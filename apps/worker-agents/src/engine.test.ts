@@ -174,7 +174,10 @@ maybe('agent run engine', () => {
     await closeDatabase();
   });
 
-  async function seedRun(steps: AgentStepsDoc): Promise<{ runId: string; agentId: string }> {
+  async function seedRun(
+    steps: AgentStepsDoc,
+    options: { triggerKind?: 'manual' | 'event' | 'schedule' | 'api' } = {}
+  ): Promise<{ runId: string; agentId: string }> {
     const agentId = randomUUID();
     await db
       .insertInto('agents')
@@ -195,7 +198,7 @@ maybe('agent run engine', () => {
         tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: subject,
-        trigger_kind: 'manual',
+        trigger_kind: options.triggerKind ?? 'manual',
         steps_snapshot: JSON.stringify(steps),
         lineage: JSON.stringify([]),
         initial_state: JSON.stringify({ subject: 'PROJ-42 is broken' }),
@@ -1780,13 +1783,19 @@ maybe('agent run engine', () => {
       })
     )({ payload: { runId } });
 
+    // Every result reaches the model fenced as data (untrusted.ts); what is
+    // inside the fence is the bare text these assertions are about.
+    const fence = '<untrusted source="tool:jira_get_issue">\n';
+    expect(seenByModel.every((text) => text.startsWith(fence))).toBe(true);
+    expect(seenByModel.every((text) => text.endsWith('\n</untrusted>'))).toBe(true);
+    const unfenced = seenByModel.map((text) => text.slice(fence.length, -'\n</untrusted>'.length));
     // The long-but-bounded result arrived intact: last row present, no marker.
-    const sawLong = seenByModel.find((text) => text.startsWith('component-0:'));
+    const sawLong = unfenced.find((text) => text.startsWith('component-0:'));
     expect(sawLong).toBe(long);
     expect(sawLong).toContain('component-399: Tapestry - Area 399');
     expect(sawLong).not.toContain('[truncated');
     // The over-cap result was cut at the cap, and the marker says by how much.
-    const sawHuge = seenByModel.find((text) => text.startsWith('xxxx'));
+    const sawHuge = unfenced.find((text) => text.startsWith('xxxx'));
     expect(sawHuge).toBeDefined();
     expect(sawHuge).toContain('x'.repeat(60_000));
     expect(sawHuge).not.toContain('x'.repeat(60_001));
@@ -3825,6 +3834,198 @@ maybe('agent run engine', () => {
       expect(JSON.stringify(deadCard.result)).toContain('run-ended');
     });
   });
+  /**
+   * The org's act-approval policy (agentActStepsRequireApproval): an Act
+   * step of an externally triggered run pauses for a person even when its
+   * author set no needsApproval, and the fixed high-risk list pauses under
+   * every policy. Same card, same row, same resume as the author's gate.
+   */
+  describe('act-approval policy', () => {
+    afterEach(async () => {
+      await setOrgSettings(tenantId, { agentActStepsRequireApproval: 'externally_triggered' });
+    });
+
+    /** One ungated step calling `tool`. */
+    const plainDoc = (tool: string): AgentStepsDoc => ({
+      version: CURRENT_STEPS_VERSION,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'Act on the mail',
+          instruction: [
+            { t: 'text', v: 'Handle ' },
+            { t: 'var', name: 'trigger.subject' },
+            { t: 'text', v: ' with ' },
+            { t: 'tool', name: tool },
+          ],
+          tool,
+          maxAttempts: 2,
+          failureHandling: [],
+        },
+      ],
+    });
+
+    /** An MCP double whose tools/list carries each tool's read-or-act kind, as the gateway's does. */
+    function kindedMcp(tools: Record<string, 'read' | 'act'>): {
+      mcp: McpClient;
+      calls: string[];
+    } {
+      const calls: string[] = [];
+      const mcp: McpClient = {
+        initialize: async () => undefined,
+        listTools: async () =>
+          Object.entries(tools).map(([name, kind]) => ({
+            name,
+            description: name,
+            inputSchema: { type: 'object' },
+            kind,
+          })),
+        callTool: async (name) => {
+          calls.push(name);
+          return okToolResult;
+        },
+      };
+      return { mcp, calls };
+    }
+
+    const callsThenFinishes = (tool: string) =>
+      stubLlm((_request, call) =>
+        call === 0
+          ? useTool(tool, { issueKey: 'PROJ-42', body: 'As the mail asked.' })
+          : finish('success')
+      );
+
+    const stateOf = async (runId: string) =>
+      db
+        .selectFrom('agent_runs')
+        .select(['status'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+
+    it('under the default, an act step of an event-triggered run pauses for approval; a manual run acts', async () => {
+      const external = await seedRun(plainDoc('jira_add_comment'), { triggerKind: 'event' });
+      const externalMcp = kindedMcp({ jira_add_comment: 'act' });
+      await handlerWith(
+        callsThenFinishes('jira_add_comment'),
+        externalMcp.mcp
+      )({
+        payload: { runId: external.runId },
+      });
+      expect((await stateOf(external.runId)).status).toBe('waiting');
+      expect(externalMcp.calls).toEqual([]);
+      const card = await db
+        .selectFrom('actionable_items')
+        .select(['kind', 'status', 'suggested_action'])
+        .where('run_id', '=', external.runId)
+        .executeTakeFirstOrThrow();
+      expect(card.kind).toBe('approval');
+      expect(card.status).toBe('suggested');
+      expect(JSON.stringify(card.suggested_action)).toContain('jira_add_comment');
+
+      // Approved, the recorded call fires exactly as the author's gate would.
+      await db
+        .updateTable('actionable_items')
+        .set({ status: 'approved', result: JSON.stringify({}), decided_at: sql`NOW()` })
+        .where('run_id', '=', external.runId)
+        .execute();
+      await handlerWith(
+        callsThenFinishes('jira_add_comment'),
+        externalMcp.mcp
+      )({
+        payload: { runId: external.runId },
+      });
+      expect((await stateOf(external.runId)).status).toBe('succeeded');
+      expect(externalMcp.calls).toEqual(['jira_add_comment']);
+
+      // A run a person started by hand acts as written.
+      const manual = await seedRun(plainDoc('jira_add_comment'));
+      const manualMcp = kindedMcp({ jira_add_comment: 'act' });
+      await handlerWith(
+        callsThenFinishes('jira_add_comment'),
+        manualMcp.mcp
+      )({
+        payload: { runId: manual.runId },
+      });
+      expect((await stateOf(manual.runId)).status).toBe('succeeded');
+      expect(manualMcp.calls).toEqual(['jira_add_comment']);
+    });
+
+    it('a read step of an event-triggered run never pauses', async () => {
+      const { runId } = await seedRun(plainDoc('jira_get_issue'), { triggerKind: 'event' });
+      const { mcp, calls } = kindedMcp({ jira_get_issue: 'read' });
+      await handlerWith(callsThenFinishes('jira_get_issue'), mcp)({ payload: { runId } });
+      expect((await stateOf(runId)).status).toBe('succeeded');
+      expect(calls).toEqual(['jira_get_issue']);
+    });
+
+    it("a high-risk tool pauses even on a manual run with the policy 'off'", async () => {
+      await setOrgSettings(tenantId, { agentActStepsRequireApproval: 'off' });
+      // jira_delete_issue rather than outlook_send_mail: the notifier mails
+      // the owner about the pause through that very tool, which would make
+      // "no call fired" ambiguous here.
+      const { runId } = await seedRun(plainDoc('jira_delete_issue'));
+      const { mcp, calls } = kindedMcp({ jira_delete_issue: 'act' });
+      await handlerWith(callsThenFinishes('jira_delete_issue'), mcp)({ payload: { runId } });
+      expect((await stateOf(runId)).status).toBe('waiting');
+      expect(calls).toEqual([]);
+
+      // While an ordinary act call on the same policy runs unattended.
+      const plain = await seedRun(plainDoc('jira_add_comment'), { triggerKind: 'event' });
+      const plainMcp = kindedMcp({ jira_add_comment: 'act' });
+      await handlerWith(
+        callsThenFinishes('jira_add_comment'),
+        plainMcp.mcp
+      )({
+        payload: { runId: plain.runId },
+      });
+      expect((await stateOf(plain.runId)).status).toBe('succeeded');
+      expect(plainMcp.calls).toEqual(['jira_add_comment']);
+    });
+
+    it("a chained run inherits its root's provenance", async () => {
+      const root = await seedRun(plainDoc('jira_get_issue'), { triggerKind: 'event' });
+      const child = await seedRun(plainDoc('jira_add_comment'));
+      await db
+        .updateTable('agent_runs')
+        .set({ trigger_kind: 'agent', parent_run_id: root.runId })
+        .where('id', '=', child.runId)
+        .execute();
+      const { mcp, calls } = kindedMcp({ jira_add_comment: 'act' });
+      await handlerWith(
+        callsThenFinishes('jira_add_comment'),
+        mcp
+      )({
+        payload: { runId: child.runId },
+      });
+      expect((await stateOf(child.runId)).status).toBe('waiting');
+      expect(calls).toEqual([]);
+    });
+
+    it('hands the model tool results fenced as data', async () => {
+      const { runId } = await seedRun(plainDoc('jira_get_issue'));
+      const seen: LlmRequest[] = [];
+      const llm = stubLlm((request, call) => {
+        seen.push(request);
+        return call === 0 ? useTool('jira_get_issue', { issueKey: 'PROJ-42' }) : finish('success');
+      });
+      await handlerWith(llm, kindedMcp({ jira_get_issue: 'read' }).mcp)({ payload: { runId } });
+      // The request's messages array is the engine's own, so it grows past
+      // the call that saw it; the tool_result message is the one to read.
+      const result = seen[1].messages
+        .flatMap((message) => message.content)
+        .find((block) => block.type === 'tool_result');
+      expect(result?.type).toBe('tool_result');
+      expect(result?.type === 'tool_result' && result.content).toBe(
+        '<untrusted source="tool:jira_get_issue">\nPROJ-42: The printer is on fire\n</untrusted>'
+      );
+      // The trigger's text is fenced in the step's own prompt too.
+      const prompt = seen[0].messages[0].content[0];
+      expect(prompt.type === 'text' && prompt.text).toContain(
+        '<untrusted source="trigger.subject">\nPROJ-42 is broken\n</untrusted>'
+      );
+    });
+  });
+
   describe('ask_person (canAskQuestions)', () => {
     // Same reasoning as the needsApproval block above: most of this suite
     // tests the delivery mechanism, which needs opt-in to fire at all.

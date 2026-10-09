@@ -80,12 +80,24 @@ export function getBearerToken(request: NextRequest): string | null {
  * 'jira' is the MCP-client class, issued through the OAuth authorization
  * server flow. 'agent' is the agent-runner class: minted server-side by the
  * agents worker for the lifetime of one run, never issued through the OAuth
- * AS, never refreshable, and revoked at run end (TTL as backstop). The two
- * are deliberately distinct values so each verification site names which
- * classes it accepts — see RENKEI.md's decision log entry on agent-runner
- * tokens.
+ * AS, never refreshable, and revoked at run end (TTL as backstop). 'widget'
+ * is the preview-card class: minted by `confirmWidgetTool` for one
+ * `*_confirm` call, allow-listed to that tool, five minutes long. It is the
+ * ONLY class the gateway registers app-only tools for — a confirm tool's
+ * provenance is the token class, never a description a client may ignore.
+ * The values are deliberately distinct so each verification site names
+ * which classes it accepts — see RENKEI.md's decision log entry on
+ * agent-runner tokens.
  */
-export type Application = 'jira' | 'agent';
+export type Application = 'jira' | 'agent' | 'widget';
+
+/**
+ * Whether a resolved token was minted by the chat's widget-card confirm
+ * path — the one caller app-only confirm tools exist for.
+ */
+export function isWidgetConfirmToken(record: Pick<AccessTokenRecord, 'application'>): boolean {
+  return record.application === 'widget';
+}
 
 export interface AccessTokenRecord {
   subject: string;

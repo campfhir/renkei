@@ -8,7 +8,16 @@
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import { createProjection, OPEN_ORG_POLICY } from '@renkei/capability-registry';
-import { withCapabilityGate, withToolAllowList, JIRA_CONNECTOR } from './capability-gate';
+import {
+  APP_ONLY_REFUSAL,
+  isAppOnlyTool,
+  withAppOnlyCallGuard,
+  withAppOnlyGate,
+  withCapabilityGate,
+  withToolAllowList,
+  JIRA_CONNECTOR,
+} from './capability-gate';
+import { APP_ONLY_META, confirmGuard, previewToolMeta } from './widgets';
 
 function fakeServer(): { server: McpServer; registered: string[] } {
   const registered: string[] = [];
@@ -187,5 +196,118 @@ describe('withToolAllowList', () => {
     registerSampleTools(gated);
 
     expect(registered).toEqual(['jira_search_issues']);
+  });
+});
+
+/**
+ * The confirm half of a preview pair is a card button, not a tool for a
+ * model or an MCP client: it must register for the chat's widget-confirm
+ * token and for nothing else — an external client's token, an agent run's,
+ * a chat turn's. The visibility used to be metadata only (Renkei's own
+ * chat filtered on it; the gateway never looked), so a client holding an
+ * OAuth token could call `entra_assign_app_role_confirm` directly and skip
+ * the card.
+ */
+describe('app-only tools at the gateway', () => {
+  type Handler = () => Promise<{ content: { type: string; text?: string }[]; isError?: boolean }>;
+
+  function recordingServer(): { server: McpServer; handlers: Map<string, Handler> } {
+    const handlers = new Map<string, Handler>();
+    const server = {
+      registerTool: (name: string, _config: unknown, handler: Handler) => {
+        handlers.set(name, handler);
+      },
+    } as unknown as McpServer;
+    return { server, handlers };
+  }
+
+  const ran = async () => ({ content: [{ type: 'text' as const, text: 'assigned' }] });
+
+  function registerEntraPair(server: McpServer): void {
+    server.registerTool(
+      'entra_assign_app_role_preview',
+      {
+        description: 'Preview assigning an app role.',
+        annotations: { readOnlyHint: false },
+        _meta: previewToolMeta('ui://widget/directory-action-preview.test.html'),
+      },
+      ran
+    );
+    server.registerTool(
+      'entra_assign_app_role_confirm',
+      {
+        description: 'Assign the role.' + confirmGuard('entra_assign_app_role_preview'),
+        annotations: { readOnlyHint: false },
+        _meta: APP_ONLY_META,
+      },
+      ran
+    );
+    server.registerTool(
+      'entra_get_application',
+      { description: 'read', annotations: { readOnlyHint: true } },
+      ran
+    );
+  }
+
+  it('reads APP_ONLY_META as app-only and a preview or plain tool as model-facing', () => {
+    expect(isAppOnlyTool({ _meta: APP_ONLY_META })).toBe(true);
+    expect(isAppOnlyTool({ _meta: previewToolMeta('ui://widget/x.html') })).toBe(false);
+    expect(isAppOnlyTool({ _meta: { ui: { visibility: ['model', 'app'] } } })).toBe(false);
+    expect(isAppOnlyTool({ description: 'plain' })).toBe(false);
+  });
+
+  it('an external client never lists a confirm tool, and cannot call it even if one registers', async () => {
+    // Registration: the confirm half is dropped for a 'jira' (OAuth-client)
+    // or 'agent' token alike — anything that is not the widget class.
+    const listing = recordingServer();
+    registerEntraPair(withAppOnlyGate(listing.server, false));
+    expect([...listing.handlers.keys()]).toEqual([
+      'entra_assign_app_role_preview',
+      'entra_get_application',
+    ]);
+
+    // Call time: a confirm tool that slipped past registration (a module
+    // registering on the raw server, say) answers a refusal, never runs.
+    const calling = recordingServer();
+    registerEntraPair(withAppOnlyCallGuard(calling.server, false));
+    const confirm = calling.handlers.get('entra_assign_app_role_confirm');
+    expect(confirm).toBeDefined();
+    const result = await confirm!();
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(APP_ONLY_REFUSAL);
+    // The guard touches nothing else.
+    expect(
+      (await calling.handlers.get('entra_assign_app_role_preview')!()).isError
+    ).toBeUndefined();
+  });
+
+  it('the widget-confirm token lists and calls exactly its one tool', async () => {
+    // confirmWidgetTool mints application 'widget' allow-listed to the one
+    // confirm tool; the gates compose so that token sees that tool and
+    // nothing beside it.
+    const { server, handlers } = recordingServer();
+    registerEntraPair(
+      withAppOnlyGate(
+        withToolAllowList(
+          withAppOnlyCallGuard(server, true),
+          new Set(['entra_assign_app_role_confirm'])
+        ),
+        true
+      )
+    );
+    expect([...handlers.keys()]).toEqual(['entra_assign_app_role_confirm']);
+    const result = await handlers.get('entra_assign_app_role_confirm')!();
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toBe('assigned');
+  });
+
+  it('an agent run token allow-listed to a confirm tool still gets nothing', () => {
+    // A step cannot name a confirm tool past validation, but the gateway
+    // does not rely on that: the allow-list says yes, the class says no.
+    const { server, handlers } = recordingServer();
+    registerEntraPair(
+      withAppOnlyGate(withToolAllowList(server, new Set(['entra_assign_app_role_confirm'])), false)
+    );
+    expect([...handlers.keys()]).toEqual([]);
   });
 });

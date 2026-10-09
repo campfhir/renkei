@@ -15,8 +15,11 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import {
   getOrgSettings,
   setOrgSettings,
+  isActApprovalPolicy,
   isLogLevel,
+  ACT_APPROVAL_POLICIES,
   LOG_LEVELS,
+  type ActApprovalPolicy,
   type OrgSettings,
   type LogLevel,
 } from '@renkei/settings';
@@ -111,13 +114,19 @@ const BOOLEAN_KEYS = [
   'coachMarksEnabled',
 ] as const;
 
-type EditableKey = keyof typeof NUMERIC_BOUNDS | (typeof BOOLEAN_KEYS)[number] | 'logLevel';
+type EditableKey =
+  | keyof typeof NUMERIC_BOUNDS
+  | (typeof BOOLEAN_KEYS)[number]
+  | 'logLevel'
+  | 'agentActStepsRequireApproval';
+type EditableValue = boolean | number | LogLevel | ActApprovalPolicy;
 
-function editable(settings: OrgSettings): Record<EditableKey, boolean | number | LogLevel> {
+function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
   return {
     readOnly: settings.readOnly,
     enableDcr: settings.enableDcr,
     logLevel: settings.logLevel,
+    agentActStepsRequireApproval: settings.agentActStepsRequireApproval,
     maxJqlResults: settings.maxJqlResults,
     maxAttachmentBytes: settings.maxAttachmentBytes,
     massUploadThreshold: settings.massUploadThreshold,
@@ -189,10 +198,7 @@ export async function PUT(
   const before = editable(current.val);
 
   const updates: Partial<OrgSettings> = {};
-  const changed: Record<
-    string,
-    { from: boolean | number | LogLevel; to: boolean | number | LogLevel }
-  > = {};
+  const changed: Record<string, { from: EditableValue; to: EditableValue }> = {};
 
   for (const key of BOOLEAN_KEYS) {
     if (!(key in submitted)) continue;
@@ -230,6 +236,25 @@ export async function PUT(
     if (value !== before.logLevel) {
       updates.logLevel = value;
       changed.logLevel = { from: before.logLevel, to: value };
+    }
+  }
+
+  if ('agentActStepsRequireApproval' in submitted) {
+    const value = submitted.agentActStepsRequireApproval;
+    if (!isActApprovalPolicy(value)) {
+      return NextResponse.json(
+        {
+          error: `agentActStepsRequireApproval must be one of: ${ACT_APPROVAL_POLICIES.join(', ')}`,
+        },
+        { status: 400 }
+      );
+    }
+    if (value !== before.agentActStepsRequireApproval) {
+      updates.agentActStepsRequireApproval = value;
+      changed.agentActStepsRequireApproval = {
+        from: before.agentActStepsRequireApproval,
+        to: value,
+      };
     }
   }
 

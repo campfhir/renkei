@@ -9,6 +9,14 @@
  * (@renkei/crypto). The person's renkei roles ride along (migration 091)
  * so a role-gated tool answers the same way it would for their browser.
  *
+ * A second class, application 'widget', is minted ONLY by the chat's
+ * widget-card confirm path (apps/web/lib/chat/widget-tools.ts) for the one
+ * `*_confirm` tool a card's button names. The gateway registers app-only
+ * tools (`_meta.ui.visibility: ['app']`) for this class alone — every
+ * other token, 'agent' included, never sees or reaches them — so the
+ * provenance of a confirm call is the token's class, not a description
+ * guard a client may ignore.
+ *
  * oauth_access_tokens.client_id has an FK to oauth_clients, so each tenant
  * gets one synthetic client row. Its secret hash is a random digest nobody
  * holds the preimage of: the row exists to satisfy the FK and name the
@@ -18,6 +26,9 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { generateSecret, sha256Hex } from '@renkei/crypto';
+
+/** The two token classes this module mints — see the header. */
+export type RunTokenApplication = 'agent' | 'widget';
 
 function runnerClientId(tenantId: string): string {
   // client_id is a GLOBAL primary key, so the tenant is part of the name.
@@ -62,6 +73,13 @@ export async function mintRunToken(
      * the surface a chat turn or a draft has always had.
      */
     tools?: readonly string[];
+    /**
+     * The token's class. 'agent' (the default) is a run or a chat turn;
+     * 'widget' is a preview card's confirm button and is the ONLY class
+     * the gateway registers app-only confirm tools for. A 'widget' token
+     * must also name its one tool in `tools`.
+     */
+    application?: RunTokenApplication;
   }
 ): Promise<string> {
   const clientId = await ensureAgentRunnerClient(db, params.tenantId);
@@ -73,7 +91,7 @@ export async function mintRunToken(
       tenant_id: params.tenantId,
       client_id: clientId,
       subject: params.subject,
-      application: 'agent',
+      application: params.application ?? 'agent',
       // The acting agent (migration 040): the subject says WHOSE authority
       // the run borrows; agent_id says WHO is borrowing it, so tools can
       // stamp agent provenance without weakening the owner-scoped gates.

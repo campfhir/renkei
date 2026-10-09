@@ -14,7 +14,11 @@
  * app-only may be reached this way, exactly as an external MCP Apps host
  * (Claude Desktop) would restrict it. The minted token is further
  * allow-listed to that one tool name, so even a bug in the appOnly check
- * could not reach anything else.
+ * could not reach anything else — and it is minted as application
+ * 'widget', the one token class the gateway registers app-only tools for
+ * at all (lib/mcp-tools/capability-gate.ts's withAppOnlyGate): an external
+ * MCP client's token, or an agent run's, never lists or reaches a confirm
+ * tool whatever its description says.
  *
  * A third callback, `ui/report-decision` (bridge.ts), is what makes a card's
  * "already decided" receipt durable across devices instead of living only
@@ -99,6 +103,7 @@ export async function confirmWidgetTool(
     ttlSeconds: CALL_TTL_SECONDS,
     roles: input.roles,
     tools: [input.name],
+    application: 'widget',
   });
   const mcp = new HttpMcpClient(internalMcpEndpoint(input.tenantId), token, {
     clientName: 'renkei-chat-widget',
