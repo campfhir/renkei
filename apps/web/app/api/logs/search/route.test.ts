@@ -29,33 +29,21 @@ const { buildLogQueryOptions: mockBuildQuery } = jest.requireMock<{
   buildLogQueryOptions: jest.Mock;
 }>('@/lib/log-query');
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
-
 /**
- * Table-aware stub: `tenants` always resolves (the route checks existence
- * first), and `provider_grants` resolves to `grantRow`. Every `where(...)` on
- * the grant chain is recorded so a test can prove which identity was queried.
+ * `provider_grants` resolves to `grantRow`. Every `where(...)` on the grant
+ * chain is recorded so a test can prove which identity was queried.
  */
 function stubDb(grantRow: Record<string, unknown> | undefined) {
   const grantFilters: Array<[string, string, unknown]> = [];
-  const makeChain = (row: unknown, record: boolean) => {
-    const chain = {
-      select: () => chain,
-      where(column: string, op: string, value: unknown) {
-        if (record) grantFilters.push([column, op, value]);
-        return chain;
-      },
-      executeTakeFirst: async () => row,
-    };
-    return chain;
-  };
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      selectFrom: (table: string) =>
-        table === 'tenants' ? makeChain({ id: TENANT }, false) : makeChain(grantRow, true),
+  const chain = {
+    select: () => chain,
+    where(column: string, op: string, value: unknown) {
+      grantFilters.push([column, op, value]);
+      return chain;
     },
-  });
+    executeTakeFirst: async () => grantRow,
+  };
+  mockGetDatabase.mockReturnValue({ ok: true, val: { selectFrom: () => chain } });
   return { grantFilters };
 }
 
@@ -91,7 +79,7 @@ describe('POST /api/logs/search', () => {
 
   it('refuses a user asking for another account, having looked up by session subject', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
-    const { grantFilters } = stubDb({ id: TENANT, provider_account_id: 'acc-a' });
+    const { grantFilters } = stubDb({ provider_account_id: 'acc-a' });
 
     const response = await POST(request('?accountId=acc-b'));
 
@@ -104,24 +92,24 @@ describe('POST /api/logs/search', () => {
 
   it('serves a user their own logs, scoped to their own account', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
-    stubDb({ id: TENANT, provider_account_id: 'acc-a' });
+    stubDb({ provider_account_id: 'acc-a' });
 
     const response = await POST(request('?accountId=acc-a'));
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.accountId).toBe('acc-a');
-    expect(mockBuildQuery).toHaveBeenCalledWith(null, TENANT, 'acc-a');
+    expect(mockBuildQuery).toHaveBeenCalledWith(null, 'acc-a');
   });
 
   it('serves a user their own logs even with no accountId in the request', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
-    stubDb({ id: TENANT, provider_account_id: 'acc-a' });
+    stubDb({ provider_account_id: 'acc-a' });
 
     const response = await POST(request());
 
     expect(response.status).toBe(200);
-    expect(mockBuildQuery).toHaveBeenCalledWith(null, TENANT, 'acc-a');
+    expect(mockBuildQuery).toHaveBeenCalledWith(null, 'acc-a');
   });
 
   it('refuses a user with no grant', async () => {

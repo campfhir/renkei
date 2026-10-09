@@ -46,6 +46,7 @@ describeDb('worker-delegate', () => {
   const owner = `owner-${randomUUID()}@example.com`;
   const friend = `friend-${randomUUID()}@example.com`;
   const leaver = `leaver-${randomUUID()}@example.com`;
+  const people = [owner, friend, leaver];
   let friendSessionId = '';
   let server: Server;
   let base = '';
@@ -155,12 +156,10 @@ describeDb('worker-delegate', () => {
     const db = getDatabase();
     if (db.ok) {
       await db.val.deleteFrom('delegate_instances').where('id', '=', instance.id).execute();
-      await db.val.deleteFrom('provider_grants').execute();
-      await db.val.deleteFrom('delegate_git_tickets').execute();
-      await db.val.deleteFrom('agents').execute();
-      await db.val.deleteFrom('delegate_signing_keys').execute();
-      await db.val.deleteFrom('resource_keys').execute();
-      await db.val.deleteFrom('user_encryption_keys').execute();
+      await db.val.deleteFrom('provider_grants').where('subject', 'in', people).execute();
+      await db.val.deleteFrom('delegate_git_tickets').where('subject', 'in', people).execute();
+      await db.val.deleteFrom('agents').where('owner_subject', 'in', people).execute();
+      await db.val.deleteFrom('user_encryption_keys').where('subject', 'in', people).execute();
     }
     await closeDatabase();
   });
@@ -465,8 +464,10 @@ describeDb('worker-delegate', () => {
     });
     expect(closed.status).toBe(423);
     expect(errorType(closed.json)).toBe('NEEDS_DELEGATION');
-    const census = await op('keys/census', { });
-    expect(census.json).toEqual({ held: 2, managed: 0, own: 0 });
+    // The census is organization-wide, so other suites' people count too.
+    const census = await op('keys/census', {});
+    expect(census.json.held).toBeGreaterThanOrEqual(2);
+    expect(census.json).toMatchObject({ managed: expect.any(Number), own: expect.any(Number) });
 
     // The browser seals again, and the owner is back for the tests below.
     if (!ownerKeys) throw new Error('owner not enrolled');
@@ -819,7 +820,7 @@ describeDb('worker-delegate', () => {
     if (!dbResult.ok) throw new Error('database unavailable');
     const db = dbResult.val;
     const instance = await createInstance(db, {
-      name: 'Dev',
+      name: `Dev ${randomUUID().slice(0, 8)}`,
       environment: 'dev',
       baseUrl: 'https://mirth.example.com',
       tlsVerify: true,
@@ -878,6 +879,6 @@ describeDb('worker-delegate', () => {
     expect((await op('forward/mirth/nope', {})).status).toBe(404);
     expect((await op('forward/elsewhere/api', {})).status).toBe(404);
 
-    await db.deleteFrom('mirth_instances').execute();
+    await db.deleteFrom('mirth_instances').where('id', '=', instance.val).execute();
   });
 });

@@ -90,7 +90,7 @@ const delta = (items: unknown[], over: Record<string, unknown> = {}) => ({
   val: { items, deltaLink: 'https://graph/delta?token=next', nextLink: null, ...over },
 });
 
-const eventsOfType = (type: string) => mockEnqueue.mock.calls.filter((call) => call[1] === type);
+const eventsOfType = (type: string) => mockEnqueue.mock.calls.filter((call) => call[0] === type);
 
 describe('runDriveWatchSync', () => {
   it('enqueues a reference per changed document — never the bytes', async () => {
@@ -122,7 +122,7 @@ describe('runDriveWatchSync', () => {
     const result = await runDriveWatchSync(access(), row());
 
     expect(result.removed).toBe(1);
-    expect(eventsOfType('delete.object')[0]![2]).toEqual({
+    expect(eventsOfType('delete.object')[0]![1]).toEqual({
       provider: 'sharepoint',
       refId: 'drive-1/item-9',
     });
@@ -232,9 +232,9 @@ describe('runDriveWatchSync', () => {
 
     const reconcile = eventsOfType('reconcile.drive');
     expect(reconcile).toHaveLength(1);
-    expect(reconcile[0]![2]).toMatchObject({ provider: 'sharepoint', driveId: 'drive-1' });
+    expect(reconcile[0]![1]).toMatchObject({ provider: 'sharepoint', driveId: 'drive-1' });
     // Same ordering key as the ingests, so lane FIFO puts it last.
-    expect(reconcile[0]![3]).toBe('sharepoint/drive-1');
+    expect(reconcile[0]![2]).toBe('sharepoint/drive-1');
     // And it carries the SAME epoch the ingests were stamped with, or it
     // would delete everything the round just wrote.
     const ingestEpoch = eventsOfType('ingest.document')[0]![2].syncEpoch;

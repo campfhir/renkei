@@ -21,15 +21,15 @@ describe('notificationTarget', () => {
       external: true,
     });
     expect(notificationTarget(jira, false)).toEqual({
-      url: '/acme/agents/a/runs/r',
+      url: '/agents/a/runs/r',
       external: false,
     });
   });
 
   it('opens an in-app link in-app whatever the preference', () => {
-    const chat = row({ kind: 'chat_permission', refUrl: '/acme/chat/c1' });
+    const chat = row({ kind: 'chat_permission', refUrl: '/chat/c1' });
     expect(notificationTarget(chat, true)).toEqual({
-      url: '/acme/chat/c1',
+      url: '/chat/c1',
       external: false,
     });
   });
@@ -37,24 +37,24 @@ describe('notificationTarget', () => {
 
 describe('notificationInAppPath', () => {
   it('follows the same precedence as a card on the notifications page', () => {
-    expect(notificationInAppPath(row({ refUrl: '/acme/chat/c1' }))).toBe('/acme/chat/c1');
+    expect(notificationInAppPath(row({ refUrl: '/chat/c1' }))).toBe('/chat/c1');
     expect(
       notificationInAppPath(
         row({ kind: 'batch_finished', meta: { batchId: 'b1', kind: 'ocr' } })
       )
-    ).toBe('/acme/batch-jobs/b1');
+    ).toBe('/batch-jobs/b1');
     expect(notificationInAppPath(row({ kind: 'agent_edited', agentId: 'a' }))).toBe(
-      '/acme/agents/a'
+      '/agents/a'
     );
     expect(
       notificationInAppPath(row({ kind: 'run_failed', agentId: 'a', runId: 'r' }))
-    ).toBe('/acme/agents/a/runs/r');
-    expect(notificationInAppPath(row())).toBe('/acme/notifications');
+    ).toBe('/agents/a/runs/r');
+    expect(notificationInAppPath(row())).toBe('/notifications');
   });
 
   it('never follows a scheme-relative path', () => {
     expect(notificationInAppPath(row({ refUrl: '//evil.example/x' }))).toBe(
-      '/acme/notifications'
+      '/notifications'
     );
   });
 });

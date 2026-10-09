@@ -62,7 +62,7 @@ let requests: { method: string; path: string; body: unknown; headers: Record<str
 const stubAuth: EntraAuth = {
   kind: 'oauth',
   resolve: async () => ({
-    auth: authedFetch((url, init) => fetch(url, init), 'entra-developer:tenant-1:oid-me'),
+    auth: authedFetch((url, init) => fetch(url, init), 'entra-developer:oid-me'),
     accountId: 'oid-me',
     upn: 'dana@contoso.com',
     tenantId: 'tenant-dir',

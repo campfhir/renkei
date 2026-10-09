@@ -29,7 +29,7 @@ const SHARE_ID = '11111111-2222-3333-4444-555555555555';
 
 function reqOf(body: unknown): NextRequest {
   return new NextRequest(
-    new Request('http://x/api/tenant/tenant-1/batch-jobs', {
+    new Request('http://x/api/batch-jobs', {
       method: 'POST',
       body: JSON.stringify(body),
     })

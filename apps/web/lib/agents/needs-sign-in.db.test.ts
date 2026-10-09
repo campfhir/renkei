@@ -17,9 +17,9 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('resumeRunsNeedingSignIn', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const owner = `owner-${tenantId.slice(0, 8)}`;
-  const other = `other-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const owner = `owner-${suiteId.slice(0, 8)}`;
+  const other = `other-${suiteId.slice(0, 8)}`;
   const agentId = randomUUID();
   const steps = { version: CURRENT_STEPS_VERSION, steps: [] };
 
@@ -64,9 +64,8 @@ maybe('resumeRunsNeedingSignIn', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs`.execute(db);
-    await sql`DELETE FROM agents`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE owner_subject IN (${owner}, ${other})`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject IN (${owner}, ${other})`.execute(db);
     await closeDatabase();
   });
 

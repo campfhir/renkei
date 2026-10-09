@@ -73,9 +73,9 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 let client: Client;
 let ids: ReturnType<typeof idsFor>;
 
-async function removeTenant(): Promise<void> {
-  // settings does not cascade from tenants; sessions does not either.
-  await client.query('DELETE FROM settings');
+async function reset(): Promise<void> {
+  // The org switch back to its default (on), and this spec's person gone.
+  await client.query(`DELETE FROM settings WHERE key = 'coach_marks_enabled'`);
   await client.query('DELETE FROM sessions WHERE subject = $1', [ids.subject]);
 }
 
@@ -84,7 +84,7 @@ test.beforeAll(async ({}, testInfo) => {
   ids = idsFor(testInfo.project.name);
   client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
-  await removeTenant();
+  await reset();
   await client.query(
     `INSERT INTO settings (key, value) VALUES ('coach_marks_enabled', 'false'::jsonb)`
   );
@@ -95,7 +95,7 @@ test.beforeAll(async ({}, testInfo) => {
 });
 
 test.afterAll(async () => {
-  await removeTenant();
+  await reset();
   await client.end();
 });
 

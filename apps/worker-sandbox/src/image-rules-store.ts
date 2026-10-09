@@ -106,7 +106,7 @@ export class DuplicateRuleError extends Error {
 
 function isDuplicate(error: unknown): boolean {
   return (
-    error instanceof Error && error.message.includes('idx_code_service_image_rules_tenant_pattern')
+    error instanceof Error && error.message.includes('idx_code_service_image_rules_pattern')
   );
 }
 

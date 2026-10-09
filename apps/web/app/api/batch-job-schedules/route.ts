@@ -134,7 +134,7 @@ export async function POST(
     });
     return NextResponse.json({ id: schedule.id }, { status: 201 });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('batch_job_schedules_tenant_name')) {
+    if (error instanceof Error && error.message.includes('batch_job_schedules_name')) {
       return NextResponse.json({ error: 'A schedule with that name already exists' }, { status: 409 });
     }
     throw error;

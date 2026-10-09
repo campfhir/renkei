@@ -10,9 +10,9 @@
  * never went through the browser authorize step, e.g. an 'agent' token) is
  * treated as holding none, the same fail-closed default `hasRole`
  * (`lib/session.ts`) uses: no ROLE_OPERATOR means the self-scoped branch,
- * never tenant-wide.
+ * never organization-wide.
  *
- * `renkei-operator` gets the same tenant-wide search the web page's operator
+ * `renkei-operator` gets the same organization-wide search the web page's operator
  * branch does — every account's activity, not just their own, and no Jira
  * grant of their own is required to ask for it. Everyone else gets exactly
  * the web page's non-operator branch: their own Jira-linked account's
@@ -81,9 +81,9 @@ const DEFAULT_LIMIT = 20;
 const ALLOWED_META = ['component', 'tool', 'url', 'method', 'status', 'reason', 'action'];
 
 /**
- * Added on top of ALLOWED_META for the operator (tenant-wide) branch only.
+ * Added on top of ALLOWED_META for the operator (organization-wide) branch only.
  * The exclusion reasoning above stops applying once a result can span every
- * account in the tenant — without these, an operator could not tell whose
+ * account in the organization — without these, an operator could not tell whose
  * activity a given row was.
  */
 const OPERATOR_EXTRA_META = ['subject', 'accountId', 'displayName'];
@@ -239,7 +239,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
         "Search Renkei's own activity log for entries about API calls, request failures, and " +
         'the like. Self-scoped to YOUR OWN Jira-linked account by default, the same view a ' +
         'non-admin gets on the web Logs page. Callers holding the renkei-operator role get ' +
-        "the web page's operator view instead — every account's activity across the tenant, " +
+        "the web page's operator view instead — every account's activity across the organization, " +
         'no Jira grant of your own required.\n\n' +
         'Filter with "filter" (structured, recommended for AND/OR), "query" (a short string ' +
         'grammar), or both — they combine with AND. ' +
@@ -284,7 +284,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
       // the module comment above for what can leave roles unset.
       const isOperator = (context.roles ?? []).includes(ROLE_OPERATOR);
 
-      // Operators search the whole tenant, so they need no Jira account of
+      // Operators search the whole organization, so they need no Jira account of
       // their own; everyone else stays scoped to the account backing their
       // own Jira grant, same as the web page's non-admin branch.
       let accountId: string | undefined;
@@ -360,7 +360,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
       }
 
       const rows = result.val;
-      const scopeLabel = isOperator ? 'tenant-wide' : 'your own activity only';
+      const scopeLabel = isOperator ? 'organization-wide' : 'your own activity only';
       if (rows.length === 0) {
         return textResult(`No log entries match (${scopeLabel}).`);
       }

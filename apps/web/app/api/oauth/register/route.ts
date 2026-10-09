@@ -11,7 +11,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 /**
  * Open by specification (RFC 7591) and each call writes a row, so the
  * throttle is what keeps it from being a client-row factory — the same
- * budget as the tenant-scoped endpoint, keyed on this system-level one.
+ * budget as the MCP endpoint's own registration route, keyed on this one.
  */
 const LIMITS = {
   perClient: { limit: 10, windowMs: 10 * 60_000 },
@@ -19,17 +19,9 @@ const LIMITS = {
 };
 
 /**
- * System-level Dynamic Client Registration endpoint (RFC 7591).
- *
- * This endpoint has no tenant of its own; it exists only for a caller that
- * reaches it without ever fetching tenant-scoped discovery metadata (which
- * 404s at the system level — see app/api/.well-known/oauth-authorization-
- * server/route.ts). The only signal available is the Referer header a
- * browser sends when it followed a link from the tenant-scoped MCP
- * endpoint's own pages; a bare API caller (curl, most DCR clients) sends
- * none. Once the tenant is known, THAT organization's registration setting
- * decides — this used to consult the platform default instead, so an org
- * that had switched registration off still took registrations here.
+ * Dynamic Client Registration endpoint (RFC 7591), at the path a client
+ * that never fetched the discovery metadata guesses. The organization's
+ * own registration setting decides whether it answers at all.
  *
  * Example request:
  *   POST /api/oauth/register

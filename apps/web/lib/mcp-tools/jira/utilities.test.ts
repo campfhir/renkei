@@ -94,7 +94,7 @@ describe('jira_connect', () => {
     const { db } = fakeDb(undefined);
     const { text } = await connectJira(db);
 
-    expect(text).toContain('https://mcp.example.com/api/mcp/tenant-1/authorize');
+    expect(text).toContain('https://mcp.example.com/api/mcp/authorize');
     expect(text).not.toContain('auth.atlassian.com');
     expect(text).not.toContain('jira-setup');
   });

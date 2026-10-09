@@ -44,11 +44,6 @@ describe('connect-flow browser binding', () => {
     expect(isConnectFlowBound(request, STATE)).toBe(false);
   });
 
-  it("refuses a cookie bound to another tenant's flow", () => {
-    const request = callbackWith({ [connectStateCookieName()]: STATE });
-    expect(isConnectFlowBound(request, STATE)).toBe(false);
-  });
-
   it('clears the cookie on the response', () => {
     const response = clearConnectFlow(NextResponse.json({ ok: true }));
     const cookie = response.cookies.get(connectStateCookieName());

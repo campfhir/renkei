@@ -128,7 +128,7 @@ function fakeAuth(
 /** No executor under test reads the db, except OnBase's slot update (not exercised here). */
 const db = {} as unknown as Kysely<DB>;
 
-const graphAuth = fakeAuth('microsoft:tenant-1:ms-1');
+const graphAuth = fakeAuth('microsoft:ms-1');
 
 beforeEach(() => {
   mockDescribe.mockReset();
@@ -178,7 +178,7 @@ describe('jira-attachment', () => {
     );
     // The slot's own Jira grant, as a fetcher — never a token.
     expect(typeof auth).toBe('function');
-    expect(auth.grantKey).toBe('atlassian:tenant-1:acct-1');
+    expect(auth.grantKey).toBe('atlassian:acct-1');
     expect(init.body).toBeInstanceOf(FormData);
     expect(mockDescribe).toHaveBeenCalledWith({
       provider: 'atlassian',
@@ -224,7 +224,7 @@ describe('jsm-attachment', () => {
       subject: 'subject-1',
     });
     expect((jiraFetch.mock.calls[0]![1] as AuthedFetch).grantKey).toBe(
-      'atlassian-jsm:tenant-1:jsm-acct'
+      'atlassian-jsm:jsm-acct'
     );
     expect(String(jiraFetch.mock.calls[1]![0])).toContain(
       '/rest/servicedeskapi/servicedesk/7/attachTemporaryFile'
@@ -239,7 +239,7 @@ describe('jsm-attachment', () => {
 
 describe('confluence-attachment', () => {
   it('uploads through confluenceUpload under the resolved access', async () => {
-    const confluenceAuth = fakeAuth('atlassian-confluence:tenant-1:acct-1');
+    const confluenceAuth = fakeAuth('atlassian-confluence:acct-1');
     resolveConfluenceAccess.mockResolvedValue({
       auth: confluenceAuth,
       cloudId: 'cloud-1',
@@ -355,7 +355,7 @@ describe('webex-attachment', () => {
 
   it('multiparts the bytes to a room on the resolved grant’s fetcher, and records the send', async () => {
     const webexAuth = fakeAuth(
-      'webex:tenant-1:subject-1',
+      'webex:subject-1',
       async () => new Response('{"id":"msg-room"}', { status: 200 })
     );
     resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: 'a@x.com' });
@@ -370,7 +370,7 @@ describe('webex-attachment', () => {
     expect(outcome.detail).toContain('report.pdf');
     // Posted as the user: without the ledger row their own webhook would
     // re-ingest it as something they typed.
-    expect(recordSentWebexMessage).toHaveBeenCalledWith('tenant-1', 'msg-room', 'acct-1');
+    expect(recordSentWebexMessage).toHaveBeenCalledWith('msg-room', 'acct-1');
     expect(webexBotClient).not.toHaveBeenCalled();
     const [url, init] = webexAuth.calls.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://webexapis.com/v1/messages');
@@ -385,7 +385,7 @@ describe('webex-attachment', () => {
   });
 
   it('multiparts to a 1:1 recipient with parentId, when the slot carries one', async () => {
-    const webexAuth = fakeAuth('webex:tenant-1:subject-1');
+    const webexAuth = fakeAuth('webex:subject-1');
     resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: null });
 
     await executeUpload(
@@ -425,7 +425,7 @@ describe('webex-attachment', () => {
   it('fails cleanly when WebEx refuses the send', async () => {
     resolveWebexAccess.mockResolvedValue({
       auth: fakeAuth(
-        'webex:tenant-1:subject-1',
+        'webex:subject-1',
         async () => new Response('{"message":"bad request"}', { status: 400 })
       ),
       personEmail: null,
@@ -447,7 +447,7 @@ describe('webex-attachment', () => {
     // answers for itself, marked by x-delegate-error.
     resolveWebexAccess.mockResolvedValue({
       auth: fakeAuth(
-        'webex:tenant-1:subject-1',
+        'webex:subject-1',
         async () =>
           new Response('{"error":{"type":"GRANT_REVOKED"}}', {
             status: 403,
@@ -473,7 +473,7 @@ describe('webex-attachment', () => {
 
 describe('webex-attachment to self', () => {
   const realFetch = global.fetch;
-  const webexAuth = fakeAuth('webex:tenant-1:subject-1');
+  const webexAuth = fakeAuth('webex:subject-1');
   const selfSlot = (markdown?: string) =>
     slotOf('webex-attachment', { noteToSelf: true, ...(markdown ? { markdown } : {}) });
   const expectedFile = expect.objectContaining({
@@ -505,14 +505,14 @@ describe('webex-attachment to self', () => {
 
     expect(outcome.ok).toBe(true);
     expect(outcome.detail).toContain('bot');
-    expect(webexBotClient).toHaveBeenCalledWith('tenant-1');
+    expect(webexBotClient).toHaveBeenCalledTimes(1);
     expect(postMessage).toHaveBeenCalledWith({
       toPersonEmail: 'a@x.com',
       markdown: 'for later',
       file: expectedFile,
     });
     expect(MockWebexClient).not.toHaveBeenCalled();
-    expect(recordSentWebexMessage).toHaveBeenCalledWith('tenant-1', 'msg-bot', 'acct-1');
+    expect(recordSentWebexMessage).toHaveBeenCalledWith('msg-bot', 'acct-1');
   });
 
   it('falls back to the user’s own Note to Self space when the org has no bot', async () => {
@@ -528,7 +528,7 @@ describe('webex-attachment to self', () => {
     expect(outcome.detail).toContain('Note to Self');
     expect(MockWebexClient).toHaveBeenCalledWith(webexAuth, { lane: 'interactive' });
     expect(sendNoteToSelf).toHaveBeenCalledWith('for later', expectedFile);
-    expect(recordSentWebexMessage).toHaveBeenCalledWith('tenant-1', 'msg-self', 'acct-1');
+    expect(recordSentWebexMessage).toHaveBeenCalledWith('msg-self', 'acct-1');
   });
 
   it('falls back to the solo space when the bot cannot deliver', async () => {

@@ -86,7 +86,7 @@ describe('session reuse', () => {
     // wrong user, so it is the property most worth pinning.
     rememberSession('s1', [SET('abc')]);
     expect(sessionCookie('s2')).toBeUndefined();
-    expect(sessionCookie('s1')).toBeUndefined();
+    expect(sessionCookie('s1')).toContain(`${ONBASE_SESSION_COOKIE}=abc`);
   });
 
   it('forgets on demand, which is what a 401 does', () => {

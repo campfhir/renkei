@@ -94,9 +94,9 @@ describe('DelegateClient', () => {
   it('binds a session or a run to every body of a derived client', async () => {
     const { fetchImpl, calls } = scripted(() => json(200, { enrolled: true }));
     const client = new DelegateClient(new DelegateTransport(config, fetchImpl));
-    await client.forSession('session-1').keyStatus('tenant-1', 'alice');
-    await client.forRun('run-1').keyStatus('tenant-1', 'alice');
-    await client.keyStatus('tenant-1', 'alice');
+    await client.forSession('session-1').keyStatus('alice');
+    await client.forRun('run-1').keyStatus('alice');
+    await client.keyStatus('alice');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
       subject: 'alice',
       sessionId: 'session-1',
@@ -164,7 +164,7 @@ describe('DelegateClient', () => {
       json(423, { error: { type: 'NEEDS_DELEGATION', message: 'seal again' } })
     );
     const client = new DelegateClient(new DelegateTransport(config, locked.fetchImpl));
-    const status = await client.keyStatus('tenant-1', 'alice');
+    const status = await client.keyStatus('alice');
     expect(status.ok).toBe(false);
     if (status.ok) return;
     expect(status.err.type).toBe('NEEDS_DELEGATION');
@@ -181,7 +181,7 @@ describe('DelegateClient', () => {
     const unconfigured = new DelegateClient(
       new DelegateTransport(null, scripted(() => json(200, {})).fetchImpl)
     );
-    const missing = await unconfigured.keyStatus('tenant-1', 'alice');
+    const missing = await unconfigured.keyStatus('alice');
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.err.type).toBe('DELEGATE_UNCONFIGURED');
@@ -190,7 +190,7 @@ describe('DelegateClient', () => {
       throw new TypeError('fetch failed');
     });
     const client = new DelegateClient(new DelegateTransport(config, down.fetchImpl));
-    const status = await client.keyStatus('tenant-1', 'alice');
+    const status = await client.keyStatus('alice');
     expect(status.ok).toBe(false);
     if (status.ok) return;
     expect(status.err.type).toBe('DELEGATE_UNREACHABLE');

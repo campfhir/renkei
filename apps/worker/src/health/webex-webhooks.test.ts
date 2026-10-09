@@ -52,13 +52,11 @@ function dbWithGrants(rows: GrantRow[]) {
       }),
       updateTable: () => ({
         set: () => ({
-          where: (_column: string, _op: string) => ({
-            where: () => ({
-              where: (_c: string, _o: string, accountId: string) => ({
-                execute: async () => {
-                  updates.push({ provider_account_id: accountId });
-                },
-              }),
+          where: () => ({
+            where: (_c: string, _o: string, accountId: string) => ({
+              execute: async () => {
+                updates.push({ provider_account_id: accountId });
+              },
             }),
           }),
         }),
@@ -104,7 +102,7 @@ describe('sweepWebexWebhooks', () => {
     provider_account_id: 'acct-1',
     metadata: { allSpaces: true, allSpacesSecret: 'secret-1' },
   };
-  const TARGET = 'https://renkei.example.com/api/webhooks/webex/tenant-1/user/acct-1';
+  const TARGET = 'https://renkei.example.com/api/webhooks/webex/user/acct-1';
 
   it('skips entirely with no public base URL — never a wrong-target registration', async () => {
     mockGetPublicBaseUrl.mockReturnValue(null);

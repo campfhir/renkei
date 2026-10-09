@@ -19,7 +19,6 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('image generation models', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
   const chatId = randomUUID();
   const imageId = randomUUID();
   const fluxId = randomUUID();
@@ -105,8 +104,7 @@ maybe('image generation models', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM llm_model_configs`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM llm_model_configs WHERE id IN (${chatId}, ${imageId}, ${fluxId}, ${offImageId}, ${anthropicId})`.execute(db);
     await closeDatabase();
     if (previousKey === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
     else process.env.TOKEN_ENCRYPTION_KEY = previousKey;
@@ -153,7 +151,12 @@ maybe('image generation models', () => {
     }
   });
 
-  it('has no image model to resolve for an org that has none', async () => {
+  it('has no image model to resolve once the organization has none left on', async () => {
+    await db
+      .updateTable('llm_model_configs')
+      .set({ enabled: false })
+      .where('id', 'in', [imageId, fluxId])
+      .execute();
     const result = await resolveImageModel(db, null);
     expect(!result.ok && result.err.type).toBe('NO_MODEL');
   });

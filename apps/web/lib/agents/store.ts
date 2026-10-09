@@ -552,7 +552,7 @@ export async function createAgent(
       })
       .execute();
   } catch (error) {
-    if (error instanceof Error && error.message.includes('agents_tenant_name')) {
+    if (error instanceof Error && error.message.includes('agents_name')) {
       return 'NAME_TAKEN';
     }
     throw error;
@@ -595,7 +595,7 @@ export async function updateAgent(
       .executeTakeFirst();
     if (Number(updated.numUpdatedRows ?? 0) === 0) return 'NOT_FOUND';
   } catch (error) {
-    if (error instanceof Error && error.message.includes('agents_tenant_name')) {
+    if (error instanceof Error && error.message.includes('agents_name')) {
       return 'NAME_TAKEN';
     }
     throw error;

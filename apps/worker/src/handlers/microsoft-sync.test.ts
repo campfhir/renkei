@@ -118,7 +118,7 @@ describe('runSubscriptionSync — the inbox is a trigger feed, not an index', ()
           messageId: 'msg-1',
         },
         occurredAt: '2026-08-10T12:00:00Z',
-        orderingKey: 'microsoft/tenant-1/acct-1',
+        orderingKey: 'microsoft/acct-1',
       })
     );
   });

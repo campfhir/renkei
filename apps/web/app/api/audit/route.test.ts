@@ -19,7 +19,6 @@ const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
 }>('@/lib/session');
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
 
 interface Recorded {
   filters: Array<[string, string, unknown]>;
@@ -85,14 +84,14 @@ describe('GET /api/audit', () => {
     expect(response.status).toBe(401);
   });
 
-  it('gives an operator the tenant-wide log context', async () => {
+  it('gives an operator the organization-wide log context', async () => {
     mockGetSession.mockResolvedValue(session('op@example.com', ['renkei-operator']));
     stubDb(undefined);
 
     const body = await (await GET(request())).json();
 
     expect(body.role).toBe('renkei-operator');
-    expect(body.logContext).toBe(`mcp:${TENANT}`);
+    expect(body.logContext).toBe('mcp');
   });
 
   it("derives a user's account id from their session, not the query string", async () => {
@@ -102,12 +101,11 @@ describe('GET /api/audit', () => {
     const body = await (await GET(request())).json();
 
     expect(recorded.filters).toEqual([
-      ['=', TENANT],
       ['provider', '=', 'atlassian'],
       ['subject', '=', 'user-a@example.com'],
     ]);
     expect(body.accountId).toBe('acc-a');
-    expect(body.logContext).toBe(`mcp:${TENANT}:acc-a`);
+    expect(body.logContext).toBe('mcp:acc-a');
   });
 
   it('refuses a user asking for another account', async () => {

@@ -74,7 +74,7 @@ test('the download link needs no API call and stays session-guarded', async () =
   const registered = tools();
   const result = await registered.get('onbase_download_document')!({ documentId: '42' });
   expect(result.isError).toBeUndefined();
-  expect(result.content[0]?.text).toContain('/api/tenant/tenant-1/onbase/documents/42/content');
+  expect(result.content[0]?.text).toContain('/api/onbase/documents/42/content');
 });
 
 test('the upload request fails cleanly without a database', async () => {

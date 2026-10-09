@@ -281,7 +281,6 @@ describe('test-connection payload validation', () => {
     expect(await response.json()).toEqual({ entries: 3 });
     expect(mocked.serviceTestConnection).toHaveBeenCalledWith(
       expect.anything(),
-      'tenant-1',
       'share-1',
       { protocol: 'sftp', username: 'alice', password: 'pw' }
     );

@@ -53,7 +53,7 @@ function existingSchedule(overrides: Partial<Record<string, unknown>> = {}) {
 
 function reqOf(body: unknown): NextRequest {
   return new NextRequest(
-    new Request(`http://x/api/tenant/tenant-1/batch-job-schedules/${SCHEDULE_ID}`, {
+    new Request(`http://x/api/batch-job-schedules/${SCHEDULE_ID}`, {
       method: 'PUT',
       body: JSON.stringify(body),
     })
@@ -114,7 +114,6 @@ describe('PUT', () => {
     expect(updateSchedule).toHaveBeenCalledWith(
       {},
       SCHEDULE_ID,
-      'tenant-1',
       expect.not.objectContaining({ nextRunAt: expect.anything() })
     );
   });
@@ -126,7 +125,6 @@ describe('PUT', () => {
     expect(updateSchedule).toHaveBeenCalledWith(
       {},
       SCHEDULE_ID,
-      'tenant-1',
       expect.objectContaining({ nextRunAt: new Date('2026-09-03T00:00:00Z') })
     );
   });
@@ -152,7 +150,7 @@ describe('PUT', () => {
   });
 
   test('a duplicate name is a 409', async () => {
-    updateSchedule.mockRejectedValue(new Error('duplicate key value violates batch_job_schedules_tenant_name'));
+    updateSchedule.mockRejectedValue(new Error('duplicate key value violates batch_job_schedules_name'));
     const response = await PUT(reqOf({ name: 'Taken' }), { params: paramsOf() });
     expect(response.status).toBe(409);
   });
@@ -169,6 +167,6 @@ describe('DELETE', () => {
   test('deletes the schedule', async () => {
     const response = await DELETE(new NextRequest('http://x', { method: 'DELETE' }), { params: paramsOf() });
     expect(response.status).toBe(200);
-    expect(deleteSchedule).toHaveBeenCalledWith({}, SCHEDULE_ID, 'tenant-1');
+    expect(deleteSchedule).toHaveBeenCalledWith({}, SCHEDULE_ID);
   });
 });

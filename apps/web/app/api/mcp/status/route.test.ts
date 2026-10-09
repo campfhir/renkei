@@ -2,8 +2,8 @@
  * Tests for the Jira connection probe.
  *
  * Both guards here are load-bearing. Without the session check the endpoint
- * discloses a tenant's Atlassian account id, the holder's real name and their
- * Jira site to anyone who knows the tenantId, which is not a secret. Without
+ * discloses the organization's Atlassian account id, the holder's real name
+ * and their Jira site to anyone who can reach the deployment. Without
  * the subject filter it reports one user's grant to another, so the page tells
  * someone with no grant that they are connected.
  */
@@ -22,7 +22,6 @@ const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
 }>('@/lib/session');
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
 
 interface Recorded {
   table: string;
@@ -88,7 +87,7 @@ describe('GET /api/mcp/status', () => {
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' });
-    // Nothing about the tenant is disclosed, not even whether it exists.
+    // Nothing is disclosed, not even whether a grant exists.
     expect(recorded.table).toBe('');
   });
 
@@ -101,7 +100,7 @@ describe('GET /api/mcp/status', () => {
     expect(mockGetDatabase).not.toHaveBeenCalled();
   });
 
-  it('scopes the lookup to the caller, the tenant and the provider', async () => {
+  it('scopes the lookup to the caller and the provider', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com'));
     const recorded = stubDb({
       provider_account_id: 'acc-a',
@@ -113,7 +112,6 @@ describe('GET /api/mcp/status', () => {
 
     expect(recorded.table).toBe('provider_grants');
     expect(recorded.filters).toEqual([
-      ['=', TENANT],
       ['provider', '=', 'atlassian'],
       ['subject', '=', 'user-a@example.com'],
     ]);
@@ -138,9 +136,9 @@ describe('GET /api/mcp/status', () => {
     });
   });
 
-  it('reports not connected when only another user in the tenant has a grant', async () => {
+  it('reports not connected when only another user has a grant', async () => {
     // The subject filter means the query returns nothing for user B even though
-    // user A's grant exists on the same tenant.
+    // user A's grant exists.
     mockGetSession.mockResolvedValue(session('user-b@example.com'));
     stubDb(undefined);
 

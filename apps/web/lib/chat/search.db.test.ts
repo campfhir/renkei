@@ -18,8 +18,8 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('searchChatMessages', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const chatA = randomUUID();
   const chatB = randomUUID();
   const chatC = randomUUID();
@@ -114,8 +114,7 @@ maybe('searchChatMessages', () => {
   afterAll(async () => {
     setKeyVault(null);
     await db.deleteFrom('delegate_instances').where('id', '=', instanceId).execute();
-    await sql`DELETE FROM chats`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chats WHERE owner_subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 

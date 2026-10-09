@@ -14,10 +14,8 @@ import { GET } from './route';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
-
 function loginRequest(): NextRequest {
-  return new NextRequest(`http://localhost/api/auth/oidc/login?tenantId=${TENANT}`, {
+  return new NextRequest('http://localhost/api/auth/oidc/login', {
     headers: { 'x-forwarded-for': '203.0.113.3' },
   });
 }

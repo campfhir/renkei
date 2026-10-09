@@ -17,31 +17,14 @@ const { getOrgSettings: mockGetOrgSettings } = jest.requireMock<{ getOrgSettings
   '@renkei/settings'
 );
 
-const REAL_TENANT = '00000000-0000-4000-8000-000000000001';
-
 /**
- * A minimal chainable Kysely stand-in covering exactly the two query shapes
- * this route issues: a `tenants` existence check and an `oauth_clients`
- * insert. Recording the insert's values is what lets the success test
- * confirm the client actually lands under the Referer-named tenant.
+ * A minimal chainable Kysely stand-in covering the one query this route
+ * issues: an `oauth_clients` insert. Recording the insert's values is what
+ * lets the success test confirm the client actually lands.
  */
-function stubDb(tenantRow: { id: string } | undefined) {
+function stubDb() {
   const inserted: { table: string; values: Record<string, unknown> }[] = [];
-  const selectChain = {
-    select() {
-      return selectChain;
-    },
-    where() {
-      return selectChain;
-    },
-    async executeTakeFirst() {
-      return tenantRow;
-    },
-  };
   const db = {
-    selectFrom() {
-      return selectChain;
-    },
     insertInto(table: string) {
       return {
         values(values: Record<string, unknown>) {
@@ -68,14 +51,9 @@ function requestWith(options: { referer?: string; redirectUris?: string[] } = {}
 }
 
 /**
- * This system-level route used to fall back to a hardcoded all-zero
- * "system tenant" when it couldn't resolve one from the Referer header —
- * except nothing ever seeds that tenant, so the fallback was not a fallback
- * at all, it was a guaranteed "Tenant not found" for every caller that
- * reached it (the exact symptom a spec-compliant DCR client hits when it
- * registers at this endpoint instead of the tenant-scoped one). What's
- * pinned here: no tenant ever resolves to that UUID, and an unresolved
- * tenant is now an actionable error instead of a doomed lookup.
+ * Registration consults the organization's own setting; with it off the
+ * route refuses before anything is written, and with it on a client row is
+ * the only thing it writes.
  */
 describe('POST /api/oauth/register (system-level)', () => {
   beforeEach(() => {
@@ -84,27 +62,20 @@ describe('POST /api/oauth/register (system-level)', () => {
     resetInboundLimits();
   });
 
-  it("honours the named tenant's own registration setting, not the platform default", async () => {
-    // The platform default is off; this org switched registration on, and
-    // the route used to consult the default anyway.
-    const { inserted } = stubDb({ id: REAL_TENANT });
+  it("honours the organization's registration setting", async () => {
+    const { inserted } = stubDb();
     mockGetOrgSettings.mockResolvedValue({ ok: true, val: { enableDcr: false } });
-    const response = await POST(
-      requestWith({ referer: `http://localhost/api/mcp/http` })
-    );
+    const response = await POST(requestWith());
     expect(response.status).toBe(403);
-    expect(mockGetOrgSettings).toHaveBeenCalledWith(REAL_TENANT);
+    expect(mockGetOrgSettings).toHaveBeenCalledTimes(1);
     expect(inserted).toHaveLength(0);
   });
 
   it('refuses a redirect URI the policy refuses before touching the database', async () => {
-    const { inserted } = stubDb({ id: REAL_TENANT });
+    const { inserted } = stubDb();
     mockGetDatabase.mockClear();
     const response = await POST(
-      requestWith({
-        referer: `http://localhost/api/mcp/http`,
-        redirectUris: ['http://attacker.example/callback'],
-      })
+      requestWith({ redirectUris: ['http://attacker.example/callback'] })
     );
     expect(response.status).toBe(400);
     const body = await response.json();
@@ -115,55 +86,33 @@ describe('POST /api/oauth/register (system-level)', () => {
   });
 
   it('refuses the eleventh registration from one address in ten minutes before the database', async () => {
-    stubDb({ id: REAL_TENANT });
+    stubDb();
     for (let i = 0; i < 10; i += 1) {
       const response = await POST(
-        requestWith({ referer: `http://localhost/api/mcp/http` })
+        requestWith()
       );
       expect(response.status).not.toBe(429);
     }
     mockGetDatabase.mockClear();
 
     const throttled = await POST(
-      requestWith({ referer: `http://localhost/api/mcp/http` })
+      requestWith()
     );
     expect(throttled.status).toBe(429);
     expect(throttled.headers.get('retry-after')).toMatch(/^\d+$/);
     expect(mockGetDatabase).not.toHaveBeenCalled();
   });
 
-  it('rejects with an actionable error when no tenant can be resolved', async () => {
-    stubDb(undefined);
-    const response = await POST(requestWith());
-    expect(response.status).toBe(400);
-    const body = await response.json();
-    expect(body.error).toBe('invalid_request');
-    expect(body.error_description).toContain('Could not determine which tenant');
-    // The historical bug: confirm the fake fallback tenant is gone entirely,
-    // not just unreachable.
-    expect(body.error_description).not.toContain('00000000-0000-0000-0000-000000000000');
-  });
-
-  it('rejects when the Referer names a tenant that does not exist', async () => {
-    stubDb(undefined);
+  it('registers the client', async () => {
+    const { inserted } = stubDb();
     const response = await POST(
-      requestWith({ referer: `http://localhost/api/mcp/http` })
-    );
-    expect(response.status).toBe(400);
-    const body = await response.json();
-    expect(body.error_description).toBe('Tenant not found');
-  });
-
-  it('registers the client under the tenant the Referer names', async () => {
-    const { inserted } = stubDb({ id: REAL_TENANT });
-    const response = await POST(
-      requestWith({ referer: `http://localhost/api/mcp/http` })
+      requestWith()
     );
     expect(response.status).toBe(201);
     const body = await response.json();
     expect(body.client_id).toMatch(/^client_/);
     expect(inserted).toHaveLength(1);
     expect(inserted[0].table).toBe('oauth_clients');
-    expect(inserted[0].values.tenant_id).toBe(REAL_TENANT);
+    expect(inserted[0].values.client_id).toBe(body.client_id);
   });
 });

@@ -124,15 +124,20 @@ const BOOLEAN_KEYS = [
   'sandboxScriptsAllowNetwork',
 ] as const;
 
+/** The organization's name: one line, long enough for any registered name. */
+const ORGANIZATION_NAME_MAX_CHARS = 80;
+
 type EditableKey =
   | keyof typeof NUMERIC_BOUNDS
   | (typeof BOOLEAN_KEYS)[number]
   | 'logLevel'
-  | 'agentActStepsRequireApproval';
-type EditableValue = boolean | number | LogLevel | ActApprovalPolicy;
+  | 'agentActStepsRequireApproval'
+  | 'organizationName';
+type EditableValue = boolean | number | string | LogLevel | ActApprovalPolicy;
 
 function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
   return {
+    organizationName: settings.organizationName,
     readOnly: settings.readOnly,
     enableDcr: settings.enableDcr,
     logLevel: settings.logLevel,
@@ -232,6 +237,18 @@ export async function PUT(
     if (clamped !== before[key]) {
       updates[key] = clamped;
       changed[key] = { from: before[key], to: clamped };
+    }
+  }
+
+  if ('organizationName' in submitted) {
+    const value = submitted.organizationName;
+    if (typeof value !== 'string' || !value.trim()) {
+      return NextResponse.json({ error: 'organizationName must be a name' }, { status: 400 });
+    }
+    const trimmed = value.trim().slice(0, ORGANIZATION_NAME_MAX_CHARS);
+    if (trimmed !== before.organizationName) {
+      updates.organizationName = trimmed;
+      changed.organizationName = { from: before.organizationName, to: trimmed };
     }
   }
 

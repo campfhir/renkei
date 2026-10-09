@@ -56,7 +56,7 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 
 async function seed(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    await client.query('DELETE FROM settings');
+    await client.query(`DELETE FROM settings WHERE key = 'agent_act_steps_require_approval'`);
     await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
     await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(

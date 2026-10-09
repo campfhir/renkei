@@ -61,7 +61,7 @@ describe('the draft job', () => {
       // Drafting acts as the person; there is usually no agent yet.
       agentId: null,
     });
-    expect(calls[0].url).toBe('http://web:3000/api/tenant/tenant-1/agents/draft/draft-1/run');
+    expect(calls[0].url).toBe('http://web:3000/api/agents/draft/draft-1/run');
   });
 
   it('revokes the token even when the call fails', async () => {

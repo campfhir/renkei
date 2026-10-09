@@ -43,8 +43,8 @@ maybe('agent notifications', () => {
   jest.setTimeout(20_000);
 
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const agentId = randomUUID();
   const runId = randomUUID();
 
@@ -78,15 +78,14 @@ maybe('agent notifications', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_notifications`.execute(db);
-    await sql`DELETE FROM agent_runs`.execute(db);
-    await sql`DELETE FROM agents`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_notifications WHERE subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
   beforeEach(async () => {
-    await sql`DELETE FROM agent_notifications`.execute(db);
+    await sql`DELETE FROM agent_notifications WHERE subject = ${subject}`.execute(db);
   });
 
   const notifier = (prefs: Partial<NotificationPrefs> = {}) =>
@@ -106,6 +105,7 @@ maybe('agent notifications', () => {
     db
       .selectFrom('agent_notifications')
       .selectAll()
+      .where('subject', '=', subject)
       .orderBy('created_at')
       .execute();
 

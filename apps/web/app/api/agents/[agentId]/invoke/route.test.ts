@@ -45,9 +45,7 @@ function stubDb() {
       const row = table === 'agents' ? AGENT_ROW : undefined;
       return {
         select: () => ({
-          where: () => ({
-            where: () => ({ executeTakeFirst: async () => row }),
-          }),
+          where: () => ({ executeTakeFirst: async () => row }),
         }),
       };
     },

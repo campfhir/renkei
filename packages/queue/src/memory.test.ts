@@ -323,12 +323,12 @@ describe('discardPending — the other half of a rebuild', () => {
     expect(claimed?.payload).toMatchObject({ refId: 'OPS-1' });
   });
 
-  it('leaves another tenant’s work alone', async () => {
+  it('leaves another provider’s work alone', async () => {
     const queue = new InMemoryQueue();
-    await queue.producer.enqueue({ ...ingest('ENG-1', 'ENG', 'old') });
+    await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
 
     const discarded = await queue.purger.discardPending('ingest.object', [
-      { path: ['provider'], value: 'jira' },
+      { path: ['provider'], value: 'confluence' },
       { path: ['metadata', 'project'], value: 'ENG' },
     ]);
     expect(discarded.ok && discarded.val).toBe(0);

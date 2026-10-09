@@ -29,9 +29,9 @@ function textOf(result: McpToolResult): string {
 maybe('chat_recall_chats', () => {
   const delegate = useTestDelegate();
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const me = `me-${tenantId.slice(0, 8)}`;
-  const colleague = `colleague-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const me = `me-${suiteId.slice(0, 8)}`;
+  const colleague = `colleague-${suiteId.slice(0, 8)}`;
   const projectId = randomUUID();
   const otherProjectId = randomUUID();
   /** This conversation, in the project. */

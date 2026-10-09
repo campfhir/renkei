@@ -36,7 +36,7 @@ function stubDb(): FakeStore {
       },
       executeTakeFirst: async () => {
         store.selects += 1;
-        return store.rows.get(`${String()}:${String(filters.connector)}`);
+        return store.rows.get(String(filters.connector));
       },
     };
     return chain;
@@ -50,7 +50,7 @@ function stubDb(): FakeStore {
         values: (row: Record<string, unknown>) => ({
           onConflict: () => ({
             execute: async () => {
-              store.rows.set(`${String()}:${String(row.connector)}`, {
+              store.rows.set(String(row.connector), {
                 enabled: row.enabled,
                 settings: JSON.parse(String(row.settings)),
                 encrypted_secrets: row.encrypted_secrets,
@@ -107,7 +107,7 @@ describe('connector config store', () => {
       KEY
     );
 
-    const stored = String(store.rows.get('tenant-1:webex')?.encrypted_secrets);
+    const stored = String(store.rows.get('webex')?.encrypted_secrets);
     expect(stored).not.toContain('super-secret-token');
     expect(stored.startsWith('v1.')).toBe(true);
   });

@@ -35,7 +35,7 @@ const SCHEDULE_CONFIG = { recurrences: [{ every: 'hour' }], timezone: 'UTC' };
 
 function reqOf(body: unknown): NextRequest {
   return new NextRequest(
-    new Request('http://x/api/tenant/tenant-1/batch-job-schedules', {
+    new Request('http://x/api/batch-job-schedules', {
       method: 'POST',
       body: JSON.stringify(body),
     })
@@ -167,7 +167,7 @@ describe('POST', () => {
   });
 
   test('a duplicate name is a 409', async () => {
-    createSchedule.mockRejectedValue(new Error('duplicate key value violates batch_job_schedules_tenant_name'));
+    createSchedule.mockRejectedValue(new Error('duplicate key value violates batch_job_schedules_name'));
     const response = await POST(
       reqOf({
         name: 'Nightly OCR',

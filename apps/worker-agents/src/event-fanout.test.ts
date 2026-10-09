@@ -25,9 +25,9 @@ maybe('agent event fan-out', () => {
   // and fail the whole file instead of skipping it.
   let db: Kysely<DB>;
 
-  const tenantId = randomUUID();
-  const owner = `owner-${tenantId.slice(0, 8)}`;
-  const stranger = `stranger-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const owner = `owner-${suiteId.slice(0, 8)}`;
+  const stranger = `stranger-${suiteId.slice(0, 8)}`;
 
   // The run-creation gate (isCurrentStepsDoc) refuses any other version,
   // so a hard-coded number here silently seeds an agent nothing will fire.
@@ -52,10 +52,9 @@ maybe('agent event fan-out', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs`.execute(db);
-    await sql`DELETE FROM agent_triggers`.execute(db);
-    await sql`DELETE FROM agents`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE owner_subject = ${owner}`.execute(db);
+    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${owner})`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject = ${owner}`.execute(db);
     await closeDatabase();
   });
 

@@ -3,8 +3,8 @@ import { safeReturnPath } from './return-path';
 describe('safeReturnPath', () => {
   it('keeps a same-origin path, query and all', () => {
     expect(safeReturnPath('/acme')).toBe('/acme');
-    expect(safeReturnPath('/acme/agents/123/runs?archived=1')).toBe(
-      '/acme/agents/123/runs?archived=1'
+    expect(safeReturnPath('/agents/123/runs?archived=1')).toBe(
+      '/agents/123/runs?archived=1'
     );
     expect(safeReturnPath('/')).toBe('/');
   });

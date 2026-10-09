@@ -46,7 +46,6 @@ import {
   type ChangeRequest,
 } from '@/lib/jira-admin/change-requests';
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
 const CHANGE = '6f1d3c1e-8c1a-4f5e-9a55-2b7a0c9e4d11';
 const PAYLOAD = { operations: [{ op: 'add', values: ['Vendor'] }] };
 
@@ -92,7 +91,7 @@ const ACCESS = {
   siteUrl: 'https://acme.atlassian.net',
   accountId: 'acct-1',
   // The delegate's fetcher stands in for the grant; the suite's global.fetch answers it.
-  auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:tenant-1:acct-1'),
+  auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:acct-1'),
 };
 
 beforeEach(() => {
@@ -124,7 +123,7 @@ it('reads someone else’s request as not found, looking it up under the caller 
   jest.mocked(getChangeRequest).mockResolvedValue(null);
   const response = await apply();
   expect(response.status).toBe(404);
-  expect(jest.mocked(getChangeRequest).mock.calls[0]?.slice(1)).toEqual([TENANT, 'owner', CHANGE]);
+  expect(jest.mocked(getChangeRequest).mock.calls[0]?.slice(1)).toEqual(['owner', CHANGE]);
 });
 
 it('refuses a request that is no longer pending, or has expired', async () => {

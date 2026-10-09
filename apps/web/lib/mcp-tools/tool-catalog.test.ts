@@ -139,7 +139,7 @@ beforeEach(() => {
   fileshareConnections = [];
   fetchSpy.mockReset();
   global.fetch = fetchSpy as unknown as typeof fetch;
-  // Every test below reuses the same tenant/subject with different mocked
+  // Every test below reuses the same subject with different mocked
   // state, so a cached result from the previous test must not leak in.
   invalidateToolCatalogCache();
 });
@@ -530,9 +530,9 @@ describe('listAvailableTools', () => {
     expect(tools).toContain('web_search');
   });
 
-  it('keeps a cached list until the tenant is invalidated — what an org-wide config save must do', async () => {
+  it('keeps a cached list until the catalog is invalidated — what an org-wide config save must do', async () => {
     // The web-search and embeddings admin routes call
-    // invalidateToolCatalogCache(tenantId) after a save for exactly this
+    // invalidateToolCatalogCache() after a save for exactly this
     // reason: nothing else would make a caller's cached list notice a
     // connector that appeared for everyone at once.
     const before = namesOf(await listAvailableTools('subject-1'));
@@ -542,7 +542,7 @@ describe('listAvailableTools', () => {
     const stale = namesOf(await listAvailableTools('subject-1'));
     expect(stale).not.toContain('web_search');
 
-    invalidateToolCatalogCache('tenant-1');
+    invalidateToolCatalogCache();
     const fresh = namesOf(await listAvailableTools('subject-1'));
     expect(fresh).toContain('web_search');
   });

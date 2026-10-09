@@ -82,11 +82,11 @@ const stubKeyStatus = async () =>
         },
       }
     : { ok: false, err: { type: 'internal', message: 'down' } };
-const stubSealForSubject = async (_tenantId: string, _subject: string, values: string[]) =>
+const stubSealForSubject = async (_subject: string, values: string[]) =>
   ownerDelegated
     ? { ok: true, val: values.map(fakeSeal) }
     : { ok: false, err: { type: 'NEEDS_DELEGATION' } };
-const stubOpenForSubject = async (_tenantId: string, _subject: string, stored: string[]) =>
+const stubOpenForSubject = async (_subject: string, stored: string[]) =>
   ownerDelegated
     ? { ok: true, val: stored.map(fakeOpen) }
     : { ok: false, err: { type: 'NEEDS_DELEGATION' } };
@@ -183,8 +183,8 @@ maybe('agent run engine', () => {
   // and fail the whole file instead of skipping it.
   let db: Kysely<DB>;
 
-  const tenantId = randomUUID();
-  const subject = `test-subject-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `test-subject-${suiteId.slice(0, 8)}`;
 
   beforeAll(async () => {
     const result = getDatabase();
@@ -201,17 +201,13 @@ maybe('agent run engine', () => {
   });
 
   afterAll(async () => {
-    // Cascades take agents/runs/steps/triggers/tokens with the tenant.
-    await db.deleteFrom('oauth_access_tokens').execute();
-    await db.deleteFrom('oauth_clients').execute();
-    await sql`DELETE FROM actionable_items`.execute(db);
-    await sql`DELETE FROM agent_run_steps`.execute(db);
-    await sql`DELETE FROM agent_runs`.execute(db);
-    await sql`DELETE FROM agent_triggers`.execute(db);
-    await sql`DELETE FROM agents`.execute(db);
-    await sql`DELETE FROM identities`.execute(db);
-    await sql`DELETE FROM settings`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await db.deleteFrom('oauth_access_tokens').where('subject', '=', subject).execute();
+    await sql`DELETE FROM actionable_items WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agent_run_steps WHERE run_id IN (SELECT id FROM agent_runs WHERE owner_subject = ${subject})`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${subject})`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM identities WHERE subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
@@ -1210,8 +1206,8 @@ maybe('agent run engine', () => {
         .execute();
       expect(attempts).toHaveLength(0);
     } finally {
-      // Restore the default so later tests in this file (sharing tenantId)
-      // don't inherit a hair-trigger deadline.
+      // Restore the default so later tests in this file (sharing the one
+      // organization's settings) don't inherit a hair-trigger deadline.
       await setOrgSettings({ agentRunTimeoutMinutes: 15 });
     }
   });
@@ -4732,8 +4728,8 @@ maybe('agent run engine', () => {
 maybe('resolve_time — the free, deterministic clock', () => {
   jest.setTimeout(20_000);
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `test-subject-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `test-subject-${suiteId.slice(0, 8)}`;
 
   beforeAll(async () => {
     const result = getDatabase();
@@ -4746,11 +4742,10 @@ maybe('resolve_time — the free, deterministic clock', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_run_steps`.execute(db);
-    await sql`DELETE FROM agent_runs`.execute(db);
-    await sql`DELETE FROM agents`.execute(db);
-    await sql`DELETE FROM identities`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_run_steps WHERE run_id IN (SELECT id FROM agent_runs WHERE owner_subject = ${subject})`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM identities WHERE subject = ${subject}`.execute(db);
     // This suite reopened the pool the previous one closed; leave it shut so
     // the worker process exits instead of hanging on an idle connection.
     await closeDatabase();

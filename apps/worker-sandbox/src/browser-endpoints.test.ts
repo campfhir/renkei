@@ -229,7 +229,7 @@ describe('dispatch', () => {
   });
 
   it('refuses a request without a caller target', async () => {
-    const response = await post('/v1/browser/snapshot', { subject: 'auth0|alice' });
+    const response = await post('/v1/browser/snapshot', {});
     expect(response.status).toBe(400);
     expect(browser.snapshot).not.toHaveBeenCalled();
   });

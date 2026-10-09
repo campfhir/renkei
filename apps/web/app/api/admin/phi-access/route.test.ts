@@ -71,7 +71,6 @@ describe('GET /api/admin/phi-access', () => {
     await get('?limit=lots');
     expect(listPhiAccessEvents).toHaveBeenLastCalledWith(
       {},
-      'tenant-1',
       expect.objectContaining({ limit: 100 })
     );
   });

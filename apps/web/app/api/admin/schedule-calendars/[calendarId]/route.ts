@@ -41,7 +41,7 @@ export async function PUT(
       return NextResponse.json({ error: 'Calendar not found' }, { status: 404 });
     }
   } catch (error) {
-    if (error instanceof Error && error.message.includes('idx_schedule_calendars_tenant_name')) {
+    if (error instanceof Error && error.message.includes('idx_schedule_calendars_name')) {
       return NextResponse.json({ error: 'A calendar with that name exists' }, { status: 409 });
     }
     throw error;

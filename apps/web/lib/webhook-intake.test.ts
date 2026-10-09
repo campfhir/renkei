@@ -81,7 +81,7 @@ describe('signature shapes', () => {
 describe('checkWebhookLimit', () => {
   beforeEach(() => resetInboundLimits());
 
-  it('keys the budget by provider and tenant', () => {
+  it('keys the budget by provider', () => {
     const request = new NextRequest('http://localhost/api/webhooks/github/x', {
       method: 'POST',
       headers: { 'x-forwarded-for': '203.0.113.9' },
@@ -90,8 +90,7 @@ describe('checkWebhookLimit', () => {
       expect(checkWebhookLimit('github', request).allowed).toBe(true);
     }
     expect(checkWebhookLimit('github', request).allowed).toBe(false);
-    // Another tenant's (or provider's) budget is untouched.
-    expect(checkWebhookLimit('github', request).allowed).toBe(true);
+    // Another provider's budget is untouched.
     expect(checkWebhookLimit('zoom', request).allowed).toBe(true);
   });
 });

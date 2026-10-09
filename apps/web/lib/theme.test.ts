@@ -111,11 +111,11 @@ describe('the per-browser cache', () => {
     setStoredThemeMode('dark');
     setStoredThemeMode('light');
     setStoredThemeMode('auto');
-    expect(seen).toEqual(['dark', 'auto']);
+    expect(seen).toEqual(['dark', 'light', 'auto']);
 
     unsubscribe();
-    setStoredThemeMode('light');
-    expect(seen).toEqual(['dark', 'auto']);
+    setStoredThemeMode('dark');
+    expect(seen).toEqual(['dark', 'light', 'auto']);
   });
 
   it("tells a subscriber what another tab wrote, and 'auto' once it is gone", () => {

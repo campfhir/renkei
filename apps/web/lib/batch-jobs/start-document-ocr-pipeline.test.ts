@@ -55,7 +55,7 @@ describe('startDocumentOcrPipeline', () => {
       },
       scheduleId: undefined,
     });
-    expect(enqueueDiscoverMock).toHaveBeenCalledWith('the-producer', 'tenant-1', 'batch-1');
+    expect(enqueueDiscoverMock).toHaveBeenCalledWith('the-producer', 'batch-1');
     expect(batch.id).toBe('batch-1');
   });
 

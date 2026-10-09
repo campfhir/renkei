@@ -1,7 +1,7 @@
 /**
  * log_search's contract: self-scoped to the caller's own Jira-linked
  * account by default, fails closed without a subject or a Jira grant,
- * widens to a tenant-wide search only for a caller whose context.roles
+ * widens to an organization-wide search only for a caller whose context.roles
  * includes renkei-operator (undefined/empty roles stay self-scoped), and
  * never renders the secure()-marked request/response body attributes back
  * to the model in either branch.
@@ -81,7 +81,7 @@ test('fails closed without a subject', async () => {
   expect(mockQuery).not.toHaveBeenCalled();
 });
 
-test('fails closed without a Jira-linked account, never widening to the tenant', async () => {
+test('fails closed without a Jira-linked account, never widening to the organization', async () => {
   const handlers = registerAll({ accountId: '' });
   const result = await handlers.get('log_search')!({});
   expect(result.isError).toBe(true);
@@ -89,7 +89,7 @@ test('fails closed without a Jira-linked account, never widening to the tenant',
   expect(mockQuery).not.toHaveBeenCalled();
 });
 
-test('scopes the query to the caller’s own tenant and account, never a client-supplied one', async () => {
+test('scopes the query to the caller’s own account, never a client-supplied one', async () => {
   mockQuery.mockResolvedValue({ ok: true, val: [] });
   const handlers = registerAll({ accountId: 'account-1' });
 
@@ -97,7 +97,6 @@ test('scopes the query to the caller’s own tenant and account, never a client-
 
   expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
     null,
-    'tenant-1',
     'account-1',
     expect.objectContaining({ levels: ['warn', 'error', 'critical'], sort: 'desc' })
   );
@@ -111,13 +110,12 @@ test('a renkei-user role (no operator) stays self-scoped, same as no roles at al
 
   expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
     null,
-    'tenant-1',
     'account-1',
     expect.anything()
   );
 });
 
-test('renkei-operator searches the whole tenant, with no Jira account required', async () => {
+test('renkei-operator searches the whole organization, with no Jira account required', async () => {
   mockQuery.mockResolvedValue({ ok: true, val: [] });
   const handlers = registerAll({ accountId: '', roles: ['renkei-operator'] });
 
@@ -126,14 +124,13 @@ test('renkei-operator searches the whole tenant, with no Jira account required',
   expect(result.isError).toBeUndefined();
   expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
     null,
-    'tenant-1',
     undefined,
     expect.anything()
   );
-  expect(result.content[0]?.text).toContain('tenant-wide');
+  expect(result.content[0]?.text).toContain('organization-wide');
 });
 
-test('an operator with their own Jira account still searches tenant-wide, not just their own', async () => {
+test('an operator with their own Jira account still searches organization-wide, not just their own', async () => {
   mockQuery.mockResolvedValue({ ok: true, val: [] });
   const handlers = registerAll({ accountId: 'account-1', roles: ['renkei-operator'] });
 
@@ -141,7 +138,6 @@ test('an operator with their own Jira account still searches tenant-wide, not ju
 
   expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
     null,
-    'tenant-1',
     undefined,
     expect.anything()
   );
@@ -223,7 +219,6 @@ test('an explicit limit is clamped into range and passed through', async () => {
 
   expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
     null,
-    'tenant-1',
     'account-1',
     expect.objectContaining({ limit: 100 })
   );
@@ -250,7 +245,6 @@ test('a structured filter compiles to the FilterExpr tree the query engine reads
         { type: 'filter', filter: { key: 'component', operator: '=', value: 'jira/fetch' } },
       ],
     },
-    'tenant-1',
     'account-1',
     expect.anything()
   );
@@ -267,7 +261,6 @@ test('isNull/isNotNull leaves carry no value', async () => {
       type: 'filter',
       filter: { key: 'errorCode', operator: '=', value: 'null', nullValue: true, negated: true },
     },
-    'tenant-1',
     'account-1',
     expect.anything()
   );

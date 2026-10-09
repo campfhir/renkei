@@ -406,7 +406,7 @@ export async function getTokenUsageByModel(
   const result = await sql<ModelBucketRow>`
     SELECT provider, model, ${TOKEN_BUCKET_COLUMNS}
     FROM llm_calls
-      ${ids === null ? sql`` : sql`AND agent_id IN (${sql.join(ids)})`}
+      ${ids === null ? sql`` : sql`WHERE agent_id IN (${sql.join(ids)})`}
     GROUP BY provider, model
     ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
   `.execute(db);

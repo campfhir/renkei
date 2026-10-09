@@ -20,10 +20,10 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('refresh-token rotation', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const clientId = `client_${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const clientId = `client_${suiteId.slice(0, 8)}`;
   const clientSecret = 'client-secret-for-tests';
-  const subject = `person-${tenantId.slice(0, 8)}@example.com`;
+  const subject = `person-${suiteId.slice(0, 8)}@example.com`;
 
   async function issueRefreshToken(options: { familyId?: string; roles?: string[] } = {}) {
     const token = `rt_${randomUUID()}`;
@@ -89,17 +89,16 @@ maybe('refresh-token rotation', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('sessions').execute();
-    await db.deleteFrom('oauth_access_tokens').execute();
-    await db.deleteFrom('oauth_refresh_tokens').execute();
-    await db.deleteFrom('oauth_clients').execute();
-    await db.deleteFrom('settings').execute();
+    await db.deleteFrom('sessions').where('subject', '=', subject).execute();
+    await db.deleteFrom('oauth_access_tokens').where('subject', '=', subject).execute();
+    await db.deleteFrom('oauth_refresh_tokens').where('subject', '=', subject).execute();
+    await db.deleteFrom('oauth_clients').where('client_id', '=', clientId).execute();
   });
 
   beforeEach(async () => {
-    await db.deleteFrom('sessions').execute();
-    await db.deleteFrom('oauth_access_tokens').execute();
-    await db.deleteFrom('oauth_refresh_tokens').execute();
+    await db.deleteFrom('sessions').where('subject', '=', subject).execute();
+    await db.deleteFrom('oauth_access_tokens').where('subject', '=', subject).execute();
+    await db.deleteFrom('oauth_refresh_tokens').where('subject', '=', subject).execute();
   });
 
   it('rotates: a new refresh token in the same family, the old one retired, lifetime unchanged', async () => {

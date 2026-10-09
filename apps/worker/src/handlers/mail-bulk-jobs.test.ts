@@ -52,9 +52,7 @@ function fakeDb() {
   return {
     selectFrom: () => ({
       selectAll: () => ({
-        where: () => ({
-          where: () => ({ executeTakeFirst: async () => jobRow }),
-        }),
+        where: () => ({ executeTakeFirst: async () => jobRow }),
       }),
     }),
     updateTable: () => ({

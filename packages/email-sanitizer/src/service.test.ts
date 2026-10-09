@@ -84,15 +84,14 @@ describe('sanitizeEmailForTenant — dedup', () => {
     });
 
     expect(mockHasRecentDuplicate).toHaveBeenCalledWith(
-      'tenant-1',
       expect.any(String),
       expect.any(Number),
       { ownerUpn: 'bob@example.com', refId: 'bob@example.com/msg/1' }
     );
-    expect(mockHasNearDuplicateChunk).toHaveBeenCalledWith('tenant-1', expect.any(String), {
+    expect(mockHasNearDuplicateChunk).toHaveBeenCalledWith(expect.any(String), {
       refId: 'bob@example.com/msg/1',
       // Mail compares only against this mailbox's own mail — not a
-      // colleague's, and not calendar or task chunks from the same tenant.
+      // colleague's, and not calendar or task chunks from the same organization.
       refIdPrefix: 'bob@example.com/msg/',
     });
   });
@@ -158,7 +157,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     expect(result.action).toBe('index');
     if (result.action === 'index') expect(result.content).toContain('Just checking in.');
     expect(mockRecordError).toHaveBeenCalledWith(
-      'tenant-1',
       'script-1',
       expect.stringContaining('boom')
     );
@@ -222,7 +220,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
 
     expect(embed).toHaveBeenCalledWith([expect.stringContaining('Just checking in.')]);
     expect(mockHasNearDuplicateChunk).toHaveBeenCalledWith(
-      'tenant-1',
       '[0.1,0.2,0.3]',
       expect.objectContaining({ refId: 'bob@example.com/msg/1' })
     );

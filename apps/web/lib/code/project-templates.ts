@@ -86,7 +86,7 @@ export async function createCodeProjectTemplate(
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.includes('idx_code_project_templates_tenant_name')
+      error.message.includes('idx_code_project_templates_name')
     ) {
       return { ok: false, error: 'duplicate' };
     }
@@ -116,7 +116,7 @@ export async function updateCodeProjectTemplate(
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.includes('idx_code_project_templates_tenant_name')
+      error.message.includes('idx_code_project_templates_name')
     ) {
       return { ok: false, error: 'duplicate' };
     }

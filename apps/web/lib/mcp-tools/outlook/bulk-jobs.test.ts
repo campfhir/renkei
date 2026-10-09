@@ -79,7 +79,7 @@ function fakeDb() {
 function stubAuth(): GraphAuth {
   return {
     resolve: async () => ({
-      auth: authedFetch(async () => new Response('{}'), 'microsoft:tenant-1:acct-1'),
+      auth: authedFetch(async () => new Response('{}'), 'microsoft:acct-1'),
       upn: 'user@example.com',
       accountId: 'acct-1',
     }),
@@ -150,7 +150,7 @@ describe('outlook_start_bulk_mail_job', () => {
       source: 'mailjobs',
       type: 'bulk-action',
       payload: { jobId },
-      orderingKey: 'mailjob:tenant-1:acct-1',
+      orderingKey: 'mailjob:acct-1',
     });
   });
 

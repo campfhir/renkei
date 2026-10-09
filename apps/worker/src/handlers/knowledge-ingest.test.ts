@@ -117,9 +117,7 @@ describe('ingest.object', () => {
 
   it('decrypts the payload content and ingests with the payload chunking options', async () => {
     await createKnowledgeIngestObjectHandler()(event('ingest.object', payload));
-    expect(mockIngestObjectChunks).toHaveBeenCalledWith(
-      'tenant-1',
-      expect.anything(),
+    expect(mockIngestObjectChunks).toHaveBeenCalledWith(expect.anything(),
       expect.objectContaining({ provider: 'zoom', content: objectContent }),
       { maxChars: 4000, overlap: 400 }
     );
@@ -194,9 +192,7 @@ describe('ingest.email', () => {
         embedder: expect.anything(),
       })
     );
-    expect(mockIngestObjectChunks).toHaveBeenCalledWith(
-      'tenant-1',
-      expect.anything(),
+    expect(mockIngestObjectChunks).toHaveBeenCalledWith(expect.anything(),
       expect.objectContaining({
         content: 'Subject: Hello\n\nJust checking in.',
         metadata: expect.objectContaining({ senderKey: 'jira', templateVersion: 3 }),
@@ -223,9 +219,7 @@ describe('ingest.email', () => {
     await createKnowledgeIngestEmailHandler()(event('ingest.email', payload));
 
     expect(mockIngestObjectChunks).not.toHaveBeenCalled();
-    expect(mockDeleteObjectChunks).toHaveBeenCalledWith(
-      'tenant-1',
-      'microsoft',
+    expect(mockDeleteObjectChunks).toHaveBeenCalledWith('microsoft',
       'alice@example.com/msg/msg-1'
     );
   });
@@ -283,7 +277,7 @@ describe('delete.object / purge.prefix', () => {
     await createKnowledgeDeleteObjectHandler()(
       event('delete.object', { provider: 'microsoft', refId: 'a@x.com/msg/1' })
     );
-    expect(mockDeleteObjectChunks).toHaveBeenCalledWith('tenant-1', 'microsoft', 'a@x.com/msg/1');
+    expect(mockDeleteObjectChunks).toHaveBeenCalledWith('microsoft', 'a@x.com/msg/1');
 
     mockDeleteObjectChunks.mockResolvedValue(err('DB_ERROR' as const));
     await expect(
@@ -297,7 +291,7 @@ describe('delete.object / purge.prefix', () => {
     await createKnowledgePurgePrefixHandler()(
       event('purge.prefix', { provider: 'microsoft', refIdPrefix: 'a@x.com/msg/' })
     );
-    expect(mockDeleteObjectChunks).toHaveBeenCalledWith('tenant-1', 'microsoft', 'a@x.com/msg/', {
+    expect(mockDeleteObjectChunks).toHaveBeenCalledWith('microsoft', 'a@x.com/msg/', {
       prefixOnly: true,
     });
   });
@@ -348,10 +342,9 @@ describe('enrich.item', () => {
         excludeRef: { provider: 'webex', refId: 'room-1:msg-1' },
       })
     );
-    // The guard: id + tenant + status='suggested' — never a blanket update.
+    // The guard: id + status='suggested' — never a blanket update.
     expect(capture.wheres).toEqual([
       ['id', '=', 'item-1'],
-      ['=', 'tenant-1'],
       ['status', '=', 'suggested'],
     ]);
     // Only evidence (via jsonb_set) and updated_at are written.

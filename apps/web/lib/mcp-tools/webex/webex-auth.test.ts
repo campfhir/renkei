@@ -61,7 +61,7 @@ describe('resolveWebexAccess', () => {
     expect(typeof access).not.toBe('string');
     if (typeof access === 'string') return;
     expect(access.personEmail).toBe('alice@example.com');
-    expect(access.auth.grantKey).toBe('webex:tenant-1:subject-1');
+    expect(access.auth.grantKey).toBe('webex:subject-1');
     expect(mockDescribe).toHaveBeenCalledWith({
       provider: 'webex',
       subject: 'subject-1',

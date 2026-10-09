@@ -138,8 +138,8 @@ describe('discover handler', () => {
 
     expect(store.insertItem).toHaveBeenNthCalledWith(1, FAKE_DB, 'batch-1', { sourcePaths: ['/a.tif'] });
     expect(store.insertItem).toHaveBeenNthCalledWith(2, FAKE_DB, 'batch-1', { sourcePaths: ['/b.tif'] });
-    expect(enqueueItem).toHaveBeenNthCalledWith(1, expect.anything(), 'tenant-1', 'batch-1', 'item-1');
-    expect(enqueueItem).toHaveBeenNthCalledWith(2, expect.anything(), 'tenant-1', 'batch-1', 'item-2');
+    expect(enqueueItem).toHaveBeenNthCalledWith(1, expect.anything(), 'batch-1', 'item-1');
+    expect(enqueueItem).toHaveBeenNthCalledWith(2, expect.anything(), 'batch-1', 'item-2');
     expect(store.activateBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 2, 0);
   });
 
@@ -177,7 +177,7 @@ describe('discover handler', () => {
       { status: 'skipped', result: { skipped: true, reason: 'already-processed' } }
     );
     expect(enqueueItem).toHaveBeenCalledTimes(1);
-    expect(enqueueItem).toHaveBeenCalledWith(expect.anything(), 'tenant-1', 'batch-1', 'item-1');
+    expect(enqueueItem).toHaveBeenCalledWith(expect.anything(), 'batch-1', 'item-1');
     expect(store.activateBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 2, 1);
   });
 

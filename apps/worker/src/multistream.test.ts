@@ -38,7 +38,6 @@ jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: jest.fn(),
   ingestObjectChunks: jest.fn(
     async (
-      _tenantId: string,
       embedder: { embed: (t: string[]) => Promise<{ ok: boolean }> },
       object: { content: string }
     ) => {
@@ -78,7 +77,7 @@ jest.mock('@renkei/knowledge', () => ({
   ingestChunk: jest.fn(async () => ({ ok: true, val: undefined })),
 }));
 jest.mock('@renkei/email-sanitizer', () => ({
-  // The To Do path runs the tenant's cleaner scripts over each task; none
+  // The To Do path runs the organization's cleaner scripts over each task; none
   // are configured here, so the text passes through.
   applyCleanerScriptsToItem: jest.fn(async (inputs: { content: string }) => inputs.content),
   decodeBody: (value: string) => value,
@@ -245,7 +244,7 @@ function hungEmbedder(): { embedder: Embedder; release: (result: EmbedResult) =>
   };
 }
 
-/** Shared DB stub: dedup misses, tenant slug resolves, inserts and updates recorded. */
+/** Shared DB stub: dedup misses, inserts and updates recorded. */
 function stubDb(state: {
   inserted: Array<Record<string, unknown>>;
   updates: Array<Record<string, unknown>>;
@@ -255,15 +254,10 @@ function stubDb(state: {
     where: () => missChain,
     executeTakeFirst: async () => undefined,
   };
-  const tenantChain = {
-    select: () => tenantChain,
-    where: () => tenantChain,
-    executeTakeFirst: async () => ({ slug: 'tenant-one' }),
-  };
   mockGetDatabase.mockReturnValue({
     ok: true,
     val: {
-      selectFrom: (table: string) => (table === 'tenants' ? tenantChain : missChain),
+      selectFrom: () => missChain,
       insertInto: () => ({
         values: (row: Record<string, unknown>) => ({
           execute: async () => {
@@ -399,7 +393,7 @@ function insertWebex(events: InMemoryQueue, messageId: string): number {
     source: 'webex',
     type: 'user-message.created',
     payload: { id: messageId, roomId: 'room-1', accountId: 'acct-w' },
-    orderingKey: `webex/tenant-1/acct-w/room-1`,
+    orderingKey: `webex/acct-w/room-1`,
   });
   return at;
 }
@@ -409,7 +403,7 @@ function insertZoom(events: InMemoryQueue, uuid: string): void {
     source: 'zoom',
     type: 'recording.transcript_completed',
     payload: { data: { meeting_uuid: uuid, topic: 'Standup', start_time: '2026-08-13T09:00:00Z' } },
-    orderingKey: `zoom/tenant-1/${uuid}`,
+    orderingKey: `zoom/${uuid}`,
   });
 }
 
@@ -625,7 +619,7 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
     let sameKeyOverlap = false;
     const completedByKey = new Map<string, string[]>();
     mockIngestObjectChunks.mockImplementation(
-      async (_tenantId: string, embedder: Embedder, object: { refId: string }) => {
+      async (embedder: Embedder, object: { refId: string }) => {
         const key = object.refId.split('/')[0]!;
         const current = (inFlightByKey.get(key) ?? 0) + 1;
         if (current > 1) sameKeyOverlap = true;

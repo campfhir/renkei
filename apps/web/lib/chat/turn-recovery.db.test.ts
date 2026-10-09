@@ -8,15 +8,15 @@
 
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { claimResumableTurns, interruptExhaustedTurns, suspendTurn, getTurn } from './turns';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('turn recovery claims', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
 
   beforeAll(async () => {
     const result = getDatabase();
@@ -25,6 +25,16 @@ maybe('turn recovery claims', () => {
   });
 
   afterAll(async () => {
+    await db
+      .deleteFrom('chat_messages')
+      .where('chat_id', 'in', db.selectFrom('chats').select('id').where('owner_subject', '=', subject))
+      .execute();
+    await db
+      .deleteFrom('chat_turns')
+      .where('chat_id', 'in', db.selectFrom('chats').select('id').where('owner_subject', '=', subject))
+      .execute();
+    await db.deleteFrom('chats').where('owner_subject', '=', subject).execute();
+    await closeDatabase();
   });
 
   async function chat(): Promise<string> {
@@ -35,6 +45,13 @@ maybe('turn recovery claims', () => {
       .execute();
     return id;
   }
+
+  /** The turns this suite made: claims are organization-wide, so other
+   *  suites' (and earlier runs') turns are filtered out of every answer. */
+  const options = { staleSeconds: 60, maxResumes: 3, limit: 100 };
+  const mine = new Set<string>();
+  const claim = async () =>
+    (await claimResumableTurns(db, options)).filter((row) => mine.has(row.id));
 
   async function turn(chatId: string, over: { resume_count?: number } = {}): Promise<string> {
     const inserted = await db
@@ -50,16 +67,15 @@ maybe('turn recovery claims', () => {
       })
       .returning('id')
       .executeTakeFirstOrThrow();
+    mine.add(inserted.id);
     return inserted.id;
   }
 
-  const options = { staleSeconds: 60, maxResumes: 3, limit: 10 };
-
   it('claims a suspended turn once, clearing the mark and counting the resume', async () => {
     const turnId = await turn(await chat());
-    expect(await claimResumableTurns(db, options)).toEqual([]);
+    expect(await claim()).toEqual([]);
     await suspendTurn(db, turnId, 4);
-    const claimed = await claimResumableTurns(db, options);
+    const claimed = await claim();
     expect(claimed.map((row) => row.id)).toEqual([turnId]);
     expect(claimed[0]).toMatchObject({
       status: 'running',
@@ -69,7 +85,7 @@ maybe('turn recovery claims', () => {
       runner: { roles: ['member'], voice: false },
     });
     // Claimed: its heartbeat is fresh and its mark gone, so nobody else takes it.
-    expect(await claimResumableTurns(db, options)).toEqual([]);
+    expect(await claim()).toEqual([]);
   });
 
   it('treats a stale heartbeat as a dead process, and a live one as running', async () => {
@@ -79,7 +95,7 @@ maybe('turn recovery claims', () => {
       .set({ updated_at: sql`NOW() - INTERVAL '2 minutes'` })
       .where('id', '=', turnId)
       .execute();
-    const claimed = await claimResumableTurns(db, options);
+    const claimed = await claim();
     expect(claimed.map((row) => row.id)).toEqual([turnId]);
     expect(claimed[0]?.resumeCount).toBe(1);
   });
@@ -104,7 +120,7 @@ maybe('turn recovery claims', () => {
       .set({ status: 'completed', suspended_at: sql`NOW()` })
       .where('id', '=', done)
       .execute();
-    const ids = (await claimResumableTurns(db, options)).map((row) => row.id);
+    const ids = (await claim()).map((row) => row.id);
     expect(ids).not.toContain(compaction.id);
     expect(ids).not.toContain(done);
   });
@@ -126,7 +142,7 @@ maybe('turn recovery claims', () => {
       .returning('id')
       .executeTakeFirstOrThrow();
     await suspendTurn(db, turnId, 9);
-    expect((await claimResumableTurns(db, options)).map((row) => row.id)).not.toContain(turnId);
+    expect((await claim()).map((row) => row.id)).not.toContain(turnId);
     const ended = await interruptExhaustedTurns(db, { ...options, error: 'too many' });
     expect(ended).toContain(turnId);
     const after = await getTurn(db, chatId, turnId);

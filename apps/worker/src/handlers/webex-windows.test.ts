@@ -226,9 +226,7 @@ describe('ingest.webex-window handler', () => {
     });
     await handler(event(payload));
 
-    expect(mockIngest).toHaveBeenCalledWith(
-      'tenant-1',
-      expect.anything(),
+    expect(mockIngest).toHaveBeenCalledWith(expect.anything(),
       expect.objectContaining({
         provider: 'webex',
         refId: 'room-1/day/2026-09-02',
@@ -247,7 +245,7 @@ describe('ingest.webex-window handler', () => {
       }),
       { maxChars: 4000, overlap: 400 }
     );
-    expect(deleteLegacy).toHaveBeenCalledWith('tenant-1', 'room-1', '2026-09-02');
+    expect(deleteLegacy).toHaveBeenCalledWith('room-1', '2026-09-02');
     // Legacy rows go only AFTER the window is written.
     expect(mockIngest.mock.invocationCallOrder[0]).toBeLessThan(
       deleteLegacy.mock.invocationCallOrder[0]
@@ -262,7 +260,7 @@ describe('ingest.webex-window handler', () => {
     });
     await handler(event(payload));
     expect(mockIngest).not.toHaveBeenCalled();
-    expect(mockDelete).toHaveBeenCalledWith('tenant-1', 'webex', 'room-1/day/2026-09-02');
+    expect(mockDelete).toHaveBeenCalledWith('webex', 'room-1/day/2026-09-02');
     expect(deleteLegacy).toHaveBeenCalled();
   });
 

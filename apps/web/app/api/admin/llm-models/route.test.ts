@@ -103,7 +103,7 @@ function fakeDb(seed: ModelConfigRow[]) {
               rows.some((row) => row.label === values.label)
             ) {
               throw new Error(
-                'duplicate key value violates unique constraint "llm_model_configs_tenant_label"'
+                'duplicate key value violates unique constraint "llm_model_configs_label"'
               );
             }
             const row: ModelConfigRow = {

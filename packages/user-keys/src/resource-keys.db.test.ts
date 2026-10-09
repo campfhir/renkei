@@ -58,10 +58,10 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 maybe('held keys and the resource key store', () => {
   let db: Kysely<DB>;
   let instance: TestInstance;
-  const tenantId = randomUUID();
-  const owner = `owner-${tenantId.slice(0, 8)}`;
-  const friend = `friend-${tenantId.slice(0, 8)}`;
-  const stranger = `stranger-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const owner = `owner-${suiteId.slice(0, 8)}`;
+  const friend = `friend-${suiteId.slice(0, 8)}`;
+  const stranger = `stranger-${suiteId.slice(0, 8)}`;
   const chatId = randomUUID();
   const projectId = randomUUID();
   const projectChatId = randomUUID();
@@ -391,7 +391,7 @@ maybe('held keys and the resource key store', () => {
   it('a person from before enrolls with everything moved off the managed key', async () => {
     process.env.USER_KEY_ENCRYPTION_KEY ??= randomBytes(32).toString('base64');
     const legacyChat = randomUUID();
-    const legacy = `legacy-${tenantId.slice(0, 8)}`;
+    const legacy = `legacy-${suiteId.slice(0, 8)}`;
     await db
       .insertInto('chats')
       .values({ id: legacyChat, owner_subject: legacy })
@@ -407,7 +407,7 @@ maybe('held keys and the resource key store', () => {
       .insertInto('provider_grants')
       .values({
         provider: 'atlassian',
-        provider_account_id: 'acct',
+        provider_account_id: `acct-${legacy}`,
         subject: legacy,
         client_id: 'c',
         display_name: 'L',

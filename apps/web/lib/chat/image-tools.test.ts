@@ -171,7 +171,7 @@ describe('chat_generate_image — which model', () => {
       { filename: 'a.png' },
       context()
     );
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 't', 'img-2');
+    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-2');
   });
 
   it('falls back to the first when the saved one is gone, or none is saved', async () => {
@@ -179,9 +179,9 @@ describe('chat_generate_image — which model', () => {
       { filename: 'a.png' },
       context()
     );
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 't', 'img-1');
+    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-1');
     await tool(returning()).execute({ filename: 'a.png' }, context());
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 't', 'img-1');
+    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-1');
   });
 
   it('says so when the chosen model cannot be used right now', async () => {

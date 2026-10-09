@@ -56,7 +56,7 @@ describe('resolveZoomAccess', () => {
     expect(typeof access).not.toBe('string');
     if (typeof access === 'string') return;
     expect(access.email).toBe('alice@example.com');
-    expect(access.auth.grantKey).toBe('zoom:tenant-1:subject-1');
+    expect(access.auth.grantKey).toBe('zoom:subject-1');
     expect(mockDescribe).toHaveBeenCalledWith({
       provider: 'zoom',
       subject: 'subject-1',

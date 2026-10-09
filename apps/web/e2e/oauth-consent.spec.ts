@@ -70,7 +70,6 @@ async function seed(fixture: Fixture): Promise<void> {
       'oauth_clients',
       'sessions',
       'identities',
-      'settings',
     ]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,

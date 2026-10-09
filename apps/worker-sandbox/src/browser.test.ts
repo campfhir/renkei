@@ -258,7 +258,7 @@ describe('sessions across replicas', () => {
     const store = memoryStore();
     const here = build({ state: store });
     await here.sessions.navigate(ALICE, 'https://example.com/inbox', 5000);
-    const saved = store.files.get('tenant-1\nauth0|alice')!;
+    const saved = store.files.get('auth0|alice')!;
     expect(saved.url).toBe('https://example.com/inbox');
     expect(saved.storageState.cookies).toEqual([{ name: 'sid', value: 'from-this-context' }]);
 
@@ -290,7 +290,7 @@ describe('sessions across replicas', () => {
     await here.sessions.navigate(ALICE, 'https://www.nems.org/', 5000);
     const there = build({ state: store, replica: 'worker-b' });
     await there.sessions.navigate(ALICE, 'https://careers.example.com/jobs', 5000);
-    expect(store.files.get('tenant-1\nauth0|alice')!.heldBy).toBe('worker-b');
+    expect(store.files.get('auth0|alice')!.heldBy).toBe('worker-b');
 
     // Back here, the context still on nems.org is no longer the caller's
     // flow: it is dropped and the saved page reopened, so a ref from the
@@ -302,10 +302,10 @@ describe('sessions across replicas', () => {
     expect(here.sessions.sessionCount()).toBe(1);
     const fresh = here.browsers[0]!.contexts[1]!;
     expect(fresh.options.storageState).toEqual(
-      store.files.get('tenant-1\nauth0|alice')!.storageState
+      store.files.get('auth0|alice')!.storageState
     );
     expect(fresh.openPages[0]!.goto).toHaveBeenCalledWith('https://careers.example.com/jobs');
-    expect(store.files.get('tenant-1\nauth0|alice')!.heldBy).toBe('worker-a');
+    expect(store.files.get('auth0|alice')!.heldBy).toBe('worker-a');
 
     // The same replica answering again keeps the page it has.
     await here.sessions.snapshot(ALICE, 5000);
@@ -332,7 +332,7 @@ describe('sessions across replicas', () => {
 
   it('does not reopen a saved page that is not a web page', async () => {
     const store = memoryStore();
-    store.files.set('tenant-1\nauth0|alice', {
+    store.files.set('auth0|alice', {
       url: 'about:blank',
       storageState: { cookies: [], origins: [] },
       refSignatures: [],

@@ -35,7 +35,7 @@ jest.mock('./zoom-auth', () => {
     // The grant's fetcher rides global fetch here, so a test that stubs
     // fetch sees the request as the delegate would forward it.
     resolveZoomAccess: jest.fn(async () => ({
-      auth: authedFetch((url, init) => fetch(url, init), 'zoom:tenant-1:acct-1'),
+      auth: authedFetch((url, init) => fetch(url, init), 'zoom:acct-1'),
       email: 'alice@example.com',
     })),
     ZOOM_API_BASE: 'https://api.zoom.us/v2',

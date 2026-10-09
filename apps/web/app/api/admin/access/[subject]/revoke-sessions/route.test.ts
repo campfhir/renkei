@@ -1,11 +1,10 @@
 /**
  * Operator sign-out-everywhere: operator-only, never on oneself, and it
- * removes the person's sessions AND both MCP token tables in this tenant.
+ * removes the person's sessions AND both MCP token tables.
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/access', () => ({ checkAccess: jest.fn(), ROLE_OPERATOR: 'renkei-operator' }));
-jest.mock('@/lib/tenant-slug', () => ({ tenantForSlug: jest.fn() }));
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 
 import { NextRequest } from 'next/server';
@@ -15,14 +14,10 @@ const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mo
 const { checkAccess: mockCheckAccess } = jest.requireMock<{ checkAccess: jest.Mock }>(
   '@/lib/access'
 );
-const { tenantForSlug: mockTenantForSlug } = jest.requireMock<{ tenantForSlug: jest.Mock }>(
-  '@/lib/tenant-slug'
-);
 const { recordAuditEvent: mockAudit } = jest.requireMock<{ recordAuditEvent: jest.Mock }>(
   '@/lib/audit-events'
 );
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
 const TARGET = 'bob@example.com';
 
 function stubDb() {
@@ -55,15 +50,14 @@ function request(subject = TARGET) {
       `http://localhost/api/admin/acme/access/${encodeURIComponent(subject)}/revoke-sessions`,
       { method: 'POST' }
     ),
-    context: { params: Promise.resolve({ slug: 'acme', subject: encodeURIComponent(subject) }) },
+    context: { params: Promise.resolve({ subject: encodeURIComponent(subject) }) },
   };
 }
 
-describe('POST /api/admin/{slug}/access/{subject}/revoke-sessions', () => {
+describe('POST /api/admin/access/{subject}/revoke-sessions', () => {
   beforeEach(() => {
     mockGetDatabase.mockReset();
     mockCheckAccess.mockReset();
-    mockTenantForSlug.mockReset().mockResolvedValue({ id: TENANT, slug: 'acme' });
     mockAudit.mockReset();
   });
 
@@ -75,7 +69,7 @@ describe('POST /api/admin/{slug}/access/{subject}/revoke-sessions', () => {
     expect(mockGetDatabase).not.toHaveBeenCalled();
   });
 
-  it("deletes the person's sessions, access tokens and refresh tokens in this tenant, and audits it", async () => {
+  it("deletes the person's sessions, access tokens and refresh tokens, and audits it", async () => {
     mockCheckAccess.mockResolvedValue({ subject: 'op@example.com', roles: ['renkei-operator'] });
     const { deletes } = stubDb();
     const { request: req, context } = request();
@@ -93,10 +87,7 @@ describe('POST /api/admin/{slug}/access/{subject}/revoke-sessions', () => {
       'sessions',
     ]);
     for (const del of deletes) {
-      expect(del.filters).toEqual([
-        [TENANT],
-        ['subject', TARGET],
-      ]);
+      expect(del.filters).toEqual([['subject', TARGET]]);
     }
     expect(mockAudit).toHaveBeenCalledWith(
       expect.objectContaining({

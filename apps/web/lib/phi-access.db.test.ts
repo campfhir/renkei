@@ -16,9 +16,9 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('phi_access_events', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const alice = `alice-${tenantId.slice(0, 8)}`;
-  const bob = `bob-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const alice = `alice-${suiteId.slice(0, 8)}`;
+  const bob = `bob-${suiteId.slice(0, 8)}`;
 
   beforeAll(async () => {
     const dbResult = getDatabase();
@@ -32,7 +32,7 @@ maybe('phi_access_events', () => {
     await sql`ALTER TABLE phi_access_events DISABLE TRIGGER phi_access_events_no_update_delete`.execute(
       db
     );
-    await db.deleteFrom('phi_access_events').execute();
+    await db.deleteFrom('phi_access_events').where('subject', 'in', [alice, bob]).execute();
     await sql`ALTER TABLE phi_access_events ENABLE TRIGGER phi_access_events_no_update_delete`.execute(
       db
     );

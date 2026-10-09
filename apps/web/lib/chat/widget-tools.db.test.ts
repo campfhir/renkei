@@ -8,6 +8,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { invalidateLlmCache } from '@renkei/agent-llm';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { encrypt, parseEncryptionKey } from '@renkei/crypto';
@@ -31,10 +32,8 @@ const maybe =
 maybe('recordWidgetModelContext', () => {
   const delegate = useTestDelegate();
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  /** A tenant with no model configured at all. */
-  const modellessTenantId = randomUUID();
-  const me = `me-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const me = `me-${suiteId.slice(0, 8)}`;
   const chatId = randomUUID();
   const modellessChatId = randomUUID();
   const modelId = randomUUID();
@@ -50,9 +49,11 @@ maybe('recordWidgetModelContext', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
+    // The default model is the organization's, cached: the block before
+    // this one configured (and then removed) its own.
+    invalidateLlmCache();
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
     if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
-    await delegate.enroll(me);
     await delegate.enroll(me);
     await db
       .insertInto('llm_model_configs')
@@ -70,23 +71,16 @@ maybe('recordWidgetModelContext', () => {
       .insertInto('chats')
       .values([
         { id: chatId, owner_subject: me, title: 'Rotate the secret' },
-        {
-          id: modellessChatId,
-          owner_subject: me,
-          title: 'No model here',
-        },
+        { id: modellessChatId, owner_subject: me, title: 'No model here' },
       ])
       .execute();
   });
 
   afterAll(async () => {
-    for (const tenant of [tenantId, modellessTenantId]) {
-      await sql`DELETE FROM chat_messages`.execute(db);
-      await sql`DELETE FROM chat_turns`.execute(db);
-      await sql`DELETE FROM chats`.execute(db);
-      await sql`DELETE FROM llm_model_configs`.execute(db);
-      await sql`DELETE FROM tenants WHERE id = ${tenant}`.execute(db);
-    }
+    await sql`DELETE FROM chat_messages WHERE chat_id IN (${chatId}, ${modellessChatId})`.execute(db);
+    await sql`DELETE FROM chat_turns WHERE chat_id IN (${chatId}, ${modellessChatId})`.execute(db);
+    await sql`DELETE FROM chats WHERE id IN (${chatId}, ${modellessChatId})`.execute(db);
+    await sql`DELETE FROM llm_model_configs WHERE id = ${modelId}`.execute(db);
     await closeDatabase();
   });
 
@@ -142,13 +136,23 @@ maybe('recordWidgetModelContext', () => {
     expect(deferred).toHaveLength(1);
   });
 
-  it('keeps the note without a turn when the chat has no usable model', async () => {
-    const recorded = await recordWidgetModelContext(db, {
-      session,
-      chatId: modellessChatId,
-      text: DECISION,
-      defer,
-    });
+  it('keeps the note without a turn when the organization has no usable model', async () => {
+    // The one model switched off for the length of this test: the chat
+    // (any chat) has nothing to answer with.
+    await db.updateTable('llm_model_configs').set({ enabled: false }).where('id', '=', modelId).execute();
+    invalidateLlmCache();
+    let recorded: Awaited<ReturnType<typeof recordWidgetModelContext>>;
+    try {
+      recorded = await recordWidgetModelContext(db, {
+        session,
+        chatId: modellessChatId,
+        text: DECISION,
+        defer,
+      });
+    } finally {
+      await db.updateTable('llm_model_configs').set({ enabled: true }).where('id', '=', modelId).execute();
+      invalidateLlmCache();
+    }
     expect(recorded.ok).toBe(true);
     if (!recorded.ok) return;
     expect(recorded.turn).toBeNull();
@@ -181,8 +185,8 @@ maybe('recordWidgetModelContext', () => {
 maybe('chat widget decisions', () => {
   const delegate = useTestDelegate();
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const me = `me-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const me = `me-${suiteId.slice(0, 8)}`;
   const chatId = randomUUID();
   const otherChatId = randomUUID();
   const stateKey = `renkei-preview:${randomUUID()}`;
@@ -191,6 +195,9 @@ maybe('chat widget decisions', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
+    // The default model is the organization's, cached: the block before
+    // this one configured (and then removed) its own.
+    invalidateLlmCache();
     await delegate.enroll(me);
     await db
       .insertInto('chats')
@@ -202,9 +209,8 @@ maybe('chat widget decisions', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_widget_decisions`.execute(db);
-    await sql`DELETE FROM chats`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_widget_decisions WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
+    await sql`DELETE FROM chats WHERE id IN (${chatId}, ${otherChatId})`.execute(db);
     await closeDatabase();
   });
 
@@ -280,8 +286,8 @@ maybe('chat widget decisions', () => {
 maybe('recordWidgetModelContext: batches decisions from one reply', () => {
   const delegate = useTestDelegate();
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const me = `me-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const me = `me-${suiteId.slice(0, 8)}`;
   const chatId = randomUUID();
   const modelId = randomUUID();
   const replyTurnId = randomUUID();
@@ -299,6 +305,9 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
+    // The default model is the organization's, cached: the block before
+    // this one configured (and then removed) its own.
+    invalidateLlmCache();
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
     if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
     await delegate.enroll(me);
@@ -371,12 +380,11 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_widget_decisions`.execute(db);
-    await sql`DELETE FROM chat_messages`.execute(db);
-    await sql`DELETE FROM chat_turns`.execute(db);
-    await sql`DELETE FROM chats`.execute(db);
-    await sql`DELETE FROM llm_model_configs`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_widget_decisions WHERE chat_id = ${chatId}`.execute(db);
+    await sql`DELETE FROM chat_messages WHERE chat_id = ${chatId}`.execute(db);
+    await sql`DELETE FROM chat_turns WHERE chat_id = ${chatId}`.execute(db);
+    await sql`DELETE FROM chats WHERE id = ${chatId}`.execute(db);
+    await sql`DELETE FROM llm_model_configs WHERE id = ${modelId}`.execute(db);
     await closeDatabase();
   });
 
@@ -425,7 +433,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
       stateKey: stateKeyB,
       defer,
     });
-    expect(recorded.ok).toBe(true);
+    expect(recorded).toMatchObject({ ok: true });
     if (!recorded.ok) return;
     expect(recorded.turn).not.toBeNull();
     expect(recorded.message.turnId).toBe(recorded.turn?.turnId ?? null);

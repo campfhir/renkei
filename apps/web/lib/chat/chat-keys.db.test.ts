@@ -37,10 +37,10 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 maybe('chat and project keys through the chat', () => {
   const delegate = useTestDelegate();
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const owner = `owner-${tenantId.slice(0, 8)}`;
-  const friend = `friend-${tenantId.slice(0, 8)}`;
-  const stranger = `stranger-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const owner = `owner-${suiteId.slice(0, 8)}`;
+  const friend = `friend-${suiteId.slice(0, 8)}`;
+  const stranger = `stranger-${suiteId.slice(0, 8)}`;
   let chatId: string;
 
   const ref = (id: string, kind: 'chat' | 'chat_project' = 'chat') => ({

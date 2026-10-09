@@ -16,8 +16,8 @@ import { getGrant, setGrant } from './store';
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('provider grant store under per-user keys', () => {
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const legacyKey = randomBytes(32);
   const base = {
     clientId: 'client-1',

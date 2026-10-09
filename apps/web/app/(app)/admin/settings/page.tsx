@@ -54,6 +54,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
   }
   const settings = settingsResult.val;
   const initial: EditableSettings = {
+    organizationName: settings.organizationName,
     readOnly: settings.readOnly,
     coachMarksEnabled: settings.coachMarksEnabled,
     phiConnectorsRequireCoveredModel: settings.phiConnectorsRequireCoveredModel,

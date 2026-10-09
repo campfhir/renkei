@@ -15,7 +15,6 @@ import {
   childEnvironment,
   cloneRepository,
   containedPath,
-  ensureCallerDirs,
   ensureWorkspacesRoot,
   findFiles,
   getWorkspacesRoot,
@@ -25,7 +24,6 @@ import {
   isCheckoutStorageKey,
   listDirectory,
   mkdirWorkspaceFile,
-  newWorkspaceStorageKey,
   readWorkspaceFile,
   removeWorkspace,
   removeWorkspaceFile,
@@ -240,9 +238,9 @@ describe('directory permissions under a restrictive umask', () => {
   // workspaces volume, so a caller's uid reads nothing else it creates.
   // mkdir's `mode` option goes through that umask like any other
   // creation call — only chmod, applied after, is immune to it. Without
-  // that chmod, /workspaces and each tenant's directory would end up
-  // 0700 (umask 0077 clears every group/other bit from a requested
-  // 0711), sealing every caller's uid out of a root it only needs to
+  // that chmod, /workspaces would end up 0700 (umask 0077 clears every
+  // group/other bit from a requested 0711), sealing every caller's uid
+  // out of a root it only needs to
   // walk through — exactly the "could not create leading directories:
   // Permission denied" a real clone would then hit.
   const modeOf = async (path: string) => (await stat(path)).mode & 0o777;
@@ -257,21 +255,10 @@ describe('directory permissions under a restrictive umask', () => {
     expect(await modeOf(getWorkspacesRoot())).toBe(0o711);
   });
 
-  it("leaves a tenant's directory traversable by everyone", async () => {
-    const storageKey = newWorkspaceStorageKey('someone');
-    const previous = process.umask(0o077);
-    try {
-      await ensureCallerDirs(storageKey, null);
-    } finally {
-      process.umask(previous);
-    }
-    const tenantDir = join(getWorkspacesRoot(), 'umask-tenant');
-    expect(await modeOf(tenantDir)).toBe(0o711);
-  });
 });
 
 describe('a cloned workspace', () => {
-  const storageKey = 'tenant-1/subjecthash/ws-1';
+  const storageKey = 'subjecthash/ws-1';
 
   it('clones a repository and reports its branch', async () => {
     const outcome = await cloneRepository({

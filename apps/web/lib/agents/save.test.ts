@@ -101,7 +101,6 @@ describe('saveAgent description regeneration', () => {
     expect(describeMock.generateAgentDescription).not.toHaveBeenCalled();
     expect(storeMock.updateAgent).toHaveBeenCalledWith(
       expect.anything(),
-      't1',
       'auth0|alice',
       'agent-1',
       expect.anything(),

@@ -32,17 +32,19 @@ describeLive('@renkei/notifications (live database)', () => {
     db = new Kysely<DB>({
       dialect: new PostgresDialect({ pool: new Pool({ connectionString: url }) }),
     });
-    // vapid_keys is a singleton row, not scoped to this test's tenant — an
+    // vapid_keys is a singleton row shared with everything else — an
     // earlier run (or a real dev server pointed at the same database) can
     // leave one behind that this run's own randomBytes(32) key can't
     // decrypt. Clearing it first makes the suite self-contained regardless
     // of what else has touched this database.
     await db.deleteFrom('platform_settings').where('key', '=', 'vapid_keys').execute();
+    await db.deleteFrom('push_subscriptions').where('subject', '=', SUBJECT).execute();
     invalidateVapidKeyCache();
   });
 
   afterAll(async () => {
     await db.deleteFrom('platform_settings').where('key', '=', 'vapid_keys').execute();
+    await db.deleteFrom('push_subscriptions').where('subject', '=', SUBJECT).execute();
     await db.destroy();
   });
 
@@ -69,7 +71,7 @@ describeLive('@renkei/notifications (live database)', () => {
     const listed = await listSubscriptions(db, SUBJECT);
     expect(listed).toEqual([subscription]);
 
-    // Idempotent re-subscribe: same (tenant, endpoint) upserts, not inserts.
+    // Idempotent re-subscribe: same (subject, endpoint) upserts, not inserts.
     await saveSubscription(db, SUBJECT, {
       ...subscription,
       keys: { p256dh: 'p256dh-value', auth: 'rotated-auth' },

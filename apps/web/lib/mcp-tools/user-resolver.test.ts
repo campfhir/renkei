@@ -152,18 +152,18 @@ describe('resolveAccountId', () => {
     expect(mockJiraFetch).toHaveBeenCalledTimes(1);
   });
 
-  it('does not serve one tenant the account id resolved for another', async () => {
-    const tenantB = {
+  it('does not serve one Jira site the account id resolved for another', async () => {
+    const siteB = {
       ...CONTEXT,
-      jiraAuth: authedFetch(async () => new Response('[]'), 'atlassian:tenant-b:acct-b'),
+      jiraAuth: authedFetch(async () => new Response('[]'), 'atlassian:acct-b'),
     };
 
-    respondWith([{ accountId: 'acc-tenant-a', emailAddress: 'sam@example.com' }]);
-    await expect(resolveAccountId(CONTEXT, 'sam@example.com')).resolves.toBe('acc-tenant-a');
+    respondWith([{ accountId: 'acc-site-a', emailAddress: 'sam@example.com' }]);
+    await expect(resolveAccountId(CONTEXT, 'sam@example.com')).resolves.toBe('acc-site-a');
 
     // Same person, different Jira site, different account id.
-    respondWith([{ accountId: 'acc-tenant-b', emailAddress: 'sam@example.com' }]);
-    await expect(resolveAccountId(tenantB, 'sam@example.com')).resolves.toBe('acc-tenant-b');
+    respondWith([{ accountId: 'acc-site-b', emailAddress: 'sam@example.com' }]);
+    await expect(resolveAccountId(siteB, 'sam@example.com')).resolves.toBe('acc-site-b');
 
     expect(mockJiraFetch).toHaveBeenCalledTimes(2);
   });

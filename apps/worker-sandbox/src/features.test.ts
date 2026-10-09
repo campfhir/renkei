@@ -74,7 +74,7 @@ describe('an organization’s sandbox switches', () => {
       scripts: true,
       scriptsAllowNetwork: false,
     });
-    expect(getOrgSettings).toHaveBeenCalledWith('tenant-1');
+    expect(getOrgSettings).toHaveBeenCalledTimes(1);
   });
 
   it('are all off when the settings cannot be read', async () => {

@@ -100,7 +100,7 @@ describe('loadApprovalFieldSchema', () => {
     const context = enrichFieldsWithAllowedValues.mock.calls[0][0] as {
       jiraAuth: { grantKey: string };
     };
-    expect(context.jiraAuth.grantKey).toBe('atlassian:t1:alice');
+    expect(context.jiraAuth.grantKey).toBe('atlassian:alice');
     expect(result).toEqual([
       {
         id: 'priority',

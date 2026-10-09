@@ -55,7 +55,7 @@ describe('oauthGraphAuth', () => {
     expect(access.accountId).toBe('acct-1');
     expect(typeof access.auth).toBe('function');
     // The grant is named by subject; the delegate maps it to the row itself.
-    expect(access.auth.grantKey).toBe('microsoft:tenant-1:subject-1');
+    expect(access.auth.grantKey).toBe('microsoft:subject-1');
     expect(mockDescribe).toHaveBeenCalledWith({
       provider: 'microsoft',
       subject: 'subject-1',

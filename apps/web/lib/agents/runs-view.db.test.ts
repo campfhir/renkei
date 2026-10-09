@@ -22,9 +22,9 @@ maybe('run detail with sealed attempt content', () => {
   jest.setTimeout(30_000);
   const delegate = useTestDelegate();
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const owner = `owner-${tenantId.slice(0, 8)}`;
-  const stranger = `stranger-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const owner = `owner-${suiteId.slice(0, 8)}`;
+  const stranger = `stranger-${suiteId.slice(0, 8)}`;
   const stepId = randomUUID();
   const steps = {
     version: CURRENT_STEPS_VERSION,
@@ -111,9 +111,9 @@ maybe('run detail with sealed attempt content', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('agent_runs').execute();
-    await db.deleteFrom('agents').execute();
-    await db.deleteFrom('user_encryption_keys').execute();
+    await db.deleteFrom('agent_runs').where('owner_subject', 'in', [owner, stranger]).execute();
+    await db.deleteFrom('agents').where('owner_subject', 'in', [owner, stranger]).execute();
+    await db.deleteFrom('user_encryption_keys').where('subject', 'in', [owner, stranger]).execute();
   });
 
   it('round-trips: the owner reads the attempt as the engine wrote it, and the row holds no content', async () => {

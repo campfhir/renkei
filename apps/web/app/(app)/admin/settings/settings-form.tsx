@@ -21,6 +21,7 @@ const ACT_APPROVAL_POLICIES = [
 type ActApprovalPolicy = (typeof ACT_APPROVAL_POLICIES)[number]['value'];
 
 export interface EditableSettings {
+  organizationName: string;
   readOnly: boolean;
   coachMarksEnabled: boolean;
   phiConnectorsRequireCoveredModel: boolean;
@@ -244,6 +245,22 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
 
   return (
     <div className="space-y-4">
+      <Section title="Organization">
+        <Row
+          label="Organization name"
+          hint="What the app calls this organization where it names it: the consent page an MCP client's user sees, for one."
+        >
+          <input
+            type="text"
+            aria-label="Organization name"
+            maxLength={80}
+            value={values.organizationName}
+            onChange={(event) => set('organizationName', event.target.value)}
+            className="w-56 rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+          />
+        </Row>
+      </Section>
+
       <Section title="Safety" anchor="admin-settings-safety">
         <Row
           label="Read-only mode"

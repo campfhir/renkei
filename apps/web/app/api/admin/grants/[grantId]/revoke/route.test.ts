@@ -6,7 +6,6 @@
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/access', () => ({ checkAccess: jest.fn(), ROLE_OPERATOR: 'renkei-operator' }));
-jest.mock('@/lib/tenant-slug', () => ({ tenantForSlug: jest.fn() }));
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 jest.mock('@/lib/mcp-tools/tool-catalog', () => ({ invalidateToolCatalogCache: jest.fn() }));
 
@@ -17,11 +16,7 @@ const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mo
 const { checkAccess: mockCheckAccess } = jest.requireMock<{ checkAccess: jest.Mock }>(
   '@/lib/access'
 );
-const { tenantForSlug: mockTenantForSlug } = jest.requireMock<{ tenantForSlug: jest.Mock }>(
-  '@/lib/tenant-slug'
-);
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
 
 function stubDb(grant: Record<string, unknown> | undefined) {
   const deletes: Array<{ table: string; filters: Array<[string, unknown]> }> = [];
@@ -54,25 +49,24 @@ function stubDb(grant: Record<string, unknown> | undefined) {
 
 function revoke() {
   return POST(
-    new NextRequest('http://localhost/api/admin/acme/grants/acct-1/revoke', {
+    new NextRequest('http://localhost/api/admin/grants/acct-1/revoke', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ provider: 'microsoft' }),
     }),
-    { params: Promise.resolve({ slug: 'acme', grantId: 'acct-1' }) }
+    { params: Promise.resolve({ grantId: 'acct-1' }) }
   );
 }
 
-describe('POST /api/admin/{slug}/grants/{grantId}/revoke', () => {
+describe('POST /api/admin/grants/{grantId}/revoke', () => {
   beforeEach(() => {
     mockGetDatabase.mockReset();
-    mockTenantForSlug.mockReset().mockResolvedValue({ id: TENANT, slug: 'acme' });
     mockCheckAccess
       .mockReset()
       .mockResolvedValue({ subject: 'op@example.com', roles: ['renkei-operator'] });
   });
 
-  it("deletes the grant and the owner's MCP access and refresh tokens for the tenant", async () => {
+  it("deletes the grant and the owner's MCP access and refresh tokens", async () => {
     const { deletes } = stubDb({
       provider_account_id: 'acct-1',
       display_name: 'Bob',
@@ -88,10 +82,7 @@ describe('POST /api/admin/{slug}/grants/{grantId}/revoke', () => {
       'oauth_refresh_tokens',
     ]);
     for (const del of deletes.slice(1)) {
-      expect(del.filters).toEqual([
-        [TENANT],
-        ['subject', 'bob@example.com'],
-      ]);
+      expect(del.filters).toEqual([['subject', 'bob@example.com']]);
     }
   });
 

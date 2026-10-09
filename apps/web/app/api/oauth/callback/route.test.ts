@@ -28,7 +28,6 @@ const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
 }>('@/lib/session');
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
 const STATE = 'f6a1c4b2-0d3e-4f5a-8b6c-7d8e9f0a1b2c';
 const SUBJECT = 'alice@example.com';
 
@@ -123,7 +122,7 @@ describe('GET /api/oauth/callback browser binding', () => {
     const response = await GET(callback({ [connectStateCookieName()]: STATE }));
 
     expect(response.status).toBe(403);
-    expect(mockGetSession).toHaveBeenCalledWith(expect.anything(), TENANT);
+    expect(mockGetSession).toHaveBeenCalledWith(expect.anything());
     expect(deleted).toEqual([`pending_oidc_signin:${STATE}`]);
   });
 

@@ -4,7 +4,6 @@
  * an explicit overwrite; a name on another site is a different template.
  */
 
-import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import {
@@ -39,7 +38,6 @@ const DOCUMENT: TemplateDocument = {
 
 maybe('jira_admin_space_templates', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
 
   const save = (overrides: Partial<Parameters<typeof saveSpaceTemplate>[1]> = {}) =>
     saveSpaceTemplate(db, {
@@ -58,11 +56,11 @@ maybe('jira_admin_space_templates', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
+    await sql`DELETE FROM jira_admin_space_templates WHERE created_by = 'dana@example.com'`.execute(db);
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM jira_admin_space_templates`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM jira_admin_space_templates WHERE created_by = 'dana@example.com'`.execute(db);
     await closeDatabase();
   });
 
@@ -108,11 +106,11 @@ maybe('jira_admin_space_templates', () => {
     expect((await listSpaceTemplates(db)).length).toBe(2);
   });
 
-  it('deletes by id, within the tenant only', async () => {
+  it('deletes by id, once', async () => {
     const saved = await save({ name: 'To remove' });
     if (!saved.ok) throw new Error(saved.reason);
-    expect(await deleteSpaceTemplate(db, saved.template.id)).toBe(false);
     expect(await deleteSpaceTemplate(db, saved.template.id)).toBe(true);
+    expect(await deleteSpaceTemplate(db, saved.template.id)).toBe(false);
     expect(await findSpaceTemplate(db, 'cloud-1', 'To remove')).toBeNull();
   });
 });

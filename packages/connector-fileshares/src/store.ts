@@ -518,6 +518,6 @@ function isDuplicateName(cause: unknown): boolean {
     isRecord(cause) &&
     cause.code === '23505' &&
     typeof cause.constraint === 'string' &&
-    cause.constraint === 'idx_file_shares_tenant_name'
+    cause.constraint === 'idx_file_shares_name'
   );
 }

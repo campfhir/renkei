@@ -29,8 +29,8 @@ const maybe =
 
 maybe('chat_widget_resolve', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const me = `me-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const me = `me-${suiteId.slice(0, 8)}`;
   const chatId = randomUUID();
   const otherChatId = randomUUID();
   const turnId = randomUUID();
@@ -145,11 +145,10 @@ maybe('chat_widget_resolve', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_widget_decisions`.execute(db);
-    await sql`DELETE FROM chat_messages`.execute(db);
-    await sql`DELETE FROM chat_turns`.execute(db);
-    await sql`DELETE FROM chats`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_widget_decisions WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
+    await sql`DELETE FROM chat_messages WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
+    await sql`DELETE FROM chat_turns WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
+    await sql`DELETE FROM chats WHERE id IN (${chatId}, ${otherChatId})`.execute(db);
     await closeDatabase();
   });
 

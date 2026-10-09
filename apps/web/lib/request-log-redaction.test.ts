@@ -37,6 +37,6 @@ describe('loggableQuery', () => {
   });
 
   it('returns an untouched query when nothing in it is sensitive', () => {
-    expect(loggableQuery('/acme/usage', '?user=alice&range=30d')).toBe('?user=alice&range=30d');
+    expect(loggableQuery('/usage', '?user=alice&range=30d')).toBe('?user=alice&range=30d');
   });
 });

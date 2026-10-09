@@ -88,7 +88,7 @@ export function parsePipelineTemplatePayload(
   return { provider, name, description, body: text };
 }
 
-const UNIQUE_INDEX = 'idx_pipeline_templates_tenant_provider_name';
+const UNIQUE_INDEX = 'idx_pipeline_templates_provider_name';
 
 export async function createPipelineTemplate(
   db: Kysely<DB>,

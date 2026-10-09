@@ -15,7 +15,6 @@ import { POST } from './route';
 import { getSessionFromRequest } from '@/lib/session';
 import { cancelChangeRequest, getChangeRequest } from '@/lib/jira-admin/change-requests';
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
 const CHANGE = '6f1d3c1e-8c1a-4f5e-9a55-2b7a0c9e4d11';
 
 function cancel() {
@@ -74,7 +73,6 @@ it('cancels a pending request under the caller', async () => {
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({ status: 'cancelled' });
   expect(jest.mocked(cancelChangeRequest).mock.calls[0]?.slice(1)).toEqual([
-    TENANT,
     'owner',
     CHANGE,
   ]);

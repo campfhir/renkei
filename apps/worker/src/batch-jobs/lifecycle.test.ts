@@ -187,7 +187,7 @@ describe('announceBatchFinished', () => {
       batchNotificationMeta(batch({ status: 'partial', succeeded: 40, failed: 2 }))
     );
     expect(sendPush).toHaveBeenCalledTimes(1);
-    expect(sendPush.mock.calls[0][4]).toMatchObject({
+    expect(sendPush.mock.calls[0][3]).toMatchObject({
       title: expect.stringContaining('Nightly scans'),
       body: 'Document OCR pipeline',
       tag: 'batch:batch-1',

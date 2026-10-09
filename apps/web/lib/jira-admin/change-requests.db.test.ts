@@ -24,9 +24,9 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('jira_admin_change_requests', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const owner = `owner-${tenantId.slice(0, 8)}`;
-  const stranger = `stranger-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const owner = `owner-${suiteId.slice(0, 8)}`;
+  const stranger = `stranger-${suiteId.slice(0, 8)}`;
 
   const propose = (title = 'Source (Ops): add “Vendor”') =>
     createChangeRequest(db, {
@@ -46,8 +46,7 @@ maybe('jira_admin_change_requests', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM jira_admin_change_requests`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM jira_admin_change_requests WHERE subject IN (${owner}, ${stranger})`.execute(db);
     await closeDatabase();
   });
 

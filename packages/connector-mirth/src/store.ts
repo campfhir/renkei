@@ -458,6 +458,6 @@ function isDuplicateName(cause: unknown): boolean {
     isRecord(cause) &&
     cause.code === '23505' &&
     typeof cause.constraint === 'string' &&
-    cause.constraint === 'idx_mirth_instances_tenant_name'
+    cause.constraint === 'idx_mirth_instances_name'
   );
 }

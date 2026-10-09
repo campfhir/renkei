@@ -153,7 +153,6 @@ describe('searchKnowledge filter construction', () => {
   it('filters nothing when no filters are given', async () => {
     await searchKnowledge({ ...baseOptions });
     const sqlText = renderedSql();
-    expect(sqlText).toContain('tenant_id =');
     // The no-filter path must stay identical to the original plan.
     expect(sqlText).not.toContain('provider =');
     expect(sqlText).not.toContain("metadata ->> 'kind'");
@@ -297,7 +296,7 @@ describe('hybrid retrieval', () => {
   });
 
   it('raises hnsw.ef_search before running the query, every search is filtered', async () => {
-    // Every search here carries a WHERE clause (tenant, at minimum), and HNSW's
+    // Every search here carries a WHERE clause, and HNSW's
     // graph traversal doesn't see that filter — it explores neighbours in raw
     // embedding space and checks the filter afterward. Left at pgvector's
     // default (40, already under MAX_OVERFETCH's 60), a real match can be

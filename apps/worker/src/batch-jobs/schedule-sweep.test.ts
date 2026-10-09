@@ -22,8 +22,8 @@ maybe('batch-job schedule sweep', () => {
   // its callback to register tests).
   let db: Kysely<DB>;
 
-  const tenantId = randomUUID();
-  const subject = `sched-subject-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `sched-subject-${suiteId.slice(0, 8)}`;
 
   beforeAll(async () => {
     const result = getDatabase();
@@ -32,9 +32,8 @@ maybe('batch-job schedule sweep', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM batch_jobs`.execute(db);
-    await sql`DELETE FROM batch_job_schedules`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM batch_jobs WHERE subject = ${subject}`.execute(db);
+    await sql`DELETE FROM batch_job_schedules WHERE subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 

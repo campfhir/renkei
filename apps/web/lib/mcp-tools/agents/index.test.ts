@@ -321,7 +321,6 @@ test('agent_create without confirm is a dry run that persists nothing', async ()
   expect(result.content[0]?.text).toContain('Nothing was saved');
   expect(saveMock.saveAgent).toHaveBeenCalledWith(
     expect.anything(),
-    'tenant-1',
     'auth0|alice',
     expect.objectContaining({ draft: expect.objectContaining({ enabled: false }) }),
     expect.objectContaining({ dryRun: true })
@@ -347,7 +346,6 @@ test('agent_create with confirm persists disabled and reports the id', async () 
   expect(result.content[0]?.text).toContain('DISABLED');
   expect(saveMock.saveAgent).toHaveBeenCalledWith(
     expect.anything(),
-    'tenant-1',
     'auth0|alice',
     expect.anything(),
     expect.objectContaining({ dryRun: false })
@@ -371,7 +369,6 @@ test('agent_update keeps an already-enabled agent on, unless keepEnabled:false',
   });
   expect(saveMock.saveAgent).toHaveBeenLastCalledWith(
     expect.anything(),
-    'tenant-1',
     'auth0|alice',
     expect.objectContaining({ draft: expect.objectContaining({ enabled: true }) }),
     expect.objectContaining({ agentId: 'agent-1' })
@@ -386,7 +383,6 @@ test('agent_update keeps an already-enabled agent on, unless keepEnabled:false',
   });
   expect(saveMock.saveAgent).toHaveBeenLastCalledWith(
     expect.anything(),
-    'tenant-1',
     'auth0|alice',
     expect.objectContaining({ draft: expect.objectContaining({ enabled: false }) }),
     expect.anything()
@@ -968,7 +964,6 @@ describe('agent_memory_forget', () => {
     expect(result.isError).toBeUndefined();
     expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(
       expect.anything(),
-      'tenant-1',
       'agent-1',
       {
         kind: 'entries',
@@ -1020,7 +1015,6 @@ describe('agent_memory_forget', () => {
     expect(result.isError).toBeUndefined();
     expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(
       expect.anything(),
-      'tenant-1',
       'agent-1',
       { kind: 'all' }
     );
@@ -1078,7 +1072,6 @@ describe('agent_memory_forget', () => {
     expect(result.isError).toBeUndefined();
     expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(
       expect.anything(),
-      'tenant-1',
       'agent-1',
       { kind: 'summary' }
     );
@@ -1298,7 +1291,6 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
 
     expect(runsMock.listRunsForOwner).toHaveBeenCalledWith(
       expect.anything(),
-      'tenant-1',
       'auth0|owner',
       'agent-1',
       expect.anything()
@@ -1323,7 +1315,6 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
 
     expect(saveMock.saveAgent).toHaveBeenCalledWith(
       expect.anything(),
-      'tenant-1',
       // The actor in the audit trail is still the caller, not the owner.
       'auth0|alice',
       expect.anything(),
@@ -1478,7 +1469,7 @@ describe("token usage — the dashboards' numbers, over MCP", () => {
     const result = await handlers.get('agent_runs_list')!({ agentId: 'agent-1' });
 
     const text = result.content[0]?.text ?? '';
-    expect(usageMock.getTokenUsageByRun).toHaveBeenCalledWith(expect.anything(), 'tenant-1', [
+    expect(usageMock.getTokenUsageByRun).toHaveBeenCalledWith(expect.anything(), [
       'run-1',
       'run-2',
     ]);
@@ -1560,13 +1551,11 @@ describe("token usage — the dashboards' numbers, over MCP", () => {
     expect(result.isError).toBeUndefined();
     expect(accessGrantsMock.resolveAgentAccess).toHaveBeenCalledWith(
       expect.anything(),
-      'tenant-1',
       'auth0|alice',
       'agent-1'
     );
     expect(usageMock.getAgentToolUsage).toHaveBeenCalledWith(
       expect.anything(),
-      'tenant-1',
       'agent-1',
       30
     );

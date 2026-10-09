@@ -14,8 +14,8 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('loadCodeProjectUsage', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const projectId = randomUUID();
   const otherProjectId = randomUUID();
   const chatA = randomUUID();
@@ -65,10 +65,9 @@ maybe('loadCodeProjectUsage', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_turns`.execute(db);
-    await sql`DELETE FROM chats`.execute(db);
-    await sql`DELETE FROM chat_projects`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_turns WHERE chat_id IN (SELECT id FROM chats WHERE owner_subject = ${subject})`.execute(db);
+    await sql`DELETE FROM chats WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM chat_projects WHERE owner_subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 

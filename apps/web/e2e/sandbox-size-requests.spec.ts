@@ -92,7 +92,7 @@ async function seed(fixture: Fixture): Promise<void> {
   await client.connect();
   try {
     await client.query('DELETE FROM sandbox_size_requests WHERE subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM settings');
+    await client.query(`DELETE FROM settings WHERE key = 'sandbox_workspace_max_bytes'`);
     await client.query('DELETE FROM chat_projects WHERE owner_subject = $1', [fixture.subject]);
     await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
     await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);

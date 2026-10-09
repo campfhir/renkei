@@ -153,7 +153,7 @@ describe('runWatchSync — jira', () => {
       },
     ];
     await runWatchSync(access(), jiraRow(null));
-    const [, , input] = mockEnqueueKnowledgeEvent.mock.calls[0] ?? [];
+    const [, input] = mockEnqueueKnowledgeEvent.mock.calls[0] ?? [];
     expect(input.content).toContain('Request participants: Sam Okafor');
     expect(input.content).not.toContain('customfield_10101');
   });
@@ -186,9 +186,7 @@ describe('runWatchSync — jira', () => {
     const result = await runWatchSync(access(), jiraRow(null));
     expect(result.items).toBe(2);
     expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledTimes(2);
-    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
-      'tenant-1',
-      'ingest.object',
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('ingest.object',
       expect.objectContaining({ provider: 'jira', refId: 'ENG-1' }),
       'jira/ENG-1'
     );

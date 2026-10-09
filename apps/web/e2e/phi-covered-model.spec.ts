@@ -51,7 +51,7 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM settings');
+    await client.query(`DELETE FROM settings WHERE key = 'phi_connectors_require_covered_model'`);
     await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
     await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(

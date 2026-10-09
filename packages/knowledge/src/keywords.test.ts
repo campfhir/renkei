@@ -159,7 +159,7 @@ describe('resolveKeywordExtractor', () => {
 
   it('resolves the org default model when the org setting is on', async () => {
     expect(await resolveKeywordExtractor()).not.toBeNull();
-    expect(mockResolveLlm).toHaveBeenCalledWith({}, 'tenant-1', null);
+    expect(mockResolveLlm).toHaveBeenCalledWith({}, null);
   });
 
   it('carries the org minimum size into the extractor', async () => {

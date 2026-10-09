@@ -114,11 +114,9 @@ describe('reindex.batch', () => {
     // queued → running, then the tallies.
     expect(updates[0]).toMatchObject({ status: 'running' });
     expect(updates[1]).not.toHaveProperty('status');
-    expect(enqueue).toHaveBeenCalledWith(
-      'tenant-1',
-      'reindex.batch',
+    expect(enqueue).toHaveBeenCalledWith('reindex.batch',
       { provider: 'reindex', runId: 'run-1', kind: 'lexical' },
-      'reindex/tenant-1/run-1',
+      'reindex/run-1',
       { strict: true }
     );
   });
@@ -154,9 +152,7 @@ describe('reindex.batch', () => {
       event({ runId: 'run-2', kind: 'embed', cursor: 'row-50' })
     );
 
-    expect(mockEmbed).toHaveBeenCalledWith(
-      'tenant-1',
-      expect.anything(),
+    expect(mockEmbed).toHaveBeenCalledWith(expect.anything(),
       expect.anything(),
       'row-50',
       expect.any(Number)
@@ -177,18 +173,14 @@ describe('reindex.batch', () => {
 
     // The handler hands its own skip set to the batch and grows it after,
     // so what the batch saw is asserted through the next link's payload.
-    expect(mockKeywords).toHaveBeenCalledWith(
-      'tenant-1',
-      expect.anything(),
+    expect(mockKeywords).toHaveBeenCalledWith(expect.anything(),
       expect.anything(),
       expect.any(Number),
       expect.any(Set)
     );
-    expect(enqueue).toHaveBeenCalledWith(
-      'tenant-1',
-      'reindex.batch',
+    expect(enqueue).toHaveBeenCalledWith('reindex.batch',
       expect.objectContaining({ skip: ['jira X-0', 'jira X-1'] }),
-      'reindex/tenant-1/run-3',
+      'reindex/run-3',
       { strict: true }
     );
   });

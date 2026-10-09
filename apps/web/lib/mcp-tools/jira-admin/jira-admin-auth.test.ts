@@ -61,7 +61,7 @@ describe('oauthJiraAdminAuth', () => {
       accountId: 'acct-1',
     });
     expect(typeof access === 'string' ? '' : access.auth.grantKey).toBe(
-      'atlassian-admin:tenant-1:subject-1'
+      'atlassian-admin:subject-1'
     );
     // The admin grant, never the everyday Jira one.
     expect(describeMock).toHaveBeenCalledWith({

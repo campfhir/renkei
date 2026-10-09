@@ -208,8 +208,8 @@ describe('PUT .../llm-models/[modelId]', () => {
     expect(response.status).toBe(400);
   });
 
-  it('404s for a model outside this tenant', async () => {
-    const db = fakeDb([{ ...baseRow }]);
+  it('404s for a model that does not exist', async () => {
+    const db = fakeDb([]);
     mockGetDatabase.mockReturnValue(db);
 
     const response = await PUT(

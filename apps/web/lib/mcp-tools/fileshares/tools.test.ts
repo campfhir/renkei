@@ -262,7 +262,7 @@ test('download_file hands out the session-guarded REST link, folders refused', a
   });
   expect(result.isError).toBeUndefined();
   expect(textOf(result)).toContain(
-    `https://renkei.example.test/api/tenant/tenant-1/fileshares/${SHARE_ID}/file?path=%2Freport.pdf`
+    `https://renkei.example.test/api/fileshares/${SHARE_ID}/file?path=%2Freport.pdf`
   );
 
   client.fsStatEntry.mockResolvedValue({

@@ -29,8 +29,8 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('chat_subagent_runs model', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const chatId = randomUUID();
   const turnId = randomUUID();
   const fastModelId = randomUUID();
@@ -62,11 +62,10 @@ maybe('chat_subagent_runs model', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_subagent_runs`.execute(db);
-    await sql`DELETE FROM chat_turns`.execute(db);
-    await sql`DELETE FROM chats`.execute(db);
-    await sql`DELETE FROM llm_model_configs`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_subagent_runs WHERE chat_id = ${chatId}`.execute(db);
+    await sql`DELETE FROM chat_turns WHERE chat_id = ${chatId}`.execute(db);
+    await sql`DELETE FROM chats WHERE id = ${chatId}`.execute(db);
+    await sql`DELETE FROM llm_model_configs WHERE id = ${fastModelId}`.execute(db);
     await closeDatabase();
   });
 

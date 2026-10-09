@@ -62,7 +62,7 @@ describe('oauthConfluenceAuth', () => {
 
     expect(access).toMatchObject({ cloudId: 'cloud-1', accountId: 'acct-1' });
     expect(typeof access === 'string' ? '' : access.auth.grantKey).toBe(
-      'atlassian-confluence:tenant-1:subject-1'
+      'atlassian-confluence:subject-1'
     );
     // The Confluence app's grant, by the caller's subject — never Jira's.
     expect(describeMock).toHaveBeenCalledWith({

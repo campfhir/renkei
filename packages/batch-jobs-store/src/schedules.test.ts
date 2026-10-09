@@ -18,8 +18,7 @@ maybe('batch_job_schedules store', () => {
   jest.setTimeout(20_000);
 
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `sched-store-subject-${tenantId.slice(0, 8)}`;
+  const subject = `sched-store-subject-${randomUUID().slice(0, 8)}`;
 
   beforeAll(async () => {
     const result = getDatabase();
@@ -28,8 +27,7 @@ maybe('batch_job_schedules store', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM batch_job_schedules`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM batch_job_schedules WHERE subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
@@ -65,7 +63,7 @@ maybe('batch_job_schedules store', () => {
     expect(await getSchedule(db, created.id)).toBeUndefined();
   });
 
-  it('enforces one name per tenant', async () => {
+  it('enforces one name per organization', async () => {
     const name = `Duplicate name ${randomUUID().slice(0, 8)}`;
     await createSchedule(db, {
       subject,
@@ -88,26 +86,4 @@ maybe('batch_job_schedules store', () => {
     ).rejects.toThrow();
   });
 
-  it('scopes get/update/delete to the owning tenant', async () => {
-    const otherTenantId = randomUUID();
-    try {
-      const created = await createSchedule(db, {
-        subject,
-        name: `Tenant-scoped ${randomUUID().slice(0, 8)}`,
-        kind: 'document-ocr-pipeline',
-        config: {},
-        scheduleConfig: {},
-        nextRunAt: new Date(),
-      });
-
-      expect(await getSchedule(db, created.id)).toBeUndefined();
-      expect(await updateSchedule(db, created.id, { enabled: false })).toBeUndefined();
-      expect(await deleteSchedule(db, created.id)).toBe(false);
-
-      // Still there under the real tenant.
-      expect(await getSchedule(db, created.id)).toBeDefined();
-    } finally {
-      await sql`DELETE FROM tenants WHERE id = ${otherTenantId}`.execute(db);
-    }
-  });
 });

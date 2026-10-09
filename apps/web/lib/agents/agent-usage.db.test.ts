@@ -22,11 +22,11 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('token usage by model and by step', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
+  const suiteId = randomUUID();
   const agentId = randomUUID();
   const stepId = randomUUID();
   const runId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const steps = {
     version: CURRENT_STEPS_VERSION,
     steps: [
@@ -98,28 +98,32 @@ maybe('token usage by model and by step', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM llm_calls`.execute(db);
-    await sql`DELETE FROM agents`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM llm_calls WHERE subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
   it('splits the whole org by model, chat and optimizer spend included', async () => {
+    // Organization-wide, so other suites' rows in a shared database sit
+    // beside these; the two models only this suite records are exact.
     const rows = await getTokenUsageByModel(db, null);
-    expect(
-      rows.map((row) => [
-        row.provider,
-        row.model,
-        row.input.today,
-        row.output.today,
-        row.cacheRead.today,
-        row.cacheWrite.today,
-      ])
-    ).toEqual([
-      ['anthropic', 'claude-big', 6_200, 530, 900, 40],
-      ['openai', 'gpt-small', 1_000, 50, 0, 0],
-      [null, null, 7, 3, 0, 0],
+    const shaped = rows.map((row) => [
+      row.provider,
+      row.model,
+      row.input.today,
+      row.output.today,
+      row.cacheRead.today,
+      row.cacheWrite.today,
     ]);
+    expect(shaped).toEqual(
+      expect.arrayContaining([
+        ['anthropic', 'claude-big', 6_200, 530, 900, 40],
+        ['openai', 'gpt-small', 1_000, 50, 0, 0],
+      ])
+    );
+    const unrecorded = rows.find((row) => row.model === null);
+    expect(unrecorded?.input.today).toBeGreaterThanOrEqual(7);
+    expect(unrecorded?.output.today).toBeGreaterThanOrEqual(3);
   });
 
   it('narrows to one agent, leaving the chat out', async () => {

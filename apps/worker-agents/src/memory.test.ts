@@ -13,11 +13,11 @@ jest.mock('@renkei/agent-llm', () => ({ resolveAgentLlm: jest.fn() }));
 const FAKE_SEAL = 'uenc1:test:';
 jest.mock('@renkei/delegate-client', () => ({
   delegateClient: () => ({
-    sealForSubject: async (_tenantId: string, _subject: string, values: string[]) => ({
+    sealForSubject: async (_subject: string, values: string[]) => ({
       ok: true,
       val: values.map((value) => FAKE_SEAL + Buffer.from(value, 'utf8').toString('base64')),
     }),
-    openForSubject: async (_tenantId: string, _subject: string, stored: string[]) => ({
+    openForSubject: async (_subject: string, stored: string[]) => ({
       ok: true,
       val: stored.map((value) =>
         value.startsWith(FAKE_SEAL)
@@ -59,6 +59,7 @@ maybe('agent memory', () => {
   // and fail the whole file instead of skipping it.
   let db: Kysely<DB>;
   let agentId: string;
+  const owner = `mem-owner-${randomUUID().slice(0, 8)}`;
 
   beforeAll(async () => {
     const result = getDatabase();
@@ -72,7 +73,7 @@ maybe('agent memory', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        owner_subject: 'owner-1',
+        owner_subject: owner,
         name: `mem-agent-${agentId.slice(0, 8)}`,
         steps: JSON.stringify({ version: 1, steps: [] }),
         enabled: true,
@@ -82,8 +83,11 @@ maybe('agent memory', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('agent_memories').execute();
-    await db.deleteFrom('agents').execute();
+    await db
+      .deleteFrom('agent_memories')
+      .where('agent_id', 'in', db.selectFrom('agents').select('id').where('owner_subject', '=', owner))
+      .execute();
+    await db.deleteFrom('agents').where('owner_subject', '=', owner).execute();
   });
 
   it('writes an identical entry once — a fact remembered every run is one line', async () => {
@@ -202,7 +206,7 @@ maybe('agent memory', () => {
       .insertInto('agents')
       .values({
         id: otherId,
-        owner_subject: 'owner-1',
+        owner_subject: owner,
         name: `mem-agent-${otherId.slice(0, 8)}`,
         steps: JSON.stringify({ version: 1, steps: [] }),
         enabled: true,

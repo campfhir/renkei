@@ -165,7 +165,7 @@ export async function PUT(
     if (!updated) return NextResponse.json({ error: 'Schedule not found' }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('batch_job_schedules_tenant_name')) {
+    if (error instanceof Error && error.message.includes('batch_job_schedules_name')) {
       return NextResponse.json({ error: 'A schedule with that name already exists' }, { status: 409 });
     }
     throw error;

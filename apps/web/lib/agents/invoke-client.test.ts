@@ -61,7 +61,7 @@ describe('rerunAgentRun', () => {
     const fetchMock = mockFetch(202, { runId: 'run-2' });
     await rerunAgentRun('agent-1', 'run-1');
     const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('/api/tenant/tenant-1/agents/agent-1/runs/run-1/rerun');
+    expect(url).toBe('/api/agents/agent-1/runs/run-1/rerun');
   });
 
   it('turns an already-in-progress 409 into needs-confirm here too', async () => {

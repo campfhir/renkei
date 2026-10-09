@@ -79,7 +79,7 @@ test('webex message: its room-day is marked dirty first, then agents fan out', a
 
   // Not an ingest of the message itself: the day is rebuilt as one
   // transcript by the window sweep, for the WATCHER the event names.
-  expect(mockMarkDirty).toHaveBeenCalledWith('tenant-1', 'room-1', '2026-08-16', 'auth0|watcher');
+  expect(mockMarkDirty).toHaveBeenCalledWith('room-1', '2026-08-16', 'auth0|watcher');
   expect(mockFanOut).toHaveBeenCalledWith(
     { fake: 'db' },
     expect.anything(),

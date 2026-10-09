@@ -16,8 +16,8 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('code project active chat', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const codeProjectId = randomUUID();
   const chatProjectId = randomUUID();
 

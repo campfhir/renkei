@@ -31,15 +31,15 @@ interface CacheEntry {
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 /**
- * Keyed by `${tenantId}:${lowercased email}` rather than by email alone.
- * Each tenant authorises against its own Jira site, and the same person can
- * hold different account IDs on different sites — a global email key would
- * serve one tenant's account ID to another.
+ * Keyed by the grant (the Jira site it reaches) and the lowercased email
+ * rather than by email alone: the same person can hold different account
+ * IDs on different sites, and a global email key would serve one site's
+ * account ID to another.
  */
 const accountIdCache = new Map<string, CacheEntry>();
 
-function cacheKey(email: string): string {
-  return email.toLowerCase();
+function cacheKey(grantKey: string, email: string): string {
+  return `${grantKey}\n${email.toLowerCase()}`;
 }
 
 export function looksLikeEmail(input: string): boolean {
@@ -105,7 +105,7 @@ export async function resolveAccountId(
     return emailOrAccountId;
   }
 
-  const key = cacheKey(emailOrAccountId);
+  const key = cacheKey(context.jiraAuth?.grantKey ?? '', emailOrAccountId);
   const cached = accountIdCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.accountId;

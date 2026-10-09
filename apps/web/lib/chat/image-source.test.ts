@@ -143,7 +143,7 @@ describe('loadSourceImage', () => {
       expect(loaded.image.bytes.subarray(1, 4).toString()).toBe('PNG');
       expect(loaded.image.bytes.includes(Buffer.from('script'))).toBe(false);
     }
-    expect(listAttachmentsMock).toHaveBeenCalledWith(null, 't', { chatId: 'c' });
+    expect(listAttachmentsMock).toHaveBeenCalledWith(null, { chatId: 'c' });
   });
 
   it('says what is there when the name is not', async () => {

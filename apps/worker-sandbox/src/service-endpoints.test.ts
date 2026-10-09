@@ -456,7 +456,6 @@ describe('start', () => {
     });
     expect(spec.name).toMatch(/^renkei-svc-/);
     expect(spec.labels['renkei.sandbox.service']).toBe('1');
-    expect(spec.labels['renkei.sandbox.tenant']).toBe('tenant-1');
     expect(spec.labels['renkei.sandbox.name']).toBe('db');
     // The subject is labelled by its hash, never in the clear.
     expect(spec.labels['renkei.sandbox.subject']).not.toContain('code-project');

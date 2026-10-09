@@ -17,7 +17,7 @@ jest.mock('./webex-auth', () => {
     jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
   return {
     resolveWebexAccess: jest.fn(async () => ({
-      auth: authedFetch(async () => new Response('{}', { status: 200 }), 'webex:tenant-1:acct-1'),
+      auth: authedFetch(async () => new Response('{}', { status: 200 }), 'webex:acct-1'),
       personEmail: 'alice@example.com',
     })),
   };

@@ -26,7 +26,7 @@ const { jiraFetch: mockFetch } = jest.requireMock<{ jiraFetch: jest.Mock }>('../
 const context = (): MCPToolContext =>
   ({
     apiBaseUrl: 'https://api.example',
-    jiraAuth: authedFetch(async () => new Response('{}'), 'atlassian:tenant-1:acct-1'),
+    jiraAuth: authedFetch(async () => new Response('{}'), 'atlassian:acct-1'),
   }) as unknown as MCPToolContext;
 
 const json = (body: unknown) => ({ ok: true, json: async () => body });

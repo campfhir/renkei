@@ -124,7 +124,7 @@ export async function POST(
       })
       .execute();
   } catch (error) {
-    if (error instanceof Error && error.message.includes('llm_model_configs_tenant_label')) {
+    if (error instanceof Error && error.message.includes('llm_model_configs_label')) {
       return NextResponse.json(
         { error: 'A model with this label already exists.' },
         { status: 409 }

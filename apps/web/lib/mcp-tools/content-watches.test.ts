@@ -44,7 +44,7 @@ maybe('watch repair and cursor inheritance', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('content_watches').execute();
+    await db.deleteFrom('content_watches').where('scope_key', '=', scopeKey).execute();
   });
 
   it('rebinds the watch to the caller, keeping the cursor', async () => {
