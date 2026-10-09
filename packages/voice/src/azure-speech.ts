@@ -43,6 +43,18 @@ import {
 } from './provider';
 
 /** MP3 at 24 kHz: every browser plays it, and a sentence is a few KB. */
+
+/**
+ * Strip trailing slashes by scanning from the end: the one-line regex
+ * (`/\/+$/`) backtracks quadratically on a run of slashes that is not at
+ * the very end, and this value comes from configuration.
+ */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 export const AZURE_OUTPUT_FORMAT = 'audio-24khz-48kbitrate-mono-mp3';
 export const AZURE_OUTPUT_CONTENT_TYPE = 'audio/mpeg';
 /** The format above is constant-rate: 48 kbit of MP3 is one second of audio. */
@@ -107,7 +119,7 @@ export function azureEndpoints(config: Pick<VoiceConfig, 'region' | 'endpoint'>)
 } {
   const detectPath = `speechtotext/transcriptions:transcribe?api-version=${AZURE_FAST_TRANSCRIPTION_API_VERSION}`;
   if (config.endpoint) {
-    const base = config.endpoint.replace(/\/+$/, '');
+    const base = stripTrailingSlashes(config.endpoint);
     return {
       voices: `${base}/tts/cognitiveservices/voices/list`,
       speech: `${base}/tts/cognitiveservices/v1`,

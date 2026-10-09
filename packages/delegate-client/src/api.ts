@@ -15,6 +15,18 @@ import type { Result } from '@campfhir/safe-functions/types';
 import { DelegateTransport, delegateConfigFromEnv, isRecord, type FetchLike } from './transport';
 
 /** Whose grant a request rides on. One of subject, accountId or pending is required. */
+
+/**
+ * Strip trailing slashes by scanning from the end: the one-line regex
+ * (`/\/+$/`) backtracks quadratically on a run of slashes that is not at
+ * the very end, and this value comes from configuration.
+ */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 export interface GrantRef {
   provider: string;
   /** The person, when the caller knows them by OIDC subject. */
@@ -315,7 +327,7 @@ export class DelegateGrants {
     ) {
       return err('DELEGATE_ERROR');
     }
-    const origin = (process.env.DELEGATE_GIT_URL?.trim() || this.url || '').replace(/\/+$/, '');
+    const origin = stripTrailingSlashes(process.env.DELEGATE_GIT_URL?.trim() || this.url || '');
     if (!origin) return err('DELEGATE_UNCONFIGURED');
     return ok({ base: `${origin}/git/${ticket}/${host}/`, insteadOf, expiresAt });
   }

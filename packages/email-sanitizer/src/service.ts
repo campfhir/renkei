@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { vectorLiteral } from '@renkei/knowledge';
 import type { EmbeddingProvider } from '@renkei/knowledge';
 import { sanitizeEmail } from './pipeline';
+import { stripTags } from './normalize';
 import { listClassifierRules } from './persistence/rules';
 import { listActiveTemplates } from './persistence/templates';
 import { hasRecentDuplicate, recordClassification } from './persistence/log';
@@ -29,8 +30,7 @@ function hashContent(content: string): string {
 }
 
 function excerptOf(raw: RawEmail): string {
-  const snippet = raw.body.content
-    .replace(/<[^>]+>/g, ' ')
+  const snippet = stripTags(raw.body.content, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 400);

@@ -99,18 +99,38 @@ export function keywordPrompt(title: string, content: string): string {
  * source of keywords — the model's reply, and a list an agent inlined
  * with its own note — so the two are indistinguishable in the index.
  */
+
+const QUOTE_CHARS = new Set(['"', "'", '`']);
+const isListMarkerChar = (char: string) => '-*•.)'.includes(char) || /[\d\s]/.test(char);
+
+/** Leading list bullets and numbering (`- `, `1. `, `3) `), as `/^[-*•\d.)\s]+/` stripped. */
+function stripListMarker(value: string): string {
+  let start = 0;
+  while (start < value.length && isListMarkerChar(value[start]!)) start += 1;
+  return value.slice(start);
+}
+
+/**
+ * Quotes wrapping a keyword, as `/^["'`]+|["'`]+$/g` stripped — scanned from
+ * each end rather than matched, since the anchored `+$` backtracks
+ * quadratically on a run of quotes that is not at the very end, and the
+ * candidates are model output.
+ */
+function stripQuotes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && QUOTE_CHARS.has(value[start]!)) start += 1;
+  while (end > start && QUOTE_CHARS.has(value[end - 1]!)) end -= 1;
+  return value.slice(start, end);
+}
+
 export function normalizeKeywords(candidates: readonly unknown[]): string[] {
   const seen = new Set<string>();
   const keywords: string[] = [];
   for (const candidate of candidates) {
     if (typeof candidate !== 'string') continue;
     // Trim before stripping quotes, or a trailing `" ` keeps its quote.
-    const cleaned = candidate
-      .split('\u0000')
-      .join('')
-      .trim()
-      .replace(/^[-*•\d.)\s]+/, '') // list bullets and numbering
-      .replace(/^["'`]+|["'`]+$/g, '')
+    const cleaned = stripQuotes(stripListMarker(candidate.split('\u0000').join('').trim()))
       .replace(/\s+/g, ' ')
       .trim();
     if (!cleaned || cleaned.length > MAX_KEYWORD_CHARS) continue;
