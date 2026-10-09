@@ -105,6 +105,11 @@ jobs:
     name: dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # The action needs the repository's Dependency graph (Settings →
+    # Security analysis), which is not on yet; until it is, the job reports
+    # but does not block. Delete this line once the graph is enabled so the
+    # review gates merges as intended.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
