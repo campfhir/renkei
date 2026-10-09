@@ -35,7 +35,7 @@ maybe('the consent step of the authorization endpoint', () => {
   const verifier = randomBytes(32).toString('base64url');
   const challenge = computeS256(verifier);
 
-  function cookie(id = sessionId): string {
+  function cookie(id: string = sessionId): string {
     return `renkei_session_${tenantId}=${id}`;
   }
 
@@ -170,11 +170,12 @@ maybe('the consent step of the authorization endpoint', () => {
   });
 
   it('turns away a request without an S256 challenge, on the registered redirect URI', async () => {
-    for (const bad of [
+    const withoutS256: Array<Record<string, string | null>> = [
       { code_challenge: null, code_challenge_method: null },
       { code_challenge_method: 'plain' },
       { code_challenge: 'short' },
-    ]) {
+    ];
+    for (const bad of withoutS256) {
       const response = await authorize(bad);
       expect(response.status).toBe(303);
       const location = new URL(response.headers.get('location')!);
