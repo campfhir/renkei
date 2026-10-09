@@ -33,6 +33,19 @@ import { runWorker } from '@renkei/worker-kit';
 import { createDelegateServer } from './server';
 import { registerInstance } from './instance';
 import { logger, attachPersistentLogging } from './logger';
+import { standInViolations } from './providers';
+
+// A provider stand-in (GITHUB_API_BASE_URL and friends) lets a person's
+// token travel to an arbitrary origin over plain HTTP. That is for the
+// e2e stub and nothing else: in production the process does not start.
+const standIns = standInViolations();
+if (standIns.length > 0) {
+  console.error(
+    `FATAL [worker-delegate]: ${standIns.join(', ')} ${standIns.length === 1 ? 'is' : 'are'} set with NODE_ENV=production. ` +
+      'Provider stand-ins route tokens to a non-provider origin and are refused in production; unset them.'
+  );
+  process.exit(1);
+}
 
 void runWorker({
   name: 'worker-delegate',

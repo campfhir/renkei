@@ -53,9 +53,13 @@ describeDb('worker-delegate', () => {
     authorization: string | null;
     method: string;
     body: string;
+    headers: Record<string, string>;
+    redirect: RequestInit['redirect'] | null;
   }[] = [];
   const gitCalls: { url: string; method: string; headers: Record<string, string>; body: string }[] =
     [];
+  /** A test may script the next upstream answers; the default is a 200 with a small JSON body. */
+  const scriptedAnswers: ((url: string, init: RequestInit | undefined) => Response | null)[] = [];
 
   beforeAll(async () => {
     const db = getDatabase();
@@ -88,7 +92,12 @@ describeDb('worker-delegate', () => {
         body: body
           ? Buffer.from(body instanceof Uint8Array ? body : String(body)).toString('utf8')
           : '',
+        headers: Object.fromEntries(headers.entries()),
+        redirect: init?.redirect ?? null,
       });
+      const scripted = scriptedAnswers.shift();
+      const answer = scripted ? scripted(url, init) : null;
+      if (answer) return answer;
       return new Response(JSON.stringify({ hello: 'world' }), {
         status: 200,
         headers: {
@@ -355,6 +364,110 @@ describeDb('worker-delegate', () => {
     });
     expect(elsewhere.status).toBe(403);
     expect(elsewhere.headers.get('x-delegate-error')).toBe('host_not_allowed');
+
+    // A caller's cookie, host and framing headers never reach the provider;
+    // fetch is never allowed to follow a redirect on its own.
+    const stripped = await fetch(`${base}/v1/api`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${API_KEY}`,
+        'x-delegate-grant': JSON.stringify(grant),
+        'x-delegate-url': 'https://api.github.com/user',
+        'x-delegate-method': 'GET',
+        'x-delegate-headers': JSON.stringify({
+          cookie: 'session=stolen',
+          host: 'evil.example.com',
+          'content-length': '999',
+          connection: 'close',
+          'x-fine': 'yes',
+        }),
+      },
+    });
+    expect(stripped.status).toBe(200);
+    const strippedCall = upstreamCalls.at(-1);
+    expect(strippedCall?.redirect).toBe('manual');
+    expect(strippedCall?.headers['x-fine']).toBe('yes');
+    for (const name of ['cookie', 'host', 'content-length', 'connection']) {
+      expect(strippedCall?.headers[name]).toBeUndefined();
+    }
+
+    // A redirect to the provider's own host is followed with the token; one
+    // to anywhere else is handed back as the 3xx it is, and never dialed.
+    scriptedAnswers.push(
+      () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://github.com/elsewhere' },
+        })
+    );
+    const followed = await fetch(`${base}/v1/api`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${API_KEY}`,
+        'x-delegate-grant': JSON.stringify(grant),
+        'x-delegate-url': 'https://api.github.com/redirecting',
+        'x-delegate-method': 'POST',
+      },
+      body: '{"name":"x"}',
+    });
+    expect(followed.status).toBe(200);
+    expect(await followed.json()).toEqual({ hello: 'world' });
+    const hop = upstreamCalls.at(-1);
+    expect(hop?.url).toBe('https://github.com/elsewhere');
+    expect(hop?.authorization).toBe('Bearer gho_secret');
+    // 302 on a POST becomes a GET without a body, the way fetch would.
+    expect(hop?.method).toBe('GET');
+    expect(hop?.body).toBe('');
+
+    const dialedBefore = upstreamCalls.length;
+    scriptedAnswers.push(
+      () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://evil.example.com/steal' },
+        })
+    );
+    const offsite = await fetch(`${base}/v1/api`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${API_KEY}`,
+        'x-delegate-grant': JSON.stringify(grant),
+        'x-delegate-url': 'https://api.github.com/redirecting',
+        'x-delegate-method': 'GET',
+      },
+      redirect: 'manual',
+    });
+    expect(offsite.status).toBe(302);
+    expect(offsite.headers.get('location')).toBe('https://evil.example.com/steal');
+    expect(upstreamCalls.length).toBe(dialedBefore + 1);
+    expect(upstreamCalls.some((call) => call.url.startsWith('https://evil.example.com'))).toBe(
+      false
+    );
+
+    // The chain stops after five hops, whichever host they stay on.
+    for (let i = 0; i < 7; i += 1) {
+      scriptedAnswers.push(
+        () =>
+          new Response(null, {
+            status: 307,
+            headers: { location: `https://api.github.com/hop/${i}` },
+          })
+      );
+    }
+    const dialedBeforeChain = upstreamCalls.length;
+    const chain = await fetch(`${base}/v1/api`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${API_KEY}`,
+        'x-delegate-grant': JSON.stringify(grant),
+        'x-delegate-url': 'https://api.github.com/redirecting',
+        'x-delegate-method': 'GET',
+      },
+      redirect: 'manual',
+    });
+    expect(chain.status).toBe(307);
+    expect(upstreamCalls.length).toBe(dialedBeforeChain + 6);
+    scriptedAnswers.length = 0;
 
     const described = await op('grant/describe', grant);
     expect(described.json.accountId).toBe(accountId);
