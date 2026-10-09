@@ -78,7 +78,7 @@ A row the cipher cannot open (sealed under another key, under a key that is lock
 
 ## Your own key
 
-A person may replace the managed derivation with a passphrase of their own, from **Preferences → Encryption key** (`apps/web/app/[slug]/preferences/encryption-key-form.tsx`, route `…/api/tenant/[tenantId]/encryption-key`). Then the server cannot derive their KEK: it is `HKDF(scrypt(passphrase NFKC, salt), salt, "renkei/user-kek-own/v1" ‖ tenant ‖ subject)`, and the passphrase is never stored. What is stored, in `user_encryption_keys` (migration 134):
+A person may replace the managed derivation with a passphrase of their own, from **Preferences → Encryption key** (`apps/web/app/(app)/preferences/encryption-key-form.tsx`, route `…/api/encryption-key`). Then the server cannot derive their KEK: it is `HKDF(scrypt(passphrase NFKC, salt), salt, "renkei/user-kek-own/v1" ‖ tenant ‖ subject)`, and the passphrase is never stored. What is stored, in `user_encryption_keys` (migration 134):
 
 - `mode` — `managed` or `own`;
 - `verifier` — `sha256(HKDF(KEK, "", "renkei/user-kek-verifier/v1"))`, so a wrong passphrase is told apart from a right one without anything sealed under the KEK being touched;
@@ -129,7 +129,7 @@ The orphan prune in `apps/worker-agents/src/chat-sweep.ts` removes a key whose c
 | `apps/web/lib/chat/content-crypto.ts`                                     | `ContentCipher`, `resourceCipher`, `userCipher`, `unavailableCipher`, the markers                        |
 | `apps/web/lib/chat/chat-keys.ts`                                          | The chat's and project's use of the key store: who opens as whom, share, revoke, delete                  |
 | `apps/web/lib/chat/access.ts`                                             | `ChatAccess.cipher`, `ProjectAccess.cipher`                                                              |
-| `apps/web/app/[slug]/preferences/encryption-key-form.tsx`                 | The person's controls; `…/api/tenant/[tenantId]/encryption-key` behind it                                |
+| `apps/web/app/(app)/preferences/encryption-key-form.tsx`                 | The person's controls; `…/api/encryption-key` behind it                                |
 | `apps/web/e2e/encryption-key.spec.ts`                                     | Adopt → lock → unlock → revert in a browser, with the chat opening at every unlocked step                |
 | `apps/worker/src/handlers/chat-note.ts`                                   | A worker writing into a chat under its key                                                               |
 | `packages/provider-grants/src/store.ts`                                   | Tokens under the owner's key, and only there                                                             |

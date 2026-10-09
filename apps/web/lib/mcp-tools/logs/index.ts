@@ -1,10 +1,10 @@
 /**
  * The `log_search` tool — access to Renkei's own activity log, the same
- * store `apps/web/app/[slug]/logs` reads for the web Logs page.
+ * store `apps/web/app/(app)/logs` reads for the web Logs page.
  *
  * An MCP bearer token now carries the caller's renkei roles (migration 091,
  * `context.roles`), captured from their browser session when the token was
- * issued — same source `apps/web/app/api/tenant/[tenantId]/logs/route.ts`
+ * issued — same source `apps/web/app/api/logs/route.ts`
  * reads for the web page's own role branch. A caller with no roles on the
  * token (undefined/empty — a token issued before migration 091, or one that
  * never went through the browser authorize step, e.g. an 'agent' token) is
@@ -16,7 +16,7 @@
  * branch does — every account's activity, not just their own, and no Jira
  * grant of their own is required to ask for it. Everyone else gets exactly
  * the web page's non-operator branch: their own Jira-linked account's
- * activity (`apps/web/app/[slug]/logs/actions.ts`). That remains the safer
+ * activity (`apps/web/app/(app)/logs/actions.ts`). That remains the safer
  * default for a surface whose output can reach a third-party model: log
  * rows can carry secure()-marked request/response bodies (failed-call
  * payloads), and this tool never renders those back for either branch, even
@@ -63,7 +63,7 @@ import type { MCPToolContext } from '../common';
 export const LOGS_CONNECTOR = 'logs';
 
 const LOG_LEVEL_VALUES = ['debug', 'info', 'warn', 'error', 'critical'] as const;
-/** Mirrors the web Logs page's own default (apps/web/app/[slug]/logs/window.ts). */
+/** Mirrors the web Logs page's own default (apps/web/app/(app)/logs/window.ts). */
 const DEFAULT_LEVELS = ['warn', 'error', 'critical'];
 const DEFAULT_WINDOW_DAYS = 7;
 const MAX_LIMIT = 100;

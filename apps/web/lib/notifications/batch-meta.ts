@@ -77,7 +77,7 @@ export function parseBatchNotificationMeta(raw: unknown): BatchNotificationMeta 
 }
 
 /** Where a batch notification opens — the batch's own page, in-app. */
-export function batchNotificationHref(slug: string, meta: BatchNotificationMeta): string {
+export function batchNotificationHref(meta: BatchNotificationMeta): string {
   return `/batch-jobs/${meta.batchId}`;
 }
 

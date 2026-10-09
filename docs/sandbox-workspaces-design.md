@@ -182,7 +182,7 @@ a transcript. So, as with browser secrets, values go around the model:
 
 - **Supplied on the project, never over MCP.** The `.env` is pasted when
   the project is made and replaced from its page
-  (`/api/tenant/[tenantId]/code/projects/[projectId]/env`), with the
+  (`/api/code/projects/[projectId]/env`), with the
   person's own session. It is parsed in the web app (`parseDotenv`:
   comments, `export`, quotes, multi-line double-quoted values) and only
   the pairs travel on; lines that were not variables are reported back.
@@ -213,8 +213,8 @@ it is for — is, of course, the point.
 
 A Bitbucket code project has a **Pipelines page**
 (`/[slug]/code/[projectId]/pipelines`,
-`apps/web/app/[slug]/code/_components/pipelines-page.tsx`, over
-`/api/tenant/[tenantId]/code/projects/[projectId]/pipelines` and
+`apps/web/app/(app)/code/_components/pipelines-page.tsx`, over
+`/api/code/projects/[projectId]/pipelines` and
 `apps/web/lib/code/bitbucket-pipelines.ts`): the recent runs (state,
 ref, who, when, how long — each opening on Bitbucket, where the steps
 and logs are), a way to start one (a branch or tag, optionally a named
@@ -365,8 +365,8 @@ what to export into the project's commands (`exports`: templates over
 `{host}` and `{port}` — `DATABASE_URL: postgres://postgres:pw@{host}:{port}/app`).
 A person has the same verbs on the project's **Services page**
 (`/[slug]/code/[projectId]/services`,
-`apps/web/app/[slug]/code/_components/services-page.tsx`, over
-`/api/tenant/[tenantId]/code/projects/[projectId]/services`): what is
+`apps/web/app/(app)/code/_components/services-page.tsx`, over
+`/api/code/projects/[projectId]/services`): what is
 running with its address, the variables it sets and when it expires,
 every service's log lines in one time-ordered tail that follows as
 they write (the worker reads each container's lines stamped by the

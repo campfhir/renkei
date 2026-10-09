@@ -18,7 +18,7 @@
 import type { ThemeMode } from '@renkei/user-prefs/prefs';
 
 export function themeStorageKey(): string {
-  return `renkei:theme:${tenantId}`;
+  return `renkei:theme`;
 }
 
 /**

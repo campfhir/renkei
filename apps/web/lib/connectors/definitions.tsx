@@ -27,19 +27,19 @@ import {
   AtlassianConfluenceForm,
   AtlassianBitbucketForm,
   AtlassianAdminForm,
-} from '@/app/[slug]/admin/connectors/forms/atlassian-forms';
-import { GitHubForm } from '@/app/[slug]/admin/connectors/forms/github-form';
-import { WebexUserForm } from '@/app/[slug]/admin/connectors/forms/webex-user-form';
-import { WebexBotForm } from '@/app/[slug]/admin/connectors/forms/webex-bot-form';
-import { MicrosoftForm } from '@/app/[slug]/admin/connectors/forms/microsoft-form';
-import { EntraDeveloperForm } from '@/app/[slug]/admin/connectors/forms/entra-developer-form';
-import { ZoomForm } from '@/app/[slug]/admin/connectors/forms/zoom-form';
-import { OnBaseForm } from '@/app/[slug]/admin/connectors/forms/onbase-form';
-import { OnBaseAdminForm } from '@/app/[slug]/admin/connectors/forms/onbase-admin-form';
-import { MistralOcrForm } from '@/app/[slug]/admin/connectors/forms/mistral-ocr-form';
-import { EmbeddingsForm } from '@/app/[slug]/admin/connectors/forms/embeddings-form';
-import { WebSearchForm } from '@/app/[slug]/admin/connectors/forms/web-search-form';
-import { VoiceForm } from '@/app/[slug]/admin/connectors/forms/voice-form';
+} from '@/app/(app)/admin/connectors/forms/atlassian-forms';
+import { GitHubForm } from '@/app/(app)/admin/connectors/forms/github-form';
+import { WebexUserForm } from '@/app/(app)/admin/connectors/forms/webex-user-form';
+import { WebexBotForm } from '@/app/(app)/admin/connectors/forms/webex-bot-form';
+import { MicrosoftForm } from '@/app/(app)/admin/connectors/forms/microsoft-form';
+import { EntraDeveloperForm } from '@/app/(app)/admin/connectors/forms/entra-developer-form';
+import { ZoomForm } from '@/app/(app)/admin/connectors/forms/zoom-form';
+import { OnBaseForm } from '@/app/(app)/admin/connectors/forms/onbase-form';
+import { OnBaseAdminForm } from '@/app/(app)/admin/connectors/forms/onbase-admin-form';
+import { MistralOcrForm } from '@/app/(app)/admin/connectors/forms/mistral-ocr-form';
+import { EmbeddingsForm } from '@/app/(app)/admin/connectors/forms/embeddings-form';
+import { WebSearchForm } from '@/app/(app)/admin/connectors/forms/web-search-form';
+import { VoiceForm } from '@/app/(app)/admin/connectors/forms/voice-form';
 
 /** Every admin form takes the same props, so the detail page can render any. */
 export interface AdminFormProps {

@@ -1,0 +1,210 @@
+import React from 'react';
+import Link from 'next/link';
+import { notFound, redirect } from 'next/navigation';
+import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
+import { getSessionFromCookies } from '@/lib/session';
+import { signInUrl } from '@/lib/sign-in-url';
+import CoachTarget from '@/components/coach-marks/anchor';
+
+interface AdminArea {
+  href: string;
+  label: string;
+  detail: string;
+}
+
+interface AdminSection {
+  label: string;
+  areas: AdminArea[];
+}
+
+/**
+ * The Organization page: the admin console's front door, and the only
+ * place the console's areas are listed — the app menu does not carry
+ * them. A signed-in user without the operator role is told so rather
+ * than being offered a sign-in that would change nothing; a signed-out
+ * visitor is sent into the tenant's OIDC flow and comes back here (the
+ * layout does this on a fresh load; this page does it for a session that
+ * expired between two client-side navigations).
+ */
+function adminSections(): AdminSection[] {
+  const admin = `/admin`;
+  return [
+    {
+      label: 'Connections',
+      areas: [
+        {
+          href: `${admin}/connectors`,
+          label: 'Connector setup',
+          detail: 'Enable connectors and hold their app registrations and credentials.',
+        },
+        {
+          href: `${admin}/file-shares`,
+          label: 'File shares',
+          detail: 'Register the network shares people can connect with their own credentials.',
+        },
+        {
+          href: `${admin}/mirth`,
+          label: 'Mirth Connect',
+          detail:
+            'Register the Mirth Connect servers (dev, test, prod…) people can connect with their own accounts.',
+        },
+        {
+          href: `${admin}/sites`,
+          label: 'Sites',
+          detail: 'The SharePoint sites the organization indexes and watches.',
+        },
+        {
+          href: `${admin}/llm-models`,
+          label: 'Models',
+          detail: 'The language models agents and the chat run on, and the default.',
+        },
+        {
+          href: `${admin}/storage`,
+          label: 'Storage',
+          detail: 'Where chat uploads and the files the assistant produces are kept.',
+        },
+      ],
+    },
+    {
+      label: 'Agents',
+      areas: [
+        {
+          href: `${admin}/agents`,
+          label: 'Agent oversight',
+          detail: 'Every agent in the organization, its runs, and the ones that need a hand.',
+        },
+        {
+          href: `${admin}/calendars`,
+          label: 'Holiday calendars',
+          detail: 'The days schedules skip.',
+        },
+        {
+          href: `${admin}/project-templates`,
+          label: 'Project templates',
+          detail: 'The starting instructions offered when someone creates a code project.',
+        },
+        {
+          href: `${admin}/pipeline-templates`,
+          label: 'Pipeline templates',
+          detail:
+            'The starting pipeline files offered on a code project’s Pipelines page when its repository has none.',
+        },
+        {
+          href: `${admin}/code-services`,
+          label: 'Code services',
+          detail:
+            'The container images a code project may start beside its checkout — your own registry, or the public ones by name.',
+        },
+      ],
+    },
+    {
+      label: 'Usage',
+      areas: [
+        {
+          href: `${admin}/usage`,
+          label: 'Organization usage',
+          detail:
+            'Token spend by surface and by model; who is using it, and which agents do the most work per token. Pick a person to see their usage, groups and agents.',
+        },
+      ],
+    },
+    {
+      label: 'Data and policy',
+      areas: [
+        {
+          href: `${admin}/redaction`,
+          label: 'Sensitive data',
+          detail: 'What is masked before it reaches a model, and how.',
+        },
+        // The Email sanitizer page (`${admin}/email-sanitizer`) is deliberately
+        // unlinked: it existed to clean mail on its way into the knowledge
+        // index, and mail is no longer indexed (it is personal — read live
+        // through each person's own grant). The route and its API still
+        // exist pending their removal; nothing should lead a person there.
+        {
+          href: `${admin}/settings`,
+          label: 'Settings',
+          detail: 'Read-only mode, limits, retention windows and the other org-wide policy.',
+        },
+      ],
+    },
+    {
+      label: 'People and records',
+      areas: [
+        {
+          href: `${admin}/access`,
+          label: 'Access',
+          detail:
+            'Who is connected to what — every person and the connectors they hold, with disconnect.',
+        },
+        {
+          href: `${admin}/audit`,
+          label: 'Audit',
+          detail: 'Who changed what in the console.',
+        },
+        {
+          href: `${admin}/tutorials`,
+          label: 'Tutorials',
+          detail: 'Who has taken the guided tours, who finished them, and who skipped.',
+        },
+        {
+          href: `${admin}/events`,
+          label: 'Events',
+          detail: 'The inbound event stream and its processing.',
+        },
+      ],
+    },
+  ];
+}
+
+export default async function AdminPage(): Promise<React.ReactNode> {
+  const access = await checkAccess([ROLE_OPERATOR]);
+  if (access) {
+    return (
+      <div className="mx-auto max-w-4xl">
+        <h1 className="mb-1 text-xl font-bold">Organization</h1>
+        <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
+          Everything an operator configures for this organization. Activity for the whole organization is on
+          the shared Activity page.
+        </p>
+        <CoachTarget name="admin-sections">
+          {adminSections().map((section) => (
+            <section key={section.label} className="mb-8">
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                {section.label}
+              </h2>
+              <ul className="grid gap-3 sm:grid-cols-2">
+                {section.areas.map((area) => (
+                  <li key={area.href}>
+                    <Link
+                      href={area.href}
+                      className="block h-full rounded-xl border border-gray-200 bg-white p-4 hover:border-blue-300 hover:bg-blue-50/40 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-blue-800 dark:hover:bg-blue-950/20"
+                    >
+                      <p className="text-sm font-semibold">{area.label}</p>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{area.detail}</p>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </CoachTarget>
+      </div>
+    );
+  }
+
+  const session = await getSessionFromCookies();
+  if (!session) {
+    redirect(signInUrl(`/admin`));
+  }
+  return (
+    <div className="mx-auto max-w-lg">
+      <h2 className="mb-2 text-lg font-semibold">Operator access required</h2>
+      <p className="text-sm text-gray-600 dark:text-gray-400">
+        You are signed in, but your account does not carry the operator role for this organization. Roles come
+        from your identity provider&apos;s claim mapping — an existing operator can check it under
+        Settings.
+      </p>
+    </div>
+  );
+}

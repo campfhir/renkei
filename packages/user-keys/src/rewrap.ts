@@ -73,7 +73,7 @@ export const REWRAP_TARGETS: readonly RewrapTarget[] = [
     prefix: '',
     ring: 'token',
   },
-  // apps/web/app/api/admin/[slug]/llm-models: a model's API key.
+  // apps/web/app/api/admin/llm-models: a model's API key.
   {
     table: 'llm_model_configs',
     idColumns: ['id'],

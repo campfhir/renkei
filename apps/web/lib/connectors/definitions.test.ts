@@ -3,7 +3,7 @@
  *
  * Jest does not load the definitions module itself (it imports the client
  * forms), so this checks the two things a person forgets from the outside:
- * every admin API directory under /api/admin/[slug]/connectors has a
+ * every admin API directory under /api/admin/connectors has a
  * catalog entry to hang its page on, and the definitions module binds a
  * form to it. A form with no binding is a page that 404s; a binding with no
  * route is a form whose save goes nowhere.
@@ -13,8 +13,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 
-const API_DIR = resolve(__dirname, '../../app/api/admin/[slug]/connectors');
-const FORMS_DIR = resolve(__dirname, '../../app/[slug]/admin/connectors/forms');
+const API_DIR = resolve(__dirname, '../../app/api/admin/connectors');
+const FORMS_DIR = resolve(__dirname, '../../app/(app)/admin/connectors/forms');
 const DEFINITIONS = readFileSync(resolve(__dirname, 'definitions.tsx'), 'utf8');
 
 const apiConfigKeys = () =>

@@ -66,9 +66,9 @@ export default function ThemeSync({
     // the write also tells the other tabs, and there is nothing to tell.
     if (getStoredThemeMode() !== mode) setStoredThemeMode(mode);
     setCurrent(mode);
-  }, [tenantId, mode]);
+  }, [mode]);
 
-  useEffect(() => subscribeStoredThemeMode(setCurrent), [tenantId]);
+  useEffect(() => subscribeStoredThemeMode(setCurrent), []);
 
   useEffect(() => {
     applyThemeMode(current);

@@ -6,7 +6,7 @@
  * the app; nothing about voice is offered to a person until it does.
  *
  * Settings (inspectable jsonb) and secrets (sealed) keys, mirrored by the
- * admin route at apps/web/app/api/admin/[slug]/connectors/voice/route.ts:
+ * admin route at apps/web/app/api/admin/connectors/voice/route.ts:
  *   settings.provider       which vendor — 'azure-speech' today
  *   settings.region         the vendor's region (Azure: `eastus`, `westeurope`…)
  *   settings.endpoint       optional custom domain / private endpoint base

@@ -161,7 +161,7 @@ export function NotificationCenter({
       // Offline, a redeploy mid-flight, a 500 — the next tick tries again.
       // A notification centre must never be the thing that breaks a page.
     }
-  }, [tenantId]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

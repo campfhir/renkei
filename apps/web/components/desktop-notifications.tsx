@@ -26,7 +26,7 @@ import { ensurePushSubscription } from '@/lib/push-subscription';
  * it on every mount rather than trusting whatever the last opt-in flow
  * left behind.
  */
-export default function DesktopNotifications({  }: { }) {
+export default function DesktopNotifications() {
   useEffect(() => {
     if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
     // Registration is cheap and idempotent — the browser no-ops a repeat
@@ -47,7 +47,7 @@ export default function DesktopNotifications({  }: { }) {
     // requestPermission() would only ever no-op) and never touches the
     // opt-in flag either way; it only re-subscribes if the browser needs it.
     void ensurePushSubscription();
-  }, [tenantId]);
+  }, []);
 
   return null;
 }

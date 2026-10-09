@@ -30,10 +30,10 @@ import { ensurePushSubscription } from '@/lib/push-subscription';
  * the switch would read "fixed" while nothing can actually reach it.
  */
 function dismissKey(): string {
-  return `renkei:notification-nudge-dismissed:${tenantId}`;
+  return `renkei:notification-nudge-dismissed`;
 }
 
-export default function NotificationPermissionNudge({  }: { }) {
+export default function NotificationPermissionNudge() {
   // Server-rendered first, where `Notification` does not exist — null until
   // the effect below reads the real answer, same reasoning as the switch
   // in preferences-form.tsx.
@@ -54,7 +54,7 @@ export default function NotificationPermissionNudge({  }: { }) {
       // No storage, no memory of a prior dismissal — it shows again, which
       // is the safe direction to fail in.
     }
-  }, [tenantId]);
+  }, []);
 
   function dismiss() {
     setDismissed(true);

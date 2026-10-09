@@ -28,7 +28,7 @@ it — so an operator can report on adoption.
    the same commit.
 
 2. **One engine, mounted once.** A `CoachMarkProvider` sits in the tenant
-   layout (`app/[slug]/layout.tsx`) beside the nav, so a tour can spotlight
+   layout (`app/(app)/layout.tsx`) beside the nav, so a tour can spotlight
    the nav and the page alike and survive client-side navigation between
    steps. It renders the overlay through a portal to `<body>` — the same
    rule `components/modal.tsx` follows, for the same reason (the sticky
@@ -87,7 +87,7 @@ it — so an operator can report on adoption.
    the `coach_marks` key (`@renkei/user-prefs`), like theme and voice.
 
 7. **Recording is fire-and-forget from the browser.** The engine POSTs to
-   `/api/tenant/[tenantId]/coach-marks` with `{ tourId, version, event,
+   `/api/coach-marks` with `{ tourId, version, event,
 step }` where event is `viewed` (on start), `step` (each advance),
    `completed`, or `dismissed`. Subject comes from the session, never the
    body. A lost request loses a data point, never a tour. Reports leave
@@ -183,7 +183,7 @@ and unit tests green on its own.
 - [x] 2. Registry + engine: `lib/coach-marks/{types,tours,select,anchor}.ts`,
       `components/coach-marks/{provider,overlay}.tsx`, mounted in the
       tenant layout; `data-coach` anchors in nav and pages; unit tests.
-- [x] 3. Recording: `POST /api/tenant/[tenantId]/coach-marks` +
+- [x] 3. Recording: `POST /api/coach-marks` +
       `lib/coach-marks/progress.ts` (upsert reducer + test).
 - [x] 4. Tutorials page `/[slug]/tutorials` + account-menu item + replay via
       `?tour=`.

@@ -35,11 +35,11 @@ export interface NotificationTarget {
 }
 
 /** The row's home inside Renkei, whatever the preference says. */
-export function notificationInAppPath(slug: string, row: NotificationTargetRow): string {
+export function notificationInAppPath(row: NotificationTargetRow): string {
   if (row.refUrl && row.refUrl.startsWith('/') && !row.refUrl.startsWith('//')) return row.refUrl;
   if (isBatchNotificationKind(row.kind)) {
     const batch = parseBatchNotificationMeta(row.meta);
-    if (batch) return batchNotificationHref(slug, batch);
+    if (batch) return batchNotificationHref(batch);
   }
   if (
     (row.kind === 'agent_edited' || row.kind === 'agent_disabled' || row.kind === 'agent_shared') &&
@@ -52,12 +52,11 @@ export function notificationInAppPath(slug: string, row: NotificationTargetRow):
 }
 
 export function notificationTarget(
-  slug: string,
   row: NotificationTargetRow,
   openInSourceApp: boolean
 ): NotificationTarget {
   if (openInSourceApp && isExternalNotificationUrl(row.refUrl)) {
     return { url: row.refUrl, external: true };
   }
-  return { url: notificationInAppPath(slug, row), external: false };
+  return { url: notificationInAppPath(row), external: false };
 }

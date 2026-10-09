@@ -448,7 +448,7 @@ export interface ThemePrefs {
    * across every short snippet a reply happens to include. The gutter is
    * pure CSS (a counter, incremented per line) rather than text the
    * markup carries, so it never rides along when a block's code is
-   * copied — see apps/web/app/[slug]/chat/_components/markdown.tsx.
+   * copied — see apps/web/app/(app)/chat/_components/markdown.tsx.
    */
   codeLineNumbers: boolean;
 }

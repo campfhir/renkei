@@ -11,7 +11,7 @@
  * the numbers live.
  */
 
-import { calendarMonths, formatTokens, type ActivityCell } from '@/app/[slug]/admin/usage/window';
+import { calendarMonths, formatTokens, type ActivityCell } from '@/app/(app)/admin/usage/window';
 
 const LEVEL_CLASS: Record<ActivityCell['level'], string> = {
   0: 'bg-gray-100 dark:bg-gray-800',

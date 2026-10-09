@@ -64,7 +64,7 @@ type Banner =
   | { kind: 'trust'; unknown: UnknownInstance[] }
   | { kind: 'unavailable' };
 
-export default function KeyGuard({ slug }: { slug: string }) {
+export default function KeyGuard() {
   const router = useRouter();
   const [banner, setBanner] = useState<Banner>({ kind: 'none' });
   // The attention-demanding states open front and center as a dialog.
@@ -171,7 +171,7 @@ export default function KeyGuard({ slug }: { slug: string }) {
     } finally {
       checking.current = false;
     }
-  }, [settle, tenantId, untrusted]);
+  }, [settle, untrusted]);
 
   useEffect(() => {
     void check();
@@ -216,7 +216,7 @@ export default function KeyGuard({ slug }: { slug: string }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [ask, settle, tenantId]);
+  }, [ask, settle]);
 
   async function submitTypedKey(): Promise<void> {
     const status = statusRef.current;
@@ -612,7 +612,6 @@ export default function KeyGuard({ slug }: { slug: string }) {
           </span>
         </div>
       ) : null}
-      <span hidden data-slug={slug} />
     </>
   );
 }

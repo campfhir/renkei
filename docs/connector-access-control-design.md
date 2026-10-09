@@ -64,7 +64,7 @@ groups         (id, tenant_id, name, created_at)
 group_members  (tenant_id, group_id, subject)
 ```
 
-managed on the existing People page (`app/[slug]/admin/people`), which already
+managed on the existing People page (`app/(app)/admin/people`), which already
 unions everyone in the org from identities, grant owners and agent owners.
 
 Why local rather than IdP claims: the OIDC config carries exactly one claim
@@ -80,10 +80,10 @@ where an empty set means everyone. Resolved per request, cached like
 
 ## Surfaces
 
-- `app/[slug]/admin/connectors` — each connector card gains an audience
+- `app/(app)/admin/connectors` — each connector card gains an audience
   control: Everyone / these people / these groups. Management tabs group the
   cards, which is what makes a long list navigable.
-- `app/[slug]/connectors` — a restricted connector simply does not render.
+- `app/(app)/connectors` — a restricted connector simply does not render.
   The grid from the last change needs no work.
 - `lib/mcp-tools/registry.ts` — already gated through `withCapabilityGate`;
   the projection change is enough.
