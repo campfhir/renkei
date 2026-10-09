@@ -313,13 +313,13 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
         </Row>
         <Row
           label="Chat retention (days)"
-          hint="How long a chat — its messages and uploaded files — is kept after its last activity before it is deleted, files first. 0 keeps chats until their owner deletes them."
+          hint="How long a chat — its messages and uploaded files — is kept after its last activity before it is deleted, files first. Default a year; 0 keeps chats until their owner deletes them, which is an explicit opt-in."
         >
           {numberInput('chatRetentionDays', '0–3,650')}
         </Row>
         <Row
           label="Log retention (days)"
-          hint="How long this organization's own logs are kept before being purged. 0 keeps them forever."
+          hint="How long this organization's own logs are kept before being purged. Default 90 days; 0 keeps them forever, which is an explicit opt-in."
         >
           {numberInput('logRetentionDays', '0–3,650')}
         </Row>

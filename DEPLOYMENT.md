@@ -804,6 +804,14 @@ sudo journalctl -u jira-mcp-gateway -f
 docker logs <container-id> -f
 ```
 
+Rows shipped to the `logs` table are purged by the retention sweep after
+the org's **Log retention** setting (admin → Settings), default 90 days.
+Setting it to 0 keeps logs forever — an explicit opt-in. An org that never
+set the dial moves from "forever" to 90 days on upgrade; set 0 before
+deploying if that is what the org wants. Successful connector exchanges no
+longer persist request or response bodies into these rows; failed ones
+still do, `secure()`-encrypted.
+
 ### Database Backups
 
 ```bash
@@ -971,8 +979,8 @@ web app stores as bytes at rest, and they live in an object store behind
 Set them in `.env`: the web app reads them to accept uploads and serve
 downloads (always through the app, under the caller's session — no
 public or signed URLs), and `worker-agents` reads them because the chat
-retention sweep (the org's **Chat retention** setting, default keep
-forever) deletes attachment blobs before it deletes the rows. Unset, chat
+retention sweep (the org's **Chat retention** setting, default 365 days;
+0 keeps forever) deletes attachment blobs before it deletes the rows. Unset, chat
 uploads are simply off — closed, never open, like the worker keys above.
 
 `docker-compose.yml` (dev) runs the Azurite emulator instead of a real

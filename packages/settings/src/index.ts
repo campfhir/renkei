@@ -128,7 +128,9 @@ export interface OrgSettings {
   agentUsageRetentionDays: number;
   /**
    * Days to keep a chat (its messages and attachments) after its last
-   * activity; 0 keeps everything. Enforced by the agents worker's sweep.
+   * activity; 0 keeps everything — an explicit opt-in, not the default,
+   * since chats carry user and connector content. Enforced by the agents
+   * worker's sweep.
    */
   chatRetentionDays: number;
   /**
@@ -194,8 +196,10 @@ export interface OrgSettings {
   webexWebhookHealthMinutes: number;
   /**
    * How long this tenant's own bored-logs rows are kept before the
-   * retention sweep purges them. 0 = keep forever (the default — deleting
-   * observability data is an explicit choice). The sweep deletes straight
+   * retention sweep purges them. 0 = keep forever — an explicit opt-in,
+   * not the default: log rows carry request and response bodies (encrypted
+   * at rest, but still content), so unbounded retention has to be chosen,
+   * not inherited. The sweep deletes straight
    * through each row's `tenantId` attribute, so one org's dial only ever
    * purges that org's rows — it does not wait on, or get vetoed by,
    * anyone else's choice.
@@ -283,7 +287,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentRunRetentionDays: 30,
   agentNotificationRetentionDays: 14,
   agentUsageRetentionDays: 365,
-  chatRetentionDays: 0,
+  chatRetentionDays: 365,
   agentOptimizerWindowDays: 30,
   agentMaxChainDepth: 3,
   agentRunTimeoutMinutes: 15,
@@ -296,7 +300,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   // cadence was tripping WebEx's rate limit on orgs with many opted-in
   // users, one `/webhooks` call per grant every pass.
   webexWebhookHealthMinutes: 60,
-  logRetentionDays: 0,
+  logRetentionDays: 90,
   logLevel: 'info',
   knowledgeKeywordEnrichment: false,
   coachMarksEnabled: true,

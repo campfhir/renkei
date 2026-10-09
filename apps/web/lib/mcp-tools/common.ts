@@ -467,13 +467,14 @@ export async function jiraFetch(
     );
   }
 
-  // Successful exchanges log too — a 2xx that did the WRONG thing (the
-  // assignee silently-ignored class of bug) is invisible without the actual
-  // payloads. The body is read from a clone; callers still consume theirs.
-  const okBody = await response
-    .clone()
-    .text()
-    .catch(() => '');
+  // Successful exchanges log the shape of the call, never its payloads.
+  // They used to carry both bodies (secure()-marked) so a 2xx that did the
+  // WRONG thing could be diagnosed from the log — but that persisted a copy
+  // of every issue, comment and page a tenant's users touched into the logs
+  // table for the retention window, readable over HTTP by tenant users. The
+  // failure path below keeps its bodies: a 4xx/5xx is rare, is what actually
+  // needs diagnosing, and carries the provider's complaint rather than the
+  // user's content.
   logger.debug('OK response', {
     component: 'jira/fetch',
     tenantId: scope.tenantId,
@@ -482,8 +483,6 @@ export async function jiraFetch(
     url,
     method: options?.method || 'GET',
     status: response.status,
-    requestBody: secureOrAbsent(describeRequestBody(options?.body)),
-    responseBody: secureOrAbsent(truncateForLog(okBody) || undefined),
   });
 
   return response;
