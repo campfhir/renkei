@@ -34,10 +34,21 @@ TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
 #   pnpm --filter @renkei/user-keys rekey-chats --all
 # with this variable (and TOKEN_ENCRYPTION_KEY) in the environment.
 # USER_KEY_ENCRYPTION_KEY=<32-byte-base64-key>
-# Every process but the delegate reaches it here, for keys, provider
-# tokens and the connector workers (compose wires the service name).
-# DELEGATE_WORKER_URL=http://renkei-worker-delegate:8096
-# DELEGATE_WORKER_API_KEY=<shared bearer key>
+# Every process but the delegate reaches it at DELEGATE_WORKER_URL
+# (docker-compose.yaml wires the service name on each one), for keys,
+# provider tokens and the connector workers — each caller with ITS OWN
+# bearer key, so a key that leaks from one container names which one and
+# is rotated alone. All four are required by the compose file; generate
+# each with `openssl rand -base64 32`. The delegate takes the four as
+# DELEGATE_WORKER_API_KEYS=web=…,worker=…,agents=…,sandbox=… (compose
+# builds that map from these), and the same four as a plain
+# comma-separated DELEGATE_WORKER_API_KEY for a delegate image from before
+# the map. Outside compose, set DELEGATE_WORKER_URL and the caller's key
+# as DELEGATE_WORKER_API_KEY on each process yourself.
+DELEGATE_KEY_WEB=<32-byte-base64-key>
+DELEGATE_KEY_WORKER=<32-byte-base64-key>
+DELEGATE_KEY_AGENTS=<32-byte-base64-key>
+DELEGATE_KEY_SANDBOX=<32-byte-base64-key>
 # A code workspace's git goes through the delegate's /git/<ticket>/… proxy
 # (no bearer key; the short-lived ticket is the credential). The web app
 # builds that proxy URL from DELEGATE_WORKER_URL; set this only when the
@@ -186,10 +197,12 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   calls today; a future batch kind is a new handler, not a new queue). Item
   work is slow, external, per-item network I/O, the same reasoning that
   moved embedding work off the interactive queue — so it never sits in
-  front of a webhook reply either. Reaches `worker-fileshares` and
-  `worker-sandbox` directly (`FILESHARES_WORKER_URL`/`SANDBOX_WORKER_URL`
-  - their bearer keys, same as the web app uses) to read source documents
-    and stage OCR results. Entrypoint: `pnpm --filter @renkei/worker start:batch-jobs`.
+  front of a webhook reply either. Reads source documents from a file
+  share through the delegate (`DELEGATE_WORKER_URL`, the worker key; the
+  person's own share credential is attached there) and stages OCR results
+  on `worker-sandbox` directly (`SANDBOX_WORKER_URL` and its bearer key,
+  same as the web app uses). Entrypoint:
+  `pnpm --filter @renkei/worker start:batch-jobs`.
 - `worker-fileshares` — not a queue consumer but an internal HTTP service,
   and not on the shared worker image: it ships as its **own image**
   (`renkei-fileshares`, the `fileshares` target in `docker/Dockerfile`,
@@ -197,9 +210,9 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   the only process that opens SMB/SFTP sessions or decrypts file-share
   credentials, so its container carries exactly the protocol stack and
   none of the queue workers' dependencies — and it rolls out without
-  restarting them. The web app reaches it at `FILESHARES_WORKER_URL`
+  restarting them. The delegate reaches it at `FILESHARES_WORKER_URL`
   (compose wires `http://renkei-worker-fileshares:8090`) presenting the
-  shared bearer key `FILESHARES_WORKER_API_KEY` — set both in `.env`
+  shared bearer key `FILESHARES_WORKER_API_KEY` — set the key in `.env`
   (`openssl rand -base64 32` makes a good key; the worker also honors
   `FILESHARES_WORKER_PORT`, default 8090). Without them the file-share
   connector answers "service not configured" everywhere — closed, never
@@ -210,9 +223,9 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   the only process that dials a customer's on-prem OnBase API Server or
   Hyland IdP — hosts the web app's SSRF guard refuses by design — doing
   OIDC discovery, the PKCE token exchange, refresh, and all Document API
-  calls. The web app reaches it at `ONBASE_WORKER_URL` (compose wires
+  calls. The delegate reaches it at `ONBASE_WORKER_URL` (compose wires
   `http://renkei-worker-onbase:8091`) presenting the shared bearer key
-  `ONBASE_WORKER_API_KEY` — set both in `.env` (the worker also honors
+  `ONBASE_WORKER_API_KEY` — set the key in `.env` (the worker also honors
   `ONBASE_WORKER_PORT`, default 8091). Without them the OnBase connector
   answers "worker not configured" everywhere — closed, never open.
   Entrypoint: `pnpm --filter @renkei/worker-onbase start`.
@@ -235,16 +248,39 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   token. The sandbox must be able to reach the delegate; when it does so
   at an address other than `DELEGATE_WORKER_URL`, set `DELEGATE_GIT_URL`
   on the app. The app and every other worker reach it at
-  `DELEGATE_WORKER_URL` with `DELEGATE_WORKER_API_KEY` (listen port
-  `DELEGATE_WORKER_PORT`, default 8096). It also needs
-  `TOKEN_ENCRYPTION_KEY` (the OAuth client secrets in connector config),
-  `DATABASE_URL`, and the `*_WORKER_URL` / `*_WORKER_API_KEY` pairs of the
-  connector workers below, which the app no longer holds; and, only while
-  people who have not enrolled remain, `USER_KEY_ENCRYPTION_KEY` (above).
-  Without it, no chat opens and no connector acts: fail closed, never
-  open. A restart is a new instance: browsers seal again on their next
-  page load, and runs in flight resume then. Entrypoint:
-  `pnpm --filter @renkei/worker-delegate start`; image target `delegate`.
+  `DELEGATE_WORKER_URL` (listen port `DELEGATE_WORKER_PORT`, default
+  8096), each presenting its own bearer key: `DELEGATE_KEY_WEB` (the web
+  app), `DELEGATE_KEY_WORKER` (`worker`, `embeddings-worker`,
+  `worker-batch-jobs` — one image, one identity), `DELEGATE_KEY_AGENTS`
+  and `DELEGATE_KEY_SANDBOX`, all four in `.env` (`openssl rand -base64 32`
+  each). `docker-compose.yaml` hands each service its key as
+  `DELEGATE_WORKER_API_KEY` and the delegate the map
+  `DELEGATE_WORKER_API_KEYS=web=…,worker=…,agents=…,sandbox=…` (plus the
+  same four as a plain list in `DELEGATE_WORKER_API_KEY`, which an image
+  from before the map reads). A production process started without
+  `DELEGATE_WORKER_URL` logs an error at boot saying so (it would
+  otherwise only fail each operation with `DELEGATE_UNCONFIGURED`). The
+  delegate also needs `TOKEN_ENCRYPTION_KEY` (the OAuth client secrets in
+  connector config), `DATABASE_URL`, and the `*_WORKER_URL` /
+  `*_WORKER_API_KEY` pairs of the connector workers below, which the app
+  no longer holds (compose sets the URLs on the delegate; the keys come
+  from `.env`); and, only while people who have not enrolled remain,
+  `USER_KEY_ENCRYPTION_KEY` (above). Without it, no chat opens and no
+  connector acts: fail closed, never open. A restart is a new instance:
+  browsers seal again on their next page load, and runs in flight resume
+  then. Entrypoint: `pnpm --filter @renkei/worker-delegate start`; image
+  target `delegate`.
+- `worker-admanager` — the same shape for ManageEngine ADManager Plus: an
+  internal HTTP service on its **own image** (`renkei-admanager`, the
+  `admanager` target in `docker/Dockerfile`). It is the only process that
+  dials an organization's ADManager Plus servers or decrypts a person's
+  stored authtoken. The delegate reaches it at `ADMANAGER_WORKER_URL`
+  (compose wires `http://renkei-worker-admanager:8095`) presenting the
+  shared bearer key `ADMANAGER_WORKER_API_KEY` — set it in `.env`
+  (`openssl rand -base64 32`; the worker also honors
+  `ADMANAGER_WORKER_PORT`, default 8095). Without it the ADManager
+  connector answers "service not configured" everywhere — closed, never
+  open. Entrypoint: `pnpm --filter @renkei/worker-admanager start`.
 - `worker-mirth` — the same shape for Mirth Connect (NextGen Connect
   4.5.2): an internal HTTP service on its **own image** (`renkei-mirth`, the
   `mirth` target in `docker/Dockerfile`, opt-in prompts in the build/push
@@ -253,9 +289,9 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   Mirth Connect (dev, test, prod…), typically on private networks the web
   app's SSRF guard refuses by design — or decrypts a person's stored Mirth
   credential. It logs in as that person, keeps one session per (instance,
-  person), and proxies every REST route. The web app reaches it at
+  person), and proxies every REST route. The delegate reaches it at
   `MIRTH_WORKER_URL` (compose wires `http://renkei-worker-mirth:8093`)
-  presenting the shared bearer key `MIRTH_WORKER_API_KEY` — set both in
+  presenting the shared bearer key `MIRTH_WORKER_API_KEY` — set the key in
   `.env` (`openssl rand -base64 32` makes a good key; the worker also honors
   `MIRTH_WORKER_PORT`, default 8093). Without them the Mirth connector
   answers "service not configured" everywhere — closed, never open.

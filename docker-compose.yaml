@@ -38,6 +38,31 @@
 x-database-urls: &database-urls
   DATABASE_URL: postgres://${POSTGRES_USER:-renkei}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (openssl rand -hex 32)}@postgres:5432/${POSTGRES_DB:-renkei}${DATABASE_URL_PARAMS:-}
 
+# The delegate (docs/delegate-key-design.md) is where every other process
+# gets a chat's key, a person's provider token and the connector workers;
+# each caller reaches it at this address with ITS OWN bearer key, so a key
+# that leaks from one container names which one, and is rotated alone:
+#   DELEGATE_KEY_WEB, DELEGATE_KEY_WORKER, DELEGATE_KEY_AGENTS,
+#   DELEGATE_KEY_SANDBOX   — each `openssl rand -base64 32`, all in .env
+# The delegate accepts all four (DELEGATE_WORKER_API_KEYS maps caller to
+# key; DELEGATE_WORKER_API_KEY carries the same keys as a plain list for a
+# delegate image from before the map). No shared DELEGATE_WORKER_API_KEY
+# in .env is needed or read.
+x-delegate-url: &delegate-url
+  DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+x-delegate-web: &delegate-web
+  <<: *delegate-url
+  DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WEB:?set DELEGATE_KEY_WEB in .env (openssl rand -base64 32)}
+x-delegate-worker: &delegate-worker
+  <<: *delegate-url
+  DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WORKER:?set DELEGATE_KEY_WORKER in .env (openssl rand -base64 32)}
+x-delegate-agents: &delegate-agents
+  <<: *delegate-url
+  DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_AGENTS:?set DELEGATE_KEY_AGENTS in .env (openssl rand -base64 32)}
+x-delegate-sandbox: &delegate-sandbox
+  <<: *delegate-url
+  DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_SANDBOX:?set DELEGATE_KEY_SANDBOX in .env (openssl rand -base64 32)}
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -87,7 +112,11 @@ services:
     # To go further and dedicate a whole instance, set
     #   WORKER_EVENT_SOURCES: webex,zoom
     # here (and run a second worker service without it for the rest).
-    environment: *database-urls
+    #
+    # Reaches the delegate for chat keys, provider tokens and the connector
+    # workers (a person's own credential attached there, never here).
+    environment:
+      <<: [*database-urls, *delegate-worker]
     depends_on:
       postgres:
         condition: service_healthy
@@ -106,7 +135,8 @@ services:
     command: ['pnpm', '--filter', '@renkei/worker', 'start:embeddings']
     env_file:
       - .env
-    environment: *database-urls
+    environment:
+      <<: [*database-urls, *delegate-worker]
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,7 +152,7 @@ services:
     env_file:
       - .env
     environment:
-      <<: *database-urls
+      <<: [*database-urls, *delegate-agents]
       RENKEI_WEB_INTERNAL_URL: http://renkei-app:3000
     depends_on:
       postgres:
@@ -140,17 +170,17 @@ services:
   # document — is slow, external, per-item I/O that must never sit in
   # front of the interactive worker's webhook replies. No container_name
   # on purpose: scale with `--scale worker-batch-jobs=N`, same reasoning as
-  # worker-agents. Reaches the fileshare and sandbox workers directly (to
-  # read source documents and stage OCR results) over the same internal
-  # URLs the web app uses, with the same bearer keys from .env.
+  # worker-agents. Reads source documents from a file share through the
+  # delegate (the person's own share credential is attached there) and
+  # stages OCR results on the sandbox worker directly, over the same
+  # internal URL the web app uses, with the same bearer key from .env.
   worker-batch-jobs:
     image: scotteremiaroden/renkei-worker:latest
     command: ['pnpm', '--filter', '@renkei/worker', 'start:batch-jobs']
     env_file:
       - .env
     environment:
-      <<: *database-urls
-      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
+      <<: [*database-urls, *delegate-worker]
       SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
     depends_on:
       postgres:
@@ -160,11 +190,11 @@ services:
   # The file-share I/O worker: the only process that opens SMB/SFTP
   # sessions or decrypts share credentials. Its own image (not the shared
   # worker one), so the SMB/SSH protocol stack ships apart from the queue
-  # workers and this service rolls out independently. The web app reaches
-  # it over HTTP on the compose network (FILESHARES_WORKER_URL below) with
-  # the shared FILESHARES_WORKER_API_KEY from .env — generate one with
-  # `openssl rand -base64 32`. No published ports on purpose: nothing
-  # outside the compose network may speak to it.
+  # workers and this service rolls out independently. The delegate reaches
+  # it over HTTP on the compose network (FILESHARES_WORKER_URL on
+  # worker-delegate below) with the shared FILESHARES_WORKER_API_KEY from
+  # .env — generate one with `openssl rand -base64 32`. No published ports
+  # on purpose: nothing outside the compose network may speak to it.
   worker-fileshares:
     image: scotteremiaroden/renkei-fileshares:latest
     container_name: renkei-worker-fileshares
@@ -179,9 +209,9 @@ services:
 
   # The OnBase egress worker: the only process that dials a customer's
   # on-prem OnBase API Server or Hyland IdP. Its own image so it rolls out
-  # independently of the queue workers. The web app reaches it over HTTP on
-  # the compose network (ONBASE_WORKER_URL below) with the shared
-  # ONBASE_WORKER_API_KEY from .env — generate one with
+  # independently of the queue workers. The delegate reaches it over HTTP
+  # on the compose network (ONBASE_WORKER_URL on worker-delegate below)
+  # with the shared ONBASE_WORKER_API_KEY from .env — generate one with
   # `openssl rand -base64 32`. No published ports on purpose: nothing
   # outside the compose network may speak to it.
   worker-onbase:
@@ -199,9 +229,9 @@ services:
   # The Mirth Connect egress worker: the only process that dials an
   # organization's Mirth Connect servers (dev, test, prod…) or decrypts a
   # person's stored Mirth credential. Its own image so it rolls out
-  # independently of the queue workers. The web app reaches it over HTTP on
-  # the compose network (MIRTH_WORKER_URL below) with the shared
-  # MIRTH_WORKER_API_KEY from .env — generate one with
+  # independently of the queue workers. The delegate reaches it over HTTP
+  # on the compose network (MIRTH_WORKER_URL on worker-delegate below)
+  # with the shared MIRTH_WORKER_API_KEY from .env — generate one with
   # `openssl rand -base64 32`. No published ports on purpose: nothing
   # outside the compose network may speak to it.
   worker-mirth:
@@ -211,6 +241,80 @@ services:
     env_file:
       - .env
     environment: *database-urls
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The ADManager Plus egress worker: the only process that dials an
+  # organization's ManageEngine ADManager Plus servers or decrypts a
+  # person's stored authtoken. Its own image so it rolls out independently
+  # of the queue workers. The delegate reaches it over HTTP on the compose
+  # network (ADMANAGER_WORKER_URL on worker-delegate below) with the shared
+  # ADMANAGER_WORKER_API_KEY from .env — generate one with
+  # `openssl rand -base64 32`. No published ports on purpose: nothing
+  # outside the compose network may speak to it.
+  worker-admanager:
+    image: scotteremiaroden/renkei-admanager:latest
+    container_name: renkei-worker-admanager
+    command: ['pnpm', '--filter', '@renkei/worker-admanager', 'start']
+    env_file:
+      - .env
+    environment: *database-urls
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The delegate — the one process that holds a key
+  # (docs/delegate-key-design.md). It derives nothing: a signed-in browser
+  # seals its person's key to this instance's public key, and the delegate
+  # opens that to unwrap a chat's or project's data key and a person's
+  # sealed values, on behalf of the app and the other workers, which reach
+  # it at DELEGATE_WORKER_URL with their own bearer keys (the x-delegate-*
+  # blocks at the top) and hold no key themselves. It also holds every
+  # provider token, forwards Mirth, ADManager Plus, file-share and OnBase
+  # operations to their workers with the person's credential attached, and
+  # relays a code workspace's git for the sandbox worker (/git/<ticket>/…).
+  # TOKEN_ENCRYPTION_KEY (the connector configs a refresh needs) comes from
+  # .env. USER_KEY_ENCRYPTION_KEY is migration-only: set it in .env while
+  # people from before held keys have not enrolled, drop it after. Without
+  # this service no chat opens and no connector acts: fail closed. No
+  # published ports on purpose: nothing outside the compose network may
+  # speak to it.
+  worker-delegate:
+    image: scotteremiaroden/renkei-delegate:latest
+    container_name: renkei-worker-delegate
+    command: ['pnpm', '--filter', '@renkei/worker-delegate', 'start']
+    env_file:
+      - .env
+    environment:
+      <<: *database-urls
+      # One key per caller (see the top of this file). The map is what the
+      # delegate reads; the plain list is the same four keys for a delegate
+      # image from before the map existed, so either reads them.
+      DELEGATE_WORKER_API_KEYS: web=${DELEGATE_KEY_WEB:?set DELEGATE_KEY_WEB in .env (openssl rand -base64 32)},worker=${DELEGATE_KEY_WORKER:?set DELEGATE_KEY_WORKER in .env (openssl rand -base64 32)},agents=${DELEGATE_KEY_AGENTS:?set DELEGATE_KEY_AGENTS in .env (openssl rand -base64 32)},sandbox=${DELEGATE_KEY_SANDBOX:?set DELEGATE_KEY_SANDBOX in .env (openssl rand -base64 32)}
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WEB},${DELEGATE_KEY_WORKER},${DELEGATE_KEY_AGENTS},${DELEGATE_KEY_SANDBOX}
+      USER_KEY_ENCRYPTION_KEY: ${USER_KEY_ENCRYPTION_KEY:-}
+      # The connector workers the delegate forwards to, with the person's
+      # credential attached (forward/<connector>/<op>); the bearer keys
+      # (*_WORKER_API_KEY) come from .env.
+      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
+      ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
+      MIRTH_WORKER_URL: http://renkei-worker-mirth:8093
+      ADMANAGER_WORKER_URL: http://renkei-worker-admanager:8095
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://127.0.0.1:8096/health', (r) => { if (r.statusCode !== 200) throw new Error(r.statusCode) })",
+        ]
+      interval: 30s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
     depends_on:
       postgres:
         condition: service_healthy
@@ -287,7 +391,7 @@ services:
     env_file:
       - .env
     environment:
-      <<: *database-urls
+      <<: [*database-urls, *delegate-sandbox]
       # A fixed Node heap, well inside the container limit, so the worker's
       # own process can never be what pushes the container over it — the
       # browser gets the rest.
@@ -343,16 +447,10 @@ services:
     env_file:
       - .env
     environment:
-      <<: *database-urls
-      # Where the web app reaches the file-share worker; the bearer key
-      # (FILESHARES_WORKER_API_KEY) comes from the shared .env.
-      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
-      # Where the web app reaches the OnBase egress worker; the bearer key
-      # (ONBASE_WORKER_API_KEY) comes from the shared .env.
-      ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
-      # Where the web app reaches the Mirth Connect egress worker; the bearer
-      # key (MIRTH_WORKER_API_KEY) comes from the shared .env.
-      MIRTH_WORKER_URL: http://renkei-worker-mirth:8093
+      # The connector workers (file shares, OnBase, Mirth, ADManager Plus)
+      # are reached through the delegate, which attaches the person's
+      # credential; the app holds neither their addresses nor their keys.
+      <<: [*database-urls, *delegate-web]
       # Where the web app reaches the sandbox worker; the bearer key
       # (SANDBOX_WORKER_API_KEY) comes from the shared .env. Omit both to
       # run without an agent scratch space — the sandbox_* tools simply

@@ -40,8 +40,11 @@ services:
       # The connector workers (file shares, OnBase, Mirth, ADManager Plus) are
       # reached through the delegate, which attaches the person's credential;
       # the app holds neither their addresses nor their keys any more.
+      # One delegate key per caller (DELEGATE_KEY_WEB / _WORKER / _AGENTS /
+      # _SANDBOX, see worker-delegate below); the dev defaults keep the
+      # stack turnkey, export the variables to override both sides at once.
       DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
-      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WEB:-renkei-dev-delegate-key-web}
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
       # On in dev so the sandbox_browser_* tools are there to try; must
@@ -101,7 +104,7 @@ services:
       # Reaches the delegate for chat keys (and, for the queue worker, the
       # file-share ops its batch jobs run on a person's own credential).
       DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
-      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker}
       NODE_ENV: production
     depends_on:
       postgres:
@@ -124,6 +127,8 @@ services:
     command: ['pnpm', '--filter', '@renkei/worker', 'start:embeddings']
     environment:
       DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
+      DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker}
       NODE_ENV: production
     depends_on:
       postgres:
@@ -148,10 +153,10 @@ services:
     command: ['pnpm', '--filter', '@renkei/worker-agents', 'start']
     environment:
       DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
-      # Reaches the delegate for chat keys (and, for the queue worker, the
-      # file-share ops its batch jobs run on a person's own credential).
+      # Reaches the delegate for chat keys and provider tokens, with the
+      # agents worker's own key.
       DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
-      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_AGENTS:-renkei-dev-delegate-key-agents}
       RENKEI_WEB_INTERNAL_URL: http://app:3000
       # The chat retention sweep deletes attachment blobs; same emulator
       # settings as the app service.
@@ -170,9 +175,10 @@ services:
   # The batch-jobs worker (document-ocr-pipeline and future batch kinds):
   # same image as `worker`, different entrypoint — the embeddings pattern.
   # Its own queue (batch_job_messages) because item work — an OCR call per
-  # document — is slow, external, per-item I/O. Reaches the fileshare and
-  # sandbox services directly (to read source documents and stage OCR
-  # results) with the same dev bearer-key defaults those services use.
+  # document — is slow, external, per-item I/O. Reads source documents
+  # from a file share through the delegate (the person's own credential
+  # attached there) and stages OCR results on the sandbox service directly,
+  # with the same dev bearer-key default that service uses.
   worker-batch-jobs:
     build:
       context: .
@@ -183,8 +189,8 @@ services:
     environment:
       DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       NODE_ENV: production
-      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
-      FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
+      DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker}
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
     depends_on:
@@ -276,8 +282,10 @@ services:
   # seals its person's key to this instance's public key, and the delegate
   # opens that to unwrap a chat's or project's data key and a person's
   # sealed values, on behalf of the app and the other workers, which reach
-  # it via DELEGATE_WORKER_URL with the shared DELEGATE_WORKER_API_KEY and
-  # hold no key themselves. USER_KEY_ENCRYPTION_KEY is migration-only: set
+  # it via DELEGATE_WORKER_URL, each with its own bearer key (the
+  # DELEGATE_KEY_* variables; DELEGATE_WORKER_API_KEYS below maps caller to
+  # key, DELEGATE_WORKER_API_KEY lists the same keys for a build from before
+  # the map), and hold no key themselves. USER_KEY_ENCRYPTION_KEY is migration-only: set
   # it while people from before held keys have not enrolled, drop it after. It also holds every provider token and relays a
   # code workspace's git for the sandbox worker (/git/<ticket>/…), which
   # reaches it by the same service name on this network.
@@ -292,7 +300,8 @@ services:
       - apps/web/.env.development
     environment:
       DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
-      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
+      DELEGATE_WORKER_API_KEYS: web=${DELEGATE_KEY_WEB:-renkei-dev-delegate-key-web},worker=${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker},agents=${DELEGATE_KEY_AGENTS:-renkei-dev-delegate-key-agents},sandbox=${DELEGATE_KEY_SANDBOX:-renkei-dev-delegate-key-sandbox}
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WEB:-renkei-dev-delegate-key-web},${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker},${DELEGATE_KEY_AGENTS:-renkei-dev-delegate-key-agents},${DELEGATE_KEY_SANDBOX:-renkei-dev-delegate-key-sandbox}
       USER_KEY_ENCRYPTION_KEY: ${USER_KEY_ENCRYPTION_KEY:-}
       # The connector workers the delegate forwards to, with the person's
       # credential attached (forward/<connector>/<op>).
@@ -359,6 +368,11 @@ services:
     environment:
       DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
+      # The sandbox's own delegate key (a workspace's git reaches the
+      # delegate by ticket, not by this key; it is the caller identity the
+      # delegate's per-caller map reserves for this service).
+      DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_SANDBOX:-renkei-dev-delegate-key-sandbox}
       SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
       # Code workspaces (docs/sandbox-workspaces-design.md): on by default
       # in the dev stack, same variable on both sides. The env-secret key
