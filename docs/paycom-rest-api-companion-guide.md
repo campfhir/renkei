@@ -13,75 +13,75 @@
 
 **Employee Lists**
 
-| Route | Description |
-| --- | --- |
-| `api/v1/employeeid` | Return a list of employee identifiers. |
+| Route                      | Description                                                  |
+| -------------------------- | ------------------------------------------------------------ |
+| `api/v1/employeeid`        | Return a list of employee identifiers.                       |
 | `api/v1/employeedirectory` | Return a paginated list of employees and their demographics. |
-| `api/v1/employeenewhire` | Return a list of employees added in a specific date range. |
+| `api/v1/employeenewhire`   | Return a list of employees added in a specific date range.   |
 
 **Non-Sensitive Employee Information**
 
-| Route | Description |
-| --- | --- |
-| `api/v1/employee/:eecode` | Return an employee master record. |
-| `api/v1/employee/:eecode/customfield` | Return custom field information for an employee. |
-| `api/v1.1/employee/:eecode/change` | Return an audit log of updates made to non-sensitive employee fields for a specified date range. |
-| `api/v1/employee/:eecode/photo` | Return an encoded string representing the employee photo. |
-| `api/v1/employee/:eecode/tax` | Return employee tax setup from Form 1. |
-| `api/v1/employee/:eecode/ratesbyallocation` | Return employee rates by allocation information from Form 10. |
+| Route                                       | Description                                                                                      |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `api/v1/employee/:eecode`                   | Return an employee master record.                                                                |
+| `api/v1/employee/:eecode/customfield`       | Return custom field information for an employee.                                                 |
+| `api/v1.1/employee/:eecode/change`          | Return an audit log of updates made to non-sensitive employee fields for a specified date range. |
+| `api/v1/employee/:eecode/photo`             | Return an encoded string representing the employee photo.                                        |
+| `api/v1/employee/:eecode/tax`               | Return employee tax setup from Form 1.                                                           |
+| `api/v1/employee/:eecode/ratesbyallocation` | Return employee rates by allocation information from Form 10.                                    |
 
 **Sensitive Employee Information**
 
-| Route | Description |
-| --- | --- |
-| `api/v1/employee/:eecode/sensitive` | Return an employee master record along with sensitive data. |
+| Route                                       | Description                                                                                                      |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `api/v1/employee/:eecode/sensitive`         | Return an employee master record along with sensitive data.                                                      |
 | `api/v1.1/employee/:eecode/sensitivechange` | Return an audit log of updates made to employee fields (including sensitive changes) for a specified date range. |
 
 ### Time and Attendance Endpoint Group
 
-| Route | Description |
-| --- | --- |
-| `api/v1.1/punchimport` | Add, edit, or delete time clock events on employee time cards. |
-| `api/v1/employee/:eecode/punchaudit` | Return historical information about punches for a specified date range. |
-| `api/v1/employee/:eecode/punchhistory` | Return a list of employee punches. |
+| Route                                  | Description                                                             |
+| -------------------------------------- | ----------------------------------------------------------------------- |
+| `api/v1.1/punchimport`                 | Add, edit, or delete time clock events on employee time cards.          |
+| `api/v1/employee/:eecode/punchaudit`   | Return historical information about punches for a specified date range. |
+| `api/v1/employee/:eecode/punchhistory` | Return a list of employee punches.                                      |
 
 ### New Hire Endpoint Group
 
-| Route | Description |
-| --- | --- |
-| `api/v1/newhireids` | Return a list of IDs of New Hires within a given time range. |
-| `api/v1/newhire/:new-hire-id` | Return the New Hire information for the given new hire id. |
-| `api/v1/newhire/:new-hire-id/customfield` | Return custom field information for new hires. |
-| `api/v1/newhire/:new-hire-id/photo` | Return an encoded string representing the new hire photo. |
+| Route                                     | Description                                                  |
+| ----------------------------------------- | ------------------------------------------------------------ |
+| `api/v1/newhireids`                       | Return a list of IDs of New Hires within a given time range. |
+| `api/v1/newhire/:new-hire-id`             | Return the New Hire information for the given new hire id.   |
+| `api/v1/newhire/:new-hire-id/customfield` | Return custom field information for new hires.               |
+| `api/v1/newhire/:new-hire-id/photo`       | Return an encoded string representing the new hire photo.    |
 
 ### Position Management Endpoint Group
 
-| Route | Description |
-| --- | --- |
-| `api/v1/positions/detail` | List all position codes, or fetch details for one via a parameter. |
-| `api/v1/positions/levels` | List all position level codes, or fetch details for one via a parameter. |
-| `api/v1/positions/seats` | List all position seat numbers, or fetch details for one via a parameter. |
+| Route                     | Description                                                               |
+| ------------------------- | ------------------------------------------------------------------------- |
+| `api/v1/positions/detail` | List all position codes, or fetch details for one via a parameter.        |
+| `api/v1/positions/levels` | List all position level codes, or fetch details for one via a parameter.  |
+| `api/v1/positions/seats`  | List all position seat numbers, or fetch details for one via a parameter. |
 
 ### Client Endpoint Group
 
 **Locations and Establishments**
 
-| Route | Description |
-| --- | --- |
-| `api/v1/cl/locations` | Return all, or specific, Company Locations configured for the client. |
+| Route                      | Description                                                                |
+| -------------------------- | -------------------------------------------------------------------------- |
+| `api/v1/cl/locations`      | Return all, or specific, Company Locations configured for the client.      |
 | `api/v1/cl/establishments` | Return all, or specific, Company Establishments configured for the client. |
 
 **Labor Allocations**
 
-| Route | Description |
-| --- | --- |
-| `api/v1/cl/category` | Return all labor allocation categories, or one if specified. |
+| Route                                | Description                                                                                                                                             |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api/v1/cl/category`                 | Return all labor allocation categories, or one if specified.                                                                                            |
 | `api/v1/cl/category/:catcode/detail` | Return information for one or all distributions in a labor allocation category. Also used to add new distributions or update existing ones (PUT/PATCH). |
 
 **Misc**
 
-| Route | Description |
-| --- | --- |
+| Route               | Description                        |
+| ------------------- | ---------------------------------- |
 | `api/v1/cl/earning` | Return information about earnings. |
 
 ## Notes and Things to Consider
@@ -277,10 +277,37 @@ records 5 hours of Regular time and $30 of tips.
 
 ```json
 [
-  { "eecode": "A001", "deptcode": "1234", "entrytype": 1, "punchtime": "1591016400", "punchtype": "ID", "timezone": "CST" },
-  { "eecode": "A001", "entrytype": 1, "punchtime": "1591048800", "punchtype": "OD", "timezone": "CST" },
-  { "eecode": "B001", "entrytype": 2, "hours": 5.0, "earncode": "R", "punchtime": "1590987600", "timezone": "CST" },
-  { "eecode": "B001", "entrytype": 3, "dollaramount": 30, "earncode": "TP1", "punchtime": "1590987600", "timezone": "CST" }
+  {
+    "eecode": "A001",
+    "deptcode": "1234",
+    "entrytype": 1,
+    "punchtime": "1591016400",
+    "punchtype": "ID",
+    "timezone": "CST"
+  },
+  {
+    "eecode": "A001",
+    "entrytype": 1,
+    "punchtime": "1591048800",
+    "punchtype": "OD",
+    "timezone": "CST"
+  },
+  {
+    "eecode": "B001",
+    "entrytype": 2,
+    "hours": 5.0,
+    "earncode": "R",
+    "punchtime": "1590987600",
+    "timezone": "CST"
+  },
+  {
+    "eecode": "B001",
+    "entrytype": 3,
+    "dollaramount": 30,
+    "earncode": "TP1",
+    "punchtime": "1590987600",
+    "timezone": "CST"
+  }
 ]
 ```
 
@@ -299,9 +326,7 @@ Notes:
 ```json
 {
   "result": true,
-  "data": [
-    { "punchId": 75323044, "makeUpTime": false, "externalId": null }
-  ],
+  "data": [{ "punchId": 75323044, "makeUpTime": false, "externalId": null }],
   "errors": [],
   "errorCount": 0,
   "records": 1

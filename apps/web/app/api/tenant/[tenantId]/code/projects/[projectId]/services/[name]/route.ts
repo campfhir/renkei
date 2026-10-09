@@ -28,7 +28,7 @@ export async function GET(
   if (!ready.ok) return ready.response;
   const name = validateServiceName(rawName);
   if (!name.ok) return jsonError(404, 'not-found', 'No such service');
-  if (!sandboxServicesEnabled()) {
+  if (!(await sandboxServicesEnabled(tenantId))) {
     return jsonError(
       503,
       'unavailable',
@@ -56,7 +56,7 @@ export async function DELETE(
   if (!ready.ok) return ready.response;
   const name = validateServiceName(rawName);
   if (!name.ok) return jsonError(404, 'not-found', 'No such service');
-  if (!sandboxServicesEnabled()) {
+  if (!(await sandboxServicesEnabled(tenantId))) {
     return jsonError(
       503,
       'unavailable',

@@ -11,15 +11,18 @@
  *
  * Configuration: SANDBOX_WORKER_URL + SANDBOX_WORKER_API_KEY. Both
  * absent-or-set-together; a missing pair means every operation answers
- * 'unconfigured' — the sandbox is down, never open. The browser verbs
- * (`sbBrowser*`) additionally need SANDBOX_BROWSER_ENABLED on the web side
- * so the sandbox_browser_* tools register only where the worker actually
- * runs a browser — `sandboxBrowserEnabled()` is that check.
+ * 'unconfigured' — the sandbox is down, never open. Which of the worker's
+ * features an organization gets (browser, charts, workspaces, services,
+ * scripts) is the organization's own settings AND what the worker reports
+ * it can do — `sandboxFeatures(tenantId)` is that check, and the web app
+ * registers each feature's tools and pages only where it holds.
  *
  * Errors keep the worker's tag + message so each surface phrases its own
  * refusals; `clientFailure` gives callers one shared status+string mapping
  * so a person and a model hear the same answer.
  */
+
+import { getOrgSettings } from '@renkei/settings';
 
 export interface WireSandboxFile {
   id: string;
@@ -69,126 +72,163 @@ export function sandboxConfig(): { url: string; key: string } | null {
 }
 
 /**
- * Whether this deployment offers the sandbox browser: the worker must be
- * configured AND SANDBOX_BROWSER_ENABLED set (the same flag the worker
- * reads to launch one). Off unless said otherwise — closed, never open.
+ * What the worker CAN do, as it reports on `/health` (apps/worker-sandbox
+ * features.ts): a feature is served only where the worker is able AND the
+ * organization has turned it on (org settings, admin → Settings → Sandbox).
+ * `scripts` is three-valued because the worker may have an interpreter but
+ * no way to start a run without a network; whether such a run is allowed
+ * is the organization's `sandboxScriptsAllowNetwork`.
  */
-export function sandboxBrowserEnabled(): boolean {
-  if (!sandboxConfig()) return false;
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_BROWSER_ENABLED ?? '').trim());
+export interface SandboxCapabilities {
+  browser: boolean;
+  charts: boolean;
+  workspaces: boolean;
+  services: boolean;
+  scripts: 'isolated' | 'network_only' | 'none';
 }
 
-/**
- * Whether this deployment renders charts: the worker must be configured
- * AND SANDBOX_CHARTS_ENABLED set (the same flag the worker reads to
- * launch its renderer). Off unless said otherwise — closed, never open.
- */
-export function sandboxChartsEnabled(): boolean {
-  if (!sandboxConfig()) return false;
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_CHARTS_ENABLED ?? '').trim());
-}
-
-/**
- * Whether this deployment offers code workspaces: the worker must be
- * configured AND SANDBOX_WORKSPACES_ENABLED set (the same flag the worker
- * reads to serve them). Off unless said otherwise — closed, never open.
- */
-export function sandboxWorkspacesEnabled(): boolean {
-  if (!sandboxConfig()) return false;
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_WORKSPACES_ENABLED ?? '').trim());
-}
-
-/**
- * Whether this deployment offers code project services — containers
- * started beside a checkout: workspaces must be on AND
- * SANDBOX_SERVICES_ENABLED set (the same flag the worker reads to talk
- * to its Docker engine). Off unless said otherwise — closed, never open.
- */
-export function sandboxServicesEnabled(): boolean {
-  if (!sandboxWorkspacesEnabled()) return false;
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_SERVICES_ENABLED ?? '').trim());
-}
-
-/**
- * Whether this deployment runs a caller's Python over their staged files
- * (sandbox_run_python): the worker must be configured AND
- * SANDBOX_SCRIPTS_ENABLED set (the same flag the worker reads to serve
- * it). Off unless said otherwise — closed, never open.
- */
-export function sandboxScriptsEnabled(): boolean {
-  if (!sandboxConfig()) return false;
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_SCRIPTS_ENABLED ?? '').trim());
-}
-
-/**
- * Whether the operator accepted scripts running WITH the worker's network
- * where the worker cannot start one without (SANDBOX_SCRIPTS_ALLOW_NETWORK,
- * the same flag the worker reads). Read here only to tell the model the
- * truth in the tool's description; the worker decides what actually runs.
- */
-export function sandboxScriptsAllowNetwork(): boolean {
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_SCRIPTS_ALLOW_NETWORK ?? '').trim());
-}
-
-/**
- * What the worker says about scripts on `/health` (apps/worker-sandbox
- * scripts.ts, ScriptsStatus): `unavailable` means it refuses every run
- * because it can neither isolate a run's network nor was told to run
- * without doing so — the tool is then withheld rather than offered and
- * refused on every call.
- */
-export type SandboxScriptsStatus = 'disabled' | 'unavailable' | 'isolated' | 'network_shared';
-
-const SCRIPTS_STATUS_TTL_MS = 60_000;
-let scriptsStatusCache: { at: number; status: SandboxScriptsStatus | null } | null = null;
-let scriptsStatusRefresh: Promise<void> | null = null;
+const CAPABILITIES_TTL_MS = 60_000;
+let capabilitiesCache: { at: number; value: SandboxCapabilities | null } | null = null;
+let capabilitiesRefresh: Promise<SandboxCapabilities | null> | null = null;
 
 /** Test-only: forget what the worker last said. */
-export function resetScriptsStatusForTests(): void {
-  scriptsStatusCache = null;
-  scriptsStatusRefresh = null;
+export function resetSandboxCapabilitiesForTests(): void {
+  capabilitiesCache = null;
+  capabilitiesRefresh = null;
 }
 
-/** Ask the worker's /health what it does with scripts; null when it cannot be asked or does not say. */
-export async function sbScriptsStatus(): Promise<SandboxScriptsStatus | null> {
+function parseCapabilities(value: unknown): SandboxCapabilities | null {
+  if (!isRecord(value) || !isRecord(value.capabilities)) return null;
+  const caps = value.capabilities;
+  const scripts = caps.scripts;
+  return {
+    browser: caps.browser === true,
+    charts: caps.charts === true,
+    workspaces: caps.workspaces === true,
+    services: caps.services === true,
+    scripts:
+      scripts === 'isolated' || scripts === 'network_only' || scripts === 'none' ? scripts : 'none',
+  };
+}
+
+/** Ask the worker's /health what it can do; null when it cannot be asked or does not say. */
+export async function sbCapabilities(): Promise<SandboxCapabilities | null> {
   const cfg = sandboxConfig();
   if (!cfg) return null;
   try {
     const response = await fetch(`${cfg.url}/health`, { signal: AbortSignal.timeout(5_000) });
     if (!response.ok) return null;
-    const value: unknown = await response.json();
-    const status = isRecord(value) ? value.scripts : undefined;
-    return status === 'disabled' ||
-      status === 'unavailable' ||
-      status === 'isolated' ||
-      status === 'network_shared'
-      ? status
-      : null;
+    return parseCapabilities(await response.json());
   } catch {
     return null;
   }
 }
 
 /**
- * Whether to register sandbox_run_python: the flag (sandboxScriptsEnabled)
- * AND the worker not having said `unavailable` on /health. Registration is
- * synchronous, so the worker's answer is cached and refreshed in the
- * background once a minute; until it has answered, the flag alone decides —
- * a call in that window still meets the worker's own 503.
+ * The worker's capabilities, remembered for a minute so a page or a tool
+ * catalog does not ask on every call. Null until the worker has answered
+ * once; a caller treats null as "capable" (the worker's own 503 is the
+ * backstop), so a worker that is slow to answer withholds nothing.
  */
-export function sandboxScriptsServed(): boolean {
-  if (!sandboxScriptsEnabled()) return false;
+async function cachedCapabilities(): Promise<SandboxCapabilities | null> {
   const now = Date.now();
-  if (!scriptsStatusCache || now - scriptsStatusCache.at > SCRIPTS_STATUS_TTL_MS) {
-    scriptsStatusRefresh ??= sbScriptsStatus()
-      .then((status) => {
-        scriptsStatusCache = { at: Date.now(), status };
-      })
-      .finally(() => {
-        scriptsStatusRefresh = null;
-      });
+  if (capabilitiesCache && now - capabilitiesCache.at < CAPABILITIES_TTL_MS) {
+    return capabilitiesCache.value;
   }
-  return scriptsStatusCache?.status !== 'unavailable';
+  capabilitiesRefresh ??= sbCapabilities()
+    .then((value) => {
+      capabilitiesCache = { at: Date.now(), value };
+      return value;
+    })
+    .finally(() => {
+      capabilitiesRefresh = null;
+    });
+  return capabilitiesRefresh;
+}
+
+/**
+ * Which sandbox features this organization gets: each is the org's own
+ * switch AND the worker's ability, with the worker configured at all.
+ * `scriptsNetworkShared` is the one degraded mode: scripts served on the
+ * worker's network because it cannot isolate one and the org accepted
+ * that — the tool's description and every result say so.
+ */
+export interface SandboxFeatures {
+  browser: boolean;
+  charts: boolean;
+  workspaces: boolean;
+  services: boolean;
+  scripts: boolean;
+  scriptsNetworkShared: boolean;
+}
+
+const NO_FEATURES: SandboxFeatures = {
+  browser: false,
+  charts: false,
+  workspaces: false,
+  services: false,
+  scripts: false,
+  scriptsNetworkShared: false,
+};
+
+export async function sandboxFeatures(tenantId: string): Promise<SandboxFeatures> {
+  if (!sandboxConfig()) return NO_FEATURES;
+  const settings = await getOrgSettings(tenantId);
+  // A settings outage opens nothing: closed, never open.
+  if (!settings.ok) return NO_FEATURES;
+  const org = settings.val;
+  // Nothing on means nothing to serve: the worker is not asked what it can do.
+  if (
+    !org.sandboxBrowserEnabled &&
+    !org.sandboxChartsEnabled &&
+    !org.sandboxWorkspacesEnabled &&
+    !org.sandboxScriptsEnabled
+  ) {
+    return NO_FEATURES;
+  }
+  const caps = await cachedCapabilities();
+  const browser = org.sandboxBrowserEnabled && (caps?.browser ?? true);
+  const charts = org.sandboxChartsEnabled && (caps?.charts ?? true);
+  const workspaces = org.sandboxWorkspacesEnabled && (caps?.workspaces ?? true);
+  const services = workspaces && org.sandboxServicesEnabled && (caps?.services ?? true);
+  const scriptsCapability = caps?.scripts ?? 'isolated';
+  const scripts =
+    org.sandboxScriptsEnabled &&
+    (scriptsCapability === 'isolated' ||
+      (scriptsCapability === 'network_only' && org.sandboxScriptsAllowNetwork));
+  return {
+    browser,
+    charts,
+    workspaces,
+    services,
+    scripts,
+    scriptsNetworkShared: scripts && scriptsCapability === 'network_only',
+  };
+}
+
+/** Whether this organization gets the sandbox browser (sandbox_browser_* tools). */
+export async function sandboxBrowserEnabled(tenantId: string): Promise<boolean> {
+  return (await sandboxFeatures(tenantId)).browser;
+}
+
+/** Whether this organization gets charts (sandbox_render_chart, chat_write_chart). */
+export async function sandboxChartsEnabled(tenantId: string): Promise<boolean> {
+  return (await sandboxFeatures(tenantId)).charts;
+}
+
+/** Whether this organization gets code workspaces (the Code section, the code_* tools). */
+export async function sandboxWorkspacesEnabled(tenantId: string): Promise<boolean> {
+  return (await sandboxFeatures(tenantId)).workspaces;
+}
+
+/** Whether this organization gets code project services (needs workspaces). */
+export async function sandboxServicesEnabled(tenantId: string): Promise<boolean> {
+  return (await sandboxFeatures(tenantId)).services;
+}
+
+/** Whether to offer sandbox_run_python to this organization at all. */
+export async function sandboxScriptsServed(tenantId: string): Promise<boolean> {
+  return (await sandboxFeatures(tenantId)).scripts;
 }
 
 function unreachable(message: string): { ok: false; err: SandboxClientError } {

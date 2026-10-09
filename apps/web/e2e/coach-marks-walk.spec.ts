@@ -95,9 +95,9 @@ const WALKS: Record<string, Walk> = {
   'chat-permission': { path: `/${E2E_SLUG}/chat/new`, spotlight: false, settle: THREAD },
   project: { path: `/${E2E_SLUG}/chat/projects/${WALK_PROJECT_ID}`, spotlight: true },
   'prompt-library': { path: `/${E2E_SLUG}/chat/prompts/${WALK_LIBRARY_ID}`, spotlight: true },
-  // Code workspaces are off in this environment (SANDBOX_WORKSPACES_ENABLED
-  // is unset for the e2e server): the index shows its notice and has no
-  // New code project link, and /code/new sends the visitor back to /code.
+  // The seeded organization has code workspaces on (e2e/seed.ts) but no
+  // Bitbucket or GitHub connected: the index shows its access notice and
+  // has no New code project link, and /code/new has nothing to offer.
   code: { path: `/${E2E_SLUG}/code`, spotlight: false },
   'code-new': { path: `/${E2E_SLUG}/code`, spotlight: false },
   // The catalog greets its first opening; the walk opens it.

@@ -44,7 +44,7 @@ export default async function CodePage({ params }: { params: Promise<{ slug: str
     <CodeIndex
       slug={slug}
       projects={sidebar.code.projects}
-      enabled={sandboxWorkspacesEnabled()}
+      enabled={await sandboxWorkspacesEnabled(tenant.id)}
       canCreate={canCreate}
       accessNotice={accessNotice}
     />

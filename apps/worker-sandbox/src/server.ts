@@ -74,7 +74,9 @@ import { createServiceHandlers } from './service-endpoints';
 import { createScriptHandlers } from './script-endpoints';
 import { expiryFromNow, quotaHeadroom } from './staging';
 import type { ServiceManager } from './services';
-import type { ScriptRunner, ScriptsStatus } from './scripts';
+import type { ScriptRunner } from './scripts';
+import { orgSandboxFeatures, type OrgFeaturesLookup, type SandboxCapabilities } from './features';
+import type { NetworkIsolation } from './workspaces';
 import type { LspSessions } from './lsp-sessions';
 import { logger } from './logger';
 
@@ -119,37 +121,40 @@ export interface SandboxServerDeps {
   apiKeys: string[];
   /** The per-tenant per-file ceiling (the org's attachment limit). */
   maxFileBytes?: (tenantId: string) => Promise<number>;
-  /** The browser, when SANDBOX_BROWSER_ENABLED; null/absent answers every browser verb 503. */
+  /**
+   * What this worker CAN do (index.ts finds it once at boot; features.ts
+   * explains the two-part decision). Each is a capability, not a switch:
+   * whether an organization gets the feature is `orgFeatures` per request.
+   */
+  /** The browser; null/absent answers every browser verb 503. */
   browser?: BrowserVerbs | null;
   /** The secret vault; the server makes its own (in-memory) when not given (tests share one with the browser). */
   vault?: SecretVault;
-  /** The chart renderer (SANDBOX_CHARTS_ENABLED); null/absent answers every chart verb 503. */
+  /** The chart renderer; null/absent answers every chart verb 503. */
   charts?: ChartVerbs | null;
-  /** Code workspaces (SANDBOX_WORKSPACES_ENABLED); off answers every workspace and env verb 503. */
+  /** Commands can be run for a caller here (not root, or root that can drop to a uid); off answers every workspace and env verb 503. */
   workspaces?: boolean;
   /**
-   * Code project services (SANDBOX_SERVICES_ENABLED): the manager over the
-   * Docker engine, or null, which answers every service verb 503. A
-   * running service's variables join the environment of every command a
-   * project runs (workspace-endpoints.ts).
+   * The manager over the Docker engine, or null, which answers every
+   * service verb 503. A running service's variables join the environment
+   * of every command a project runs (workspace-endpoints.ts).
    */
   services?: ServiceManager | null;
   /** The language server sessions behind `workspaces/lsp/*`; made here when not given (tests script one). */
   lsp?: LspSessions;
   /**
-   * Scripts over staged files (SANDBOX_SCRIPTS_ENABLED): the runner that
-   * copies a caller's files into a throwaway directory and runs their
-   * Python there as their own uid with no network (scripts.ts), or null,
-   * which answers the script verb 503.
+   * The runner that copies a caller's files into a throwaway directory and
+   * runs their Python there as their own uid (scripts.ts), or null when
+   * this worker has no interpreter, which answers the script verb 503.
    */
   scripts?: ScriptRunner | null;
-  /**
-   * What `/health` says about scripts — the boot decision (scripts.ts,
-   * decideScripts) the web app reads to offer or withhold sandbox_run_python.
-   * `disabled` when not given; `unavailable` also carries the 503's message.
-   */
-  scriptsStatus?: ScriptsStatus;
-  scriptsUnavailable?: string | null;
+  /** How the runner starts a run with no network; null means every run would have this container's. */
+  scriptsNetworkIsolation?: NetworkIsolation | null;
+  uidIsolation?: SandboxCapabilities['uidIsolation'];
+  /** Why a capability is missing, for /health and the 503s. */
+  capabilityProblems?: SandboxCapabilities['problems'];
+  /** The organization's switches; the real settings lookup unless a test stands one in. */
+  orgFeatures?: OrgFeaturesLookup;
   /**
    * How `/v1/fetch` reaches a URL: the guarded fetch by default — every
    * redirect re-checked, every hop dialled at the address it verified
@@ -308,15 +313,33 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
   const maxFileBytes = deps.maxFileBytes ?? orgMaxFileBytes;
   let draining = false;
   const vault = deps.vault ?? new SecretVault();
-  const services = createServiceHandlers({ db: deps.db, manager: deps.services ?? null });
+  const orgFeatures = deps.orgFeatures ?? orgSandboxFeatures;
+  const scriptsNetworkIsolation = deps.scriptsNetworkIsolation ?? null;
+  const capabilities: SandboxCapabilities = {
+    browser: deps.browser !== null && deps.browser !== undefined,
+    charts: deps.charts !== null && deps.charts !== undefined,
+    workspaces: deps.workspaces === true,
+    services: deps.services !== null && deps.services !== undefined,
+    scripts: deps.scripts ? (scriptsNetworkIsolation ? 'isolated' : 'network_only') : 'none',
+    uidIsolation: deps.uidIsolation ?? 'unisolated',
+    problems: deps.capabilityProblems ?? {},
+  };
+  const services = createServiceHandlers({
+    db: deps.db,
+    manager: deps.services ?? null,
+    enabledFor: async (tenantId) => (await orgFeatures(tenantId)).services,
+  });
   const scripts = createScriptHandlers({
     db: deps.db,
     runner: deps.scripts ?? null,
-    unavailable: deps.scriptsUnavailable ?? null,
+    capability: capabilities.scripts,
+    networkIsolation: scriptsNetworkIsolation,
+    orgFeatures,
   });
   const workspaces = createWorkspaceHandlers({
     db: deps.db,
-    enabled: deps.workspaces === true,
+    capable: capabilities.workspaces,
+    enabledFor: async (tenantId) => (await orgFeatures(tenantId)).workspaces,
     // A running service's variables join every command's environment.
     ...(deps.services ? { serviceEnv: (target) => deps.services!.environmentFor(target) } : {}),
     lsp: deps.lsp,
@@ -604,11 +627,19 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
         response,
         503,
         'browser_unavailable',
-        'The sandbox browser is not enabled on this deployment.'
+        'The sandbox browser is not available on this deployment.'
       );
     }
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
+    if (!(await orgFeatures(target.tenantId)).browser) {
+      return sendError(
+        response,
+        503,
+        'browser_unavailable',
+        'The sandbox browser is not enabled for this organization (admin → Settings → Sandbox).'
+      );
+    }
     const maxChars = snapshotCharsOf(body.maxChars);
     try {
       switch (op) {
@@ -726,11 +757,19 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
         response,
         503,
         'charts_unavailable',
-        'Charts are not enabled on this deployment (SANDBOX_CHARTS_ENABLED).'
+        `Charts are not available on this deployment${capabilities.problems.charts ? `: ${capabilities.problems.charts}` : ''}.`
       );
     }
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
+    if (!(await orgFeatures(target.tenantId)).charts) {
+      return sendError(
+        response,
+        503,
+        'charts_unavailable',
+        'Charts are not enabled for this organization (admin → Settings → Sandbox).'
+      );
+    }
     const parsed = parseChartRequest(body);
     if (!parsed.ok) return sendError(response, 400, parsed.type, parsed.message);
     try {
@@ -924,10 +963,9 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       );
     }
     if (request.method === 'GET' && url.pathname === '/health') {
-      return sendJson(response, 200, {
-        ok: true,
-        scripts: deps.scriptsStatus ?? (deps.scripts ? 'isolated' : 'disabled'),
-      });
+      // What this worker can do, for the web app's feature resolution
+      // (@renkei/sandbox-client sandboxFeatures) and an operator's curl.
+      return sendJson(response, 200, { ok: true, capabilities });
     }
     if (!authorized(request, deps.apiKeys)) {
       return sendError(response, 401, 'unauthorized');

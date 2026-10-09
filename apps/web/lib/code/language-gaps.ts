@@ -58,7 +58,7 @@ let availability: { at: number; languages: string[] } | null = null;
 
 /** Which servers the worker can start, remembered for a minute; none when workspaces are off. */
 async function availableServers(target: SandboxTarget): Promise<string[]> {
-  if (!sandboxWorkspacesEnabled()) return [];
+  if (!(await sandboxWorkspacesEnabled(target.tenantId))) return [];
   const now = Date.now();
   if (availability && now - availability.at < AVAILABILITY_TTL_MS) return availability.languages;
   const listed = await sbLspLanguages(target);

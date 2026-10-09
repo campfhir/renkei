@@ -11,6 +11,7 @@ import type { AddressInfo } from 'node:net';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { createSandboxServer } from './server';
+import { ALL_ORG_FEATURES } from './features';
 import { ScriptRunError, type ScriptRunner } from './scripts';
 
 const API_KEY = 'test-worker-key';
@@ -46,13 +47,25 @@ beforeAll(async () => {
     db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     scripts: runner,
+    scriptsNetworkIsolation: 'netns',
+    orgFeatures: async () => ALL_ORG_FEATURES,
   });
-  disabledServer = createSandboxServer({ db: {} as Kysely<DB>, apiKeys: [API_KEY] });
+  // The interpreter is there; this organization has not turned scripts on.
+  disabledServer = createSandboxServer({
+    db: {} as Kysely<DB>,
+    apiKeys: [API_KEY],
+    scripts: runner,
+    scriptsNetworkIsolation: 'netns',
+    orgFeatures: async () => ({ ...ALL_ORG_FEATURES, scripts: false }),
+  });
+  // No network isolation here, and this organization has not accepted
+  // runs on the container's network.
   unavailableServer = createSandboxServer({
     db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
-    scriptsStatus: 'unavailable',
-    scriptsUnavailable: 'Scripts are unavailable on this deployment: no network isolation.',
+    scripts: runner,
+    scriptsNetworkIsolation: null,
+    orgFeatures: async () => ({ ...ALL_ORG_FEATURES, scriptsAllowNetwork: false }),
   });
   enabledBase = await listen(enabledServer);
   disabledBase = await listen(disabledServer);
@@ -79,23 +92,23 @@ describe('/v1/scripts/run', () => {
     expect(json.error.type).toBe('scripts_unavailable');
   });
 
-  it('is closed with the boot decision’s reason where no network isolation works, and /health says so', async () => {
+  it('is closed with the reason where no network isolation works and the org has not opted in, and /health says what the worker can do', async () => {
     const { status, json } = await post(unavailableBase, 'scripts/run', {
       ...TARGET,
       code: 'print(1)',
     });
     expect(status).toBe(503);
     expect(json.error.type).toBe('scripts_unavailable');
-    expect(json.error.message).toMatch(/no network isolation/);
+    expect(json.error.message).toMatch(/cannot start a script without network access/);
     expect(run).not.toHaveBeenCalled();
-    const health = (await (await fetch(`${unavailableBase}/health`)).json()) as {
-      scripts: string;
-    };
-    expect(health.scripts).toBe('unavailable');
-    const served = (await (await fetch(`${enabledBase}/health`)).json()) as { scripts: string };
-    expect(served.scripts).toBe('isolated');
-    const off = (await (await fetch(`${disabledBase}/health`)).json()) as { scripts: string };
-    expect(off.scripts).toBe('disabled');
+    type Health = { capabilities: { scripts: string } };
+    const health = (await (await fetch(`${unavailableBase}/health`)).json()) as Health;
+    expect(health.capabilities.scripts).toBe('network_only');
+    const served = (await (await fetch(`${enabledBase}/health`)).json()) as Health;
+    expect(served.capabilities.scripts).toBe('isolated');
+    // The organization's switch is not the worker's to report.
+    const off = (await (await fetch(`${disabledBase}/health`)).json()) as Health;
+    expect(off.capabilities.scripts).toBe('isolated');
   });
 
   it('requires a bearer key', async () => {

@@ -58,7 +58,7 @@ Vets 4212 Emp Category, Vets 4212 Job Category, Workers Comp Code.
 ## Requirements
 
 - Familiarity with the Paycom API — webhooks are an extension of it.
-  A webhook notification only tells you *something* changed; you make a
+  A webhook notification only tells you _something_ changed; you make a
   follow-up API call to retrieve the detailed information.
 - A webhook endpoint (a web server able to accept requests from Paycom —
   .NET, PHP, or similar).
@@ -96,31 +96,31 @@ Example resulting header:
 
 ## Possible Webhooks
 
-| Event | Description | Use | Next Step |
-| --- | --- | --- | --- |
-| Subscribed | Notifies you a new subscription was set up. | Notification of new event subscription | None — notification only |
-| Verification URL | Sent when verifying a new webhook setup; carries an authorization code that must be entered into Paycom to finalize setup. Failure to enter it prevents further notifications. Once a URL is validated, no further validation is required. | Validate a new webhook URL | Use the registration code to verify the webhook URL |
-| Ping | Manually triggered from the Paycom Webhook Interface, for testing. | Test a webhook URL | None — notification only |
-| New Hire Created | Fired when a new hire is created (New Employee Queue). | Know when a new hire is added | API call to get new hire information |
-| New Hire Deleted | Fired when a new hire is archived (New Employee Queue). | Know when a new hire is archived | Stop any process concerning that new hire in other systems |
-| New Hire Self Onboarding Completed | Fired when new-hire self-onboarding (entering personal info) completes. | Know self-onboarding finished | API call to get new hire information |
-| Employee Added | Fired when an employee is added — via import, manual add, or new-hire → employee conversion. | Know a new hire converted / an employee was added manually; most HR workflows need IT resources allocated at this point | API call to get employee information; trigger IT onboarding (create accounts, service-desk tickets for equipment, etc.) |
-| Employee Photo Added | Fired when an employee's photo is updated. | Know a photo was updated | API call to retrieve the photo and update other systems (e.g. Active Directory) |
-| Employee Change | Fired for any selected subscribed employee change; includes a direct API link (callback URL) to the change. | Know some employee information changed | API call to retrieve the change and update other systems |
-| Unsubscribed | Notifies you a subscription was deleted in the Webhook Configuration menu. | Know an event subscription was removed | Consider alerting if this wasn't intentional |
+| Event                              | Description                                                                                                                                                                                                                                | Use                                                                                                                     | Next Step                                                                                                               |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Subscribed                         | Notifies you a new subscription was set up.                                                                                                                                                                                                | Notification of new event subscription                                                                                  | None — notification only                                                                                                |
+| Verification URL                   | Sent when verifying a new webhook setup; carries an authorization code that must be entered into Paycom to finalize setup. Failure to enter it prevents further notifications. Once a URL is validated, no further validation is required. | Validate a new webhook URL                                                                                              | Use the registration code to verify the webhook URL                                                                     |
+| Ping                               | Manually triggered from the Paycom Webhook Interface, for testing.                                                                                                                                                                         | Test a webhook URL                                                                                                      | None — notification only                                                                                                |
+| New Hire Created                   | Fired when a new hire is created (New Employee Queue).                                                                                                                                                                                     | Know when a new hire is added                                                                                           | API call to get new hire information                                                                                    |
+| New Hire Deleted                   | Fired when a new hire is archived (New Employee Queue).                                                                                                                                                                                    | Know when a new hire is archived                                                                                        | Stop any process concerning that new hire in other systems                                                              |
+| New Hire Self Onboarding Completed | Fired when new-hire self-onboarding (entering personal info) completes.                                                                                                                                                                    | Know self-onboarding finished                                                                                           | API call to get new hire information                                                                                    |
+| Employee Added                     | Fired when an employee is added — via import, manual add, or new-hire → employee conversion.                                                                                                                                               | Know a new hire converted / an employee was added manually; most HR workflows need IT resources allocated at this point | API call to get employee information; trigger IT onboarding (create accounts, service-desk tickets for equipment, etc.) |
+| Employee Photo Added               | Fired when an employee's photo is updated.                                                                                                                                                                                                 | Know a photo was updated                                                                                                | API call to retrieve the photo and update other systems (e.g. Active Directory)                                         |
+| Employee Change                    | Fired for any selected subscribed employee change; includes a direct API link (callback URL) to the change.                                                                                                                                | Know some employee information changed                                                                                  | API call to retrieve the change and update other systems                                                                |
+| Unsubscribed                       | Notifies you a subscription was deleted in the Webhook Configuration menu.                                                                                                                                                                 | Know an event subscription was removed                                                                                  | Consider alerting if this wasn't intentional                                                                            |
 
 ## Common Payload Fields
 
-| Field | Description |
-| --- | --- |
-| `Event_ID` | Unique ID of the webhook event. Process each ID only once — duplicate deliveries can happen. |
-| `Event_Name` | Friendly description of the event. |
-| `Event_DateTime` | UTC time of the event (Unix timestamp). |
-| `ClientCode` | Client code the event pertains to — useful when listening across multiple Paycom client instances. |
-| `Resource` / `Resource_Identifier` / `Object` / `Object_Identifier` | Identify what the event is about. |
-| `Data` | Varies per webhook; see examples below. |
-| `Endpoint` | Recommended API endpoint to use to gather more information. |
-| `EndpointUrl` | Direct API link to the data (relative — does not include the base API URL). |
+| Field                                                               | Description                                                                                        |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `Event_ID`                                                          | Unique ID of the webhook event. Process each ID only once — duplicate deliveries can happen.       |
+| `Event_Name`                                                        | Friendly description of the event.                                                                 |
+| `Event_DateTime`                                                    | UTC time of the event (Unix timestamp).                                                            |
+| `ClientCode`                                                        | Client code the event pertains to — useful when listening across multiple Paycom client instances. |
+| `Resource` / `Resource_Identifier` / `Object` / `Object_Identifier` | Identify what the event is about.                                                                  |
+| `Data`                                                              | Varies per webhook; see examples below.                                                            |
+| `Endpoint`                                                          | Recommended API endpoint to use to gather more information.                                        |
+| `EndpointUrl`                                                       | Direct API link to the data (relative — does not include the base API URL).                        |
 
 ## Example Payloads
 

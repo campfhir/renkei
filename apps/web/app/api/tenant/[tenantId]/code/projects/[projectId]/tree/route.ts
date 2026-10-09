@@ -42,7 +42,7 @@ export async function GET(
     return jsonError(404, 'not-found', 'No such project');
   const path = new URL(request.url).searchParams.get('path') ?? '';
 
-  const workspace = sandboxWorkspacesEnabled() ? await projectWorkspace(project) : null;
+  const workspace = (await sandboxWorkspacesEnabled(tenantId)) ? await projectWorkspace(project) : null;
   if (workspace?.status === 'ready' && project.workspaceId) {
     const listed = await sbWorkspaceLs(codeProjectTarget(tenantId, projectId), {
       id: project.workspaceId,

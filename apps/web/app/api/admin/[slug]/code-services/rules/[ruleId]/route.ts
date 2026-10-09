@@ -22,7 +22,7 @@ async function operatorTenant(slug: string): Promise<{ id: string } | NextRespon
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (!sandboxServicesEnabled()) {
+  if (!(await sandboxServicesEnabled(tenant.id))) {
     return NextResponse.json(
       { error: 'Code project services are not enabled on this deployment', enabled: false },
       { status: 503 }

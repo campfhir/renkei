@@ -9,12 +9,14 @@
 
 jest.mock('@/lib/sandbox/service-client', () => ({
   sandboxConfig: jest.fn(() => ({ url: 'http://sandbox.internal:8092', key: 'k' })),
-  sandboxBrowserEnabled: jest.fn(() => false),
-  sandboxWorkspacesEnabled: jest.fn(() => false),
-  sandboxChartsEnabled: jest.fn(() => true),
-  sandboxScriptsEnabled: jest.fn(() => false),
-  sandboxScriptsServed: jest.fn(() => false),
-  sandboxScriptsAllowNetwork: jest.fn(() => false),
+  sandboxFeatures: jest.fn(async () => ({
+    browser: false,
+    charts: true,
+    workspaces: false,
+    services: false,
+    scripts: false,
+    scriptsNetworkShared: false,
+  })),
   clientFailure: jest.fn((error: { kind: string; type?: string; message?: string }) => ({
     status: 400,
     message: error.message ?? `failed: ${error.type ?? error.kind}`,
@@ -34,6 +36,19 @@ import type { MCPToolContext } from '../common';
 
 const client = jest.requireMock<Record<string, jest.Mock>>('@/lib/sandbox/service-client');
 
+/** The org's sandbox features as the mock answers them, overrides applied. */
+function features(overrides: Partial<Record<string, boolean>> = {}) {
+  return {
+    browser: false,
+    charts: false,
+    workspaces: false,
+    services: false,
+    scripts: false,
+    scriptsNetworkShared: false,
+    ...overrides,
+  };
+}
+
 type Handler = (
   args: Record<string, unknown>
 ) => Promise<{ content: { text: string }[]; isError?: boolean }>;
@@ -42,14 +57,14 @@ interface Registered {
   handler: Handler;
 }
 
-function collect(context: MCPToolContext): Map<string, Registered> {
+async function collect(context: MCPToolContext): Promise<Map<string, Registered>> {
   const tools = new Map<string, Registered>();
   const server = {
     registerTool: (name: string, config: Registered['config'], handler: Handler) => {
       tools.set(name, { config, handler });
     },
   } as unknown as McpServer;
-  registerSandboxTools(server, context);
+  await registerSandboxTools(server, context);
   return tools;
 }
 
@@ -80,24 +95,24 @@ const SOURCE = 'xychart-beta\n  x-axis [Q1, Q2]\n  bar [1, 2]';
 
 beforeEach(() => {
   jest.clearAllMocks();
-  client.sandboxChartsEnabled.mockReturnValue(true);
+  client.sandboxFeatures.mockResolvedValue(features({ charts: true }));
 });
 
 describe('sandbox_render_chart', () => {
-  it('is an act tool that explains Mermaid text, registered only where charts are enabled', () => {
-    const tools = collect(context());
+  it('is an act tool that explains Mermaid text, registered only where charts are enabled', async () => {
+    const tools = await collect(context());
     const tool = tools.get('sandbox_render_chart');
     expect(tool?.config.annotations?.readOnlyHint).toBe(false);
     expect(tool?.config.description).toMatch(/xychart-beta/);
     expect(tool?.config.description).toMatch(/sandbox_send_to_upload/);
 
-    client.sandboxChartsEnabled.mockReturnValue(false);
-    expect(collect(context()).has('sandbox_render_chart')).toBe(false);
+    client.sandboxFeatures.mockResolvedValue(features());
+    expect((await collect(context())).has('sandbox_render_chart')).toBe(false);
   });
 
   it('stages the chart with the request checked and defaulted, and answers the file and its size', async () => {
     client.sbChartStage.mockResolvedValue({ ok: true, val: STAGED });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_render_chart')!
       .handler({ source: SOURCE, filename: 'sales' });
@@ -121,7 +136,7 @@ describe('sandbox_render_chart', () => {
 
   it('carries every option through, correcting the filename’s extension to the format', async () => {
     client.sbChartStage.mockResolvedValue({ ok: true, val: STAGED });
-    const tools = collect(context());
+    const tools = await collect(context());
     await tools.get('sandbox_render_chart')!.handler({
       source: SOURCE,
       format: 'pdf',
@@ -142,7 +157,7 @@ describe('sandbox_render_chart', () => {
   });
 
   it('refuses a bad option or a path before asking the worker', async () => {
-    const tools = collect(context());
+    const tools = await collect(context());
     const handler = tools.get('sandbox_render_chart')!.handler;
     const badTheme = await handler({ source: SOURCE, theme: 'solarized' });
     expect(badTheme.isError).toBe(true);
@@ -166,7 +181,7 @@ describe('sandbox_render_chart', () => {
         message: 'Mermaid could not draw this diagram: Parse error on line 2',
       },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_render_chart')!
       .handler({ source: 'flowchart LR\n  A --> ' });
@@ -175,7 +190,7 @@ describe('sandbox_render_chart', () => {
   });
 
   it('refuses without a signed-in identity before touching the worker', async () => {
-    const tools = collect(context(''));
+    const tools = await collect(context(''));
     const result = await tools.get('sandbox_render_chart')!.handler({ source: SOURCE });
     expect(result.isError).toBe(true);
     expect(client.sbChartStage).not.toHaveBeenCalled();

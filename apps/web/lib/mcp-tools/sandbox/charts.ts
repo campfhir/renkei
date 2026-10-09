@@ -9,8 +9,9 @@
  * (apps/web/lib/chat/chart-tools.ts) renders the same way and attaches
  * the result to the chat directly instead.
  *
- * Registered only where the deployment renders charts
- * (SANDBOX_CHARTS_ENABLED on the worker and here) — closed, never open.
+ * Registered only where the organization has charts on and the worker
+ * can draw them (@renkei/sandbox-client sandboxFeatures) — closed, never
+ * open.
  */
 
 import { z } from 'zod';

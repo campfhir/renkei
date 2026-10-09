@@ -214,7 +214,7 @@ the file's language, and a coloured text box otherwise. The shape:
   row per tenant, extension, language and reason, with how many opens,
   when, and the last path. Nothing in the app reads it; it is the
   operator's `SELECT extension, language, reason, open_count FROM
-  code_language_gaps ORDER BY open_count DESC` for deciding which
+code_language_gaps ORDER BY open_count DESC` for deciding which
   server to add next.
 - **Not in this cut.** Rename and workspace-wide edits (an edit to a file
   the pane has not loaded would be silently dropped, so they are not

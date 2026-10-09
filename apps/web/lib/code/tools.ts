@@ -102,8 +102,8 @@ export interface CodeToolBinding {
   /** The chat is in auto mode: its sub-agents run under auto mode's long limits (delegate.ts). */
   auto?: boolean;
   /**
-   * Whether the deployment lets a project start services — containers
-   * beside the checkout (SANDBOX_SERVICES_ENABLED on both sides). Off,
+   * Whether the organization lets a project start services — containers
+   * beside the checkout (its Settings → Sandbox switch). Off,
    * the code_service_* tools do not exist in the turn.
    */
   servicesEnabled?: boolean;

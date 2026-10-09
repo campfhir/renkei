@@ -47,11 +47,9 @@ services:
       DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WEB:-renkei-dev-delegate-key-web}
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
-      # On in dev so the sandbox_browser_* tools are there to try; must
-      # match worker-sandbox's setting below. Same for the code workspaces.
-      SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
-      SANDBOX_WORKSPACES_ENABLED: ${SANDBOX_WORKSPACES_ENABLED:-true}
-      SANDBOX_SERVICES_ENABLED: ${SANDBOX_SERVICES_ENABLED:-false}
+      # Which sandbox features an organization gets (the browser, charts,
+      # code workspaces, services, scripts) is that organization's own
+      # setting — admin → Settings → Sandbox — not a variable here.
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.
       RENKEI_WEB_INTERNAL_URL: http://127.0.0.1:3000
@@ -353,8 +351,9 @@ services:
   # SANDBOX_WORKER_URL with the shared bearer key; the dev default below
   # keeps the stack turnkey — export SANDBOX_WORKER_API_KEY to override
   # both sides at once. The image also carries the headless Chromium behind
-  # the sandbox_browser_* tools; SANDBOX_BROWSER_ENABLED turns it on here
-  # and registers the tools in the app (same variable on both).
+  # the sandbox_browser_* tools, a chart renderer, code workspaces and a
+  # Python for scripts; each organization turns the features it wants on
+  # under admin → Settings → Sandbox, and the worker serves what it can.
   worker-sandbox:
     build:
       context: .
@@ -374,23 +373,20 @@ services:
       # delegate's per-caller map reserves for this service).
       DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
       DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_SANDBOX:-renkei-dev-delegate-key-sandbox}
-      SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
-      # Code workspaces (docs/sandbox-workspaces-design.md): on by default
-      # in the dev stack, same variable on both sides. The env-secret key
-      # defaults to the dev TOKEN_ENCRYPTION_KEY fallback inside the worker.
-      SANDBOX_WORKSPACES_ENABLED: ${SANDBOX_WORKSPACES_ENABLED:-true}
+      # Code workspaces (docs/sandbox-workspaces-design.md): the env-secret
+      # key defaults to the dev TOKEN_ENCRYPTION_KEY fallback inside the
+      # worker.
       SANDBOX_ENV_SECRETS_KEY: ${SANDBOX_ENV_SECRETS_KEY:-}
       # Code project services — containers beside a checkout from the
-      # org's allowed images — need a Docker engine; off unless
-      # SANDBOX_SERVICES_ENABLED=true is exported (same variable on the
-      # app service). The engine is reached through the socket proxy
-      # below (`--profile services`), never by mounting the host's socket
-      # here: the socket is the engine, and a proxy that allows only the
-      # container, image and network calls the worker makes is the most
-      # this container should be able to ask of it. SANDBOX_CONTAINER_ID
+      # org's allowed images — need a Docker engine, reached through the
+      # socket proxy below (`--profile services`), never by mounting the
+      # host's socket here: the socket is the engine, and a proxy that
+      # allows only the container, image and network calls the worker
+      # makes is the most this container should be able to ask of it.
+      # Without the profile the engine does not answer at boot and the
+      # worker reports services as a capability it lacks. SANDBOX_CONTAINER_ID
       # is this container's own name, so the worker can join the services
       # network it creates.
-      SANDBOX_SERVICES_ENABLED: ${SANDBOX_SERVICES_ENABLED:-false}
       SANDBOX_DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-tcp://renkei-docker-proxy:2375}
       SANDBOX_CONTAINER_ID: renkei-worker-sandbox
       NODE_ENV: production
@@ -418,9 +414,8 @@ services:
   # allowed — containers, images and networks, with POST so it can create,
   # start and stop them. Everything else (exec, volumes, the daemon's own
   # configuration, other containers' logs) is refused. Off unless started
-  # with `docker compose --profile services up`, alongside
-  # SANDBOX_SERVICES_ENABLED=true; without the profile the worker refuses
-  # to start with that flag set and says the engine does not answer.
+  # with `docker compose --profile services up`; without the profile the
+  # worker finds no engine at boot and reports services unavailable.
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
     container_name: renkei-docker-proxy
@@ -444,6 +439,15 @@ services:
     container_name: renkei-dev-migrate
     environment:
       DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
+      # Migration 152 carries a deployment's sandbox switches into each
+      # organization's settings once; passed through so a `.env` that set
+      # them keeps the same features on. Unread after that.
+      SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-}
+      SANDBOX_CHARTS_ENABLED: ${SANDBOX_CHARTS_ENABLED:-}
+      SANDBOX_WORKSPACES_ENABLED: ${SANDBOX_WORKSPACES_ENABLED:-}
+      SANDBOX_SERVICES_ENABLED: ${SANDBOX_SERVICES_ENABLED:-}
+      SANDBOX_SCRIPTS_ENABLED: ${SANDBOX_SCRIPTS_ENABLED:-}
+      SANDBOX_SCRIPTS_ALLOW_NETWORK: ${SANDBOX_SCRIPTS_ALLOW_NETWORK:-}
     depends_on:
       postgres:
         condition: service_healthy

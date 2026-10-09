@@ -105,8 +105,10 @@ import { logger } from './logger';
 
 export interface WorkspaceHandlerDeps {
   db: Kysely<DB>;
-  /** Whether workspaces are enabled on this worker at all (SANDBOX_WORKSPACES_ENABLED). */
-  enabled: boolean;
+  /** Whether this worker can run commands for a caller at all (features.ts); off answers every verb 503. */
+  capable: boolean;
+  /** Whether the organization has code workspaces on (its settings), asked per request. */
+  enabledFor: (tenantId: string) => Promise<boolean>;
   /**
    * The variables the caller's running services add to a command
    * (services.ts): SERVICE_<NAME>_HOST and friends, and each service's
@@ -190,6 +192,33 @@ function gitText(result: RunResult): string {
 }
 
 export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
+  /**
+   * The two-part gate every workspace verb passes (features.ts): this
+   * worker can run commands at all, and the organization has workspaces
+   * on. Answers the 503 itself and says which half failed.
+   */
+  async function enabled(tenantId: string, response: ServerResponse): Promise<boolean> {
+    if (!deps.capable) {
+      sendError(
+        response,
+        503,
+        'workspaces_unavailable',
+        'Code workspaces are not available on this deployment.'
+      );
+      return false;
+    }
+    if (!(await deps.enabledFor(tenantId))) {
+      sendError(
+        response,
+        503,
+        'workspaces_unavailable',
+        'Code workspaces are not enabled for this organization (admin → Settings → Sandbox).'
+      );
+      return false;
+    }
+    return true;
+  }
+
   const { db } = deps;
   const lsp = deps.lsp ?? new LspSessions();
 
@@ -1241,15 +1270,9 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   // ─── Environment secrets ──────────────────────────────────────────────
 
   async function handleEnv(op: string, body: Body, response: ServerResponse): Promise<void> {
-    if (!deps.enabled)
-      return sendError(
-        response,
-        503,
-        'workspaces_unavailable',
-        'Code workspaces are not enabled on this deployment.'
-      );
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
+    if (!(await enabled(target.tenantId, response))) return;
     const key = envSecretsKey();
     if (!key) {
       return sendError(
@@ -1372,17 +1395,11 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
    * The bytes land as they are, uncommitted, owned by the project's uid.
    */
   async function handleUpload(url: URL, bytes: Buffer, response: ServerResponse): Promise<void> {
-    if (!deps.enabled)
-      return sendError(
-        response,
-        503,
-        'workspaces_unavailable',
-        'Code workspaces are not enabled on this deployment.'
-      );
     const tenantId = url.searchParams.get('tenantId') ?? '';
     const subject = url.searchParams.get('subject') ?? '';
     const id = url.searchParams.get('id') ?? '';
     if (!tenantId || !subject || !id) return sendError(response, 400, 'bad_request');
+    if (!(await enabled(tenantId, response))) return;
     const target = { tenantId, subject };
     const path = validateWorkspacePath(url.searchParams.get('path'), { forWrite: true });
     if (!path.ok || !path.path)
@@ -1532,15 +1549,9 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   }
 
   async function handleWorkspaces(op: string, body: Body, response: ServerResponse): Promise<void> {
-    if (!deps.enabled)
-      return sendError(
-        response,
-        503,
-        'workspaces_unavailable',
-        'Code workspaces are not enabled on this deployment.'
-      );
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
+    if (!(await enabled(target.tenantId, response))) return;
     if (op.startsWith('lsp/')) return handleLsp(op.slice('lsp/'.length), target, body, response);
     switch (op) {
       case 'clone':
@@ -1577,7 +1588,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
    * grace after which no instance has it and the row alone goes.
    */
   async function sweep(limit: number): Promise<void> {
-    if (!deps.enabled) return;
+    if (!deps.capable) return;
     const expired = await store.listExpiredWorkspaces(db, limit);
     for (const workspace of expired) {
       try {

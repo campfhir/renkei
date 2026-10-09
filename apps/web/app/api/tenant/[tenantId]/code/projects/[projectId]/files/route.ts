@@ -89,7 +89,7 @@ export async function GET(
     language,
   });
 
-  const workspace = sandboxWorkspacesEnabled() ? await projectWorkspace(project) : null;
+  const workspace = (await sandboxWorkspacesEnabled(tenantId)) ? await projectWorkspace(project) : null;
   if (workspace?.status === 'ready' && project.workspaceId) {
     const read = await sbWorkspaceRead(codeProjectTarget(tenantId, projectId), {
       id: project.workspaceId,

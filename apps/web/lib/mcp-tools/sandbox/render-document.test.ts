@@ -9,12 +9,14 @@
 
 jest.mock('@/lib/sandbox/service-client', () => ({
   sandboxConfig: jest.fn(() => ({ url: 'http://sandbox.internal:8092', key: 'k' })),
-  sandboxBrowserEnabled: jest.fn(() => false),
-  sandboxWorkspacesEnabled: jest.fn(() => false),
-  sandboxChartsEnabled: jest.fn(() => false),
-  sandboxScriptsEnabled: jest.fn(() => false),
-  sandboxScriptsServed: jest.fn(() => false),
-  sandboxScriptsAllowNetwork: jest.fn(() => false),
+  sandboxFeatures: jest.fn(async () => ({
+    browser: false,
+    charts: false,
+    workspaces: false,
+    services: false,
+    scripts: false,
+    scriptsNetworkShared: false,
+  })),
   clientFailure: jest.fn((error: { kind: string; type?: string; message?: string }) => ({
     status: 400,
     message: error.message ?? `failed: ${error.type ?? error.kind}`,
@@ -41,14 +43,14 @@ interface Registered {
   handler: Handler;
 }
 
-function collect(context: MCPToolContext): Map<string, Registered> {
+async function collect(context: MCPToolContext): Promise<Map<string, Registered>> {
   const tools = new Map<string, Registered>();
   const server = {
     registerTool: (name: string, config: Registered['config'], handler: Handler) => {
       tools.set(name, { config, handler });
     },
   } as unknown as McpServer;
-  registerSandboxTools(server, context);
+  await registerSandboxTools(server, context);
   return tools;
 }
 
@@ -75,8 +77,8 @@ beforeEach(() => {
 });
 
 describe('sandbox_render_document', () => {
-  it('is an act tool', () => {
-    const tools = collect(context());
+  it('is an act tool', async () => {
+    const tools = await collect(context());
     expect(tools.get('sandbox_render_document')?.config.annotations?.readOnlyHint).toBe(false);
   });
 
@@ -85,7 +87,7 @@ describe('sandbox_render_document', () => {
       ok: true,
       val: { ...STAGED, filename: 'notes.md', contentType: 'text/markdown' },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_render_document')!
       .handler({ filename: 'notes.md', content: '# Sprint notes\n\nDone.' });
@@ -106,7 +108,7 @@ describe('sandbox_render_document', () => {
 
   it('renders a document format from Markdown before staging it', async () => {
     client.sbWriteFile.mockResolvedValue({ ok: true, val: STAGED });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools.get('sandbox_render_document')!.handler({
       filename: 'brief.docx',
       content: '# Sprint review\n\n- Item one\n- Item two\n',
@@ -129,7 +131,7 @@ describe('sandbox_render_document', () => {
       ok: true,
       val: { ...STAGED, filename: 'memo.pdf', contentType: 'application/pdf' },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_render_document')!
       .handler({ filename: 'memo.pdf', content: '# 連携\n\nLinkage.' });
@@ -139,7 +141,7 @@ describe('sandbox_render_document', () => {
   });
 
   it('refuses a format nothing here can produce, without staging anything', async () => {
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_render_document')!
       .handler({ filename: 'report.xls', content: 'a,b' });
@@ -152,7 +154,7 @@ describe('sandbox_render_document', () => {
   });
 
   it('refuses a path or an empty name before rendering or staging anything', async () => {
-    const tools = collect(context());
+    const tools = await collect(context());
     for (const filename of ['../etc/passwd', 'a/b.csv', 'a\\b.csv', '', '..']) {
       const result = await tools
         .get('sandbox_render_document')!
@@ -167,7 +169,7 @@ describe('sandbox_render_document', () => {
       ok: false,
       err: { kind: 'op', type: 'quota_exceeded', message: 'scratch space is full' },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_render_document')!
       .handler({ filename: 'notes.txt', content: 'hi' });
@@ -177,7 +179,7 @@ describe('sandbox_render_document', () => {
   });
 
   it('refuses without a signed-in identity before touching the worker', async () => {
-    const tools = collect(context(''));
+    const tools = await collect(context(''));
     const result = await tools
       .get('sandbox_render_document')!
       .handler({ filename: 'notes.txt', content: 'hi' });
