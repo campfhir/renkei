@@ -370,7 +370,13 @@ export async function seed(client: Client): Promise<void> {
   await client.query('DELETE FROM oauth_clients WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM tenants WHERE id = $1', [E2E_TENANT_ID]);
 
-  await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [E2E_TENANT_ID, E2E_SLUG]);
+  // Verified at creation: the sign-in page routes a domain only to a tenant
+  // whose domain_verified_at is set (migration 146), and nothing in e2e
+  // publishes DNS records.
+  await client.query('INSERT INTO tenants (id, slug, domain_verified_at) VALUES ($1, $2, NOW())', [
+    E2E_TENANT_ID,
+    E2E_SLUG,
+  ]);
 
   await client.query(
     `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)

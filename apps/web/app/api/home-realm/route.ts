@@ -42,21 +42,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     const db = dbResult.val;
 
-    // Check if tenant exists for this domain via tenant_domains table
-    const tenant = await db
+    // The tenant claiming this domain — and whether that claim is proven.
+    // Only a tenant whose domain_verified_at is set is routable from here
+    // (migration 146): a tenant created for a domain its creator does not
+    // control must never receive that domain's sign-ins.
+    const claim = await db
       .selectFrom('tenants')
       .leftJoin('tenant_domains', 'tenants.id', 'tenant_domains.tenant_id')
       .where('tenant_domains.domain', '=', domain)
-      .select(['tenants.id', 'tenants.slug'])
+      .select(['tenants.id', 'tenants.slug', 'tenants.domain_verified_at'])
       .executeTakeFirst();
+    const tenant = claim?.domain_verified_at ? claim : null;
 
     if (!tenant) {
-      // Domain not found - redirect to create organization flow
       const originResult = await getOrigin(request);
       if (!originResult.ok) {
         return NextResponse.json({ error: 'Config error' }, { status: 500 });
       }
       const origin = originResult.val;
+      if (claim) {
+        // Claimed but unproven: the onboarding page explains the TXT record
+        // without naming the tenant — its id belongs to whoever created it.
+        return NextResponse.redirect(
+          new URL(`/create-organization?domain=${encodeURIComponent(domain)}&pending=1`, origin)
+        );
+      }
+      // Domain not found - redirect to create organization flow
       return NextResponse.redirect(
         new URL(`/create-organization?domain=${encodeURIComponent(domain)}`, origin)
       );

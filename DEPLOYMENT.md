@@ -823,6 +823,28 @@ pg_dump -U jira_mcp jira_mcp_db | gzip > /backups/jira_mcp_$(date +%Y%m%d).sql.g
 find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
 ```
 
+## Onboarding a new organization
+
+Self-service onboarding (`/create-organization`) mints a tenant for an email
+domain nobody has claimed and, since migration 146, hands the creator two
+things nobody else sees:
+
+- a **one-time onboarding secret**, valid 24 hours, that the first
+  (unauthenticated) identity-provider save must present
+  (`X-Renkei-Bootstrap-Secret`); it is spent on use. A tenant that exists
+  with no identity provider and no secret — one created before the
+  migration, or whose secret expired — cannot be claimed through the form;
+  an operator configures it directly (`tenant_oidc`) or deletes it and the
+  creator starts again;
+- a **DNS TXT record** `renkei-verify=<token>` to publish on the domain.
+  Until `POST /api/tenant/<id>/verify-domain` sees it, the home page does
+  not route that domain's addresses to the tenant (the creator can still
+  sign in by the direct `/api/auth/oidc/login?tenantId=` link). Every
+  tenant that existed at the migration is marked verified.
+
+Asking to create a tenant for a domain that is already claimed answers 409
+without the tenant's id.
+
 ## Security Checklist
 
 - [x] HTTPS enabled (TLS 1.2+)

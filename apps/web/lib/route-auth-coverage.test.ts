@@ -93,6 +93,9 @@ const PUBLIC: Record<string, string> = {
   'api/home-realm/create/route.ts':
     'self-service onboarding — no session can exist before the first tenant; ' +
     'throttled per-client and globally (checkInboundLimit)',
+  'api/tenant/[tenantId]/verify-domain/route.ts':
+    'DNS TXT ownership check for onboarding — before any session can exist; it proves ' +
+    'control of the domain, writes nothing but the verified timestamp, and is throttled (checkInboundLimit)',
   'api/manifest/[slug]/route.ts':
     "the tenant-scoped Web App Manifest linked from [slug]/layout.tsx's generateMetadata; " +
     'a manifest is fetched by the OS before any page runs, same as the public icon it names, ' +
