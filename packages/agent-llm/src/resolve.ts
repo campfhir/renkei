@@ -14,7 +14,7 @@
 
 import { sql, type Kysely, type SqlBool } from 'kysely';
 import type { DB } from '@renkei/db';
-import { decrypt, parseEncryptionKey } from '@renkei/crypto';
+import { decrypt, loadKeyring } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmProvider } from './contract';
@@ -149,7 +149,7 @@ function buildProvider(row: ModelRow, apiKey: string): Result<LlmProvider, Resol
 
 /** The row's API key, decrypted with the deployment key at the moment of use. */
 function apiKeyOf(row: ModelRow): Result<string, ResolveLlmError> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return err('CONFIG_ERROR' as const, { message: 'Encryption key missing' });
 
   if (!row.encrypted_secrets) {

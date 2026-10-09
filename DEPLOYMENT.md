@@ -23,6 +23,12 @@ ATLASSIAN_REDIRECT_URI=https://yourdomain.com/api/oauth/callback
 # Encryption
 # Generate each with: openssl rand -base64 32
 TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
+# To rotate, set the plural form instead — the NEW key first, the old one
+# behind it — and follow "Rotating TOKEN_ENCRYPTION_KEY" below. The same
+# plural form exists for LOG_ENCRYPTION_KEYS, CONTENT_ENCRYPTION_KEYS and
+# SANDBOX_ENV_SECRETS_KEYS. With one key and no rotation under way the
+# singular is all that is needed.
+# TOKEN_ENCRYPTION_KEYS=<new-key>,<old-key>
 # MIGRATION ONLY (docs/delegate-key-design.md, "Phases 2–5 as built"): the
 # master that pre-enrollment (managed) keys were derived from. People hold
 # their own keys now; the delegate reads this variable in exactly one
@@ -34,10 +40,21 @@ TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
 #   pnpm --filter @renkei/user-keys rekey-chats --all
 # with this variable (and TOKEN_ENCRYPTION_KEY) in the environment.
 # USER_KEY_ENCRYPTION_KEY=<32-byte-base64-key>
-# Every process but the delegate reaches it here, for keys, provider
-# tokens and the connector workers (compose wires the service name).
-# DELEGATE_WORKER_URL=http://renkei-worker-delegate:8096
-# DELEGATE_WORKER_API_KEY=<shared bearer key>
+# Every process but the delegate reaches it at DELEGATE_WORKER_URL
+# (docker-compose.yaml wires the service name on each one), for keys,
+# provider tokens and the connector workers — each caller with ITS OWN
+# bearer key, so a key that leaks from one container names which one and
+# is rotated alone. All four are required by the compose file; generate
+# each with `openssl rand -base64 32`. The delegate takes the four as
+# DELEGATE_WORKER_API_KEYS=web=…,worker=…,agents=…,sandbox=… (compose
+# builds that map from these), and the same four as a plain
+# comma-separated DELEGATE_WORKER_API_KEY for a delegate image from before
+# the map. Outside compose, set DELEGATE_WORKER_URL and the caller's key
+# as DELEGATE_WORKER_API_KEY on each process yourself.
+DELEGATE_KEY_WEB=<32-byte-base64-key>
+DELEGATE_KEY_WORKER=<32-byte-base64-key>
+DELEGATE_KEY_AGENTS=<32-byte-base64-key>
+DELEGATE_KEY_SANDBOX=<32-byte-base64-key>
 # A code workspace's git goes through the delegate's /git/<ticket>/… proxy
 # (no bearer key; the short-lived ticket is the credential). The web app
 # builds that proxy URL from DELEGATE_WORKER_URL; set this only when the
@@ -45,7 +62,22 @@ TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
 # DELEGATE_GIT_URL=http://renkei-worker-delegate:8096
 
 # Database
-DATABASE_URL=postgresql://user:password@postgres.example.com:5432/jira_mcp_db
+# docker-compose.yaml builds DATABASE_URL itself from these three — the
+# bundled postgres container is created with the same values, so there is
+# exactly one place to set the password and no default to forget to change
+# (`docker compose up` refuses to start while POSTGRES_PASSWORD is unset).
+# Hex rather than base64 so the password needs no URL-escaping in the URL.
+POSTGRES_PASSWORD=<openssl rand -hex 32>
+# POSTGRES_USER=renkei
+# POSTGRES_DB=renkei
+# Query string appended to the compose-built URL. The bundled postgres is
+# reached over the private compose network only and speaks no TLS, so leave
+# it empty there. Against a managed Postgres (drop the postgres service and
+# set DATABASE_URL below instead) always require a verified TLS session:
+# DATABASE_URL_PARAMS=?sslmode=verify-full
+#
+# Outside compose (systemd, a PaaS), set the URL directly:
+DATABASE_URL=postgresql://user:password@postgres.example.com:5432/jira_mcp_db?sslmode=verify-full
 
 # Server
 PUBLIC_BASE_URL=https://yourdomain.com
@@ -132,13 +164,31 @@ Every push to `main` that passes CI (lint, typecheck, tests) also builds
 and publishes the nine images `docker-compose.yaml` pulls — `renkei`,
 `renkei-migrate`, `renkei-worker`, `renkei-fileshares`, `renkei-onbase`,
 `renkei-mirth`, `renkei-admanager`, `renkei-delegate`, `renkei-sandbox` —
-to Docker Hub from the `docker` job in `.github/workflows/ci.yml`. Each image is pushed under two tags: `latest`
-and the version in `apps/web/package.json` (the version every app in the
-workspace shares, and the same one `scripts/docker-build.sh` stamps). Bump
-that version when a release should keep its own tag; until then a new push
-to `main` overwrites both tags. Images are built for `linux/amd64`, with
-the short commit baked in as `GIT_COMMIT` so log rows name the exact build.
-Pull requests never publish.
+to Docker Hub from the `docker` job in `.github/workflows/ci.yml`. Each
+image is pushed under three tags: `latest`, the version in
+`apps/web/package.json` (the version every app in the workspace shares,
+and the same one `scripts/docker-build.sh` stamps), and the full commit
+SHA, so a deployment can pin exactly the build it tested
+(`image: scotteremiaroden/renkei:<sha>`) rather than whatever `latest`
+has become. Bump the version when a release should keep its own tag;
+until then a new push to `main` overwrites `latest` and the version tag.
+Images are built for `linux/amd64`, with the short commit baked in as
+`GIT_COMMIT` so log rows name the exact build. Pull requests never
+publish.
+
+Before the push, every image is scanned by Trivy: a fixable `HIGH` or
+`CRITICAL` in the OS packages or in `node_modules` fails that image's job
+and nothing of it is pushed (the dated baseline is `.trivyignore`; the
+same list by GHSA id gates `pnpm audit` in `pnpm-workspace.yaml`). Each
+pushed image carries a SLSA provenance attestation (`mode=max`: the
+workflow, commit and build arguments that produced it) and an SBOM,
+attached to its manifest; read them with
+`docker buildx imagetools inspect scotteremiaroden/renkei:<tag> --format '{{ json .Provenance }}'`
+(or `.SBOM`). The base images in `docker/Dockerfile` and the third-party
+images both compose files pull are pinned by digest as well as tag, and
+the sandbox image's toolchain downloads (Go, rustup, the Temurin JDK,
+jdtls) are exact versions checked against their vendors' published
+checksums; Dependabot proposes the next digest or version.
 
 The job needs two repository secrets (Settings → Secrets and variables →
 Actions): `DOCKERHUB_USERNAME`, the Docker Hub account to log in as, and
@@ -171,10 +221,12 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   calls today; a future batch kind is a new handler, not a new queue). Item
   work is slow, external, per-item network I/O, the same reasoning that
   moved embedding work off the interactive queue — so it never sits in
-  front of a webhook reply either. Reaches `worker-fileshares` and
-  `worker-sandbox` directly (`FILESHARES_WORKER_URL`/`SANDBOX_WORKER_URL`
-  - their bearer keys, same as the web app uses) to read source documents
-    and stage OCR results. Entrypoint: `pnpm --filter @renkei/worker start:batch-jobs`.
+  front of a webhook reply either. Reads source documents from a file
+  share through the delegate (`DELEGATE_WORKER_URL`, the worker key; the
+  person's own share credential is attached there) and stages OCR results
+  on `worker-sandbox` directly (`SANDBOX_WORKER_URL` and its bearer key,
+  same as the web app uses). Entrypoint:
+  `pnpm --filter @renkei/worker start:batch-jobs`.
 - `worker-fileshares` — not a queue consumer but an internal HTTP service,
   and not on the shared worker image: it ships as its **own image**
   (`renkei-fileshares`, the `fileshares` target in `docker/Dockerfile`,
@@ -182,9 +234,9 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   the only process that opens SMB/SFTP sessions or decrypts file-share
   credentials, so its container carries exactly the protocol stack and
   none of the queue workers' dependencies — and it rolls out without
-  restarting them. The web app reaches it at `FILESHARES_WORKER_URL`
+  restarting them. The delegate reaches it at `FILESHARES_WORKER_URL`
   (compose wires `http://renkei-worker-fileshares:8090`) presenting the
-  shared bearer key `FILESHARES_WORKER_API_KEY` — set both in `.env`
+  shared bearer key `FILESHARES_WORKER_API_KEY` — set the key in `.env`
   (`openssl rand -base64 32` makes a good key; the worker also honors
   `FILESHARES_WORKER_PORT`, default 8090). Without them the file-share
   connector answers "service not configured" everywhere — closed, never
@@ -195,9 +247,9 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   the only process that dials a customer's on-prem OnBase API Server or
   Hyland IdP — hosts the web app's SSRF guard refuses by design — doing
   OIDC discovery, the PKCE token exchange, refresh, and all Document API
-  calls. The web app reaches it at `ONBASE_WORKER_URL` (compose wires
+  calls. The delegate reaches it at `ONBASE_WORKER_URL` (compose wires
   `http://renkei-worker-onbase:8091`) presenting the shared bearer key
-  `ONBASE_WORKER_API_KEY` — set both in `.env` (the worker also honors
+  `ONBASE_WORKER_API_KEY` — set the key in `.env` (the worker also honors
   `ONBASE_WORKER_PORT`, default 8091). Without them the OnBase connector
   answers "worker not configured" everywhere — closed, never open.
   Entrypoint: `pnpm --filter @renkei/worker-onbase start`.
@@ -220,16 +272,39 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   token. The sandbox must be able to reach the delegate; when it does so
   at an address other than `DELEGATE_WORKER_URL`, set `DELEGATE_GIT_URL`
   on the app. The app and every other worker reach it at
-  `DELEGATE_WORKER_URL` with `DELEGATE_WORKER_API_KEY` (listen port
-  `DELEGATE_WORKER_PORT`, default 8096). It also needs
-  `TOKEN_ENCRYPTION_KEY` (the OAuth client secrets in connector config),
-  `DATABASE_URL`, and the `*_WORKER_URL` / `*_WORKER_API_KEY` pairs of the
-  connector workers below, which the app no longer holds; and, only while
-  people who have not enrolled remain, `USER_KEY_ENCRYPTION_KEY` (above).
-  Without it, no chat opens and no connector acts: fail closed, never
-  open. A restart is a new instance: browsers seal again on their next
-  page load, and runs in flight resume then. Entrypoint:
-  `pnpm --filter @renkei/worker-delegate start`; image target `delegate`.
+  `DELEGATE_WORKER_URL` (listen port `DELEGATE_WORKER_PORT`, default
+  8096), each presenting its own bearer key: `DELEGATE_KEY_WEB` (the web
+  app), `DELEGATE_KEY_WORKER` (`worker`, `embeddings-worker`,
+  `worker-batch-jobs` — one image, one identity), `DELEGATE_KEY_AGENTS`
+  and `DELEGATE_KEY_SANDBOX`, all four in `.env` (`openssl rand -base64 32`
+  each). `docker-compose.yaml` hands each service its key as
+  `DELEGATE_WORKER_API_KEY` and the delegate the map
+  `DELEGATE_WORKER_API_KEYS=web=…,worker=…,agents=…,sandbox=…` (plus the
+  same four as a plain list in `DELEGATE_WORKER_API_KEY`, which an image
+  from before the map reads). A production process started without
+  `DELEGATE_WORKER_URL` logs an error at boot saying so (it would
+  otherwise only fail each operation with `DELEGATE_UNCONFIGURED`). The
+  delegate also needs `TOKEN_ENCRYPTION_KEY` (the OAuth client secrets in
+  connector config), `DATABASE_URL`, and the `*_WORKER_URL` /
+  `*_WORKER_API_KEY` pairs of the connector workers below, which the app
+  no longer holds (compose sets the URLs on the delegate; the keys come
+  from `.env`); and, only while people who have not enrolled remain,
+  `USER_KEY_ENCRYPTION_KEY` (above). Without it, no chat opens and no
+  connector acts: fail closed, never open. A restart is a new instance:
+  browsers seal again on their next page load, and runs in flight resume
+  then. Entrypoint: `pnpm --filter @renkei/worker-delegate start`; image
+  target `delegate`.
+- `worker-admanager` — the same shape for ManageEngine ADManager Plus: an
+  internal HTTP service on its **own image** (`renkei-admanager`, the
+  `admanager` target in `docker/Dockerfile`). It is the only process that
+  dials an organization's ADManager Plus servers or decrypts a person's
+  stored authtoken. The delegate reaches it at `ADMANAGER_WORKER_URL`
+  (compose wires `http://renkei-worker-admanager:8095`) presenting the
+  shared bearer key `ADMANAGER_WORKER_API_KEY` — set it in `.env`
+  (`openssl rand -base64 32`; the worker also honors
+  `ADMANAGER_WORKER_PORT`, default 8095). Without it the ADManager
+  connector answers "service not configured" everywhere — closed, never
+  open. Entrypoint: `pnpm --filter @renkei/worker-admanager start`.
 - `worker-mirth` — the same shape for Mirth Connect (NextGen Connect
   4.5.2): an internal HTTP service on its **own image** (`renkei-mirth`, the
   `mirth` target in `docker/Dockerfile`, opt-in prompts in the build/push
@@ -238,9 +313,9 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   Mirth Connect (dev, test, prod…), typically on private networks the web
   app's SSRF guard refuses by design — or decrypts a person's stored Mirth
   credential. It logs in as that person, keeps one session per (instance,
-  person), and proxies every REST route. The web app reaches it at
+  person), and proxies every REST route. The delegate reaches it at
   `MIRTH_WORKER_URL` (compose wires `http://renkei-worker-mirth:8093`)
-  presenting the shared bearer key `MIRTH_WORKER_API_KEY` — set both in
+  presenting the shared bearer key `MIRTH_WORKER_API_KEY` — set the key in
   `.env` (`openssl rand -base64 32` makes a good key; the worker also honors
   `MIRTH_WORKER_PORT`, default 8093). Without them the Mirth connector
   answers "service not configured" everywhere — closed, never open.
@@ -352,9 +427,17 @@ DESC` says which server to add next.
   `CAP_SETUID`/`CAP_SETGID`/`CAP_SETPCAP` held — Docker's defaults) and
   refuses to start otherwise, saying why. A
   command has the container's network (a project's install and tests
-  need it), so a deployment that enables workspaces should give this
-  service its own network with a route out and none to postgres or the
-  other workers. `SANDBOX_ENV_SECRETS_KEY` (`openssl rand -base64 32`)
+  need it), which is why `docker-compose.yaml` puts this service on the
+  `renkei-sandbox` network alone — a route out, plus the web app and the
+  delegate's git proxy, which join that network to be reached — and
+  postgres and every other worker on `renkei-internal`, which the sandbox
+  is not on. The same file drops every capability from this container
+  but the seven the uid drop needs (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
+  `KILL`, `SETGID`, `SETUID`, `SETPCAP`), sets `no-new-privileges` (a
+  setuid binary in a checkout cannot regain root; setpriv's drop is a
+  loss of privilege and still works), and runs every stateless service
+  with a read-only root filesystem and no capabilities at all. Keep that
+  shape on any other platform. `SANDBOX_ENV_SECRETS_KEY` (`openssl rand -base64 32`)
   seals the `.env` a code project's commands run with
   (migration 101, `sandbox_env_secrets`); it falls back to
   `TOKEN_ENCRYPTION_KEY`, and a dedicated key is the recommendation so the
@@ -371,16 +454,20 @@ DESC` says which server to add next.
 chats get, and the Organization → Code services page) and this worker —
 lets a project's chat start a container beside its checkout (Postgres,
 Redis, a broker) for the project's tests, from the images the
-organization allows. The worker needs a Docker engine for that:
-uncomment the `/var/run/docker.sock` mount on `worker-sandbox` in
-`docker-compose.yaml`, or run a socket proxy (docker-socket-proxy with
-`CONTAINERS`, `IMAGES`, `NETWORKS` and `POST` allowed and nothing else)
-and point `SANDBOX_DOCKER_HOST=tcp://<proxy>:2375` at it — the proxy is
-the recommendation where it can be had, since the raw socket is the
-engine itself. Either way the socket is root's inside the container: a
-project's own commands run as other uids (above) and cannot open it;
-what may run is decided by this worker against the organization's
-rules, never by a command. The worker refuses to start with the flag
+organization allows. The worker needs a Docker engine for that, and it
+should get one only through a socket proxy: `docker-compose.yml` (dev)
+carries a `docker-socket-proxy` service (tecnativa/docker-socket-proxy
+with `CONTAINERS`, `IMAGES`, `NETWORKS` and `POST` allowed and nothing
+else — no exec, no volumes, no daemon configuration) behind the
+`services` profile, with the host's socket mounted read-only into the
+proxy and `SANDBOX_DOCKER_HOST=tcp://renkei-docker-proxy:2375` on the
+worker; start the stack with `docker compose --profile services up`.
+Copy that arrangement into a deployment that wants services — never
+mount `/var/run/docker.sock` into `worker-sandbox` itself, since the raw
+socket is the engine and so the host. The proxy is root's to reach
+inside the sandbox container: a project's own commands run as other uids
+(above) and cannot speak to it; what may run is decided by this worker
+against the organization's rules, never by a command. The worker refuses to start with the flag
 set and no engine answering, saying so. Services are created on an
 internal Docker network (`SANDBOX_SERVICES_NETWORK`, default
 `renkei-sandbox-services`; no route out of it), which this container
@@ -412,12 +499,23 @@ formats, with what the script writes staged back under the same quota as
 any other file. Independent of workspaces (no checkout is involved), but
 with the same arrangement for who runs it: with the flag set the
 entrypoint keeps the worker root so each run is dropped to its caller's
-own uid, and — where the kernel lets this container make a network
-namespace — started with no network at all. Docker's default profile
-withholds that (`unshare` needs `CAP_SYS_ADMIN`); the worker says so at
-boot and in every result, and a deployment that wants scripts fully
-offline adds `cap_add: [SYS_ADMIN]` to `worker-sandbox` in compose,
-weighing that capability against the rest of what the container holds.
+own uid, and started with no network at all — a network namespace of its
+own (`unshare --net`). Creating that namespace needs `CAP_SYS_ADMIN`,
+which `docker-compose.yaml` deliberately withholds from `worker-sandbox`
+(it drops every capability and adds back only the seven setpriv, chown
+and kill need); the worker is being changed to refuse a script it cannot
+isolate rather than run it on the container's network. Do **not** answer
+that with `cap_add: [SYS_ADMIN]` — it is most of root, in the one
+container that runs other people's code. The supported answer is
+**user-namespace isolation** on the host: `"userns-remap": "default"` in
+`/etc/docker/daemon.json` (then restart the daemon; existing volumes need
+their ownership shifted once, see Docker's userns-remap documentation).
+Under it the container's root is an unprivileged uid on the host, every
+file the worker writes is owned by a subordinate uid, a breakout lands as
+nobody, and the kernel lets that unprivileged root create its own user
+and network namespaces — which is what `unshare --net` needs — without
+any capability the container does not already hold. The same setting is
+worth turning on for the whole stack regardless of scripts.
 The image carries the interpreter at `/opt/sandbox-python` (pandas,
 numpy, openpyxl, XlsxWriter, pinned in `docker/Dockerfile`);
 `SANDBOX_PYTHON` points at another. A run's directory is made under
@@ -857,13 +955,97 @@ Error: "Redirect URI mismatch"
 
 ### Token Encryption Errors
 
-Error: "TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key"
+Error: "TOKEN_ENCRYPTION_KEY must decode to 32 bytes" (or the same of
+`TOKEN_ENCRYPTION_KEYS`, `LOG_ENCRYPTION_KEY(S)`, `CONTENT_ENCRYPTION_KEY(S)`)
 
-**Solution:** Regenerate the key:
+The variable is set to something that is not a base64 32-byte key — a
+truncated paste, a key with a trailing character, a comma-separated ring
+with one bad entry (the whole ring is refused rather than the bad key
+dropped, since dropping it would leave every row under it unreadable).
+**Fix the value; do not regenerate it.** Every connector secret, model
+API key, OIDC client secret and knowledge chunk the deployment holds is
+sealed under the key that is set, and a fresh key opens none of them. To
+move to a new key on purpose, follow the runbook below.
 
-```bash
-openssl rand -base64 32
-```
+### Rotating TOKEN_ENCRYPTION_KEY
+
+Secrets are sealed in an envelope that names its key (`v2.<kid>.…`, the
+first 8 hex characters of SHA-256 of the key; rows from before rotation
+existed are `v1.…` and name none), and every process reads its key as a
+**ring**: `TOKEN_ENCRYPTION_KEYS=<current>,<previous>,...` — the first
+key seals, every key opens (a `v2` by its kid, a `v1` by trying each in
+turn). `TOKEN_ENCRYPTION_KEY` alone is a ring of one. Rotation is
+therefore four steps, with no downtime and the old key kept until nothing
+names it:
+
+1. **Add the new key in front.** Generate it (`openssl rand -base64 32`)
+   and set, on **every** service that has `TOKEN_ENCRYPTION_KEY` today
+   (`.env` for the compose stack — the web app, every worker and the
+   delegate read it):
+
+   ```bash
+   TOKEN_ENCRYPTION_KEYS=<new-key>,<old-key>
+   ```
+
+   Restart the services. From here new writes are sealed under the new
+   key and existing rows still open under the old one. Nothing is
+   unreadable at any point in this step; a service that has not restarted
+   yet can still open everything (the new rows are the only thing it
+   cannot, until it restarts).
+
+2. **Rewrap what is still under the old key.** From a checkout, with
+   `DATABASE_URL` and the same ring in the environment:
+
+   ```bash
+   TOKEN_ENCRYPTION_KEYS=<new-key>,<old-key> pnpm --filter @renkei/user-keys rewrap --dry-run
+   TOKEN_ENCRYPTION_KEYS=<new-key>,<old-key> pnpm --filter @renkei/user-keys rewrap
+   ```
+
+   It walks `connector_configs.encrypted_secrets`,
+   `llm_model_configs.encrypted_secrets`, `tenant_oidc.client_secret`,
+   `platform_settings.vapid_keys`, `knowledge_chunks.content`,
+   `sandbox_env_secrets.sealed` and
+   `code_service_image_rules.registry_sealed` in batches of 200, opens
+   each `v1` or old-kid value with the ring and seals it again under the
+   current key. It is resumable (a row already under the current key is
+   never read again) and safe to run while the services are up (a row
+   someone saves meanwhile is left as they saved it — under the new key).
+   It exits 1 and names any row **no** key of the ring opens: that is a
+   value sealed under a key that was dropped too early, and the fix is to
+   put that key back behind the current one and run again. Do not go on
+   while it reports any.
+
+   `CONTENT_ENCRYPTION_KEY` and `SANDBOX_ENV_SECRETS_KEY`, when set apart
+   from the token key, rotate the same way (`CONTENT_ENCRYPTION_KEYS`,
+   `SANDBOX_ENV_SECRETS_KEYS`; the same `rewrap` run reads all three).
+   `LOG_ENCRYPTION_KEYS` rotates with step 1 alone: there is nothing to
+   rewrap, the ring keeps old log rows readable and retention ages them
+   out. The sandbox worker's own sealed files on `/data` (unlocked secret
+   keys for their window, browser sessions) are not rewrapped either —
+   each expires in hours, and one that straddles the rotation asks its
+   owner to unlock or sign in again.
+
+3. **Verify.** A clean `rewrap` (0 unreadable) and, if you want to see it,
+   `SELECT count(*) FROM connector_configs WHERE encrypted_secrets NOT LIKE 'v2.<new-kid>.%'`
+   is 0 — the new kid is the first 8 characters of
+   `echo -n "<new-key>" | base64 -d | sha256sum`. Open a connector's
+   settings page and a chat that uses a configured model: both read
+   through the new key now.
+
+4. **Drop the old key.** Set `TOKEN_ENCRYPTION_KEYS=<new-key>` (or back
+   to `TOKEN_ENCRYPTION_KEY=<new-key>`) everywhere and restart. Keep the
+   old key in your secrets manager for a while regardless: a database
+   backup taken before step 2 still needs it, and restoring one means
+   putting it back behind the current key and running `rewrap` again.
+
+A key that has **leaked** is rotated the same way — the steps are in the
+order that keeps the service up — but step 4 is the one that matters and
+should follow the rewrap immediately; until it does, the leaked key still
+opens every row the rewrap has not reached, and (on a service not yet
+restarted onto the ring) seals new ones. Consider the connector secrets
+themselves (OAuth client secrets, API keys) compromised and regenerate
+them at their providers; the rotation protects what is written from here
+on, it does not un-leak what was readable.
 
 ### High Memory Usage
 

@@ -12,7 +12,7 @@
  * everything, by design.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { logger } from '@/lib/logger';
 
@@ -35,7 +35,7 @@ export interface ZoomApp {
 
 /** The tenant's Zoom app, or null when not (fully) configured. */
 export async function getZoomApp(tenantId: string, origin: string): Promise<ZoomApp | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/zoom',

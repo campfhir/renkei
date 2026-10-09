@@ -30,10 +30,41 @@ export type DelegateCallError = Err<string>;
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
-export function delegateConfigFromEnv(env: NodeJS.ProcessEnv = process.env): DelegateConfig | null {
+let unconfiguredReported = false;
+
+/** Test-only: let the next unconfigured boot say so again. */
+export function resetDelegateUnconfiguredReportForTests(): void {
+  unconfiguredReported = false;
+}
+
+/**
+ * Reads DELEGATE_WORKER_URL / DELEGATE_WORKER_API_KEY. Every process calls
+ * this once at boot (DelegateClient.fromEnv, DelegateGrants.fromEnv), so
+ * this is also where a production process with no delegate says so — once,
+ * at error level, instead of only as `DELEGATE_UNCONFIGURED` on each op
+ * later: with no delegate no chat opens and no connector acts, and the
+ * compose file that forgot the service should be found at boot, not from
+ * the first person's failed request. Development stays quiet, since a
+ * developer may well run the app without one.
+ */
+export function delegateConfigFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  report: (message: string) => void = (message) => console.error(message)
+): DelegateConfig | null {
   const url = env.DELEGATE_WORKER_URL?.trim();
   const apiKey = env.DELEGATE_WORKER_API_KEY?.trim();
-  if (!url || !apiKey) return null;
+  if (!url || !apiKey) {
+    if (env.NODE_ENV === 'production' && !unconfiguredReported) {
+      unconfiguredReported = true;
+      const missing = [!url && 'DELEGATE_WORKER_URL', !apiKey && 'DELEGATE_WORKER_API_KEY']
+        .filter(Boolean)
+        .join(' and ');
+      report(
+        `ERROR [delegate-client]: ${missing} not set in production — the delegate is unreachable from this process, so every key, token and connector operation will answer DELEGATE_UNCONFIGURED (docker-compose.yaml wires both on each service; DEPLOYMENT.md, "worker-delegate").`
+      );
+    }
+    return null;
+  }
   return { url: url.replace(/\/+$/, ''), apiKey };
 }
 

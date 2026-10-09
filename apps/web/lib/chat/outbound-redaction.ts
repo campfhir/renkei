@@ -15,7 +15,7 @@
  * Best effort, like the gate: it never blocks or fails a turn.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import type { OrgSettings } from '@renkei/settings';
 import {
   createPseudonymizer,
@@ -31,7 +31,7 @@ export interface OutboundRedactor {
   apply(text: string): { text: string; counts: Record<string, number> };
 }
 
-const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
 const redactionKey = deriveRedactionKey(keyResult.ok ? keyResult.val : null);
 
 export function createOutboundRedactor(

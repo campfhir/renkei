@@ -3,18 +3,22 @@ services:
     # Matches docker-compose.yaml (the deploy stack). Postgres majors are not
     # binary compatible, so a dev/prod split here means testing migrations on a
     # different engine than they run on.
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
     container_name: renkei-postgres
     environment:
       POSTGRES_USER: renkei
-      POSTGRES_PASSWORD: renkei
+      # DEV ONLY: a fixed default so `docker compose up` is turnkey on a
+      # laptop. The deploy stack (docker-compose.yaml) has no default and
+      # refuses to start without POSTGRES_PASSWORD in .env. Export it here
+      # too to run the dev stack with a real password.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-renkei}
       POSTGRES_DB: renkei
     ports:
-      - "5432:5432"
+      - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U renkei"]
+      test: ['CMD-SHELL', 'pg_isready -U renkei']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -29,15 +33,18 @@ services:
     env_file:
       - apps/web/.env.development
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       PORT: 3000
       HOST: 0.0.0.0
       NODE_ENV: production
       # The connector workers (file shares, OnBase, Mirth, ADManager Plus) are
       # reached through the delegate, which attaches the person's credential;
       # the app holds neither their addresses nor their keys any more.
+      # One delegate key per caller (DELEGATE_KEY_WEB / _WORKER / _AGENTS /
+      # _SANDBOX, see worker-delegate below); the dev defaults keep the
+      # stack turnkey, export the variables to override both sides at once.
       DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
-      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WEB:-renkei-dev-delegate-key-web}
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
       # On in dev so the sandbox_browser_* tools are there to try; must
@@ -57,31 +64,33 @@ services:
       AZURE_BLOB_ENDPOINT: http://azurite:10000/devstoreaccount1
       AZURE_BLOB_CONTAINER: renkei-chat
     ports:
-      - "3000:3000"
+      - '3000:3000'
     depends_on:
       postgres:
         condition: service_healthy
-      # Azure Blob Storage emulator for chat attachments (packages/blob-store).
-  # Production points AZURE_BLOB_* at a real storage account instead; the
-  # container is created on first use, so no init step is needed here.
-  azurite:
-    image: mcr.microsoft.com/azure-storage/azurite:latest
-    container_name: renkei-azurite
-    command: ['azurite-blob', '--blobHost', '0.0.0.0', '--skipApiVersionCheck', '--location', '/data']
-    ports:
-      - "10000:10000"
-    volumes:
-      - azurite_data:/data
-
-  migrate:
+      migrate:
         condition: service_completed_successfully
       azurite:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      test:
+        ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:3000/api/health']
       interval: 10s
       timeout: 5s
       retries: 3
+
+  # Azure Blob Storage emulator for chat attachments (packages/blob-store).
+  # Production points AZURE_BLOB_* at a real storage account instead; the
+  # container is created on first use, so no init step is needed here.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.9.0@sha256:a5479e27ec4224a9d03a228397f03f86dcc7282f84ac63007d6dd7c115208892
+    container_name: renkei-azurite
+    command:
+      ['azurite-blob', '--blobHost', '0.0.0.0', '--skipApiVersionCheck', '--location', '/data']
+    ports:
+      - '10000:10000'
+    volumes:
+      - azurite_data:/data
 
   worker:
     build:
@@ -91,11 +100,11 @@ services:
     image: renkei-worker:latest
     container_name: renkei-worker
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       # Reaches the delegate for chat keys (and, for the queue worker, the
       # file-share ops its batch jobs run on a person's own credential).
       DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
-      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker}
       NODE_ENV: production
     depends_on:
       postgres:
@@ -117,7 +126,9 @@ services:
     container_name: renkei-embeddings-worker
     command: ['pnpm', '--filter', '@renkei/worker', 'start:embeddings']
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
+      DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker}
       NODE_ENV: production
     depends_on:
       postgres:
@@ -141,11 +152,11 @@ services:
     image: renkei-worker:latest
     command: ['pnpm', '--filter', '@renkei/worker-agents', 'start']
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
-      # Reaches the delegate for chat keys (and, for the queue worker, the
-      # file-share ops its batch jobs run on a person's own credential).
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
+      # Reaches the delegate for chat keys and provider tokens, with the
+      # agents worker's own key.
       DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
-      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_AGENTS:-renkei-dev-delegate-key-agents}
       RENKEI_WEB_INTERNAL_URL: http://app:3000
       # The chat retention sweep deletes attachment blobs; same emulator
       # settings as the app service.
@@ -164,9 +175,10 @@ services:
   # The batch-jobs worker (document-ocr-pipeline and future batch kinds):
   # same image as `worker`, different entrypoint — the embeddings pattern.
   # Its own queue (batch_job_messages) because item work — an OCR call per
-  # document — is slow, external, per-item I/O. Reaches the fileshare and
-  # sandbox services directly (to read source documents and stage OCR
-  # results) with the same dev bearer-key defaults those services use.
+  # document — is slow, external, per-item I/O. Reads source documents
+  # from a file share through the delegate (the person's own credential
+  # attached there) and stages OCR results on the sandbox service directly,
+  # with the same dev bearer-key default that service uses.
   worker-batch-jobs:
     build:
       context: .
@@ -175,10 +187,10 @@ services:
     image: renkei-worker:latest
     command: ['pnpm', '--filter', '@renkei/worker', 'start:batch-jobs']
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       NODE_ENV: production
-      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
-      FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
+      DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker}
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
     depends_on:
@@ -204,7 +216,7 @@ services:
     env_file:
       - apps/web/.env.development
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
       NODE_ENV: production
     depends_on:
@@ -231,7 +243,7 @@ services:
     env_file:
       - apps/web/.env.development
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       ONBASE_WORKER_API_KEY: ${ONBASE_WORKER_API_KEY:-renkei-dev-onbase-key}
       NODE_ENV: production
     depends_on:
@@ -256,7 +268,7 @@ services:
     env_file:
       - apps/web/.env.development
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       MIRTH_WORKER_API_KEY: ${MIRTH_WORKER_API_KEY:-renkei-dev-mirth-key}
       NODE_ENV: production
     depends_on:
@@ -270,8 +282,10 @@ services:
   # seals its person's key to this instance's public key, and the delegate
   # opens that to unwrap a chat's or project's data key and a person's
   # sealed values, on behalf of the app and the other workers, which reach
-  # it via DELEGATE_WORKER_URL with the shared DELEGATE_WORKER_API_KEY and
-  # hold no key themselves. USER_KEY_ENCRYPTION_KEY is migration-only: set
+  # it via DELEGATE_WORKER_URL, each with its own bearer key (the
+  # DELEGATE_KEY_* variables; DELEGATE_WORKER_API_KEYS below maps caller to
+  # key, DELEGATE_WORKER_API_KEY lists the same keys for a build from before
+  # the map), and hold no key themselves. USER_KEY_ENCRYPTION_KEY is migration-only: set
   # it while people from before held keys have not enrolled, drop it after. It also holds every provider token and relays a
   # code workspace's git for the sandbox worker (/git/<ticket>/…), which
   # reaches it by the same service name on this network.
@@ -285,8 +299,9 @@ services:
     env_file:
       - apps/web/.env.development
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
-      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
+      DELEGATE_WORKER_API_KEYS: web=${DELEGATE_KEY_WEB:-renkei-dev-delegate-key-web},worker=${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker},agents=${DELEGATE_KEY_AGENTS:-renkei-dev-delegate-key-agents},sandbox=${DELEGATE_KEY_SANDBOX:-renkei-dev-delegate-key-sandbox}
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WEB:-renkei-dev-delegate-key-web},${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker},${DELEGATE_KEY_AGENTS:-renkei-dev-delegate-key-agents},${DELEGATE_KEY_SANDBOX:-renkei-dev-delegate-key-sandbox}
       USER_KEY_ENCRYPTION_KEY: ${USER_KEY_ENCRYPTION_KEY:-}
       # The connector workers the delegate forwards to, with the person's
       # credential attached (forward/<connector>/<op>).
@@ -322,7 +337,7 @@ services:
     env_file:
       - apps/web/.env.development
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       ADMANAGER_WORKER_API_KEY: ${ADMANAGER_WORKER_API_KEY:-renkei-dev-admanager-key}
       NODE_ENV: production
     depends_on:
@@ -351,8 +366,13 @@ services:
     env_file:
       - apps/web/.env.development
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
+      # The sandbox's own delegate key (a workspace's git reaches the
+      # delegate by ticket, not by this key; it is the caller identity the
+      # delegate's per-caller map reserves for this service).
+      DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_SANDBOX:-renkei-dev-delegate-key-sandbox}
       SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
       # Code workspaces (docs/sandbox-workspaces-design.md): on by default
       # in the dev stack, same variable on both sides. The env-secret key
@@ -360,21 +380,23 @@ services:
       SANDBOX_WORKSPACES_ENABLED: ${SANDBOX_WORKSPACES_ENABLED:-true}
       SANDBOX_ENV_SECRETS_KEY: ${SANDBOX_ENV_SECRETS_KEY:-}
       # Code project services — containers beside a checkout from the
-      # org's allowed images — need the engine socket below; off unless
+      # org's allowed images — need a Docker engine; off unless
       # SANDBOX_SERVICES_ENABLED=true is exported (same variable on the
-      # app service). SANDBOX_CONTAINER_ID is this container's own name,
-      # so the worker can join the services network it creates.
+      # app service). The engine is reached through the socket proxy
+      # below (`--profile services`), never by mounting the host's socket
+      # here: the socket is the engine, and a proxy that allows only the
+      # container, image and network calls the worker makes is the most
+      # this container should be able to ask of it. SANDBOX_CONTAINER_ID
+      # is this container's own name, so the worker can join the services
+      # network it creates.
       SANDBOX_SERVICES_ENABLED: ${SANDBOX_SERVICES_ENABLED:-false}
+      SANDBOX_DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-tcp://renkei-docker-proxy:2375}
       SANDBOX_CONTAINER_ID: renkei-worker-sandbox
       NODE_ENV: production
       NODE_OPTIONS: --max-old-space-size=1024
     volumes:
       - sandbox_data:/data
       - sandbox_workspaces:/workspaces
-      # The host's Docker engine, for code project services (above). Root
-      # inside the container; a project's own commands run as other uids
-      # and cannot open it.
-      - /var/run/docker.sock:/var/run/docker.sock
     # Same sizing as the deploy stack (docker-compose.yaml): the browser
     # needs headroom and a real /dev/shm, and should be the last thing the
     # kernel kills. Export SANDBOX_WORKER_MEMORY to raise the cap.
@@ -388,6 +410,30 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # The Docker engine for code project services, behind a socket proxy
+  # (tecnativa/docker-socket-proxy): the host's socket is mounted HERE,
+  # read-only, and the sandbox worker speaks to this proxy over TCP
+  # (SANDBOX_DOCKER_HOST above) with only the API sections the worker uses
+  # allowed — containers, images and networks, with POST so it can create,
+  # start and stop them. Everything else (exec, volumes, the daemon's own
+  # configuration, other containers' logs) is refused. Off unless started
+  # with `docker compose --profile services up`, alongside
+  # SANDBOX_SERVICES_ENABLED=true; without the profile the worker refuses
+  # to start with that flag set and says the engine does not answer.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
+    container_name: renkei-docker-proxy
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    security_opt:
+      - no-new-privileges:true
+    profiles: ['services']
+
   migrate:
     build:
       context: .
@@ -396,7 +442,7 @@ services:
     image: renkei-migrate:latest
     container_name: renkei-dev-migrate
     environment:
-      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
     depends_on:
       postgres:
         condition: service_healthy

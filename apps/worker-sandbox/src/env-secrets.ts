@@ -26,7 +26,7 @@
  * opened with the wrong key.
  */
 
-import { decrypt, encrypt, parseEncryptionKey } from '@renkei/crypto';
+import { decrypt, encrypt, parseKeyring } from '@renkei/crypto';
 import { scrubSecretValues } from '@renkei/connector-sandbox';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
@@ -36,15 +36,22 @@ const PREFIX = 'env1.';
 
 let cachedKey: Buffer | null | undefined;
 
-/** The sealing key, resolved once: SANDBOX_ENV_SECRETS_KEY, else TOKEN_ENCRYPTION_KEY, else none. */
+/**
+ * The sealing key, resolved once: SANDBOX_ENV_SECRETS_KEY, else
+ * TOKEN_ENCRYPTION_KEY, else none — each as a keyring (the `..._KEYS`
+ * form, current first and previous behind it, while a rotation is under
+ * way; secretbox.ts), so a value sealed under the previous key still opens.
+ */
 export function envSecretsKey(): Buffer | null {
   if (cachedKey !== undefined) return cachedKey;
   const raw = (
-    process.env.SANDBOX_ENV_SECRETS_KEY ??
-    process.env.TOKEN_ENCRYPTION_KEY ??
+    process.env.SANDBOX_ENV_SECRETS_KEYS ||
+    process.env.SANDBOX_ENV_SECRETS_KEY ||
+    process.env.TOKEN_ENCRYPTION_KEYS ||
+    process.env.TOKEN_ENCRYPTION_KEY ||
     ''
   ).trim();
-  const parsed = raw ? parseEncryptionKey(raw) : null;
+  const parsed = raw ? parseKeyring(raw) : null;
   cachedKey = parsed && parsed.ok ? parsed.val : null;
   return cachedKey;
 }

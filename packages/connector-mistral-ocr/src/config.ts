@@ -9,7 +9,7 @@
  * directly rather than each re-deriving it.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import type { MistralOcrConfig } from './types';
 
@@ -27,7 +27,7 @@ export type ResolveMistralOcrError = 'unconfigured' | 'db_error';
 export async function resolveMistralOcrConfig(
   tenantId: string
 ): Promise<{ ok: true; val: MistralOcrConfig } | { ok: false; err: ResolveMistralOcrError }> {
-  const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!key.ok) return { ok: false, err: 'unconfigured' };
 
   const configResult = await readConnectorConfigCached(tenantId, MISTRAL_OCR_CONNECTOR, key.val);

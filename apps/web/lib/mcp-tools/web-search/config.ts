@@ -22,7 +22,7 @@
  *   secrets.apiKey           the resource's API key
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 
 /** The connector key the web-search capability registers under. */
@@ -132,7 +132,7 @@ export function parseReasoningEffort(value: unknown): string | null {
  * per-call connector lookup.
  */
 export async function resolveWebSearchConfig(tenantId: string): Promise<WebSearchConfig | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
 
   const configResult = await readConnectorConfigCached(

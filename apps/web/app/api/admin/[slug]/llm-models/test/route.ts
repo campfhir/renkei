@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { decrypt, parseEncryptionKey } from '@renkei/crypto';
+import { decrypt, loadKeyring } from '@renkei/crypto';
 import { testLlmConnection, type TestConnectionError } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
@@ -96,7 +96,7 @@ export async function POST(
       .executeTakeFirst();
     if (!row) return NextResponse.json({ error: 'Model config not found' }, { status: 404 });
 
-    const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+    const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (!keyResult.ok) {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }

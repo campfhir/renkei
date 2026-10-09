@@ -8,7 +8,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "rekey-chats": "tsx scripts/rekey-chats.ts"
+    "rekey-chats": "tsx scripts/rekey-chats.ts",
+    "rewrap": "tsx scripts/rewrap-secrets.ts"
   },
   "dependencies": {
     "@campfhir/safe-functions": "^0.1.3",

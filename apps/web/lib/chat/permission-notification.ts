@@ -16,7 +16,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { friendlyToolName } from '@renkei/agents';
 import { logger } from '@/lib/logger';
@@ -65,7 +65,7 @@ export function notifyChatToolPermission(input: {
       .execute();
 
     // Fire-and-forget: a push service's latency never adds to the wait.
-    const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+    const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (keyResult.ok) {
       void sendPush(
         dbResult.val,

@@ -38,7 +38,7 @@ import {
   isEncryptedContent,
   isResourceEncrypted,
   isUserSealed,
-  parseEncryptionKey,
+  loadKeyring,
   decrypt,
   RESOURCE_ENVELOPE_PREFIX,
   USER_ENVELOPE_PREFIX,
@@ -430,7 +430,7 @@ async function rekeyProviderGrants(db: Kysely<DB>, legacyKey: Buffer): Promise<v
 }
 
 async function rekeyConnectors(db: Kysely<DB>): Promise<void> {
-  const legacy = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const legacy = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!legacy.ok) fail('TOKEN_ENCRYPTION_KEY (the legacy credential key) is not set or malformed.');
   await rekeyProviderGrants(db, legacy.val);
   await rekeyCredentials(db, 'mirth_instance_connections', legacy.val);

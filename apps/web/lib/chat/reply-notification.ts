@@ -31,7 +31,7 @@ import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import { getOrgSettings } from '@renkei/settings';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { sendPush, wasRecentlyWatchingChat } from '@renkei/notifications';
 import { logger } from '@/lib/logger';
 
@@ -91,7 +91,7 @@ export function notifyChatReplyDesktop(input: {
 
     // Fire-and-forget, same as every other write in this app: a push
     // service's own latency must never add to the turn it describes.
-    const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+    const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (keyResult.ok) {
       void sendPush(
         dbResult.val,

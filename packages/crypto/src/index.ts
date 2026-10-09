@@ -5,7 +5,20 @@
  * deployment key; every process that touches a grant comes through here.
  */
 
-export { encrypt, decrypt, parseEncryptionKey, safeEqual, DecryptionError } from './secretbox';
+export {
+  encrypt,
+  decrypt,
+  parseEncryptionKey,
+  parseKeyring,
+  loadKeyring,
+  keyringKeys,
+  keyId,
+  isKeyring,
+  envelopeKeyId,
+  safeEqual,
+  DecryptionError,
+  type Keyring,
+} from './secretbox';
 export { sha256Hex, generateSecret } from './tokens';
 export {
   contentEncryptionKey,

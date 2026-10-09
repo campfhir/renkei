@@ -7,7 +7,7 @@
  * environment — an org-admin stores it through the connectors API.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { logger } from '@/lib/logger';
 
@@ -127,7 +127,7 @@ async function readApp(
   connector: string,
   usableCeiling: (stored: string | null) => string[]
 ): Promise<AtlassianApp | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/atlassian',

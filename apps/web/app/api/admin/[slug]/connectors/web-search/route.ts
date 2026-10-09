@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import {
   getConnectorConfig,
   setConnectorConfig,
@@ -51,7 +51,7 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
@@ -165,7 +165,7 @@ export async function PUT(
   const blocked = validateDomains(body.blockedDomains, 'blockedDomains');
   if (!blocked.ok) return NextResponse.json({ error: blocked.error }, { status: 400 });
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }

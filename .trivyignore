@@ -1,0 +1,33 @@
+# Trivy's baseline for the image scan in .github/workflows/ci.yml (the
+# `docker` job scans every image before it is pushed and fails on a
+# fixable HIGH or CRITICAL). These are the advisories that were already
+# open against the production dependencies when the gate went in — the
+# same list pnpm-workspace.yaml's auditConfig.ignoreGhsas carries for
+# `pnpm audit`, by the id Trivy reports (the CVE where one exists, the
+# GHSA otherwise). Each line expires: past its date Trivy counts the
+# finding again and the push fails, so fix the dependency and delete the
+# line, or renew the date with a reason. Keep the two lists in step.
+
+# next 16.2.12 → 16.3.8 (upgrade first; three are RCEs)
+CVE-2026-75604 exp:2026-11-30
+GHSA-2xp9-vwfh-vxw4 exp:2026-11-30
+GHSA-vcvr-r3jv-pc5j exp:2026-11-30
+CVE-2026-94483 exp:2026-11-30
+# sharp 0.34.5, postcss 8.4.31, nanoid, source-map-js — next's own pins
+GHSA-f88m-g3jw-g9cj exp:2026-11-30
+GHSA-rgj7-g3m4-5g8c exp:2026-11-30
+GHSA-wq5f-xc86-pv6w exp:2026-11-30
+CVE-2026-45623 exp:2026-11-30
+CVE-2026-73646 exp:2026-11-30
+CVE-2026-67213 exp:2026-11-30
+CVE-2026-93749 exp:2026-11-30
+# brace-expansion under exceljs → archiver and safe-functions → minimatch
+CVE-2026-14257 exp:2026-11-30
+CVE-2026-69152 exp:2026-11-30
+CVE-2026-102278 exp:2026-11-30
+CVE-2026-102276 exp:2026-11-30
+# image-size 1.2.1 under pptxgenjs
+CVE-2025-71329 exp:2026-11-30
+CVE-2025-71330 exp:2026-11-30
+# lodash-es under mermaid → chevrotain
+CVE-2026-4800 exp:2026-11-30

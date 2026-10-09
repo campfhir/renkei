@@ -38,7 +38,7 @@ import {
 } from '@renkei/redaction';
 import { ATLASSIAN, ATLASSIAN_JSM, readAtlassianMetadata } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { getIdentityEmail } from '@/lib/identity';
 import { buildProjection } from '@/lib/mcp-tools/projection';
 import { resolveAudience } from '@/lib/connectors/audience';
@@ -55,7 +55,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
  * per call would still redact, but the tokens would stop being comparable,
  * which is most of what makes them useful.
  */
-const redactionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+const redactionKeyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
 const redactionKey = deriveRedactionKey(redactionKeyResult.ok ? redactionKeyResult.val : null);
 
 /**

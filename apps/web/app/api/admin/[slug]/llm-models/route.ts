@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
-import { encrypt, parseEncryptionKey } from '@renkei/crypto';
+import { encrypt, loadKeyring } from '@renkei/crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
@@ -80,7 +80,7 @@ export async function POST(
     return NextResponse.json({ error: 'apiKey is required' }, { status: 400 });
   }
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
 
   const dbResult = getDatabase();
