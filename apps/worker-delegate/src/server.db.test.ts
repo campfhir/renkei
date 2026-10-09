@@ -11,7 +11,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { getDatabase, closeDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { instanceListMessage, parseEncryptionKey, verifyEd25519 } from '@renkei/crypto';
 import { setGrant, GITHUB } from '@renkei/provider-grants';
 import { createInstance, upsertConnection } from '@renkei/connector-mirth';
 import { sealForSubject } from '@renkei/user-keys';
@@ -26,6 +26,7 @@ import {
 } from '@renkei/user-keys/test-support';
 import { createDelegateServer } from './server';
 import type { GitDialer } from './git';
+import { loadOrCreateSigningKey } from './signing';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -136,6 +137,12 @@ describeDb('worker-delegate', () => {
     server = createDelegateServer({
       db: db.val,
       encryptionKey: key.val,
+      signer: loadOrCreateSigningKey(db.val, key.val, {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+      }),
       // The plain string is the web app's key (the shared-key form from before);
       // the named ones are the workers'.
       apiKeys: [API_KEY, { name: 'agents', key: AGENTS_KEY }, { name: 'worker', key: WORKER_KEY }],
@@ -157,6 +164,7 @@ describeDb('worker-delegate', () => {
       await db.val.deleteFrom('provider_grants').where('tenant_id', '=', tenantId).execute();
       await db.val.deleteFrom('delegate_git_tickets').where('tenant_id', '=', tenantId).execute();
       await db.val.deleteFrom('agents').where('tenant_id', '=', tenantId).execute();
+      await db.val.deleteFrom('delegate_signing_keys').execute();
       await db.val.deleteFrom('resource_keys').where('tenant_id', '=', tenantId).execute();
       await db.val.deleteFrom('user_encryption_keys').where('tenant_id', '=', tenantId).execute();
       await db.val.deleteFrom('tenants').where('id', '=', tenantId).execute();
@@ -405,6 +413,30 @@ describeDb('worker-delegate', () => {
         }),
       ])
     );
+    // The list is signed by the deployment's key, over the canonical message
+    // a browser rebuilds; a list with one more instance is not.
+    const listed = Array.isArray(instances.json.instances) ? instances.json.instances : [];
+    const signed = listed.flatMap((item) =>
+      isRecord(item) && typeof item.id === 'string' && typeof item.publicKey === 'string'
+        ? [{ id: item.id, publicKey: item.publicKey }]
+        : []
+    );
+    const signingKey = Buffer.from(String(instances.json.signingKey), 'base64');
+    const signature = Buffer.from(String(instances.json.signature), 'base64');
+    expect(signingKey.byteLength).toBe(32);
+    expect(verifyEd25519(signingKey, Buffer.from(instanceListMessage(signed)), signature)).toBe(
+      true
+    );
+    const planted = [
+      ...signed,
+      { id: randomUUID(), publicKey: randomBytes(32).toString('base64') },
+    ];
+    expect(verifyEd25519(signingKey, Buffer.from(instanceListMessage(planted)), signature)).toBe(
+      false
+    );
+    // The same key on the next boot: one row per deployment.
+    const again = await op('keys/instances', {});
+    expect(again.json.signingKey).toBe(instances.json.signingKey);
     const status = await op('keys/status', { tenantId, subject: owner, sessionId: ownerSessionId });
     expect(status.json.enrolled).toBe(true);
     expect(status.json.legacy).toBe(false);

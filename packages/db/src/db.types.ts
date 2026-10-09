@@ -1380,6 +1380,14 @@ export interface DelegateAccessEvents {
   tenant_id: string | null;
 }
 
+export interface DelegateSigningKeys {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  public_key: string;
+  sealed_private_key: string;
+  singleton: Generated<boolean>;
+}
+
 export interface DelegateGitTickets {
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
@@ -1613,6 +1621,7 @@ export interface DB {
   delegate_access_events: DelegateAccessEvents;
   delegate_git_tickets: DelegateGitTickets;
   delegate_instances: DelegateInstances;
+  delegate_signing_keys: DelegateSigningKeys;
   device_key_requests: DeviceKeyRequests;
   key_delegations: KeyDelegations;
   coach_mark_progress: CoachMarkProgress;

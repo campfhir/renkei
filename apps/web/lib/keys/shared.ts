@@ -24,6 +24,14 @@ export interface KeyStatusView {
   enrolledAt: string | null;
   /** The live delegate instances and their public keys: what to seal to. */
   instances: { id: string; publicKey: string }[];
+  /**
+   * The deployment's delegate signing key (raw Ed25519, base64) and its
+   * signature over `instances`, for a browser deciding whether to seal to
+   * an instance it has not seen before; both null when the delegate has no
+   * signing key, in which case the browser asks the person.
+   */
+  instanceSigningKey: string | null;
+  instancesSignature: string | null;
   /** Every live instance holds this session's delegation: nothing to do. */
   sessionDelegated: boolean;
   /** Some live instance lacks this session's delegation (a restart, a new instance): seal again. */

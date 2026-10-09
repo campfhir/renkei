@@ -21,7 +21,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Browser, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { enrollForE2E, formatUserKey, keyFor, secretbox } from './keys';
+import { deviceCodeOf, enrollForE2E, formatUserKey, keyFor, secretbox } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -430,6 +430,66 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   await expect(other.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
   await expect(other.getByTestId('chat-key-unavailable-notice')).toHaveCount(0);
   await second.close();
+});
+
+test('a key service this browser has not met is confirmed by fingerprint before anything is sealed', async ({
+  page,
+}, testInfo) => {
+  const fixture = fixtureFor(`trust-${testInfo.project.name}`);
+  const userKey = await seed(fixture, { chat: true });
+  expect(userKey).not.toBeNull();
+  if (!userKey) return;
+  await signIn(page, fixture);
+
+  // First use on this browser: the live instances are trusted on sight and
+  // the device gets the key by typing it, sealing without a question.
+  await dropDelegations(fixture);
+  await page.goto(`/${fixture.slug}/chat/${fixture.chatId}`);
+  await expect(page.getByTestId('key-modal-needs-key')).toBeVisible({ timeout: 30_000 });
+  await page
+    .getByTestId('key-unlock')
+    .getByLabel('Type the key you wrote down')
+    .fill(formatUserKey(userKey));
+  await page.getByTestId('key-unlock-submit').click();
+  await expect(page.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('key-modal-trust')).toHaveCount(0);
+
+  // The web app now claims one more instance, with a key the deployment's
+  // signing key never signed — what a compromised web app would do. The
+  // browser names its fingerprint and seals nothing until the person says so.
+  const planted = randomBytes(32).toString('base64');
+  await page.route(`**/api/tenant/${fixture.tenantId}/keys`, async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    json.instances = [...json.instances, { id: randomUUID(), publicKey: planted }];
+    json.sessionDelegated = false;
+    json.instancesMissingSession = [...json.instancesMissingSession, 'planted'];
+    await route.fulfill({ response, json });
+  });
+  await dropDelegations(fixture);
+  await page.reload();
+  const trust = page.getByTestId('key-modal-trust');
+  await expect(trust).toBeVisible({ timeout: 30_000 });
+  const fingerprint = (await trust.getByTestId('key-trust-fingerprint').innerText()).trim();
+  expect(fingerprint).toMatch(/^[A-Z2-7]{5}-[A-Z2-7]{5}$/);
+  expect(fingerprint).toBe(deviceCodeOf(Buffer.from(planted, 'base64')));
+  expect(await delegationCount(fixture, 'session')).toBe(0);
+  await shot(page, testInfo, 'keys-09-trust-dialog');
+  // Not now: the key stays unsealed and a banner is the way back.
+  await trust.getByRole('button', { name: 'Not now' }).click();
+  await expect(trust).toHaveCount(0);
+  await expect(page.getByTestId('key-banner-trust')).toBeVisible();
+  expect(await delegationCount(fixture, 'session')).toBe(0);
+  // Confirmed: the browser seals (the delegate drops the instance nobody runs) and remembers.
+  await page.getByTestId('key-banner-trust').getByRole('button', { name: 'Review' }).click();
+  await trust.getByTestId('key-trust-confirm').click();
+  await expect
+    .poll(() => delegationCount(fixture, 'session'), { timeout: 30_000 })
+    .toBeGreaterThan(0);
+  await page.unroute(`**/api/tenant/${fixture.tenantId}/keys`);
+  await page.reload();
+  await expect(page.getByTestId('key-modal-trust')).toHaveCount(0);
+  await expect(page.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
 });
 
 test('the key dialog and the section at phone width', async ({ page }, testInfo) => {

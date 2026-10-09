@@ -81,6 +81,7 @@ import { sendError } from './errors';
 import { Grants, type DelegateLogger, silentDelegateLogger } from './grants';
 import { Forwarder } from './forward';
 import { GitTickets, type GitDialer } from './git';
+import type { InstanceSigner } from './signing';
 
 export interface DelegateServerDeps {
   db: Kysely<DB>;
@@ -98,6 +99,12 @@ export interface DelegateServerDeps {
   logger?: DelegateLogger;
   /** Injected in tests; production dials the git host with node's own client. */
   gitDialer?: GitDialer;
+  /**
+   * The deployment's instance-list signer (signing.ts), loaded at boot;
+   * absent or null, `keys/instances` goes unsigned and a browser asks the
+   * person before sealing to an instance it has not seen.
+   */
+  signer?: Promise<InstanceSigner | null> | InstanceSigner | null;
 }
 
 /** A batch of values to seal or open; a chat's whole memory list fits many times over. */
@@ -271,7 +278,13 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
   const handlers: Record<string, Handler> = {
     // ── the person's keys ──────────────────────────────────────────────────
     'keys/instances': async (_body, response) => {
-      sendJson(response, 200, { instances: await liveInstances(db) });
+      const instances = await liveInstances(db);
+      const signer = (await deps.signer) ?? null;
+      sendJson(response, 200, {
+        instances,
+        signingKey: signer?.publicKey ?? null,
+        signature: signer ? signer.sign(instances) : null,
+      });
     },
     'keys/status': async (body, response) => {
       const tenantId = str(body.tenantId);

@@ -33,6 +33,8 @@ export {
   generateKeyPair,
   sealToPublicKey,
   openSealedBox,
+  verifyEd25519,
   SEALED_BOX_PREFIX,
   type RawKeyPair,
 } from './webcrypto';
+export { instanceListMessage, INSTANCE_LIST_TAG, type SignedInstance } from './instance-list';

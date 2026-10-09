@@ -39,6 +39,7 @@ import { registerInstance } from './instance';
 import { logger, attachPersistentLogging } from './logger';
 import { CALLER_OPS, developmentKeyRefusal } from './callers';
 import { standInViolations } from './providers';
+import { loadOrCreateSigningKey } from './signing';
 
 // A provider stand-in (GITHUB_API_BASE_URL and friends) lets a person's
 // token travel to an arbitrary origin over plain HTTP. That is for the
@@ -102,7 +103,16 @@ void runWorker({
         );
         process.exit(1);
       });
-    return createDelegateServer({ db, encryptionKey, apiKeys: namedApiKeys, logger });
+    // The deployment's signing key: made on the first boot, read on every
+    // later one, so a browser can accept a new instance's key on its say-so.
+    const signer = loadOrCreateSigningKey(db, encryptionKey, logger).catch((error: unknown) => {
+      logger.error('the delegate signing key could not be loaded: {error}', {
+        component: 'worker-delegate/signing',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+    return createDelegateServer({ db, encryptionKey, apiKeys: namedApiKeys, logger, signer });
   },
 });
 

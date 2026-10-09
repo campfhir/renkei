@@ -120,6 +120,15 @@ function refBody(ref: ResourceRef): Record<string, unknown> {
   return { tenantId: ref.tenantId, kind: ref.kind, resourceId: ref.resourceId };
 }
 
+/** The live instances as signed by the deployment's delegate signing key. */
+export interface SignedInstanceList {
+  instances: LiveInstance[];
+  /** Raw Ed25519 public key, base64; null when the delegate has none. */
+  signingKey: string | null;
+  /** Base64 signature over `instanceListMessage(instances)`; null when unsigned. */
+  signature: string | null;
+}
+
 /** A person's enrollment and delegations as the delegate reports them; dates parsed. */
 export interface KeyStatus extends Omit<DelegationStatus, 'enrolledAt' | 'automationUntil'> {
   enrolledAt: Date | null;
@@ -205,6 +214,17 @@ export class DelegateClient {
 
   /** The live delegate instances: what a browser seals a person's key to. */
   async keyInstances(): Promise<Result<LiveInstance[], KeysOpError>> {
+    const signed = await this.keyInstancesSigned();
+    return signed.ok ? ok(signed.val.instances) : signed;
+  }
+
+  /**
+   * The live instances with the deployment's signature over them (and the
+   * signing key), for a browser deciding whether to seal to an instance it
+   * has not seen (docs/delegate-key-design.md, "Which delegate am I sealing
+   * to?"). Both null when the delegate has no signing key.
+   */
+  async keyInstancesSigned(): Promise<Result<SignedInstanceList, KeysOpError>> {
     const answer = await this.keys('keys/instances', {});
     if (!answer.ok) return answer;
     const instances: LiveInstance[] = [];
@@ -215,7 +235,11 @@ export class DelegateClient {
         instances.push({ id: item.id, publicKey: item.publicKey });
       }
     }
-    return ok(instances);
+    return ok({
+      instances,
+      signingKey: typeof answer.val.signingKey === 'string' ? answer.val.signingKey : null,
+      signature: typeof answer.val.signature === 'string' ? answer.val.signature : null,
+    });
   }
 
   /** A person's enrollment and what is delegated for them, as of this session when given. */

@@ -169,6 +169,7 @@ export const EXPECTED_MIGRATIONS = [
   '137-drop-todo-chunks',
   '138-held-keys-and-delegations',
   '144-delegate-access-and-device-asks',
+  '145-delegate-signing-keys',
 ];
 
 export interface MigrationStatus {

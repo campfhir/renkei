@@ -111,7 +111,7 @@ export async function keyStatusView(
   const client = delegateClient();
   const [status, instances, automationDays, pendingDevices] = await Promise.all([
     client.keyStatus(tenantId, session.subject, session.id),
-    client.keyInstances(),
+    client.keyInstancesSigned(),
     automationDaysOf(db, tenantId, session.subject),
     pendingDevicesOf(db, tenantId, session.subject),
   ]);
@@ -126,6 +126,8 @@ export async function keyStatusView(
       version: 0,
       enrolledAt: null,
       instances: [],
+      instanceSigningKey: null,
+      instancesSignature: null,
       sessionDelegated: false,
       instancesMissingSession: [],
       automationInstances: [],
@@ -136,7 +138,8 @@ export async function keyStatusView(
     };
   }
   const held = new Set(status.val.thisSessionInstances);
-  const missing = instances.val.map((instance) => instance.id).filter((id) => !held.has(id));
+  const live = instances.val.instances;
+  const missing = live.map((instance) => instance.id).filter((id) => !held.has(id));
   return {
     enrolled: status.val.enrolled,
     legacy: status.val.legacy,
@@ -146,8 +149,10 @@ export async function keyStatusView(
     wrappedAutomationKey: status.val.wrappedAutomationKey,
     version: status.val.version,
     enrolledAt: status.val.enrolledAt ? status.val.enrolledAt.toISOString() : null,
-    instances: instances.val,
-    sessionDelegated: instances.val.length > 0 && missing.length === 0,
+    instances: live,
+    instanceSigningKey: instances.val.signingKey,
+    instancesSignature: instances.val.signature,
+    sessionDelegated: live.length > 0 && missing.length === 0,
     instancesMissingSession: missing,
     automationInstances: status.val.automationInstances,
     automationUntil: status.val.automationUntil ? status.val.automationUntil.toISOString() : null,
