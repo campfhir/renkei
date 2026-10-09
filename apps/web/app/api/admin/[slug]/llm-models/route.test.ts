@@ -13,7 +13,10 @@ jest.mock('@/lib/access', () => ({
 }));
 jest.mock('@/lib/tenant-slug', () => ({ tenantForSlug: jest.fn() }));
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('@renkei/agent-llm', () => ({ invalidateLlmCache: jest.fn() }));
+jest.mock('@renkei/agent-llm', () => ({
+  ...jest.requireActual('@renkei/agent-llm'),
+  invalidateLlmCache: jest.fn(),
+}));
 
 import { NextRequest } from 'next/server';
 import { randomBytes } from 'node:crypto';
@@ -101,8 +104,12 @@ function fakeDb(seed: ModelConfigRow[]) {
       insertInto: () => ({
         values: (values: Record<string, unknown>) => ({
           execute: async () => {
-            if (rows.some((row) => row.tenant_id === values.tenant_id && row.label === values.label)) {
-              throw new Error('duplicate key value violates unique constraint "llm_model_configs_tenant_label"');
+            if (
+              rows.some((row) => row.tenant_id === values.tenant_id && row.label === values.label)
+            ) {
+              throw new Error(
+                'duplicate key value violates unique constraint "llm_model_configs_tenant_label"'
+              );
             }
             const row: ModelConfigRow = {
               id: String(values.id),
@@ -152,7 +159,12 @@ describe('POST .../llm-models', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ label: 'Prod Claude', provider: 'anthropic', model: 'claude-sonnet-5', apiKey: 'sk-ant-secret' }),
+      reqOf({
+        label: 'Prod Claude',
+        provider: 'anthropic',
+        model: 'claude-sonnet-5',
+        apiKey: 'sk-ant-secret',
+      }),
       { params: paramsOf() }
     );
 
@@ -174,7 +186,14 @@ describe('POST .../llm-models', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ label: 'Painter', provider: 'openai', model: 'gpt-image-1', apiKey: 'sk-x', apiSurface: 'images', isDefault: true }),
+      reqOf({
+        label: 'Painter',
+        provider: 'openai',
+        model: 'gpt-image-1',
+        apiKey: 'sk-x',
+        apiSurface: 'images',
+        isDefault: true,
+      }),
       { params: paramsOf() }
     );
 
@@ -188,12 +207,23 @@ describe('POST .../llm-models', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ label: 'Fox', provider: 'openai', model: 'FLUX.2-flex', apiKey: 'sk-x', apiSurface: 'flux', apiVersion: 'preview', isDefault: true }),
+      reqOf({
+        label: 'Fox',
+        provider: 'openai',
+        model: 'FLUX.2-flex',
+        apiKey: 'sk-x',
+        apiSurface: 'flux',
+        apiVersion: 'preview',
+        isDefault: true,
+      }),
       { params: paramsOf() }
     );
 
     expect(response.status).toBe(201);
-    expect(JSON.parse(String(db.inserted[0]!.settings))).toEqual({ apiSurface: 'flux', apiVersion: 'preview' });
+    expect(JSON.parse(String(db.inserted[0]!.settings))).toEqual({
+      apiSurface: 'flux',
+      apiVersion: 'preview',
+    });
     expect(db.inserted[0]!.is_default).toBe(false);
   });
 
@@ -202,7 +232,14 @@ describe('POST .../llm-models', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ label: 'Chatty', provider: 'openai', model: 'gpt-x', apiKey: 'sk-x', apiSurface: 'responses', isDefault: true }),
+      reqOf({
+        label: 'Chatty',
+        provider: 'openai',
+        model: 'gpt-x',
+        apiKey: 'sk-x',
+        apiSurface: 'responses',
+        isDefault: true,
+      }),
       { params: paramsOf() }
     );
 
@@ -215,7 +252,13 @@ describe('POST .../llm-models', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ label: 'Nope', provider: 'anthropic', model: 'claude-x', apiKey: 'sk-x', apiSurface: 'flux' }),
+      reqOf({
+        label: 'Nope',
+        provider: 'anthropic',
+        model: 'claude-x',
+        apiKey: 'sk-x',
+        apiSurface: 'flux',
+      }),
       { params: paramsOf() }
     );
 
@@ -232,7 +275,7 @@ describe('POST .../llm-models', () => {
     expect(response.status).toBe(400);
   });
 
-  it('borrows a sibling row\'s stored key via apiKeyFromId without retyping it', async () => {
+  it("borrows a sibling row's stored key via apiKeyFromId without retyping it", async () => {
     const db = fakeDb([
       {
         id: 'existing-1',
