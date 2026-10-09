@@ -38,6 +38,7 @@
  * after the fact.
  */
 
+import { randomInt } from 'node:crypto';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import {
@@ -148,20 +149,25 @@ function truncateForLog(text: string): string {
   return text.length > 1300 ? `${text.slice(0, 1300)}… (${text.length} chars total)` : text;
 }
 
-/** A random, unambiguous password for reset/create when the caller doesn't supply one. */
-function generatePassword(): string {
+/**
+ * A random, unambiguous password for reset/create when the caller doesn't
+ * supply one. Every draw is `crypto.randomInt` — a password set on a real
+ * account must not come from `Math.random`, whose output is predictable
+ * from a few observed values.
+ */
+export function generatePassword(): string {
   const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   const lower = 'abcdefghijkmnopqrstuvwxyz';
   const digits = '23456789';
   const symbols = '!@#$%^&*-_=+';
   const all = upper + lower + digits + symbols;
-  const pick = (set: string): string => set[Math.floor(Math.random() * set.length)];
+  const pick = (set: string): string => set[randomInt(set.length)];
   const required = [pick(upper), pick(lower), pick(digits), pick(symbols)];
   const rest = Array.from({ length: 12 }, () => pick(all));
   const chars = [...required, ...rest];
   // Fisher-Yates so the required classes aren't always in the same four slots.
   for (let i = chars.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(i + 1);
     [chars[i], chars[j]] = [chars[j], chars[i]];
   }
   return chars.join('');
@@ -503,9 +509,18 @@ export function registerAdManagerTools(
     }
   );
 
-  const instanceIdField = z.string().min(1).describe('An instance id from admanager_list_instances.');
-  const domainField = z.string().min(1).describe('The AD domain the account is in (e.g. corp.example.com).');
-  const samField = z.string().min(1).describe('The account’s logon name (sAMAccountName), e.g. "jdoe".');
+  const instanceIdField = z
+    .string()
+    .min(1)
+    .describe('An instance id from admanager_list_instances.');
+  const domainField = z
+    .string()
+    .min(1)
+    .describe('The AD domain the account is in (e.g. corp.example.com).');
+  const samField = z
+    .string()
+    .min(1)
+    .describe('The account’s logon name (sAMAccountName), e.g. "jdoe".');
 
   gated('accounts.read').registerTool(
     'admanager_get_user',
@@ -557,8 +572,8 @@ export function registerAdManagerTools(
       if (refusal) return errText(refusal);
       const query = str(args.query);
       const filter = combineFilters(
-        ['FIRST_NAME', 'LAST_NAME', 'DISPLAY_NAME', 'SAM_ACCOUNT_NAME', 'EMAIL_ADDRESS'].map((column) =>
-          filterClause(column, 'co', query)
+        ['FIRST_NAME', 'LAST_NAME', 'DISPLAY_NAME', 'SAM_ACCOUNT_NAME', 'EMAIL_ADDRESS'].map(
+          (column) => filterClause(column, 'co', query)
         ),
         'or'
       );
@@ -575,7 +590,8 @@ export function registerAdManagerTools(
       });
       if (!answered.ok) return errText(answered.message);
       const parsed = parseJson(answered.response.body);
-      const rows = isRecord(parsed) && Array.isArray(parsed.data) ? parsed.data.filter(isRecord) : [];
+      const rows =
+        isRecord(parsed) && Array.isArray(parsed.data) ? parsed.data.filter(isRecord) : [];
       if (rows.length === 0) return textResult(`No users matched "${query}".`);
       const lines = rows.map(
         (user) =>
@@ -651,13 +667,17 @@ export function registerAdManagerTools(
         title: `Unlock ${displayName}`,
         subtitle: `${instanceName} · ${domainName}`,
         person: { name: displayName, detail: `${samAccountName} · ${domainName}` },
-        fields: [{ label: 'Current status', value: str(existing.user.ACCOUNT_STATUS) || 'unknown' }],
+        fields: [
+          { label: 'Current status', value: str(existing.user.ACCOUNT_STATUS) || 'unknown' },
+        ],
         confirmTool: 'admanager_unlock_account_confirm',
         confirmLabel: 'Unlock account',
         confirmArgs: args,
       };
       return {
-        content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
+        content: [
+          { type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' },
+        ],
         structuredContent: preview,
       };
     }
@@ -667,7 +687,9 @@ export function registerAdManagerTools(
     'admanager_unlock_account_confirm',
     {
       title: 'ADManager Plus · Act — Execute a confirmed account unlock',
-      description: 'Unlock the account the user confirmed on the preview card. ' + confirmGuard('admanager_unlock_account_preview'),
+      description:
+        'Unlock the account the user confirmed on the preview card. ' +
+        confirmGuard('admanager_unlock_account_preview'),
       annotations: { readOnlyHint: false },
       _meta: APP_ONLY_META,
       inputSchema: unlockSchema,
@@ -747,7 +769,9 @@ export function registerAdManagerTools(
     if (!reset.ok) return errText(reset.message);
     const resetOutcome = interpretV1Response(parseJson(reset.response.body));
     if (!resetOutcome.ok) {
-      return errText(`ADManager Plus could not reset the password for ${samAccountName}: ${resetOutcome.message}`);
+      return errText(
+        `ADManager Plus could not reset the password for ${samAccountName}: ${resetOutcome.message}`
+      );
     }
 
     if (mustChangePassword && templateName) {
@@ -776,7 +800,9 @@ export function registerAdManagerTools(
       }
     }
 
-    return textResult(`Password reset for ${samAccountName} in ${domainName}. New password: ${newPassword}`);
+    return textResult(
+      `Password reset for ${samAccountName} in ${domainName}. New password: ${newPassword}`
+    );
   };
 
   gated('accounts.reset_password').registerTool(
@@ -803,7 +829,9 @@ export function registerAdManagerTools(
       const template = await resetTemplateFor(instanceId, mustChangePassword);
       if (!template.ok) return errText(template.message);
       const templateName = mustChangePassword ? template.templateName : null;
-      const existing = await getUserRecord(instanceId, domainName, samAccountName, ['DISPLAY_NAME']);
+      const existing = await getUserRecord(instanceId, domainName, samAccountName, [
+        'DISPLAY_NAME',
+      ]);
       if (!existing.ok) return errText(existing.message);
       const newPassword = str(args.newPassword) || generatePassword();
       const instanceName = await instanceNameFor(instanceId);
@@ -833,7 +861,9 @@ export function registerAdManagerTools(
         confirmArgs,
       };
       return {
-        content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
+        content: [
+          { type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' },
+        ],
         structuredContent: preview,
       };
     }
@@ -860,7 +890,10 @@ export function registerAdManagerTools(
   const createUserSchema = z.object({
     instanceId: instanceIdField,
     domainName: domainField,
-    ouPath: z.string().min(1).describe('Distinguished name of the target OU, e.g. "OU=Users,DC=corp,DC=example".'),
+    ouPath: z
+      .string()
+      .min(1)
+      .describe('Distinguished name of the target OU, e.g. "OU=Users,DC=corp,DC=example".'),
     firstName: z.string().min(1),
     lastName: z.string().min(1),
     sAMAccountName: samField,
@@ -882,7 +915,10 @@ export function registerAdManagerTools(
   });
 
   /** The flat attribute object ADManager Plus's v1 CreateUser takes as one `inputFormat` entry. */
-  function createUserBody(args: Record<string, unknown>, password: string): Record<string, unknown> {
+  function createUserBody(
+    args: Record<string, unknown>,
+    password: string
+  ): Record<string, unknown> {
     const body: Record<string, unknown> = {
       sAMAccountName: str(args.sAMAccountName),
       givenName: str(args.firstName),
@@ -927,7 +963,9 @@ export function registerAdManagerTools(
     const entry = parsed.find(isRecord);
     if (!entry || str(entry.status).toUpperCase() !== 'SUCCESS') {
       const message = entry ? str(entry.statusMessage) || str(entry.STATUS_MESSAGE) : '';
-      return errText(`ADManager Plus could not create the user: ${message || 'no success entry in response'}`);
+      return errText(
+        `ADManager Plus could not create the user: ${message || 'no success entry in response'}`
+      );
     }
 
     if (args.enabled === false) {
@@ -936,7 +974,9 @@ export function registerAdManagerTools(
         path: '/RestAPI/DisableUser',
         query: { domainName, inputFormat: JSON.stringify([{ sAMAccountName: samAccountName }]) },
       });
-      const disableOutcome = disabled.ok ? interpretV1Response(parseJson(disabled.response.body)) : null;
+      const disableOutcome = disabled.ok
+        ? interpretV1Response(parseJson(disabled.response.body))
+        : null;
       if (!disabled.ok || !disableOutcome?.ok) {
         return textResult(
           `Created ${samAccountName} in ${domainName}, but could not leave the account disabled as ` +
@@ -975,7 +1015,10 @@ export function registerAdManagerTools(
         tone: 'positive',
         title: `Create ${displayName}`,
         subtitle: `${instanceName} · ${str(args.domainName)}`,
-        person: { name: displayName, detail: `${str(args.sAMAccountName)} · ${str(args.domainName)}` },
+        person: {
+          name: displayName,
+          detail: `${str(args.sAMAccountName)} · ${str(args.domainName)}`,
+        },
         fields: [
           { label: 'OU', value: str(args.ouPath) },
           { label: 'UPN', value: str(args.userPrincipalName) },
@@ -991,7 +1034,9 @@ export function registerAdManagerTools(
         confirmArgs,
       };
       return {
-        content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
+        content: [
+          { type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' },
+        ],
         structuredContent: preview,
       };
     }
@@ -1098,7 +1143,9 @@ export function registerAdManagerTools(
       // A template is required on every call, so "just reapply the
       // template" with zero other changes is always a meaningful update —
       // nothing to refuse here.
-      const changed = EDITABLE_FIELDS.filter(([argKey]) => typeof args[argKey] === 'string' && args[argKey]);
+      const changed = EDITABLE_FIELDS.filter(
+        ([argKey]) => typeof args[argKey] === 'string' && args[argKey]
+      );
       // TELEPHONE_NUMBER/DESCRIPTION aren't requested here — see the note
       // on USER_FIELDS above; their old value shows as "(none)" below
       // rather than a real comparison, since ADManager Plus's `fields`
@@ -1148,7 +1195,9 @@ export function registerAdManagerTools(
         confirmArgs: args,
       };
       return {
-        content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
+        content: [
+          { type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' },
+        ],
         structuredContent: preview,
       };
     }
@@ -1210,7 +1259,9 @@ export function registerAdManagerTools(
     if (!answered.ok) return errText(answered.message);
     const outcome = interpretV2PatchResponse(parseJson(answered.response.body));
     if (!outcome.ok) {
-      return errText(`ADManager Plus could not add ${samAccountName} to groups: ${outcome.message}`);
+      return errText(
+        `ADManager Plus could not add ${samAccountName} to groups: ${outcome.message}`
+      );
     }
     return textResult(`Added ${samAccountName} to: ${groupNames.join(', ')}.`);
   };
@@ -1252,14 +1303,18 @@ export function registerAdManagerTools(
         person: { name: displayName, detail: `${samAccountName} · ${domainName}` },
         groupLists: [
           { label: 'Groups to add', groups: requested, tone: 'add' },
-          ...(already.length ? [{ label: 'Already a member of', groups: already, tone: 'muted' as const }] : []),
+          ...(already.length
+            ? [{ label: 'Already a member of', groups: already, tone: 'muted' as const }]
+            : []),
         ],
         confirmTool: 'admanager_add_user_to_groups_confirm',
         confirmLabel: 'Add to groups',
         confirmArgs: { ...args, groupNames: requested },
       };
       return {
-        content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
+        content: [
+          { type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' },
+        ],
         structuredContent: preview,
       };
     }
@@ -1307,7 +1362,9 @@ export function registerAdManagerTools(
     if (!answered.ok) return errText(answered.message);
     const outcome = interpretV2PatchResponse(parseJson(answered.response.body));
     if (!outcome.ok) {
-      return errText(`ADManager Plus could not remove ${samAccountName} from groups: ${outcome.message}`);
+      return errText(
+        `ADManager Plus could not remove ${samAccountName} from groups: ${outcome.message}`
+      );
     }
     return textResult(`Removed ${samAccountName} from: ${groupNames.join(', ')}.`);
   };
@@ -1357,7 +1414,13 @@ export function registerAdManagerTools(
         groupLists: [
           { label: 'Groups to remove', groups: toRemove, tone: 'remove' },
           ...(notAMember.length
-            ? [{ label: 'Not currently a member of (ignored)', groups: notAMember, tone: 'muted' as const }]
+            ? [
+                {
+                  label: 'Not currently a member of (ignored)',
+                  groups: notAMember,
+                  tone: 'muted' as const,
+                },
+              ]
             : []),
         ],
         confirmTool: 'admanager_remove_user_from_groups_confirm',
@@ -1367,7 +1430,9 @@ export function registerAdManagerTools(
         confirmArgs: { ...args, groupNames: toRemove },
       };
       return {
-        content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
+        content: [
+          { type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' },
+        ],
         structuredContent: preview,
       };
     }
@@ -1405,7 +1470,9 @@ export function registerAdManagerTools(
       inputSchema: z.object({
         instanceId: instanceIdField,
         domainName: domainField,
-        sourceSamAccountName: samField.describe('Logon name of the user whose groups to copy from.'),
+        sourceSamAccountName: samField.describe(
+          'Logon name of the user whose groups to copy from.'
+        ),
         targetSamAccountName: samField.describe('Logon name of the user to grant those groups to.'),
         templateName: groupTemplateNameField,
       }),
@@ -1464,7 +1531,9 @@ export function registerAdManagerTools(
         },
       };
       return {
-        content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
+        content: [
+          { type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' },
+        ],
         structuredContent: preview,
       };
     }

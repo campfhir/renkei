@@ -15,7 +15,7 @@ jest.mock('@/lib/admanager/service-client', () => ({
 import type { McpServer } from '@modelcontextprotocol/server';
 import { ADMANAGER_PERMISSION_IDS } from '@renkei/connector-admanager';
 import type { AdManagerPermission, InstanceConnection } from '@renkei/connector-admanager';
-import { registerAdManagerTools, type AdManagerToolExposure } from './index';
+import { generatePassword, registerAdManagerTools, type AdManagerToolExposure } from './index';
 import { NO_SUCH_INSTANCE } from './admanager-auth';
 import type { AdManagerAuth } from './admanager-auth';
 import type { MCPToolContext } from '../common';
@@ -187,7 +187,8 @@ describe('admanager_get_user', () => {
       samAccountName: 'jdoe',
     });
     const fields = String(
-      (admanagerApi.mock.calls[0]?.[1] as { query?: { fields?: string } } | undefined)?.query?.fields
+      (admanagerApi.mock.calls[0]?.[1] as { query?: { fields?: string } } | undefined)?.query
+        ?.fields
     );
     expect(fields).not.toMatch(/TELEPHONE_NUMBER|DESCRIPTION/);
     expect(fields).toMatch(/EMPLOYEE_ID/);
@@ -205,7 +206,9 @@ describe('admanager_get_user', () => {
     });
     expect(textOf(withId)).toContain('Employee ID: E12345');
 
-    admanagerApi.mockResolvedValueOnce(usersResponse([{ SAM_ACCOUNT_NAME: 'svc-backup', DISPLAY_NAME: 'svc-backup' }]));
+    admanagerApi.mockResolvedValueOnce(
+      usersResponse([{ SAM_ACCOUNT_NAME: 'svc-backup', DISPLAY_NAME: 'svc-backup' }])
+    );
     const withoutId = await handlers.get('admanager_get_user')!({
       instanceId: INSTANCE_ID,
       domainName: 'corp.example',
@@ -240,13 +243,11 @@ describe('unlock account: preview + confirm', () => {
     });
     expect(result.structuredContent?.kind).toBe('directory_action');
     expect(result.structuredContent?.action).toBe('Unlock account');
-    expect(
-      (result.structuredContent?.person as Record<string, unknown>).name
-    ).toBe('Jane Doe');
+    expect((result.structuredContent?.person as Record<string, unknown>).name).toBe('Jane Doe');
     expect(result.structuredContent?.confirmTool).toBe('admanager_unlock_account_confirm');
-    expect(
-      (result.structuredContent?.confirmArgs as Record<string, unknown>).samAccountName
-    ).toBe('jdoe');
+    expect((result.structuredContent?.confirmArgs as Record<string, unknown>).samAccountName).toBe(
+      'jdoe'
+    );
   });
 
   it('confirm posts to /RestAPI/UnlockUser with inputFormat and reports success', async () => {
@@ -263,13 +264,18 @@ describe('unlock account: preview + confirm', () => {
       expect.objectContaining({
         method: 'POST',
         path: '/RestAPI/UnlockUser',
-        query: { domainName: 'corp.example', inputFormat: JSON.stringify([{ sAMAccountName: 'jdoe' }]) },
+        query: {
+          domainName: 'corp.example',
+          inputFormat: JSON.stringify([{ sAMAccountName: 'jdoe' }]),
+        },
       })
     );
   });
 
   it('confirm treats a logical failure (HTTP 200, error envelope) as an error', async () => {
-    admanagerApi.mockResolvedValueOnce(answer(200, { SEVERITY: 'FAILURE', STATUS_MESSAGE: 'No such user' }));
+    admanagerApi.mockResolvedValueOnce(
+      answer(200, { SEVERITY: 'FAILURE', STATUS_MESSAGE: 'No such user' })
+    );
     const handlers = register();
     const result = await handlers.get('admanager_unlock_account_confirm')!({
       instanceId: INSTANCE_ID,
@@ -355,8 +361,12 @@ describe('reset password: the shown password is the one used', () => {
 
   it('confirm resets via /RestAPI/ResetPwd then forces the change via /RestAPI/ModifyUser with the instance template, keyed by sAMAccountName', async () => {
     admanagerApi
-      .mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Password Reset Successful.' }]))
-      .mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Successfully modified.' }]));
+      .mockResolvedValueOnce(
+        answer(200, [{ status: '1', statusMessage: 'Password Reset Successful.' }])
+      )
+      .mockResolvedValueOnce(
+        answer(200, [{ status: '1', statusMessage: 'Successfully modified.' }])
+      );
     const handlers = register();
     const result = await handlers.get('admanager_reset_password_confirm')!({
       instanceId: INSTANCE_ID,
@@ -410,7 +420,9 @@ describe('reset password: the shown password is the one used', () => {
   });
 
   it('confirm resets without forcing a change when mustChangePassword is false, template or not', async () => {
-    admanagerApi.mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Password Reset Successful.' }]));
+    admanagerApi.mockResolvedValueOnce(
+      answer(200, [{ status: '1', statusMessage: 'Password Reset Successful.' }])
+    );
     const handlers = registerWithoutResetTemplate();
     const result = await handlers.get('admanager_reset_password_confirm')!({
       instanceId: INSTANCE_ID,
@@ -469,7 +481,9 @@ describe('group membership is additive only', () => {
   });
 
   it('remove preview short-circuits with plain text when nothing is held', async () => {
-    admanagerApi.mockResolvedValueOnce(usersResponse([{ DISPLAY_NAME: 'Jane Doe', MEMBER_OF: [] }]));
+    admanagerApi.mockResolvedValueOnce(
+      usersResponse([{ DISPLAY_NAME: 'Jane Doe', MEMBER_OF: [] }])
+    );
     const handlers = register();
     const result = await handlers.get('admanager_remove_user_from_groups_preview')!({
       instanceId: INSTANCE_ID,
@@ -539,7 +553,9 @@ describe('group membership is additive only', () => {
 describe('group membership: confirm PATCHes the two dedicated attribute keys', () => {
   it('add confirm PATCHes memberOf with the given template and reports success', async () => {
     admanagerApi.mockResolvedValueOnce(
-      answer(200, { data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }] })
+      answer(200, {
+        data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }],
+      })
     );
     const handlers = register();
     const result = await handlers.get('admanager_add_user_to_groups_confirm')!({
@@ -566,7 +582,9 @@ describe('group membership: confirm PATCHes the two dedicated attribute keys', (
 
   it('remove confirm PATCHes removememberOf, never memberOf', async () => {
     admanagerApi.mockResolvedValueOnce(
-      answer(200, { data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }] })
+      answer(200, {
+        data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }],
+      })
     );
     const handlers = register();
     const result = await handlers.get('admanager_remove_user_from_groups_confirm')!({
@@ -591,7 +609,9 @@ describe('group membership: confirm PATCHes the two dedicated attribute keys', (
   });
 
   it('surfaces a request-level ManageEngine rejection (IAM_ERROR_STATUS)', async () => {
-    admanagerApi.mockResolvedValueOnce(answer(200, { IAM_ERROR_STATUS: true, eSTATUS: 'Template not found' }));
+    admanagerApi.mockResolvedValueOnce(
+      answer(200, { IAM_ERROR_STATUS: true, eSTATUS: 'Template not found' })
+    );
     const handlers = register();
     const result = await handlers.get('admanager_add_user_to_groups_confirm')!({
       instanceId: INSTANCE_ID,
@@ -624,7 +644,9 @@ describe('group membership: confirm PATCHes the two dedicated attribute keys', (
 describe('create user: /RestAPI/CreateUser', () => {
   it('confirm sends a flat inputFormat entry and reports the password on success', async () => {
     admanagerApi.mockResolvedValueOnce(
-      answer(200, [{ status: 'SUCCESS', USER_EMAIL: 'jdoe@corp.example', 'SAM Account Name': 'jdoe' }])
+      answer(200, [
+        { status: 'SUCCESS', USER_EMAIL: 'jdoe@corp.example', 'SAM Account Name': 'jdoe' },
+      ])
     );
     const handlers = register();
     const result = await handlers.get('admanager_create_user_confirm')!({
@@ -705,7 +727,10 @@ describe('create user: /RestAPI/CreateUser', () => {
       expect.objectContaining({
         method: 'POST',
         path: '/RestAPI/DisableUser',
-        query: { domainName: 'corp.example', inputFormat: JSON.stringify([{ sAMAccountName: 'jdoe' }]) },
+        query: {
+          domainName: 'corp.example',
+          inputFormat: JSON.stringify([{ sAMAccountName: 'jdoe' }]),
+        },
       })
     );
   });
@@ -724,14 +749,17 @@ describe('update user: a logical PATCH failure is reported, not swallowed', () =
       templateName: 'AD Update Template',
     });
     const fields = String(
-      (admanagerApi.mock.calls[0]?.[1] as { query?: { fields?: string } } | undefined)?.query?.fields
+      (admanagerApi.mock.calls[0]?.[1] as { query?: { fields?: string } } | undefined)?.query
+        ?.fields
     );
     expect(fields).not.toMatch(/TELEPHONE_NUMBER|DESCRIPTION/);
   });
 
   it('reports success with the per-item status message', async () => {
     admanagerApi.mockResolvedValueOnce(
-      answer(200, { data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }] })
+      answer(200, {
+        data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }],
+      })
     );
     const handlers = register();
     const result = await handlers.get('admanager_update_user_confirm')!({
@@ -780,5 +808,43 @@ describe('unknown instance is not an existence oracle', () => {
       samAccountName: 'jdoe',
     });
     expect(textOf(result)).toBe(NO_SUCH_INSTANCE);
+  });
+});
+
+describe('generatePassword', () => {
+  const UPPER = /[ABCDEFGHJKLMNPQRSTUVWXYZ]/;
+  const LOWER = /[abcdefghijkmnopqrstuvwxyz]/;
+  const DIGIT = /[23456789]/;
+  const SYMBOL = /[!@#$%^&*\-_=+]/;
+  const ALPHABET = /^[ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*\-_=+]+$/;
+
+  it('is 16 characters from the unambiguous alphabet with every class present', () => {
+    for (let i = 0; i < 200; i += 1) {
+      const password = generatePassword();
+      expect(password).toHaveLength(16);
+      expect(password).toMatch(ALPHABET);
+      expect(password).toMatch(UPPER);
+      expect(password).toMatch(LOWER);
+      expect(password).toMatch(DIGIT);
+      expect(password).toMatch(SYMBOL);
+    }
+  });
+
+  it('draws from node:crypto, never Math.random', () => {
+    const spy = jest.spyOn(Math, 'random');
+    try {
+      generatePassword();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('does not leave the required classes in fixed slots', () => {
+    // 200 draws: the first character is a symbol-class pick about 1/16 of
+    // the time when shuffled, 0 of the time if the shuffle were missing
+    // (slot 0 would always be the uppercase pick).
+    const firsts = new Set(Array.from({ length: 200 }, () => generatePassword()[0]));
+    expect([...firsts].some((char) => !UPPER.test(char))).toBe(true);
   });
 });
