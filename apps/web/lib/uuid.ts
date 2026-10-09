@@ -1,7 +1,7 @@
 /**
  * URL-segment uuid hygiene. Ids arrive in URLs that get pasted into chat and
- * docs, where autolinkers glue on trailing punctuation ("…/mcp/<uuid>." at a
- * sentence end) — and Postgres answers a 22P02 for the malformed cast, which
+ * docs, where autolinkers glue on trailing punctuation ("…/upload/<uuid>."
+ * at a sentence end) — and Postgres answers a 22P02 for the malformed cast, which
  * surfaces as a 500 on a request that deserves a plain 404.
  */
 
@@ -16,30 +16,13 @@ export function isUuid(value: string): boolean {
  * a query. The proxy rejects malformed ones with a 404 before any handler
  * runs, so no route needs its own guard.
  */
-const UUID_SEGMENT_PREFIXES = [
-  '/api/mcp/',
-  '/api/tenant/',
-  '/api/microsoft/',
-  '/api/entra-developer/',
-  '/api/webex/',
-  '/api/zoom/',
-  '/api/atlassian-jsm/',
-  '/api/atlassian-confluence/',
-  '/api/atlassian-admin/',
-  '/api/webhooks/microsoft/',
-  '/api/webhooks/webex/',
-  '/api/webhooks/zoom/',
-  '/api/upload/',
-] as const;
+const UUID_SEGMENT_PREFIXES = ['/api/upload/'] as const;
 
 /** True when the path names one of the uuid-keyed API trees with a bad id. */
 export function hasMalformedUuidSegment(pathname: string): boolean {
   for (const prefix of UUID_SEGMENT_PREFIXES) {
     if (pathname.startsWith(prefix)) {
       const segment = pathname.slice(prefix.length).split('/')[0] ?? '';
-      // /api/mcp/.well-known/* is a sibling tree, not a tenant id — but it
-      // only exists UNDER a tenant (/api/mcp/<uuid>/.well-known), so a
-      // non-uuid first segment is malformed for every listed prefix.
       return !isUuid(segment);
     }
   }

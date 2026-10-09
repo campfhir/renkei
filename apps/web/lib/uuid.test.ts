@@ -23,20 +23,19 @@ describe('isUuid', () => {
 
 describe('hasMalformedUuidSegment', () => {
   it('flags a uuid-keyed API path whose id carries trailing punctuation', () => {
-    expect(hasMalformedUuidSegment('/api/mcp/fb38968e-2dde-4c84-a1de-e78cc30a54a9./mcp')).toBe(
-      true
-    );
-    expect(hasMalformedUuidSegment('/api/tenant/garbage/agents')).toBe(true);
+    expect(
+      hasMalformedUuidSegment('/api/upload/fb38968e-2dde-4c84-a1de-e78cc30a54a9./content')
+    ).toBe(true);
     expect(hasMalformedUuidSegment('/api/upload/nope')).toBe(true);
   });
 
   it('passes well-formed ids and unrelated paths through', () => {
-    expect(hasMalformedUuidSegment('/api/mcp/fb38968e-2dde-4c84-a1de-e78cc30a54a9/mcp')).toBe(
-      false
-    );
     expect(
-      hasMalformedUuidSegment('/api/webhooks/microsoft/fb38968e-2dde-4c84-a1de-e78cc30a54a9/acct-1')
+      hasMalformedUuidSegment('/api/upload/fb38968e-2dde-4c84-a1de-e78cc30a54a9/content')
     ).toBe(false);
+    // Trees whose first segment is a name, not an id, are not guarded.
+    expect(hasMalformedUuidSegment('/api/mcp/oauth/authorize')).toBe(false);
+    expect(hasMalformedUuidSegment('/api/webhooks/microsoft/acct-1')).toBe(false);
     expect(hasMalformedUuidSegment('/api/health')).toBe(false);
     expect(hasMalformedUuidSegment('/nems-org/agents/whatever')).toBe(false);
   });

@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -68,9 +69,12 @@ async function seed(fixture: Fixture): Promise<void> {
       [fixture.subject, fixture.subject]
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
       [fixture.subject]
     );
+    // Enrolled already, so the first-sign-in "your encryption key is ready"
+    // dialog does not sit over the settings this spec saves.
+    await enrollForE2E(client, fixture.subject);
   });
 }
 

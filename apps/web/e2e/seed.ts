@@ -456,7 +456,7 @@ export async function seed(client: Client): Promise<void> {
   // tours switched off, so no card lands on a page a screenshot is about
   // to capture. coach-marks.spec.ts signs in as a subject of its own.
   await client.query(
-    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n     ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
     [E2E_SUBJECT]
   );
 
@@ -1118,7 +1118,7 @@ export async function seed(client: Client): Promise<void> {
   // before the model was recorded, and a little on the plain agent so the
   // oversight sort has something to order. Same day spread as the run log.
   await client.query(
-    `INSERT INTO llm_calls\n       (subject, agent_id, run_id, step_id, purpose, provider, model,\n        input_tokens, output_tokens, cache_read_input_tokens, cache_write_input_tokens, created_at)\n     SELECT $1, $3, $2, gen_random_uuid(), step.id::uuid, 'run', step.provider, step.model,\n            step.input_tokens, step.output_tokens, step.cache_read, step.cache_write,\n            NOW() - make_interval(days => spread.days_ago, mins => n)\n     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)\n     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n\n     CROSS JOIN (VALUES\n       ($4, 'anthropic', 'claude-sonnet-5', 3580, 210, 2400, 0),\n       ($5, 'anthropic', 'claude-opus-5', 3650, 640, 0, 0),\n       ($6, 'openai', 'gpt-5-mini', 1200, 95, 480, 0),\n       ($7, NULL, NULL, 310, 40, 0, 0)\n     ) AS step(id, provider, model, input_tokens, output_tokens, cache_read, cache_write)`,
+    `INSERT INTO llm_calls\n       (subject, agent_id, run_id, step_id, purpose, provider, model,\n        input_tokens, output_tokens, cache_read_input_tokens, cache_write_input_tokens, created_at)\n     SELECT $2, $1, gen_random_uuid(), step.id::uuid, 'run', step.provider, step.model,\n            step.input_tokens, step.output_tokens, step.cache_read, step.cache_write,\n            NOW() - make_interval(days => spread.days_ago, mins => n)\n     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)\n     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n\n     CROSS JOIN (VALUES\n       ($3, 'anthropic', 'claude-sonnet-5', 3580, 210, 2400, 0),\n       ($4, 'anthropic', 'claude-opus-5', 3650, 640, 0, 0),\n       ($5, 'openai', 'gpt-5-mini', 1200, 95, 480, 0),\n       ($6, NULL, NULL, 310, 40, 0, 0)\n     ) AS step(id, provider, model, input_tokens, output_tokens, cache_read, cache_write)`,
     [AGENT_RICH_ID, E2E_SUBJECT, STEP_COLLECT, STEP_RANK, STEP_FILE, STEP_WRAP]
   );
   await client.query(
@@ -1131,7 +1131,7 @@ export async function seed(client: Client): Promise<void> {
   // subject the reverse, so the two boards rank them differently. Same
   // day spread as the run log. (Cleanup rides the tenant delete's cascade.)
   await client.query(
-    `INSERT INTO voice_usage (subject, kind, characters, audio_ms, provider, voice, locale, created_at)\n     SELECT $1, person.subject, piece.kind,\n            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen ELSE 0 END,\n            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen * 65\n                 ELSE piece.amount * person.talk END,\n            'azure-speech', CASE WHEN piece.kind = 'speech' THEN 'en-GB-SoniaNeural' END, 'en-GB',\n            NOW() - make_interval(days => spread.days_ago, mins => n)\n     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)\n     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n\n     CROSS JOIN (VALUES ('speech', 420), ('transcription', 6500)) AS piece(kind, amount)\n     CROSS JOIN (VALUES ($2, 3, 1), ($3, 1, 4)) AS person(subject, listen, talk)`,
+    `INSERT INTO voice_usage (subject, kind, characters, audio_ms, provider, voice, locale, created_at)\n     SELECT person.subject, piece.kind,\n            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen ELSE 0 END,\n            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen * 65\n                 ELSE piece.amount * person.talk END,\n            'azure-speech', CASE WHEN piece.kind = 'speech' THEN 'en-GB-SoniaNeural' END, 'en-GB',\n            NOW() - make_interval(days => spread.days_ago, mins => n)\n     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)\n     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n\n     CROSS JOIN (VALUES ('speech', 420), ('transcription', 6500)) AS piece(kind, amount)\n     CROSS JOIN (VALUES ($1, 3, 1), ($2, 1, 4)) AS person(subject, listen, talk)`,
     [E2E_SUBJECT, 'e2e-colleague@example.com']
   );
 

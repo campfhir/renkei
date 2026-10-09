@@ -226,7 +226,7 @@ export async function enrollForE2E(
   }
   if (!enrolled.has(cacheKey)) {
     await client.query(
-      `INSERT INTO user_encryption_keys\n         (subject, salt, mode, version, public_key, wrapped_private_key,\n          wrapped_automation_key, enrolled_at)\n       VALUES ($1, $2, $3, 'held', 1, $4, $5, $6, NOW())\n       ON CONFLICT (subject) DO UPDATE SET\n         mode = 'held', version = user_encryption_keys.version + 1, public_key = EXCLUDED.public_key,\n         wrapped_private_key = EXCLUDED.wrapped_private_key,\n         wrapped_automation_key = EXCLUDED.wrapped_automation_key, enrolled_at = NOW(),\n         verifier = NULL, sealed_kek = NULL, unlocked_until = NULL`,
+      `INSERT INTO user_encryption_keys\n         (subject, salt, mode, version, public_key, wrapped_private_key,\n          wrapped_automation_key, enrolled_at)\n       VALUES ($1, $2, 'held', 1, $3, $4, $5, NOW())\n       ON CONFLICT (subject) DO UPDATE SET\n         mode = 'held', version = user_encryption_keys.version + 1, public_key = EXCLUDED.public_key,\n         wrapped_private_key = EXCLUDED.wrapped_private_key,\n         wrapped_automation_key = EXCLUDED.wrapped_automation_key, enrolled_at = NOW(),\n         verifier = NULL, sealed_kek = NULL, unlocked_until = NULL`,
       [
         subject,
         Buffer.alloc(32).toString('base64'),
@@ -238,10 +238,10 @@ export async function enrollForE2E(
     // Anything the person held under an earlier key (a rotation in
     // keys.spec.ts, a pre-derivation run) is unopenable under these; a
     // spec that seeds reseeds.
-    await client.query(`DELETE FROM resource_key_grants WHERE holder = $2`, [
+    await client.query(`DELETE FROM resource_key_grants WHERE holder = $1`, [
       subject,
     ]);
-    await client.query(`DELETE FROM key_delegations WHERE subject = $2`, [
+    await client.query(`DELETE FROM key_delegations WHERE subject = $1`, [
       subject,
     ]);
     enrolled.set(cacheKey, keys);
@@ -259,7 +259,7 @@ export async function enrollForE2E(
   for (const instance of instances) {
     for (const session of sessions.rows) {
       await client.query(
-        `INSERT INTO key_delegations\n           (subject, instance_id, scope, session_id, sealed_key, expires_at)\n         SELECT $1::uuid, $2::text, $3::uuid, 'session', $4::uuid, $5::text, $6::timestamptz\n          WHERE NOT EXISTS (\n            SELECT 1 FROM key_delegations\n             WHERE instance_id = $3::uuid AND session_id = $4::uuid AND scope = 'session')`,
+        `INSERT INTO key_delegations\n           (subject, instance_id, scope, session_id, sealed_key, expires_at)\n         SELECT $1::text, $2::uuid, 'session', $3::uuid, $4::text, $5::timestamptz\n          WHERE NOT EXISTS (\n            SELECT 1 FROM key_delegations\n             WHERE instance_id = $2::uuid AND session_id = $3::uuid AND scope = 'session')`,
         [
           subject,
           instance.id,
@@ -271,7 +271,7 @@ export async function enrollForE2E(
     }
     if (options.automation !== false) {
       await client.query(
-        `INSERT INTO key_delegations\n           (subject, instance_id, scope, session_id, sealed_key, expires_at)\n         SELECT $1::uuid, $2::text, $3::uuid, 'automation', NULL, $4::text, NOW() + interval '30 days'\n          WHERE NOT EXISTS (\n            SELECT 1 FROM key_delegations\n             WHERE instance_id = $3::uuid::uuid AND subject = $2::text\n               AND scope = 'automation')`,
+        `INSERT INTO key_delegations\n           (subject, instance_id, scope, session_id, sealed_key, expires_at)\n         SELECT $1::text, $2::uuid, 'automation', NULL, $3::text, NOW() + interval '30 days'\n          WHERE NOT EXISTS (\n            SELECT 1 FROM key_delegations\n             WHERE instance_id = $2::uuid AND subject = $1::text\n               AND scope = 'automation')`,
         [subject, instance.id, sealToPublicKey(instance.publicKey, keys.automationKey)]
       );
     }

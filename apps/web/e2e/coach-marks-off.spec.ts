@@ -14,6 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 /**
  * A tenant per project: the three projects run side by side, and a tenant
@@ -92,6 +93,9 @@ test.beforeAll(async ({}, testInfo) => {
     `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')`,
     [ids.sessionId, ids.subject, ['renkei-user', 'renkei-operator']]
   );
+  // Enrolled already, so the first-sign-in "your encryption key is ready"
+  // dialog does not sit over the shell this spec clicks through.
+  await enrollForE2E(client, ids.subject);
 });
 
 test.afterAll(async () => {

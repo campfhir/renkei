@@ -80,7 +80,7 @@ async function seedTenant(client: Client, fixture: ReturnType<typeof fixtureFor>
     [fixture.subject, fixture.subject, 'E2E Tester']
   );
   await client.query(
-    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
     [fixture.subject]
   );
   await client.query(

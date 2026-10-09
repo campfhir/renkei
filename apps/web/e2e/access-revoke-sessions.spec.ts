@@ -97,7 +97,7 @@ async function seed(fixture: Fixture): Promise<void> {
       [uuidFrom(`rt:${fixture.slug}`), fixture.target.clientId, fixture.target.subject, `rhash-${fixture.target.sessionId}`, inAnHour]
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
       [fixture.operator.subject]
     );
   });

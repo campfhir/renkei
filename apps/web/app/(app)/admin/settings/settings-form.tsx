@@ -148,6 +148,15 @@ function Toggle({
  * adjusts a few at a time, and eleven separate save buttons would be
  * eleven chances to forget one.
  */
+/** The fields of `after` that differ from `before`. */
+function changedFields<T extends object>(before: T, after: T): Partial<T> {
+  const changed: Partial<T> = {};
+  for (const key in after) {
+    if (after[key] !== before[key]) changed[key] = after[key];
+  }
+  return changed;
+}
+
 export function SettingsForm({ initial }: { initial: EditableSettings }) {
   const [values, setValues] = useState(initial);
   const [saved, setSaved] = useState(initial);
@@ -224,10 +233,13 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
   async function save() {
     setState('saving');
     setError(null);
+    // Only what this form changed: the settings are the whole organization's,
+    // and sending every field would write another operator's concurrent save
+    // back to what this form last loaded.
     const result = await sendJsonFull<{ settings: EditableSettings }>(
       `/api/admin/org-settings`,
       'PUT',
-      values
+      changedFields(saved, values)
     );
     if (result.error || !result.data) {
       setState('error');

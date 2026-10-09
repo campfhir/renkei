@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect as baseExpect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -105,13 +106,16 @@ async function seed(fixture: Fixture): Promise<void> {
       [fixture.subject, fixture.subject]
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
       [fixture.subject]
     );
     await client.query(
       `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch, workspace_id)\n       VALUES ($1, $2, $3, 'code', 'atlassian-bitbucket', 'acme/monorepo', 'main', $4)`,
       [fixture.projectId, fixture.subject, fixture.projectName, workspace.id]
     );
+    // Enrolled already, so the first-sign-in "your encryption key is ready"
+    // dialog does not sit over the project page this spec works in.
+    await enrollForE2E(client, fixture.subject);
   } finally {
     await client.end();
   }
