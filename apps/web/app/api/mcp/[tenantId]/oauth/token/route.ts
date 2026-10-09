@@ -98,8 +98,8 @@ export async function POST(
 
     // A token request names its own grant type by definition; each handler
     // then authenticates the client and the grant it presents.
-    // prettier-ignore
-    if (grantType === 'authorization_code') { // codeql[js/user-controlled-bypass]
+    // codeql[js/user-controlled-bypass]
+    if (grantType === 'authorization_code') {
       return handleAuthorizationCodeGrant(params, credentials, db, settings, tenantId);
     } else if (grantType === 'refresh_token') {
       return handleRefreshTokenGrant(params, credentials, db, settings, tenantId);

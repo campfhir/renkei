@@ -587,8 +587,8 @@ export function runProcess(input: RunInput, file: string, args: string[]): Promi
       // The caller's own shell command is the feature here; what contains it
       // is the uid drop, the capability bounding set and the limits that
       // `wrapCommand` puts around it, not the command text.
+      // codeql[js/command-line-injection, js/indirect-command-line-injection]
       child = spawn(wrapped.file, wrapped.args, {
-        // codeql[js/command-line-injection, js/indirect-command-line-injection]
         cwd: input.cwd,
         env: childEnvironment(input),
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -925,7 +925,8 @@ export async function writeWorkspaceFile(
     // in between them is refused by the kernel; only `created` could be
     // stale, and it is informational.
     try {
-      handle = await open(path, O_WRONLY | O_TRUNC | O_NOFOLLOW); // codeql[js/file-system-race]
+      // codeql[js/file-system-race]
+      handle = await open(path, O_WRONLY | O_TRUNC | O_NOFOLLOW);
     } catch (inner) {
       const code = errnoCode(inner);
       if (code === 'ELOOP')
