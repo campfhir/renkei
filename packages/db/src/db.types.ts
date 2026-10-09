@@ -1212,6 +1212,23 @@ export interface Prompts {
   updated_by_subject: string;
 }
 
+export interface PhiAccessEvents {
+  action: string;
+  agent_id: string | null;
+  channel_id: string | null;
+  connector: string;
+  created_at: Generated<Timestamp>;
+  document_id: string | null;
+  id: Generated<string>;
+  instance_id: string | null;
+  message_id: string | null;
+  path_hash: string | null;
+  run_id: string | null;
+  subject: string;
+  tenant_id: string;
+  tool_name: string;
+}
+
 export interface ProviderGrants {
   client_id: string;
   created_at: Generated<Timestamp>;
@@ -1640,6 +1657,7 @@ export interface DB {
   pr_subscriptions: PrSubscriptions;
   prompt_libraries: PromptLibraries;
   prompts: Prompts;
+  phi_access_events: PhiAccessEvents;
   provider_grants: ProviderGrants;
   provider_refresh_locks: ProviderRefreshLocks;
   push_subscriptions: PushSubscriptions;

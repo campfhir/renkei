@@ -829,6 +829,35 @@ find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
 - [x] SQL injection prevention (using Kysely ORM)
 - [x] CSRF protection (state verification in OAuth)
 - [x] XSS protection (React escaping, no dangerouslySetInnerHTML)
+- [x] PHI access trail append-only (`phi_access_events`, below)
+
+### PHI access trail
+
+Every read, search, export or download through the Mirth, OnBase and
+file-share tools — by a person or by one of their agents — writes one row
+to `phi_access_events` (migration 141): who (OIDC subject, and the agent
+and run when an agent called), which connector and instance or share,
+which tool, and the record reached **by identifier only** — channel and
+message id, OnBase document id, a SHA-256 of the share path. Never
+content, never a search's text, never a path. A Mirth read or search also
+posts Mirth's own `_auditAccessedPHIMessage` / `_auditQueriedPHIMessage`
+event on the instance, best effort, so Mirth's event log agrees.
+
+Operators read it at `GET /api/admin/{slug}/phi-access?subject=<oidc
+subject>&limit=100&before=<ISO date-time>` (operator role; without
+`subject` the org's whole trail, newest first).
+
+The table is **append-only by trigger**: `UPDATE` and `DELETE` are refused
+whatever role connects, because the migration runs as the application's
+own database user, which owns the table, and a `REVOKE` on an owner would
+be a no-op. Retention is therefore a deliberate DBA act, never the
+application's: as a superuser, `ALTER TABLE phi_access_events DISABLE
+TRIGGER phi_access_events_no_update_delete;`, prune, then `ENABLE` it
+again — and prefer archiving the pruned rows first. If the application
+connects as a role that does not own the table, additionally `REVOKE
+UPDATE, DELETE ON phi_access_events FROM <app role>;` so the guarantee no
+longer rests on the trigger alone. A failed insert is logged at `warn`
+(`component=phi-access`); the read it describes still returns.
 
 ## Troubleshooting
 

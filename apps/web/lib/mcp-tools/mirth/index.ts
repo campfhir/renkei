@@ -60,7 +60,9 @@ import {
 } from '../widgets';
 import { NO_SUCH_INSTANCE } from './mirth-auth';
 import type { MirthAuth } from './mirth-auth';
-import { registerOperationTools, type OperationRuntime } from './operations';
+import { registerOperationTools, xstreamValue, type OperationRuntime } from './operations';
+import { logger } from '@/lib/logger';
+import { phiActorOf, recordPhiAccess, type PhiAction } from '@/lib/phi-access';
 import {
   REF_KINDS,
   createDirectory,
@@ -73,6 +75,26 @@ import {
 
 /** The connector key the Mirth capabilities register under. */
 export const MIRTH_MCP_CONNECTOR = 'mirth';
+
+/**
+ * The generated tools that reach message content, and how the PHI access
+ * trail (lib/phi-access.ts) names what they did. The curated search and
+ * read tools record inline; everything else in the operation table is
+ * configuration, status or an act, none of it a patient's record.
+ */
+const PHI_OPERATION_ACTIONS: Record<string, PhiAction> = {
+  export_messages: 'export',
+  get_message_attachments: 'read',
+  get_message_attachment: 'read',
+  get_dicom_message: 'read',
+};
+
+/** Mirth's own PHI audit routes (operations.ts), by what happened. */
+const MIRTH_AUDIT_PATHS = {
+  accessed: '/channels/_auditAccessedPHIMessage',
+  queried: '/channels/_auditQueriedPHIMessage',
+  exported: '/channels/_auditExportMessages',
+} as const;
 
 /** What the caller may do somewhere: the union of their instances' permissions. */
 export interface MirthToolExposure {
@@ -290,8 +312,7 @@ const dateArg = (value: unknown): string | undefined =>
  * useful error, which reads as "not found" instead of "out of range". This
  * rejects it before the request ever goes out.
  */
-const int32Field = () =>
-  z.number().int().min(-2147483648).max(2147483647);
+const int32Field = () => z.number().int().min(-2147483648).max(2147483647);
 
 /**
  * The operators Mirth's custom-metadata search recognises. On the wire each
@@ -326,8 +347,13 @@ const metadataFilterField = z.object({
   operator: z.enum(METADATA_OPERATORS).describe('How to compare the column to value.'),
   value: z
     .union([z.string(), z.number()])
-    .describe('The value to compare against — a number for a Number column (e.g. ATTEMPTS), text otherwise.'),
-  caseInsensitive: z.boolean().optional().describe('Ignore case for a text column (default false).'),
+    .describe(
+      'The value to compare against — a number for a Number column (e.g. ATTEMPTS), text otherwise.'
+    ),
+  caseInsensitive: z
+    .boolean()
+    .optional()
+    .describe('Ignore case for a text column (default false).'),
 });
 
 /** The message search filters Mirth's GET /channels/{id}/messages accepts, as a model sees them. */
@@ -387,7 +413,7 @@ function messageQuery(
 
 export function registerMirthTools(
   rawServer: McpServer,
-  _context: MCPToolContext,
+  context: MCPToolContext,
   auth: MirthAuth,
   exposure: MirthToolExposure,
   options: { directory?: Directory } = {}
@@ -483,12 +509,98 @@ export function registerMirthTools(
   };
 
   /**
+   * The PHI access trail: who read which message on which channel, by id,
+   * every time a message tool answers — and, best effort, the same fact
+   * told to Mirth's own event log through its `_audit…PHIMessage` routes,
+   * so an operator reading either audit sees the read. Neither write may
+   * fail the read it describes: the content is already in hand, and a
+   * trail that failed reads would be turned off. The trail insert logs
+   * its own failure (lib/phi-access.ts); the Mirth audit logs here.
+   */
+  const actor = phiActorOf(context);
+  const auditInMirth = async (
+    instanceId: string,
+    what: keyof typeof MIRTH_AUDIT_PATHS,
+    attributes: Record<string, string>
+  ): Promise<void> => {
+    try {
+      const audited = await call(instanceId, 'record the PHI audit event', {
+        method: 'POST',
+        path: MIRTH_AUDIT_PATHS[what],
+        body: xstreamValue('string-map', attributes),
+        contentType: 'application/xml',
+      });
+      if (!audited.ok) {
+        logger.warn('Mirth PHI audit event not recorded: {error}', {
+          component: 'mcp/mirth',
+          tenantId: context.tenantId,
+          subject: context.subject,
+          instanceId,
+          error: audited.message,
+        });
+      }
+    } catch (error) {
+      logger.warn('Mirth PHI audit event not recorded: {error}', {
+        component: 'mcp/mirth',
+        tenantId: context.tenantId,
+        subject: context.subject,
+        instanceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  const recordMessageAccess = async (input: {
+    instanceId: string;
+    action: PhiAction;
+    toolName: string;
+    channelId: string;
+    messageId?: string | number | null;
+  }): Promise<void> => {
+    if (actor) {
+      await recordPhiAccess({
+        ...actor,
+        connector: 'mirth',
+        instanceId: input.instanceId,
+        action: input.action,
+        toolName: input.toolName,
+        channelId: input.channelId,
+        messageId: input.messageId ?? null,
+      });
+    }
+    await auditInMirth(
+      input.instanceId,
+      input.action === 'search' ? 'queried' : input.action === 'export' ? 'exported' : 'accessed',
+      {
+        channelId: input.channelId,
+        ...(input.messageId !== undefined && input.messageId !== null
+          ? { messageId: String(input.messageId) }
+          : {}),
+        tool: input.toolName,
+      }
+    );
+  };
+
+  /**
    * What the generated, one-tool-per-route half (operations.ts) borrows:
    * the same call path, the same exposure gate, the same instance names.
    */
   const runtime: OperationRuntime = {
     call,
     exposureRefusal,
+    async recordAccess(tool, args) {
+      const action = PHI_OPERATION_ACTIONS[tool];
+      if (!action) return;
+      await recordMessageAccess({
+        instanceId: str(args.instanceId),
+        action,
+        toolName: `mirth_${tool}`,
+        channelId: textOf(args.channelId),
+        messageId:
+          typeof args.messageId === 'number' || typeof args.messageId === 'string'
+            ? args.messageId
+            : null,
+      });
+    },
     async instanceName(instanceId) {
       const connected = await auth.listConnected();
       if (typeof connected === 'string') return instanceId;
@@ -919,6 +1031,12 @@ export function registerMirthTools(
         }
       );
       if (!found.ok) return errText(found.message);
+      await recordMessageAccess({
+        instanceId,
+        action: 'search',
+        toolName: 'mirth_search_messages',
+        channelId,
+      });
       const messages = unwrapList(found.value);
       if (messages.length === 0) return textResult('No messages match.');
       const lines = messages.map((message) => {
@@ -1003,6 +1121,13 @@ export function registerMirthTools(
       if (!isRecord(message) || message.messageId === undefined) {
         return errText('Mirth has no message with that id on this channel.');
       }
+      await recordMessageAccess({
+        instanceId: str(args.instanceId),
+        action: 'read',
+        toolName: 'mirth_get_message',
+        channelId: str(args.channelId),
+        messageId: textOf(message.messageId),
+      });
       const lines = [
         `Message #${textOf(message.messageId)} — received ${dateOf(message.receivedDate)} — processed: ${textOf(message.processed)}`,
       ];

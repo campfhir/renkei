@@ -179,7 +179,13 @@ export interface EngineDeps {
   db: Kysely<DB>;
   /** Base URL the worker reaches the web app on (RENKEI_WEB_INTERNAL_URL). */
   webBaseUrl: string;
-  createMcpClient?: (tenantId: string, token: string, webBaseUrl: string) => McpClient;
+  createMcpClient?: (
+    tenantId: string,
+    token: string,
+    webBaseUrl: string,
+    /** The run the client acts for — stamped on each call for the PHI access trail. */
+    runId?: string
+  ) => McpClient;
   mintToken?: typeof mintRunToken;
   revokeToken?: typeof revokeRunToken;
   resolveLlm?: typeof resolveAgentLlm;
@@ -936,8 +942,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
   const db = deps.db;
   const createClient =
     deps.createMcpClient ??
-    ((tenantId: string, token: string, base: string) =>
-      new AgentMcpClient(`${base.replace(/\/+$/, '')}/api/mcp/${tenantId}/mcp`, token));
+    ((tenantId: string, token: string, base: string, runId?: string) =>
+      new AgentMcpClient(`${base.replace(/\/+$/, '')}/api/mcp/${tenantId}/mcp`, token, {
+        ...(runId ? { runId } : {}),
+      }));
   const mint = deps.mintToken ?? mintRunToken;
   const revoke = deps.revokeToken ?? revokeRunToken;
   const resolveLlm = deps.resolveLlm ?? resolveAgentLlm;
@@ -1229,7 +1237,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     });
 
     try {
-      const mcp = createClient(tenantId, token, deps.webBaseUrl);
+      const mcp = createClient(tenantId, token, deps.webBaseUrl, run.id);
       await mcp.initialize();
       const availableTools = await mcp.listTools();
       const toolsByName = new Map(availableTools.map((tool) => [tool.name, tool]));

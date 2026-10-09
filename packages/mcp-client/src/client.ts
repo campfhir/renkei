@@ -94,12 +94,19 @@ export function parseSseBody(body: string): unknown {
 export interface HttpMcpClientOptions {
   /** How this caller introduces itself in `initialize`. */
   clientName?: string;
+  /**
+   * The agent run every call belongs to, stamped as `x-renkei-run` so the
+   * server's PHI access trail can say which run read a record. Only the
+   * agent runner sets it.
+   */
+  runId?: string;
 }
 
 export class HttpMcpClient implements McpClient {
   private nextId = 1;
   private sessionId: string | null = null;
   private readonly clientName: string;
+  private readonly runId: string | null;
 
   /**
    * The step attempt every subsequent call belongs to, stamped on each
@@ -115,6 +122,7 @@ export class HttpMcpClient implements McpClient {
     options: HttpMcpClientOptions = {}
   ) {
     this.clientName = options.clientName ?? 'renkei-agent-runner';
+    this.runId = options.runId ?? null;
   }
 
   /** Called by the engine before each attempt of a step. */
@@ -132,6 +140,7 @@ export class HttpMcpClient implements McpClient {
         authorization: `Bearer ${this.bearerToken}`,
         'mcp-protocol-version': PROTOCOL_VERSION,
         ...(this.sessionId ? { 'mcp-session-id': this.sessionId } : {}),
+        ...(this.runId ? { 'x-renkei-run': this.runId } : {}),
         ...(this.attempt
           ? {
               'x-renkei-attempt': String(this.attempt.attempt),

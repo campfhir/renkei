@@ -168,6 +168,7 @@ export const EXPECTED_MIGRATIONS = [
   '136-delegate-git-tickets',
   '137-drop-todo-chunks',
   '138-held-keys-and-delegations',
+  '141-phi-access-events',
 ];
 
 export interface MigrationStatus {
