@@ -195,7 +195,7 @@ async function tools(): Promise<Map<string, ToolHandler>> {
       accountId: 'acct-1',
       siteUrl: 'https://example.atlassian.net',
       apiBaseUrl,
-      accessToken: 'token-1',
+      jiraAuth: null,
       maxJqlResults: 100,
     } as MCPToolContext,
     stubAuth()

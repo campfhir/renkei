@@ -11,9 +11,9 @@
  * `oauthZoomAuth`; `zoom.no-sandbox.test.ts` passes `deniedZoomAuth` instead,
  * since no Zoom sandbox exists yet. Two tools — zoom_get_transcript and
  * zoom_get_meeting_summary — are a documented exception: they construct a
- * ZoomClient with no injectable transport of its own, so they resolve
- * access via resolveZoomAccess directly rather than through ZoomAuth.fetch()
- * — see zoom-auth.ts's header for why that isn't fixable here.
+ * ZoomClient (for its lane limiting and VTT download) on the caller's own
+ * grant fetcher, resolved via resolveZoomAccess rather than through
+ * ZoomAuth.fetch() — see zoom-auth.ts's header.
  */
 
 import { z } from 'zod';
@@ -37,6 +37,7 @@ import {
   previewToolMeta,
   newPreviewId,
 } from '../widgets';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { resolveZoomAccess, ZOOM_API_BASE, type ZoomAuth } from './zoom-auth';
 
 export const ZOOM_MCP_CONNECTOR = 'zoom';
@@ -111,14 +112,9 @@ async function zoomCall(
  * routing a low-stakes, already-best-effort lookup through the full
  * ZoomAuth/zoomGet machinery.
  */
-async function tryResolveMeetingUuid(
-  accessToken: string,
-  meetingId: string
-): Promise<string | null> {
+async function tryResolveMeetingUuid(auth: AuthedFetch, meetingId: string): Promise<string | null> {
   try {
-    const response = await fetch(`${ZOOM_API_BASE}/meetings/${meetingId}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const response = await auth(`${ZOOM_API_BASE}/meetings/${meetingId}`);
     if (!response.ok) return null;
     const body: unknown = await response.json().catch(() => null);
     const uuid =
@@ -780,11 +776,11 @@ export async function registerZoomTools(
     async (args: Record<string, any>) => {
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
-      // ZoomClient has no injectable transport — see this file's header.
+      // ZoomClient rides the caller's grant fetcher — see this file's header.
       const access = await resolveZoomAccess(context);
       if (typeof access === 'string') return errText(access);
 
-      const client = new ZoomClient(access.accessToken, { lane: 'interactive' });
+      const client = new ZoomClient(access.auth, { lane: 'interactive' });
       const transcript = await client.getMeetingTranscript(meetingId);
       if (!transcript.ok) {
         return errText(
@@ -827,7 +823,7 @@ export async function registerZoomTools(
     async (args: Record<string, any>) => {
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
-      // ZoomClient has no injectable transport — see this file's header.
+      // ZoomClient rides the caller's grant fetcher — see this file's header.
       const access = await resolveZoomAccess(context);
       if (typeof access === 'string') return errText(access);
 
@@ -837,11 +833,11 @@ export async function registerZoomTools(
       // itself.
       let summaryKey = meetingId;
       if (/^\d+$/.test(meetingId)) {
-        const uuid = await tryResolveMeetingUuid(access.accessToken, meetingId);
+        const uuid = await tryResolveMeetingUuid(access.auth, meetingId);
         if (uuid) summaryKey = uuid;
       }
 
-      const client = new ZoomClient(access.accessToken, { lane: 'interactive' });
+      const client = new ZoomClient(access.auth, { lane: 'interactive' });
       const summary = await client.getMeetingSummary(summaryKey);
       if (!summary.ok) {
         return errText(

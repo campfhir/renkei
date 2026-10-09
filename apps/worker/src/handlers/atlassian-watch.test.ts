@@ -20,6 +20,7 @@ jest.mock('../enqueue', () => ({ enqueueKnowledgeEvent: jest.fn() }));
 import { runWatchSync } from './atlassian-watch';
 import type { AtlassianAccess } from './atlassian-access';
 import type { WatchRow } from './atlassian-watch';
+import { authedFetch } from '@renkei/delegate-client';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { resolveEmbeddingProvider: mockResolveEmbeddingProvider } = jest.requireMock<{
@@ -74,7 +75,8 @@ beforeEach(() => {
 
 function access(): AtlassianAccess {
   return {
-    accessToken: 'token-1',
+    // Reads the global fetch stub lazily, at call time.
+    auth: authedFetch((url, init) => fetch(url, init), 'atlassian:tenant-1:acct-1'),
     accountId: 'acct-1',
     cloudId: 'cloud-1',
     siteUrl: 'https://acme.atlassian.net',

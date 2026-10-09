@@ -139,13 +139,13 @@ export async function searchMyKnowledge(
   }
 
   // Source names map to provider/kind pairs in one place (the MCP tool's
-  // module) so this page and the tool can never drift apart on what
-  // 'outlook_mail' means.
+  // module) so this page and the tool can never drift apart on what a
+  // source name means.
   const sourceFilters = sourceFiltersFor(filters.sources ?? []);
   const verifiers = await buildKnowledgeVerifiers(tenantId);
 
   // No query yet: show the newest indexed items instead of an empty page,
-  // so the filters double as a browser ("top 20 mail", "top 20 WebEx").
+  // so the filters double as a browser ("top 20 tasks", "top 20 WebEx").
   // This path needs no embedder, so browsing still works for an org that
   // has not configured one.
   if (!semanticQuery) {

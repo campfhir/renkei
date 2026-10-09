@@ -20,17 +20,18 @@
 import type { AccessVerifier, SourceRef } from '@renkei/gates';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { atlassianFetch, listOf, rec, str } from './client';
 
 /** How the caller's Atlassian credential is found, given only their email. */
 export interface AtlassianCredentialLookup {
   /**
-   * Resolve the access token + cloud id for this user, or null when they
+   * Resolve the grant's fetcher + cloud id for this user, or null when they
    * have no usable grant. Null denies every ref in the batch, which is
    * correct: a user with no Confluence connection cannot be shown
    * Confluence content on the strength of the index alone.
    */
-  (userEmail: string): Promise<{ accessToken: string; cloudId: string } | null>;
+  (userEmail: string): Promise<{ auth: AuthedFetch; cloudId: string } | null>;
 }
 
 /** Jira refs are the issue key, chunk suffix included: `PROJ-123#0001`. */
@@ -93,7 +94,7 @@ export function createJiraAccessVerifier(lookup: AtlassianCredentialLookup): Acc
         const response = await atlassianFetch({
           product: 'jira',
           cloudId: credential.cloudId,
-          accessToken: credential.accessToken,
+          auth: credential.auth,
           path: '/rest/api/3/search/jql',
           method: 'POST',
           json: { jql, fields: ['key'], maxResults: batch.length },
@@ -137,7 +138,7 @@ export function createConfluenceAccessVerifier(lookup: AtlassianCredentialLookup
         const response = await atlassianFetch({
           product: 'confluence',
           cloudId: credential.cloudId,
-          accessToken: credential.accessToken,
+          auth: credential.auth,
           path: `/wiki/api/v2/pages?${query}&limit=${batch.length}`,
           lane: 'interactive',
         });

@@ -12,6 +12,8 @@
     "skipLibCheck": true,
     "types": ["node", "jest"],
     "paths": {
+      "@renkei/user-keys": ["../../packages/user-keys/src/index.ts"],
+      "@renkei/delegate-client": ["../../packages/delegate-client/src/index.ts"],
       "@renkei/db": ["../../packages/db/src/index.ts"],
       "@renkei/agents": ["../../packages/agents/src/index.ts"],
       "@renkei/batch-jobs-store": ["../../packages/batch-jobs-store/src/index.ts"],

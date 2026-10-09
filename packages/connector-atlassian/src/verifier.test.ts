@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * The gate's contract is default-deny, and these verifiers are the only
  * thing standing between "the index proposed it" and "the user sees it".
@@ -6,31 +5,51 @@
  * missing grant, an API failure, an id the provider did not return.
  */
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { createJiraAccessVerifier, createConfluenceAccessVerifier } from './verifier';
 
 interface FetchCall {
   url: string;
   body: unknown;
+  authorization: string | null;
 }
 
 let calls: FetchCall[] = [];
 /** Queued responses, consumed in order; `null` means "make this call fail". */
 let responses: (Record<string, unknown> | null)[] = [];
 
+/** The caller's grant fetcher: records what it was asked to send and answers from the queue. */
+const auth: AuthedFetch = Object.assign(
+  async (url: string, init?: RequestInit): Promise<Response> => {
+    calls.push({
+      url,
+      body: init?.body ? JSON.parse(String(init.body)) : null,
+      authorization: new Headers(init?.headers).get('Authorization'),
+    });
+    const next = responses.shift();
+    if (next === null || next === undefined) {
+      return new Response('boom', { status: 500, statusText: 'boom' });
+    }
+    return new Response(JSON.stringify(next), { status: 200 });
+  },
+  { grantKey: 'grant-1' }
+);
+
+let globalFetch: jest.SpyInstance;
+
 beforeEach(() => {
   calls = [];
   responses = [];
-  global.fetch = (async (url: string, init?: RequestInit) => {
-    calls.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
-    const next = responses.shift();
-    if (next === null || next === undefined) {
-      return { ok: false, status: 500, statusText: 'boom', text: async () => 'boom' };
-    }
-    return { ok: true, status: 200, text: async () => JSON.stringify(next) };
-  }) as unknown as typeof fetch;
+  globalFetch = jest.spyOn(globalThis, 'fetch');
 });
 
-const credential = async () => ({ accessToken: 'token-1', cloudId: 'cloud-1' });
+afterEach(() => {
+  // Nothing in these verifiers may bypass the caller's grant.
+  expect(globalFetch).not.toHaveBeenCalled();
+  globalFetch.mockRestore();
+});
+
+const credential = async () => ({ auth, cloudId: 'cloud-1' });
 const refs = (provider: string, ids: string[]) => ids.map((id) => ({ provider, refId: id }));
 
 describe('createJiraAccessVerifier', () => {
@@ -45,6 +64,16 @@ describe('createJiraAccessVerifier', () => {
     if (!result.ok) return;
     // ENG-2 was asked about and not returned — that IS the denial.
     expect(result.val.map((ref) => ref.refId)).toEqual(['ENG-1']);
+  });
+
+  it('asks through the caller’s grant fetcher and sets no Authorization of its own', async () => {
+    responses = [{ issues: [] }];
+    const verifier = createJiraAccessVerifier(credential);
+    await verifier.verifyAccess('scott@example.com', refs('jira', ['ENG-1']));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe('https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/search/jql');
+    // The delegate behind the grant attaches the credential; we never do.
+    expect(calls[0]?.authorization).toBeNull();
   });
 
   it('denies everything when the user has no Atlassian grant', async () => {

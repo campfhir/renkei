@@ -1,8 +1,7 @@
 /**
  * The worker's one resolution step: from (tenant, instance, subject) to the
- * instance's connection details plus the CALLER'S OWN decrypted credential.
- * Only the Mirth worker calls this — it is the only process holding the
- * encryption key for a purpose other than sealing on the way in. Every
+ * instance's connection details plus the CALLER'S OWN decrypted credential,
+ * opened under the caller's own key (user-credentials.ts). Every
  * uncertain outcome denies, and "no such instance" and "not connected"
  * are distinguished here but collapsed by the tools before a model sees
  * them (ids must not become an existence oracle).
@@ -12,7 +11,8 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { decryptCredentials, type MirthCredentials } from './credentials';
+import type { MirthCredentials } from './credentials';
+import { openCredentialsForSubject } from './user-credentials';
 import { getInstance, readConnectionCiphertext, type InstanceRow } from './store';
 
 export interface ResolvedTarget {
@@ -40,13 +40,21 @@ export async function resolveInstance(
   return ok(instance.val);
 }
 
+/**
+ * The instance and the person's credential. The credential is what the
+ * DELEGATE opened and attached to the request (`provided`) — the one
+ * process that holds a key (docs/delegate-key-design.md); a worker given
+ * none has nothing to open it with and answers `not_connected`.
+ */
 export async function resolveTarget(
   db: Kysely<DB>,
-  encryptionKey: Buffer,
-  target: SubjectTarget
+  target: SubjectTarget,
+  provided?: MirthCredentials | null
 ): Promise<Result<ResolvedTarget, ResolveError>> {
   const instance = await resolveInstance(db, target.tenantId, target.instanceId);
   if (!instance.ok) return instance;
+  if (provided) return ok({ instance: instance.val, credentials: provided });
+  if (provided === null) return err('not_connected' as const);
 
   const ciphertext = await readConnectionCiphertext(
     db,
@@ -57,7 +65,12 @@ export async function resolveTarget(
   if (!ciphertext.ok) return err('store' as const);
   if (ciphertext.val === null) return err('not_connected' as const);
 
-  const credentials = decryptCredentials(ciphertext.val, encryptionKey);
+  const credentials = await openCredentialsForSubject(
+    db,
+    target.tenantId,
+    target.subject,
+    ciphertext.val
+  );
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ instance: instance.val, credentials: credentials.val });
 }

@@ -415,9 +415,7 @@ export default function ProjectView({
           )}
           <p className="truncate text-xs text-gray-500">
             {role === 'owner'
-              ? project.publishedToOrg
-                ? `Your ${variant === 'code' ? 'code ' : ''}project · published to the organization`
-                : `Your ${variant === 'code' ? 'code ' : ''}project`
+              ? `Your ${variant === 'code' ? 'code ' : ''}project`
               : `Shared by ${project.ownerName ?? 'its owner'} · you can ${canEdit ? 'edit' : 'view'}`}
           </p>
         </div>
@@ -767,7 +765,6 @@ export default function ProjectView({
           kind="chat_project"
           resourceId={project.id}
           title={`Share “${project.name}”`}
-          published={project.publishedToOrg}
           onClose={() => setShare(false)}
         />
       ) : null}

@@ -11,11 +11,11 @@
  * viewport pass at phone width.
  */
 
-import { createCipheriv, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { keyFor } from './keys';
 
 test.use({
   browserName: 'chromium',
@@ -24,24 +24,6 @@ test.use({
     args: ['--no-sandbox'],
   },
 });
-
-function seal(plaintext: string): string {
-  const encoded = process.env.CONTENT_ENCRYPTION_KEY || process.env.TOKEN_ENCRYPTION_KEY || '';
-  const key = Buffer.from(encoded, 'base64');
-  if (key.byteLength !== 32) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return (
-    'renc1:' +
-    [
-      'v1',
-      iv.toString('base64'),
-      cipher.getAuthTag().toString('base64'),
-      ciphertext.toString('base64'),
-    ].join('.')
-  );
-}
 
 /** Per-project fixtures: the Playwright projects share one database. */
 function idsFor(project: string) {
@@ -122,6 +104,12 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
 }
 
 async function seedTurn(client: Client, chatId: string, turnId: string): Promise<void> {
+  const chatKey = await keyFor(client, {
+    tenantId: E2E_TENANT_ID,
+    kind: 'chat',
+    resourceId: chatId,
+    ownerSubject: E2E_SUBJECT,
+  });
   {
     const rows: {
       seq: number;
@@ -224,7 +212,7 @@ async function seedTurn(client: Client, chatId: string, turnId: string): Promise
           row.seq,
           row.role,
           row.kind,
-          seal(JSON.stringify(row.blocks)),
+          chatKey.seal(JSON.stringify(row.blocks)),
           row.stop,
         ]
       );

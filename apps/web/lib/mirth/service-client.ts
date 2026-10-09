@@ -7,7 +7,8 @@
  * on the CALLER'S OWN stored credential. This client only ever names a
  * tenant, an instance, a subject, and an API path.
  *
- * Configuration: MIRTH_WORKER_URL + MIRTH_WORKER_API_KEY. Both
+ * Configuration: DELEGATE_WORKER_URL + DELEGATE_WORKER_API_KEY (the delegate
+ * forwards to the worker; see `config()`). Both
  * absent-or-set-together; a missing pair means every operation answers
  * 'unconfigured' — Mirth is down, never open.
  *
@@ -19,7 +20,7 @@
 import type { HttpMethod, MirthCredentials } from '@renkei/connector-mirth';
 
 export type MirthClientError =
-  /** MIRTH_WORKER_URL / _API_KEY are not set. */
+  /** DELEGATE_WORKER_URL / _API_KEY are not set. */
   | { kind: 'unconfigured' }
   /** The worker could not be reached or answered garbage. */
   | { kind: 'unreachable'; message: string }
@@ -70,11 +71,18 @@ function optStr(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * The worker is reached THROUGH the delegate (docs/delegate-key-design.md,
+ * decision 2): `forward/mirth/<op>` on DELEGATE_WORKER_URL. The delegate
+ * opens the person's credential — this process holds no key — and
+ * forwards the op to the worker with it attached; the answer comes back
+ * as the worker gave it. MIRTH_WORKER_URL is the delegate's setting now.
+ */
 function config(): { url: string; key: string } | null {
-  const url = process.env.MIRTH_WORKER_URL?.trim().replace(/\/$/, '');
-  const key = process.env.MIRTH_WORKER_API_KEY?.trim();
+  const url = process.env.DELEGATE_WORKER_URL?.trim().replace(/\/$/, '');
+  const key = process.env.DELEGATE_WORKER_API_KEY?.trim();
   if (!url || !key) return null;
-  return { url, key };
+  return { url: `${url}/v1/forward/mirth`, key };
 }
 
 /** Whether the web app can reach a Mirth worker at all. */
@@ -102,6 +110,10 @@ async function opFailure(response: Response): Promise<{ ok: false; err: MirthCli
   } catch {
     // A non-JSON failure body: keep the generic tag.
   }
+  // The delegate answers `unconfigured` when it has no address for this
+  // worker: to a caller that is the same "service not configured" it used
+  // to read off its own missing env, so it keeps that shape.
+  if (type === 'unconfigured') return { ok: false, err: { kind: 'unconfigured' } };
   return { ok: false, err: { kind: 'op', type, message, status: response.status } };
 }
 
@@ -110,7 +122,7 @@ async function callOp(op: string, body: unknown): Promise<MirthClientResult<unkn
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
-    response = await fetch(`${cfg.url}/v1/${op}`, {
+    response = await fetch(`${cfg.url}/${op}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),

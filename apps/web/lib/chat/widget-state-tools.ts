@@ -155,7 +155,12 @@ export function widgetStateTools(): LocalTool[] {
         inputSchema: { type: 'object', properties: {} },
       },
       async execute(_input, context) {
-        const messages = await listMessages(context.db, context.tenantId, context.chatId);
+        const messages = await listMessages(
+          context.db,
+          context.tenantId,
+          context.chatId,
+          context.cipher
+        );
         const decisions = await listWidgetDecisions(context.db, context.tenantId, context.chatId);
         const cards = widgetCardsOf(messages, decisions);
         if (cards.length === 0) return textResult('No preview cards in this chat.');
@@ -224,7 +229,12 @@ export function widgetStateTools(): LocalTool[] {
           (outcome === 'done' ? 'Done' : 'Cancelled');
         const detail = str(input.detail).slice(0, MAX_DETAIL_CHARS);
 
-        const messages = await listMessages(context.db, context.tenantId, context.chatId);
+        const messages = await listMessages(
+          context.db,
+          context.tenantId,
+          context.chatId,
+          context.cipher
+        );
         const decisions = await listWidgetDecisions(context.db, context.tenantId, context.chatId);
         const card = findWidgetCard(widgetCardsOf(messages, decisions), widget);
         if (!card) {

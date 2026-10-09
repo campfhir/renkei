@@ -41,6 +41,7 @@ jest.mock('@/lib/jira-admin/change-requests', () => {
   };
 });
 
+import { authedFetch } from '@renkei/delegate-client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { registerJiraAdminTools } from './index';
@@ -72,7 +73,8 @@ const stubAuth: JiraAdminAuth = {
     cloudId: 'cloud-1',
     siteUrl: 'https://acme.atlassian.net',
     accountId: 'acct-1',
-    authHeader: 'Bearer t',
+    // The delegate's fetcher stands in for the grant; the suite's global.fetch answers it.
+    auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:tenant-1:acct-1'),
   }),
 };
 

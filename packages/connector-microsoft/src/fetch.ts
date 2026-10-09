@@ -12,9 +12,15 @@
  *     requests, not on rate, so the token bucket never saw it coming. A chat
  *     turn firing four reads at once, a bulk job's $batch (which Graph fans
  *     out four-wide by itself) and the worker's delta rounds all land on the
- *     same mailbox. The gate is keyed by the token, which names the mailbox
- *     as well as anything the callers have in common; drive, site and
- *     directory URLs are not gated, since they are not Exchange's limit.
+ *     same mailbox. The gate is keyed by the grant (the fetcher's
+ *     `grantKey`), which names the mailbox as well as anything the callers
+ *     have in common; drive, site and directory URLs are not gated, since
+ *     they are not Exchange's limit.
+ *
+ * The request itself goes out through the caller's `AuthedFetch`: the
+ * delegate worker attaches the Authorization header, refreshes the token
+ * and retries a 401, so none of that happens here. Anything a caller puts
+ * in Authorization is dropped by the delegate.
  *  3. Retry on a throttled answer (429, and 503 for the concurrency case),
  *     waiting what Retry-After says, bounded per lane. Only idempotent
  *     methods retry by default: Microsoft has been known to send the mail
@@ -26,7 +32,7 @@
  * four, with a chained $batch (mail-batch.ts) counting as one.
  */
 
-import { createHash } from 'node:crypto';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { GateTimeoutError, KeyedGate, LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 
 export const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0';
@@ -92,7 +98,7 @@ export interface GraphFetchOptions {
    * idempotent methods and false for POST — see the header comment.
    */
   retry?: boolean;
-  /** Gate key override; defaults to a digest of the token (one per mailbox). */
+  /** Gate key override; defaults to the fetcher's `grantKey` (one per mailbox). */
   mailboxKey?: string;
 }
 
@@ -186,10 +192,6 @@ export const retryClock = {
   sleep: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
-function gateKeyFor(accessToken: string): string {
-  return createHash('sha256').update(accessToken).digest('hex').slice(0, 16);
-}
-
 /** Free the connection behind an answer whose body nobody will read. */
 async function discardBody(response: Response): Promise<void> {
   try {
@@ -207,7 +209,7 @@ async function discardBody(response: Response): Promise<void> {
  * plus GateTimeoutError when no mailbox slot freed up in time.
  */
 export async function graphFetch(
-  accessToken: string,
+  auth: AuthedFetch,
   pathOrUrl: string,
   init?: RequestInit & GraphFetchOptions
 ): Promise<Response> {
@@ -218,11 +220,11 @@ export async function graphFetch(
   const attempts = retry ? ATTEMPTS[lane] : 1;
   const timeoutMs = init?.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const gated = isMailboxUrl(url);
-  const gateKey = init?.mailboxKey ?? gateKeyFor(accessToken);
+  const gateKey = init?.mailboxKey ?? auth.grantKey;
 
   // Kept as a plain object when the caller gave one (test doubles read
-  // keys back case-sensitively); the bearer token is added only when the
-  // caller did not already set one.
+  // keys back case-sensitively). No Authorization is added: the delegate
+  // behind `auth` attaches it.
   const given = init?.headers;
   const headers: Record<string, string> = {};
   if (given instanceof Headers || Array.isArray(given)) {
@@ -233,9 +235,6 @@ export async function graphFetch(
     for (const [name, value] of Object.entries(given)) {
       if (typeof value === 'string') headers[name] = value;
     }
-  }
-  if (!Object.keys(headers).some((name) => name.toLowerCase() === 'authorization')) {
-    headers.Authorization = `Bearer ${accessToken}`;
   }
 
   // The options this layer consumes must not reach fetch as unknown keys.
@@ -250,7 +249,7 @@ export async function graphFetch(
     const release = gated ? await mailboxGate.acquire(gateKey, GATE_WAIT_MS[lane]) : null;
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await auth(url, {
         ...rest,
         headers,
         // A caller-supplied signal still wins — theirs may carry its own

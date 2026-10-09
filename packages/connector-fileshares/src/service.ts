@@ -28,7 +28,8 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { EntryKind, ShareEntry, ShareSummary } from './types';
 import { childPath, normalizePath, parentPath, type PathError } from './paths';
-import { decryptCredentials, type ShareCredentials } from './credentials';
+import type { ShareCredentials } from './credentials';
+import { openCredentialsForSubject } from './user-credentials';
 import { openBackend, type BackendError, type ShareBackend } from './backend';
 import { withSessionLimits } from './limits';
 import { getShare, readConnectionCiphertext } from './store';
@@ -48,8 +49,6 @@ export type ServiceError =
 
 export interface ServiceDeps {
   db: Kysely<DB>;
-  /** The parsed TOKEN_ENCRYPTION_KEY, for opening stored credentials. */
-  encryptionKey: Buffer;
 }
 
 /** The share fields responses echo so callers can name it without a DB read. */
@@ -67,6 +66,14 @@ export interface SubjectTarget {
   tenantId: string;
   shareId: string;
   subject: string;
+  /**
+   * The person's credential as the DELEGATE opened and attached it — the
+   * one process that holds a key (docs/delegate-key-design.md). Null means
+   * the caller named none: the worker has nothing to open a stored one
+   * with and answers `not_connected`. Undefined keeps the stored lookup,
+   * for the package's own in-process callers and tests.
+   */
+  credentials?: ShareCredentials | null;
 }
 
 const TRAVERSAL_MESSAGE =
@@ -90,6 +97,8 @@ export async function resolveConnection(
   const share = await getShare(deps.db, target.tenantId, target.shareId);
   if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
+  if (target.credentials) return ok({ share: share.val.summary, credentials: target.credentials });
+  if (target.credentials === null) return err('not_connected' as const);
 
   const ciphertext = await readConnectionCiphertext(
     deps.db,
@@ -99,7 +108,12 @@ export async function resolveConnection(
   );
   if (!ciphertext.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (ciphertext.val === null) return err('not_connected' as const);
-  const credentials = decryptCredentials(ciphertext.val, deps.encryptionKey);
+  const credentials = await openCredentialsForSubject(
+    deps.db,
+    target.tenantId,
+    target.subject,
+    ciphertext.val
+  );
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ share: share.val.summary, credentials: credentials.val });
 }

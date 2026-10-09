@@ -3,20 +3,21 @@
  * decides whose grant dies, never a parameter.
  *
  * Disconnect is also a data-retention event: the grant's Graph
- * subscriptions are deleted (best-effort — an already-expired token just
- * means they lapse on their own within days, and the webhook route drops
- * their deliveries as unknown meanwhile), the subscription rows go, and
+ * subscriptions are deleted on the grant's own fetcher (best-effort — a
+ * grant the delegate can no longer refresh just means they lapse on their
+ * own within days, and the webhook route drops their deliveries as
+ * unknown meanwhile), the subscription rows go, and
  * every knowledge chunk indexed from this mailbox is purged. Consent to
  * index was the grant; revoking one revokes the other.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
-import { deleteGrant, getGrant, MICROSOFT } from '@renkei/provider-grants';
+import { MICROSOFT } from '@renkei/provider-grants';
+import { delegateGrants, grantFetch } from '@renkei/delegate-client';
 import { deleteGraphSubscription } from '@renkei/connector-microsoft';
 import { deleteObjectChunks } from '@renkei/knowledge';
 import { logger } from '@/lib/logger';
@@ -50,29 +51,26 @@ export async function DELETE(
   }
   const accountId = grantRow.provider_account_id;
 
-  // Best-effort provider-side cleanup while the credential still exists.
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (keyResult.ok) {
-    const grant = await getGrant(MICROSOFT, tenantId, accountId, keyResult.val);
-    if (grant.ok && grant.val) {
-      const subscriptions = await db
-        .selectFrom('webhook_subscriptions')
-        .select(['subscription_id'])
-        .where('tenant_id', '=', tenantId)
-        .where('provider', '=', MICROSOFT)
-        .where('account_id', '=', accountId)
-        .execute();
-      for (const row of subscriptions) {
-        if (!row.subscription_id) continue;
-        const deleted = await deleteGraphSubscription(grant.val.accessToken, row.subscription_id);
-        if (!deleted.ok) {
-          logger.warn('Could not delete Graph subscription on disconnect; it will lapse', {
-            component: 'connectors/microsoft',
-            tenantId,
-            subscriptionId: row.subscription_id,
-          });
-        }
-      }
+  // Best-effort provider-side cleanup while the grant still exists: each
+  // subscription is deleted through the grant's own fetcher, so the token
+  // never passes through this process.
+  const subscriptions = await db
+    .selectFrom('webhook_subscriptions')
+    .select(['subscription_id'])
+    .where('tenant_id', '=', tenantId)
+    .where('provider', '=', MICROSOFT)
+    .where('account_id', '=', accountId)
+    .execute();
+  const auth = grantFetch({ tenantId, provider: MICROSOFT, accountId });
+  for (const row of subscriptions) {
+    if (!row.subscription_id) continue;
+    const deleted = await deleteGraphSubscription(auth, row.subscription_id);
+    if (!deleted.ok) {
+      logger.warn('Could not delete Graph subscription on disconnect; it will lapse', {
+        component: 'connectors/microsoft',
+        tenantId,
+        subscriptionId: row.subscription_id,
+      });
     }
   }
 
@@ -101,7 +99,7 @@ export async function DELETE(
     }
   }
 
-  const deleted = await deleteGrant(MICROSOFT, tenantId, accountId);
+  const deleted = await delegateGrants().delete({ tenantId, provider: MICROSOFT, accountId });
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }

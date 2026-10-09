@@ -22,6 +22,10 @@ jest.mock('../enqueue', () => ({ enqueueKnowledgeEvent: jest.fn() }));
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { createMicrosoftMessageOverrideHandler } from './microsoft-events';
 import type { ClaimedEvent } from '../queue';
+import { authedFetch } from '@renkei/delegate-client';
+
+/** A grant fetcher stand-in: the code under test only passes it through. */
+const auth = authedFetch(async () => new Response(), 'microsoft:tenant-1:acct-1');
 
 const { resolveMicrosoftAccess: mockResolveMicrosoftAccess } = jest.requireMock<{
   resolveMicrosoftAccess: jest.Mock;
@@ -56,7 +60,7 @@ beforeEach(() => {
   jest.resetAllMocks();
   mockResolveMicrosoftAccess.mockResolvedValue({
     accountId: 'acct-1',
-    accessToken: 'token',
+    auth,
     upn: 'alice@example.com',
     scopes: ['Mail.Read'],
   });
@@ -92,7 +96,7 @@ describe('createMicrosoftMessageOverrideHandler', () => {
     const handler = createMicrosoftMessageOverrideHandler();
     await handler(event({ action: 'reclassify', category: 'human' }));
 
-    expect(mockGraphRequest).toHaveBeenCalledWith('token', '/me/messages/msg-1');
+    expect(mockGraphRequest).toHaveBeenCalledWith(auth, '/me/messages/msg-1');
     expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
       'tenant-1',
       'ingest.email',

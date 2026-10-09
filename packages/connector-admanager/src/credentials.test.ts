@@ -1,6 +1,4 @@
-import { decryptCredentials, encryptCredentials, parseAdManagerCredentials } from './credentials';
-
-const KEY = Buffer.alloc(32, 9);
+import { parseAdManagerCredentials } from './credentials';
 
 describe('parseAdManagerCredentials', () => {
   it('accepts an authtoken, trimming it', () => {
@@ -15,23 +13,5 @@ describe('parseAdManagerCredentials', () => {
     expect(parseAdManagerCredentials({})).toBeNull();
     expect(parseAdManagerCredentials('abc123')).toBeNull();
     expect(parseAdManagerCredentials(null)).toBeNull();
-  });
-});
-
-describe('credential envelope', () => {
-  it('round-trips under the key', () => {
-    const sealed = encryptCredentials({ authToken: 'abc123' }, KEY);
-    expect(sealed).not.toContain('abc123');
-    expect(decryptCredentials(sealed, KEY)).toEqual({
-      ok: true,
-      val: { authToken: 'abc123' },
-    });
-  });
-
-  it('fails closed on the wrong key and on malformed plaintext', () => {
-    const sealed = encryptCredentials({ authToken: 'abc123' }, KEY);
-    const wrong = decryptCredentials(sealed, Buffer.alloc(32, 1));
-    expect(wrong.ok).toBe(false);
-    if (!wrong.ok) expect(wrong.err.type).toBe('DECRYPTION_ERROR');
   });
 });

@@ -23,7 +23,7 @@ export async function GET(
   const { db, session } = ready.context;
   const access = await resolveChatAccess(db, tenantId, session.subject, chatId);
   if (!access) return jsonError(404, 'not-found', 'No such chat');
-  const rows = await listMessages(db, tenantId, chatId);
+  const rows = await listMessages(db, tenantId, chatId, access.cipher);
   const pullRequest = latestPrInTranscript(rows.map(toMessageView));
   return NextResponse.json({ pullRequest });
 }

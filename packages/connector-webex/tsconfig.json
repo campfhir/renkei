@@ -12,8 +12,12 @@
     "skipLibCheck": true,
     "types": ["node", "jest"],
     "paths": {
+      "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
+      "@renkei/db": ["../../packages/db/src/index.ts"],
+      "@renkei/delegate-client": ["../../packages/delegate-client/src/index.ts"],
       "@renkei/gates": ["../../packages/gates/src/index.ts"],
-      "@renkei/rate-limit": ["../../packages/rate-limit/src/index.ts"]
+      "@renkei/rate-limit": ["../../packages/rate-limit/src/index.ts"],
+      "@renkei/user-keys": ["../../packages/user-keys/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"],

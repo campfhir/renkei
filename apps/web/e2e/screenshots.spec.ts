@@ -161,6 +161,9 @@ test('agent overview — invocations open', async ({ page }, testInfo) => {
 test('runs list', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/runs`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  // The run parked for the owner's key reads as paused-for-sign-in, not
+  // as waiting on an approval.
+  await expect(page.getByText('Paused: sign in', { exact: true }).first()).toBeVisible();
   await shot(page, testInfo, 'runs-list');
 });
 
@@ -318,8 +321,10 @@ test('run timeline with iterations', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/runs/${RUN_ITERATIONS_ID}`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   // Looped steps group their rounds under amber iteration sub-headers.
-  await expect(page.getByText('Iteration 1').first()).toBeVisible();
-  await expect(page.getByText('Iteration 2').first()).toBeVisible();
+  // Exact: the collapsed "What it did" panel above lists "… · iteration 1"
+  // too, and a loose first match lands on that hidden text.
+  await expect(page.getByText('Iteration 1', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Iteration 2', { exact: true }).first()).toBeVisible();
   await shot(page, testInfo, 'run-timeline-iterations');
 });
 

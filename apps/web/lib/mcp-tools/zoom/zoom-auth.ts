@@ -7,29 +7,21 @@
  * credential instead of a live per-request grant lookup. `deniedZoomAuth` is
  * the stand-in until that credential exists — see zoom.no-sandbox.test.ts.
  *
- * One limitation this file does NOT paper over: zoom_get_transcript and
- * zoom_get_meeting_summary construct a `ZoomClient` from
- * @renkei/connector-zoom directly, and that client makes its own HTTP calls
- * with no injectable transport. Rather than invent a workaround (routing a
- * real network client through a Response-returning interface, or extending
- * ZoomAuth with a raw-token escape hatch that every OTHER connector's
- * interface would then need too, for consistency), those two tools resolve
- * access via `resolveZoomAccess` directly, same as every tool here did
- * before this refactor — see index.ts. That is a pre-existing limitation of
- * ZoomClient's own design, not something introduced here, and not something
- * fixable without changing that shared package.
+ * Two tools — zoom_get_transcript and zoom_get_meeting_summary — construct
+ * a `ZoomClient` from @renkei/connector-zoom directly rather than going
+ * through ZoomAuth.fetch(), because the client's own request layer (lane
+ * limiting, VTT download) is what they want. They resolve the caller's
+ * grant via `resolveZoomAccess` and hand the client the same `AuthedFetch`
+ * this module sends its own calls through — see index.ts.
+ *
+ * No token is read here (docs/delegate-key-design.md): the fetcher comes
+ * from the delegate, which attaches the credential, refreshes it when due
+ * and retries once on a 401.
  */
 
-import {
-  getGrant,
-  refreshGrantTokens,
-  ZOOM,
-  ZoomAdapter,
-  type ProviderGrant,
-} from '@renkei/provider-grants';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { getDatabase } from '@renkei/db';
-import { getZoomApp } from '@/lib/zoom-app';
+import { ZOOM } from '@renkei/provider-grants';
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
+import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
 import { authFailure } from '../auth-support';
@@ -37,68 +29,30 @@ import { authFailure } from '../auth-support';
 /** Exported so index.ts's two ZoomClient-based tools can share it — see this file's header. */
 export const ZOOM_API_BASE = 'https://api.zoom.us/v2';
 const API = ZOOM_API_BASE;
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
+const LABEL = 'Zoom';
 
 export interface ZoomAccess {
-  accessToken: string;
+  /** `fetch` on the caller's own Zoom grant; the delegate supplies the credential. */
+  auth: AuthedFetch;
   email: string | null;
 }
 
 /**
- * The caller's live Zoom token, refreshed through the adapter when stale.
- * Resolved FRESH on every call — see WebEx's identical note on why no
- * module-level token cache exists here. Exported for the summary collectors
- * AND for the two ZoomClient-based tools in index.ts that cannot go through
- * ZoomAuth.fetch() at all (see this file's header).
+ * The caller's Zoom grant as a fetcher, plus the account email the grant
+ * recorded. Resolved FRESH on every call — see WebEx's identical note on
+ * why no module-level cache exists here. Exported for the summary
+ * collectors AND for the two ZoomClient-based tools in index.ts.
  */
-export async function resolveZoomAccess(context: MCPToolContext): Promise<ZoomAccess | string> {
+export async function resolveZoomAccess(
+  context: Pick<MCPToolContext, 'tenantId' | 'subject'>
+): Promise<ZoomAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Server misconfigured (encryption key).';
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
-
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', ZOOM)
-    .where('subject', '=', context.subject)
-    .executeTakeFirst();
-  if (!row) {
-    return 'Zoom is not connected. Connect it on the Connectors page, then try again.';
-  }
-
-  const grantResult = await getGrant(
-    ZOOM,
-    context.tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
-  if (!grantResult.ok || !grantResult.val) return 'Could not read the Zoom grant.';
-  let grant: ProviderGrant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getZoomApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'Zoom integration is no longer configured.';
-    const refreshed = await refreshGrantTokens(
-      new ZoomAdapter(app.clientSecret),
-      context.tenantId,
-      grant.accountId,
-      keyResult.val,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your Zoom authorization was revoked. Reconnect it on the Connectors page.'
-        : 'Could not refresh the Zoom token; try again shortly.';
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
-  const email = typeof grant.metadata.email === 'string' ? grant.metadata.email : null;
-  return { accessToken: grant.accessToken, email };
+  const grant = { tenantId: context.tenantId, provider: ZOOM, subject: context.subject };
+  const described = await delegateGrants().describe(grant);
+  if (!described.ok) return grantRefusalText(described.err.type, LABEL);
+  const email =
+    typeof described.val.metadata.email === 'string' ? described.val.metadata.email : null;
+  return { auth: grantFetch(grant), email };
 }
 
 export interface ZoomAuth {
@@ -147,11 +101,10 @@ export function oauthZoomAuth(context: MCPToolContext): ZoomAuth {
       const method = init?.method ?? 'GET';
       let response: Response;
       try {
-        response = await fetch(`${API}${path}`, {
+        response = await access.auth(`${API}${path}`, {
           ...init,
           method,
           headers: {
-            Authorization: `Bearer ${access.accessToken}`,
             ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
             ...init?.headers,
           },
@@ -166,6 +119,11 @@ export function oauthZoomAuth(context: MCPToolContext): ZoomAuth {
         });
         return authFailure('Could not reach api.zoom.us');
       }
+
+      // The delegate refusing (grant gone, token unrefreshable, delegate
+      // down) is not a Zoom answer; it comes back in the resolvers' words.
+      const refused = refusalTextOf(response, LABEL);
+      if (refused) return authFailure(refused, 400);
 
       if (!response.ok) {
         const responseBody = await response

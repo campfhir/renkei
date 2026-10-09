@@ -1,4 +1,5 @@
 <!-- BEGIN:nextjs-agent-rules -->
+
 # This is NOT the Next.js you know
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
@@ -22,16 +23,23 @@ viewport pass.
 - **Local setup** (once per environment): a Postgres 16 server with the
   `vector` extension (`apt-get install postgresql-16-pgvector` if it's not
   already on the box), a repo-root `.env.development` with `DATABASE_URL`,
-  `TOKEN_ENCRYPTION_KEY`, and `LOG_ENCRYPTION_KEY` (each `openssl rand
-  -base64 32`), then `pnpm --filter @renkei/db migrate`. After that,
+  `TOKEN_ENCRYPTION_KEY` and `LOG_ENCRYPTION_KEY` (each `openssl rand
+-base64 32`; `USER_KEY_ENCRYPTION_KEY` is optional and migration-only —
+  people hold their own keys, and `e2e/keys.ts` enrolls a spec's person the
+  way a browser would, against the delegate the config starts), plus
+  `SANDBOX_WORKER_URL=http://127.0.0.1:8092`,
+  `SANDBOX_WORKER_API_KEY=e2e-sandbox-key`, `SANDBOX_WORKSPACES_ENABLED=true`
+  and `SANDBOX_SERVICES_ENABLED=true` so the Code pages and their services
+  are on against the sandbox stub; then `pnpm --filter @renkei/db migrate`. After that,
   `npx playwright test <spec>.spec.ts --project=desktop-light` from
-  `apps/web` drives everything else (dev server, sandbox stub) itself.
+  `apps/web` drives everything else (dev server, sandbox stub, the
+  delegate worker) itself.
 - **Drive it, don't just render it**: click the button, fill the form,
   trigger the network call (mock it with `page.route` when it would hit a
   real vendor/provider), and assert on the resulting UI state — not just
   that the page loaded.
 - **For mobile, just resize the viewport** — `page.setViewportSize({width:
-  390, height: 844})` on the pinned Chromium executable
+390, height: 844})` on the pinned Chromium executable
   (`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`), the way
   `preferences-widths.spec.ts` and `llm-models.spec.ts` do it. Do NOT reach
   for the `mobile` project (`devices['iPhone 14']`) for a routine UI check:

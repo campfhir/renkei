@@ -37,7 +37,6 @@ export default function LibraryView({
     id: string;
     name: string;
     description: string | null;
-    publishedToOrg: boolean;
     role: 'owner' | 'editor' | 'viewer';
   };
   prompts: PromptItem[];
@@ -116,9 +115,7 @@ export default function LibraryView({
           <p className="truncate text-xs text-gray-500">
             {library.description ??
               (library.role === 'owner'
-                ? library.publishedToOrg
-                  ? 'Published to the organization'
-                  : 'Your library'
+                ? 'Your library'
                 : `Shared · you can ${canEdit ? 'edit' : 'view'}`)}
           </p>
         </div>
@@ -255,7 +252,6 @@ export default function LibraryView({
           kind="prompt_library"
           resourceId={library.id}
           title={`Share “${library.name}”`}
-          published={library.publishedToOrg}
           onClose={() => setShare(false)}
         />
       ) : null}

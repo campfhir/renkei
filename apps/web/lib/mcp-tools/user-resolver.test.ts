@@ -15,6 +15,7 @@ jest.mock('@/lib/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
+import { authedFetch } from '@renkei/delegate-client';
 import { jiraFetch } from './common';
 import { resolveAccountId, searchUsers, looksLikeEmail, clearUserCache } from './user-resolver';
 
@@ -34,7 +35,8 @@ function respondWith(body: FakeUser[] | Record<string, unknown>): void {
 const CONTEXT = {
   tenantId: 'tenant-a',
   apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
-  accessToken: 'token-a',
+  // The grant's fetcher; never called here — jiraFetch is mocked.
+  jiraAuth: authedFetch(async () => new Response('[]'), 'atlassian:tenant-a:acct-a'),
 };
 
 describe('looksLikeEmail', () => {
@@ -77,7 +79,10 @@ describe('searchUsers', () => {
     respondWith([]);
     await searchUsers(CONTEXT, 'sam', 500);
 
-    expect(mockJiraFetch).toHaveBeenCalledWith(expect.stringContaining('maxResults=50'), 'token-a');
+    expect(mockJiraFetch).toHaveBeenCalledWith(
+      expect.stringContaining('maxResults=50'),
+      CONTEXT.jiraAuth
+    );
   });
 });
 
@@ -149,7 +154,11 @@ describe('resolveAccountId', () => {
   });
 
   it('does not serve one tenant the account id resolved for another', async () => {
-    const tenantB = { ...CONTEXT, tenantId: 'tenant-b', accessToken: 'token-b' };
+    const tenantB = {
+      ...CONTEXT,
+      tenantId: 'tenant-b',
+      jiraAuth: authedFetch(async () => new Response('[]'), 'atlassian:tenant-b:acct-b'),
+    };
 
     respondWith([{ accountId: 'acc-tenant-a', emailAddress: 'sam@example.com' }]);
     await expect(resolveAccountId(CONTEXT, 'sam@example.com')).resolves.toBe('acc-tenant-a');

@@ -148,7 +148,7 @@ export async function registerAttachmentTools(
         let filename = str(args.filename);
         if (driveItem) {
           const downloaded = await graphDownload(
-            graphAccess.accessToken,
+            graphAccess.auth,
             str(driveItem.driveId),
             str(driveItem.itemId),
             { maxBytes, lane: 'interactive' }
@@ -164,7 +164,7 @@ export async function registerAttachmentTools(
           const attachmentId = str(outlookAttachment.attachmentId);
           const result = await graphGet(
             context,
-            graphAccess.accessToken,
+            graphAccess.auth,
             `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`
           );
           if (!result.ok) {

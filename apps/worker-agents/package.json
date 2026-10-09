@@ -17,6 +17,7 @@
     "@renkei/blob-store": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/delegate-client": "workspace:*",
     "@renkei/mcp-client": "workspace:*",
     "@renkei/notifications": "workspace:*",
     "@renkei/queue": "workspace:*",

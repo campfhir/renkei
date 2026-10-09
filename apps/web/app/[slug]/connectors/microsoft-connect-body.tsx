@@ -17,7 +17,6 @@ import { useRouter } from 'next/navigation';
 import { MICROSOFT_SCOPE_OPTIONS } from '@/lib/microsoft-scopes';
 import { MICROSOFT_PRODUCTS, groupsOfProduct, optionsOfProduct } from '@/lib/microsoft-products';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
-import SyncProgress from './sync-progress';
 import WatchManager from './watch-manager';
 import OutlookIndexingPrefs from './outlook-indexing-prefs';
 import MicrosoftProductCard from './microsoft-product-card';
@@ -49,8 +48,6 @@ export default function MicrosoftConnectBody({
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [reindexing, setReindexing] = useState(false);
-  const [reindexNotice, setReindexNotice] = useState<string | null>(null);
   // Only catalog options count as choices; required scopes (openid, profile,
   // email, offline_access, User.Read) ride along server-side and are not
   // offered here.
@@ -115,52 +112,12 @@ export default function MicrosoftConnectBody({
     }
   }
 
-  async function reindex() {
-    setReindexing(true);
-    setReindexNotice(null);
-    try {
-      const response = await fetch(`/api/microsoft/${tenantId}/reindex`, { method: 'POST' });
-      const data = await response.json().catch(() => ({}));
-      setReindexNotice(
-        response.ok
-          ? 'Re-indexing started — everything will be re-fetched and re-cleaned in the background.'
-          : (data.error ?? 'Could not start re-indexing')
-      );
-    } catch {
-      setReindexNotice('Could not reach the server');
-    } finally {
-      setReindexing(false);
-    }
-  }
-
   /** Product-specific controls, keyed by product id. */
   const extras: Record<string, ReactNode> = {
-    outlook: connected ? (
-      <>
-        <OutlookIndexingPrefs tenantId={tenantId} />
-        <div className="mt-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => void reindex()}
-              disabled={reindexing}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
-            >
-              {reindexing ? 'Starting…' : 'Re-index'}
-            </button>
-            {reindexNotice && (
-              <span className="text-sm text-gray-600 dark:text-gray-400">{reindexNotice}</span>
-            )}
-          </div>
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Replaces what Renkei has indexed: it clears the existing mail, calendar and task
-            entries, then re-fetches everything from Outlook and re-runs it through the current
-            cleaning rules. Nothing in Outlook itself is touched. Useful after changing classifier
-            rules or teaching a new sender template on Mail review.
-          </p>
-        </div>
-        <SyncProgress tenantId={tenantId} connector="microsoft" />
-      </>
-    ) : null,
+    // Nothing in Outlook is indexed (mail, calendar and To Do are personal),
+    // so there is no progress to show and nothing to re-index: the one
+    // control is the trigger-feed opt-in.
+    outlook: connected ? <OutlookIndexingPrefs tenantId={tenantId} /> : null,
 
     // Gated on the grant actually carrying Sites.Read.All: without it,
     // listing sites, resolving a library and the background sweep all fail,

@@ -34,13 +34,7 @@ export {
   type PathError,
 } from './paths';
 
-export {
-  decryptCredentials,
-  encryptCredentials,
-  parseShareCredentials,
-  type CredentialError,
-  type ShareCredentials,
-} from './credentials';
+export { parseShareCredentials, type CredentialError, type ShareCredentials } from './credentials';
 
 export { openBackend, type BackendError, type ShareBackend } from './backend';
 
@@ -97,3 +91,8 @@ export {
   type StoreError,
   type ToolExposure,
 } from './store';
+export {
+  sealCredentialsForSubject,
+  openCredentialsForSubject,
+  type SealCredentialsError,
+} from './user-credentials';

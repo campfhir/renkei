@@ -1,29 +1,29 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
- * Regression tests for jiraFetch token handling.
+ * jiraFetch over the grant's fetcher.
  *
- * The MCP handler cache captures context.accessToken by value when a handler
- * is created, and that closure outlives the token. jiraFetch must therefore
- * resolve the freshest known token for the capture's owner, or every call
- * after the first expiry pays a 401 + refresh + retry round trip forever.
+ * The delegate worker holds the token (docs/delegate-key-design.md): the
+ * `AuthedFetch` it hands out attaches the Authorization header, refreshes
+ * when due and retries once on a 401. What is left to pin here is the part
+ * this process still owns — the headers it sets (and the one it must NOT
+ * set), the timeout and reachability errors, and how a refusal the delegate
+ * issued itself is told apart from Atlassian's own answer.
  */
 
-const refreshMock = jest.fn();
-jest.mock('@/lib/tenant-operations', () => ({
-  refreshAtlassianTokenDirect: (...args: unknown[]) => refreshMock(...args),
-}));
 jest.mock('@/lib/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   secure: (value: unknown) => value,
   redact: (value: unknown) => value,
 }));
 
-import { jiraFetch, cacheTokenMetadata } from './common';
+import { authedFetch } from '@renkei/delegate-client';
+import { logger } from '@/lib/logger';
+import { jiraFetch, JiraApiError } from './common';
 
-function jsonResponse(status: number, body: unknown = {}): Response {
+function jsonResponse(status: number, body: unknown = {}, extra: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extra },
   });
 }
 
@@ -32,99 +32,167 @@ function headersOf(call: unknown[]): Record<string, string> {
   return (init?.headers ?? {}) as Record<string, string>;
 }
 
-afterEach(() => {
-  jest.restoreAllMocks();
-  refreshMock.mockReset();
-});
+const GRANT_KEY = 'atlassian:tenant-1:acct-1';
 
-describe('jiraFetch token refresh', () => {
-  it('uses the refreshed token on later calls made with a stale capture', async () => {
-    cacheTokenMetadata('stale-token', 'tenant-refresh', 'account-refresh');
-    refreshMock.mockResolvedValue({
-      ok: true,
-      val: { accessToken: 'fresh-token', refreshToken: 'r', expiresAt: new Date() },
-    });
+/** A grant fetcher whose answers the test scripts; `send` records every call. */
+function fakeAuth(answer: () => Promise<Response>) {
+  const send = jest.fn((_url: string, _init?: RequestInit) => answer());
+  return { auth: authedFetch(send, GRANT_KEY), send };
+}
 
-    const fetchMock = jest
-      .spyOn(globalThis, 'fetch')
-      .mockImplementation(async (_url, init) =>
-        ((init?.headers ?? {}) as Record<string, string>).Authorization === 'Bearer fresh-token'
-          ? jsonResponse(200)
-          : jsonResponse(401)
-      );
+afterEach(() => jest.clearAllMocks());
 
-    // First call: the stale token 401s, gets refreshed, and the retry succeeds.
-    await jiraFetch('https://example.test/rest/api/3/myself', 'stale-token');
-    expect(refreshMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+describe('jiraFetch through the grant fetcher', () => {
+  it('sends through the AuthedFetch with no Authorization of its own', async () => {
+    const { auth, send } = fakeAuth(async () => jsonResponse(200));
 
-    // Second call still passes the stale capture — it must go straight through
-    // with the refreshed token: no second 401, no second refresh.
-    await jiraFetch('https://example.test/rest/api/3/myself', 'stale-token');
-    expect(refreshMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(headersOf(fetchMock.mock.calls[2]).Authorization).toBe('Bearer fresh-token');
+    const response = await jiraFetch('https://example.test/rest/api/3/myself', auth);
+
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toBe('https://example.test/rest/api/3/myself');
+    const headers = headersOf(send.mock.calls[0]);
+    // The delegate attaches the credential; one set here would be dropped anyway.
+    expect(headers.Authorization).toBeUndefined();
+    expect(headers.Accept).toBe('application/json');
   });
 
-  it('prefers a token recorded per request over the captured one before any 401', async () => {
-    // Simulates the transport route calling cacheTokenMetadata on every
-    // request: a token rotated elsewhere is used immediately.
-    cacheTokenMetadata('captured-token', 'tenant-rotate', 'account-rotate');
-    cacheTokenMetadata('rotated-token', 'tenant-rotate', 'account-rotate');
+  it('logs the grant behind the call by account, never a token', async () => {
+    const { auth } = fakeAuth(async () => jsonResponse(200));
 
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200));
+    await jiraFetch('https://example.test/rest/api/3/myself', auth);
 
-    await jiraFetch('https://example.test/rest/api/3/myself', 'captured-token');
-    expect(headersOf(fetchMock.mock.calls[0]).Authorization).toBe('Bearer rotated-token');
-    expect(refreshMock).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(
+      'Request',
+      expect.objectContaining({ tenantId: 'tenant-1', accountId: 'acct-1' })
+    );
+  });
+
+  it('throws a JiraApiError carrying the status on a non-2xx answer', async () => {
+    const { auth } = fakeAuth(async () =>
+      jsonResponse(404, { errorMessages: ['Issue does not exist'] })
+    );
+
+    const failure = await jiraFetch('https://example.test/rest/api/3/issue/X-1', auth).catch(
+      (error: unknown) => error
+    );
+
+    expect(failure).toBeInstanceOf(JiraApiError);
+    expect((failure as JiraApiError).status).toBe(404);
+    expect((failure as JiraApiError).message).toContain('Issue does not exist');
+    expect((failure as JiraApiError).isAuthError).toBe(false);
+  });
+
+  it("treats a 401 as Atlassian's final word — the delegate already retried once", async () => {
+    const { auth, send } = fakeAuth(async () => jsonResponse(401));
+
+    const failure = await jiraFetch('https://example.test/rest/api/3/myself', auth).catch(
+      (error: unknown) => error
+    );
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect((failure as JiraApiError).status).toBe(401);
+    expect((failure as JiraApiError).isAuthError).toBe(true);
+  });
+});
+
+describe('jiraFetch and the delegate’s own refusals', () => {
+  it('surfaces a revoked grant as the GRANT_REVOKED auth error callers key on', async () => {
+    const { auth } = fakeAuth(async () =>
+      jsonResponse(
+        401,
+        { error: { type: 'GRANT_REVOKED' } },
+        { 'x-delegate-error': 'GRANT_REVOKED' }
+      )
+    );
+
+    const failure = await jiraFetch('https://example.test/rest/api/3/myself', auth).catch(
+      (error: unknown) => error
+    );
+
+    expect(failure).toBeInstanceOf(JiraApiError);
+    expect((failure as JiraApiError).message).toBe('GRANT_REVOKED');
+    expect((failure as JiraApiError).isAuthError).toBe(true);
+  });
+
+  it('says a missing grant in the resolver’s words, as an auth error', async () => {
+    const { auth } = fakeAuth(async () =>
+      jsonResponse(404, { error: { type: 'NO_GRANT' } }, { 'x-delegate-error': 'NO_GRANT' })
+    );
+
+    const failure = await jiraFetch('https://example.test/rest/api/3/myself', auth).catch(
+      (error: unknown) => error
+    );
+
+    expect((failure as JiraApiError).message).toContain('Jira is not connected');
+    expect((failure as JiraApiError).isAuthError).toBe(true);
+  });
+
+  it('reports a host outside Atlassian’s as a refusal, not a Jira answer', async () => {
+    const { auth } = fakeAuth(async () =>
+      jsonResponse(
+        403,
+        { error: { type: 'host_not_allowed' } },
+        { 'x-delegate-error': 'host_not_allowed' }
+      )
+    );
+
+    const failure = await jiraFetch('https://evil.test/rest/api/3/myself', auth).catch(
+      (error: unknown) => error
+    );
+
+    expect((failure as JiraApiError).message).toContain("not Jira's API");
+    expect((failure as JiraApiError).isAuthError).toBe(false);
   });
 });
 
 describe('jiraFetch FormData bodies', () => {
   it('presets no Content-Type, so fetch can write the multipart boundary', async () => {
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200));
+    const { auth, send } = fakeAuth(async () => jsonResponse(200));
 
     const form = new FormData();
     form.append('file', new Blob([Buffer.from('hello')]), 'hello.txt');
-    await jiraFetch('https://example.test/attachments', 'token-formdata', {
+    await jiraFetch('https://example.test/attachments', auth, {
       method: 'POST',
       body: form,
       headers: { 'X-Atlassian-Token': 'no-check' },
     });
 
-    const headers = headersOf(fetchMock.mock.calls[0]);
+    const headers = headersOf(send.mock.calls[0]);
     expect(headers['Content-Type']).toBeUndefined();
     expect(headers['X-Atlassian-Token']).toBe('no-check');
-    expect(headers.Authorization).toBe('Bearer token-formdata');
+    expect(headers.Authorization).toBeUndefined();
   });
 
   it('keeps the JSON Content-Type for non-FormData bodies', async () => {
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200));
+    const { auth, send } = fakeAuth(async () => jsonResponse(200));
 
-    await jiraFetch('https://example.test/rest/api/3/issue', 'token-json', {
+    await jiraFetch('https://example.test/rest/api/3/issue', auth, {
       method: 'POST',
       body: JSON.stringify({ fields: {} }),
     });
 
-    expect(headersOf(fetchMock.mock.calls[0])['Content-Type']).toBe('application/json');
+    expect(headersOf(send.mock.calls[0])['Content-Type']).toBe('application/json');
   });
 });
 
 describe('jiraFetch timeouts', () => {
   it('turns a stalled request into a JiraApiError 504 instead of hanging', async () => {
-    jest
-      .spyOn(globalThis, 'fetch')
-      .mockRejectedValue(Object.assign(new Error('aborted'), { name: 'TimeoutError' }));
+    const { auth } = fakeAuth(async () => {
+      throw Object.assign(new Error('aborted'), { name: 'TimeoutError' });
+    });
 
-    await expect(jiraFetch('https://example.test/rest/api/3/myself', 'token-t')).rejects.toThrow(
+    await expect(jiraFetch('https://example.test/rest/api/3/myself', auth)).rejects.toThrow(
       /timed out after \d+ms/
     );
   });
 
   it('reports an unreachable API as a JiraApiError instead of a raw TypeError', async () => {
-    jest.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'));
+    const { auth } = fakeAuth(async () => {
+      throw new TypeError('fetch failed');
+    });
 
-    await expect(jiraFetch('https://example.test/rest/api/3/myself', 'token-u')).rejects.toThrow(
+    await expect(jiraFetch('https://example.test/rest/api/3/myself', auth)).rejects.toThrow(
       'Could not reach the Jira API'
     );
   });

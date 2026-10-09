@@ -1,0 +1,31 @@
+{
+  "name": "@renkei/user-keys",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "rekey-chats": "tsx scripts/rekey-chats.ts"
+  },
+  "dependencies": {
+    "@campfhir/safe-functions": "^0.1.3",
+    "@renkei/crypto": "workspace:*",
+    "@renkei/db": "workspace:*",
+    "kysely": "^0.29.4"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
+    "tsx": "^4.23.5",
+    "typescript": "^5"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./test-support": "./src/test-support/enroll.ts"
+  }
+}

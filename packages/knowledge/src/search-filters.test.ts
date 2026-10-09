@@ -175,15 +175,15 @@ describe('searchKnowledge filter construction', () => {
   it('pins the kind alongside its own provider, not across the whole query', async () => {
     await searchKnowledge({
       ...baseOptions,
-      sources: [{ provider: 'microsoft', kind: 'msg' }, { provider: 'jira' }],
+      sources: [{ provider: 'microsoft', kind: 'task' }, { provider: 'jira' }],
     });
     const sqlText = renderedSql();
     // The pair is AND-ed inside its own group and OR-ed with the other, so
-    // Jira is not silently required to carry kind 'msg' — and microsoft is
-    // not silently widened to calendar and tasks to save it.
+    // Jira is not silently required to carry kind 'task' — and microsoft is
+    // not silently widened to every kind it stores to save it.
     expect(sqlText).toContain("metadata ->> 'kind'");
     expect(sqlText).toContain(' OR ');
-    expect(allValues()).toContain('msg');
+    expect(allValues()).toContain('task');
     expect(allValues()).toContain('jira');
   });
 
@@ -271,7 +271,7 @@ describe('owner-scoped candidate narrowing', () => {
       userEmail: 'scott@example.com',
       k: 5,
       verifiers: new Map([['microsoft', ownerScopedVerifier('microsoft')]]),
-      sources: [{ provider: 'microsoft', kind: 'msg' }, { provider: 'jira' }],
+      sources: [{ provider: 'microsoft', kind: 'task' }, { provider: 'jira' }],
     });
     const sqlText = renderedSql();
     expect(sqlText).toContain('provider NOT IN');
@@ -473,11 +473,11 @@ describe('listRecentKnowledge', () => {
     // indistinguishable from "not indexed".
     await listRecentKnowledge({
       ...recentOptions,
-      sources: [{ provider: 'microsoft', kind: 'msg' }, { provider: 'jira' }],
+      sources: [{ provider: 'microsoft', kind: 'task' }, { provider: 'jira' }],
     });
     const sqlText = renderedSql();
     expect(sqlText).toContain('UNION ALL');
-    expect(allValues()).toContain('msg');
+    expect(allValues()).toContain('task');
     expect(allValues()).toContain('jira');
   });
 

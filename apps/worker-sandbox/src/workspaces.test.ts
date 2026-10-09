@@ -112,14 +112,17 @@ describe('wrapCommand', () => {
     });
   });
 
-  it('builds the environment from nothing and carries a git header as config, not argv', () => {
+  it('builds the environment from nothing and points git at the proxy as config, not argv', () => {
     const env = childEnvironment({
       cwd: '/w',
       home: '/h',
       identity: null,
       env: { NPM_TOKEN: 'abc' },
       timeoutMs: 1,
-      gitAuthHeader: 'Basic xyz',
+      gitProxy: {
+        base: 'http://delegate:8096/git/ticket/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+      },
     });
     expect(env.NPM_TOKEN).toBe('abc');
     expect(env.HOME).toBe('/h');
@@ -132,8 +135,10 @@ describe('wrapCommand', () => {
     expect(env.DATABASE_URL).toBeUndefined();
     expect(env.SANDBOX_WORKER_API_KEY).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBe('1');
-    expect(env.GIT_CONFIG_KEY_0).toBe('http.https://bitbucket.org/.extraheader');
-    expect(env.GIT_CONFIG_VALUE_0).toBe('Authorization: Basic xyz');
+    expect(env.GIT_CONFIG_KEY_0).toBe(
+      'url.http://delegate:8096/git/ticket/bitbucket.org/.insteadOf'
+    );
+    expect(env.GIT_CONFIG_VALUE_0).toBe('https://bitbucket.org/');
     expect(shellPrelude()).toMatch(/^ulimit -u \d+ -f \d+ -c 0/);
   });
 });
@@ -247,7 +252,10 @@ describe('a cloned workspace', () => {
       storageKey,
       identity: null,
       cloneUrl: origin,
-      authHeader: 'Basic unused-for-a-local-clone',
+      gitProxy: {
+        base: 'http://127.0.0.1:1/git/unused/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+      },
       branch: '',
       depth: 0,
     });
@@ -262,7 +270,10 @@ describe('a cloned workspace', () => {
       storageKey: 'tenant-1/subjecthash/ws-bad',
       identity: null,
       cloneUrl: origin,
-      authHeader: 'Basic x',
+      gitProxy: {
+        base: 'http://127.0.0.1:1/git/unused/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+      },
       branch: 'no-such-branch',
       depth: 0,
     });

@@ -91,7 +91,6 @@ function scriptedAuth(
         });
       },
       content: () => Promise.resolve('no content in this suite'),
-      access: () => Promise.resolve({ accessToken: 'at', accountId: 'acct' }),
     },
   };
 }

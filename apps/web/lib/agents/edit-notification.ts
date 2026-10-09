@@ -97,7 +97,7 @@ export function notifyAgentEdited(input: {
           });
         } else {
           const context = { tenantId: input.tenantId, subject: input.ownerSubject };
-          const sent = await graphPost(context, access.accessToken, '/me/sendMail', {
+          const sent = await graphPost(context, access.auth, '/me/sendMail', {
             message: {
               subject: headline,
               body: { contentType: 'Text', content: headline },

@@ -1,7 +1,7 @@
 /**
  * How the jsm_ tools (classic JSM — service desks, requests, customers;
  * NOT jsm_ops_*, see ops-auth.ts for that) reach Jira — injected, not read
- * off `context.accessToken`/`context.apiBaseUrl` inline.
+ * off `context.jiraAuth`/`context.apiBaseUrl` inline.
  *
  * Same full shape as JsmOpsAuth/WebexAuth/ZoomAuth: fetch(requiredScopes,
  * path, init) wraps the scope check around the real call, because
@@ -41,7 +41,13 @@ export function oauthJsmAuth(context: MCPToolContext): JsmAuth {
           );
         }
       }
-      return jiraFetch(`${context.apiBaseUrl}${path}`, context.accessToken, init);
+      if (!context.jiraAuth) {
+        return authFailure(
+          'Jira Service Management is not connected. Connect it on the Connectors page.',
+          401
+        );
+      }
+      return jiraFetch(`${context.apiBaseUrl}${path}`, context.jiraAuth, init);
     },
   };
 }

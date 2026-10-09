@@ -10,6 +10,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest } from './client';
 
 export type DeltaKind = 'mail-inbox' | 'calendar' | 'todo' | 'drive';
@@ -133,7 +134,7 @@ export interface DeltaRoundOptions {
 }
 
 export async function runDeltaRound(
-  accessToken: string,
+  auth: AuthedFetch,
   startUrl: string,
   options?: DeltaRoundOptions
 ): Promise<
@@ -145,7 +146,7 @@ export async function runDeltaRound(
   const maxPages = options?.maxPages ?? MAX_DELTA_PAGES;
 
   for (let page = 0; page < maxPages && url !== null; page += 1) {
-    const result: Result<unknown, 'GRAPH_API_ERROR'> = await graphRequest(accessToken, url, {
+    const result: Result<unknown, 'GRAPH_API_ERROR'> = await graphRequest(auth, url, {
       // Mail bodies come back as HTML by default; text keeps the index clean.
       // Graph ignores unknown Prefer tokens, so this is inert on the drive and
       // to-do resources rather than meaningful to them.

@@ -12,7 +12,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { parseEncryptionKey } from '@renkei/crypto';
 import {
   WEBEX_CONNECTOR,
   WebexClient,
@@ -32,15 +31,12 @@ import {
   CONFLUENCE_KNOWLEDGE_PROVIDER,
 } from '@renkei/connector-atlassian';
 import {
-  getGrant,
-  refreshGrantTokens,
   readAtlassianMetadata,
   ATLASSIAN,
   ATLASSIAN_CONFLUENCE,
   MICROSOFT,
-  MicrosoftAdapter,
 } from '@renkei/provider-grants';
-import { getMicrosoftApp } from '@/lib/microsoft-app';
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { getDatabase } from '@renkei/db';
 import type { AccessVerifier } from '@renkei/gates';
 import { withheldNote } from '@renkei/gates';
@@ -75,8 +71,6 @@ export async function buildKnowledgeVerifiers(
   tenantId: string
 ): Promise<ReadonlyMap<string, AccessVerifier>> {
   const verifiers = new Map<string, AccessVerifier>();
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return verifiers;
 
   // WebEx verifies with the CALLING user's own grant — there is no bot.
   // No grant on file → webex chunks stay default-denied, the gate's
@@ -88,7 +82,7 @@ export async function buildKnowledgeVerifiers(
       const { resolveWebexUserAccessByEmail } = await import('@/lib/webex-user-access');
       const access = await resolveWebexUserAccessByEmail(tenantId, userEmail);
       // Interactive: this client exists to answer a live search.
-      return access ? new WebexClient(access.accessToken, { lane: 'interactive' }) : null;
+      return access ? new WebexClient(access.auth, { lane: 'interactive' }) : null;
     })
   );
 
@@ -108,160 +102,105 @@ export async function buildKnowledgeVerifiers(
   // with the CALLING user's own grant. Registered unconditionally for the
   // same reason as above: absent them, every jira/confluence chunk is
   // silently withheld, which looks identical to "nothing is indexed".
-  const encryptionKey = keyResult.val;
   verifiers.set(
     JIRA_KNOWLEDGE_PROVIDER,
-    createJiraAccessVerifier((userEmail) =>
-      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN, encryptionKey)
-    )
+    createJiraAccessVerifier((userEmail) => atlassianCredentialFor(tenantId, userEmail, ATLASSIAN))
   );
   verifiers.set(
     CONFLUENCE_KNOWLEDGE_PROVIDER,
     createConfluenceAccessVerifier((userEmail) =>
-      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN_CONFLUENCE, encryptionKey)
+      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN_CONFLUENCE)
     )
   );
 
   // Drive documents are the one Microsoft surface where ownership is NOT the
-  // ACL — a file is shared — so this asks Graph live with the caller's own
-  // token rather than reading an owner out of the ref. Registered
+  // ACL — a file is shared — so this asks Graph live on the caller's own
+  // grant rather than reading an owner out of the ref. Registered
   // unconditionally for the same reason as the pair above.
   verifiers.set(
     SHAREPOINT_KNOWLEDGE_PROVIDER,
-    createSharepointAccessVerifier((userEmail) =>
-      microsoftCredentialFor(tenantId, userEmail, encryptionKey)
-    )
+    createSharepointAccessVerifier((userEmail) => microsoftCredentialFor(tenantId, userEmail))
   );
 
   return verifiers;
 }
 
 /**
- * The caller's own Atlassian credential, found from their email.
- *
- * The gate hands verifiers an EMAIL (the identity spine's key), while
- * grants are keyed by OIDC subject — so this hops identities → provider
- * grants. Anything missing returns null, which denies: a user who has not
- * connected the product cannot be shown its content on the index's word
- * alone.
+ * The OIDC subject behind an email, or null. The gate hands verifiers an
+ * EMAIL (the identity spine's key), while grants are keyed by subject — so
+ * every credential lookup below hops identities → the delegate's grant.
+ */
+async function subjectOf(tenantId: string, userEmail: string): Promise<string | null> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return null;
+  const row = await dbResult.val
+    .selectFrom('identities')
+    .select('subject')
+    .where('tenant_id', '=', tenantId)
+    .where('email', '=', userEmail)
+    .limit(1)
+    .executeTakeFirst();
+  return row?.subject ?? null;
+}
+
+/**
+ * The caller's own Atlassian credential, found from their email: a fetcher
+ * on their grant and the site it was minted for. Anything missing returns
+ * null, which denies: a user who has not connected the product cannot be
+ * shown its content on the index's word alone. No token is read here — the
+ * delegate describes the grant (for the cloud id) and authenticates the
+ * fetcher itself.
  */
 async function atlassianCredentialFor(
   tenantId: string,
   userEmail: string,
-  provider: string,
-  encryptionKey: Parameters<typeof getGrant>[3]
-): Promise<{ accessToken: string; cloudId: string } | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
+  provider: string
+): Promise<{ auth: AuthedFetch; cloudId: string } | null> {
+  const subject = await subjectOf(tenantId, userEmail);
+  if (!subject) return null;
 
-  const row = await dbResult.val
-    .selectFrom('identities')
-    .innerJoin('provider_grants', (join) =>
-      join
-        .onRef('provider_grants.subject', '=', 'identities.subject')
-        .onRef('provider_grants.tenant_id', '=', 'identities.tenant_id')
-    )
-    .select('provider_grants.provider_account_id')
-    .where('identities.tenant_id', '=', tenantId)
-    .where('identities.email', '=', userEmail)
-    .where('provider_grants.provider', '=', provider)
-    .limit(1)
-    .executeTakeFirst();
-  if (!row) return null;
-
-  const grantResult = await getGrant(provider, tenantId, row.provider_account_id, encryptionKey);
-  if (!grantResult.ok || !grantResult.val) return null;
-  const site = readAtlassianMetadata(grantResult.val.metadata);
+  const described = await delegateGrants().describe({ tenantId, provider, subject });
+  if (!described.ok) return null;
+  const site = readAtlassianMetadata(described.val.metadata);
   if (!site.cloudId) return null;
-  return { accessToken: grantResult.val.accessToken, cloudId: site.cloudId };
+  return {
+    auth: grantFetch({ tenantId, provider, accountId: described.val.accountId }),
+    cloudId: site.cloudId,
+  };
 }
 
-/** Refresh when the token is inside this window of expiry. */
-const MICROSOFT_REFRESH_MARGIN_MS = 2 * 60 * 1000;
-
 /**
- * The caller's own Microsoft credential, found from their email — REFRESHED.
+ * The caller's own Microsoft credential, found from their email.
  *
- * Do not simplify this into atlassianCredentialFor's shape. That one hands
- * back the stored access token as-is, which is survivable for Atlassian's
- * long-lived tokens and is NOT here: Microsoft access tokens live about an
- * hour, so a stored one is usually stale. Every $batch sub-request would
- * 401, the gate would deny on anything short of an affirmative 200, and the
- * symptom is "SharePoint search returns nothing" — indistinguishable from
- * "nothing is indexed", with no error anywhere. Refresh proactively; there
- * is no room to retry a 401 inside the gate's budget.
- *
- * Returning null on a missing Files.Read.All is the same instinct: denying
- * immediately is cheaper than 20 sub-request 403s, and it gives one place to
- * see why a user's SharePoint results are empty.
+ * Freshness is the delegate's job now: the fetcher it hands back refreshes
+ * the hour-long Graph token before a call and retries once on a 401, so a
+ * stale token no longer presents as "SharePoint search returns nothing".
+ * What stays here is the scope check — returning null on a missing
+ * Files.Read.All denies immediately, which is cheaper than 20 sub-request
+ * 403s and gives one place to see why a user's SharePoint results are empty.
  */
 async function microsoftCredentialFor(
   tenantId: string,
-  userEmail: string,
-  encryptionKey: Parameters<typeof getGrant>[3]
-): Promise<{ accessToken: string } | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
+  userEmail: string
+): Promise<{ auth: AuthedFetch } | null> {
+  const subject = await subjectOf(tenantId, userEmail);
+  if (!subject) return null;
 
-  // The gate keys on email (the identity spine); grants key on OIDC subject.
-  const row = await dbResult.val
-    .selectFrom('identities')
-    .innerJoin('provider_grants', (join) =>
-      join
-        .onRef('provider_grants.subject', '=', 'identities.subject')
-        .onRef('provider_grants.tenant_id', '=', 'identities.tenant_id')
-    )
-    .select('provider_grants.provider_account_id')
-    .where('identities.tenant_id', '=', tenantId)
-    .where('identities.email', '=', userEmail)
-    .where('provider_grants.provider', '=', MICROSOFT)
-    .limit(1)
-    .executeTakeFirst();
-  if (!row) return null;
+  const described = await delegateGrants().describe({ tenantId, provider: MICROSOFT, subject });
+  if (!described.ok) return null;
+  const { accountId, grantedScopes, requestedScopes } = described.val;
 
-  const grantResult = await getGrant(MICROSOFT, tenantId, row.provider_account_id, encryptionKey);
-  if (!grantResult.ok || !grantResult.val) return null;
-  const grant = grantResult.val;
-
-  const scopes = grant.grantedScopes ?? grant.requestedScopes ?? [];
+  const scopes = grantedScopes ?? requestedScopes;
   if (!scopes.includes('Files.Read.All')) {
     logger.info('microsoft grant lacks Files.Read.All; withholding drive results', {
       component: 'knowledge/verify',
       tenantId,
-      accountId: row.provider_account_id,
+      accountId,
     });
     return null;
   }
 
-  if (new Date(grant.expiresAt).getTime() - Date.now() >= MICROSOFT_REFRESH_MARGIN_MS) {
-    return { accessToken: grant.accessToken };
-  }
-
-  const app = await getMicrosoftApp(tenantId, '');
-  if (!app) return null;
-  const tid =
-    typeof grant.metadata.tid === 'string' && grant.metadata.tid
-      ? grant.metadata.tid
-      : app.directoryTenantId;
-  if (!tid) return null;
-
-  const refreshed = await refreshGrantTokens(
-    new MicrosoftAdapter(app.clientSecret, tid),
-    tenantId,
-    row.provider_account_id,
-    encryptionKey,
-    logger
-  );
-  if (!refreshed.ok) {
-    logger.warn('could not refresh microsoft token for drive verification', {
-      component: 'knowledge/verify',
-      tenantId,
-      accountId: row.provider_account_id,
-      error: refreshed.err.type,
-    });
-    return null;
-  }
-  return { accessToken: refreshed.val.accessToken };
+  return { auth: grantFetch({ tenantId, provider: MICROSOFT, accountId }) };
 }
 
 function formatDistance(distance: number): string {
@@ -274,11 +213,12 @@ function formatDistance(distance: number): string {
  * would name ('outlook'), and the finer split lives in `metadata.kind`
  * with a per-connector vocabulary. Mapping here means a caller never has
  * to know either, and the storage names stay free to change.
+ *
+ * Nothing from Outlook is here on purpose: mail, calendar and To Do are
+ * personal and are never indexed (migrations 135 and 137 dropped what had
+ * been); the outlook_* tools read them live.
  */
 const SOURCE_FILTERS: Record<string, { provider: string; kind?: string }> = {
-  outlook_mail: { provider: 'microsoft', kind: 'msg' },
-  outlook_calendar: { provider: 'microsoft', kind: 'evt' },
-  outlook_tasks: { provider: 'microsoft', kind: 'task' },
   zoom: { provider: 'zoom' },
   webex: { provider: 'webex' },
   confluence: { provider: 'confluence' },
@@ -299,7 +239,7 @@ export const KNOWLEDGE_SOURCE_NAMES = Object.keys(SOURCE_FILTERS);
  * SOURCE_FILTERS. Results are labelled in the same vocabulary the `sources`
  * argument accepts, so a caller can narrow a follow-up query by copying the
  * token back; the storage provider alone can't do that, since `microsoft`
- * covers mail, calendar and tasks alike.
+ * is a connector name, not a source a person would type.
  */
 function sourceNameOf(hit: KnowledgeHit): string {
   const kind = typeof hit.metadata.kind === 'string' ? hit.metadata.kind : undefined;
@@ -315,9 +255,9 @@ function sourceNameOf(hit: KnowledgeHit): string {
  * layer ORs together.
  *
  * Each name keeps its own kind. An earlier version handed back separate
- * provider and kind lists, which the SQL then AND-ed: selecting Email plus
- * Jira had to drop the kind to keep Jira, and silently returned calendar
- * events under an "Email" filter.
+ * provider and kind lists, which the SQL then AND-ed: selecting a kinded
+ * source plus Jira had to drop the kind to keep Jira, and silently widened
+ * the kinded source to every kind its provider stored.
  */
 export function sourceFiltersFor(sources: readonly string[]): SourceFilter[] {
   return sources
@@ -407,8 +347,9 @@ export async function registerKnowledgeTools(
       title: 'Knowledge · Read — Search org knowledge',
       description:
         'Search over what Renkei has indexed from connected tools — ' +
-        'Outlook mail/calendar/tasks, Confluence, Jira, Zoom and WebEx, as far as ' +
-        'each has been indexed — plus your own notes (knowledge_create_note). Matches by ' +
+        'Outlook tasks, Confluence, Jira, Zoom, WebEx and SharePoint, as far as ' +
+        'each has been indexed — plus your own notes (knowledge_create_note). Mail and ' +
+        'calendar are never indexed; use the outlook_* tools to read them live. Matches by ' +
         "meaning AND by exact words, so a ticket key, file name or person's name in the " +
         'query finds the item that carries it; quote a phrase to require it. One result ' +
         'per document, best match first; ask for as many as you need in one call (k up ' +
@@ -433,19 +374,7 @@ export async function registerKnowledgeTools(
           .optional()
           .describe('Maximum results to return (1-10, default 5)'),
         sources: z
-          .array(
-            z.enum([
-              'outlook_mail',
-              'outlook_calendar',
-              'outlook_tasks',
-              'zoom',
-              'webex',
-              'confluence',
-              'jira',
-              'sharepoint',
-              'notes',
-            ])
-          )
+          .array(z.enum(['zoom', 'webex', 'confluence', 'jira', 'sharepoint', 'notes']))
           .optional()
           .describe('Only search these sources (default: everything indexed)'),
         after: z

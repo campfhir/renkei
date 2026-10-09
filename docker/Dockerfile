@@ -337,6 +337,47 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["pnpm", "--filter", "@renkei/worker-mirth", "start"]
 
+# Delegate stage - the one process that holds a key
+# (docs/delegate-key-design.md): the only container that reads
+# USER_KEY_ENCRYPTION_KEY, derives a person's key-encryption key, unwraps a
+# chat's or project's data key, or opens a person's sealed values. Its own
+# image so that key is set on exactly one service and it rolls out
+# independently of the queue workers.
+FROM node:24-alpine AS delegate
+ARG PNPM_VERSION
+
+WORKDIR /app
+
+RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S worker -u 1001
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
+COPY --parents apps/*/package.json packages/*/package.json ./
+RUN pnpm install --frozen-lockfile --prod --no-optional \
+      --filter @renkei/worker-delegate... && \
+    rm -rf /root/.pnpm-store /root/.npm
+
+COPY --chown=worker:nodejs --parents packages/*/src ./
+COPY --chown=worker:nodejs apps/worker-delegate/src ./apps/worker-delegate/src
+COPY --chown=worker:nodejs apps/worker-delegate/tsconfig.json ./apps/worker-delegate/
+
+USER worker
+
+ARG GIT_COMMIT
+ENV NODE_ENV=production \
+    GIT_COMMIT=${GIT_COMMIT}
+
+EXPOSE 8096
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.DELEGATE_WORKER_PORT || 8096) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["pnpm", "--filter", "@renkei/worker-delegate", "start"]
+
 # ADManager stage - the ManageEngine ADManager Plus egress service, its own
 # image on purpose: it is the only process that dials an organization's
 # ADManager Plus servers (typically on a private network the web app's SSRF

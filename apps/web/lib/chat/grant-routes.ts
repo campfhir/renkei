@@ -14,6 +14,7 @@ import {
 } from './access';
 import { parseExpiry } from './grant-input';
 import { chatRequestContext, jsonError, readJsonBody } from './route-support';
+import { revokeKey, shareKey } from './chat-keys';
 
 export async function listGrantsRoute(
   request: NextRequest,
@@ -52,6 +53,16 @@ export async function addGrantRoute(
   if (outcome === 'NOT_FOUND') return jsonError(404, 'not-found', 'Not found');
   if (outcome === 'SELF') return jsonError(400, 'self', 'That is you');
   if (outcome === 'INVALID_ROLE') return jsonError(400, 'invalid', 'Invalid role');
+  // A project's content is under the project's key: the share rewraps it
+  // for the grantee (chat-keys.ts). Libraries hold no sealed content.
+  if (kind === 'chat_project') {
+    await shareKey(
+      db,
+      'chat_project',
+      { id: resourceId, tenantId, ownerSubject: session.subject },
+      granteeSubject
+    );
+  }
   return NextResponse.json({ ok: true });
 }
 
@@ -74,5 +85,6 @@ export async function revokeGrantRoute(
     grantId
   );
   if (!revoked) return jsonError(404, 'not-found', 'No such share');
+  if (kind === 'chat_project') await revokeKey(db, 'chat_project', tenantId, resourceId, revoked);
   return NextResponse.json({ ok: true });
 }

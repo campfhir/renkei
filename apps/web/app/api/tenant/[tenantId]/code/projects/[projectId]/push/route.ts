@@ -14,7 +14,7 @@ import { jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { getOrigin } from '@/lib/get-origin';
-import { resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
+import { resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function POST(
@@ -36,7 +36,7 @@ export async function POST(
     branch = ref.ref;
   }
   const origin = await getOrigin(request);
-  const credential = await resolveWorkspaceGitCredential(
+  const credential = await resolveWorkspaceGitAccess(
     {
       tenantId,
       subject: session.subject,
@@ -48,7 +48,7 @@ export async function POST(
   if (typeof credential === 'string') return jsonError(409, 'git-credential', credential);
   const pushed = await sbWorkspaceGitPush(codeProjectTarget(tenantId, projectId), {
     id: project.workspaceId,
-    authHeader: credential.authHeader,
+    gitProxy: credential.gitProxy,
     ...(branch ? { branch } : {}),
   });
   if (!pushed.ok) {

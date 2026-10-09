@@ -20,6 +20,7 @@
  */
 
 import type { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 export const E2E_TENANT_ID = '11111111-1111-4111-8111-111111111111';
 export const E2E_SLUG = 'e2e';
@@ -35,6 +36,7 @@ export const RUN_STEP_FAILED_ID = '66666666-6666-4666-8666-666666666662';
 export const RUN_TIMEOUT_ID = '66666666-6666-4666-8666-666666666663';
 export const RUN_RUNNING_ID = '66666666-6666-4666-8666-666666666664';
 export const RUN_ITERATIONS_ID = '66666666-6666-4666-8666-666666666665';
+export const RUN_PARKED_ID = '66666666-6666-4666-8666-666666666666';
 
 const STEP_COLLECT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const STEP_RANK = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
@@ -388,6 +390,12 @@ export async function seed(client: Client): Promise<void> {
     [E2E_TENANT_ID, E2E_SUBJECT, E2E_SUBJECT, 'E2E Tester']
   );
 
+  // The person holds their own encryption key (docs/delegate-key-design.md):
+  // enrolled here the way their browser would be, with a session delegation
+  // to the running delegate, so every page opens their chats without the
+  // KeyGuard having to enroll them first.
+  await enrollForE2E(client, E2E_TENANT_ID, E2E_SUBJECT);
+
   // The coach marks stay out of every other spec's way: this person has
   // tours switched off, so no card lands on a page a screenshot is about
   // to capture. coach-marks.spec.ts signs in as a subject of its own.
@@ -533,6 +541,18 @@ export async function seed(client: Client): Promise<void> {
       hoursAgo(49),
     ],
     [RUN_RUNNING_ID, 'running', null, null, STEP_COLLECT, hoursAgo(0.05), null],
+    // Parked by the engine: the owner's key was not delegated when the
+    // schedule fired (docs/delegate-key-design.md, phase 3). Their next
+    // sign-in re-queues it; until then the list says so.
+    [
+      RUN_PARKED_ID,
+      'waiting',
+      'needs-sign-in',
+      'Paused: your encryption key is not available to your agents. Sign in to resume.',
+      null,
+      null,
+      null,
+    ],
   ];
   for (const [id, status, errorKind, error, currentStep, startedAt, finishedAt] of runRows) {
     await client.query(

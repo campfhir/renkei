@@ -31,6 +31,7 @@ import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import ExcelJS from 'exceljs';
 import { Client } from 'pg';
+import { keyFor } from './keys';
 import { renderDocument } from '@renkei/document-render';
 import { sheetFromXlsx } from '../lib/chat/sheet-preview';
 
@@ -85,12 +86,6 @@ function secretbox(plaintext: string, encoded: string): string {
     ciphertext.toString('base64'),
   ].join('.');
 }
-const seal = (plaintext: string) =>
-  'renc1:' +
-  secretbox(
-    plaintext,
-    process.env.CONTENT_ENCRYPTION_KEY || process.env.TOKEN_ENCRYPTION_KEY || ''
-  );
 const sealSecret = (plaintext: string) =>
   secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '');
 
@@ -217,6 +212,12 @@ async function seed(f: Fixture, files: Seeded[]): Promise<void> {
        VALUES ($1, $2, $3, 'Quarter files', $4, NOW())`,
       [f.chatId, f.tenantId, f.subject, f.chatModelId]
     );
+    const chatKey = await keyFor(client, {
+      tenantId: f.tenantId,
+      kind: 'chat',
+      resourceId: f.chatId,
+      ownerSubject: f.subject,
+    });
     await client.query(
       `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
        VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
@@ -276,7 +277,7 @@ async function seed(f: Fixture, files: Seeded[]): Promise<void> {
           row.seq,
           row.role,
           row.kind,
-          seal(JSON.stringify(row.blocks)),
+          chatKey.seal(JSON.stringify(row.blocks)),
           assistant ? f.chatModelId : null,
           assistant ? 'anthropic' : null,
           assistant ? 'e2e-model' : null,
@@ -299,7 +300,7 @@ async function seed(f: Fixture, files: Seeded[]): Promise<void> {
           file.contentType,
           file.bytes.byteLength,
           file.extractStatus,
-          file.extractedText ? seal(file.extractedText) : null,
+          file.extractedText ? chatKey.seal(file.extractedText) : null,
           resultsRow,
         ]
       );

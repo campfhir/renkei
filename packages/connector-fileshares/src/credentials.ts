@@ -11,10 +11,6 @@
  * guess at what was meant.
  */
 
-import { decrypt, encrypt } from '@renkei/crypto';
-import { ok, err } from '@campfhir/safe-functions/helpers';
-import type { Result } from '@campfhir/safe-functions/types';
-
 export type ShareCredentials =
   | { protocol: 'smb'; username: string; password: string; domain?: string }
   | { protocol: 'sftp'; username: string; password: string }
@@ -64,27 +60,4 @@ export function parseShareCredentials(value: unknown): ShareCredentials | null {
   }
 
   return null;
-}
-
-export function encryptCredentials(credentials: ShareCredentials, key: Buffer): string {
-  return encrypt(JSON.stringify(credentials), key);
-}
-
-export function decryptCredentials(
-  payload: string,
-  key: Buffer
-): Result<ShareCredentials, CredentialError> {
-  const opened = decrypt(payload, key);
-  if (!opened.ok) return err('DECRYPTION_ERROR' as const);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(opened.val);
-  } catch {
-    return err('MALFORMED_CREDENTIALS' as const);
-  }
-
-  const credentials = parseShareCredentials(parsed);
-  if (!credentials) return err('MALFORMED_CREDENTIALS' as const);
-  return ok(credentials);
 }

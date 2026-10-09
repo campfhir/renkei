@@ -12,6 +12,7 @@
  * and this module deals only in account IDs.
  */
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { jiraFetch } from './common';
 import { logger } from '@/lib/logger';
 
@@ -53,7 +54,8 @@ export function clearUserCache(): void {
 interface ResolverContext {
   tenantId: string;
   apiBaseUrl: string;
-  accessToken: string;
+  /** The caller's Jira grant as a fetcher; null when Jira is not connected. */
+  jiraAuth: AuthedFetch | null;
 }
 
 /**
@@ -66,9 +68,12 @@ export async function searchUsers(
   query: string,
   maxResults = 50
 ): Promise<UserSearchResult[]> {
+  if (!context.jiraAuth) {
+    throw new Error('Jira is not connected, so users cannot be looked up.');
+  }
   const response = await jiraFetch(
     `${context.apiBaseUrl}/rest/api/3/user/search?query=${encodeURIComponent(query)}&maxResults=${Math.min(maxResults, 50)}`,
-    context.accessToken
+    context.jiraAuth
   );
 
   const results: unknown = await response.json();

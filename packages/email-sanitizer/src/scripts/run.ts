@@ -33,10 +33,12 @@ import type { Result } from '@campfhir/safe-functions/types';
 
 /**
  * What a script may be pointed at. Mail was the only kind when scripts
- * shipped; invites and tasks reach the same stage now, and a script says
- * which of them it is willing to handle.
+ * shipped; invites reach the same stage, and a script says which of them
+ * it is willing to handle. Tasks (Microsoft To Do) were a kind until they
+ * left the index with migration 137; a stored script that still names
+ * them is read as pointing at nothing.
  */
-export type CleanerScriptKind = 'msg' | 'evt' | 'task';
+export type CleanerScriptKind = 'msg' | 'evt';
 
 export interface CleanerScriptInput {
   /** The message text as cleaned so far — what the script transforms. */

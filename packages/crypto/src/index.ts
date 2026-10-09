@@ -15,3 +15,37 @@ export {
   revealContent,
   CONTENT_ENVELOPE_PREFIX,
 } from './content';
+export {
+  userKeyMaster,
+  generateDataKey,
+  generateUserKeySalt,
+  deriveUserKek,
+  wrapKey,
+  unwrapKey,
+  encryptWithResourceKey,
+  decryptWithResourceKey,
+  parseResourceEnvelope,
+  isResourceEncrypted,
+  sealForUser,
+  openForUser,
+  isUserSealed,
+  RESOURCE_ENVELOPE_PREFIX,
+  USER_ENVELOPE_PREFIX,
+  DATA_KEY_BYTES,
+  deriveOwnKek,
+  deriveUnlockKey,
+  kekVerifier,
+  verifierMatches,
+  OWN_KEY_PASSPHRASE_MIN_CHARS,
+  OWN_KEY_PASSPHRASE_MAX_CHARS,
+} from './keys';
+export {
+  generateX25519KeyPair,
+  x25519PublicKeyOf,
+  sealToPublicKey,
+  openSealedBox,
+  isSealedBox,
+  SEALED_BOX_PREFIX,
+  type X25519KeyPair,
+} from './sealed-box';
+export { formatUserKey, parseUserKey, deviceCodeOf, USER_KEY_BYTES } from './browser/key-display';

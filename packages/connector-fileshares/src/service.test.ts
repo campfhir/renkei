@@ -17,6 +17,9 @@ jest.mock('./store', () => {
   };
 });
 jest.mock('./backend', () => ({ openBackend: jest.fn() }));
+// The credential opens under the caller's own key (user-credentials.ts); the
+// service only needs what comes out, so the opener is stood in for.
+jest.mock('./user-credentials', () => ({ openCredentialsForSubject: jest.fn() }));
 jest.mock('./limits', () => {
   const actual = jest.requireActual<typeof import('./limits')>('./limits');
   return {
@@ -29,7 +32,6 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { RawEntry, ShareSummary } from './types';
 import type { ShareBackend } from './backend';
-import { encryptCredentials } from './credentials';
 import {
   serviceListFolder,
   serviceMakeFolder,
@@ -49,12 +51,14 @@ const { getShare, readConnectionCiphertext } = jest.requireMock<{
   readConnectionCiphertext: jest.Mock;
 }>('./store');
 const { openBackend } = jest.requireMock<{ openBackend: jest.Mock }>('./backend');
+const { openCredentialsForSubject } = jest.requireMock<{ openCredentialsForSubject: jest.Mock }>(
+  './user-credentials'
+);
 
-const KEY = Buffer.alloc(32, 7);
 const SHARE_ID = 'share-1';
 
 function deps(): ServiceDeps {
-  return { db: {} as Kysely<DB>, encryptionKey: KEY };
+  return { db: {} as Kysely<DB> };
 }
 
 function target() {
@@ -108,7 +112,10 @@ function fakeBackend(tree: Record<string, RawEntry[] | Uint8Array>): {
     async stat(path) {
       const node = tree[path];
       if (Array.isArray(node)) {
-        return { ok: true, val: { name: path, kind: 'dir' as const, size: null, modifiedAt: null } };
+        return {
+          ok: true,
+          val: { name: path, kind: 'dir' as const, size: null, modifiedAt: null },
+        };
       }
       if (node instanceof Uint8Array) {
         return {
@@ -145,9 +152,10 @@ function fakeBackend(tree: Record<string, RawEntry[] | Uint8Array>): {
 
 function arm(tree: Record<string, RawEntry[] | Uint8Array>): FakeCalls {
   getShare.mockResolvedValue(shareRow());
-  readConnectionCiphertext.mockResolvedValue({
+  readConnectionCiphertext.mockResolvedValue({ ok: true, val: 'uenc1:sealed' });
+  openCredentialsForSubject.mockResolvedValue({
     ok: true,
-    val: encryptCredentials({ protocol: 'sftp', username: 'alice', password: 'pw' }, KEY),
+    val: { protocol: 'sftp', username: 'alice', password: 'pw' },
   });
   const { backend, calls } = fakeBackend(tree);
   openBackend.mockResolvedValue({ ok: true, val: backend });
@@ -174,6 +182,10 @@ describe('resolution failures', () => {
     expect(unconnected).toMatchObject({ ok: false, err: { type: 'not_connected' } });
 
     readConnectionCiphertext.mockResolvedValue({ ok: true, val: 'not-a-ciphertext' });
+    openCredentialsForSubject.mockResolvedValueOnce({
+      ok: false,
+      err: { type: 'DECRYPTION_ERROR' },
+    });
     const garbled = await serviceListFolder(deps(), target(), '/');
     expect(garbled).toMatchObject({ ok: false, err: { type: 'bad_credentials' } });
   });

@@ -1,14 +1,17 @@
 /**
- * chat_messages: read with the envelope opened, written sealed. `seq` is
- * allocated under the chat's row lock by the caller's transaction so two
- * writers cannot collide (the unique constraint would catch them anyway).
+ * chat_messages: read with the envelope opened, written sealed — under
+ * the chat's own cipher (content-crypto.ts, chat-keys.ts), which every
+ * caller passes: there is no default, so a row cannot be written under
+ * the wrong key by omission. `seq` is allocated under the chat's row lock
+ * by the caller's transaction so two writers cannot collide (the unique
+ * constraint would catch them anyway).
  */
 
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { LlmContentBlock, LlmUsage } from '@renkei/agent-llm';
 import { isUuid } from '@/lib/uuid';
-import { openBlocks, sealBlocks } from './content-crypto';
+import { openBlocks, sealBlocks, type ContentCipher } from './content-crypto';
 import type {
   MessageKind,
   MessageRole,
@@ -147,26 +150,29 @@ function usageJson(usage: LlmUsage): {
   };
 }
 
-function rowOf(raw: {
-  id: string;
-  chat_id: string;
-  turn_id: string | null;
-  seq: number;
-  role: string;
-  kind: string;
-  status: string;
-  content: string;
-  llm_model_id: string | null;
-  provider: string | null;
-  model: string | null;
-  stop_reason: string | null;
-  usage: unknown;
-  timing: unknown;
-  error: string | null;
-  summary_id: string | null;
-  created_at: Date;
-  updated_at: Date;
-}): StoredMessage {
+function rowOf(
+  raw: {
+    id: string;
+    chat_id: string;
+    turn_id: string | null;
+    seq: number;
+    role: string;
+    kind: string;
+    status: string;
+    content: string;
+    llm_model_id: string | null;
+    provider: string | null;
+    model: string | null;
+    stop_reason: string | null;
+    usage: unknown;
+    timing: unknown;
+    error: string | null;
+    summary_id: string | null;
+    created_at: Date;
+    updated_at: Date;
+  },
+  cipher: ContentCipher
+): StoredMessage {
   return {
     id: raw.id,
     chatId: raw.chat_id,
@@ -175,7 +181,7 @@ function rowOf(raw: {
     role: roleOf(raw.role),
     kind: kindOf(raw.kind),
     status: statusOf(raw.status),
-    blocks: openBlocks(raw.content),
+    blocks: openBlocks(raw.content, cipher),
     llmModelId: raw.llm_model_id,
     provider: raw.provider,
     model: raw.model,
@@ -192,7 +198,8 @@ function rowOf(raw: {
 export async function listMessages(
   db: Kysely<DB>,
   tenantId: string,
-  chatId: string
+  chatId: string,
+  cipher: ContentCipher
 ): Promise<StoredMessage[]> {
   if (!isUuid(chatId)) return [];
   const rows = await db
@@ -202,13 +209,14 @@ export async function listMessages(
     .where('chat_id', '=', chatId)
     .orderBy('seq', 'asc')
     .execute();
-  return rows.map(rowOf);
+  return rows.map((row) => rowOf(row, cipher));
 }
 
 export async function listTurnMessages(
   db: Kysely<DB>,
   tenantId: string,
-  turnId: string
+  turnId: string,
+  cipher: ContentCipher
 ): Promise<StoredMessage[]> {
   if (!isUuid(turnId)) return [];
   const rows = await db
@@ -218,7 +226,7 @@ export async function listTurnMessages(
     .where('turn_id', '=', turnId)
     .orderBy('seq', 'asc')
     .execute();
-  return rows.map(rowOf);
+  return rows.map((row) => rowOf(row, cipher));
 }
 
 export interface NewMessage {
@@ -232,6 +240,8 @@ export interface NewMessage {
   llmModelId?: string | null;
   provider?: string | null;
   model?: string | null;
+  /** The chat's cipher (access.cipher, or chat-keys.ts for a process acting as the owner). */
+  cipher: ContentCipher;
 }
 
 export interface InsertedMessage {
@@ -249,7 +259,7 @@ export async function insertMessage(
   db: Kysely<DB> | Transaction<DB>,
   input: NewMessage
 ): Promise<InsertedMessage | null> {
-  const sealed = sealBlocks(input.blocks);
+  const sealed = sealBlocks(input.blocks, input.cipher);
   if (!sealed.ok) return null;
   const inserted = await db
     .insertInto('chat_messages')
@@ -304,9 +314,10 @@ export async function updateMessageContent(
   db: Kysely<DB>,
   messageId: string,
   blocks: LlmContentBlock[],
+  cipher: ContentCipher,
   patch: AssistantPatch = {}
 ): Promise<boolean> {
-  const sealed = sealBlocks(blocks);
+  const sealed = sealBlocks(blocks, cipher);
   if (!sealed.ok) return false;
   await db
     .updateTable('chat_messages')

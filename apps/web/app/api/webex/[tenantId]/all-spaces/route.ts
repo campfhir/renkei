@@ -1,6 +1,6 @@
 /**
  * Opt in/out of the all-spaces webhook: a no-roomId-filter messages
- * webhook on the CALLER's own WebEx token, firing for every space they
+ * webhook on the CALLER's own WebEx grant, firing for every space they
  * are in (including ones they join later) and feeding only their own
  * agent triggers. Strictly self-service — the session decides whose
  * webhook, never a parameter — and reversible: opting out deletes the
@@ -54,7 +54,7 @@ export async function POST(
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const targetUrl = webexUserWebhookTargetUrl(originResult.val, tenantId, access.accountId);
-  const client = new WebexClient(access.accessToken);
+  const client = new WebexClient(access.auth);
 
   const existingSecret =
     typeof access.metadata.allSpacesSecret === 'string' ? access.metadata.allSpacesSecret : null;

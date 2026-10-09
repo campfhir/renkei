@@ -13,8 +13,17 @@ jest.mock('./client', () => ({
   graphRequest: jest.fn(),
 }));
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest } from './client';
 import { graphBatch, summarizeBatch, withCategoryChanges, BATCH_CHUNK_SIZE } from './mail-batch';
+
+/** Never called: graphRequest is mocked, so this only has to type as a grant's fetcher. */
+const auth: AuthedFetch = Object.assign(
+  async () => {
+    throw new Error('graphRequest is mocked');
+  },
+  { grantKey: 'grant-1' }
+);
 
 const graphRequestMock = graphRequest as jest.Mock;
 
@@ -49,7 +58,7 @@ beforeEach(() => {
   }) as unknown as typeof setTimeout);
 
   graphRequestMock.mockReset();
-  graphRequestMock.mockImplementation(async (_token: string, _path: string, init?: RequestInit) => {
+  graphRequestMock.mockImplementation(async (_auth: unknown, _path: string, init?: RequestInit) => {
     if (inFlight) sawConcurrentCalls = true;
     inFlight = true;
     const payload = JSON.parse(String(init?.body ?? '{}')) as BatchPost;
@@ -83,7 +92,7 @@ const markRequests = (count: number) =>
 
 describe('graphBatch', () => {
   it('never puts more than 20 sub-requests in one batch', async () => {
-    await graphBatch('token', markRequests(45));
+    await graphBatch(auth, markRequests(45));
     expect(batches).toHaveLength(3);
     for (const batch of batches)
       expect(batch.requests.length).toBeLessThanOrEqual(BATCH_CHUNK_SIZE);
@@ -92,13 +101,13 @@ describe('graphBatch', () => {
 
   it('dispatches chunks sequentially, not all at once', async () => {
     // Concurrent chunks are how a 200-message action throttles itself.
-    await graphBatch('token', markRequests(60));
+    await graphBatch(auth, markRequests(60));
     expect(sawConcurrentCalls).toBe(false);
   });
 
   it('retries a 429d sub-request and reports it failed after bounded rounds', async () => {
     statusById.set('msg-0', [429, 429, 429, 429, 429]);
-    const { results } = await graphBatch('token', markRequests(2));
+    const { results } = await graphBatch(auth, markRequests(2));
     const throttled = results.find((result) => result.id === 'msg-0');
     expect(throttled?.ok).toBe(false);
     expect(throttled?.error).toContain('rate limiting');
@@ -109,14 +118,14 @@ describe('graphBatch', () => {
 
   it('recovers a sub-request that stops being throttled', async () => {
     statusById.set('msg-0', [429, 200]);
-    const { results } = await graphBatch('token', markRequests(1));
+    const { results } = await graphBatch(auth, markRequests(1));
     expect(results).toHaveLength(1);
     expect(results[0].ok).toBe(true);
   });
 
   it('reports incremental progress per settled chunk', async () => {
     const progress: number[] = [];
-    await graphBatch('token', markRequests(45), {
+    await graphBatch(auth, markRequests(45), {
       onChunk: (settled) => {
         progress.push(settled.length);
       },
@@ -125,23 +134,19 @@ describe('graphBatch', () => {
   });
 
   it('chains a background chunk with dependsOn so Graph runs it one sub-request at a time', async () => {
-    await graphBatch('token', markRequests(3), { lane: 'background' });
+    await graphBatch(auth, markRequests(3), { lane: 'background' });
     const [batch] = batches;
-    expect(batch!.requests.map((request) => (request as { dependsOn?: string[] }).dependsOn)).toEqual([
-      undefined,
-      ['msg-0'],
-      ['msg-1'],
-    ]);
+    expect(
+      batch!.requests.map((request) => (request as { dependsOn?: string[] }).dependsOn)
+    ).toEqual([undefined, ['msg-0'], ['msg-1']]);
   });
 
   it('leaves an interactive chunk fanned out unless told otherwise', async () => {
-    await graphBatch('token', markRequests(3), { lane: 'interactive' });
-    expect(
-      batches[0]!.requests.some((request) => 'dependsOn' in request)
-    ).toBe(false);
+    await graphBatch(auth, markRequests(3), { lane: 'interactive' });
+    expect(batches[0]!.requests.some((request) => 'dependsOn' in request)).toBe(false);
 
     batches = [];
-    await graphBatch('token', markRequests(3), { lane: 'interactive', sequential: true });
+    await graphBatch(auth, markRequests(3), { lane: 'interactive', sequential: true });
     expect((batches[0]!.requests[2] as { dependsOn?: string[] }).dependsOn).toEqual(['msg-1']);
   });
 
@@ -149,7 +154,7 @@ describe('graphBatch', () => {
     statusById.set('msg-0', [404]);
     statusById.set('msg-1', [424, 200]);
     statusById.set('msg-2', [424, 200]);
-    const { results } = await graphBatch('token', markRequests(3), { lane: 'background' });
+    const { results } = await graphBatch(auth, markRequests(3), { lane: 'background' });
 
     expect(results.map((result) => [result.id, result.ok])).toEqual([
       ['msg-0', false],
@@ -163,12 +168,12 @@ describe('graphBatch', () => {
   });
 
   it('marks the whole $batch retryable only when every sub-request is idempotent', async () => {
-    await graphBatch('token', markRequests(2));
+    await graphBatch(auth, markRequests(2));
     const patchInit = graphRequestMock.mock.calls[0]![2] as { retry?: boolean };
     expect(patchInit.retry).toBe(true);
 
     graphRequestMock.mockClear();
-    await graphBatch('token', [
+    await graphBatch(auth, [
       { id: 'a', method: 'POST', url: '/me/messages/a/move', body: { destinationId: 'archive' } },
     ]);
     const moveInit = graphRequestMock.mock.calls[0]![2] as { retry?: boolean };
@@ -180,7 +185,7 @@ describe('graphBatch', () => {
       ok: false,
       err: { message: 'Graph API unreachable' },
     });
-    const { results } = await graphBatch('token', markRequests(3));
+    const { results } = await graphBatch(auth, markRequests(3));
     expect(results).toHaveLength(3);
     expect(results.every((result) => !result.ok)).toBe(true);
     expect(results[0].error).toContain('unreachable');

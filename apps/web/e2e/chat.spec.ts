@@ -13,6 +13,7 @@ import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { keyFor } from './keys';
 
 test.use({
   launchOptions: {
@@ -72,11 +73,6 @@ function secretbox(plaintext: string, encoded: string, name: string): string {
     cipher.getAuthTag().toString('base64'),
     ciphertext.toString('base64'),
   ].join('.');
-}
-
-function seal(plaintext: string): string {
-  const encoded = process.env.CONTENT_ENCRYPTION_KEY || process.env.TOKEN_ENCRYPTION_KEY || '';
-  return 'renc1:' + secretbox(plaintext, encoded, 'TOKEN_ENCRYPTION_KEY');
 }
 
 /** `llm_model_configs.encrypted_secrets` is a bare secretbox under TOKEN_ENCRYPTION_KEY. */
@@ -159,6 +155,12 @@ async function seedChat(
      VALUES ($1, $2, $3, $6, $4, $5, true, NOW())`,
     [CHAT_ID, E2E_TENANT_ID, E2E_SUBJECT, title, MODEL_ID, projectId]
   );
+  const chatKey = await keyFor(client, {
+    tenantId: E2E_TENANT_ID,
+    kind: 'chat',
+    resourceId: CHAT_ID,
+    ownerSubject: E2E_SUBJECT,
+  });
   await client.query(
     `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, input_tokens, output_tokens, finished_at)
      VALUES ($1, $2, $3, 'completed', $4, 2, 1200, 340, NOW())`,
@@ -252,7 +254,7 @@ async function seedChat(
         row.seq,
         row.role,
         row.kind,
-        seal(JSON.stringify(row.blocks)),
+        chatKey.seal(JSON.stringify(row.blocks)),
         assistant ? MODEL_ID : null,
         assistant ? 'anthropic' : null,
         assistant ? 'e2e-model' : null,

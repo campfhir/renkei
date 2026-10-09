@@ -76,7 +76,7 @@ async function toolsOf(scopes?: string[]): Promise<Map<string, Handler>> {
     accountId: 'acct-1',
     siteUrl: '',
     apiBaseUrl: '',
-    accessToken: '',
+    jiraAuth: null,
     maxJqlResults: 100,
     githubScopes: scopes,
   } as unknown as MCPToolContext;
@@ -183,7 +183,9 @@ describe('repositories', () => {
     });
 
     expect(result.isError).not.toBe(true);
-    const tree = requests.find((request) => request.method === 'POST' && request.path.endsWith('/git/trees'));
+    const tree = requests.find(
+      (request) => request.method === 'POST' && request.path.endsWith('/git/trees')
+    );
     expect(tree?.json).toMatchObject({
       base_tree: 'base-tree',
       tree: [
@@ -221,7 +223,12 @@ describe('pull requests', () => {
     routes.push({
       match: '/pulls',
       method: 'POST',
-      body: { number: 7, title: 'Add rate limiting', head: { ref: 'feature/rl' }, base: { ref: 'main' } },
+      body: {
+        number: 7,
+        title: 'Add rate limiting',
+        head: { ref: 'feature/rl' },
+        base: { ref: 'main' },
+      },
     });
     const tools = await toolsOf();
     const result = await tools.get('github_create_pull_request')!({
@@ -235,8 +242,14 @@ describe('pull requests', () => {
     expect(result.isError).not.toBe(true);
     expect(result.content[0]?.text).toContain('#7');
     expect(result.content[0]?.text).toContain('https://github.com/acme/api/pull/7');
-    const post = requests.find((request) => request.method === 'POST' && request.path.endsWith('/pulls'));
-    expect(post?.json).toMatchObject({ title: 'Add rate limiting', head: 'feature/rl', base: 'main' });
+    const post = requests.find(
+      (request) => request.method === 'POST' && request.path.endsWith('/pulls')
+    );
+    expect(post?.json).toMatchObject({
+      title: 'Add rate limiting',
+      head: 'feature/rl',
+      base: 'main',
+    });
   });
 
   it('the create preview never creates — the card does', async () => {
@@ -260,7 +273,12 @@ describe('pull requests', () => {
   it('the merge preview never merges — the card does', async () => {
     routes.push({
       match: '/pulls/7',
-      body: { number: 7, title: 'Add rate limiting', head: { ref: 'feature/rl' }, base: { ref: 'main' } },
+      body: {
+        number: 7,
+        title: 'Add rate limiting',
+        head: { ref: 'feature/rl' },
+        base: { ref: 'main' },
+      },
     });
     const tools = await toolsOf();
     const result = await tools.get('github_merge_pull_request_preview')!({
@@ -270,7 +288,9 @@ describe('pull requests', () => {
     });
 
     expect(requests.filter((request) => request.method === 'PUT')).toHaveLength(0);
-    expect(result.structuredContent).toMatchObject({ confirmTool: 'github_merge_pull_request_confirm' });
+    expect(result.structuredContent).toMatchObject({
+      confirmTool: 'github_merge_pull_request_confirm',
+    });
   });
 
   it('merges with the chosen strategy', async () => {
@@ -315,6 +335,8 @@ describe('actions', () => {
     });
 
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(0);
-    expect(result.structuredContent).toMatchObject({ confirmTool: 'github_trigger_workflow_confirm' });
+    expect(result.structuredContent).toMatchObject({
+      confirmTool: 'github_trigger_workflow_confirm',
+    });
   });
 });

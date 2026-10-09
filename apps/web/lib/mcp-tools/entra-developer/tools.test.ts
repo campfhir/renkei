@@ -11,16 +11,11 @@ jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
 }));
-// client.ts imports these for resolveEntraAccess, which the stub auth
-// below replaces — kept inert so the module loads without a database.
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
-jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({ ENTRA_DEVELOPER: 'entra-developer' }));
 jest.mock('@renkei/connector-microsoft', () => ({
   ...jest.requireActual('@renkei/connector-microsoft/src/fetch'),
   GRAPH_BASE_URL: 'https://graph.microsoft.com/v1.0',
 }));
-jest.mock('@/lib/entra-developer-app', () => ({ getEntraDeveloperApp: jest.fn() }));
 jest.mock('../widgets', () => ({
   APP_ONLY_META: { ui: { visibility: ['app'] } },
   DIRECTORY_ACTION_PREVIEW_URI: 'ui://widget/directory-action-preview.test.html',
@@ -33,6 +28,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { registerEntraDeveloperTools } from './index';
 import type { EntraAuth } from './entra-auth';
+import { authedFetch } from '@renkei/delegate-client';
 
 type ToolResult = {
   content: { type: string; text?: string }[];
@@ -59,10 +55,14 @@ const ALL_SCOPES = [
 let graph: Record<string, [number, unknown]>;
 let requests: { method: string; path: string; body: unknown; headers: Record<string, string> }[];
 
+/**
+ * The grant's fetcher as the delegate would hand it out: it sends through
+ * global fetch (the Graph stub below) and attaches nothing itself.
+ */
 const stubAuth: EntraAuth = {
   kind: 'oauth',
   resolve: async () => ({
-    accessToken: 't',
+    auth: authedFetch((url, init) => fetch(url, init), 'entra-developer:tenant-1:oid-me'),
     accountId: 'oid-me',
     upn: 'dana@contoso.com',
     tenantId: 'tenant-dir',

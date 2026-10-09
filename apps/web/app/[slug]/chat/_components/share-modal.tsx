@@ -3,8 +3,10 @@
 /**
  * One sharing dialog for chats, projects and prompt libraries: who has
  * access, add a person (with a role where the resource has roles, and an
- * optional expiry), revoke, and — for projects and libraries — publish to
- * the whole organization. People come from the tenant directory.
+ * optional expiry), revoke. People come from the tenant directory. There
+ * is no "publish to the organization": a project's content is under a key
+ * wrapped to the people invited (docs/delegate-key-design.md, decision 1),
+ * and no tenant-wide key exists to publish under.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -26,15 +28,12 @@ export default function ShareModal({
   kind,
   resourceId,
   title,
-  published,
   onClose,
 }: {
   tenantId: string;
   kind: ResourceKind;
   resourceId: string;
   title: string;
-  /** Present for kinds that can be published to the org. */
-  published?: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -44,7 +43,6 @@ export default function ShareModal({
   const [chosen, setChosen] = useState<Person | null>(null);
   const [role, setRole] = useState<GrantRole>('viewer');
   const [expiresAt, setExpiresAt] = useState('');
-  const [publish, setPublish] = useState(published ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -102,35 +100,14 @@ export default function ShareModal({
     router.refresh();
   };
 
-  const togglePublish = async (on: boolean) => {
-    if (kind === 'chat') return;
-    setPublish(on);
-    const result = await chatClient.publish(tenantId, kind, resourceId, on);
-    if (result.error) {
-      setError(result.error);
-      setPublish(!on);
-      return;
-    }
-    router.refresh();
-  };
-
   return (
     <Modal title={title} onClose={onClose}>
       <div className="space-y-4 text-sm">
-        {kind === 'chat' ? (
-          <p className="text-gray-600 dark:text-gray-400">
-            People you share with can read this chat and watch it live. Only you can continue it.
-          </p>
-        ) : (
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={publish}
-              onChange={(event) => void togglePublish(event.target.checked)}
-            />
-            <span>Everyone in the organization can view this</span>
-          </label>
-        )}
+        <p className="text-gray-600 dark:text-gray-400">
+          {kind === 'chat'
+            ? 'People you share with can read this chat and watch it live. Only you can continue it.'
+            : 'Only the people you add here can open this; its content is keyed to them.'}
+        </p>
 
         <div className="space-y-2">
           <label className="block text-xs font-medium text-gray-500">Add a person</label>

@@ -6,7 +6,7 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import type { ResourceAccess } from '@/lib/chat/access';
+import type { ProjectAccess } from '@/lib/chat/access';
 import { loadProjectView, type ProjectView } from '@/lib/chat/project-view';
 import { getProjectRow } from '@/lib/chat/projects';
 import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
@@ -53,7 +53,7 @@ export async function loadCodeProjectView(
   tenantId: string,
   viewerSubject: string,
   projectId: string,
-  access: ResourceAccess
+  access: ProjectAccess
 ): Promise<CodeProjectView | null> {
   const project = await getProjectRow(db, tenantId, projectId);
   if (!project || project.kind !== 'code' || !project.repo) return null;

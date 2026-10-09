@@ -5,8 +5,11 @@
  * (ENTRA_DEVELOPER), so nothing here ever reads the Microsoft 365 grant.
  *
  * The graph/client.ts pattern: access is resolved fresh on every call,
- * refreshing near expiry, never captured in a handler closure. The request
- * wrapper is this module's own rather than graph/client.ts's because a
+ * never captured in a handler closure, and no token is read here — the
+ * delegate worker holds the grant and hands back an AuthedFetch that
+ * authenticates, refreshes and retries once on a 401
+ * (docs/delegate-key-design.md). The request wrapper is this module's own
+ * rather than graph/client.ts's because a
  * developer provisioning an application needs Graph's REASON — "Another
  * object with the same value for property identifierUris already exists",
  * "Insufficient privileges to complete the operation" — not just the
@@ -15,21 +18,13 @@
  */
 
 import { GRAPH_BASE_URL } from '@renkei/connector-microsoft';
-import { parseEncryptionKey } from '@renkei/crypto';
-import {
-  getGrant,
-  refreshGrantTokens,
-  ENTRA_DEVELOPER,
-  MicrosoftAdapter,
-  type ProviderGrant,
-} from '@renkei/provider-grants';
-import { getDatabase } from '@renkei/db';
-import { getEntraDeveloperApp } from '@/lib/entra-developer-app';
+import { ENTRA_DEVELOPER } from '@renkei/provider-grants';
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
+import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
+const LABEL = 'Entra Developer';
 
 /**
  * Graph, less the path. A deployment may point it elsewhere
@@ -39,8 +34,9 @@ const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 const API_BASE = process.env.ENTRA_DEVELOPER_API_BASE_URL?.replace(/\/+$/, '') || GRAPH_BASE_URL;
 
 export interface EntraAccess {
-  accessToken: string;
-  /** The Microsoft account whose grant this token came from (its oid). */
+  /** `fetch` on the caller's own Entra Developer grant; the delegate supplies the credential. */
+  auth: AuthedFetch;
+  /** The Microsoft account whose grant `auth` rides on (its oid). */
   accountId: string;
   /** The person's user principal name, for "connected as". */
   upn: string;
@@ -56,69 +52,28 @@ export interface EntraCallContext {
 }
 
 /**
- * The caller's live Entra Developer token, refreshed when stale. A string
- * is a human-readable reason there is none, handed straight to the model.
+ * The caller's Entra Developer grant as a fetcher, plus what the grant
+ * recorded about them. A string is a human-readable reason there is none,
+ * handed straight to the model.
  */
 export async function resolveEntraAccess(context: EntraCallContext): Promise<EntraAccess | string> {
   if (!context.subject) return 'No signed-in identity on this request.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Token encryption is not configured on this deployment.';
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
 
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', ENTRA_DEVELOPER)
-    .where('subject', '=', context.subject)
-    .limit(1)
-    .executeTakeFirst();
-  if (!row) {
-    return (
-      'Entra Developer is not connected. Connect it on the Connectors page (it is separate ' +
-      'from Microsoft 365), then try again.'
-    );
+  const grant = { tenantId: context.tenantId, provider: ENTRA_DEVELOPER, subject: context.subject };
+  const described = await delegateGrants().describe(grant);
+  if (!described.ok) {
+    return described.err.type === 'NO_GRANT'
+      ? 'Entra Developer is not connected. Connect it on the Connectors page (it is separate ' +
+          'from Microsoft 365), then try again.'
+      : grantRefusalText(described.err.type, LABEL);
   }
-
-  const grantResult = await getGrant(
-    ENTRA_DEVELOPER,
-    context.tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
-  if (!grantResult.ok || !grantResult.val) {
-    return 'Your Entra Developer connection could not be read. Reconnect on the Connectors page.';
-  }
-  let grant: ProviderGrant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getEntraDeveloperApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'Entra Developer is no longer configured for this organization.';
-    const tid =
-      typeof grant.metadata.tid === 'string' && grant.metadata.tid
-        ? grant.metadata.tid
-        : app.directoryTenantId;
-    const refreshed = await refreshGrantTokens(
-      new MicrosoftAdapter(app.clientSecret, tid, ENTRA_DEVELOPER),
-      context.tenantId,
-      row.provider_account_id,
-      keyResult.val,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your Entra Developer authorization was revoked. Reconnect it on the Connectors page.'
-        : 'Could not refresh the Entra Developer token; try again shortly.';
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
+  const { metadata } = described.val;
 
   return {
-    accessToken: grant.accessToken,
-    accountId: row.provider_account_id,
-    upn: typeof grant.metadata.upn === 'string' ? grant.metadata.upn : '',
-    tenantId: typeof grant.metadata.tid === 'string' ? grant.metadata.tid : '',
+    auth: grantFetch(grant),
+    accountId: described.val.accountId,
+    upn: typeof metadata.upn === 'string' ? metadata.upn : '',
+    tenantId: typeof metadata.tid === 'string' ? metadata.tid : '',
   };
 }
 
@@ -137,7 +92,7 @@ function graphReason(body: unknown): string {
 function describeStatus(status: number, reason: string): string {
   const why = reason ? ` ${reason}` : '';
   if (status === 401) {
-    return `Graph refused the Entra Developer token (401); reconnect it on the Connectors page.${why}`;
+    return `Graph refused the Entra Developer grant (401); reconnect it on the Connectors page.${why}`;
   }
   if (status === 403) {
     return (
@@ -172,10 +127,9 @@ export async function entraRequest(
   const url = pathAndQuery.startsWith('https://') ? pathAndQuery : `${API_BASE}${pathAndQuery}`;
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await access.auth(url, {
       method,
       headers: {
-        Authorization: `Bearer ${access.accessToken}`,
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...extraHeaders,
@@ -206,6 +160,10 @@ export async function entraRequest(
           : `${reason} — the change may still have gone through; check Entra before retrying.`,
     };
   }
+  // The delegate refusing (no grant, revoked, refresh failed) is not a
+  // Graph answer; the status words below would blame the wrong party.
+  const refused = refusalTextOf(response, LABEL);
+  if (refused) return { ok: false, error: refused, status: response.status };
   const text = await response.text().catch(() => '');
   let parsed: unknown = null;
   try {

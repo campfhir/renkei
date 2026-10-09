@@ -32,6 +32,10 @@ import {
   createKnowledgeEnrichItemHandler,
 } from './knowledge-ingest';
 import type { ClaimedEvent } from '../queue';
+import { authedFetch } from '@renkei/delegate-client';
+
+/** A grant fetcher stand-in: the code under test only passes it through. */
+const auth = authedFetch(async () => new Response(), 'webex:tenant-1:acct-1');
 
 // The handlers are strict about payload encryption, so the fixtures encrypt
 // the content-bearing fields exactly as enqueue.ts's producer does. Set at
@@ -310,7 +314,7 @@ describe('enrich.item', () => {
   };
 
   beforeEach(() => {
-    mockResolveLinkedWebexUserAccess.mockResolvedValue({ accessToken: 'user-token' });
+    mockResolveLinkedWebexUserAccess.mockResolvedValue({ auth });
     mockSearchKnowledge.mockResolvedValue(
       ok({
         hits: [

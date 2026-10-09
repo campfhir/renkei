@@ -40,7 +40,6 @@ export default async function PromptLibraryPage({
         id: library.id,
         name: library.name,
         description: library.description,
-        publishedToOrg: library.publishedToOrg,
         role: access.role,
       }}
       prompts={prompts.map((prompt) => ({

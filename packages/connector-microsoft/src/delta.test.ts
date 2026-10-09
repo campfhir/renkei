@@ -14,6 +14,17 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+function fakeAuth() {
+  const send = jest.fn<Promise<Response>, [string, RequestInit?]>();
+  return Object.assign(send, { grantKey: 'grant-1' });
+}
+
+let auth: ReturnType<typeof fakeAuth>;
+
+beforeEach(() => {
+  auth = fakeAuth();
+});
+
 afterEach(() => {
   jest.restoreAllMocks();
 });
@@ -75,8 +86,7 @@ describe('initialDeltaUrl', () => {
 describe('runDeltaRound', () => {
   it('follows nextLinks, accumulates items, and returns the final deltaLink', async () => {
     const page2 = `${GRAPH_BASE_URL}/me/messages/delta?$skiptoken=t2`;
-    const fetchMock = jest
-      .spyOn(globalThis, 'fetch')
+    const fetchMock = auth
       .mockResolvedValueOnce(
         jsonResponse(200, { value: [{ id: 'm1' }, { id: 'm2' }], '@odata.nextLink': page2 })
       )
@@ -87,7 +97,7 @@ describe('runDeltaRound', () => {
         })
       );
 
-    const result = await runDeltaRound('token-1', "/me/mailFolders('inbox')/messages/delta");
+    const result = await runDeltaRound(auth, "/me/mailFolders('inbox')/messages/delta");
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -98,12 +108,11 @@ describe('runDeltaRound', () => {
 
     // The nextLink is followed verbatim as an absolute URL.
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1]![0])).toBe(page2);
+    expect(fetchMock.mock.calls[1]![0]).toBe(page2);
   });
 
   it('sends the plain-text body preference on every page', async () => {
-    const fetchMock = jest
-      .spyOn(globalThis, 'fetch')
+    const fetchMock = auth
       .mockResolvedValueOnce(
         jsonResponse(200, {
           value: [],
@@ -114,7 +123,7 @@ describe('runDeltaRound', () => {
         jsonResponse(200, { value: [], '@odata.deltaLink': `${GRAPH_BASE_URL}/delta?d=1` })
       );
 
-    await runDeltaRound('token-1', '/me/calendarView/delta?startDateTime=a&endDateTime=b');
+    await runDeltaRound(auth, '/me/calendarView/delta?startDateTime=a&endDateTime=b');
 
     for (const [, init] of fetchMock.mock.calls) {
       const prefer = new Headers(init?.headers).get('Prefer') ?? '';
@@ -126,9 +135,9 @@ describe('runDeltaRound', () => {
   });
 
   it('returns null for both links when Graph produces neither', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, { value: [] }));
+    auth.mockResolvedValue(jsonResponse(200, { value: [] }));
 
-    const result = await runDeltaRound('token-1', '/me/messages/delta');
+    const result = await runDeltaRound(auth, '/me/messages/delta');
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -139,14 +148,14 @@ describe('runDeltaRound', () => {
 
   it('stops at the page cap and hands back the unfollowed nextLink to resume from', async () => {
     // A fresh Response per call — a body is single-use.
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+    const fetchMock = auth.mockImplementation(async () =>
       jsonResponse(200, {
         value: [{ id: 'x' }],
         '@odata.nextLink': `${GRAPH_BASE_URL}/delta?$skiptoken=again`,
       })
     );
 
-    const result = await runDeltaRound('token-1', '/me/messages/delta');
+    const result = await runDeltaRound(auth, '/me/messages/delta');
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -160,14 +169,14 @@ describe('runDeltaRound', () => {
   }, 15_000); // take several real seconds at 5/sec, past Jest's default 5000ms. // TokenBucket, not mocked) — 50 real page fetches past a 5-request burst // graphRequest is rate-limited for real here (client.ts's module-level
 
   it('honours a caller-supplied page cap, so one big library cannot hog a sweep', async () => {
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+    const fetchMock = auth.mockImplementation(async () =>
       jsonResponse(200, {
         value: [{ id: 'x' }],
         '@odata.nextLink': `${GRAPH_BASE_URL}/delta?$skiptoken=again`,
       })
     );
 
-    const result = await runDeltaRound('token-1', '/drives/d1/root/delta', { maxPages: 3 });
+    const result = await runDeltaRound(auth, '/drives/d1/root/delta', { maxPages: 3 });
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     if (result.ok) {
@@ -180,9 +189,9 @@ describe('runDeltaRound', () => {
   it('propagates a page failure', async () => {
     // 500, not 503: a throttled page is now re-sent after a pause (fetch.ts),
     // and this test is about the failure that reaches the caller.
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(500, {}));
+    auth.mockResolvedValue(jsonResponse(500, {}));
 
-    const result = await runDeltaRound('token-1', '/me/messages/delta');
+    const result = await runDeltaRound(auth, '/me/messages/delta');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.type).toBe('GRAPH_API_ERROR');

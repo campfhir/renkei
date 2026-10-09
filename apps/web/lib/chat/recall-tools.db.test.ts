@@ -11,7 +11,14 @@ import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import type { McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext } from './local-tools';
 import { insertMessage } from './messages';
+import { chatCipherById } from './chat-keys';
+import { unavailableCipher } from './content-crypto';
 import { recallTools } from './recall-tools';
+
+// The delegate is the one process that holds keys; the web app reaches it
+// over HTTP, so these tests run it in-process on a loopback port, one per
+// describe block (each block opens and closes its own database pool).
+import { useTestDelegate } from '@/lib/test-support/delegate';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
@@ -20,6 +27,7 @@ function textOf(result: McpToolResult): string {
 }
 
 maybe('chat_recall_chats', () => {
+  const delegate = useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const me = `me-${tenantId.slice(0, 8)}`;
@@ -43,6 +51,8 @@ maybe('chat_recall_chats', () => {
     tenantId,
     subject: me,
     chatId,
+    // The tool reads other chats as their owners; this chat's own cipher is unused here.
+    cipher: unavailableCipher('no-key'),
     projectId: inProject,
     readOnly: false,
   });
@@ -54,6 +64,8 @@ maybe('chat_recall_chats', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
+    await delegate.enroll(tenantId, me);
+    await delegate.enroll(tenantId, colleague);
     await db
       .insertInto('chat_projects')
       .values([
@@ -86,6 +98,7 @@ maybe('chat_recall_chats', () => {
         role: 'user',
         kind: 'prompt',
         status: 'complete',
+        cipher: await chatCipherById(db, tenantId, chatId),
         blocks: [{ type: 'text', text }],
       });
       if (!row) throw new Error('message not sealed — is TOKEN_ENCRYPTION_KEY set?');

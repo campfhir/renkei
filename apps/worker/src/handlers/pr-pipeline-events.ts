@@ -28,6 +28,7 @@ import type { EventHandler } from '../handlers';
 import type { ClaimedEvent } from '../queue';
 import { logger } from '../logger';
 import { GITHUB, ATLASSIAN_BITBUCKET } from '@renkei/provider-grants';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { resolveGitHubSubjectAccess, resolveBitbucketSubjectAccess } from './repo-access';
 import {
   getGitHubWorkflowRunConclusion,
@@ -40,9 +41,12 @@ import { insertChatNote } from './chat-note';
 
 const COMPONENT = 'repo/pr-pipeline-events';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function rec(value: unknown): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return isRecord(value) ? value : {};
 }
 
 function arr(value: unknown): unknown[] {
@@ -160,8 +164,8 @@ async function actOnSubscription(
         : await resolveBitbucketSubjectAccess(tenantId, subscription.subscriber_subject);
     const merged = access
       ? provider === GITHUB
-        ? await mergeGitHubPullRequest(access.accessToken, target, subscription.pr_number)
-        : await mergeBitbucketPullRequest(access.accessToken, target, subscription.pr_number)
+        ? await mergeGitHubPullRequest(access.auth, target, subscription.pr_number)
+        : await mergeBitbucketPullRequest(access.auth, target, subscription.pr_number)
       : { ok: false as const, error: 'The subscriber has no live grant for this host.' };
     if (merged.ok) {
       actionTaken = 'merged';
@@ -223,7 +227,9 @@ export function createGitHubPrPipelineHandler(): EventHandler {
 
     const candidates = (
       await Promise.all(
-        parsed.prNumbers.map((number) => activeSubscriptions(tenantId, GITHUB, parsed.repoFullName, number))
+        parsed.prNumbers.map((number) =>
+          activeSubscriptions(tenantId, GITHUB, parsed.repoFullName, number)
+        )
       )
     ).flat();
     if (candidates.length === 0) return 'skipped';
@@ -232,12 +238,19 @@ export function createGitHubPrPipelineHandler(): EventHandler {
       const access = await resolveGitHubSubjectAccess(tenantId, subscription.subscriber_subject);
       if (!access) continue;
       const conclusion = await getGitHubWorkflowRunConclusion(
-        access.accessToken,
+        access.auth,
         { fullName: parsed.repoFullName },
         parsed.runId
       );
       if (!conclusion) continue;
-      await actOnSubscription(tenantId, GITHUB, subscription, parsed.runId, conclusion, event.payload);
+      await actOnSubscription(
+        tenantId,
+        GITHUB,
+        subscription,
+        parsed.runId,
+        conclusion,
+        event.payload
+      );
     }
   };
 }
@@ -249,13 +262,13 @@ export function parseBitbucketRepoFullName(payload: Record<string, unknown>): st
 }
 
 async function bitbucketPrHead(
-  accessToken: string,
+  auth: AuthedFetch,
   repoFullName: string,
   prNumber: number
 ): Promise<string | null> {
-  const response = await fetch(
+  const response = await auth(
     `https://api.bitbucket.org/2.0/repositories/${repoFullName}/pullrequests/${prNumber}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
+    { headers: { Accept: 'application/json' } }
   );
   if (!response.ok) return null;
   const body: unknown = await response.json().catch(() => null);
@@ -275,10 +288,10 @@ export function createBitbucketPrPipelineHandler(): EventHandler {
     for (const subscription of candidates) {
       const access = await resolveBitbucketSubjectAccess(tenantId, subscription.subscriber_subject);
       if (!access) continue;
-      const head = await bitbucketPrHead(access.accessToken, repoFullName, subscription.pr_number);
+      const head = await bitbucketPrHead(access.auth, repoFullName, subscription.pr_number);
       if (!head) continue;
       const conclusion = await getBitbucketCommitStatusConclusion(
-        access.accessToken,
+        access.auth,
         { fullName: repoFullName },
         head
       );
@@ -286,7 +299,14 @@ export function createBitbucketPrPipelineHandler(): EventHandler {
       // The PR's current head commit stands in for a "run id": a later
       // commit on the same PR is treated as a new run, since Bitbucket
       // gives this path no single pipeline-run identifier to key off.
-      await actOnSubscription(tenantId, ATLASSIAN_BITBUCKET, subscription, head, conclusion, event.payload);
+      await actOnSubscription(
+        tenantId,
+        ATLASSIAN_BITBUCKET,
+        subscription,
+        head,
+        conclusion,
+        event.payload
+      );
     }
   };
 }

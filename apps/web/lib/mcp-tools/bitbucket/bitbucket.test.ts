@@ -74,7 +74,7 @@ async function toolsOf(scopes?: string[]): Promise<Map<string, Handler>> {
     accountId: 'acct-1',
     siteUrl: '',
     apiBaseUrl: '',
-    accessToken: '',
+    jiraAuth: null,
     maxJqlResults: 100,
     bitbucketScopes: scopes,
   } as unknown as MCPToolContext;
@@ -488,7 +488,11 @@ describe('repositories and source', () => {
   it('does not pass max_depth when it is left unset', async () => {
     routes = [{ match: '/src/main/', body: { values: [] } }];
     const tools = await toolsOf();
-    await tools.get('bitbucket_browse_source')!({ workspace: 'acme', repoSlug: 'api', ref: 'main' });
+    await tools.get('bitbucket_browse_source')!({
+      workspace: 'acme',
+      repoSlug: 'api',
+      ref: 'main',
+    });
 
     const request = requests.find((entry) => entry.path.includes('/src/main/'));
     expect(request?.path).not.toContain('max_depth');

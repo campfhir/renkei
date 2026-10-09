@@ -16,6 +16,7 @@ jest.mock('../common', () => ({
   withPresentationHint: (text: string) => text,
 }));
 
+import { authedFetch } from '@renkei/delegate-client';
 import { collectSprint, collectWorkItems } from './collect-jira';
 import { resolvePeriod } from './period';
 import type { MCPToolContext } from '../common';
@@ -23,7 +24,10 @@ import type { MCPToolContext } from '../common';
 const { jiraFetch: mockFetch } = jest.requireMock<{ jiraFetch: jest.Mock }>('../common');
 
 const context = (): MCPToolContext =>
-  ({ apiBaseUrl: 'https://api.example', accessToken: 'token' }) as unknown as MCPToolContext;
+  ({
+    apiBaseUrl: 'https://api.example',
+    jiraAuth: authedFetch(async () => new Response('{}'), 'atlassian:tenant-1:acct-1'),
+  }) as unknown as MCPToolContext;
 
 const json = (body: unknown) => ({ ok: true, json: async () => body });
 

@@ -10,14 +10,16 @@
  *   message att: POST /me/messages/{id}/attachments/createUploadSession
  *                { AttachmentItem: { attachmentType: 'file', name, size } }
  *
- * The session's uploadUrl is PRE-AUTHORIZED — chunks are PUT to it with NO
- * Authorization header (Graph rejects one on some session hosts). Chunks
+ * The session's uploadUrl is PRE-AUTHORIZED — chunks are PUT to it with
+ * plain `fetch` and NO Authorization header (Graph rejects one on some
+ * session hosts), so they bypass the grant's fetcher on purpose. Chunks
  * must be multiples of 320 KiB except the last; 5 MiB (16 × 320 KiB) keeps
  * the request count low without long single PUTs.
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest, type GraphRequestOptions } from './client';
 
 /** 16 × 320KiB — Graph requires non-final chunks be 320KiB multiples. */
@@ -31,13 +33,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function graphUploadViaSession(
-  accessToken: string,
+  auth: AuthedFetch,
   createSessionPath: string,
   createSessionBody: unknown,
   bytes: Uint8Array,
   options?: GraphRequestOptions & { chunkBytes?: number }
 ): Promise<Result<Record<string, unknown>, 'GRAPH_API_ERROR'>> {
-  const session = await graphRequest(accessToken, createSessionPath, {
+  const session = await graphRequest(auth, createSessionPath, {
     method: 'POST',
     body: JSON.stringify(createSessionBody),
     lane: options?.lane,

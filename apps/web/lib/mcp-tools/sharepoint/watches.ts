@@ -53,11 +53,11 @@ export function registerWatchTools(
         return errText('No signed-in Microsoft identity on this request.');
       }
 
-      const site = await resolveSite(context, access.accessToken, String(args.site));
+      const site = await resolveSite(context, access.auth, String(args.site));
       if (!site.ok) return errText(site.error);
       const library = await resolveLibrary(
         context,
-        access.accessToken,
+        access.auth,
         String(args.site),
         str(args.library) || undefined
       );
@@ -102,7 +102,7 @@ export function registerWatchTools(
 
       const library = await resolveLibrary(
         context,
-        access.accessToken,
+        access.auth,
         String(args.site),
         str(args.library) || undefined
       );

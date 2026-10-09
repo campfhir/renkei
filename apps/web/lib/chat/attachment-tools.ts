@@ -30,7 +30,15 @@ async function findAttachment(
   if (!/^[0-9a-f-]{36}$/i.test(attachmentId)) return null;
   const row = await context.db
     .selectFrom('chat_attachments')
-    .select(['id', 'filename', 'content_type', 'blob_key', 'extracted_text', 'extract_status'])
+    .select([
+      'id',
+      'filename',
+      'content_type',
+      'blob_key',
+      'extracted_text',
+      'extract_status',
+      'chat_id',
+    ])
     .where('tenant_id', '=', context.tenantId)
     .where('id', '=', attachmentId)
     .where((eb) =>
@@ -41,12 +49,19 @@ async function findAttachment(
     )
     .executeTakeFirst();
   if (!row) return null;
+  // A chat's file opens under the chat's key, a project's under the project's.
+  const cipher = row.chat_id === context.chatId ? context.cipher : context.projectCipher;
   return {
     id: row.id,
     filename: row.filename,
     contentType: row.content_type,
     blobKey: row.blob_key,
-    extractedText: row.extracted_text ? openText(row.extracted_text) : null,
+    extractedText:
+      row.extracted_text && cipher
+        ? openText(row.extracted_text, cipher)
+        : row.extracted_text
+          ? '[content unavailable: no key for this file]'
+          : null,
     extractStatus: row.extract_status,
   };
 }

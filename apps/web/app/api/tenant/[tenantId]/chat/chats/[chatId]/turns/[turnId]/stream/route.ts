@@ -22,6 +22,7 @@ import { pingChatPresence } from '@renkei/notifications';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext } from '@/lib/chat/route-support';
 import { resolveChatAccess } from '@/lib/chat/access';
+import type { ContentCipher } from '@/lib/chat/content-crypto';
 import { getTurn, isTurnSettled, toTurnView } from '@/lib/chat/turns';
 import { listTurnMessages, toMessageView } from '@/lib/chat/messages';
 import { getTurnChannel } from '@/lib/chat/turn-events';
@@ -37,11 +38,12 @@ async function snapshotOf(
   db: Kysely<DB>,
   tenantId: string,
   chatId: string,
-  turnId: string
+  turnId: string,
+  cipher: ContentCipher
 ): Promise<ChatStreamEvent | null> {
   const turn = await getTurn(db, tenantId, chatId, turnId);
   if (!turn) return null;
-  const messages = await listTurnMessages(db, tenantId, turnId);
+  const messages = await listTurnMessages(db, tenantId, turnId, cipher);
   const produced =
     messages.length > 0
       ? await db
@@ -166,7 +168,7 @@ export async function GET(
         // A channel that closed before we subscribed already replayed its
         // ending; a turn settled in the database says the same thing.
         if (channel.closed || isTurnSettled(turn.status)) {
-          const snapshot = await snapshotOf(db, tenantId, chatId, turnId);
+          const snapshot = await snapshotOf(db, tenantId, chatId, turnId, access.cipher);
           if (snapshot) send(null, snapshot);
           touchPresence();
           send(null, { type: 'turn_end', turnId, status: turn.status, error: turn.error });
@@ -181,7 +183,7 @@ export async function GET(
       let lastSent = '';
       const tick = async () => {
         if (closed) return;
-        const snapshot = await snapshotOf(db, tenantId, chatId, turnId);
+        const snapshot = await snapshotOf(db, tenantId, chatId, turnId, access.cipher);
         if (!snapshot || snapshot.type !== 'snapshot') {
           close();
           return;

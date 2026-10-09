@@ -3,17 +3,7 @@ import { randomUUID } from 'crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { getDatabase } from '@renkei/db';
-import { readConnectorConfigCached } from '@renkei/connector-config';
-import {
-  ATLASSIAN,
-  AtlassianAdapter,
-  ATLASSIAN_JSM,
-  getGrant,
-  setGrant,
-  readAtlassianMetadata,
-  refreshGrantTokens,
-} from '@renkei/provider-grants';
-import { logger } from '@/lib/logger';
+import { ATLASSIAN } from '@renkei/provider-grants';
 
 export { ATLASSIAN };
 
@@ -41,30 +31,6 @@ export interface TenantOidcClaims {
   userIdpValue?: string | null;
   groupsClaim?: string | null;
 }
-
-export interface JiraGrant {
-  accountId: string;
-  atlassianClientId: string;
-  cloudId: string;
-  siteUrl: string;
-  displayName: string;
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: string;
-  /** What the (possibly user-narrowed) authorize step asked Atlassian for. */
-  requestedScopes: string[];
-  /** What the minted token actually carries, from its claims; null = unknown. */
-  grantedScopes: string[] | null;
-  /**
-   * OIDC subject of the signed-in user who connected this grant. Null only for
-   * rows created before grants were owned — those are unusable and must not be
-   * served to a caller, since we cannot tell whose Jira account they are.
-   */
-  subject: string | null;
-}
-
-/** Writes always record an owner; only reads can surface a legacy unowned row. */
-export type NewJiraGrant = Omit<JiraGrant, 'subject'> & { subject: string };
 
 /**
  * Store OIDC configuration for a tenant.
@@ -331,127 +297,4 @@ export async function setTenantOidcClaims(
   );
   if (!result.ok) return result;
   return ok(Number(result.val.numUpdatedRows) > 0);
-}
-
-/**
- * Store encrypted Jira grant for a tenant user.
- *
- * A façade over @renkei/provider-grants: this module supplies the deployment
- * configuration (encryption key from env) and maps the Atlassian site
- * identity into the provider-shaped metadata; the lifecycle lives in the
- * package.
- */
-export async function setJiraGrant(
-  tenantId: string,
-  grant: NewJiraGrant
-): Promise<Result<void, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
-  const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!encryptionKeyResult.ok) return err('INVALID_ENCRYPTION_KEY' as const);
-
-  return setGrant(
-    ATLASSIAN,
-    tenantId,
-    {
-      accountId: grant.accountId,
-      clientId: grant.atlassianClientId,
-      displayName: grant.displayName,
-      subject: grant.subject,
-      accessToken: grant.accessToken,
-      refreshToken: grant.refreshToken,
-      expiresAt: grant.expiresAt,
-      requestedScopes: grant.requestedScopes,
-      grantedScopes: grant.grantedScopes,
-      // Site identity is Atlassian-specific, so it lives in metadata rather
-      // than as columns every other provider would leave NULL.
-      metadata: { cloudId: grant.cloudId, siteUrl: grant.siteUrl },
-    },
-    encryptionKeyResult.val
-  );
-}
-
-/**
- * Get decrypted Jira grant for a tenant user. Façade over the package store,
- * flattening Atlassian's metadata into the JiraGrant shape callers expect.
- */
-export async function getJiraGrant(
-  tenantId: string,
-  accountId: string
-): Promise<Result<JiraGrant | null, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR'>> {
-  const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!encryptionKeyResult.ok) return err('INVALID_ENCRYPTION_KEY' as const);
-
-  const grantResult = await getGrant(ATLASSIAN, tenantId, accountId, encryptionKeyResult.val);
-  if (!grantResult.ok) return grantResult;
-
-  const grant = grantResult.val;
-  if (!grant) return ok(null);
-
-  const site = readAtlassianMetadata(grant.metadata);
-
-  // Return grant as-is; refresh on 401 is handled by the MCP tool layer.
-  return ok({
-    accountId: grant.accountId,
-    subject: grant.subject,
-    atlassianClientId: grant.clientId,
-    cloudId: site.cloudId,
-    siteUrl: site.siteUrl,
-    displayName: grant.displayName,
-    accessToken: grant.accessToken,
-    refreshToken: grant.refreshToken,
-    expiresAt: grant.expiresAt,
-    requestedScopes: grant.requestedScopes,
-    grantedScopes: grant.grantedScopes,
-  });
-}
-/**
- * Refresh an expired Atlassian OAuth token using the refresh token.
- * Updates the database with new tokens.
- * Exported for use by MCP tool layer (e.g., on 401 responses).
- *
- * Façade over @renkei/provider-grants: the cross-process locking, revoked-
- * grant cleanup, and persistence live in the package; this supplies the
- * Atlassian adapter (client secret from env), the encryption key, and the
- * app logger.
- */
-export async function refreshAtlassianTokenDirect(
-  tenantId: string,
-  accountId: string,
-  // Which Atlassian app's grant to refresh: ATLASSIAN (Jira) or
-  // ATLASSIAN_JSM — each has its own client secret in connector config.
-  provider: string = ATLASSIAN
-): Promise<
-  Result<
-    { accessToken: string; refreshToken: string; expiresAt: Date },
-    'REFRESH_FAILED' | 'GRANT_REVOKED'
-  >
-> {
-  const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!encryptionKeyResult.ok) {
-    logger.error('Failed to parse encryption key', {
-      component: 'grants/refresh',
-      tenantId,
-      accountId,
-    });
-    return err('REFRESH_FAILED' as const);
-  }
-
-  // The client secret is org connector configuration in the database, like
-  // the rest of the Atlassian app registration.
-  const connector = provider === ATLASSIAN_JSM ? ATLASSIAN_JSM : ATLASSIAN;
-  const configResult = await readConnectorConfigCached(
-    tenantId,
-    connector,
-    encryptionKeyResult.val
-  );
-  if (!configResult.ok || !configResult.val?.secrets.clientSecret) {
-    logger.error('Atlassian connector config missing; cannot refresh', {
-      component: 'grants/refresh',
-      tenantId,
-      accountId,
-    });
-    return err('REFRESH_FAILED' as const);
-  }
-
-  const adapter = new AtlassianAdapter(configResult.val.secrets.clientSecret, provider);
-  return refreshGrantTokens(adapter, tenantId, accountId, encryptionKeyResult.val, logger);
 }

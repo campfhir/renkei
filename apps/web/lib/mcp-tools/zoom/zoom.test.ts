@@ -28,13 +28,19 @@ jest.mock('@renkei/db', () => ({
 // resolveZoomAccess is needed — the ZoomClient-exception-path tools call it
 // directly (see index.ts); every other tool uses the stubAuth() below and
 // never touches this module at all.
-jest.mock('./zoom-auth', () => ({
-  resolveZoomAccess: jest.fn(async () => ({
-    accessToken: 'raw-token',
-    email: 'alice@example.com',
-  })),
-  ZOOM_API_BASE: 'https://api.zoom.us/v2',
-}));
+jest.mock('./zoom-auth', () => {
+  const { authedFetch } =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    // The grant's fetcher rides global fetch here, so a test that stubs
+    // fetch sees the request as the delegate would forward it.
+    resolveZoomAccess: jest.fn(async () => ({
+      auth: authedFetch((url, init) => fetch(url, init), 'zoom:tenant-1:acct-1'),
+      email: 'alice@example.com',
+    })),
+    ZOOM_API_BASE: 'https://api.zoom.us/v2',
+  };
+});
 
 const mockGetMeetingTranscript = jest.fn();
 const mockDownloadFromUrl = jest.fn();

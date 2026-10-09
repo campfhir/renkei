@@ -24,6 +24,7 @@ import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { WebexClient, webexRefId } from '@renkei/connector-webex';
 import type { WebexMessage, WebexRoom } from '@renkei/connector-webex';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import {
   resolveEmbeddingProvider,
   ingestObjectChunks,
@@ -203,7 +204,7 @@ function str(value: unknown): string {
 
 export interface WindowHandlerDeps {
   resolveAccess?: typeof resolveWebexUserAccessBySubject;
-  makeClient?: (accessToken: string) => WindowClient;
+  makeClient?: (auth: AuthedFetch) => WindowClient;
   deleteLegacy?: typeof deleteLegacyMessageRows;
 }
 
@@ -220,7 +221,7 @@ export function createKnowledgeIngestWebexWindowHandler(
 ): EventHandler {
   const resolveAccess = deps.resolveAccess ?? resolveWebexUserAccessBySubject;
   const makeClient =
-    deps.makeClient ?? ((token: string) => new WebexClient(token, { lane: 'background' }));
+    deps.makeClient ?? ((auth: AuthedFetch) => new WebexClient(auth, { lane: 'background' }));
   const deleteLegacy = deps.deleteLegacy ?? deleteLegacyMessageRows;
 
   return async (event) => {
@@ -247,7 +248,7 @@ export function createKnowledgeIngestWebexWindowHandler(
       });
       return;
     }
-    const client = makeClient(access.accessToken);
+    const client = makeClient(access.auth);
 
     const room = await client.getRoom(roomId);
     if (!room.ok) {

@@ -5,44 +5,27 @@
  * interface itself is narrower — see graph-auth.ts's header for why
  * resolve() takes no requiredScopes and there is no fetch() to wrap: Graph's
  * client.ts already separated "resolve a credential" from "make a call",
- * and this only had to make the first half swappable.
+ * and this only had to make the first half swappable. What resolving yields
+ * is the delegate's fetcher for the grant, never a token.
  */
 
-jest.mock('@renkei/provider-grants', () => ({
-  getGrant: jest.fn(async () => ({
-    ok: true,
-    val: {
-      accessToken: 'token-1',
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      metadata: { upn: 'alice@example.com' },
-    },
-  })),
-  refreshGrantTokens: jest.fn(),
-  MICROSOFT: 'microsoft',
-  MicrosoftAdapter: class {},
-}));
-jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
-jest.mock('@/lib/microsoft-app', () => ({ getMicrosoftApp: jest.fn(async () => null) }));
+jest.mock('@renkei/provider-grants', () => ({ MICROSOFT: 'microsoft' }));
+jest.mock('@renkei/delegate-client', () => {
+  const actual =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    ...actual,
+    delegateGrants: () => ({ describe: mockDescribe }),
+    grantFetch: (ref: Parameters<typeof actual.grantKeyOf>[0]) =>
+      actual.authedFetch(async () => new Response('{}'), actual.grantKeyOf(ref)),
+  };
+});
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
 }));
 
-/** Accepts any chain, always resolves the one row resolveGraphAccess needs. */
-jest.mock('@renkei/db', () => {
-  const chain: unknown = new Proxy(
-    {},
-    {
-      get: (_t, property) => {
-        if (property === 'executeTakeFirst') {
-          return async () => ({ provider_account_id: 'acct-1' });
-        }
-        return () => chain;
-      },
-    }
-  );
-  return { getDatabase: () => ({ ok: true, val: chain }) };
-});
+const mockDescribe = jest.fn();
 
 import { oauthGraphAuth, deniedGraphAuth } from './graph-auth';
 import type { GraphCallContext } from './client';
@@ -54,17 +37,42 @@ const context = (overrides: Partial<GraphCallContext> = {}): GraphCallContext =>
   ...overrides,
 });
 
+beforeEach(() => {
+  mockDescribe.mockReset();
+  mockDescribe.mockResolvedValue({
+    ok: true,
+    val: { accountId: 'acct-1', metadata: { upn: 'alice@example.com' } },
+  });
+});
+
 describe('oauthGraphAuth', () => {
-  it('resolves the real access token through the mocked grant chain', async () => {
+  it('resolves the delegate fetcher for the caller’s grant, with its upn and account', async () => {
     const auth = oauthGraphAuth(context());
 
     const access = await auth.resolve();
 
-    expect(access).toEqual({
-      accessToken: 'token-1',
-      upn: 'alice@example.com',
-      accountId: 'acct-1',
+    if (typeof access === 'string') throw new Error(access);
+    expect(access.upn).toBe('alice@example.com');
+    expect(access.accountId).toBe('acct-1');
+    expect(typeof access.auth).toBe('function');
+    // The grant is named by subject; the delegate maps it to the row itself.
+    expect(access.auth.grantKey).toBe('microsoft:tenant-1:subject-1');
+    expect(mockDescribe).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      provider: 'microsoft',
+      subject: 'subject-1',
     });
+  });
+
+  it('phrases the delegate’s refusal as the sentence the handlers hand back', async () => {
+    mockDescribe.mockResolvedValue({ ok: false, err: { type: 'NO_GRANT' } });
+    const auth = oauthGraphAuth(context());
+
+    const access = await auth.resolve();
+
+    expect(access).toBe(
+      'Microsoft is not connected. Connect it on the Connectors page, then try again.'
+    );
   });
 
   it('reports an unresolved grant as a string, not a thrown error', async () => {
@@ -76,16 +84,18 @@ describe('oauthGraphAuth', () => {
 
     expect(typeof access).toBe('string');
     expect(access).toContain('No signed-in identity');
+    expect(mockDescribe).not.toHaveBeenCalled();
   });
 });
 
 describe('deniedGraphAuth', () => {
-  it('always refuses, without touching the database', async () => {
+  it('always refuses, without asking the delegate', async () => {
     const auth = deniedGraphAuth();
 
     const access = await auth.resolve();
 
     expect(typeof access).toBe('string');
     expect(access).toContain('No Microsoft test credential is configured');
+    expect(mockDescribe).not.toHaveBeenCalled();
   });
 });

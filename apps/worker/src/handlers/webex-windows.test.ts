@@ -30,6 +30,10 @@ import {
   type WindowClient,
 } from './webex-windows';
 import type { ClaimedEvent } from '../queue';
+import { authedFetch } from '@renkei/delegate-client';
+
+/** A grant fetcher stand-in: the code under test only passes it through. */
+const auth = authedFetch(async () => new Response(), 'webex:tenant-1:auth0|w');
 
 const {
   resolveEmbeddingProvider: mockResolveEmbedder,
@@ -201,7 +205,7 @@ describe('ingest.webex-window handler', () => {
     };
   }
 
-  const resolveAccess = jest.fn(async () => ({ accessToken: 'tok', subject: 'auth0|w', personEmail: null }));
+  const resolveAccess = jest.fn(async () => ({ auth, subject: 'auth0|w', personEmail: null }));
   const deleteLegacy = jest.fn(async () => undefined);
 
   beforeEach(() => {

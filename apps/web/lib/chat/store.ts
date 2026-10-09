@@ -11,6 +11,7 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { parseToolConfig, toolConfigJson, type ChatToolConfig } from './tool-config';
+import { createKey, deleteKey, wrapKeyUnderProject } from './chat-keys';
 
 export interface ChatRow {
   id: string;
@@ -218,6 +219,12 @@ export async function createChat(
     })
     .returning('id')
     .executeTakeFirstOrThrow();
+  // The chat's own key, wrapped for its owner (chat-keys.ts): every row
+  // the chat will hold is sealed under it. In a project, also under the
+  // project's key, so every member of the project opens it.
+  const chat = { id: inserted.id, tenantId: input.tenantId, ownerSubject: input.ownerSubject };
+  await createKey(db, 'chat', chat);
+  if (input.projectId) await wrapKeyUnderProject(db, chat, input.projectId);
   return inserted.id;
 }
 
@@ -276,7 +283,14 @@ export async function moveChatToProject(
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', chatId)
     .executeTakeFirst();
-  return Number(result.numUpdatedRows) > 0;
+  const moved = Number(result.numUpdatedRows) > 0;
+  // Into a project: the project's members open the chat through its key.
+  // (Out of one: the old wrapping stays inert — the project's access rules
+  // no longer resolve the chat, so nobody reaches it that way.)
+  if (moved && projectId) {
+    await wrapKeyUnderProject(db, { id: chatId, tenantId, ownerSubject }, projectId);
+  }
+  return moved;
 }
 
 export async function deleteChat(
@@ -300,6 +314,7 @@ export async function deleteChat(
       .where('resource_kind', '=', 'chat')
       .where('resource_id', '=', chatId)
       .execute();
+    await deleteKey(db, 'chat', tenantId, chatId);
   }
   return deleted;
 }

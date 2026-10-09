@@ -13,14 +13,26 @@ jest.mock('@renkei/crypto', () => ({
 jest.mock('@renkei/provider-grants', () => ({
   ATLASSIAN: 'atlassian',
   ATLASSIAN_JSM: 'atlassian-jsm',
-  getGrant: jest.fn(),
+  ONBASE: 'onbase',
+  ONBASE_ADMIN: 'onbase-admin',
   readAtlassianMetadata: jest.fn(() => ({ cloudId: 'cloud-1' })),
 }));
+// The delegate, faked at the client boundary: `describe` stands in for the
+// grant row, and the fetcher it hands out is a real AuthedFetch whose
+// grantKey names the grant — what the executors pass on, never a token.
+const mockDescribe = jest.fn();
+jest.mock('@renkei/delegate-client', () => {
+  const actual =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    ...actual,
+    delegateGrants: () => ({ describe: (...args: unknown[]) => mockDescribe(...args) }),
+    grantFetch: (grant: Parameters<typeof actual.grantKeyOf>[0]) =>
+      actual.authedFetch((url, init) => fetch(url, init), actual.grantKeyOf(grant)),
+  };
+});
 jest.mock('@renkei/connector-microsoft', () => ({ graphUploadViaSession: jest.fn() }));
-jest.mock('@/lib/mcp-tools/common', () => ({
-  cacheTokenMetadata: jest.fn(),
-  jiraFetch: jest.fn(),
-}));
+jest.mock('@/lib/mcp-tools/common', () => ({ jiraFetch: jest.fn() }));
 jest.mock('@/lib/mcp-tools/graph/client', () => ({
   graphPost: jest.fn(),
   graphPutContent: jest.fn(),
@@ -58,6 +70,7 @@ jest.mock('@/lib/file-shares/service-client', () => {
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
+import { authedFetch, type AuthedFetch } from '@renkei/delegate-client';
 import {
   executeUpload,
   finalizeUploadSlot,
@@ -65,14 +78,10 @@ import {
   type UploadSlotRow,
 } from './upload-executors';
 
-const { getGrant } = jest.requireMock<{ getGrant: jest.Mock }>('@renkei/provider-grants');
 const { graphUploadViaSession } = jest.requireMock<{ graphUploadViaSession: jest.Mock }>(
   '@renkei/connector-microsoft'
 );
-const { cacheTokenMetadata, jiraFetch } = jest.requireMock<{
-  cacheTokenMetadata: jest.Mock;
-  jiraFetch: jest.Mock;
-}>('@/lib/mcp-tools/common');
+const { jiraFetch } = jest.requireMock<{ jiraFetch: jest.Mock }>('@/lib/mcp-tools/common');
 const { graphPost, graphPutContent, resolveGraphAccess } = jest.requireMock<{
   graphPost: jest.Mock;
   graphPutContent: jest.Mock;
@@ -106,23 +115,24 @@ function slotOf(kind: string, destination: unknown): UploadSlotRow {
   };
 }
 
-/** resolveAtlassian only touches the db when it prefers a JSM grant. */
-function dbWithJsmGrant(row: { provider_account_id: string } | undefined): Kysely<DB> {
-  const chain = {
-    select: () => chain,
-    where: () => chain,
-    limit: () => chain,
-    executeTakeFirst: async () => row,
-  };
-  return { selectFrom: () => chain } as unknown as Kysely<DB>;
+/** A fetcher as the delegate would hand it out for a resolved grant, recording its calls. */
+function fakeAuth(
+  grantKey: string,
+  send: (url: string, init?: RequestInit) => Promise<Response> = async () =>
+    new Response('{}', { status: 200 })
+): AuthedFetch & { calls: jest.Mock } {
+  const calls = jest.fn(send);
+  return Object.assign(authedFetch(calls, grantKey), { calls });
 }
 
-const db = dbWithJsmGrant(undefined);
+/** No executor under test reads the db, except OnBase's slot update (not exercised here). */
+const db = {} as unknown as Kysely<DB>;
+
+const graphAuth = fakeAuth('microsoft:tenant-1:ms-1');
 
 beforeEach(() => {
-  getGrant.mockReset();
+  mockDescribe.mockReset();
   graphUploadViaSession.mockReset();
-  cacheTokenMetadata.mockReset();
   jiraFetch.mockReset();
   graphPost.mockReset();
   graphPutContent.mockReset();
@@ -134,11 +144,16 @@ beforeEach(() => {
   webexBotClient.mockReset();
   webexBotClient.mockResolvedValue(null);
   MockWebexClient.mockReset();
-  getGrant.mockResolvedValue({
+  // Every Atlassian grant exists unless a test says otherwise; the account
+  // id echoes the one asked for (or the JSM grant's own, by subject).
+  mockDescribe.mockImplementation(async (grant: { provider: string; accountId?: string }) => ({
     ok: true,
-    val: { accessToken: 'atl-token', accountId: 'acct-1', metadata: {} },
-  });
-  resolveGraphAccess.mockResolvedValue({ accessToken: 'graph-token' });
+    val: {
+      accountId: grant.accountId ?? (grant.provider === 'atlassian-jsm' ? 'jsm-acct' : 'acct-1'),
+      metadata: {},
+    },
+  }));
+  resolveGraphAccess.mockResolvedValue({ auth: graphAuth, upn: null, accountId: 'ms-1' });
 });
 
 describe('jira-attachment', () => {
@@ -153,22 +168,27 @@ describe('jira-attachment', () => {
 
     expect(outcome.ok).toBe(true);
     expect(outcome.detail).toContain('PROJ-1');
-    const [url, token, init] = jiraFetch.mock.calls[0] as [
+    const [url, auth, init] = jiraFetch.mock.calls[0] as [
       string,
-      string,
+      AuthedFetch,
       { method: string; body: unknown },
     ];
     expect(url).toBe(
       'https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/PROJ-1/attachments'
     );
-    expect(token).toBe('atl-token');
+    // The slot's own Jira grant, as a fetcher — never a token.
+    expect(typeof auth).toBe('function');
+    expect(auth.grantKey).toBe('atlassian:tenant-1:acct-1');
     expect(init.body).toBeInstanceOf(FormData);
-    // Arms jiraFetch's 401-refresh path, as the MCP transport does.
-    expect(cacheTokenMetadata).toHaveBeenCalled();
+    expect(mockDescribe).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      provider: 'atlassian',
+      accountId: 'acct-1',
+    });
   });
 
   it('fails cleanly when no usable Atlassian grant exists', async () => {
-    getGrant.mockResolvedValue({ ok: false, err: 'nope' });
+    mockDescribe.mockResolvedValue({ ok: false, err: { type: 'NO_GRANT' } });
 
     const outcome = await executeUpload(
       db,
@@ -199,6 +219,15 @@ describe('jsm-attachment', () => {
 
     expect(outcome.ok).toBe(true);
     expect(jiraFetch).toHaveBeenCalledTimes(3);
+    // The JSM grant is preferred, looked up by the slot's subject.
+    expect(mockDescribe.mock.calls[0]![0]).toEqual({
+      tenantId: 'tenant-1',
+      provider: 'atlassian-jsm',
+      subject: 'subject-1',
+    });
+    expect((jiraFetch.mock.calls[0]![1] as AuthedFetch).grantKey).toBe(
+      'atlassian-jsm:tenant-1:jsm-acct'
+    );
     expect(String(jiraFetch.mock.calls[1]![0])).toContain(
       '/rest/servicedeskapi/servicedesk/7/attachTemporaryFile'
     );
@@ -212,7 +241,12 @@ describe('jsm-attachment', () => {
 
 describe('confluence-attachment', () => {
   it('uploads through confluenceUpload under the resolved access', async () => {
-    resolveConfluenceAccess.mockResolvedValue({ accessToken: 'conf-token' });
+    const confluenceAuth = fakeAuth('atlassian-confluence:tenant-1:acct-1');
+    resolveConfluenceAccess.mockResolvedValue({
+      auth: confluenceAuth,
+      cloudId: 'cloud-1',
+      accountId: 'acct-1',
+    });
     confluenceUpload.mockResolvedValue({ ok: true, body: {} });
 
     const outcome = await executeUpload(
@@ -225,6 +259,8 @@ describe('confluence-attachment', () => {
     expect(String(confluenceUpload.mock.calls[0]![2])).toBe(
       '/rest/api/content/12345/child/attachment'
     );
+    // The resolved access rides through whole: the fetcher is the client's to use.
+    expect((confluenceUpload.mock.calls[0]![1] as { auth: AuthedFetch }).auth).toBe(confluenceAuth);
   });
 });
 
@@ -243,6 +279,8 @@ describe('onedrive/sharepoint documents', () => {
     expect(outcome.ok).toBe(true);
     expect(outcome.detail).toContain('item-1');
     expect(graphUploadViaSession).not.toHaveBeenCalled();
+    // The Graph helpers take the grant's fetcher where the token used to go.
+    expect(graphPutContent.mock.calls[0]![1]).toBe(graphAuth);
     expect(String(graphPutContent.mock.calls[0]![2])).toContain(
       '/drives/d1/items/p1:/report.pdf:/content'
     );
@@ -259,6 +297,7 @@ describe('onedrive/sharepoint documents', () => {
 
     expect(outcome.ok).toBe(true);
     expect(graphPutContent).not.toHaveBeenCalled();
+    expect(graphUploadViaSession.mock.calls[0]![0]).toBe(graphAuth);
     expect(String(graphUploadViaSession.mock.calls[0]![1])).toContain(':/createUploadSession');
   });
 });
@@ -305,14 +344,23 @@ it('refuses an unknown kind', async () => {
 describe('webex-attachment', () => {
   const realFetch = global.fetch;
 
+  beforeEach(() => {
+    // The multipart POST goes through the grant's fetcher, never raw fetch.
+    global.fetch = jest.fn(async () => {
+      throw new Error('unexpected raw fetch');
+    }) as unknown as typeof fetch;
+  });
+
   afterEach(() => {
     global.fetch = realFetch;
   });
 
-  it('multiparts the bytes to a room under the resolved grant, and records the send', async () => {
-    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
-    const fetchMock = jest.fn(async () => new Response('{"id":"msg-room"}', { status: 200 }));
-    global.fetch = fetchMock as unknown as typeof fetch;
+  it('multiparts the bytes to a room on the resolved grant’s fetcher, and records the send', async () => {
+    const webexAuth = fakeAuth(
+      'webex:tenant-1:subject-1',
+      async () => new Response('{"id":"msg-room"}', { status: 200 })
+    );
+    resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: 'a@x.com' });
 
     const outcome = await executeUpload(
       db,
@@ -326,9 +374,10 @@ describe('webex-attachment', () => {
     // re-ingest it as something they typed.
     expect(recordSentWebexMessage).toHaveBeenCalledWith('tenant-1', 'msg-room', 'acct-1');
     expect(webexBotClient).not.toHaveBeenCalled();
-    const [url, init] = (fetchMock as jest.Mock).mock.calls[0] as [string, RequestInit];
+    const [url, init] = webexAuth.calls.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://webexapis.com/v1/messages');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer webex-token');
+    // No Authorization of our own: the delegate attaches the credential.
+    expect(init.headers).toBeUndefined();
     expect(init.body).toBeInstanceOf(FormData);
     const form = init.body as FormData;
     expect(form.get('roomId')).toBe('room-1');
@@ -338,9 +387,8 @@ describe('webex-attachment', () => {
   });
 
   it('multiparts to a 1:1 recipient with parentId, when the slot carries one', async () => {
-    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: null });
-    const fetchMock = jest.fn(async () => new Response('{}', { status: 200 }));
-    global.fetch = fetchMock as unknown as typeof fetch;
+    const webexAuth = fakeAuth('webex:tenant-1:subject-1');
+    resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: null });
 
     await executeUpload(
       db,
@@ -348,7 +396,7 @@ describe('webex-attachment', () => {
       Buffer.from('bytes')
     );
 
-    const [, init] = (fetchMock as jest.Mock).mock.calls[0] as [string, RequestInit];
+    const [, init] = webexAuth.calls.mock.calls[0] as [string, RequestInit];
     const form = init.body as FormData;
     expect(form.get('toPersonEmail')).toBe('bob@example.com');
     expect(form.get('parentId')).toBe('msg-root');
@@ -377,10 +425,13 @@ describe('webex-attachment', () => {
   });
 
   it('fails cleanly when WebEx refuses the send', async () => {
-    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: null });
-    global.fetch = jest.fn(
-      async () => new Response('{"message":"bad request"}', { status: 400 })
-    ) as unknown as typeof fetch;
+    resolveWebexAccess.mockResolvedValue({
+      auth: fakeAuth(
+        'webex:tenant-1:subject-1',
+        async () => new Response('{"message":"bad request"}', { status: 400 })
+      ),
+      personEmail: null,
+    });
 
     const outcome = await executeUpload(
       db,
@@ -392,10 +443,39 @@ describe('webex-attachment', () => {
     expect(outcome.detail).toContain('400');
     expect(outcome.detail).toContain('bad request');
   });
+
+  it('phrases a delegate refusal in the resolver’s words, not as a WebEx status', async () => {
+    // The grant died between the describe and the send: the delegate
+    // answers for itself, marked by x-delegate-error.
+    resolveWebexAccess.mockResolvedValue({
+      auth: fakeAuth(
+        'webex:tenant-1:subject-1',
+        async () =>
+          new Response('{"error":{"type":"GRANT_REVOKED"}}', {
+            status: 403,
+            headers: { 'x-delegate-error': 'GRANT_REVOKED' },
+          })
+      ),
+      personEmail: null,
+    });
+
+    const outcome = await executeUpload(
+      db,
+      slotOf('webex-attachment', { roomId: 'room-1' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toBe(
+      'Your WebEx authorization was revoked. Reconnect it on the Connectors page.'
+    );
+    expect(recordSentWebexMessage).not.toHaveBeenCalled();
+  });
 });
 
 describe('webex-attachment to self', () => {
   const realFetch = global.fetch;
+  const webexAuth = fakeAuth('webex:tenant-1:subject-1');
   const selfSlot = (markdown?: string) =>
     slotOf('webex-attachment', { noteToSelf: true, ...(markdown ? { markdown } : {}) });
   const expectedFile = expect.objectContaining({
@@ -417,7 +497,7 @@ describe('webex-attachment to self', () => {
   });
 
   it('sends as the org bot first, so the note arrives unread', async () => {
-    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
+    resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: 'a@x.com' });
     const postMessage = jest
       .fn()
       .mockResolvedValue({ ok: true, val: { id: 'msg-bot', roomId: 'dm-1' } });
@@ -438,7 +518,7 @@ describe('webex-attachment to self', () => {
   });
 
   it('falls back to the user’s own Note to Self space when the org has no bot', async () => {
-    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
+    resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: 'a@x.com' });
     const sendNoteToSelf = jest
       .fn()
       .mockResolvedValue({ ok: true, val: { id: 'msg-self', roomId: 'room-solo' } });
@@ -448,13 +528,13 @@ describe('webex-attachment to self', () => {
 
     expect(outcome.ok).toBe(true);
     expect(outcome.detail).toContain('Note to Self');
-    expect(MockWebexClient).toHaveBeenCalledWith('webex-token', { lane: 'interactive' });
+    expect(MockWebexClient).toHaveBeenCalledWith(webexAuth, { lane: 'interactive' });
     expect(sendNoteToSelf).toHaveBeenCalledWith('for later', expectedFile);
     expect(recordSentWebexMessage).toHaveBeenCalledWith('tenant-1', 'msg-self', 'acct-1');
   });
 
   it('falls back to the solo space when the bot cannot deliver', async () => {
-    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
+    resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: 'a@x.com' });
     const postMessage = jest
       .fn()
       .mockResolvedValue({ ok: false, err: { type: 'WEBEX_API_ERROR', message: '403' } });
@@ -473,7 +553,7 @@ describe('webex-attachment to self', () => {
   });
 
   it('skips the bot when the grant recorded no address for it to reach', async () => {
-    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: null });
+    resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: null });
     const postMessage = jest.fn();
     webexBotClient.mockResolvedValue({ postMessage });
     const sendNoteToSelf = jest
@@ -489,10 +569,11 @@ describe('webex-attachment to self', () => {
   });
 
   it('surfaces the solo-space failure when both routes fail', async () => {
-    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
-    const sendNoteToSelf = jest
-      .fn()
-      .mockResolvedValue({ ok: false, err: { type: 'WEBEX_API_ERROR', message: 'WebEx API 403 for /rooms' } });
+    resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: 'a@x.com' });
+    const sendNoteToSelf = jest.fn().mockResolvedValue({
+      ok: false,
+      err: { type: 'WEBEX_API_ERROR', message: 'WebEx API 403 for /rooms' },
+    });
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
 
     const outcome = await executeUpload(db, selfSlot(), Buffer.from('bytes'));
@@ -588,10 +669,16 @@ describe('finalizeUploadSlot', () => {
   it('marks a successful outcome completed with its detail as the result', async () => {
     const { db: recordingDb, updates } = dbRecordingUpdates();
 
-    const outcome = await finalizeUploadSlot(recordingDb, { id: 'slot-1' }, { ok: true, detail: 'done' });
+    const outcome = await finalizeUploadSlot(
+      recordingDb,
+      { id: 'slot-1' },
+      { ok: true, detail: 'done' }
+    );
 
     expect(outcome).toEqual({ ok: true, detail: 'done' });
-    expect(updates).toEqual([{ status: 'completed', result: 'done', completed_at: 'sql-fragment' }]);
+    expect(updates).toEqual([
+      { status: 'completed', result: 'done', completed_at: 'sql-fragment' },
+    ]);
   });
 
   it('marks a failed outcome failed with its detail as the result', async () => {
@@ -604,7 +691,9 @@ describe('finalizeUploadSlot', () => {
     );
 
     expect(outcome).toEqual({ ok: false, detail: 'no good' });
-    expect(updates).toEqual([{ status: 'failed', result: 'no good', completed_at: 'sql-fragment' }]);
+    expect(updates).toEqual([
+      { status: 'failed', result: 'no good', completed_at: 'sql-fragment' },
+    ]);
   });
 });
 

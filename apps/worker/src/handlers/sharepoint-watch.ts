@@ -104,7 +104,7 @@ export async function runDriveWatchSync(
   const syncEpoch = randomUUID();
   const startUrl = row.cursor ?? initialDeltaUrl('drive', { driveId });
 
-  const round = await runDeltaRound(access.accessToken, startUrl, { maxPages: DRIVE_MAX_PAGES });
+  const round = await runDeltaRound(access.auth, startUrl, { maxPages: DRIVE_MAX_PAGES });
   if (!round.ok) {
     // A delta token that has aged out is not an error — it is an instruction
     // to start over. Cheap, because the cTag skip means re-enumerating costs

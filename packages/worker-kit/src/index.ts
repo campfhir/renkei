@@ -45,6 +45,7 @@ export {
   createJsonRpcServer,
   type GenericWorkerError,
   type JsonRpcHandler,
+  type RawHandler,
   type CreateJsonRpcServerOptions,
 } from './http';
 export { runWorker, type RunWorkerOptions, type WorkerServerDeps } from './bootstrap';

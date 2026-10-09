@@ -15,15 +15,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ATLASSIAN, ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
 import { atlassianFetch, listOf, rec, str } from '@renkei/connector-atlassian';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { getSessionFromRequest } from '@/lib/session';
-import { getOrigin } from '@/lib/get-origin';
 import {
   resolveAtlassianUserAccess,
   type AtlassianUserProvider,
 } from '@/lib/atlassian-user-access';
 import { upsertWatch, disableWatch, listWatches } from '@/lib/mcp-tools/content-watches';
-import { resolveGraphAccess, graphGet, values, str as gstr } from '@/lib/mcp-tools/graph/client';
-import { resolveSite } from '@/lib/mcp-tools/graph/resolve';
+import {
+  graphStr as gstr,
+  graphValues,
+  resolveSharePointAccess,
+  resolveSharePointSite,
+  sharePointGet,
+} from './sharepoint-access';
 
 type WatchProvider = 'jira' | 'confluence' | 'sharepoint';
 type AtlassianWatchProvider = 'jira' | 'confluence';
@@ -88,13 +93,9 @@ export async function POST(
     return NextResponse.json({ error: 'provider and scopeKey are required' }, { status: 400 });
   }
 
-  const originResult = await getOrigin(request);
-  if (!originResult.ok)
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-
   if (provider === 'sharepoint') {
     return watchLibrary(
-      { tenantId, subject: session.subject, origin: originResult.val },
+      { tenantId, subject: session.subject },
       str(rec(body).site).trim(),
       scopeKey
     );
@@ -103,8 +104,7 @@ export async function POST(
   const access = await resolveAtlassianUserAccess(
     tenantId,
     session.subject,
-    grantProviderFor(provider),
-    originResult.val
+    grantProviderFor(provider)
   );
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
@@ -159,7 +159,7 @@ export async function DELETE(
  * would be accepted on faith and stored with no label at all.
  */
 async function watchLibrary(
-  owner: { tenantId: string; subject: string; origin: string },
+  owner: { tenantId: string; subject: string },
   site: string,
   driveId: string
 ): Promise<NextResponse> {
@@ -170,23 +170,21 @@ async function watchLibrary(
     );
   }
 
-  const context = { tenantId: owner.tenantId, subject: owner.subject, origin: owner.origin };
-  const access = await resolveGraphAccess(context);
+  const access = await resolveSharePointAccess(owner.tenantId, owner.subject);
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
-  const resolvedSite = await resolveSite(context, access.accessToken, site);
+  const resolvedSite = await resolveSharePointSite(access, site);
   if (!resolvedSite.ok) {
     return NextResponse.json({ error: resolvedSite.error }, { status: 400 });
   }
 
-  const drives = await graphGet(
-    context,
-    access.accessToken,
+  const drives = await sharePointGet(
+    access,
     `/sites/${resolvedSite.siteId}/drives?$select=id,name`
   );
   if (!drives.ok) return NextResponse.json({ error: drives.error }, { status: 400 });
 
-  const library = values(drives.body).find((drive) => gstr(drive.id) === driveId);
+  const library = graphValues(drives.body).find((drive) => gstr(drive.id) === driveId);
   if (!library) {
     return NextResponse.json(
       { error: 'That library is not one this site lists, or you cannot see it.' },
@@ -216,14 +214,14 @@ async function watchLibrary(
  */
 async function resolveScope(
   provider: AtlassianWatchProvider,
-  access: { accessToken: string; cloudId: string },
+  access: { auth: AuthedFetch; cloudId: string },
   scopeKey: string
 ): Promise<{ ok: true; key: string; label: string } | { ok: false; error: string }> {
   if (provider === 'jira') {
     const search = await atlassianFetch({
       product: 'jira',
       cloudId: access.cloudId,
-      accessToken: access.accessToken,
+      auth: access.auth,
       path: '/rest/api/3/search/jql',
       method: 'POST',
       json: { jql: `project = "${scopeKey.replace(/"/g, '')}"`, maxResults: 1, fields: ['key'] },
@@ -242,7 +240,7 @@ async function resolveScope(
     const project = await atlassianFetch({
       product: 'jira',
       cloudId: access.cloudId,
-      accessToken: access.accessToken,
+      auth: access.auth,
       path: `/rest/api/3/project/${encodeURIComponent(scopeKey)}`,
     });
     return {
@@ -257,7 +255,7 @@ async function resolveScope(
   const byKey = await atlassianFetch({
     product: 'confluence',
     cloudId: access.cloudId,
-    accessToken: access.accessToken,
+    auth: access.auth,
     path: `/wiki/api/v2/spaces?keys=${encodeURIComponent(scopeKey)}&limit=1`,
   });
   const match = byKey.ok ? listOf(byKey.body, 'results')[0] : undefined;
@@ -267,7 +265,7 @@ async function resolveScope(
     const byId = await atlassianFetch({
       product: 'confluence',
       cloudId: access.cloudId,
-      accessToken: access.accessToken,
+      auth: access.auth,
       path: `/wiki/api/v2/spaces/${encodeURIComponent(scopeKey)}`,
     });
     if (byId.ok && str(byId.body.id)) {

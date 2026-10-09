@@ -23,7 +23,7 @@ export async function sendWebexNote(
 ): Promise<Result<NoteDelivery, 'WEBEX_API_ERROR'>> {
   return sendNoteToPerson({
     bot: await webexBotClient(tenantId),
-    user: new WebexClient(access.accessToken),
+    user: new WebexClient(access.auth),
     personEmail: personEmailOf(access),
     markdown,
   });

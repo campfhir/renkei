@@ -18,6 +18,7 @@
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { WebexClient } from '@renkei/connector-webex';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { enqueueKnowledgeEvent } from '../enqueue';
 import { resolveWebexUserAccessByAccount } from '../handlers/webex-linked-user';
 import { windowDayOf, type WindowClient } from '../handlers/webex-windows';
@@ -36,7 +37,7 @@ const MAX_BACKFILLS_PER_PASS = 3;
 const BACKFILL_ROOMS = 100;
 
 export interface WindowSweepDeps {
-  makeClient?: (accessToken: string) => WindowClient & Pick<WebexClient, 'listRooms'>;
+  makeClient?: (auth: AuthedFetch) => WindowClient & Pick<WebexClient, 'listRooms'>;
   resolveAccess?: typeof resolveWebexUserAccessByAccount;
   enqueue?: typeof enqueueKnowledgeEvent;
   now?: () => Date;
@@ -125,7 +126,7 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
 
 async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
   const makeClient =
-    deps.makeClient ?? ((token: string) => new WebexClient(token, { lane: 'background' }));
+    deps.makeClient ?? ((auth: AuthedFetch) => new WebexClient(auth, { lane: 'background' }));
   const resolveAccess = deps.resolveAccess ?? resolveWebexUserAccessByAccount;
   const dbResult = getDatabase();
   if (!dbResult.ok) return;
@@ -143,7 +144,7 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
   for (const grant of grants) {
     const access = await resolveAccess(grant.tenant_id, grant.provider_account_id);
     if (!access) continue; // token trouble; the webhook sweep will say so
-    const client = makeClient(access.accessToken);
+    const client = makeClient(access.auth);
 
     const rooms = await client.listRooms(BACKFILL_ROOMS);
     if (!rooms.ok) {

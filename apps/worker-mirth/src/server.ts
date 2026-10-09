@@ -65,14 +65,15 @@ import {
 
 export interface MirthServerDeps {
   db: Kysely<DB>;
-  /** The parsed TOKEN_ENCRYPTION_KEY; opens stored credentials. */
-  encryptionKey: Buffer;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /** Injected in tests; production dials the real server. */
   dial?: UpstreamDialer;
   /** Injected in tests; production reads the store. */
-  resolveTarget?: (target: SubjectTarget) => Promise<Result<ResolvedTarget, ResolveError>>;
+  resolveTarget?: (
+    target: SubjectTarget,
+    provided: MirthCredentials | null
+  ) => Promise<Result<ResolvedTarget, ResolveError>>;
   resolveInstance?: (
     tenantId: string,
     instanceId: string
@@ -169,8 +170,12 @@ function withQuery(url: string, query: unknown): string {
 
 export function createMirthServer(deps: MirthServerDeps): Server {
   const dial = deps.dial ?? dialUpstream;
+  // The credential arrives WITH the request, opened by the delegate; this
+  // process holds no key and never reads a stored one.
   const resolve =
-    deps.resolveTarget ?? ((target) => resolveTarget(deps.db, deps.encryptionKey, target));
+    deps.resolveTarget ??
+    ((target: SubjectTarget, provided: MirthCredentials | null) =>
+      resolveTarget(deps.db, target, provided));
   const resolveOne =
     deps.resolveInstance ??
     ((tenantId: string, instanceId: string) => resolveInstance(deps.db, tenantId, instanceId));
@@ -278,7 +283,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
         return sendError(response, 'bad_request', 'path is not a usable API path');
       }
 
-      const resolved = await resolve(target);
+      const resolved = await resolve(target, parseMirthCredentials(body.credentials));
       if (!resolved.ok) return sendError(response, resolved.err.type);
       const { instance, credentials } = resolved.val;
 

@@ -21,8 +21,28 @@ ATLASSIAN_CLIENT_SECRET=<your-client-secret>
 ATLASSIAN_REDIRECT_URI=https://yourdomain.com/api/oauth/callback
 
 # Encryption
-# Generate with: openssl rand -base64 32
+# Generate each with: openssl rand -base64 32
 TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
+# MIGRATION ONLY (docs/delegate-key-design.md, "Phases 2–5 as built"): the
+# master that pre-enrollment (managed) keys were derived from. People hold
+# their own keys now; the delegate reads this variable in exactly one
+# place, the enrollment that moves a person's existing rows off their old
+# key on their first sign-in. Set it on the DELEGATE service only, keep it
+# while `keys/census` reports people who have not enrolled, and remove it
+# once that count is zero. Builds with user keys from before the delegate
+# also needed, once, before serving traffic:
+#   pnpm --filter @renkei/user-keys rekey-chats --all
+# with this variable (and TOKEN_ENCRYPTION_KEY) in the environment.
+# USER_KEY_ENCRYPTION_KEY=<32-byte-base64-key>
+# Every process but the delegate reaches it here, for keys, provider
+# tokens and the connector workers (compose wires the service name).
+# DELEGATE_WORKER_URL=http://renkei-worker-delegate:8096
+# DELEGATE_WORKER_API_KEY=<shared bearer key>
+# A code workspace's git goes through the delegate's /git/<ticket>/… proxy
+# (no bearer key; the short-lived ticket is the credential). The web app
+# builds that proxy URL from DELEGATE_WORKER_URL; set this only when the
+# sandbox worker reaches the delegate at a different address.
+# DELEGATE_GIT_URL=http://renkei-worker-delegate:8096
 
 # Database
 DATABASE_URL=postgresql://user:password@postgres.example.com:5432/jira_mcp_db
@@ -109,10 +129,10 @@ ls -la .next/
 ## Published Images
 
 Every push to `main` that passes CI (lint, typecheck, tests) also builds
-and publishes the six images `docker-compose.yaml` pulls — `renkei`,
+and publishes the nine images `docker-compose.yaml` pulls — `renkei`,
 `renkei-migrate`, `renkei-worker`, `renkei-fileshares`, `renkei-onbase`,
-`renkei-sandbox` — to Docker Hub from the `docker` job in
-`.github/workflows/ci.yml`. Each image is pushed under two tags: `latest`
+`renkei-mirth`, `renkei-admanager`, `renkei-delegate`, `renkei-sandbox` —
+to Docker Hub from the `docker` job in `.github/workflows/ci.yml`. Each image is pushed under two tags: `latest`
 and the version in `apps/web/package.json` (the version every app in the
 workspace shares, and the same one `scripts/docker-build.sh` stamps). Bump
 that version when a release should keep its own tag; until then a new push
@@ -181,6 +201,35 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `ONBASE_WORKER_PORT`, default 8091). Without them the OnBase connector
   answers "worker not configured" everywhere — closed, never open.
   Entrypoint: `pnpm --filter @renkei/worker-onbase start`.
+- `worker-delegate` — the one process that holds a key
+  (docs/delegate-key-design.md). It derives nothing: at boot it generates
+  an X25519 keypair and registers itself in `delegate_instances`; a
+  signed-in browser seals its person's user key (and automation key) to
+  that public key, and the delegate opens those delegations to act. Run
+  several and the browser seals to each. It answers a chat's or project's
+  data key to the request that needs it,
+  opens and seals a person's own values, holds every OAuth provider token
+  (the `api` proxy attaches it; `oauth/exchange` trades a code for one
+  without the app ever seeing it), and forwards Mirth, ADManager Plus,
+  file-share and OnBase operations to their workers with the person's
+  credential attached. A code workspace's git (clone, pull, push) runs
+  through its smart-HTTP proxy at `/git/<ticket>/<host>/…`: the app asks
+  for a fifteen-minute ticket (`grant/git-ticket`), the sandbox worker's
+  git dials the delegate with it, and the delegate attaches the person's
+  GitHub or Bitbucket token on the way out, so the sandbox never holds a
+  token. The sandbox must be able to reach the delegate; when it does so
+  at an address other than `DELEGATE_WORKER_URL`, set `DELEGATE_GIT_URL`
+  on the app. The app and every other worker reach it at
+  `DELEGATE_WORKER_URL` with `DELEGATE_WORKER_API_KEY` (listen port
+  `DELEGATE_WORKER_PORT`, default 8096). It also needs
+  `TOKEN_ENCRYPTION_KEY` (the OAuth client secrets in connector config),
+  `DATABASE_URL`, and the `*_WORKER_URL` / `*_WORKER_API_KEY` pairs of the
+  connector workers below, which the app no longer holds; and, only while
+  people who have not enrolled remain, `USER_KEY_ENCRYPTION_KEY` (above).
+  Without it, no chat opens and no connector acts: fail closed, never
+  open. A restart is a new instance: browsers seal again on their next
+  page load, and runs in flight resume then. Entrypoint:
+  `pnpm --filter @renkei/worker-delegate start`; image target `delegate`.
 - `worker-mirth` — the same shape for Mirth Connect (NextGen Connect
   4.5.2): an internal HTTP service on its **own image** (`renkei-mirth`, the
   `mirth` target in `docker/Dockerfile`, opt-in prompts in the build/push
@@ -404,7 +453,7 @@ on separate disks (several hosts) never delete each other's rows early.
 
 **Horizontal scale:** either process may run as N instances. Claims take
 row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key
-(one mailbox's index writes, one subscription's delta rounds, one room's
+(one To Do list's index writes, one subscription's delta rounds, one room's
 messages) are delivered strictly in order, one at a time, across all
 instances — distinct keys drain in parallel. With docker compose, drop the
 hardcoded `container_name` and use `--scale embeddings-worker=N`.

@@ -98,6 +98,7 @@ import {
   writeWorkspaceFile,
   type RunInput,
   type RunResult,
+  parseGitProxy,
 } from './workspaces';
 import { LspSessions, probeLanguageServers } from './lsp-sessions';
 import { logger } from './logger';
@@ -314,8 +315,8 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       branch = ref.ref;
     }
     const cloneUrl = str(body.cloneUrl);
-    const authHeader = str(body.authHeader);
-    if (!/^https:\/\/bitbucket\.org\/[^\s]+\.git$/.test(cloneUrl) || !authHeader) {
+    const gitProxy = parseGitProxy(body.gitProxy);
+    if (!/^https:\/\/(bitbucket\.org|github\.com)\/[^\s]+\.git$/.test(cloneUrl) || !gitProxy) {
       return sendError(response, 400, 'bad_request');
     }
     const depth =
@@ -349,7 +350,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         storageKey,
         identity: identityFor(target),
         cloneUrl,
-        authHeader,
+        gitProxy,
         branch,
         depth,
       });
@@ -1138,8 +1139,8 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     body: Body,
     response: ServerResponse
   ) {
-    const authHeader = str(body.authHeader);
-    if (!authHeader) return sendError(response, 400, 'bad_request');
+    const gitProxy = parseGitProxy(body.gitProxy);
+    if (!gitProxy) return sendError(response, 400, 'bad_request');
     const branch = await currentBranch(workspace, env);
     if (branch === 'HEAD') {
       return sendError(
@@ -1155,7 +1156,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       if (!ref.ok) return sendError(response, 400, 'bad_request', ref.message);
       remoteBranch = ref.ref;
     }
-    const input = runInputFor(workspace, env, 5 * 60_000, { gitAuthHeader: authHeader });
+    const input = runInputFor(workspace, env, 5 * 60_000, { gitProxy });
     const pushed = await runGit(input, [
       'push',
       '--set-upstream',
@@ -1174,9 +1175,9 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     body: Body,
     response: ServerResponse
   ) {
-    const authHeader = str(body.authHeader);
-    if (!authHeader) return sendError(response, 400, 'bad_request');
-    const input = runInputFor(workspace, env, 5 * 60_000, { gitAuthHeader: authHeader });
+    const gitProxy = parseGitProxy(body.gitProxy);
+    if (!gitProxy) return sendError(response, 400, 'bad_request');
+    const input = runInputFor(workspace, env, 5 * 60_000, { gitProxy });
     let output: string;
     if (str(body.branch)) {
       const ref = validateGitRef(body.branch);

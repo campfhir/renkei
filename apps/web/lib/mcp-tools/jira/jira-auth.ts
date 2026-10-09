@@ -1,6 +1,6 @@
 /**
  * How the jira_ tools reach Jira — injected, not read off
- * `context.accessToken`/`context.apiBaseUrl` inline.
+ * `context.jiraAuth`/`context.apiBaseUrl` inline.
  *
  * Same full shape as JsmAuth/JsmOpsAuth/WebexAuth/ZoomAuth:
  * fetch(requiredScopes, path, init) wraps the scope check around the real
@@ -37,7 +37,10 @@ export function oauthJiraAuth(context: MCPToolContext): JiraAuth {
           );
         }
       }
-      return jiraFetch(`${context.apiBaseUrl}${path}`, context.accessToken, init);
+      if (!context.jiraAuth) {
+        return authFailure('Jira is not connected. Connect it on the Connectors page.', 401);
+      }
+      return jiraFetch(`${context.apiBaseUrl}${path}`, context.jiraAuth, init);
     },
   };
 }

@@ -49,6 +49,17 @@ jest.mock('@renkei/db', () => ({
 
 import { notifyAgentEdited } from './edit-notification';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '@renkei/user-prefs';
+import { authedFetch } from '@renkei/delegate-client';
+
+/** The owner's grants as the delegate hands them out: fetchers, never tokens. */
+const graphAuth = authedFetch(
+  async () => new Response('{}', { status: 202 }),
+  'microsoft:tenant-1:ms-account-1'
+);
+const webexAuth = authedFetch(
+  async () => new Response('{}', { status: 200 }),
+  'webex:tenant-1:webex-account-1'
+);
 
 const { getNotificationPrefs: mockGetNotificationPrefs } = jest.requireMock<{
   getNotificationPrefs: jest.Mock;
@@ -107,14 +118,14 @@ beforeEach(() => {
       : { email: 'editor@example.com', displayName: 'Editor' }
   );
   mockResolveGraphAccess.mockResolvedValue({
-    accessToken: 'ms-token',
+    auth: graphAuth,
     upn: 'owner@example.com',
     accountId: 'ms-account-1',
   });
   mockGraphPost.mockResolvedValue({ ok: true, body: {} });
   mockResolveWebexAccess.mockResolvedValue({
     accountId: 'webex-account-1',
-    accessToken: 'webex-token',
+    auth: webexAuth,
     metadata: {},
   });
 });
@@ -168,7 +179,7 @@ describe('notifyAgentEdited', () => {
 
     expect(inserted).toHaveLength(0);
     expect(mockGraphPost).not.toHaveBeenCalled();
-    expect(MockWebexClient).toHaveBeenCalledWith('webex-token');
+    expect(MockWebexClient).toHaveBeenCalledWith(webexAuth);
     expect(sendNoteToSelf).toHaveBeenCalledTimes(1);
     expect(String(sendNoteToSelf.mock.calls[0][0])).toContain('Sunday Sweep');
   });

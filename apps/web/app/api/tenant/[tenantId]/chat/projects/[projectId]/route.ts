@@ -11,10 +11,9 @@ import {
   optionalString,
   readJsonBody,
 } from '@/lib/chat/route-support';
-import { resolveResourceAccess } from '@/lib/chat/access';
+import { resolveProjectAccess } from '@/lib/chat/access';
 import {
   deleteProject,
-  getProjectRow,
   updateProject,
   PROJECT_INSTRUCTIONS_MAX_CHARS,
   PROJECT_NAME_MAX_CHARS,
@@ -31,13 +30,7 @@ export async function GET(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    tenantId,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   const view = await loadProjectView(db, tenantId, session.subject, projectId, access);
   if (!view) return jsonError(404, 'not-found', 'No such project');
@@ -52,13 +45,7 @@ export async function PATCH(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    tenantId,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   if (access.role === 'viewer')
     return jsonError(403, 'read-only', 'Only editors can change this project.');
@@ -79,16 +66,9 @@ export async function PATCH(
     if (!parsed) return jsonError(400, 'invalid', 'Invalid tool configuration');
     patch.toolConfig = parsed;
   }
-  if (typeof body.publishedToOrg === 'boolean') {
-    if (access.role !== 'owner') {
-      return jsonError(403, 'owner-only', 'Only the owner can publish a project.');
-    }
-    patch.publishedToOrg = body.publishedToOrg;
-  }
-  const updated = await updateProject(db, tenantId, projectId, patch);
+  const updated = await updateProject(db, tenantId, projectId, patch, access.cipher);
   if (!updated) return jsonError(404, 'not-found', 'No such project');
-  const row = await getProjectRow(db, tenantId, projectId);
-  return NextResponse.json({ ok: true, publishedToOrg: row?.publishedToOrg ?? false });
+  return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(

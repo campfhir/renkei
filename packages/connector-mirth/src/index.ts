@@ -58,13 +58,7 @@ export {
   type ParamType,
 } from './operations';
 
-export {
-  decryptCredentials,
-  encryptCredentials,
-  parseMirthCredentials,
-  type CredentialError,
-  type MirthCredentials,
-} from './credentials';
+export { parseMirthCredentials, type CredentialError, type MirthCredentials } from './credentials';
 
 export {
   createInstance,
@@ -96,3 +90,8 @@ export {
   type ResolvedTarget,
   type SubjectTarget,
 } from './resolve';
+export {
+  sealCredentialsForSubject,
+  openCredentialsForSubject,
+  type SealCredentialsError,
+} from './user-credentials';

@@ -65,7 +65,7 @@ const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
     origin: 'https://renkei.example',
     siteUrl: '',
     apiBaseUrl: '',
-    accessToken: '',
+    jiraAuth: null,
     maxJqlResults: 100,
     ...overrides,
   }) as unknown as MCPToolContext;
@@ -267,7 +267,10 @@ describe('claimPendingUploadSlotByOwner', () => {
   it('refuses without a signed-in subject', async () => {
     stubClaimDb(CLAIMED_ROW);
 
-    const claimed = await claimPendingUploadSlotByOwner(context({ subject: undefined }), 'upload-1');
+    const claimed = await claimPendingUploadSlotByOwner(
+      context({ subject: undefined }),
+      'upload-1'
+    );
 
     expect(claimed.ok).toBe(false);
   });

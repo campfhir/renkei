@@ -3,7 +3,7 @@ import { getDatabase } from '@renkei/db';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import { resolveResourceAccess } from '@/lib/chat/access';
+import { resolveProjectAccess } from '@/lib/chat/access';
 import { loadCodeProjectView } from '@/lib/code/project-view';
 import ProjectView from '../../chat/_components/project-view';
 import { CodeRail, CodeRepoStrip } from '../_components/code-sections';
@@ -34,13 +34,7 @@ export default async function CodeProjectPage({
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
-  const access = await resolveResourceAccess(
-    db,
-    tenant.id,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveProjectAccess(db, tenant.id, session.subject, projectId);
   if (!access) notFound();
   const view = await loadCodeProjectView(db, tenant.id, session.subject, projectId, access);
   if (!view) notFound();

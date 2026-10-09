@@ -6,7 +6,7 @@
  * as an authorize-URL parameter, so these "scopes" name nothing GitHub
  * itself reads. They are Renkei's own bookkeeping — what requested_scopes
  * records and what the tool gate (github/scopes.ts) and
- * resolveWorkspaceGitCredential narrow by, exactly the role Bitbucket's
+ * resolveWorkspaceGitAccess narrow by, exactly the role Bitbucket's
  * fixed-consumer scopes play (see atlassian-scopes.ts's header and
  * narrowedScopes).
  */

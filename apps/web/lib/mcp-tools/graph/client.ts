@@ -10,7 +10,12 @@
  *
  * Access is resolved fresh on every call, never captured in a handler
  * closure: a tool registered at connect time may be invoked an hour later,
- * by which point the access token has expired.
+ * by which point the grant may have been revoked or reconnected.
+ *
+ * No token is read here (docs/delegate-key-design.md, "Phase 1 as built"):
+ * the delegate worker holds the Microsoft grant, and what a caller gets is
+ * an `AuthedFetch` that the delegate authenticates, refreshes and retries
+ * once on a 401. The web process never sees an access token.
  */
 
 import {
@@ -20,12 +25,13 @@ import {
   headersForLog,
   retryAfterSeconds,
 } from '@renkei/connector-microsoft';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { getGrant, refreshGrantTokens, MICROSOFT, MicrosoftAdapter } from '@renkei/provider-grants';
-import { getDatabase } from '@renkei/db';
-import { getMicrosoftApp } from '@/lib/microsoft-app';
+import { MICROSOFT } from '@renkei/provider-grants';
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
+import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
 import { REQUEST_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, isTimeoutError } from '../fetch-guard';
+
+const LABEL = 'Microsoft';
 /**
  * All these calls need of their caller.
  *
@@ -39,21 +45,23 @@ export interface GraphCallContext {
   tenantId: string;
   /** The caller's OIDC subject — whose grant is used. */
   subject?: string;
-  /** Public origin, for rebuilding the Microsoft app config on refresh. */
+  /**
+   * Public origin. No longer needed to reach Graph (the delegate refreshes
+   * the grant itself), but an MCPToolContext carries it and callers still
+   * pass it, so it stays accepted.
+   */
   origin?: string;
 }
 
-/** Refresh inside this window of expiry rather than risking a 401 mid-call. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
-
 export interface GraphAccess {
-  accessToken: string;
+  /** `fetch` on the caller's own Microsoft grant; the delegate supplies the credential. */
+  auth: AuthedFetch;
   upn: string | null;
   /**
-   * The Microsoft account whose grant this token came from. A content watch
+   * The Microsoft account whose grant `auth` rides on. A content watch
    * records it so the worker knows which grant to poll with, and getting it
-   * from the same lookup that produced the token is what keeps the two from
-   * disagreeing.
+   * from the same lookup that produced the fetcher is what keeps the two
+   * from disagreeing.
    */
   accountId: string;
 }
@@ -91,74 +99,27 @@ function truncateForLog(text: string): string {
 }
 
 /**
- * The calling user's Graph token. Returns a human-readable string on failure
- * so a handler can hand it straight back to the model.
+ * The calling user's Graph access: a fetcher on their Microsoft grant plus
+ * what the grant recorded about them. Returns a human-readable string on
+ * failure so a handler can hand it straight back to the model.
  */
 export async function resolveGraphAccess(context: GraphCallContext): Promise<GraphAccess | string> {
   if (!context.subject) return 'No signed-in identity on this request.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Token encryption is not configured on this deployment.';
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
-
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', MICROSOFT)
-    .where('subject', '=', context.subject)
-    .limit(1)
-    .executeTakeFirst();
-  if (!row) {
-    return 'Microsoft is not connected. Connect it on the Connectors page, then try again.';
-  }
-
-  const grantResult = await getGrant(
-    MICROSOFT,
-    context.tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
-  if (!grantResult.ok || !grantResult.val) {
-    return 'Your Microsoft connection could not be read. Reconnect on the Connectors page.';
-  }
-  let grant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getMicrosoftApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'The Microsoft connector is not configured for this organization.';
-    const tid =
-      typeof grant.metadata.tid === 'string' && grant.metadata.tid
-        ? grant.metadata.tid
-        : app.directoryTenantId;
-    if (!tid) return 'The Microsoft connector has no directory tenant id configured.';
-
-    const refreshed = await refreshGrantTokens(
-      new MicrosoftAdapter(app.clientSecret, tid),
-      context.tenantId,
-      row.provider_account_id,
-      keyResult.val,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your Microsoft connection was revoked. Reconnect on the Connectors page.'
-        : 'Could not refresh your Microsoft token. Reconnect on the Connectors page.';
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
+  const grant = { tenantId: context.tenantId, provider: MICROSOFT, subject: context.subject };
+  const described = await delegateGrants().describe(grant);
+  if (!described.ok) return grantRefusalText(described.err.type, LABEL);
 
   return {
-    accessToken: grant.accessToken,
-    upn: typeof grant.metadata.upn === 'string' ? grant.metadata.upn : null,
-    accountId: row.provider_account_id,
+    auth: grantFetch(grant),
+    upn: typeof described.val.metadata.upn === 'string' ? described.val.metadata.upn : null,
+    accountId: described.val.accountId,
   };
 }
 
 async function graphCall(
   context: GraphCallContext,
-  accessToken: string,
+  auth: AuthedFetch,
   method: string,
   pathAndQuery: string,
   json?: unknown,
@@ -169,10 +130,9 @@ async function graphCall(
     : `${GRAPH_BASE_URL}${pathAndQuery}`;
   let response: Response;
   try {
-    response = await graphFetch(accessToken, url, {
+    response = await graphFetch(auth, url, {
       method,
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         ...(json === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...extraHeaders,
       },
@@ -192,6 +152,11 @@ async function graphCall(
     return { ok: false, error: describeFetchFailure(error, REQUEST_TIMEOUT_MS) };
   }
 
+  // The delegate answering for itself (no grant, revoked, refresh failed)
+  // is not a Graph status, and the status words would mislead.
+  const refused = refusalTextOf(response, LABEL);
+  if (refused) return { ok: false, error: refused };
+
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
     logger.warn('Graph API non-OK response', {
@@ -204,7 +169,10 @@ async function graphCall(
       responseHeaders: headersForLog(response.headers),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, retryAfterSeconds(response.headers)) };
+    return {
+      ok: false,
+      error: describeStatus(response.status, retryAfterSeconds(response.headers)),
+    };
   }
 
   // 202 (accepted, e.g. copy) and 204 (deleted) carry no body.
@@ -223,43 +191,43 @@ async function graphCall(
 
 export const graphGet = (
   context: GraphCallContext,
-  token: string,
+  auth: AuthedFetch,
   path: string,
   headers?: Record<string, string>
-): Promise<GraphResult> => graphCall(context, token, 'GET', path, undefined, headers);
+): Promise<GraphResult> => graphCall(context, auth, 'GET', path, undefined, headers);
 
 export const graphPost = (
   context: GraphCallContext,
-  token: string,
+  auth: AuthedFetch,
   path: string,
   json: unknown,
   headers?: Record<string, string>
-): Promise<GraphResult> => graphCall(context, token, 'POST', path, json, headers);
+): Promise<GraphResult> => graphCall(context, auth, 'POST', path, json, headers);
 
 export const graphPatch = (
   context: GraphCallContext,
-  token: string,
+  auth: AuthedFetch,
   path: string,
   json: unknown
-): Promise<GraphResult> => graphCall(context, token, 'PATCH', path, json);
+): Promise<GraphResult> => graphCall(context, auth, 'PATCH', path, json);
 
 export const graphPut = (
   context: GraphCallContext,
-  token: string,
+  auth: AuthedFetch,
   path: string,
   json: unknown
-): Promise<GraphResult> => graphCall(context, token, 'PUT', path, json);
+): Promise<GraphResult> => graphCall(context, auth, 'PUT', path, json);
 
 export const graphDelete = (
   context: GraphCallContext,
-  token: string,
+  auth: AuthedFetch,
   path: string
-): Promise<GraphResult> => graphCall(context, token, 'DELETE', path);
+): Promise<GraphResult> => graphCall(context, auth, 'DELETE', path);
 
 /** Upload raw bytes; Graph wants the body unwrapped, not JSON. */
 export async function graphPutContent(
   context: GraphCallContext,
-  accessToken: string,
+  auth: AuthedFetch,
   pathAndQuery: string,
   bytes: Uint8Array,
   contentType: string
@@ -274,9 +242,9 @@ export async function graphPutContent(
 
   let response: Response;
   try {
-    response = await graphFetch(accessToken, pathAndQuery, {
+    response = await graphFetch(auth, pathAndQuery, {
       method: 'PUT',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': contentType },
+      headers: { 'Content-Type': contentType },
       body,
       lane: 'interactive',
       timeoutMs: UPLOAD_TIMEOUT_MS,
@@ -284,6 +252,8 @@ export async function graphPutContent(
   } catch (error) {
     return { ok: false, error: describeFetchFailure(error, UPLOAD_TIMEOUT_MS) };
   }
+  const refused = refusalTextOf(response, LABEL);
+  if (refused) return { ok: false, error: refused };
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
     logger.warn('Graph upload failed', {
@@ -295,7 +265,10 @@ export async function graphPutContent(
       responseHeaders: headersForLog(response.headers),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, retryAfterSeconds(response.headers)) };
+    return {
+      ok: false,
+      error: describeStatus(response.status, retryAfterSeconds(response.headers)),
+    };
   }
   try {
     const parsed: unknown = JSON.parse(responseBody);
@@ -318,15 +291,16 @@ export async function graphPutContent(
  */
 export async function graphContentDownloadUrl(
   context: GraphCallContext,
-  accessToken: string,
+  auth: AuthedFetch,
   driveId: string,
   itemId: string
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   const path = `/drives/${driveId}/items/${itemId}/content`;
   let response: Response;
   try {
-    response = await graphFetch(accessToken, path, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+    // `redirect: 'manual'` reaches the delegate, which hands the 302 back
+    // untouched instead of following it.
+    response = await graphFetch(auth, path, {
       redirect: 'manual',
       lane: 'interactive',
       timeoutMs: REQUEST_TIMEOUT_MS,
@@ -334,6 +308,8 @@ export async function graphContentDownloadUrl(
   } catch (error) {
     return { ok: false, error: describeFetchFailure(error, REQUEST_TIMEOUT_MS) };
   }
+  const refused = refusalTextOf(response, LABEL);
+  if (refused) return { ok: false, error: refused };
   const location = response.headers.get('location');
   if (response.status >= 300 && response.status < 400 && location) {
     return { ok: true, url: location };

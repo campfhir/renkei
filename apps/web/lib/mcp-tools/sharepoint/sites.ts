@@ -52,7 +52,7 @@ export function registerSiteTools(
       const max = num(args.max) ?? 20;
       const found = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/sites?search=${encodeURIComponent(String(args.query))}&$top=${max}` +
           '&$select=id,displayName,webUrl,description'
       );
@@ -90,12 +90,12 @@ export function registerSiteTools(
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
-      const resolved = await resolveSite(context, access.accessToken, String(args.site));
+      const resolved = await resolveSite(context, access.auth, String(args.site));
       if (!resolved.ok) return errText(resolved.error);
 
       const drives = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/sites/${resolved.siteId}/drives?$select=id,name,webUrl,driveType`
       );
       if (!drives.ok) return errText(drives.error);
@@ -132,15 +132,15 @@ export function registerSiteTools(
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
-      const resolved = await resolveSite(context, access.accessToken, String(args.site));
+      const resolved = await resolveSite(context, access.auth, String(args.site));
       if (!resolved.ok) return errText(resolved.error);
       const base = `/sites/${resolved.siteId}`;
 
       const [subsites, drives, lists, pages] = await Promise.all([
-        graphGet(context, access.accessToken, `${base}/sites?$select=id,displayName,webUrl`),
-        graphGet(context, access.accessToken, `${base}/drives?$select=id,name,webUrl`),
-        graphGet(context, access.accessToken, `${base}/lists?$select=id,displayName,webUrl,list`),
-        graphGet(context, access.accessToken, `${base}/pages?$select=id,title,webUrl`),
+        graphGet(context, access.auth, `${base}/sites?$select=id,displayName,webUrl`),
+        graphGet(context, access.auth, `${base}/drives?$select=id,name,webUrl`),
+        graphGet(context, access.auth, `${base}/lists?$select=id,displayName,webUrl,list`),
+        graphGet(context, access.auth, `${base}/pages?$select=id,title,webUrl`),
       ]);
 
       const sections: string[] = [];

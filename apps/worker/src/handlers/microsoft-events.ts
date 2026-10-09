@@ -6,9 +6,11 @@
  * callback because the subscription handshake calls our webhook route
  * synchronously and the backfill is minutes of work, not callback work.
  *
- * change-notification — the ingestion workhorse: a notification names a
- * subscription; the handler runs a delta round from that row's cursor.
- * Notification ids are hints; delta is the truth.
+ * change-notification — the delta workhorse: a notification names a
+ * subscription; the handler runs a delta round from that row's cursor
+ * (To Do rows index, the inbox row publishes `mail.received` and indexes
+ * nothing — see microsoft-sync.ts). Notification ids are hints; delta is
+ * the truth.
  *
  * lifecycle — Graph's own health channel: reauthorizationRequired renews
  * now; subscriptionRemoved clears the row so ensure recreates it.
@@ -159,7 +161,7 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
 
     if (lifecycleEvent === 'reauthorizationRequired') {
       const access = await resolveMicrosoftAccess(tenantId, accountId);
-      const renewed = await renewGraphSubscription(access.accessToken, subscriptionId);
+      const renewed = await renewGraphSubscription(access.auth, subscriptionId);
       if (renewed.ok) {
         await db
           .updateTable('webhook_subscriptions')
@@ -200,7 +202,9 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
 /**
  * message-override — a mailbox owner's own correction from their private
  * mail-review page (never admin-initiated; see packages/email-sanitizer's
- * persistence/log.ts for why). Message bodies are never persisted at rest,
+ * persistence/log.ts for why). Mail is no longer indexed by the sync, so
+ * this only ever acts on the page's own re-ingests; the page is unlinked
+ * and both go together when it is removed. Message bodies are never persisted at rest,
  * so applying an override means re-fetching the one message from Graph,
  * running it back through the pipeline with the override forced, and
  * re-indexing or removing accordingly. 'exclude' needs no re-fetch — there
@@ -243,7 +247,7 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
       return;
     }
 
-    const fetched = await graphRequest(access.accessToken, `/me/messages/${objectId}`);
+    const fetched = await graphRequest(access.auth, `/me/messages/${objectId}`);
     if (!fetched.ok || !isRecord(fetched.val)) {
       throw new Error(`could not re-fetch message ${objectId} for override (tenant ${tenantId})`);
     }

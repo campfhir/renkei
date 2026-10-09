@@ -18,6 +18,7 @@
  * surface as SharePoint, so both namespaces share one code path.
  */
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphGet, str, rec, type GraphResult, type GraphCallContext } from './client';
 
 export interface DriveItemRef {
@@ -69,7 +70,7 @@ function itemFrom(body: Record<string, unknown>, fallbackDriveId?: string): Driv
  */
 export async function resolveSite(
   context: GraphCallContext,
-  token: string,
+  auth: AuthedFetch,
   site: string
 ): Promise<{ ok: true; siteId: string; name: string } | { ok: false; error: string }> {
   const trimmed = site.trim();
@@ -94,7 +95,7 @@ export async function resolveSite(
     path = `/sites/${encodeURIComponent(trimmed)}`;
   }
 
-  const result = await graphGet(context, token, `${path}?$select=id,displayName,webUrl`);
+  const result = await graphGet(context, auth, `${path}?$select=id,displayName,webUrl`);
   if (!result.ok) return { ok: false, error: result.error };
   const siteId = str(result.body.id);
   if (!siteId) return { ok: false, error: `No SharePoint site matched "${site}".` };
@@ -104,15 +105,15 @@ export async function resolveSite(
 /** A site's document library by name, or its default library when unnamed. */
 export async function resolveLibrary(
   context: GraphCallContext,
-  token: string,
+  auth: AuthedFetch,
   site: string,
   library?: string
 ): Promise<{ ok: true; driveId: string; name: string } | { ok: false; error: string }> {
-  const resolved = await resolveSite(context, token, site);
+  const resolved = await resolveSite(context, auth, site);
   if (!resolved.ok) return resolved;
 
   if (!library) {
-    const drive = await graphGet(context, token, `/sites/${resolved.siteId}/drive?$select=id,name`);
+    const drive = await graphGet(context, auth, `/sites/${resolved.siteId}/drive?$select=id,name`);
     if (!drive.ok) return { ok: false, error: drive.error };
     const driveId = str(drive.body.id);
     if (!driveId) return { ok: false, error: 'That site has no default document library.' };
@@ -121,7 +122,7 @@ export async function resolveLibrary(
 
   const drives = await graphGet(
     context,
-    token,
+    auth,
     `/sites/${resolved.siteId}/drives?$select=id,name,webUrl`
   );
   if (!drives.ok) return { ok: false, error: drives.error };
@@ -143,9 +144,9 @@ export async function resolveLibrary(
 /** The caller's own OneDrive id, resolved once so both namespaces share a code path. */
 export async function resolveMyDriveId(
   context: GraphCallContext,
-  token: string
+  auth: AuthedFetch
 ): Promise<{ ok: true; driveId: string } | { ok: false; error: string }> {
-  const result = await graphGet(context, token, '/me/drive?$select=id');
+  const result = await graphGet(context, auth, '/me/drive?$select=id');
   if (!result.ok) return { ok: false, error: result.error };
   const driveId = str(result.body.id);
   if (!driveId) return { ok: false, error: 'Could not find your OneDrive.' };
@@ -160,7 +161,7 @@ export async function resolveMyDriveId(
  */
 export async function resolveDriveItem(
   context: GraphCallContext,
-  token: string,
+  auth: AuthedFetch,
   selector: ItemSelector,
   defaultDriveId?: string
 ): Promise<{ ok: true; item: DriveItemRef } | { ok: false; error: string }> {
@@ -170,7 +171,7 @@ export async function resolveDriveItem(
     const shareId = encodeShareId(selector.itemUrl.trim());
     const result: GraphResult = await graphGet(
       context,
-      token,
+      auth,
       `/shares/${shareId}/driveItem${select}`
     );
     if (!result.ok) {
@@ -190,7 +191,7 @@ export async function resolveDriveItem(
   let driveId = selector.driveId ?? defaultDriveId ?? '';
 
   if (!driveId && selector.site) {
-    const library = await resolveLibrary(context, token, selector.site, selector.library);
+    const library = await resolveLibrary(context, auth, selector.site, selector.library);
     if (!library.ok) return library;
     driveId = library.driveId;
   }
@@ -207,7 +208,7 @@ export async function resolveDriveItem(
       ? `/drives/${driveId}/root:/${encodePath(selector.path)}`
       : `/drives/${driveId}/root`;
 
-  const result = await graphGet(context, token, `${address}${select}`);
+  const result = await graphGet(context, auth, `${address}${select}`);
   if (!result.ok) return { ok: false, error: result.error };
   const item = itemFrom(result.body, driveId);
   return item ? { ok: true, item } : { ok: false, error: 'That did not resolve to an item.' };

@@ -117,7 +117,7 @@ describeOrSkip(SUITE_NAME, () => {
       accountId: 'integration-test',
       siteUrl: testCreds.baseUrl,
       apiBaseUrl: '',
-      accessToken: '',
+      jiraAuth: null,
       maxJqlResults: 100,
     } as unknown as MCPToolContext;
     tools = await toolsOf(context, auth);

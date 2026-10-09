@@ -22,8 +22,7 @@ import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
 import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
-import { attachmentPromptBlocks } from './attachments';
-import { openBlocks } from './content-crypto';
+import { openBlocks, type ContentCipher } from './content-crypto';
 import { getActiveTurn } from './turns';
 import { startChatTurn, type StartTurnError, type StartedTurn } from './start-turn';
 
@@ -52,16 +51,16 @@ export interface Resent extends StartedTurn {
 }
 
 /** A stored row's first text block, without the attachment excerpts riding behind it, untrimmed. */
-function rawPromptText(content: string): string {
-  const blocks = openBlocks(content);
+function rawPromptText(content: string, cipher: ContentCipher): string {
+  const blocks = openBlocks(content, cipher);
   const first = blocks.find((block) => block.type === 'text');
   if (!first || first.type !== 'text') return '';
   return first.text.replace(/<attachment [^>]*>[\s\S]*?<\/attachment>/g, '');
 }
 
 /** The typed text of a stored prompt: its first text block, without the attachment excerpts. */
-export function promptTextOf(content: string): string {
-  return rawPromptText(content).trim();
+export function promptTextOf(content: string, cipher: ContentCipher): string {
+  return rawPromptText(content, cipher).trim();
 }
 
 /**
@@ -77,9 +76,10 @@ async function originalPromptText(
   db: Kysely<DB>,
   tenantId: string,
   chatId: string,
-  prompt: { turn_id: string | null; content: string }
+  prompt: { turn_id: string | null; content: string },
+  cipher: ContentCipher
 ): Promise<string> {
-  if (!prompt.turn_id) return promptTextOf(prompt.content);
+  if (!prompt.turn_id) return promptTextOf(prompt.content, cipher);
   const rows = await db
     .selectFrom('chat_messages')
     .select(['content'])
@@ -90,9 +90,9 @@ async function originalPromptText(
     .where('kind', '=', 'prompt')
     .orderBy('seq', 'asc')
     .execute();
-  if (rows.length === 0) return promptTextOf(prompt.content);
+  if (rows.length === 0) return promptTextOf(prompt.content, cipher);
   return rows
-    .map((row) => rawPromptText(row.content))
+    .map((row) => rawPromptText(row.content, cipher))
     .join('')
     .trim();
 }
@@ -120,7 +120,7 @@ export async function resendFromMessage(
   const text =
     input.text !== null
       ? input.text
-      : await originalPromptText(db, input.tenantId, access.chat.id, prompt);
+      : await originalPromptText(db, input.tenantId, access.chat.id, prompt, access.cipher);
   const ownUploads = await db
     .selectFrom('chat_attachments')
     .select('id')
@@ -191,22 +191,11 @@ export async function resendFromMessage(
     }
   }
 
-  const extraBlocks =
-    attachmentIds.length > 0
-      ? await attachmentPromptBlocks(
-          db,
-          input.tenantId,
-          input.session.subject,
-          access.chat.id,
-          attachmentIds
-        )
-      : [];
   const started = await startChatTurn(db, {
     tenantId: input.tenantId,
     session: input.session,
     chatId: access.chat.id,
     text,
-    extraBlocks,
     attachmentIds,
     llmModelId: input.llmModelId ?? null,
     voice: input.voice === true,

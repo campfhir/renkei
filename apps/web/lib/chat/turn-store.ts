@@ -24,6 +24,7 @@ import { touchChat } from './store';
 import { interruptSubagentRunsOfTurn } from './subagent-runs';
 import type { TurnStore } from './turn-runner';
 import type { AttachmentView } from './views';
+import type { ContentCipher } from './content-crypto';
 
 /** A tool's file beyond this is not kept; the model saw what it saw. */
 const ARTIFACT_MAX_BYTES = 25_000_000;
@@ -39,6 +40,8 @@ export function createTurnStore(
     chatTitle: string | null;
     /** The model this turn runs on, stamped on every ledger row it writes. */
     model: LlmCallModel | null;
+    /** The chat's cipher: every row this turn writes is sealed under it. */
+    cipher: ContentCipher;
   }
 ): TurnStore {
   return {
@@ -51,12 +54,13 @@ export function createTurnStore(
         kind: input.kind,
         status: input.status,
         blocks: input.blocks,
+        cipher: scope.cipher,
       });
       if (!inserted) throw new Error('The content encryption key is not configured.');
       return inserted;
     },
     async flushAssistant(id, blocks, patch) {
-      await updateMessageContent(db, id, blocks, patch);
+      await updateMessageContent(db, id, blocks, scope.cipher, patch);
     },
     heartbeat(iterations, stage) {
       return heartbeatTurn(db, scope.turnId, iterations, stage);
@@ -131,6 +135,7 @@ export function createTurnStore(
           maxBytes: ARTIFACT_MAX_BYTES,
           // Tool output was redacted at the MCP boundary already.
           redactor: null,
+          cipher: scope.cipher,
           origin: 'model',
           messageId,
         });

@@ -4,46 +4,30 @@
  * that a denied credential never reaches the network. `webex.test.ts` stubs
  * this interface entirely to test the TOOLS; this file is the other half,
  * proving the concrete implementations do what WebexAuth promises.
+ *
+ * The delegate is faked at the client boundary: `describe` answers what a
+ * grant row would, and the grant's fetcher rides global fetch so the
+ * suite's fetch mock sees each request as the delegate would forward it.
  */
 
-jest.mock('@renkei/provider-grants', () => ({
-  getGrant: jest.fn(async () => ({
-    ok: true,
-    val: {
-      accessToken: 'token-1',
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      accountId: 'acct-1',
-      metadata: { personEmail: 'alice@example.com' },
-    },
-  })),
-  refreshGrantTokens: jest.fn(),
-  WEBEX_USER: 'webex-user',
-  WebexUserAdapter: class {},
-}));
-jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
-jest.mock('@/lib/webex-app', () => ({ getWebexUserApp: jest.fn(async () => null) }));
+const mockDescribe = jest.fn();
+
+jest.mock('@renkei/delegate-client', () => {
+  const actual =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    ...actual,
+    delegateGrants: () => ({ describe: (...args: unknown[]) => mockDescribe(...args) }),
+    grantFetch: (grant: Parameters<typeof actual.grantKeyOf>[0]) =>
+      actual.authedFetch((url, init) => fetch(url, init), actual.grantKeyOf(grant)),
+  };
+});
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
 }));
 
-/** Accepts any chain, always resolves the one row resolveWebexAccess needs. */
-jest.mock('@renkei/db', () => {
-  const chain: unknown = new Proxy(
-    {},
-    {
-      get: (_t, property) => {
-        if (property === 'executeTakeFirst') {
-          return async () => ({ provider_account_id: 'acct-1' });
-        }
-        return () => chain;
-      },
-    }
-  );
-  return { getDatabase: () => ({ ok: true, val: chain }) };
-});
-
-import { oauthWebexAuth, deniedWebexAuth } from './webex-auth';
+import { oauthWebexAuth, deniedWebexAuth, resolveWebexAccess } from './webex-auth';
 import type { MCPToolContext } from '../common';
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
@@ -58,6 +42,10 @@ const realFetch = global.fetch;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockDescribe.mockResolvedValue({
+    ok: true,
+    val: { accountId: 'acct-1', metadata: { personEmail: 'alice@example.com' } },
+  });
   global.fetch = jest.fn(
     async () => new Response('{"id":"msg-1"}', { status: 200 })
   ) as unknown as typeof fetch;
@@ -65,6 +53,39 @@ beforeEach(() => {
 
 afterAll(() => {
   global.fetch = realFetch;
+});
+
+describe('resolveWebexAccess', () => {
+  it('asks the delegate about the caller’s grant and hands back its fetcher plus the address', async () => {
+    const access = await resolveWebexAccess(context());
+
+    expect(typeof access).not.toBe('string');
+    if (typeof access === 'string') return;
+    expect(access.personEmail).toBe('alice@example.com');
+    expect(access.auth.grantKey).toBe('webex:tenant-1:subject-1');
+    expect(mockDescribe).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      provider: 'webex',
+      subject: 'subject-1',
+    });
+  });
+
+  it('phrases a missing grant the way the connectors page would', async () => {
+    mockDescribe.mockResolvedValue({ ok: false, err: { type: 'NO_GRANT' } });
+
+    const access = await resolveWebexAccess(context());
+
+    expect(access).toBe(
+      'WebEx is not connected. Connect it on the Connectors page, then try again.'
+    );
+  });
+
+  it('refuses without a subject before asking the delegate anything', async () => {
+    const access = await resolveWebexAccess(context({ subject: undefined }));
+
+    expect(access).toContain('No signed-in subject');
+    expect(mockDescribe).not.toHaveBeenCalled();
+  });
 });
 
 describe('oauthWebexAuth — the call-time scope gate', () => {
@@ -98,14 +119,15 @@ describe('oauthWebexAuth — the call-time scope gate', () => {
 });
 
 describe('oauthWebexAuth — the request itself', () => {
-  it('sends a bearer token against the webexapis.com base', async () => {
+  it('sends the request on the grant fetcher against the webexapis.com base, with no token of its own', async () => {
     const auth = oauthWebexAuth(context());
 
     await auth.fetch([], '/rooms?max=10');
 
     const [url, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://webexapis.com/v1/rooms?max=10');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer token-1');
+    // The delegate attaches Authorization; nothing here may set one.
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
 
   it('sets Content-Type: application/json for a JSON string body', async () => {
@@ -141,6 +163,26 @@ describe('oauthWebexAuth — the request itself', () => {
     expect(global.fetch).not.toHaveBeenCalled();
     const body = (await response.json()) as { message: string };
     expect(body.message).toContain('No signed-in subject');
+  });
+
+  it('turns a delegate refusal into the resolver’s own words, not a WebEx answer', async () => {
+    // The delegate never reached WebEx: the grant was revoked between the
+    // describe and the call. Its refusal carries x-delegate-error.
+    global.fetch = jest.fn(
+      async () =>
+        new Response('{"error":{"type":"GRANT_REVOKED"}}', {
+          status: 403,
+          headers: { 'x-delegate-error': 'GRANT_REVOKED' },
+        })
+    ) as unknown as typeof fetch;
+    const auth = oauthWebexAuth(context());
+
+    const response = await auth.fetch([], '/rooms');
+
+    expect(response.ok).toBe(false);
+    const body = (await response.json()) as { message: string };
+    expect(body.message).toContain('revoked');
+    expect(body.message).toContain('Reconnect');
   });
 });
 

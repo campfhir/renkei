@@ -15,6 +15,7 @@ import path from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { keyFor } from './keys';
 
 test.use({
   browserName: 'chromium',
@@ -38,11 +39,6 @@ function secretbox(plaintext: string): string {
     cipher.getAuthTag().toString('base64'),
     ciphertext.toString('base64'),
   ].join('.');
-}
-
-/** Sealed chat content: the `renc1:` envelope over the secretbox. */
-function sealContent(plaintext: string): string {
-  return `renc1:${secretbox(plaintext)}`;
 }
 
 /** Per-project fixtures: the Playwright projects share one database. */
@@ -88,6 +84,12 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
        VALUES ($1, $2, $3, $4, NOW())`,
       [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.chatTitle]
     );
+    const chatKey = await keyFor(client, {
+      tenantId: E2E_TENANT_ID,
+      kind: 'chat',
+      resourceId: ids.chatId,
+      ownerSubject: E2E_SUBJECT,
+    });
     await client.query(
       `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
        VALUES ($1, $2, $3, 'anthropic', 'claude-haiku-4-5', $4, TRUE, FALSE)`,
@@ -164,7 +166,7 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
           row.seq,
           row.role,
           row.kind,
-          sealContent(JSON.stringify(row.blocks)),
+          chatKey.seal(JSON.stringify(row.blocks)),
           row.stop,
         ]
       );
@@ -207,9 +209,9 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
         E2E_TENANT_ID,
         ids.chatId,
         ids.turnId,
-        sealContent(TASK),
-        sealContent(JSON.stringify(transcript)),
-        sealContent(REPORT),
+        chatKey.seal(TASK),
+        chatKey.seal(JSON.stringify(transcript)),
+        chatKey.seal(REPORT),
         ids.fastModelId,
       ]
     );

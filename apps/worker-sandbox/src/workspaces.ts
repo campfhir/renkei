@@ -33,10 +33,10 @@
  *
  * A command's environment is built from nothing — never inherited from
  * this process — plus the caller's own variables (env-secrets.ts), a
- * HOME, a PATH and a few conveniences. The git token for a clone or a
- * push rides in the child's environment as an `http.extraheader` config
- * (`GIT_CONFIG_*`), so it is never in argv, never in `.git/config`, and
- * gone when that process exits.
+ * HOME, a PATH and a few conveniences. No git token reaches the child: a
+ * clone or a push goes through the delegate's git proxy, named in the
+ * child's environment as a `url.<base>.insteadOf` config (`GIT_CONFIG_*`),
+ * so nothing secret is in argv, in `.git/config`, or in the process at all.
  *
  * Network is the one thing not narrowed here: a project's own commands
  * (`pnpm install`, a test hitting a sandbox API) need the internet, and
@@ -291,6 +291,26 @@ export function interruptRunningProcesses(): number {
   return interrupt.length;
 }
 
+/** The delegate's git proxy for one operation: `url.<base>.insteadOf = <insteadOf>`. */
+export interface GitProxy {
+  base: string;
+  insteadOf: string;
+}
+
+/**
+ * The proxy as the request carried it: an http(s) base ending in `/` and
+ * an `insteadOf` that is one of the two hosts a workspace may live on.
+ */
+export function parseGitProxy(value: unknown): GitProxy | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const record: Record<string, unknown> = Object.fromEntries(Object.entries(value));
+  const base = typeof record.base === 'string' ? record.base : '';
+  const insteadOf = typeof record.insteadOf === 'string' ? record.insteadOf : '';
+  if (!/^https?:\/\/[^\s/]+\/git\/[^\s]+\/$/.test(base)) return null;
+  if (insteadOf !== 'https://github.com/' && insteadOf !== 'https://bitbucket.org/') return null;
+  return { base, insteadOf };
+}
+
 export interface RunInput {
   cwd: string;
   home: string;
@@ -300,8 +320,13 @@ export interface RunInput {
   timeoutMs: number;
   /** Extra variables this worker sets for one call (git plumbing); win over the caller's. */
   extraEnv?: Record<string, string>;
-  /** Passed to the child only, never logged: a git credential header. */
-  gitAuthHeader?: string;
+  /**
+   * Where this one git process goes instead of its host: the delegate's
+   * git proxy (docs/delegate-key-design.md), as `url.<base>.insteadOf`.
+   * Passed to the child only; the ticket in `base` is worth one person's
+   * grant on one host for a few minutes, and no token is ever here.
+   */
+  gitProxy?: GitProxy;
   /**
    * Fires when the caller no longer wants the result — the web app's
    * chat turn was stopped and its request went away. The process tree is
@@ -345,13 +370,14 @@ export function childEnvironment(input: RunInput): Record<string, string> {
     RUSTUP_HOME,
     ...(input.extraEnv ?? {}),
   };
-  if (input.gitAuthHeader) {
+  if (input.gitProxy) {
     // Config through the environment: not argv (visible in `ps`), not
-    // .git/config (at rest on the volume). One entry, scoped to the host.
+    // .git/config (at rest on the volume) — the remote stays the real host
+    // and only this one process is rerouted through the delegate.
     const count = Number(env.GIT_CONFIG_COUNT ?? '0');
     env.GIT_CONFIG_COUNT = String(count + 1);
-    env[`GIT_CONFIG_KEY_${count}`] = 'http.https://bitbucket.org/.extraheader';
-    env[`GIT_CONFIG_VALUE_${count}`] = `Authorization: ${input.gitAuthHeader}`;
+    env[`GIT_CONFIG_KEY_${count}`] = `url.${input.gitProxy.base}.insteadOf`;
+    env[`GIT_CONFIG_VALUE_${count}`] = input.gitProxy.insteadOf;
   }
   return env;
 }
@@ -598,7 +624,7 @@ export interface CloneInput {
   storageKey: string;
   identity: ExecIdentity | null;
   cloneUrl: string;
-  authHeader: string;
+  gitProxy: GitProxy;
   /** Empty means the repository's default branch. */
   branch: string;
   /** 0 means the whole history. */
@@ -626,7 +652,7 @@ export async function cloneRepository(input: CloneInput): Promise<CloneOutcome> 
     identity: input.identity,
     env: {},
     timeoutMs: CLONE_TIMEOUT_MS,
-    gitAuthHeader: input.authHeader,
+    gitProxy: input.gitProxy,
   };
   const args = ['clone', '--no-tags'];
   if (input.depth > 0) args.push('--depth', String(input.depth), '--no-single-branch');

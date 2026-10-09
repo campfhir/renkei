@@ -264,13 +264,6 @@ export const chatClient = {
   revoke: (tenantId: string, kind: ResourceKind, resourceId: string, grantId: string) =>
     sendJsonFull(`${base(tenantId)}/${grantPath(kind, resourceId)}/${grantId}`, 'DELETE'),
 
-  publish: (tenantId: string, kind: 'chat_project' | 'prompt_library', id: string, on: boolean) =>
-    sendJsonFull(
-      `${base(tenantId)}/${kind === 'chat_project' ? 'projects' : 'prompt-libraries'}/${id}`,
-      'PATCH',
-      { publishedToOrg: on }
-    ),
-
   people: (tenantId: string) =>
     getJson<{ people: { subject: string; email: string; displayName: string | null }[] }>(
       `${base(tenantId)}/people`

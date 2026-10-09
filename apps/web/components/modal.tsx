@@ -30,12 +30,18 @@ export default function Modal({
   onClose,
   children,
   size = 'md',
+  dismissible = true,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   /** 'lg' for a form with a list in it; 'wide' for content that needs the room — a diff side by side. */
   size?: 'md' | 'lg' | 'wide';
+  /**
+   * False for a dialog the person must answer (an encryption key shown
+   * once): no close button, and the backdrop and Escape do nothing.
+   */
+  dismissible?: boolean;
 }) {
   // There is no document on the server; the portal target exists only once
   // this has mounted. A dialog is opened by a click, so nobody sees the
@@ -45,11 +51,11 @@ export default function Modal({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape' && dismissible) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, dismissible]);
 
   if (!mounted) return null;
 
@@ -58,7 +64,7 @@ export default function Modal({
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      onClick={onClose}
+      onClick={dismissible ? onClose : undefined}
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
     >
       <div
@@ -67,14 +73,16 @@ export default function Modal({
       >
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold">{title}</h2>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-          >
-            <Icon path={ICONS.close} />
-          </button>
+          {dismissible ? (
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+            >
+              <Icon path={ICONS.close} />
+            </button>
+          ) : null}
         </div>
         {children}
       </div>

@@ -38,7 +38,7 @@ export async function collectCalendar(
   // and miss today's instance entirely.
   const result = await graphGet(
     context,
-    access.accessToken,
+    access.auth,
     `/me/calendarView?startDateTime=${graphInstant(period.start)}` +
       `&endDateTime=${graphInstant(period.end)}` +
       `&$select=subject,start,end,location,organizer,attendees,isAllDay,isCancelled,onlineMeetingUrl` +
@@ -92,7 +92,7 @@ export async function collectUnreadMail(
 
   const result = await graphGet(
     context,
-    access.accessToken,
+    access.auth,
     `/me/mailFolders('inbox')/messages?$filter=${encodeURIComponent(filter)}` +
       `&$orderby=receivedDateTime desc&$top=${MAX_ITEMS_PER_SECTION}&$count=true` +
       `&$select=subject,from,receivedDateTime,bodyPreview,importance,hasAttachments`,

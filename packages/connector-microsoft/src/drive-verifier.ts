@@ -11,8 +11,8 @@
  * not something to reimplement and could not be answered from the index
  * anyway.
  *
- * So we ask Graph, as the requesting user: fetch each candidate item with
- * THEIR delegated token and keep what comes back 200. The response IS the
+ * So we ask Graph, as the requesting user: fetch each candidate item through
+ * THEIR grant's fetcher and keep what comes back 200. The response IS the
  * permission answer. Anything else — 403, 404, a throttle, a timeout — is
  * not an affirmative grant and therefore denies, per the gate's default-deny
  * contract.
@@ -26,6 +26,7 @@
 import type { AccessVerifier, SourceRef } from '@renkei/gates';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest } from './client';
 import { partsOfSharepointRefId, SHAREPOINT_KNOWLEDGE_PROVIDER } from './drive-refs';
 
@@ -43,21 +44,19 @@ const BATCH_SIZE = 20;
 const VERIFY_TIMEOUT_MS = 2_500;
 
 /**
- * Resolving the CALLER's own Graph credential.
- *
- * Must return a token that is fresh: Microsoft access tokens live about an
- * hour, and a stale one 401s every sub-request. Because the gate denies on
- * anything that is not an affirmative 200, that failure is invisible — it
- * presents as "SharePoint search returns nothing", indistinguishable from
- * "nothing is indexed". Refresh proactively in the lookup; do not rely on
- * retrying a 401 inside the verification budget.
+ * Resolving the CALLER's own Graph credential: an `AuthedFetch` bound to
+ * their grant. The delegate behind it owns token freshness and the 401
+ * retry, so a stale token is no longer this layer's failure mode — but the
+ * gate still denies on anything that is not an affirmative 200, so a grant
+ * the delegate refuses presents as "SharePoint search returns nothing",
+ * indistinguishable from "nothing is indexed".
  *
  * Return null to deny everything — no credential, no disclosure. Returning
  * null when the grant lacks Files.Read.All is deliberate and cheaper than
  * discovering it as 20 sub-request 403s.
  */
 export interface MicrosoftCredentialLookup {
-  (userEmail: string): Promise<{ accessToken: string } | null>;
+  (userEmail: string): Promise<{ auth: AuthedFetch } | null>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -105,7 +104,7 @@ export function createSharepointAccessVerifier(lookup: MicrosoftCredentialLookup
           _key: key,
         }));
 
-        const response = await graphRequest(credential.accessToken, '/$batch', {
+        const response = await graphRequest(credential.auth, '/$batch', {
           method: 'POST',
           body: JSON.stringify({
             requests: requests.map(({ _key, ...request }) => request),

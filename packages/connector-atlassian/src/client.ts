@@ -10,8 +10,14 @@
  *
  * Both products sit behind the same gateway host, differing only in the
  * product segment: `api.atlassian.com/ex/{jira,confluence}/{cloudId}`.
+ *
+ * Every call rides the caller's `AuthedFetch`: the delegate worker holds
+ * the grant's token, attaches the Authorization header, refreshes and
+ * retries a 401. Nothing here sees a token, and anything set in
+ * Authorization is dropped by the delegate.
  */
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 
 export const ATLASSIAN_GATEWAY = 'https://api.atlassian.com/ex';
@@ -41,7 +47,8 @@ export type AtlassianProduct = 'jira' | 'confluence';
 export interface AtlassianCall {
   product: AtlassianProduct;
   cloudId: string;
-  accessToken: string;
+  /** The grant's fetcher; the delegate behind it supplies the credential. */
+  auth: AuthedFetch;
   /** Path after the product/cloudId segment, e.g. '/rest/api/3/search/jql'. */
   path: string;
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -67,10 +74,9 @@ export async function atlassianFetch(call: AtlassianCall): Promise<AtlassianResp
   await limiter.take(call.lane);
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await call.auth(url, {
       method: call.method ?? 'GET',
       headers: {
-        Authorization: `Bearer ${call.accessToken}`,
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },

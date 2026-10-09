@@ -15,6 +15,10 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import { createWebexUserMessageHandler } from './webex-user-message';
 import type { ClaimedEvent } from '../queue';
 import type { WebexMessage } from '@renkei/connector-webex';
+import { authedFetch } from '@renkei/delegate-client';
+
+/** A grant fetcher stand-in: the code under test only passes it through. */
+const auth = authedFetch(async () => new Response(), 'webex:tenant-1:watcher');
 
 const WATCHER_ACCOUNT = 'watcher-account-id';
 const TENANT = 'tenant-1';
@@ -44,7 +48,7 @@ function handlerWith(options: {
 }) {
   return createWebexUserMessageHandler({
     resolveAccess: async () => ({
-      accessToken: 'token',
+      auth,
       subject: 'watcher@example.com',
       personEmail: null,
       accountId: WATCHER_ACCOUNT,
