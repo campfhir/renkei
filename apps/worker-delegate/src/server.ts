@@ -170,6 +170,7 @@ function delegationInputOf(body: Record<string, unknown>): DelegationInput | nul
     session,
     automation,
     automationUntil: dateOf(body.automationUntil),
+    revokeSession: body.revokeSession === true,
   };
 }
 

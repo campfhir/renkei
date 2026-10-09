@@ -63,6 +63,8 @@ export interface HeldRow {
   wrapped_private_key: string | null;
   wrapped_automation_key: string | null;
   enrolled_at: Date | null;
+  /** For a held row: a verifier of the automation key (enrollment.ts, checkOwnAutomation). */
+  verifier: string | null;
 }
 
 export async function readKeyRow(
@@ -79,6 +81,7 @@ export async function readKeyRow(
       'wrapped_private_key',
       'wrapped_automation_key',
       'enrolled_at',
+      'verifier',
     ])
     .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)

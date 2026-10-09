@@ -8,7 +8,7 @@
  * involved. Needs DATABASE_URL and TOKEN_ENCRYPTION_KEY.
  */
 
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { getDatabase, closeDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
@@ -458,6 +458,58 @@ describeDb('worker-delegate', () => {
     const sealed = sealDelegations(ownerKeys, {
       instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
     });
+
+    // A session cookie alone cannot replace the automation rows: without the
+    // session blob they are refused, and an automation blob of some other
+    // key is refused even beside a valid session blob. Nothing changed.
+    const cookieOnly = await op('keys/delegate', {
+      tenantId,
+      subject: owner,
+      sessionId: ownerSessionId,
+      session: [{ instanceId: randomUUID(), sealedKey: 'sbox1:x:y' }],
+      automation: sealed.automation,
+    });
+    expect(cookieOnly.status).toBe(423);
+    expect(errorType(cookieOnly.json)).toBe('NEEDS_SESSION');
+    const forgedAutomation = sealDelegations(
+      { ...ownerKeys, automationKey: randomBytes(32) },
+      { instances: [{ id: instance.id, publicKey: instance.pair.publicKey }] }
+    );
+    const forged = await op('keys/delegate', {
+      tenantId,
+      subject: owner,
+      sessionId: ownerSessionId,
+      session: sealed.session,
+      automation: forgedAutomation.automation,
+    });
+    expect(forged.status).toBe(400);
+    expect(errorType(forged.json)).toBe('BAD_DELEGATION');
+    expect(
+      (await op('keys/status', { tenantId, subject: owner })).json.automationInstances
+    ).toEqual([]);
+    // An empty session list stores nothing and drops this session's rows only on request.
+    const empty = await op('keys/delegate', {
+      tenantId,
+      subject: owner,
+      sessionId: ownerSessionId,
+      session: [],
+      automation: [],
+    });
+    expect(empty.status).toBe(400);
+    expect(errorType(empty.json)).toBe('BAD_DELEGATION');
+    expect(
+      (
+        await op('keys/delegate', {
+          tenantId,
+          subject: owner,
+          sessionId: ownerSessionId,
+          session: [],
+          automation: [],
+          revokeSession: true,
+        })
+      ).status
+    ).toBe(200);
+
     const restored = await op('keys/delegate', {
       tenantId,
       subject: owner,

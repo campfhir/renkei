@@ -30,15 +30,24 @@ import {
   decrypt,
   encrypt,
   isSealedBox,
+  kekVerifier,
   openForUser,
   unwrapKey,
+  verifierMatches,
   wrapKey,
   x25519PublicKeyOf,
   USER_ENVELOPE_PREFIX,
 } from '@renkei/crypto';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { getKeyRing, readKeyRow, ringFromUserKey, type HeldRow, type KeyError } from './keyring';
+import {
+  getKeyRing,
+  readKeyRow,
+  ringFromUserKey,
+  type HeldRow,
+  type KeyError,
+  type KeyRing,
+} from './keyring';
 import { legacyKekOf, type LegacyKekError } from './legacy';
 import { verifySession } from './request-scope';
 import { PRIVATE_ENVELOPE_PREFIX } from './user-sealed';
@@ -63,6 +72,12 @@ export interface DelegationInput {
   automation: SealedDelegation[];
   /** When the automation delegations lapse; clamped to the maximum. */
   automationUntil: Date | null;
+  /**
+   * An empty `session` list is otherwise refused (a request that carries no
+   * delegation has nothing to store and would only drop this session's);
+   * set when dropping them is the point (sign-out, "forget this session").
+   */
+  revokeSession?: boolean;
 }
 
 export interface EnrollInput extends DelegationInput {
@@ -87,7 +102,13 @@ export type EnrollError =
   | 'DECRYPTION_ERROR';
 
 export type DelegateError =
-  'NO_VAULT' | 'NOT_ENROLLED' | 'BAD_DELEGATION' | 'SESSION_MISMATCH' | 'NO_USER_KEY';
+  | 'NO_VAULT'
+  | 'NOT_ENROLLED'
+  | 'BAD_DELEGATION'
+  | 'SESSION_MISMATCH'
+  /** Replacing the automation delegations needs the person's own session blob in the same request. */
+  | 'NEEDS_SESSION'
+  | 'NO_USER_KEY';
 
 export type RotateError =
   KeyError | 'BAD_DELEGATION' | 'KEY_MISMATCH' | 'SESSION_MISMATCH' | 'DECRYPTION_ERROR';
@@ -286,6 +307,38 @@ function openOwnDelegation(
   return ok({ userKey, automationKey: automation.val });
 }
 
+/**
+ * The automation blob sealed to THIS instance must open to the person's
+ * real automation key — the one their session ring (or their fresh
+ * wrappings, at rotation) says it is — and to the verifier the row keeps
+ * of it. Without that, a request that proves nothing could replace every
+ * automation row with boxes of its own making and sideline the person's
+ * agents until their next sign-in, or hand a key of the attacker's choosing
+ * to a delegate instance.
+ */
+function checkOwnAutomation(
+  automation: SealedDelegation[],
+  expected: Buffer,
+  verifier: string | null
+): Result<void, 'NO_VAULT' | 'BAD_DELEGATION'> {
+  const vault = keyVault();
+  if (!vault) return err('NO_VAULT' as const);
+  const own = automation.find((entry) => entry.instanceId === vault.instanceId);
+  if (!own || !isSealedBox(own.sealedKey)) {
+    return err('BAD_DELEGATION' as const, {
+      message: 'the automation delegation for this instance is missing',
+    });
+  }
+  const opened = vault.open(own.sealedKey);
+  if (!opened || opened.byteLength !== 32 || !opened.equals(expected)) {
+    return err('BAD_DELEGATION' as const, {
+      message: "the automation delegation does not open to this person's automation key",
+    });
+  }
+  if (verifier && !verifierMatches(opened, verifier)) return err('BAD_DELEGATION' as const);
+  return ok();
+}
+
 function clampAutomationUntil(until: Date | null): Date {
   const max = Date.now() + AUTOMATION_WINDOW_MAX_MS;
   if (!until || Number.isNaN(until.getTime()))
@@ -398,6 +451,10 @@ export async function enroll(
       wrapped_automation_key: input.wrappedAutomationKey,
     });
     if (!keys.ok) return keys;
+    if (input.automation.length > 0) {
+      const automation = checkOwnAutomation(input.automation, keys.val.automationKey, null);
+      if (!automation.ok) return automation;
+    }
     const version = (existing?.version ?? 0) + 1;
     let migrated = { grants: 0, values: 0 };
     if (existing) {
@@ -429,7 +486,9 @@ export async function enroll(
         wrapped_private_key: input.wrappedPrivateKey,
         wrapped_automation_key: input.wrappedAutomationKey,
         enrolled_at: enrolledAt,
-        verifier: null,
+        // For a held row the verifier is of the AUTOMATION key: what a later
+        // `delegate` checks an automation blob against (checkOwnAutomation).
+        verifier: kekVerifier(keys.val.automationKey),
         sealed_kek: null,
         unlocked_until: null,
         rotated_at: existing ? enrolledAt : null,
@@ -442,7 +501,7 @@ export async function enroll(
           wrapped_private_key: input.wrappedPrivateKey,
           wrapped_automation_key: input.wrappedAutomationKey,
           enrolled_at: enrolledAt,
-          verifier: null,
+          verifier: kekVerifier(keys.val.automationKey),
           sealed_kek: null,
           unlocked_until: null,
           rotated_at: enrolledAt,
@@ -455,9 +514,14 @@ export async function enroll(
 }
 
 /**
- * Fresh delegations from an enrolled person's browser. The one sealed to
- * this instance is checked against the row (it must open to the user key
- * the wrappings are under) when present; the others are stored as sealed.
+ * Fresh delegations from an enrolled person's browser. The session blob
+ * sealed to this instance must open to the user key the wrappings are
+ * under; the others are stored as sealed. Replacing the AUTOMATION rows
+ * takes more than a session cookie: the same request must carry that valid
+ * session blob, and the automation blob for this instance must open to the
+ * automation key the ring says the person has (and the row's verifier of
+ * it). An empty session list stores nothing and is refused unless the
+ * caller says dropping this session's rows is the point.
  */
 export async function storeDelegations(
   db: Kysely<DB>,
@@ -468,17 +532,23 @@ export async function storeDelegations(
   const row = await readKeyRow(db, input.tenantId, input.subject);
   if (!row) return err('NO_USER_KEY' as const);
   if (row.mode !== 'held') return err('NOT_ENROLLED' as const);
+  if (input.session.length === 0 && !input.revokeSession) {
+    return err('BAD_DELEGATION' as const, {
+      message: "no session delegation; set revokeSession to drop this session's",
+    });
+  }
   const ownSession = input.session.find((entry) => entry.instanceId === vault.instanceId);
+  let ring: KeyRing | null = null;
   if (ownSession) {
     const userKey = vault.open(ownSession.sealedKey);
-    if (!userKey || !ringFromUserKey(input.tenantId, input.subject, row, userKey).ok) {
-      return err('BAD_DELEGATION' as const);
-    }
+    const made = userKey ? ringFromUserKey(input.tenantId, input.subject, row, userKey) : null;
+    if (!made || !made.ok) return err('BAD_DELEGATION' as const);
+    ring = made.val;
   }
-  const ownAutomation = input.automation.find((entry) => entry.instanceId === vault.instanceId);
-  if (ownAutomation) {
-    const automationKey = vault.open(ownAutomation.sealedKey);
-    if (!automationKey || automationKey.byteLength !== 32) return err('BAD_DELEGATION' as const);
+  if (input.automation.length > 0) {
+    if (!ring) return err('NEEDS_SESSION' as const);
+    const automation = checkOwnAutomation(input.automation, ring.automationKey, row.verifier);
+    if (!automation.ok) return automation;
   }
   const session = await boundSession(db, input);
   if (!session.ok) return session;
@@ -529,6 +599,10 @@ export async function rotateUserKey(
   });
   if (!next.ok) return next.err.type === 'NO_VAULT' ? err('NO_VAULT' as const) : next;
   if (!next.val.automationKey.equals(ring.automationKey)) return err('KEY_MISMATCH' as const);
+  if (input.automation.length > 0) {
+    const automation = checkOwnAutomation(input.automation, ring.automationKey, row.verifier);
+    if (!automation.ok) return automation;
+  }
   const session = await boundSession(db, input);
   if (!session.ok) return session;
   return db

@@ -148,8 +148,17 @@ export async function delegateInBrowser(
       failure: { code: 'wrong_key', error: 'This key does not fit your account.' },
     };
   }
+  const session = await sealToInstances(status.instances, userKey);
+  if (session.length === 0) {
+    // Nothing to seal to: the delegate refuses an empty list rather than
+    // drop this session's rows, so say why here instead of asking.
+    return {
+      ok: false,
+      failure: { code: 'no_instances', error: 'No key service is running to hold your key.' },
+    };
+  }
   const answer = await post(`/api/tenant/${tenantId}/keys/delegate`, {
-    session: await sealToInstances(status.instances, userKey),
+    session,
     automation: automationKey ? await sealToInstances(status.instances, automationKey) : [],
     automationDays: options.automationDays,
   });

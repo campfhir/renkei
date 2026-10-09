@@ -86,6 +86,7 @@ const KEYS_OP_ERRORS: readonly KeysOpError[] = [
   'KEY_LOCKED',
   'WRONG_PASSPHRASE',
   'DECRYPTION_ERROR',
+  'SESSION_MISMATCH',
 ];
 
 function keyOpError(error: DelegateCallError): KeyOpError {
@@ -152,6 +153,7 @@ function delegationBody(input: DelegationInput): Record<string, unknown> {
     session: input.session,
     automation: input.automation,
     automationUntil: input.automationUntil ? input.automationUntil.toISOString() : null,
+    revokeSession: input.revokeSession === true,
   };
 }
 
