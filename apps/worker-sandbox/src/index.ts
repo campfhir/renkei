@@ -120,7 +120,7 @@ function envFlag(name: string): boolean {
 }
 
 function fatal(message: string): never {
-  console.error(`FATAL [worker-sandbox]: ${message.replace(/\n|\r/g, ' ')}`);
+  console.error(`FATAL [worker-sandbox]: ${message.replace(/[\r\n]+/g, ' ')}`);
   process.exit(1);
 }
 

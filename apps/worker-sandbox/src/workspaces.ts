@@ -921,8 +921,11 @@ export async function writeWorkspaceFile(
   } catch (error) {
     if (errnoCode(error) !== 'EEXIST') throw error;
     created = false;
+    // Not a check-then-use: both opens carry O_NOFOLLOW, so a link slipped
+    // in between them is refused by the kernel; only `created` could be
+    // stale, and it is informational.
     try {
-      handle = await open(path, O_WRONLY | O_TRUNC | O_NOFOLLOW);
+      handle = await open(path, O_WRONLY | O_TRUNC | O_NOFOLLOW); // codeql[js/file-system-race]
     } catch (inner) {
       const code = errnoCode(inner);
       if (code === 'ELOOP')

@@ -371,7 +371,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   } catch (error) {
     console.error(
       'OIDC callback error:',
-      JSON.stringify(error instanceof Error ? error.message : String(error))
+      (error instanceof Error ? error.message : String(error)).replace(/[\r\n]+/g, ' ')
     );
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
   }
