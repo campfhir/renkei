@@ -403,9 +403,17 @@ DESC` says which server to add next.
   `CAP_SETUID`/`CAP_SETGID`/`CAP_SETPCAP` held — Docker's defaults) and
   refuses to start otherwise, saying why. A
   command has the container's network (a project's install and tests
-  need it), so a deployment that enables workspaces should give this
-  service its own network with a route out and none to postgres or the
-  other workers. `SANDBOX_ENV_SECRETS_KEY` (`openssl rand -base64 32`)
+  need it), which is why `docker-compose.yaml` puts this service on the
+  `renkei-sandbox` network alone — a route out, plus the web app and the
+  delegate's git proxy, which join that network to be reached — and
+  postgres and every other worker on `renkei-internal`, which the sandbox
+  is not on. The same file drops every capability from this container
+  but the seven the uid drop needs (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
+  `KILL`, `SETGID`, `SETUID`, `SETPCAP`), sets `no-new-privileges` (a
+  setuid binary in a checkout cannot regain root; setpriv's drop is a
+  loss of privilege and still works), and runs every stateless service
+  with a read-only root filesystem and no capabilities at all. Keep that
+  shape on any other platform. `SANDBOX_ENV_SECRETS_KEY` (`openssl rand -base64 32`)
   seals the `.env` a code project's commands run with
   (migration 101, `sandbox_env_secrets`); it falls back to
   `TOKEN_ENCRYPTION_KEY`, and a dedicated key is the recommendation so the
@@ -422,16 +430,20 @@ DESC` says which server to add next.
 chats get, and the Organization → Code services page) and this worker —
 lets a project's chat start a container beside its checkout (Postgres,
 Redis, a broker) for the project's tests, from the images the
-organization allows. The worker needs a Docker engine for that:
-uncomment the `/var/run/docker.sock` mount on `worker-sandbox` in
-`docker-compose.yaml`, or run a socket proxy (docker-socket-proxy with
-`CONTAINERS`, `IMAGES`, `NETWORKS` and `POST` allowed and nothing else)
-and point `SANDBOX_DOCKER_HOST=tcp://<proxy>:2375` at it — the proxy is
-the recommendation where it can be had, since the raw socket is the
-engine itself. Either way the socket is root's inside the container: a
-project's own commands run as other uids (above) and cannot open it;
-what may run is decided by this worker against the organization's
-rules, never by a command. The worker refuses to start with the flag
+organization allows. The worker needs a Docker engine for that, and it
+should get one only through a socket proxy: `docker-compose.yml` (dev)
+carries a `docker-socket-proxy` service (tecnativa/docker-socket-proxy
+with `CONTAINERS`, `IMAGES`, `NETWORKS` and `POST` allowed and nothing
+else — no exec, no volumes, no daemon configuration) behind the
+`services` profile, with the host's socket mounted read-only into the
+proxy and `SANDBOX_DOCKER_HOST=tcp://renkei-docker-proxy:2375` on the
+worker; start the stack with `docker compose --profile services up`.
+Copy that arrangement into a deployment that wants services — never
+mount `/var/run/docker.sock` into `worker-sandbox` itself, since the raw
+socket is the engine and so the host. The proxy is root's to reach
+inside the sandbox container: a project's own commands run as other uids
+(above) and cannot speak to it; what may run is decided by this worker
+against the organization's rules, never by a command. The worker refuses to start with the flag
 set and no engine answering, saying so. Services are created on an
 internal Docker network (`SANDBOX_SERVICES_NETWORK`, default
 `renkei-sandbox-services`; no route out of it), which this container
@@ -463,12 +475,23 @@ formats, with what the script writes staged back under the same quota as
 any other file. Independent of workspaces (no checkout is involved), but
 with the same arrangement for who runs it: with the flag set the
 entrypoint keeps the worker root so each run is dropped to its caller's
-own uid, and — where the kernel lets this container make a network
-namespace — started with no network at all. Docker's default profile
-withholds that (`unshare` needs `CAP_SYS_ADMIN`); the worker says so at
-boot and in every result, and a deployment that wants scripts fully
-offline adds `cap_add: [SYS_ADMIN]` to `worker-sandbox` in compose,
-weighing that capability against the rest of what the container holds.
+own uid, and started with no network at all — a network namespace of its
+own (`unshare --net`). Creating that namespace needs `CAP_SYS_ADMIN`,
+which `docker-compose.yaml` deliberately withholds from `worker-sandbox`
+(it drops every capability and adds back only the seven setpriv, chown
+and kill need); the worker is being changed to refuse a script it cannot
+isolate rather than run it on the container's network. Do **not** answer
+that with `cap_add: [SYS_ADMIN]` — it is most of root, in the one
+container that runs other people's code. The supported answer is
+**user-namespace isolation** on the host: `"userns-remap": "default"` in
+`/etc/docker/daemon.json` (then restart the daemon; existing volumes need
+their ownership shifted once, see Docker's userns-remap documentation).
+Under it the container's root is an unprivileged uid on the host, every
+file the worker writes is owned by a subordinate uid, a breakout lands as
+nobody, and the kernel lets that unprivileged root create its own user
+and network namespaces — which is what `unshare --net` needs — without
+any capability the container does not already hold. The same setting is
+worth turning on for the whole stack regardless of scripts.
 The image carries the interpreter at `/opt/sandbox-python` (pandas,
 numpy, openpyxl, XlsxWriter, pinned in `docker/Dockerfile`);
 `SANDBOX_PYTHON` points at another. A run's directory is made under
