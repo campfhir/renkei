@@ -5,13 +5,14 @@ import { NextRequest } from 'next/server';
 import { POST } from './route';
 import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 import { FREE_EMAIL_DOMAIN_ERROR } from '@/lib/free-email-domains';
+import { sha256Hex } from '@renkei/crypto';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { seedDefaultClassifierRules: mockSeed } = jest.requireMock<{
   seedDefaultClassifierRules: jest.Mock;
 }>('@renkei/email-sanitizer');
 
-function stubDb() {
+function stubDb(existing: { tenant_id: string } | undefined = undefined) {
   const inserted: { table: string; values: Record<string, unknown> }[] = [];
   const db = {
     selectFrom() {
@@ -23,7 +24,7 @@ function stubDb() {
           return this;
         },
         async executeTakeFirst() {
-          return undefined;
+          return existing;
         },
       };
     },
@@ -73,5 +74,39 @@ describe('POST /api/home-realm/create', () => {
     const body = await response.json();
     expect(body.alreadyExists).toBe(false);
     expect(inserted.find((i) => i.table === 'tenant_domains')?.values.domain).toBe('acme.com');
+  });
+
+  it('hands the creator a one-time secret and a TXT record, storing only the digest', async () => {
+    const { inserted } = stubDb();
+    const response = await POST(requestWith('acme.com'));
+    const body = await response.json();
+    const tenantRow = inserted.find((i) => i.table === 'tenants')?.values ?? {};
+
+    expect(typeof body.bootstrapSecret).toBe('string');
+    expect(body.bootstrapSecret.length).toBeGreaterThanOrEqual(32);
+    expect(tenantRow.bootstrap_secret_hash).toBe(sha256Hex(body.bootstrapSecret));
+    expect(tenantRow.bootstrap_secret_hash).not.toBe(body.bootstrapSecret);
+    expect(new Date(String(tenantRow.bootstrap_secret_expires_at)).getTime()).toBeGreaterThan(
+      Date.now()
+    );
+
+    expect(body.domainVerification).toEqual({
+      domain: 'acme.com',
+      recordType: 'TXT',
+      record: `renkei-verify=${tenantRow.domain_verification_token}`,
+    });
+    // Not routable from the sign-in page until the record is seen.
+    expect(tenantRow.domain_verified_at).toBeNull();
+  });
+
+  it('tells an anonymous caller a claimed domain is taken without naming its tenant', async () => {
+    const { inserted } = stubDb({ tenant_id: '00000000-0000-4000-8000-000000000001' });
+    const response = await POST(requestWith('acme.com'));
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.alreadyExists).toBe(true);
+    expect(body.tenantId).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain('00000000-0000-4000-8000-000000000001');
+    expect(inserted).toHaveLength(0);
   });
 });

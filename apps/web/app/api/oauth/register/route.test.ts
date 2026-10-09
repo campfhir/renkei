@@ -2,6 +2,7 @@ jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 
 import { NextRequest } from 'next/server';
 import { POST } from './route';
+import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 
 // Fetched through requireMock rather than the typed import: these stubs
 // stand in for a Kysely instance, which cannot be satisfied structurally,
@@ -71,6 +72,25 @@ function requestWith(options: { referer?: string; redirectUris?: string[] } = {}
 describe('POST /api/oauth/register (system-level)', () => {
   beforeEach(() => {
     mockGetDatabase.mockReset();
+    resetInboundLimits();
+  });
+
+  it('refuses the eleventh registration from one address in ten minutes before the database', async () => {
+    stubDb({ id: REAL_TENANT });
+    for (let i = 0; i < 10; i += 1) {
+      const response = await POST(
+        requestWith({ referer: `http://localhost/api/mcp/${REAL_TENANT}/http` })
+      );
+      expect(response.status).not.toBe(429);
+    }
+    mockGetDatabase.mockClear();
+
+    const throttled = await POST(
+      requestWith({ referer: `http://localhost/api/mcp/${REAL_TENANT}/http` })
+    );
+    expect(throttled.status).toBe(429);
+    expect(throttled.headers.get('retry-after')).toMatch(/^\d+$/);
+    expect(mockGetDatabase).not.toHaveBeenCalled();
   });
 
   it('rejects with an actionable error when no tenant can be resolved', async () => {

@@ -101,6 +101,14 @@ export interface OrgSettings {
   authorizationCodeTtlSeconds: number;
   refreshTokenTtlDays: number;
   /**
+   * How long a browser session may go unused before it is ended, in
+   * minutes (apps/web/lib/session.ts). The absolute 30-day lifetime still
+   * caps it. Twelve hours by default: a working day plus slack, so a
+   * laptop left signed in overnight on a shared desk is not a signed-in
+   * laptop in the morning.
+   */
+  sessionIdleTimeoutMinutes: number;
+  /**
    * Best-effort removal of identifiers from MCP tool results before they reach
    * a model (@renkei/redaction). On by default: the shipped detectors are
    * precise enough to run untuned, and a protection nobody switches on
@@ -151,7 +159,9 @@ export interface OrgSettings {
   agentUsageRetentionDays: number;
   /**
    * Days to keep a chat (its messages and attachments) after its last
-   * activity; 0 keeps everything. Enforced by the agents worker's sweep.
+   * activity; 0 keeps everything — an explicit opt-in, not the default,
+   * since chats carry user and connector content. Enforced by the agents
+   * worker's sweep.
    */
   chatRetentionDays: number;
   /**
@@ -225,8 +235,10 @@ export interface OrgSettings {
   webexWebhookHealthMinutes: number;
   /**
    * How long this tenant's own bored-logs rows are kept before the
-   * retention sweep purges them. 0 = keep forever (the default — deleting
-   * observability data is an explicit choice). The sweep deletes straight
+   * retention sweep purges them. 0 = keep forever — an explicit opt-in,
+   * not the default: log rows carry request and response bodies (encrypted
+   * at rest, but still content), so unbounded retention has to be chosen,
+   * not inherited. The sweep deletes straight
    * through each row's `tenantId` attribute, so one org's dial only ever
    * purges that org's rows — it does not wait on, or get vetoed by,
    * anyone else's choice.
@@ -308,13 +320,14 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   accessTokenTtlMinutes: 60,
   authorizationCodeTtlSeconds: 60,
   refreshTokenTtlDays: 30,
+  sessionIdleTimeoutMinutes: 720,
   redactionEnabled: true,
   redactionDetectors: ['ssn', 'card', 'mrn', 'dob'],
   redactionMrnFormats: [],
   agentRunRetentionDays: 30,
   agentNotificationRetentionDays: 14,
   agentUsageRetentionDays: 365,
-  chatRetentionDays: 0,
+  chatRetentionDays: 365,
   agentOptimizerWindowDays: 30,
   agentMaxChainDepth: 3,
   agentRunTimeoutMinutes: 15,
@@ -328,7 +341,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   // cadence was tripping WebEx's rate limit on orgs with many opted-in
   // users, one `/webhooks` call per grant every pass.
   webexWebhookHealthMinutes: 60,
-  logRetentionDays: 0,
+  logRetentionDays: 90,
   logLevel: 'info',
   knowledgeKeywordEnrichment: false,
   coachMarksEnabled: true,
@@ -429,6 +442,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     refreshTokenTtlDays: Number(
       coerce(stored.get('refresh_token_ttl_days'), d.refreshTokenTtlDays)
     ),
+    sessionIdleTimeoutMinutes: Number(
+      coerce(stored.get('session_idle_timeout_minutes'), d.sessionIdleTimeoutMinutes)
+    ),
     redactionEnabled: Boolean(coerce(stored.get('redaction_enabled'), d.redactionEnabled)),
     redactionDetectors: coerceStringList(stored.get('redaction_detectors'), d.redactionDetectors),
     // A new key rather than a reused one: the old `redaction_mrn_patterns`
@@ -515,6 +531,7 @@ export async function setOrgSettings(
     ['access_token_ttl_minutes', updates.accessTokenTtlMinutes],
     ['authorization_code_ttl_seconds', updates.authorizationCodeTtlSeconds],
     ['refresh_token_ttl_days', updates.refreshTokenTtlDays],
+    ['session_idle_timeout_minutes', updates.sessionIdleTimeoutMinutes],
     ['redaction_enabled', updates.redactionEnabled],
     ['redaction_detectors', updates.redactionDetectors],
     ['redaction_mrn_formats', updates.redactionMrnFormats],

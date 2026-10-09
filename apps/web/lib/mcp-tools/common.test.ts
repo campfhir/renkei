@@ -68,6 +68,43 @@ describe('jiraFetch through the grant fetcher', () => {
     );
   });
 
+  it('persists no request or response body for a successful exchange', async () => {
+    const { auth } = fakeAuth(async () =>
+      jsonResponse(200, { key: 'X-1', fields: { summary: 's' } })
+    );
+
+    await jiraFetch('https://example.test/rest/api/3/issue', auth, {
+      method: 'POST',
+      body: JSON.stringify({ fields: { summary: 'user content' } }),
+    });
+
+    const okLog = (logger.debug as jest.Mock).mock.calls.find(
+      ([message]) => message === 'OK response'
+    );
+    expect(okLog).toBeDefined();
+    const attributes: Record<string, unknown> = okLog?.[1] ?? {};
+    expect(attributes.status).toBe(200);
+    expect(attributes).not.toHaveProperty('requestBody');
+    expect(attributes).not.toHaveProperty('responseBody');
+  });
+
+  it('still records the bodies of a failed exchange, secure()-marked', async () => {
+    const { auth } = fakeAuth(async () => jsonResponse(400, { errorMessages: ['bad field'] }));
+
+    await jiraFetch('https://example.test/rest/api/3/issue', auth, {
+      method: 'POST',
+      body: JSON.stringify({ fields: {} }),
+    }).catch(() => undefined);
+
+    const failLog = (logger.warn as jest.Mock).mock.calls.find(
+      ([message]) => message === 'Non-OK response'
+    );
+    expect(failLog).toBeDefined();
+    const attributes: Record<string, unknown> = failLog?.[1] ?? {};
+    expect(attributes.requestBody).toBeDefined();
+    expect(attributes.responseBody).toBeDefined();
+  });
+
   it('throws a JiraApiError carrying the status on a non-2xx answer', async () => {
     const { auth } = fakeAuth(async () =>
       jsonResponse(404, { errorMessages: ['Issue does not exist'] })

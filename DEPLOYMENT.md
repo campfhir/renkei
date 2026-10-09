@@ -902,6 +902,14 @@ sudo journalctl -u jira-mcp-gateway -f
 docker logs <container-id> -f
 ```
 
+Rows shipped to the `logs` table are purged by the retention sweep after
+the org's **Log retention** setting (admin → Settings), default 90 days.
+Setting it to 0 keeps logs forever — an explicit opt-in. An org that never
+set the dial moves from "forever" to 90 days on upgrade; set 0 before
+deploying if that is what the org wants. Successful connector exchanges no
+longer persist request or response bodies into these rows; failed ones
+still do, `secure()`-encrypted.
+
 ### Database Backups
 
 ```bash
@@ -913,6 +921,47 @@ pg_dump -U jira_mcp jira_mcp_db | gzip > /backups/jira_mcp_$(date +%Y%m%d).sql.g
 find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
 ```
 
+## Onboarding a new organization
+
+Self-service onboarding (`/create-organization`) mints a tenant for an email
+domain nobody has claimed and, since migration 146, hands the creator two
+things nobody else sees:
+
+- a **one-time onboarding secret**, valid 24 hours, that the first
+  (unauthenticated) identity-provider save must present
+  (`X-Renkei-Bootstrap-Secret`); it is spent on use. A tenant that exists
+  with no identity provider and no secret — one created before the
+  migration, or whose secret expired — cannot be claimed through the form;
+  an operator configures it directly (`tenant_oidc`) or deletes it and the
+  creator starts again;
+- a **DNS TXT record** `renkei-verify=<token>` to publish on the domain.
+  Until `POST /api/tenant/<id>/verify-domain` sees it, the home page does
+  not route that domain's addresses to the tenant (the creator can still
+  sign in by the direct `/api/auth/oidc/login?tenantId=` link). Every
+  tenant that existed at the migration is marked verified.
+
+Asking to create a tenant for a domain that is already claimed answers 409
+without the tenant's id.
+
+## Sessions, tokens and revocation
+
+- Browser sessions end after 30 days, or after the org's **Browser session
+  idle timeout** (admin → Settings, default 12 hours) without a request —
+  whichever comes first.
+- MCP refresh tokens rotate on every use (migration 147): each refresh
+  returns a new `refresh_token` and retires the presented one; presenting a
+  retired token again revokes that whole token family and the subject's
+  access tokens for the client. Rotation never extends the family's
+  lifetime (**Refresh token lifetime**, default 30 days), and a refreshed
+  token takes the roles of the subject's newest live browser session when
+  one exists, the original roles otherwise.
+- Operators end a person's access from admin → Access: **Sign out
+  everywhere** deletes their sessions, access tokens and refresh tokens and
+  writes a `user.sessions_revoked` audit event; disconnecting a connector
+  grant there also deletes that person's MCP tokens.
+- The legacy `/api/tenant/<id>/sessions` endpoint (it read the unused
+  `jira_sessions` table) is gone.
+
 ## Security Checklist
 
 - [x] HTTPS enabled (TLS 1.2+)
@@ -921,12 +970,12 @@ find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
 - [x] Regular database backups
 - [x] PostgreSQL firewall rules (only app can connect)
 - [x] Failed login attempts logged
-- [x] Rate limiting configured (nginx or app-level)
-- [x] Security headers configured (X-Frame-Options, etc.)
+- [x] Rate limiting: app-level, in-process fixed windows (`apps/web/lib/inbound-rate-limit.ts`; per forwarded client address AND a per-endpoint ceiling, so a spoofed address cannot widen the budget; N replicas multiply the ceiling). Tenant creation 5/h per client, 20/h total; OIDC sign-in start 30/min per client, 600/min per tenant; OAuth token endpoint 60/min per client, 1,200/min per tenant; dynamic client registration 10 per 10 min per client, 100 per 10 min per tenant (and per the system-level endpoint); inbound webhooks 600/min per client, 6,000/min per provider+tenant; voice 120/min per person. Webhook routes also refuse a missing or malformed signature header before any config or database read, and cap bodies at 1 MiB (413). Add nginx `limit_req` in front for a ceiling that holds across replicas.
+- [x] Security headers set by the app itself (`apps/web/lib/security-headers.ts`, via `next.config.ts`): `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (camera/geolocation/payment denied, microphone self), `X-Frame-Options: DENY` + `frame-ancestors 'none'` except on the chat's framed widget/mockup routes, `Strict-Transport-Security` when `PUBLIC_BASE_URL` is https, `X-Powered-By` removed. Content-Security-Policy is REPORT-ONLY — it still carries `'unsafe-inline'` for scripts and styles until per-request nonces are wired; review reports before enforcing.
 - [x] CORS configured properly
 - [x] SQL injection prevention (using Kysely ORM)
-- [x] CSRF protection (state verification in OAuth)
-- [x] XSS protection (React escaping, no dangerouslySetInnerHTML)
+- [x] CSRF protection (OAuth state rows are single-use and bound to the starting browser by an httpOnly cookie plus the session subject — sign-in `oidc_state_`, connector flows `connect_state_`)
+- [x] XSS protection (React escaping; `dangerouslySetInnerHTML` only for the theme bootstrap script in `components/theme-script.tsx`, whose content is a constant)
 
 ## Troubleshooting
 
@@ -1153,8 +1202,8 @@ web app stores as bytes at rest, and they live in an object store behind
 Set them in `.env`: the web app reads them to accept uploads and serve
 downloads (always through the app, under the caller's session — no
 public or signed URLs), and `worker-agents` reads them because the chat
-retention sweep (the org's **Chat retention** setting, default keep
-forever) deletes attachment blobs before it deletes the rows. Unset, chat
+retention sweep (the org's **Chat retention** setting, default 365 days;
+0 keeps forever) deletes attachment blobs before it deletes the rows. Unset, chat
 uploads are simply off — closed, never open, like the worker keys above.
 
 `docker-compose.yml` (dev) runs the Azurite emulator instead of a real

@@ -87,6 +87,15 @@ describe('org settings', () => {
     if (result.ok) expect(result.val).toEqual(DEFAULT_ORG_SETTINGS);
   });
 
+  it('bounds log and chat retention by default; 0 (forever) is an opt-in', () => {
+    // Both defaulted to 0 before: a fresh org kept every log row (request
+    // and response bodies included) and every chat indefinitely unless an
+    // admin found the dial. Unbounded retention is now something an org
+    // chooses, not something it inherits.
+    expect(DEFAULT_ORG_SETTINGS.logRetentionDays).toBe(90);
+    expect(DEFAULT_ORG_SETTINGS.chatRetentionDays).toBe(365);
+  });
+
   it('overrides only what was stored, per key', async () => {
     stubDb();
     await setOrgSettings('tenant-1', { readOnly: true, maxAttachmentBytes: 1024 });

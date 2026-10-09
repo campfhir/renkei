@@ -64,7 +64,9 @@ const NON_SESSION_AUTH: Record<string, string> = {
     'owner whose run history the analysis may read, and the row is read under that subject',
   'api/mcp/[tenantId]/oauth/token/route.ts':
     'OAuth token endpoint: client secret + PKCE code_verifier',
-  'api/oauth/callback/route.ts': 'single-use OAuth state row bound to the pending authorization',
+  'api/oauth/callback/route.ts':
+    'single-use OAuth state row bound to the pending authorization, to the starting ' +
+    'browser (connect_state_ cookie) and to its session subject (lib/connect-flow-binding.ts)',
   'api/upload/[slotId]/route.ts': 'opaque per-slot bearer, single-use claim, expiring',
   'api/webhooks/microsoft/[tenantId]/[accountId]/route.ts':
     'per-subscription clientState secret matched against webhook_subscriptions',
@@ -74,7 +76,8 @@ const NON_SESSION_AUTH: Record<string, string> = {
   'api/webhooks/github/[tenantId]/route.ts':
     'x-hub-signature-256 HMAC over raw bytes, the GitHub App Webhook secret (verifyGitHubSignature)',
   'api/webhooks/bitbucket/[tenantId]/route.ts':
-    'shared ?secret= query parameter matched against the Bitbucket connector config (verifyBitbucketSecret)',
+    'shared secret (X-Renkei-Webhook-Secret header, or legacy ?secret=) matched against the ' +
+    'Bitbucket connector config (verifyBitbucketSecret)',
 };
 
 /**
@@ -90,6 +93,9 @@ const PUBLIC: Record<string, string> = {
   'api/home-realm/create/route.ts':
     'self-service onboarding — no session can exist before the first tenant; ' +
     'throttled per-client and globally (checkInboundLimit)',
+  'api/tenant/[tenantId]/verify-domain/route.ts':
+    'DNS TXT ownership check for onboarding — before any session can exist; it proves ' +
+    'control of the domain, writes nothing but the verified timestamp, and is throttled (checkInboundLimit)',
   'api/manifest/[slug]/route.ts':
     "the tenant-scoped Web App Manifest linked from [slug]/layout.tsx's generateMetadata; " +
     'a manifest is fetched by the OS before any page runs, same as the public icon it names, ' +

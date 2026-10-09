@@ -63,6 +63,23 @@ export async function POST(
     .where('tenant_id', '=', tenantRef.id)
     .execute();
 
+  // The subject's MCP bearer credentials go with the grant: an access token
+  // or refresh token issued to them keeps naming them as the caller for up
+  // to its lifetime, and the admin pressed this to cut access now, not at
+  // the next expiry. Every client's — one revoke, no survivors.
+  if (grant.subject) {
+    await db
+      .deleteFrom('oauth_access_tokens')
+      .where('tenant_id', '=', tenantRef.id)
+      .where('subject', '=', grant.subject)
+      .execute();
+    await db
+      .deleteFrom('oauth_refresh_tokens')
+      .where('tenant_id', '=', tenantRef.id)
+      .where('subject', '=', grant.subject)
+      .execute();
+  }
+
   recordAuditEvent({
     tenantId: tenantRef.id,
     actorSubject: access.subject,

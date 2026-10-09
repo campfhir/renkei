@@ -4,6 +4,17 @@ import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { generateSecret, hashToken } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
+import { checkInboundLimit } from '@/lib/inbound-rate-limit';
+
+/**
+ * Open by specification (RFC 7591) and each call writes a row, so the
+ * throttle is what keeps it from being a client-row factory — the same
+ * budget as the tenant-scoped endpoint, keyed on this system-level one.
+ */
+const LIMITS = {
+  perClient: { limit: 10, windowMs: 10 * 60_000 },
+  global: { limit: 100, windowMs: 10 * 60_000 },
+};
 
 /**
  * Dynamic Client Registration endpoint (RFC 7591)
@@ -20,6 +31,14 @@ import { logger } from '@/lib/logger';
  *   }
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const verdict = checkInboundLimit('oauth/register', request, LIMITS);
+  if (!verdict.allowed) {
+    return NextResponse.json(
+      { error: 'slow_down', error_description: 'Too many registration requests' },
+      { status: 429, headers: { 'Retry-After': String(verdict.retryAfterSeconds) } }
+    );
+  }
+
   // No tenant is known yet at system-level registration, so the platform
   // default applies; tenant-scoped registration consults the org's setting.
   if (!DEFAULT_ORG_SETTINGS.enableDcr) {

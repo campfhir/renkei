@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
+import { bindConnectFlow } from '@/lib/connect-flow-binding';
 import { getAtlassianConfluenceApp } from '@/lib/atlassian-app';
 import { ATLASSIAN_REQUIRED_SCOPES } from '@/lib/atlassian-scopes';
 import { getOrigin } from '@/lib/get-origin';
@@ -107,7 +108,8 @@ export async function GET(
       clientId: app.clientId,
       urlLength: authUrl.toString().length,
     });
-    return NextResponse.redirect(authUrl.toString());
+    // Bound to this browser: the callback requires the cookie this sets.
+    return bindConnectFlow(NextResponse.redirect(authUrl.toString()), tenantId, state);
   } catch (error) {
     logger.error('Atlassian Confluence authorize error: {error}', {
       component: 'auth/oauth',

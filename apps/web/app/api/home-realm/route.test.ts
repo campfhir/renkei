@@ -55,4 +55,46 @@ describe('POST /api/home-realm', () => {
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toContain('/create-organization?domain=acme.com');
   });
+
+  function stubClaim(row: Record<string, unknown> | undefined) {
+    mockGetDatabase.mockReturnValue({
+      ok: true,
+      val: {
+        selectFrom() {
+          return {
+            leftJoin() {
+              return this;
+            },
+            where() {
+              return this;
+            },
+            select() {
+              return this;
+            },
+            async executeTakeFirst() {
+              return row;
+            },
+          };
+        },
+      },
+    });
+  }
+
+  it('routes a verified domain to its tenant', async () => {
+    stubClaim({ id: 't1', slug: 'acme', domain_verified_at: new Date() });
+    const response = await POST(requestWith('someone@acme.com'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toMatch(/\/acme$/);
+  });
+
+  it('never routes to a tenant that has not proven control of the domain', async () => {
+    // A squatter's tenant: created for acme.com, TXT record never published.
+    stubClaim({ id: 't1', slug: 'acme', domain_verified_at: null });
+    const response = await POST(requestWith('someone@acme.com'));
+    expect(response.status).toBe(307);
+    const location = response.headers.get('location') ?? '';
+    expect(location).toContain('/create-organization?domain=acme.com&pending=1');
+    expect(location).not.toContain('/acme');
+    expect(location).not.toContain('t1');
+  });
 });

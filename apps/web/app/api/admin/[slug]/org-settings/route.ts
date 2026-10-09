@@ -35,6 +35,9 @@ const NUMERIC_BOUNDS = {
   accessTokenTtlMinutes: [5, 1_440],
   authorizationCodeTtlSeconds: [30, 600],
   refreshTokenTtlDays: [1, 365],
+  // Floor 15 minutes (below that nobody finishes a form); the ceiling is
+  // the session's absolute 30-day lifetime, past which the dial is inert.
+  sessionIdleTimeoutMinutes: [15, 43_200],
   agentMaxChainDepth: [1, 10],
   agentRunTimeoutMinutes: [1, 120],
   // Above the 10 default is allowed on purpose; 100 is the typo guard.
@@ -89,6 +92,7 @@ const NUMERIC_KEYS = [
   'accessTokenTtlMinutes',
   'authorizationCodeTtlSeconds',
   'refreshTokenTtlDays',
+  'sessionIdleTimeoutMinutes',
   'agentMaxChainDepth',
   'agentRunTimeoutMinutes',
   'agentMaxStepAttempts',
@@ -134,6 +138,7 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
     accessTokenTtlMinutes: settings.accessTokenTtlMinutes,
     authorizationCodeTtlSeconds: settings.authorizationCodeTtlSeconds,
     refreshTokenTtlDays: settings.refreshTokenTtlDays,
+    sessionIdleTimeoutMinutes: settings.sessionIdleTimeoutMinutes,
     agentMaxChainDepth: settings.agentMaxChainDepth,
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
     agentMaxStepAttempts: settings.agentMaxStepAttempts,

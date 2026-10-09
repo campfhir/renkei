@@ -1096,7 +1096,11 @@ export interface OauthRefreshTokens {
   client_id: string;
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
+  /** Every token descended from one authorization shares this (migration 147); reuse revokes the family. */
+  family_id: Generated<string>;
   roles: Generated<string[]>;
+  /** Set when this token was exchanged for its successor; presenting it again is reuse. */
+  rotated_at: Timestamp | null;
   scope: string | null;
   subject: string;
   tenant_id: string;
@@ -1439,7 +1443,14 @@ export interface TenantOidc {
 }
 
 export interface Tenants {
+  /** SHA-256 digest of the one-time onboarding secret (migration 146); null once used or never minted. */
+  bootstrap_secret_hash: string | null;
+  bootstrap_secret_expires_at: Timestamp | null;
   created_at: Generated<Timestamp>;
+  /** The value published as `renkei-verify=<token>` in the domain's TXT record (migration 146). */
+  domain_verification_token: string | null;
+  /** When the TXT record was seen; the sign-in page routes the domain here only once set. */
+  domain_verified_at: Timestamp | null;
   id: string;
   slug: string;
 }

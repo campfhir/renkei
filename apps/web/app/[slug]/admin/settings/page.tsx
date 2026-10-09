@@ -74,6 +74,7 @@ export default async function SettingsPage({
     accessTokenTtlMinutes: settings.accessTokenTtlMinutes,
     authorizationCodeTtlSeconds: settings.authorizationCodeTtlSeconds,
     refreshTokenTtlDays: settings.refreshTokenTtlDays,
+    sessionIdleTimeoutMinutes: settings.sessionIdleTimeoutMinutes,
     agentMaxChainDepth: settings.agentMaxChainDepth,
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
     agentMaxStepAttempts: settings.agentMaxStepAttempts,

@@ -129,8 +129,9 @@ export async function PUT(
   // Optional: verifies inbound webhook deliveries
   // (app/api/webhooks/bitbucket/[tenantId]/route.ts) — a repo webhook is
   // registered by hand in Bitbucket's own repository settings with this
-  // same value as a `?secret=` query parameter on the webhook URL, since
-  // Bitbucket Cloud does not sign deliveries the way GitHub Apps do.
+  // same value as an `X-Renkei-Webhook-Secret` header (or, for older
+  // registrations, a `?secret=` query parameter), since Bitbucket Cloud
+  // does not sign deliveries the way GitHub Apps do.
   const mergedWebhookSecret =
     typeof webhookSecret === 'string' && webhookSecret.length > 0
       ? webhookSecret

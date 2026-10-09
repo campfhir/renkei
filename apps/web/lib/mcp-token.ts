@@ -10,7 +10,8 @@
 
 import { timingSafeEqual } from 'crypto';
 import type { NextRequest } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import type { Kysely } from 'kysely';
+import { getDatabase, type DB } from '@renkei/db';
 import { sha256Hex, generateSecret } from '@renkei/crypto';
 import { logger } from '@/lib/logger';
 
@@ -131,11 +132,20 @@ export async function storeAccessToken(params: {
   ttlSeconds: number;
   application?: Application;
   roles?: string[];
+  /**
+   * The connection to write on — a transaction when the caller's other
+   * writes (a refresh-token rotation) must land with this one or not at all.
+   */
+  db?: Kysely<DB>;
 }): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('Database unavailable');
+  let db = params.db;
+  if (!db) {
+    const dbResult = getDatabase();
+    if (!dbResult.ok) throw new Error('Database unavailable');
+    db = dbResult.val;
+  }
 
-  await dbResult.val
+  await db
     .insertInto('oauth_access_tokens')
     .values({
       token_hash: hashToken(params.token),

@@ -13,6 +13,15 @@ import { webhookEventsQueue } from '@renkei/queue';
 import { WEBEX_USER } from '@renkei/provider-grants';
 import { verifyWebexSignature, parseWebhookPayload } from '@renkei/connector-webex';
 import { logger } from '@/lib/logger';
+import {
+  WEBEX_SIGNATURE_SHAPE,
+  checkWebhookLimit,
+  hasSignatureShape,
+  malformedSignature,
+  payloadTooLarge,
+  readWebhookBody,
+  tooManyRequests,
+} from '@/lib/webhook-intake';
 
 const eventsQueue = webhookEventsQueue();
 
@@ -22,8 +31,16 @@ export async function POST(
 ): Promise<NextResponse> {
   const { tenantId, accountId } = await params;
 
-  const rawBody = await request.text();
-  const signature = request.headers.get('x-spark-signature') ?? '';
+  // Throttle, then the credential's shape, then a bounded body — all before
+  // any database read (lib/webhook-intake.ts).
+  const verdict = checkWebhookLimit('webex', tenantId, request);
+  if (!verdict.allowed) return tooManyRequests(verdict);
+  const signature = request.headers.get('x-spark-signature');
+  if (!hasSignatureShape(signature, WEBEX_SIGNATURE_SHAPE)) return malformedSignature();
+
+  const bodyResult = await readWebhookBody(request);
+  if (!bodyResult.ok) return payloadTooLarge();
+  const rawBody = bodyResult.val;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {

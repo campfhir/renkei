@@ -8,6 +8,9 @@ function CreateOrganizationContent() {
   const searchParams = useSearchParams();
   const domain = searchParams.get('domain') || '';
   const tenantId = searchParams.get('tenantId') || '';
+  // The sign-in page sends a domain here with pending=1 when a tenant has
+  // claimed it but not yet proven control of it (api/home-realm/route.ts).
+  const pending = searchParams.get('pending') === '1';
 
   const [formData, setFormData] = useState({
     discoveryEndpoint: '',
@@ -27,6 +30,54 @@ function CreateOrganizationContent() {
     authEndpoint?: string;
     tokenEndpoint?: string;
   } | null>(null);
+  // What only the creator receives when the tenant is minted
+  // (api/home-realm/create): the one-time secret the identity-provider
+  // save must present, and the TXT record to publish before the sign-in
+  // page routes this domain here.
+  const [onboarding, setOnboarding] = useState<{
+    tenantId: string;
+    bootstrapSecret: string;
+    record: string;
+    recordDomain: string;
+  } | null>(null);
+  const [configured, setConfigured] = useState(false);
+  const [verification, setVerification] = useState<{
+    state: 'idle' | 'checking' | 'verified' | 'not-yet' | 'error';
+    detail?: string;
+  }>({ state: 'idle' });
+
+  const verifyDomain = async () => {
+    if (!onboarding) return;
+    setVerification({ state: 'checking' });
+    try {
+      const response = await fetch(`/api/tenant/${onboarding.tenantId}/verify-domain`, {
+        method: 'POST',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.verified === true) {
+        setVerification({ state: 'verified' });
+        return;
+      }
+      if (response.status === 409 && data.verified === false) {
+        const reasons: string[] = Array.isArray(data.domains)
+          ? data.domains.map(
+              (d: { domain?: string; reason?: string }) => `${d.domain}: ${d.reason}`
+            )
+          : [];
+        setVerification({ state: 'not-yet', detail: reasons.join('; ') });
+        return;
+      }
+      setVerification({
+        state: 'error',
+        detail: data.error || `Server returned ${response.status}`,
+      });
+    } catch (error) {
+      setVerification({
+        state: 'error',
+        detail: error instanceof Error ? error.message : 'Could not reach the server',
+      });
+    }
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -94,7 +145,8 @@ function CreateOrganizationContent() {
     setMessage(null);
 
     try {
-      let actualTenantId = tenantId;
+      let actualTenantId = tenantId || onboarding?.tenantId || '';
+      let bootstrapSecret = onboarding?.bootstrapSecret ?? '';
 
       // If no tenant ID, create one for this domain
       if (!actualTenantId && domain) {
@@ -114,8 +166,15 @@ function CreateOrganizationContent() {
           return;
         }
 
-        const { tenantId: newTenantId } = await createResponse.json();
-        actualTenantId = newTenantId;
+        const created = await createResponse.json();
+        actualTenantId = created.tenantId;
+        bootstrapSecret = created.bootstrapSecret ?? '';
+        setOnboarding({
+          tenantId: created.tenantId,
+          bootstrapSecret,
+          record: created.domainVerification?.record ?? '',
+          recordDomain: created.domainVerification?.domain ?? domain,
+        });
       }
 
       if (!actualTenantId) {
@@ -129,7 +188,12 @@ function CreateOrganizationContent() {
 
       const response = await fetch(`/api/tenant/${actualTenantId}/oidc`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          // The first configuration is accepted only from whoever created the
+          // tenant: the one-time secret the create call returned.
+          ...(bootstrapSecret ? { 'X-Renkei-Bootstrap-Secret': bootstrapSecret } : {}),
+        },
         body: JSON.stringify({
           discoveryEndpoint: formData.discoveryEndpoint,
           clientId: formData.clientId,
@@ -152,11 +216,16 @@ function CreateOrganizationContent() {
       }
 
       setMessage({ type: 'success', text: 'Organization configured successfully!' });
-      // Straight into the OIDC flow they just configured — prove the login
-      // works, then land on the tenant's home page (the callback's default).
-      setTimeout(() => {
-        window.location.href = `/api/auth/oidc/login?tenantId=${actualTenantId}`;
-      }, 1500);
+      setConfigured(true);
+      if (!onboarding && !bootstrapSecret) {
+        // An existing tenant (tenantId in the URL): nothing to verify here.
+        // Straight into the OIDC flow they just configured — prove the login
+        // works, then land on the tenant's home page (the callback's default).
+        setTimeout(() => {
+          window.location.href = `/api/auth/oidc/login?tenantId=${actualTenantId}`;
+        }, 1500);
+      }
+      setIsLoading(false);
     } catch (error) {
       setMessage({
         type: 'error',
@@ -182,6 +251,82 @@ function CreateOrganizationContent() {
             ? `Configure OIDC for ${domain}`
             : 'Configure your organization identity provider'}
         </p>
+
+        {pending && (
+          <div
+            className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-100"
+            data-testid="domain-pending"
+          >
+            <p className="font-semibold">{domain} is waiting for domain verification.</p>
+            <p className="mt-1">
+              Someone has set this organization up, but sign-in from the home page stays off until
+              the <code className="font-mono">renkei-verify=…</code> TXT record they were given is
+              published on <code className="font-mono">{domain}</code> and verified. If that was
+              you, use the verification step from the page where you created the organization; if
+              not, ask your IT team.
+            </p>
+          </div>
+        )}
+
+        {configured && onboarding && (
+          <div
+            className="mb-6 space-y-3 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-900 dark:border-green-800 dark:bg-green-900/20 dark:text-green-100"
+            data-testid="domain-verification-steps"
+          >
+            <p className="font-semibold">
+              One more step: prove you control {onboarding.recordDomain}
+            </p>
+            <p>
+              Until this record is published and verified, the home page will not route{' '}
+              <code className="font-mono">@{onboarding.recordDomain}</code> addresses to your
+              organization. Add a DNS record at your domain registrar:
+            </p>
+            <dl className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1 font-mono text-xs">
+              <dt className="text-green-800 dark:text-green-200">Type</dt>
+              <dd>TXT</dd>
+              <dt className="text-green-800 dark:text-green-200">Host</dt>
+              <dd>{onboarding.recordDomain}</dd>
+              <dt className="text-green-800 dark:text-green-200">Value</dt>
+              <dd className="break-all" data-testid="domain-verification-record">
+                {onboarding.record}
+              </dd>
+            </dl>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void verifyDomain()}
+                disabled={verification.state === 'checking' || verification.state === 'verified'}
+                className="rounded-lg bg-green-700 px-3 py-1.5 font-medium text-white hover:bg-green-800 disabled:bg-gray-400"
+              >
+                {verification.state === 'checking'
+                  ? 'Checking DNS…'
+                  : verification.state === 'verified'
+                    ? 'Verified'
+                    : 'Verify now'}
+              </button>
+              <a
+                href={`/api/auth/oidc/login?tenantId=${onboarding.tenantId}`}
+                className="text-blue-700 underline dark:text-blue-300"
+              >
+                Continue to sign in
+              </a>
+            </div>
+            {verification.state === 'not-yet' && (
+              <p className="text-amber-800 dark:text-amber-200">
+                Not visible yet{verification.detail ? ` (${verification.detail})` : ''}. DNS changes
+                can take a few minutes to appear; come back to the home page and sign in with your
+                work email once it has, or try again.
+              </p>
+            )}
+            {verification.state === 'error' && (
+              <p className="text-red-800 dark:text-red-200">{verification.detail}</p>
+            )}
+            <p className="text-xs">
+              Keep this page open until you have saved the record: the value above is shown only
+              now. The onboarding secret used to save this configuration has already been spent.
+            </p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4 mb-6">
           <div>
