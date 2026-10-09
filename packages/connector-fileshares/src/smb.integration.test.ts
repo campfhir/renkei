@@ -26,6 +26,7 @@ function share(): ShareSummary {
     shareName: shareName ?? '',
     rootPath: '/',
     caseInsensitive: true,
+    hostKeyFingerprint: null,
     enabled: true,
   };
 }

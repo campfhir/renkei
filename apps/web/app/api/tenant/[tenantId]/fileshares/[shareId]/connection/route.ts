@@ -109,7 +109,9 @@ export async function POST(
       sealed.err.type === 'NEEDS_SESSION' ||
       sealed.err.type === 'NOT_ENROLLED'
       ? NextResponse.json(
-          { error: 'Your encryption key is not connected to this session. Sign in again and retry.' },
+          {
+            error: 'Your encryption key is not connected to this session. Sign in again and retry.',
+          },
           { status: 423 }
         )
       : NextResponse.json({ error: 'Encryption key unavailable' }, { status: 503 });
@@ -133,7 +135,12 @@ export async function POST(
     targetLabel: share.val.summary.name,
     details: { toolAccess: parsed.toolAccess, allowDelete: parsed.allowDelete },
   });
-  return NextResponse.json({ ok: true });
+  // SFTP: the host key this connection verified — and whether it was the
+  // first to see it (recorded for the admin to confirm on the share's page).
+  return NextResponse.json({
+    ok: true,
+    ...(tested.val.hostKey ? { hostKey: tested.val.hostKey } : {}),
+  });
 }
 
 export async function DELETE(

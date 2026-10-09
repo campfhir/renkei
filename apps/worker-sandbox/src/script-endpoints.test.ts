@@ -22,8 +22,10 @@ const runner = { run } as unknown as ScriptRunner;
 
 let enabledServer: Server;
 let disabledServer: Server;
+let unavailableServer: Server;
 let enabledBase: string;
 let disabledBase: string;
+let unavailableBase: string;
 
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -46,13 +48,21 @@ beforeAll(async () => {
     scripts: runner,
   });
   disabledServer = createSandboxServer({ db: {} as Kysely<DB>, apiKeys: [API_KEY] });
+  unavailableServer = createSandboxServer({
+    db: {} as Kysely<DB>,
+    apiKeys: [API_KEY],
+    scriptsStatus: 'unavailable',
+    scriptsUnavailable: 'Scripts are unavailable on this deployment: no network isolation.',
+  });
   enabledBase = await listen(enabledServer);
   disabledBase = await listen(disabledServer);
+  unavailableBase = await listen(unavailableServer);
 });
 
 afterAll(async () => {
   await new Promise((resolve) => enabledServer.close(resolve));
   await new Promise((resolve) => disabledServer.close(resolve));
+  await new Promise((resolve) => unavailableServer.close(resolve));
 });
 
 beforeEach(() => {
@@ -67,6 +77,25 @@ describe('/v1/scripts/run', () => {
     });
     expect(status).toBe(503);
     expect(json.error.type).toBe('scripts_unavailable');
+  });
+
+  it('is closed with the boot decision’s reason where no network isolation works, and /health says so', async () => {
+    const { status, json } = await post(unavailableBase, 'scripts/run', {
+      ...TARGET,
+      code: 'print(1)',
+    });
+    expect(status).toBe(503);
+    expect(json.error.type).toBe('scripts_unavailable');
+    expect(json.error.message).toMatch(/no network isolation/);
+    expect(run).not.toHaveBeenCalled();
+    const health = (await (await fetch(`${unavailableBase}/health`)).json()) as {
+      scripts: string;
+    };
+    expect(health.scripts).toBe('unavailable');
+    const served = (await (await fetch(`${enabledBase}/health`)).json()) as { scripts: string };
+    expect(served.scripts).toBe('isolated');
+    const off = (await (await fetch(`${disabledBase}/health`)).json()) as { scripts: string };
+    expect(off.scripts).toBe('disabled');
   });
 
   it('requires a bearer key', async () => {

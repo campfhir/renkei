@@ -23,6 +23,8 @@ export interface OnBaseConfig {
   clientId: string | null;
   idpScopeName: string | null;
   allowInsecureHttp: boolean;
+  /** The admin's word that this is a production system: https with verification, no exceptions. */
+  production: boolean;
   hasClientSecret: boolean;
 }
 
@@ -40,6 +42,7 @@ export function OnBaseForm({ slug, origin }: { slug: string; origin: string | nu
   const [idpScopeName, setIdpScopeName] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [allowInsecureHttp, setAllowInsecureHttp] = useState(false);
+  const [production, setProduction] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -54,6 +57,7 @@ export function OnBaseForm({ slug, origin }: { slug: string; origin: string | nu
     setClientId(state.data.clientId ?? '');
     setIdpScopeName(state.data.idpScopeName ?? '');
     setAllowInsecureHttp(state.data.allowInsecureHttp);
+    setProduction(state.data.production);
     setEnabled(state.data.configured ? state.data.enabled : true);
   }, [state.data]);
 
@@ -68,6 +72,7 @@ export function OnBaseForm({ slug, origin }: { slug: string; origin: string | nu
       clientId: clientId.trim(),
       idpScopeName: idpScopeName.trim(),
       allowInsecureHttp,
+      production,
       // Blank means keep the stored secret — omit it from the payload.
       ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
       enabled,
@@ -156,6 +161,18 @@ export function OnBaseForm({ slug, origin }: { slug: string; origin: string | nu
         <CallbackUrl origin={origin} />, then enter the details below. Each person connects their
         own OnBase account from the Connectors page.
       </p>
+      {config?.allowInsecureHttp ? (
+        <p
+          role="alert"
+          data-testid="insecure-transport-banner"
+          className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+        >
+          <strong>Transport security is off for this connector</strong> (plaintext HTTP allowed):
+          bearer tokens and documents travel where an intercepting party on the path could read
+          them. Allowed only for a non-production system on a private network; turn it off as soon
+          as the servers speak https.
+        </p>
+      ) : null}
       <form onSubmit={(e) => void save(e)} className="space-y-3">
         <div>
           <label htmlFor="ob-api" className={labelClass}>
@@ -246,7 +263,16 @@ export function OnBaseForm({ slug, origin }: { slug: string; origin: string | nu
             checked={allowInsecureHttp}
             onChange={(e) => setAllowInsecureHttp(e.target.checked)}
           />
-          Allow insecure HTTP (bearer tokens travel unencrypted — lab servers only)
+          Allow insecure HTTP (bearer tokens travel unencrypted — lab servers only, on a private
+          network; never for a production system)
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={production}
+            onChange={(e) => setProduction(e.target.checked)}
+          />
+          This is a production system (https with a verified certificate is required)
         </label>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />

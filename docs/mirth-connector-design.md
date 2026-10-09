@@ -183,7 +183,13 @@ OnBase and fileshare arrangement — behind a bearer key
   verification off for that instance (`tls_verify = false`). Global
   `fetch` cannot express either per request without pulling in undici as
   a dependency. Plaintext `http://` is refused unless
-  `allow_insecure_http` is recorded, the OnBase discipline;
+  `allow_insecure_http` is recorded, the OnBase discipline. Either
+  switch — verification off, or plaintext allowed — is accepted only for a
+  non-production instance whose host resolves to a private network, is
+  refused outright for a production label, is written to the audit trail on
+  every save (`mirth.instance.insecure_transport_enabled`) and shows as a
+  persistent banner on the instance's admin page
+  (`apps/web/lib/insecure-transport.ts`);
 - envelopes the upstream status and body back verbatim (a 403 is Mirth's
   authorization verdict on the account, not the worker's), and buffers
   bodies up to a cap so a runaway response fails loudly.

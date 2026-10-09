@@ -11,7 +11,11 @@
  * the same functions the server validates with, so the preview is honest.
  */
 
-import { normalizePath, windowsToUnix } from '@renkei/connector-fileshares/pure';
+import {
+  normalizeHostKeyFingerprint,
+  normalizePath,
+  windowsToUnix,
+} from '@renkei/connector-fileshares/pure';
 
 export const inputClass =
   'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -25,6 +29,8 @@ export interface ShareDraft {
   rootPath: string;
   caseInsensitive: boolean;
   enabled: boolean;
+  /** SFTP: the server's SHA256 host-key fingerprint; empty records it on first connection. */
+  hostKeyFingerprint: string;
 }
 
 export function emptyDraft(): ShareDraft {
@@ -37,6 +43,7 @@ export function emptyDraft(): ShareDraft {
     rootPath: '/',
     caseInsensitive: true,
     enabled: true,
+    hostKeyFingerprint: '',
   };
 }
 
@@ -51,6 +58,25 @@ export function draftPayload(draft: ShareDraft): Record<string, unknown> {
     rootPath: draft.rootPath,
     caseInsensitive: draft.caseInsensitive,
     enabled: draft.enabled,
+    hostKeyFingerprint: draft.protocol === 'sftp' ? draft.hostKeyFingerprint : null,
+  };
+}
+
+/** The live verdict on a pasted fingerprint, with the same function the server validates with. */
+export function hostKeyPreview(raw: string): { text: string; error: boolean } {
+  const normalized = normalizeHostKeyFingerprint(raw);
+  if (normalized === undefined) {
+    return { text: 'Not a SHA256 fingerprint — paste what `ssh-keygen -lf` prints.', error: true };
+  }
+  if (normalized === null) {
+    return {
+      text: 'Empty: the key the server presents on the first successful connection is recorded here for you to confirm. Pin it now to refuse any other key from the start.',
+      error: false,
+    };
+  }
+  return {
+    text: `Pinned as ${normalized}; a server presenting any other key is refused.`,
+    error: false,
   };
 }
 
@@ -71,6 +97,7 @@ export default function ShareConfigFields({
 }) {
   const set = (patch: Partial<ShareDraft>) => onChange({ ...draft, ...patch });
   const preview = pathPreview(draft.rootPath);
+  const hostKey = hostKeyPreview(draft.hostKeyFingerprint);
 
   return (
     <div className="space-y-3">
@@ -144,6 +171,23 @@ export default function ShareConfigFields({
             {preview.text} — Windows paths (\\server\share\folder, C:\folder) are translated.
           </span>
         </label>
+        {draft.protocol === 'sftp' ? (
+          <label className="block text-sm font-medium sm:col-span-2">
+            Host key fingerprint (SHA256)
+            <input
+              className={`${inputClass} mt-1 block w-full font-mono`}
+              value={draft.hostKeyFingerprint}
+              placeholder="SHA256:… from ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
+              spellCheck={false}
+              onChange={(event) => set({ hostKeyFingerprint: event.target.value })}
+            />
+            <span
+              className={`mt-1 block text-xs font-normal ${hostKey.error ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}
+            >
+              {hostKey.text}
+            </span>
+          </label>
+        ) : null}
         <label className="mt-6 flex items-center gap-2 text-sm font-medium">
           <input
             type="checkbox"

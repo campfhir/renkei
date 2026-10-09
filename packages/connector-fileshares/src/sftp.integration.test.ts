@@ -23,11 +23,44 @@ function share(): ShareSummary {
     shareName: null,
     rootPath: process.env.FILESHARE_TEST_SFTP_ROOT ?? '/upload',
     caseInsensitive: false,
+    hostKeyFingerprint: null,
     enabled: true,
   };
 }
 
 describeLive('sftp backend (live)', () => {
+  it('reports the host key on a first connection and refuses a different pinned one', async () => {
+    const seen: string[] = [];
+    const first = await openSftpBackend(
+      share(),
+      { protocol: 'sftp', username: user ?? '', password: password ?? '' },
+      { onHostKey: (fingerprint) => void seen.push(fingerprint) }
+    );
+    expect(first.ok).toBe(true);
+    if (first.ok) await first.val.close();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatch(/^SHA256:[A-Za-z0-9+/]{43}$/);
+
+    const pinned = await openSftpBackend(
+      { ...share(), hostKeyFingerprint: seen[0]! },
+      { protocol: 'sftp', username: user ?? '', password: password ?? '' }
+    );
+    expect(pinned.ok).toBe(true);
+    if (pinned.ok) await pinned.val.close();
+
+    const wrong = 'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+    const refused = await openSftpBackend(
+      { ...share(), hostKeyFingerprint: wrong },
+      { protocol: 'sftp', username: user ?? '', password: password ?? '' }
+    );
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.err.type).toBe('connection');
+      expect(refused.err.message).toContain(seen[0]);
+      expect(refused.err.message).toContain(wrong);
+    }
+  });
+
   it('writes, lists, stats, reads and refuses traversal', async () => {
     const opened = await openSftpBackend(share(), {
       protocol: 'sftp',

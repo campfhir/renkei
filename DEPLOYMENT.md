@@ -503,23 +503,33 @@ formats, with what the script writes staged back under the same quota as
 any other file. Independent of workspaces (no checkout is involved), but
 with the same arrangement for who runs it: with the flag set the
 entrypoint keeps the worker root so each run is dropped to its caller's
-own uid, and started with no network at all — a network namespace of its
-own (`unshare --net`). Creating that namespace needs `CAP_SYS_ADMIN`,
-which `docker-compose.yaml` deliberately withholds from `worker-sandbox`
-(it drops every capability and adds back only the seven setpriv, chown
-and kill need); the worker is being changed to refuse a script it cannot
-isolate rather than run it on the container's network. Do **not** answer
-that with `cap_add: [SYS_ADMIN]` — it is most of root, in the one
-container that runs other people's code. The supported answer is
-**user-namespace isolation** on the host: `"userns-remap": "default"` in
-`/etc/docker/daemon.json` (then restart the daemon; existing volumes need
-their ownership shifted once, see Docker's userns-remap documentation).
-Under it the container's root is an unprivileged uid on the host, every
-file the worker writes is owned by a subordinate uid, a breakout lands as
-nobody, and the kernel lets that unprivileged root create its own user
-and network namespaces — which is what `unshare --net` needs — without
-any capability the container does not already hold. The same setting is
-worth turning on for the whole stack regardless of scripts.
+own uid, and started with **no network at all** — in a network namespace
+made as root (`unshare --net`, which needs `CAP_SYS_ADMIN`) or, failing
+that, a user namespace of the caller's own (`unshare -Un`, which needs
+unprivileged user namespaces). `docker-compose.yaml` deliberately
+withholds the capability from `worker-sandbox` (it drops every capability
+and adds back only the seven setpriv, chown and kill need) and Docker's
+default seccomp profile blocks the user-namespace route, so on a stock
+deployment the worker proves at boot that neither works and then
+**closes the verb**: `sandbox_run_python` answers 503
+`scripts_unavailable`, `/health` reports `scripts: unavailable` and the
+web app stops offering the tool — because the tool tells the model there
+is no network, and running with one anyway would make that a lie. The
+supported way to open it is **user-namespace isolation on the host**:
+`"userns-remap": "default"` in `/etc/docker/daemon.json` (then restart the
+daemon; existing volumes need their ownership shifted once, see Docker's
+userns-remap documentation). Under it the container's root is an
+unprivileged uid on the host, a breakout lands as nobody, and the kernel
+lets the worker make the namespaces it needs without any capability the
+container does not already hold; the same setting is worth turning on
+for the whole stack regardless of scripts. A seccomp profile that allows
+`unshare`/`clone` with `CLONE_NEWUSER|CLONE_NEWNET` is the narrower
+alternative. Do **not** answer with `cap_add: [SYS_ADMIN]` — it is most
+of root, in the one container that runs other people's code. To accept
+scripts running on the container's network instead, set
+`SANDBOX_SCRIPTS_ALLOW_NETWORK=true` in `.env` (read by BOTH the worker
+and the web app): the verb is served, the tool's description tells the
+model the script has the worker's network, and every result says so too.
 The image carries the interpreter at `/opt/sandbox-python` (pandas,
 numpy, openpyxl, XlsxWriter, pinned in `docker/Dockerfile`);
 `SANDBOX_PYTHON` points at another. A run's directory is made under

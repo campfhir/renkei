@@ -54,14 +54,24 @@ export interface ShareBackend {
  * mismatch between share row and credential document is a typed error here
  * rather than a connect-time mystery.
  */
+export interface OpenBackendOptions {
+  /**
+   * SFTP: called with the server's host-key fingerprint once the handshake
+   * has verified it — the trust-on-first-use hook the service layer uses
+   * to record a share's key when none is pinned yet.
+   */
+  onHostKey?: (fingerprint: string) => void | Promise<void>;
+}
+
 export async function openBackend(
   share: ShareSummary,
-  credentials: ShareCredentials
+  credentials: ShareCredentials,
+  options: OpenBackendOptions = {}
 ): Promise<Result<ShareBackend, BackendError>> {
   if (share.protocol === 'smb') {
     const { openSmbBackend } = await import('./smb');
     return openSmbBackend(share, credentials);
   }
   const { openSftpBackend } = await import('./sftp');
-  return openSftpBackend(share, credentials);
+  return openSftpBackend(share, credentials, options);
 }

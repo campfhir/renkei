@@ -27,6 +27,7 @@ function share(
       shareName: 'docs',
       rootPath: '/',
       caseInsensitive: true,
+      hostKeyFingerprint: null,
       enabled: true,
     },
     connection: { username: 'alice', toolAccess, allowDelete },

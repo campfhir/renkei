@@ -173,6 +173,7 @@ export const EXPECTED_MIGRATIONS = [
   '145-delegate-signing-keys',
   '146-tenant-bootstrap-and-domain-verification',
   '147-refresh-token-rotation',
+  '150-file-share-host-key',
 ];
 
 export interface MigrationStatus {

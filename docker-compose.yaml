@@ -449,14 +449,18 @@ services:
   # with NO network: a script's own network namespace (unshare --net).
   # That namespace needs CAP_SYS_ADMIN, which this service deliberately
   # does not have (cap_drop below) — SYS_ADMIN is most of root, and would
-  # sit in the same container as every caller's checkout. The worker is
-  # being changed to refuse to run scripts rather than run them on the
-  # container's network; the supported way to give it the namespace
-  # WITHOUT SYS_ADMIN in the container is user-namespace isolation on the
-  # host (`"userns-remap": "default"` in /etc/docker/daemon.json, see
-  # DEPLOYMENT.md, "Scripts over staged files"), under which this
+  # sit in the same container as every caller's checkout — and Docker's
+  # default seccomp profile blocks the user-namespace fallback, so on a
+  # stock deployment the worker proves at boot that it cannot isolate a
+  # script and CLOSES the verb (503 scripts_unavailable; the web app stops
+  # offering the tool) rather than run it on the container's network. The
+  # supported way to open it WITHOUT SYS_ADMIN is user-namespace isolation
+  # on the host (`"userns-remap": "default"` in /etc/docker/daemon.json,
+  # see DEPLOYMENT.md, "Scripts over staged files"), under which this
   # container's root is an unprivileged host uid and the kernel lets it
-  # create its own namespaces.
+  # create its own namespaces. SANDBOX_SCRIPTS_ALLOW_NETWORK=true in .env
+  # (read by both) instead accepts scripts on the container's network, with
+  # the tool's description and every result saying so.
   # SANDBOX_SCRIPT_MEMORY (default 2g) caps a run's address space; several
   # people running large joins at once share SANDBOX_WORKER_MEMORY below
   # with the browser, so raise both together.

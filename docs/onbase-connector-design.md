@@ -247,6 +247,11 @@ so:
    real Foundation server is first contact.
 4. **Versions** — built to the Foundation 26.1 spec; older servers missing
    endpoints surface their own problem+json detail verbatim.
+   That setting is accepted only when the API server and IdP hosts resolve
+   to a private network and the connector is not flagged `production`
+   (a settings boolean the admin card sets); each such save is audited
+   (`onbase.insecure_transport_enabled`) and the card shows a persistent
+   banner while it is on (`apps/web/lib/insecure-transport.ts`).
 
 Deliberate scope cuts, per this document: no deletes, no locks, no
 sensitive-note-text, and knowledge indexing deferred (retrieval-only v1 —

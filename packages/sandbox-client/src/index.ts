@@ -120,6 +120,77 @@ export function sandboxScriptsEnabled(): boolean {
   return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_SCRIPTS_ENABLED ?? '').trim());
 }
 
+/**
+ * Whether the operator accepted scripts running WITH the worker's network
+ * where the worker cannot start one without (SANDBOX_SCRIPTS_ALLOW_NETWORK,
+ * the same flag the worker reads). Read here only to tell the model the
+ * truth in the tool's description; the worker decides what actually runs.
+ */
+export function sandboxScriptsAllowNetwork(): boolean {
+  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_SCRIPTS_ALLOW_NETWORK ?? '').trim());
+}
+
+/**
+ * What the worker says about scripts on `/health` (apps/worker-sandbox
+ * scripts.ts, ScriptsStatus): `unavailable` means it refuses every run
+ * because it can neither isolate a run's network nor was told to run
+ * without doing so — the tool is then withheld rather than offered and
+ * refused on every call.
+ */
+export type SandboxScriptsStatus = 'disabled' | 'unavailable' | 'isolated' | 'network_shared';
+
+const SCRIPTS_STATUS_TTL_MS = 60_000;
+let scriptsStatusCache: { at: number; status: SandboxScriptsStatus | null } | null = null;
+let scriptsStatusRefresh: Promise<void> | null = null;
+
+/** Test-only: forget what the worker last said. */
+export function resetScriptsStatusForTests(): void {
+  scriptsStatusCache = null;
+  scriptsStatusRefresh = null;
+}
+
+/** Ask the worker's /health what it does with scripts; null when it cannot be asked or does not say. */
+export async function sbScriptsStatus(): Promise<SandboxScriptsStatus | null> {
+  const cfg = sandboxConfig();
+  if (!cfg) return null;
+  try {
+    const response = await fetch(`${cfg.url}/health`, { signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) return null;
+    const value: unknown = await response.json();
+    const status = isRecord(value) ? value.scripts : undefined;
+    return status === 'disabled' ||
+      status === 'unavailable' ||
+      status === 'isolated' ||
+      status === 'network_shared'
+      ? status
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether to register sandbox_run_python: the flag (sandboxScriptsEnabled)
+ * AND the worker not having said `unavailable` on /health. Registration is
+ * synchronous, so the worker's answer is cached and refreshed in the
+ * background once a minute; until it has answered, the flag alone decides —
+ * a call in that window still meets the worker's own 503.
+ */
+export function sandboxScriptsServed(): boolean {
+  if (!sandboxScriptsEnabled()) return false;
+  const now = Date.now();
+  if (!scriptsStatusCache || now - scriptsStatusCache.at > SCRIPTS_STATUS_TTL_MS) {
+    scriptsStatusRefresh ??= sbScriptsStatus()
+      .then((status) => {
+        scriptsStatusCache = { at: Date.now(), status };
+      })
+      .finally(() => {
+        scriptsStatusRefresh = null;
+      });
+  }
+  return scriptsStatusCache?.status !== 'unavailable';
+}
+
 function unreachable(message: string): { ok: false; err: SandboxClientError } {
   return { ok: false, err: { kind: 'unreachable', message } };
 }

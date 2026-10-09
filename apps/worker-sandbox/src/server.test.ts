@@ -30,7 +30,13 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { BlockedUrlError } from '@renkei/connector-sandbox';
 import { createSandboxServer } from './server';
+
+/** The outbound fetch `/v1/fetch` makes; each test that reaches it scripts one. */
+let fetchUrl: (url: string, init: { signal: AbortSignal }) => Promise<Response> = async () => {
+  throw new Error('no outbound fetch scripted for this test');
+};
 
 const disk = jest.requireMock<{
   newStorageKey: jest.Mock;
@@ -59,6 +65,7 @@ beforeAll(async () => {
     db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     maxFileBytes: async () => 1_048_576,
+    fetchUrl: (url, init) => fetchUrl(url, init),
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as AddressInfo;
@@ -151,25 +158,12 @@ describe('quota enforcement', () => {
 
 describe('batch quota pool', () => {
   const BATCH_ID = '11111111-1111-4111-8111-111111111111';
-  let fetchSpy: jest.SpiedFunction<typeof fetch>;
-
-  const realFetch = globalThis.fetch;
 
   beforeEach(() => {
-    // These two tests pass the quota check and reach the real outbound
-    // fetch(url) call — stand in a real Response so Readable.fromWeb has a
-    // genuine body stream to bridge, without touching the network. The
-    // test's own `post()` helper also calls global fetch (against
-    // 127.0.0.1), so only the non-local URL gets faked.
-    fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
-      const url = typeof input === 'string' ? input : input.toString();
-      if (url.startsWith(base)) return realFetch(input, init);
-      return Promise.resolve(new Response('bytes', { status: 200 }));
-    });
-  });
-
-  afterEach(() => {
-    fetchSpy.mockRestore();
+    // These two tests pass the quota check and reach the outbound fetch —
+    // stand in a real Response so Readable.fromWeb has a genuine body
+    // stream to bridge, without touching the network.
+    fetchUrl = jest.fn(async () => new Response('bytes', { status: 200 }));
   });
 
   it('checks the batch pool, not the per-subject pool, when a batchId is given', async () => {
@@ -247,6 +241,22 @@ describe('sandbox_download_url egress guard', () => {
       filename: 'x.txt',
     });
     expect(response.status).toBe(400);
+  });
+
+  it('answers blocked_url when the guarded fetch refuses a redirect or a resolution', async () => {
+    fetchUrl = jest.fn(async () => {
+      throw new BlockedUrlError('host resolves to a private or reserved address');
+    });
+    const response = await post('/v1/fetch', {
+      ...TARGET,
+      url: 'https://example.com/redirects-to-metadata',
+      filename: 'x.txt',
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { type: string; message: string } };
+    expect(body.error.type).toBe('blocked_url');
+    expect(body.error.message).toMatch(/private or reserved/);
+    expect(disk.writeStream).not.toHaveBeenCalled();
   });
 });
 
