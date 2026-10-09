@@ -32,7 +32,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
@@ -96,7 +95,6 @@ export async function POST(
       return NextResponse.json({ error: 'Malformed refId for this message' }, { status: 500 });
     }
     const enqueued = await webhookEventsQueue().producer.enqueue({
-      tenantId,
       source: MICROSOFT,
       type: 'message-override',
       payload: {

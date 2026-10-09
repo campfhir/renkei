@@ -53,7 +53,6 @@ export async function describeActor(
     const row = await db
       .selectFrom('identities')
       .select(['display_name', 'email'])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .executeTakeFirst();
     displayName = row?.display_name || row?.email || subject;
@@ -88,7 +87,6 @@ export async function describeAccountActor(
     const grant = await db
       .selectFrom('provider_grants')
       .select(['subject', 'display_name'])
-      .where('tenant_id', '=', tenantId)
       .where('provider_account_id', '=', accountId)
       .executeTakeFirst();
     if (grant?.subject) {

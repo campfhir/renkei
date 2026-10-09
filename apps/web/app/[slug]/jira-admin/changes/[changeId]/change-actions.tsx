@@ -10,12 +10,10 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function ChangeActions({
-  tenantId,
   changeId,
   count,
   applyBlocked,
 }: {
-  tenantId: string;
   changeId: string;
   /** How many operations, for the button's label. */
   count: number;
@@ -31,7 +29,7 @@ export default function ChangeActions({
     setNotice(null);
     try {
       const response = await fetch(
-        `/api/tenant/${tenantId}/jira-admin/changes/${changeId}/${action}`,
+        `/api/jira-admin/changes/${changeId}/${action}`,
         { method: 'POST' }
       );
       const data: unknown = await response.json().catch(() => ({}));

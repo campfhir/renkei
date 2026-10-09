@@ -108,7 +108,6 @@ export async function sweepLogRetention(): Promise<void> {
       if (deleted > 0) {
         logger.info('purged {deleted} log row(s) for tenant {tenantId} older than {days} day(s)', {
           component: COMPONENT,
-          tenantId: tenant.id,
           deleted,
           days,
         });
@@ -116,7 +115,6 @@ export async function sweepLogRetention(): Promise<void> {
     } catch (error) {
       logger.error('log purge failed for tenant {tenantId}: {error}', {
         component: COMPONENT,
-        tenantId: tenant.id,
         error: error instanceof Error ? error.message : String(error),
       });
     }

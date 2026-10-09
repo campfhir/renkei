@@ -13,13 +13,12 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; libraryId: string }> }
 ): Promise<Response> {
-  const { tenantId, libraryId } = await params;
+  const { libraryId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
     db,
-    tenantId,
     session.subject,
     'prompt_library',
     libraryId
@@ -32,7 +31,6 @@ export async function POST(
     typeof body.body === 'string' ? body.body.trim().slice(0, PROMPT_BODY_MAX_CHARS) : '';
   if (!title || !text) return jsonError(400, 'invalid', 'A prompt needs a title and a body');
   const promptId = await createPrompt(db, {
-    tenantId,
     libraryId,
     title,
     body: text,

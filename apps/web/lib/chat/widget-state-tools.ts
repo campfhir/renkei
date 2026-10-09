@@ -254,7 +254,6 @@ export function widgetStateTools(): LocalTool[] {
           ...(detail ? { detail } : {}),
         };
         const recorded = await recordWidgetDecision(context.db, {
-          tenantId: context.tenantId,
           chatId: context.chatId,
           subject: context.subject,
           stateKey: card.stateKey,

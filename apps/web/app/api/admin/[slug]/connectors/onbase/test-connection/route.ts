@@ -9,7 +9,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { obTestConnection, onbaseClientFailure } from '@/lib/onbase/service-client';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -21,10 +20,6 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
   const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -44,7 +39,7 @@ export async function POST(
       : {}),
   };
 
-  const tested = await obTestConnection({ tenantId: tenantRef.id, unsaved });
+  const tested = await obTestConnection({ unsaved });
   if (!tested.ok) {
     const failure = onbaseClientFailure(tested.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });

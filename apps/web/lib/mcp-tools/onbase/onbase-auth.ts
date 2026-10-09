@@ -104,7 +104,6 @@ function makeOauthAuth(spec: OnBaseConnectorSpec) {
       async api(request) {
         if (!context.subject) return NO_SUBJECT;
         const result = await obApi({
-          tenantId: context.tenantId,
           connector: spec.connector,
           subject: context.subject,
           method: request.method,
@@ -118,7 +117,6 @@ function makeOauthAuth(spec: OnBaseConnectorSpec) {
       async content(path, accept) {
         if (!context.subject) return NO_SUBJECT;
         const result = await obContent({
-          tenantId: context.tenantId,
           connector: spec.connector,
           subject: context.subject,
           path,

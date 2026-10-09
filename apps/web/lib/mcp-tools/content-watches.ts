@@ -32,7 +32,6 @@ export type WatchProvider = 'jira' | 'confluence' | 'sharepoint';
 export type WatchScopeType = 'project' | 'space' | 'drive';
 
 export interface WatchOwner {
-  tenantId: string;
   /** OIDC subject — the watch's owner, and the uniqueness key. */
   subject: string;
   /** The provider account whose grant the worker polls with. */
@@ -91,7 +90,6 @@ export async function upsertWatch(
   const existing = await dbResult.val
     .selectFrom('content_watches')
     .select(['id', 'enabled'])
-    .where('tenant_id', '=', owner.tenantId)
     .where('provider', '=', provider)
     .where('subject', '=', owner.subject)
     .where('scope_type', '=', scopeType)
@@ -124,7 +122,6 @@ export async function upsertWatch(
   const sibling = await dbResult.val
     .selectFrom('content_watches')
     .select('cursor')
-    .where('tenant_id', '=', owner.tenantId)
     .where('provider', '=', provider)
     .where('scope_type', '=', scopeType)
     .where('scope_key', '=', scopeKey)
@@ -137,7 +134,6 @@ export async function upsertWatch(
     .insertInto('content_watches')
     .values({
       id: randomUUID(),
-      tenant_id: owner.tenantId,
       provider,
       account_id: owner.accountId,
       subject: owner.subject,
@@ -191,7 +187,6 @@ export async function repairWatch(
       last_synced_at: null,
       updated_at: sql<Date>`NOW()`,
     })
-    .where('tenant_id', '=', owner.tenantId)
     .where('provider', '=', provider)
     .where('scope_type', '=', scopeType)
     .where('scope_key', '=', scopeKey)
@@ -218,7 +213,6 @@ export async function disableWatch(
   const result = await dbResult.val
     .updateTable('content_watches')
     .set({ enabled: false, sync_status: 'idle', updated_at: sql<Date>`NOW()` })
-    .where('tenant_id', '=', owner.tenantId)
     .where('provider', '=', provider)
     .where('subject', '=', owner.subject)
     .where('scope_type', '=', scopeType)
@@ -250,7 +244,6 @@ export async function listWatches(
       'sync_status',
       'last_error',
     ])
-    .where('tenant_id', '=', owner.tenantId)
     .where('provider', '=', provider)
     .where('subject', '=', owner.subject)
     .orderBy('scope_key', 'asc')
@@ -268,7 +261,6 @@ export async function listWatches(
       sql<string>`metadata ->> ${metadataKey}`.as('scope'),
       sql<string>`count(DISTINCT split_part(ref_id, '#', 1))`.as('objects'),
     ])
-    .where('tenant_id', '=', owner.tenantId)
     .where('provider', '=', provider)
     // GROUP BY the output ALIAS, never a repeat of the expression: each
     // `${metadataKey}` becomes its own bound parameter, so Postgres sees
@@ -283,7 +275,6 @@ export async function listWatches(
       sql<string>`payload -> 'metadata' ->> ${metadataKey}`.as('scope'),
       sql<string>`count(*)`.as('objects'),
     ])
-    .where('tenant_id', '=', owner.tenantId)
     .where('status', '=', 'pending')
     .where(sql<boolean>`payload ->> 'provider' = ${provider}`)
     .groupBy(sql`scope`)

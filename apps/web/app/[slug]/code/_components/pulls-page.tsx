@@ -23,18 +23,16 @@ function StatePill({ state }: { state: HostPullRequest['state'] }) {
 
 export default function PullsPage({
   slug,
-  tenantId,
   projectId,
   projectName,
   repoFullName,
 }: {
   slug: string;
-  tenantId: string;
   projectId: string;
   projectName: string;
   repoFullName: string;
 }) {
-  const url = `/api/tenant/${tenantId}/code/projects/${projectId}/pulls`;
+  const url = `/api/code/projects/${projectId}/pulls`;
   const [pullRequests, setPullRequests] = useState<HostPullRequest[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,7 +54,7 @@ export default function PullsPage({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-        <BackLink href={`/${slug}/code/${projectId}`} label={projectName} />
+        <BackLink href={`/code/${projectId}`} label={projectName} />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold">Pull requests</h1>
           <p className="truncate text-xs text-gray-500">

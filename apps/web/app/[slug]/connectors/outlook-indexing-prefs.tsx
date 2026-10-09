@@ -44,7 +44,7 @@ export default function OutlookIndexingPrefs({ tenantId }: { tenantId: string })
     let cancelled = false;
     void (async () => {
       try {
-        const response = await fetch(`/api/microsoft/${tenantId}/indexing`);
+        const response = await fetch(`/api/microsoft/indexing`);
         if (!response.ok) return;
         const data = await response.json().catch(() => ({}));
         if (!cancelled && data.indexing) setPrefs(data.indexing);
@@ -64,7 +64,7 @@ export default function OutlookIndexingPrefs({ tenantId }: { tenantId: string })
     setBusy(true);
     setNotice(null);
     try {
-      const response = await fetch(`/api/microsoft/${tenantId}/indexing`, {
+      const response = await fetch(`/api/microsoft/indexing`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(next),

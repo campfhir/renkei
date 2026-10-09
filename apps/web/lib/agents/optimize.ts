@@ -144,7 +144,6 @@ export async function gatherOptimizationEvidence(
         'output_tokens',
         'tool_calls',
       ])
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', ownerSubject)
       .where('agent_id', '=', agent.id)
       .where('status', '=', 'failed')
@@ -170,8 +169,7 @@ export async function gatherOptimizationEvidence(
              MAX(input_tokens + output_tokens) AS max_tokens,
              AVG(attempts) AS avg_attempts
       FROM agent_run_log
-      WHERE tenant_id = ${tenantId}
-        AND owner_subject = ${ownerSubject}
+      WHERE owner_subject = ${ownerSubject}
         AND agent_id = ${agent.id}
         AND created_at >= ${since}
         AND status IN ('succeeded', 'failed', 'stopped')
@@ -194,8 +192,7 @@ export async function gatherOptimizationEvidence(
              AVG(s.tool_call_count) AS avg_calls
       FROM agent_run_steps s
       JOIN agent_runs r ON r.id = s.run_id
-      WHERE s.tenant_id = ${tenantId}
-        AND r.owner_subject = ${ownerSubject}
+      WHERE r.owner_subject = ${ownerSubject}
         AND r.agent_id = ${agent.id}
         AND r.created_at >= ${since}
       GROUP BY s.step_id
@@ -454,7 +451,6 @@ export async function optimizeAgent(
       onRetry: (attempt, error, nextDelayMs) => {
         logger.debug('agent optimization retry {attempt}: {error} (waiting {delay}ms)', {
           component: 'agents/optimize',
-          tenantId,
           agentId: agent.id,
           attempt,
           error: error.message,
@@ -469,7 +465,6 @@ export async function optimizeAgent(
     const message = completion.err.message?.slice(0, 300);
     logger.warn('agent optimization failed: {kind}', {
       component: 'agents/optimize',
-      tenantId,
       agentId: agent.id,
       kind,
       ms: Date.now() - startedAt,
@@ -490,7 +485,6 @@ export async function optimizeAgent(
   const report = parseOptimizationReply(text, summary);
   logger.info('agent optimization {result} in {ms}ms', {
     component: 'agents/optimize',
-    tenantId,
     agentId: agent.id,
     result: report ? 'succeeded' : 'unparseable',
     ms: Date.now() - startedAt,

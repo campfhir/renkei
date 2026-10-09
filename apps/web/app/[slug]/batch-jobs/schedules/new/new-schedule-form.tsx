@@ -35,11 +35,9 @@ function defaultTimezone(): string {
 
 export default function NewScheduleForm({
   slug,
-  tenantId,
   calendars,
 }: {
   slug: string;
-  tenantId: string;
   calendars: CalendarOption[];
 }) {
   const router = useRouter();
@@ -82,7 +80,7 @@ export default function NewScheduleForm({
         ? { strategy: 'whole-file' as const }
         : { strategy: 'filename-pattern' as const, pattern };
     const { data, error: submitError } = await sendJsonFull<{ id: string }>(
-      `/api/tenant/${tenantId}/batch-job-schedules`,
+      `/api/batch-job-schedules`,
       'POST',
       {
         name: name.trim(),
@@ -99,7 +97,7 @@ export default function NewScheduleForm({
       setError(submitError ?? 'Could not create the schedule.');
       return;
     }
-    router.push(`/${slug}/batch-jobs/schedules/${data.id}`);
+    router.push(`/batch-jobs/schedules/${data.id}`);
   }
 
   return (

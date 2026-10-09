@@ -82,7 +82,7 @@ export async function secretSummary(
     expiresAt: secret.expiresAt,
     lastUsedAt: secret.lastUsedAt,
     unlockedUntil: await vault.unlockedUntil(
-      { tenantId: secret.tenantId, subject: secret.subject },
+      { subject: secret.subject },
       secret.id
     ),
   };

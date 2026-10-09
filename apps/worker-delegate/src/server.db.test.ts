@@ -78,16 +78,15 @@ describeDb('worker-delegate', () => {
     instance = await registerTestInstance(db.val);
     const targets = [{ id: instance.id, publicKey: instance.pair.publicKey }];
     const enrolledOwner = await enrollTestPerson(db.val, {
-      tenantId,
       subject: owner,
       instances: targets,
     });
     ownerSessionId = enrolledOwner.sessionId;
     ownerKeys = enrolledOwner.keys;
     friendSessionId = (
-      await enrollTestPerson(db.val, { tenantId, subject: friend, instances: targets })
+      await enrollTestPerson(db.val, { subject: friend, instances: targets })
     ).sessionId;
-    await enrollTestPerson(db.val, { tenantId, subject: leaver, instances: targets });
+    await enrollTestPerson(db.val, { subject: leaver, instances: targets });
     const fetchImpl: typeof fetch = async (input, init) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -161,12 +160,12 @@ describeDb('worker-delegate', () => {
     const db = getDatabase();
     if (db.ok) {
       await db.val.deleteFrom('delegate_instances').where('id', '=', instance.id).execute();
-      await db.val.deleteFrom('provider_grants').where('tenant_id', '=', tenantId).execute();
-      await db.val.deleteFrom('delegate_git_tickets').where('tenant_id', '=', tenantId).execute();
-      await db.val.deleteFrom('agents').where('tenant_id', '=', tenantId).execute();
+      await db.val.deleteFrom('provider_grants').execute();
+      await db.val.deleteFrom('delegate_git_tickets').execute();
+      await db.val.deleteFrom('agents').execute();
       await db.val.deleteFrom('delegate_signing_keys').execute();
-      await db.val.deleteFrom('resource_keys').where('tenant_id', '=', tenantId).execute();
-      await db.val.deleteFrom('user_encryption_keys').where('tenant_id', '=', tenantId).execute();
+      await db.val.deleteFrom('resource_keys').execute();
+      await db.val.deleteFrom('user_encryption_keys').execute();
       await db.val.deleteFrom('tenants').where('id', '=', tenantId).execute();
     }
     await closeDatabase();
@@ -198,22 +197,21 @@ describeDb('worker-delegate', () => {
   it('lets each caller run only its own ops: the agents key is refused a shred the web key may do', async () => {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
-    const refused = await op('keys/shred', { tenantId, subject: leaver }, AGENTS_KEY);
+    const refused = await op('keys/shred', { subject: leaver }, AGENTS_KEY);
     expect(refused.status).toBe(403);
     expect(errorType(refused.json)).toBe('forbidden');
-    expect((await op('keys/shred', { tenantId, subject: leaver }, WORKER_KEY)).status).toBe(403);
-    expect((await op('keys/status', { tenantId, subject: leaver })).json.enrolled).toBe(true);
+    expect((await op('keys/shred', { subject: leaver }, WORKER_KEY)).status).toBe(403);
+    expect((await op('keys/status', { subject: leaver })).json.enrolled).toBe(true);
 
-    const shredded = await op('keys/shred', { tenantId, subject: leaver });
+    const shredded = await op('keys/shred', { subject: leaver });
     expect(shredded.status).toBe(200);
     expect(shredded.json.shredded).toBe(true);
-    expect((await op('keys/status', { tenantId, subject: leaver })).json.enrolled).toBe(false);
+    expect((await op('keys/status', { subject: leaver })).json.enrolled).toBe(false);
 
     // The shred left an append-only access row naming the caller, not the key or the person.
     const events = await dbResult.val
       .selectFrom('delegate_access_events')
       .selectAll()
-      .where('tenant_id', '=', tenantId)
       .where('op', '=', 'keys/shred')
       .execute();
     expect(events.map((event) => [event.caller, event.outcome, event.status])).toEqual(
@@ -240,7 +238,7 @@ describeDb('worker-delegate', () => {
 
   it("binds an op to the session it names: another session of the same person, or anyone else's, is refused", async () => {
     const chatId = randomUUID();
-    const ref = { tenantId, kind: 'chat', resourceId: chatId };
+    const ref = { kind: 'chat', resourceId: chatId };
     expect((await op('resource-key/ensure', { ...ref, ownerSubject: owner })).status).toBe(200);
     const bound = await op('resource-key/open', {
       ...ref,
@@ -255,12 +253,11 @@ describeDb('worker-delegate', () => {
     });
     expect(mismatched.status).toBe(403);
     expect(errorType(mismatched.json)).toBe('SESSION_MISMATCH');
-    const madeUp = await op('keys/status', { tenantId, subject: owner, sessionId: randomUUID() });
+    const madeUp = await op('keys/status', { subject: owner, sessionId: randomUUID() });
     expect(madeUp.status).toBe(403);
     expect(errorType(madeUp.json)).toBe('SESSION_MISMATCH');
     // A delegation for a session that is not the person's binds nothing.
     const stolen = await op('keys/delegate', {
-      tenantId,
       subject: owner,
       sessionId: friendSessionId,
       session: [],
@@ -276,7 +273,6 @@ describeDb('worker-delegate', () => {
       .insertInto('sessions')
       .values({
         id: secondSession,
-        tenant_id: tenantId,
         subject: owner,
         expires_at: new Date(Date.now() + 3_600_000),
       })
@@ -300,7 +296,7 @@ describeDb('worker-delegate', () => {
     // The queue worker mints a chat note's key: wrapped under the owner's
     // automation key, since the session key is not the worker's to hold.
     const chatId = randomUUID();
-    const ref = { tenantId, kind: 'chat', resourceId: chatId };
+    const ref = { kind: 'chat', resourceId: chatId };
     const minted = await op('resource-key/ensure', { ...ref, ownerSubject: owner }, WORKER_KEY);
     expect(minted.status).toBe(200);
     const holders = await op('resource-key/holders', ref);
@@ -311,7 +307,7 @@ describeDb('worker-delegate', () => {
     ).toEqual(['automation']);
     // A value under the user key alone is out of a worker's reach, whatever op it tries.
     expect(
-      (await op('user-sealed/open', { tenantId, subject: owner, stored: [] }, WORKER_KEY)).status
+      (await op('user-sealed/open', { subject: owner, stored: [] }, WORKER_KEY)).status
     ).toBe(403);
 
     // The agents worker asks about a run's owner: without the run, or with
@@ -320,25 +316,24 @@ describeDb('worker-delegate', () => {
     const runId = randomUUID();
     await db
       .insertInto('agents')
-      .values({ id: agentId, tenant_id: tenantId, owner_subject: owner, name: 'r24', steps: '[]' })
+      .values({ id: agentId, owner_subject: owner, name: 'r24', steps: '[]' })
       .execute();
     await db
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: owner,
         steps_snapshot: '[]',
         trigger_kind: 'manual',
       })
       .execute();
-    const unnamed = await op('keys/status', { tenantId, subject: owner }, AGENTS_KEY);
+    const unnamed = await op('keys/status', { subject: owner }, AGENTS_KEY);
     expect(unnamed.status).toBe(403);
     expect(errorType(unnamed.json)).toBe('RUN_MISMATCH');
-    const wrongOwner = await op('keys/status', { tenantId, subject: friend, runId }, AGENTS_KEY);
+    const wrongOwner = await op('keys/status', { subject: friend, runId }, AGENTS_KEY);
     expect(wrongOwner.status).toBe(403);
-    const named = await op('keys/status', { tenantId, subject: owner, runId }, AGENTS_KEY);
+    const named = await op('keys/status', { subject: owner, runId }, AGENTS_KEY);
     expect(named.status).toBe(200);
     expect(named.json.enrolled).toBe(true);
     await op('resource-key/delete', ref);
@@ -346,7 +341,7 @@ describeDb('worker-delegate', () => {
 
   it('mints, opens, shares and revokes a resource key', async () => {
     const chatId = randomUUID();
-    const ref = { tenantId, kind: 'chat', resourceId: chatId };
+    const ref = { kind: 'chat', resourceId: chatId };
     const minted = await op('resource-key/ensure', { ...ref, ownerSubject: owner });
     expect(minted.status).toBe(200);
     expect(typeof minted.json.id).toBe('string');
@@ -366,7 +361,6 @@ describeDb('worker-delegate', () => {
     expect(shared.json.key).toBe(minted.json.key);
 
     const many = await op('resource-key/open-many', {
-      tenantId,
       kind: 'chat',
       entries: [
         { resourceId: chatId, subject: friend },
@@ -384,7 +378,6 @@ describeDb('worker-delegate', () => {
 
   it('seals and opens person-only values, null where one will not open', async () => {
     const sealed = await op('user-sealed/seal', {
-      tenantId,
       subject: owner,
       values: ['one', 'two'],
     });
@@ -394,12 +387,11 @@ describeDb('worker-delegate', () => {
     const b = String(list[1]);
     expect(a.startsWith('uenc1:')).toBe(true);
     const opened = await op('user-sealed/open', {
-      tenantId,
       subject: owner,
       stored: [b, a, 'uenc1:garbage'],
     });
     expect(opened.json.opened).toEqual(['two', 'one', null]);
-    const other = await op('user-sealed/open', { tenantId, subject: friend, stored: [a] });
+    const other = await op('user-sealed/open', { subject: friend, stored: [a] });
     expect(other.json.opened).toEqual([null]);
   });
 
@@ -437,7 +429,7 @@ describeDb('worker-delegate', () => {
     // The same key on the next boot: one row per deployment.
     const again = await op('keys/instances', {});
     expect(again.json.signingKey).toBe(instances.json.signingKey);
-    const status = await op('keys/status', { tenantId, subject: owner, sessionId: ownerSessionId });
+    const status = await op('keys/status', { subject: owner, sessionId: ownerSessionId });
     expect(status.json.enrolled).toBe(true);
     expect(status.json.legacy).toBe(false);
     expect(status.json.sessionInstances).toEqual([instance.id]);
@@ -446,18 +438,17 @@ describeDb('worker-delegate', () => {
     expect(typeof status.json.wrappedAutomationKey).toBe('string');
     expect(JSON.stringify(status.json)).not.toContain('"privateKey"');
 
-    const nobody = await op('keys/status', { tenantId, subject: 'nobody@example.com' });
+    const nobody = await op('keys/status', { subject: 'nobody@example.com' });
     expect(nobody.json.enrolled).toBe(false);
     expect(nobody.json.legacy).toBe(false);
 
-    expect((await op('keys/revoke-automation', { tenantId, subject: owner })).json.revoked).toBe(1);
-    const revoked = await op('keys/status', { tenantId, subject: owner });
+    expect((await op('keys/revoke-automation', { subject: owner })).json.revoked).toBe(1);
+    const revoked = await op('keys/status', { subject: owner });
     expect(revoked.json.automationInstances).toEqual([]);
     expect(revoked.json.automationUntil).toBeNull();
 
     // A delegation for an instance nobody runs is dropped; a malformed one is refused.
     const stale = await op('keys/delegate', {
-      tenantId,
       subject: owner,
       sessionId: ownerSessionId,
       session: [{ instanceId: randomUUID(), sealedKey: 'sbox1:x:y' }],
@@ -465,7 +456,6 @@ describeDb('worker-delegate', () => {
     });
     expect(stale.status).toBe(200);
     const bad = await op('keys/delegate', {
-      tenantId,
       subject: owner,
       sessionId: ownerSessionId,
       session: [{ instanceId: instance.id, sealedKey: 'sbox1:not:real' }],
@@ -475,7 +465,6 @@ describeDb('worker-delegate', () => {
     expect(errorType(bad.json)).toBe('BAD_DELEGATION');
     // The stale call replaced this session's delegations with none: nothing opens for the owner now.
     const closed = await op('resource-key/ensure', {
-      tenantId,
       kind: 'chat',
       resourceId: randomUUID(),
       ownerSubject: owner,
@@ -495,7 +484,6 @@ describeDb('worker-delegate', () => {
     // session blob they are refused, and an automation blob of some other
     // key is refused even beside a valid session blob. Nothing changed.
     const cookieOnly = await op('keys/delegate', {
-      tenantId,
       subject: owner,
       sessionId: ownerSessionId,
       session: [{ instanceId: randomUUID(), sealedKey: 'sbox1:x:y' }],
@@ -508,7 +496,6 @@ describeDb('worker-delegate', () => {
       { instances: [{ id: instance.id, publicKey: instance.pair.publicKey }] }
     );
     const forged = await op('keys/delegate', {
-      tenantId,
       subject: owner,
       sessionId: ownerSessionId,
       session: sealed.session,
@@ -517,11 +504,10 @@ describeDb('worker-delegate', () => {
     expect(forged.status).toBe(400);
     expect(errorType(forged.json)).toBe('BAD_DELEGATION');
     expect(
-      (await op('keys/status', { tenantId, subject: owner })).json.automationInstances
+      (await op('keys/status', { subject: owner })).json.automationInstances
     ).toEqual([]);
     // An empty session list stores nothing and drops this session's rows only on request.
     const empty = await op('keys/delegate', {
-      tenantId,
       subject: owner,
       sessionId: ownerSessionId,
       session: [],
@@ -532,7 +518,6 @@ describeDb('worker-delegate', () => {
     expect(
       (
         await op('keys/delegate', {
-          tenantId,
           subject: owner,
           sessionId: ownerSessionId,
           session: [],
@@ -543,14 +528,13 @@ describeDb('worker-delegate', () => {
     ).toBe(200);
 
     const restored = await op('keys/delegate', {
-      tenantId,
       subject: owner,
       sessionId: ownerSessionId,
       session: sealed.session,
       automation: sealed.automation,
     });
     expect(restored.status).toBe(200);
-    expect((await op('keys/status', { tenantId, subject: owner })).json.sessionInstances).toEqual([
+    expect((await op('keys/status', { subject: owner })).json.sessionInstances).toEqual([
       instance.id,
     ]);
   });
@@ -571,7 +555,7 @@ describeDb('worker-delegate', () => {
     });
     expect(saved.ok).toBe(true);
 
-    const grant = { tenantId, provider: GITHUB, subject: owner };
+    const grant = { provider: GITHUB, subject: owner };
     const proxied = await fetch(`${base}/v1/api`, {
       method: 'POST',
       headers: {
@@ -716,7 +700,7 @@ describeDb('worker-delegate', () => {
     expect(described.json.accountId).toBe(accountId);
     expect(JSON.stringify(described.json)).not.toContain('gho_secret');
 
-    expect((await op('grant/delete', { tenantId, provider: GITHUB, accountId })).status).toBe(200);
+    expect((await op('grant/delete', { provider: GITHUB, accountId })).status).toBe(200);
     expect((await op('grant/describe', grant)).status).toBe(404);
   });
 
@@ -739,14 +723,14 @@ describeDb('worker-delegate', () => {
     // Nobody but GitHub and Bitbucket; nobody without a grant.
     expect(
       errorType(
-        (await op('grant/git-ticket', { tenantId, provider: 'webex', subject: owner })).json
+        (await op('grant/git-ticket', { provider: 'webex', subject: owner })).json
       )
     ).toBe('host_not_allowed');
     expect(
-      (await op('grant/git-ticket', { tenantId, provider: GITHUB, subject: friend })).status
+      (await op('grant/git-ticket', { provider: GITHUB, subject: friend })).status
     ).toBe(404);
 
-    const read = await op('grant/git-ticket', { tenantId, provider: GITHUB, subject: owner });
+    const read = await op('grant/git-ticket', { provider: GITHUB, subject: owner });
     expect(read.status).toBe(200);
     expect(read.json.host).toBe('github.com');
     expect(read.json.insteadOf).toBe('https://github.com/');
@@ -819,7 +803,6 @@ describeDb('worker-delegate', () => {
 
     // A write ticket pushes.
     const write = await op('grant/git-ticket', {
-      tenantId,
       provider: GITHUB,
       subject: owner,
       write: true,
@@ -832,7 +815,7 @@ describeDb('worker-delegate', () => {
     expect(pushed.status).toBe(200);
     expect(gitCalls.at(-1)?.url).toBe('https://github.com/acme/demo.git/git-receive-pack');
 
-    expect((await op('grant/delete', { tenantId, provider: GITHUB, accountId })).status).toBe(200);
+    expect((await op('grant/delete', { provider: GITHUB, accountId })).status).toBe(200);
   });
 
   it("forwards a Mirth op to its worker with the person's credential attached, never a stored one", async () => {
@@ -853,7 +836,6 @@ describeDb('worker-delegate', () => {
     if (!instance.ok) throw new Error('instance not created');
     const sealed = await sealForSubject(
       db,
-      tenantId,
       owner,
       JSON.stringify({ username: 'alice', password: 'pw-secret' })
     );
@@ -866,7 +848,6 @@ describeDb('worker-delegate', () => {
     if (!stored.ok) throw new Error('connection not stored');
 
     const forwarded = await op('forward/mirth/api', {
-      tenantId,
       instanceId: instance.val,
       subject: owner,
       method: 'GET',
@@ -887,7 +868,6 @@ describeDb('worker-delegate', () => {
 
     // Somebody else: the connection is not theirs.
     const stranger = await op('forward/mirth/api', {
-      tenantId,
       instanceId: instance.val,
       subject: friend,
       method: 'GET',
@@ -897,13 +877,13 @@ describeDb('worker-delegate', () => {
     expect(errorType(stranger.json)).toBe('not_connected');
 
     // A pass-through op carries no credential and reaches the worker as sent.
-    const probe = await op('forward/mirth/probe', { tenantId, instanceId: instance.val });
+    const probe = await op('forward/mirth/probe', { instanceId: instance.val });
     expect(probe.status).toBe(200);
     expect(upstreamCalls.at(-1)?.url).toBe('http://mirth.test/v1/probe');
 
     expect((await op('forward/mirth/nope', {})).status).toBe(404);
     expect((await op('forward/elsewhere/api', {})).status).toBe(404);
 
-    await db.deleteFrom('mirth_instances').where('tenant_id', '=', tenantId).execute();
+    await db.deleteFrom('mirth_instances').execute();
   });
 });

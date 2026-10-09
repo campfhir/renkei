@@ -16,12 +16,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; shareId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, shareId } = await params;
+  const { shareId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const listed = await fsListFolder(
-    { tenantId, shareId, subject: session.subject },
+    { shareId, subject: session.subject },
     request.nextUrl.searchParams.get('path') ?? '/'
   );
   if (!listed.ok) {

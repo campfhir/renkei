@@ -51,7 +51,6 @@ const WEBEX_API_BASE = 'https://webexapis.com/v1';
 
 export interface UploadSlotRow {
   id: string;
-  tenant_id: string;
   subject: string;
   account_id: string;
   kind: string;
@@ -88,7 +87,7 @@ async function resolveAtlassian(
   candidates.push({ provider: ATLASSIAN, accountId: slot.account_id });
 
   for (const candidate of candidates) {
-    const grant = { tenantId: slot.tenant_id, ...candidate };
+    const grant = { ...candidate };
     const described = await delegateGrants().describe(grant);
     if (!described.ok) continue;
     const site = readAtlassianMetadata(described.val.metadata);
@@ -102,7 +101,7 @@ async function resolveAtlassian(
 }
 
 function graphContextOf(slot: UploadSlotRow): { tenantId: string; subject: string } {
-  return { tenantId: slot.tenant_id, subject: slot.subject };
+  return { subject: slot.subject };
 }
 
 async function jiraAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
@@ -381,7 +380,6 @@ async function webexNoteToSelfAttachment(
     }
     logger.warn('webex note-to-self upload: the bot could not deliver; posting to the solo space', {
       component: 'upload-executors',
-      tenantId: slot.tenant_id,
       reason: viaBot.ok ? 'no roomId in the bot response' : viaBot.err.message,
     });
   }
@@ -411,7 +409,7 @@ async function fileshareFile(slot: UploadSlotRow, bytes: Buffer): Promise<Upload
 
   const target = fileshareChildPath(folder, slot.filename);
   const written = await fsWriteFile(
-    { tenantId: slot.tenant_id, shareId, subject: slot.subject },
+    { shareId, subject: slot.subject },
     target,
     new Uint8Array(bytes)
   );
@@ -451,7 +449,6 @@ async function onbaseDocument(
     ? slot.filename.slice(slot.filename.lastIndexOf('.') + 1)
     : 'dat';
   const staged = await obApi({
-    tenantId: slot.tenant_id,
     subject: slot.subject,
     method: 'POST',
     path: '/documents/uploads',
@@ -482,7 +479,6 @@ async function onbaseDocument(
   for (let part = 0; part < partCount; part += 1) {
     const chunk = bytes.subarray(part * filePartSize, (part + 1) * filePartSize);
     const put = await obPutBytes({
-      tenantId: slot.tenant_id,
       subject: slot.subject,
       uploadId: onbaseUploadId,
       filePart: part + 1,

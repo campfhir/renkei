@@ -135,7 +135,6 @@ export async function PUT(
   }
 
   const writeResult = await setConnectorConfig(
-    tenantId,
     EMBEDDINGS_CONNECTOR,
     {
       enabled,

@@ -37,7 +37,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`oauth-consent-e2e-tenant:${projectName}`),
     slug: `e2e-oauth-consent-${projectName}`,
     sessionId: uuidFrom(`oauth-consent-e2e-session:${projectName}`),
     subject: `e2e-consent-${projectName}@example.com`,
@@ -72,7 +71,7 @@ async function seed(fixture: Fixture): Promise<void> {
       'identities',
       'tenant_settings',
     ]) {
-      await client.query(`DELETE FROM ${table} WHERE tenant_id = $1`, [fixture.tenantId]);
+      await client.query(`DELETE FROM ${table}`, [fixture.tenantId]);
     }
     await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
     await client.query(
@@ -105,7 +104,7 @@ async function seed(fixture: Fixture): Promise<void> {
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -135,7 +134,7 @@ function authorizeUrl(fixture: Fixture, state: string): string {
     code_challenge: createHash('sha256').update(verifier).digest('base64url'),
     code_challenge_method: 'S256',
   });
-  return `/api/mcp/${fixture.tenantId}/oauth/authorize?${query.toString()}`;
+  return `/api/mcp/oauth/authorize?${query.toString()}`;
 }
 
 /** Catch the client's loopback callback in the browser instead of letting it fail to connect. */
@@ -188,7 +187,7 @@ test('an MCP client must be allowed on the consent page before it gets a code', 
 
   const minted = await withDb((client) =>
     client.query(
-      'SELECT subject, code_challenge_method FROM oauth_authorization_codes WHERE tenant_id = $1',
+      'SELECT subject, code_challenge_method FROM oauth_authorization_codes',
       [fixture.tenantId]
     )
   );
@@ -197,7 +196,7 @@ test('an MCP client must be allowed on the consent page before it gets a code', 
   // A consent page that was left open and then answered twice is spent.
   const audit = await withDb((client) =>
     client.query(
-      'SELECT action FROM audit_events WHERE tenant_id = $1 AND action LIKE $2 ORDER BY action',
+      'SELECT action FROM audit_events WHERE action LIKE $2 ORDER BY action',
       [fixture.tenantId, 'oauth.consent_%']
     )
   );
@@ -228,7 +227,7 @@ test('a request without PKCE never reaches the consent page', async ({ page }, t
     state: 'no-pkce',
   });
   const response = await page.request.get(
-    `/api/mcp/${fixture.tenantId}/oauth/authorize?${query.toString()}`,
+    `/api/mcp/oauth/authorize?${query.toString()}`,
     { maxRedirects: 0 }
   );
   expect(response.status()).toBe(303);
@@ -240,7 +239,7 @@ test('a request without PKCE never reaches the consent page', async ({ page }, t
   expect(landed.searchParams.get('code')).toBeNull();
 
   const pending = await withDb((client) =>
-    client.query('SELECT count(*) FROM oauth_consent_requests WHERE tenant_id = $1', [
+    client.query('SELECT count(*) FROM oauth_consent_requests', [
       fixture.tenantId,
     ])
   );

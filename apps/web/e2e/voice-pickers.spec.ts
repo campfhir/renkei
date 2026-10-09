@@ -32,7 +32,7 @@ test.beforeAll(async () => {
 
 test('preferences: the language and voice pickers', async ({ page }, testInfo) => {
   await mockVendor(page);
-  await page.goto(`/${E2E_SLUG}/preferences`);
+  await page.goto(`/preferences`);
   const section = page.getByRole('region', { name: 'Voice' });
   await expect(section.getByRole('combobox', { name: 'Voice' })).toContainText('Sonia');
   await section.scrollIntoViewIfNeeded();
@@ -85,7 +85,7 @@ test('preferences: the language and voice pickers', async ({ page }, testInfo) =
 
 test('chat: the pickers in the speaker menu', async ({ page }, testInfo) => {
   await mockVendor(page);
-  await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${CHAT_ID}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
 
   await page.getByRole('button', { name: 'Voice', exact: true }).click();

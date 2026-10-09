@@ -2,7 +2,6 @@ import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import AutoRefresh from '@/components/auto-refresh';
@@ -29,11 +28,9 @@ export default async function NotificationsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/${slug}/notifications`));
+  if (!session) redirect(signInUrl(tenant.id, `/notifications`));
 
   const dbResult = getDatabase();
   // One extra row, never rendered, just to answer "is there more?" without
@@ -44,7 +41,6 @@ export default async function NotificationsPage({
         .selectAll()
         // Own rows only, and structurally so: no parameter here can name
         // another subject.
-        .where('tenant_id', '=', tenant.id)
         .where('subject', '=', session.subject)
         .orderBy('created_at', 'desc')
         .limit(PAGE_SIZE + 1)
@@ -61,7 +57,6 @@ export default async function NotificationsPage({
     ? await dbResult.val
         .selectFrom('agent_notifications')
         .select((eb) => eb.fn.countAll<string>().as('count'))
-        .where('tenant_id', '=', tenant.id)
         .where('subject', '=', session.subject)
         .where('read_at', 'is', null)
         .executeTakeFirst()
@@ -92,7 +87,7 @@ export default async function NotificationsPage({
         took.{' '}
         <CoachTarget name="notifications-preferences-link" as="span">
           <Link
-            href={`/${slug}/preferences`}
+            href={`/preferences`}
             className="text-blue-600 hover:underline dark:text-blue-400"
           >
             Choose what appears here

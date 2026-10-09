@@ -51,13 +51,11 @@ function uuidFrom(seed: string): string {
 
 /** This project's own tenant/session/slug — isolated from every other project and spec. */
 function fixtureFor(projectName: string): {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`entra-developer-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`entra-developer-e2e-session:${projectName}`),
     slug: `e2e-entra-dev-${projectName}`,
     subject: `e2e-entra-dev-${projectName}@example.com`,
@@ -80,12 +78,12 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 
 async function seedTenant(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM pending_oidc_signin WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+    await client.query('DELETE FROM provider_grants', [fixture.tenantId]);
+    await client.query('DELETE FROM connector_configs', [fixture.tenantId]);
+    await client.query('DELETE FROM pending_oidc_signin', [fixture.tenantId]);
+    await client.query('DELETE FROM user_preferences', [fixture.tenantId]);
+    await client.query('DELETE FROM sessions', [fixture.tenantId]);
+    await client.query('DELETE FROM identities', [fixture.tenantId]);
     await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
       fixture.tenantId,
@@ -167,7 +165,7 @@ async function connectEntraDeveloper(fixture: Fixture): Promise<void> {
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -193,7 +191,7 @@ test('entra developer: register the app, connect with narrowed scopes, disconnec
   await signIn(page, fixture);
 
   // --- The operator registers the second Entra app. ---
-  await page.goto(`/${fixture.slug}/admin/connectors/entra-developer`);
+  await page.goto(`/admin/connectors/entra-developer`);
   await expect(page.getByRole('heading', { name: 'Entra Developer', level: 1 })).toBeVisible();
   const form = page.locator('[data-coach="admin-connector-form"]');
   // The one thing an operator must not miss: it is a separate app, and
@@ -222,7 +220,7 @@ test('entra developer: register the app, connect with narrowed scopes, disconnec
   );
   const stored = await withDb((client) =>
     client.query<{ enabled: boolean; settings: { scopes?: string; directoryTenantId?: string } }>(
-      `SELECT enabled, settings FROM connector_configs WHERE tenant_id = $1 AND connector = $2`,
+      `SELECT enabled, settings FROM connector_configs WHERE connector = $2`,
       [fixture.tenantId, 'entra-developer']
     )
   );
@@ -243,7 +241,7 @@ test('entra developer: register the app, connect with narrowed scopes, disconnec
   );
 
   // --- The person connects it from its own card. ---
-  await page.goto(`/${fixture.slug}/connectors`);
+  await page.goto(`/connectors`);
   const microsoftCard = page.locator('[data-coach="card-microsoft"]');
   await expect(microsoftCard.getByText('Connected', { exact: true })).toBeVisible();
   const card = page.locator('[data-coach="card-entra-developer"]');
@@ -265,7 +263,7 @@ test('entra developer: register the app, connect with narrowed scopes, disconnec
   // redirect — read with redirects off, so nothing leaves this machine —
   // against the org's own directory, never `common`.
   const href = await connect.getAttribute('href');
-  expect(href).toMatch(new RegExp(`^/api/entra-developer/${fixture.tenantId}/authorize`));
+  expect(href).toMatch(new RegExp(`^/api/entra-developer/authorize`));
   const authorize = await page.request.get(href ?? '', { maxRedirects: 0 });
   expect([302, 307]).toContain(authorize.status());
   const consent = new URL(authorize.headers()['location'] ?? '');
@@ -289,7 +287,7 @@ test('entra developer: register the app, connect with narrowed scopes, disconnec
   // A scope beyond the org's ceiling — the box it held back — is refused,
   // not silently dropped.
   const widened = await page.request.get(
-    `/api/entra-developer/${fixture.tenantId}/authorize?scopes=Application.Read.All+Group.Read.All`,
+    `/api/entra-developer/authorize?scopes=Application.Read.All+Group.Read.All`,
     { maxRedirects: 0 }
   );
   expect(widened.status()).toBe(400);
@@ -311,7 +309,7 @@ test('entra developer: register the app, connect with narrowed scopes, disconnec
   await card.getByRole('button', { name: 'Yes, disconnect' }).click();
   await expect(card.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
   const remaining = await withDb((client) =>
-    client.query(`SELECT provider FROM provider_grants WHERE tenant_id = $1 ORDER BY provider`, [
+    client.query(`SELECT provider FROM provider_grants ORDER BY provider`, [
       fixture.tenantId,
     ])
   );

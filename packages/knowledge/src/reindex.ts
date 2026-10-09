@@ -90,7 +90,7 @@ export async function reindexLexicalBatch(
       .where('search_text', 'is', null)
       .orderBy('id')
       .limit(limit);
-    if (tenantId) query = query.where('tenant_id', '=', tenantId);
+    if (tenantId) query = query;
     const rows = await query.execute();
 
     let skipped = 0;
@@ -145,7 +145,6 @@ export async function reembedBatch(
     let query = db
       .selectFrom('knowledge_chunks')
       .select(['id', 'content', 'metadata'])
-      .where('tenant_id', '=', tenantId)
       // Only multi-chunk rows carry a header; ingest stamps `chunkCount`
       // on exactly those.
       .where(sql<boolean>`(metadata ->> 'chunkCount')::int > 1`);
@@ -225,7 +224,6 @@ export async function extractKeywordsBatch(
     const pending = await db
       .selectFrom('knowledge_chunks')
       .select(['provider', objectRef.as('object_ref')])
-      .where('tenant_id', '=', tenantId)
       .where('keywords', 'is', null)
       .groupBy(['provider', objectRef])
       .orderBy('provider')
@@ -243,7 +241,6 @@ export async function extractKeywordsBatch(
       const rows = await db
         .selectFrom('knowledge_chunks')
         .select(['id', 'ref_id', 'content', 'metadata'])
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where((eb) => eb.or([eb('ref_id', '=', ref), eb('ref_id', 'like', `${ref}#%`)]))
         .orderBy('ref_id')

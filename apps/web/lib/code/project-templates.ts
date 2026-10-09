@@ -31,7 +31,6 @@ export async function listCodeProjectTemplates(
   const rows = await db
     .selectFrom('code_project_templates')
     .select(['id', 'name', 'description', 'instructions'])
-    .where('tenant_id', '=', tenantId)
     .orderBy('name')
     .execute();
   return rows.map((row) => ({
@@ -79,7 +78,6 @@ export async function createCodeProjectTemplate(
     const inserted = await db
       .insertInto('code_project_templates')
       .values({
-        tenant_id: tenantId,
         name: input.name,
         description: input.description,
         instructions: input.instructions,
@@ -114,7 +112,6 @@ export async function updateCodeProjectTemplate(
         instructions: input.instructions,
         updated_at: sql`NOW()`,
       })
-      .where('tenant_id', '=', tenantId)
       .where('id', '=', templateId)
       .executeTakeFirst();
     if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'not-found' };
@@ -138,7 +135,6 @@ export async function deleteCodeProjectTemplate(
   if (!isUuid(templateId)) return false;
   const result = await db
     .deleteFrom('code_project_templates')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', templateId)
     .executeTakeFirst();
   return Number(result.numDeletedRows ?? 0) > 0;

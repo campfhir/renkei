@@ -15,7 +15,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
@@ -29,7 +28,6 @@ export async function POST(
   }
   const days = automationDaysOfBody(body.automationDays);
   const rotated = await delegateClient().rotateUserKey({
-    tenantId,
     subject: session.subject,
     sessionId: session.id,
     wrappedPrivateKey,
@@ -57,6 +55,6 @@ export async function POST(
         return jsonError(503, 'delegate', 'The key service could not be reached.');
     }
   }
-  recordAuditEvent({ tenantId, actorSubject: session.subject, action: 'encryption-key.rotated' });
+  recordAuditEvent({ actorSubject: session.subject, action: 'encryption-key.rotated' });
   return NextResponse.json(rotated.val);
 }

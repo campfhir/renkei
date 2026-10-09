@@ -51,7 +51,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -97,7 +96,6 @@ export async function GET(
       'read_at',
       'created_at',
     ])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', session.subject)
     .orderBy('created_at', 'desc')
     .limit(limit);
@@ -111,7 +109,6 @@ export async function GET(
     db
       .selectFrom('agent_notifications')
       .select((eb) => eb.fn.countAll<string>().as('count'))
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', session.subject)
       .where('read_at', 'is', null)
       .executeTakeFirst(),
@@ -150,7 +147,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -173,7 +169,6 @@ export async function POST(
   let update = dbResult.val
     .updateTable('agent_notifications')
     .set({ read_at: toUnread ? null : new Date() })
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', session.subject)
     .where('read_at', toUnread ? 'is not' : 'is', null);
   // Narrowing by id still carries the tenant and subject predicates, so a
@@ -198,7 +193,6 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -219,7 +213,6 @@ export async function DELETE(
 
   let del = dbResult.val
     .deleteFrom('agent_notifications')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', session.subject);
   if (ids) {
     if (ids.length === 0) return NextResponse.json({ deleted: 0 });

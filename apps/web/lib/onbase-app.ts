@@ -61,7 +61,6 @@ export async function getOnBaseApp(
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/onbase',
-      tenantId,
     });
     return null;
   }
@@ -70,7 +69,6 @@ export async function getOnBaseApp(
   if (!configResult.ok) {
     logger.error('Could not read {connector} connector config', {
       component: 'connectors/onbase',
-      tenantId,
       connector,
     });
     return null;
@@ -94,7 +92,6 @@ export async function getOnBaseApp(
   ) {
     logger.warn('{connector} connector config is incomplete', {
       component: 'connectors/onbase',
-      tenantId,
       connector,
     });
     return null;

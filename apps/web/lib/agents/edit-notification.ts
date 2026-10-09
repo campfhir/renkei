@@ -29,7 +29,6 @@ import { getIdentityDisplay } from '@/lib/identity';
 import { logger } from '@/lib/logger';
 
 export function notifyAgentEdited(input: {
-  tenantId: string;
   /** Whose agent it is — the notification's reader. */
   ownerSubject: string;
   /** Who saved the change. */
@@ -56,7 +55,6 @@ export function notifyAgentEdited(input: {
           .insertInto('agent_notifications')
           .values({
             id,
-            tenant_id: input.tenantId,
             subject: input.ownerSubject,
             kind: 'agent_edited',
             headline,
@@ -85,18 +83,16 @@ export function notifyAgentEdited(input: {
       const owner = await getIdentityDisplay(input.tenantId, input.ownerSubject);
       if (owner?.email) {
         const access = await resolveGraphAccess({
-          tenantId: input.tenantId,
           subject: input.ownerSubject,
         });
         if (typeof access === 'string') {
           logger.warn('agent-edited mail not sent: {reason}', {
             component: 'agents/edit-notification',
-            tenantId: input.tenantId,
             agentId: input.agentId,
             reason: access,
           });
         } else {
-          const context = { tenantId: input.tenantId, subject: input.ownerSubject };
+          const context = { subject: input.ownerSubject };
           const sent = await graphPost(context, access.auth, '/me/sendMail', {
             message: {
               subject: headline,
@@ -108,7 +104,6 @@ export function notifyAgentEdited(input: {
           if (!sent.ok) {
             logger.warn('agent-edited mail not sent: {reason}', {
               component: 'agents/edit-notification',
-              tenantId: input.tenantId,
               agentId: input.agentId,
               reason: sent.error,
             });
@@ -124,7 +119,6 @@ export function notifyAgentEdited(input: {
         if (!sent.ok) {
           logger.warn('agent-edited WebEx note not sent for agent {agentId}', {
             component: 'agents/edit-notification',
-            tenantId: input.tenantId,
             agentId: input.agentId,
           });
         }
@@ -133,7 +127,6 @@ export function notifyAgentEdited(input: {
   })().catch((error: unknown) => {
     logger.warn('agent-edited notification not recorded', {
       component: 'agents/edit-notification',
-      tenantId: input.tenantId,
       agentId: input.agentId,
       error: error instanceof Error ? error.message : String(error),
     });

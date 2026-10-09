@@ -21,7 +21,6 @@ export async function loadCalendarOptions(db: Kysely<DB>, tenantId: string): Pro
   const rows = await db
     .selectFrom('schedule_calendars')
     .select(['id', 'name', 'dates'])
-    .where('tenant_id', '=', tenantId)
     .orderBy('name')
     .execute();
   return rows.map((row) => ({

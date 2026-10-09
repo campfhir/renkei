@@ -40,7 +40,7 @@ export default function PipelineTemplateForms({ slug }: { slug: string }) {
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ templates: TemplateRow[] }>(
-      `/api/admin/${slug}/pipeline-templates`
+      `/api/admin/pipeline-templates`
     );
     if (loadError) setError(loadError);
     else setTemplates(data?.templates ?? []);
@@ -60,8 +60,8 @@ export default function PipelineTemplateForms({ slug }: { slug: string }) {
       body: draft.body,
     };
     const saveError = draft.id
-      ? await sendJson(`/api/admin/${slug}/pipeline-templates/${draft.id}`, 'PUT', payload)
-      : await sendJson(`/api/admin/${slug}/pipeline-templates`, 'POST', payload);
+      ? await sendJson(`/api/admin/pipeline-templates/${draft.id}`, 'PUT', payload)
+      : await sendJson(`/api/admin/pipeline-templates`, 'POST', payload);
     setBusy(false);
     if (saveError) {
       setError(saveError);
@@ -75,7 +75,7 @@ export default function PipelineTemplateForms({ slug }: { slug: string }) {
     setBusy(true);
     setError(null);
     const removeError = await sendJson(
-      `/api/admin/${slug}/pipeline-templates/${templateId}`,
+      `/api/admin/pipeline-templates/${templateId}`,
       'DELETE'
     );
     setBusy(false);

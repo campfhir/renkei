@@ -135,7 +135,6 @@ export async function upsertChunkRow(
         .insertInto('knowledge_chunks')
         .values({
           id: randomUUID(),
-          tenant_id: tenantId,
           provider: chunk.provider,
           ref_id: chunk.refId,
           metadata: JSON.stringify(chunk.metadata),
@@ -149,7 +148,7 @@ export async function upsertChunkRow(
           // source_at must be in the update set too: a re-ingest of an edited
           // page carries a newer document date, and omitting it here would
           // pin the row to whatever date the first ingest saw.
-          oc.columns(['tenant_id', 'provider', 'ref_id']).doUpdateSet({
+          oc.columns(['provider', 'ref_id']).doUpdateSet({
             metadata: JSON.stringify(chunk.metadata),
             content: storedContent,
             embedding: sql`${vector}::vector`,

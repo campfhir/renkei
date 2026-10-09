@@ -20,11 +20,9 @@ export interface ImageModelOption {
 }
 
 export default function ImageModelForm({
-  tenantId,
   initial,
   models,
 }: {
-  tenantId: string;
   initial: ImagePrefs;
   models: ImageModelOption[];
 }) {
@@ -37,7 +35,7 @@ export default function ImageModelForm({
   async function save() {
     setStatus('saving');
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/preferences`, {
+      const response = await fetch(`/api/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: { modelId } }),

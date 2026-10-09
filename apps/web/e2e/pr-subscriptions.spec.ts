@@ -204,7 +204,7 @@ test.describe('PR pipeline subscriptions', () => {
 
     // ── The project page's own condensed row, on the Pulls card's
     // most-recent PR (#90) — no trip to the full Pulls page needed. ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     const main = page.getByRole('main');
     const pullsCard = main.locator('section', {
       has: page.getByRole('heading', { level: 2, name: 'Pull requests' }),
@@ -225,7 +225,7 @@ test.describe('PR pipeline subscriptions', () => {
 
     // ── The full Pulls page reports the same subscription back — one
     // opt-in, read from either place. ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}/pulls`);
+    await page.goto(`/code/${ids.projectId}/pulls`);
     await expect(page.getByRole('heading', { level: 1, name: 'Pull requests' })).toBeVisible();
     const row90 = subscribeBlock(page, OPEN_PR.number);
     await row90.getByText('Subscribe', { exact: true }).click();
@@ -253,7 +253,7 @@ test.describe('PR pipeline subscriptions', () => {
     if (!mobile) return;
 
     // ── Mobile: the project page's condensed row still works at phone width ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await page.setViewportSize(MOBILE_VIEWPORT);
     const mobilePullsCard = page.getByRole('main').locator('section', {
       has: page.getByRole('heading', { level: 2, name: 'Pull requests' }),
@@ -262,7 +262,7 @@ test.describe('PR pipeline subscriptions', () => {
     await shot(page, testInfo, 'pr-subscribe-compact-mobile.png');
 
     // ── Mobile: the full Pulls page's disclosure and outcome line too ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}/pulls`);
+    await page.goto(`/code/${ids.projectId}/pulls`);
     await page.setViewportSize(MOBILE_VIEWPORT);
     await expect(page.getByRole('heading', { level: 1, name: 'Pull requests' })).toBeVisible();
     const mobileRow91 = subscribeBlock(page, SEEDED_PR.number);

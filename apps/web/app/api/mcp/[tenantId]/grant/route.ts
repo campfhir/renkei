@@ -23,7 +23,6 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
@@ -40,7 +39,6 @@ export async function DELETE(
     const grant = await db
       .selectFrom('provider_grants')
       .select(['provider_account_id', 'display_name'])
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', 'atlassian')
       .where('subject', '=', session.subject)
       .executeTakeFirst();
@@ -58,32 +56,27 @@ export async function DELETE(
     await db.transaction().execute(async (trx) => {
       await trx
         .deleteFrom('provider_grants')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', 'atlassian')
         .where('subject', '=', session.subject)
         .execute();
 
       await trx
         .deleteFrom('oauth_access_tokens')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', session.subject)
         .execute();
 
       await trx
         .deleteFrom('oauth_refresh_tokens')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', session.subject)
         .execute();
     });
 
     logger.info('Revoked by owner', {
       component: 'grants/store',
-      tenantId,
       subject: session.subject,
       accountId: grant.provider_account_id,
     });
     recordAuditEvent({
-      tenantId,
       actorSubject: session.subject,
       action: 'connector.disconnected',
       targetKind: 'connector',
@@ -104,7 +97,6 @@ export async function DELETE(
   } catch (error) {
     logger.error('Revocation failed', {
       component: 'grants/store',
-      tenantId,
       subject: session.subject,
       error: error instanceof Error ? error.message : String(error),
     });

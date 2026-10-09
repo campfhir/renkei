@@ -64,7 +64,6 @@ export interface SealedDelegation {
 }
 
 export interface DelegationInput {
-  tenantId: string;
   subject: string;
   /** The browser session the session delegations live and die with. */
   sessionId: string;
@@ -218,7 +217,6 @@ async function moveSealedRows(
   const grants = await trx
     .selectFrom('resource_key_grants')
     .select(['resource_key_id', 'holder_kind', 'wrapped_key'])
-    .where('tenant_id', '=', tenantId)
     .where('holder', '=', subject)
     .where('holder_kind', 'in', ['user', 'automation'])
     .forUpdate()
@@ -250,7 +248,7 @@ async function moveSealedRows(
     const selected = [...spec.idColumns, ...spec.columns].map((column) => sql.ref(column));
     const rows = await sql<Record<string, unknown>>`
       SELECT ${sql.join(selected)} FROM ${table}
-       WHERE tenant_id = ${tenantId} AND ${subjectColumn} = ${subject}
+       WHERE ${subjectColumn} = ${subject}
        FOR UPDATE
     `.execute(trx);
     for (const row of rows.rows) {
@@ -272,7 +270,7 @@ async function moveSealedRows(
       );
       await sql`
         UPDATE ${table} SET ${sql.join(assignments)}
-         WHERE tenant_id = ${tenantId} AND ${subjectColumn} = ${subject}
+         WHERE ${subjectColumn} = ${subject}
            AND ${sql.join(identity, sql` AND `)}
       `.execute(trx);
       values += 1;
@@ -374,7 +372,6 @@ async function writeDelegations(
   );
   await trx
     .deleteFrom('key_delegations')
-    .where('tenant_id', '=', input.tenantId)
     .where('subject', '=', input.subject)
     .where('scope', '=', 'session')
     .where('session_id', '=', input.sessionId)
@@ -385,7 +382,6 @@ async function writeDelegations(
       .insertInto('key_delegations')
       .values(
         session.map((entry) => ({
-          tenant_id: input.tenantId,
           subject: input.subject,
           instance_id: entry.instanceId,
           scope: 'session',
@@ -400,7 +396,6 @@ async function writeDelegations(
   if (automation.length > 0) {
     await trx
       .deleteFrom('key_delegations')
-      .where('tenant_id', '=', input.tenantId)
       .where('subject', '=', input.subject)
       .where('scope', '=', 'automation')
       .execute();
@@ -409,7 +404,6 @@ async function writeDelegations(
       .insertInto('key_delegations')
       .values(
         automation.map((entry) => ({
-          tenant_id: input.tenantId,
           subject: input.subject,
           instance_id: entry.instanceId,
           scope: 'automation',
@@ -438,7 +432,6 @@ export async function enroll(
     const existing = await trx
       .selectFrom('user_encryption_keys')
       .select(['salt', 'mode', 'version', 'verifier', 'sealed_kek', 'unlocked_until'])
-      .where('tenant_id', '=', input.tenantId)
       .where('subject', '=', input.subject)
       .forUpdate()
       .executeTakeFirst();
@@ -477,7 +470,6 @@ export async function enroll(
     await trx
       .insertInto('user_encryption_keys')
       .values({
-        tenant_id: input.tenantId,
         subject: input.subject,
         salt: existing?.salt ?? Buffer.alloc(32).toString('base64'),
         mode: 'held',
@@ -494,7 +486,7 @@ export async function enroll(
         rotated_at: existing ? enrolledAt : null,
       })
       .onConflict((oc) =>
-        oc.columns(['tenant_id', 'subject']).doUpdateSet({
+        oc.columns(['subject']).doUpdateSet({
           mode: 'held',
           version,
           public_key: input.publicKey,
@@ -564,7 +556,6 @@ export async function revokeAutomation(
 ): Promise<number> {
   const result = await db
     .deleteFrom('key_delegations')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('scope', '=', 'automation')
     .executeTakeFirst();
@@ -625,7 +616,6 @@ export async function rotateUserKey(
           wrapped_automation_key: input.wrappedAutomationKey,
           rotated_at: new Date(),
         })
-        .where('tenant_id', '=', input.tenantId)
         .where('subject', '=', input.subject)
         .execute();
       // Every other session's delegation carries the OLD key: gone, so those
@@ -633,7 +623,6 @@ export async function rotateUserKey(
       // first replace through device approval or by typing the new key).
       await trx
         .deleteFrom('key_delegations')
-        .where('tenant_id', '=', input.tenantId)
         .where('subject', '=', input.subject)
         .execute();
       await writeDelegations(trx, input, session.val.expiresAt);
@@ -654,13 +643,11 @@ export async function shredUserKey(
   return db.transaction().execute(async (trx) => {
     await trx
       .deleteFrom('resource_key_grants')
-      .where('tenant_id', '=', tenantId)
       .where('holder', '=', subject)
       .where('holder_kind', 'in', ['user', 'automation', 'public'])
       .execute();
     const result = await trx
       .deleteFrom('user_encryption_keys')
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .executeTakeFirst();
     return Number(result.numDeletedRows) > 0;
@@ -676,7 +663,7 @@ export async function enrollmentCensus(
     .selectFrom('user_encryption_keys')
     .select(['mode', (eb) => eb.fn.countAll<string>().as('count')])
     .groupBy('mode');
-  if (tenantId) query = query.where('tenant_id', '=', tenantId);
+  if (tenantId) query = query;
   const rows = await query.execute();
   const census = { held: 0, managed: 0, own: 0 };
   for (const row of rows) {

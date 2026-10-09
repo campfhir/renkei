@@ -41,7 +41,6 @@ function excerptOf(raw: RawEmail): string {
 }
 
 export interface SanitizeForTenantOptions {
-  tenantId: string;
   provider: string;
   refId: string;
   /** The mailbox owner's identity — the only scope any later read of this message's log row will use. */
@@ -95,7 +94,6 @@ async function runScriptsOver(
       if (script.lastError) await recordCleanerScriptError(tenantId, script.id, null);
     } else {
       await recordCleanerScriptError(
-        tenantId,
         script.id,
         `${run.err.type}: ${run.detail ?? ''}`.trim()
       );
@@ -131,7 +129,6 @@ async function applyCleanerScripts(
  * strip boilerplate, so that is what it gets.
  */
 export async function applyCleanerScriptsToItem(inputs: {
-  tenantId: string;
   kind: CleanerScriptKind;
   content: string;
   fields?: Partial<Omit<CleanerScriptRunInput, 'text' | 'kind'>>;
@@ -230,7 +227,6 @@ export async function sanitizeEmailForTenant(
   }
 
   await recordClassification({
-    tenantId: options.tenantId,
     provider: options.provider,
     refId: options.refId,
     ownerUpn: options.ownerUpn,

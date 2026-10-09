@@ -3,10 +3,8 @@
 import { useEffect, useState } from 'react';
 
 export default function AccessCountBadge({
-  tenantId,
   agentId,
 }: {
-  tenantId: string;
   agentId: string;
 }) {
   const [count, setCount] = useState<number | null>(null);
@@ -14,7 +12,7 @@ export default function AccessCountBadge({
   useEffect(() => {
     const fetchCount = async () => {
       try {
-        const response = await fetch(`/api/tenant/${tenantId}/agents/${agentId}/access-count`);
+        const response = await fetch(`/api/agents/${agentId}/access-count`);
         if (!response.ok) return;
         const data: { count?: number } = await response.json().catch(() => ({}));
         setCount(data.count ?? 0);

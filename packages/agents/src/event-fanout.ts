@@ -22,7 +22,6 @@ import { createAgentRun } from './runs';
 import { matchesTriggerEvent } from './trigger-catalog';
 
 export interface AgentEventInput {
-  tenantId: string;
   /** Catalog source/type, e.g. 'microsoft' / 'mail.received'. */
   source: string;
   type: string;
@@ -90,7 +89,6 @@ export async function fanOutAgentEvents(
       'a.steps',
       'a.llm_model_id',
     ])
-    .where('t.tenant_id', '=', event.tenantId)
     .where('t.kind', '=', 'event')
     .where('t.enabled', '=', true)
     .where('t.event_source', '=', event.source)
@@ -134,7 +132,6 @@ export async function fanOutAgentEvents(
         .values({
           trigger_id: trigger.trigger_id,
           dedupe_key: dedupeKey,
-          tenant_id: event.tenantId,
           run_id: null,
         })
         .onConflict((oc) => oc.columns(['trigger_id', 'dedupe_key']).doNothing())
@@ -144,7 +141,6 @@ export async function fanOutAgentEvents(
     }
 
     const result = await createAgentRun(db, producer, {
-      tenantId: event.tenantId,
       agentId: trigger.agent_id,
       ownerSubject: trigger.owner_subject,
       steps: trigger.steps,

@@ -14,7 +14,6 @@ import type { ClaimedEvent, Disposition } from './queue';
 function event(over: Partial<ClaimedEvent> = {}): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: 'tenant-1',
     source: 'webex',
     type: 'messages.created',
     payload: {},

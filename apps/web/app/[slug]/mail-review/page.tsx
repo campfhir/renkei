@@ -1,6 +1,5 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import ReviewList from './review-list';
@@ -18,12 +17,10 @@ export default async function MailReviewPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/mail-review`));
+    redirect(signInUrl(tenant.id, `/mail-review`));
   }
 
   return (

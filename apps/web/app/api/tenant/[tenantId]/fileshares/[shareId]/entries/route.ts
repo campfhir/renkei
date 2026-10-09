@@ -28,12 +28,12 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; shareId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, shareId } = await params;
+  const { shareId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const path = request.nextUrl.searchParams.get('path') ?? '';
-  const removed = await fsRemoveEntry({ tenantId, shareId, subject: session.subject }, path);
+  const removed = await fsRemoveEntry({ shareId, subject: session.subject }, path);
   if (!removed.ok) {
     const failure = clientFailure(removed.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });
@@ -45,7 +45,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; shareId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, shareId } = await params;
+  const { shareId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -59,7 +59,7 @@ export async function POST(
   const from = typeof body.from === 'string' ? body.from : '';
   if (!from) return NextResponse.json({ error: 'Unusable source path' }, { status: 400 });
 
-  const target = { tenantId, shareId, subject: session.subject };
+  const target = { shareId, subject: session.subject };
   const moved =
     op === 'move'
       ? await fsMoveEntry(target, from, typeof body.toFolder === 'string' ? body.toFolder : '')

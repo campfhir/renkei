@@ -38,7 +38,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string; runId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId, runId } = await params;
+  const { agentId, runId } = await params;
   if (!isUuid(agentId) || !isUuid(runId)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
@@ -59,7 +59,6 @@ export async function POST(
   const run = await db
     .selectFrom('agent_runs')
     .select(['id', 'status', 'initial_state', 'trigger_id', 'trigger_kind'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('id', '=', runId)
     .where('owner_subject', '=', access.ownerSubject)
@@ -75,7 +74,6 @@ export async function POST(
   const agent = await db
     .selectFrom('agents')
     .select(['id', 'owner_subject', 'steps', 'llm_model_id'])
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', agentId)
     .where('owner_subject', '=', access.ownerSubject)
     .executeTakeFirst();
@@ -127,7 +125,6 @@ export async function POST(
       : undefined;
 
   const created = await createAgentRun(db, agentJobsQueue().producer, {
-    tenantId,
     agentId,
     ownerSubject: agent.owner_subject,
     steps: agent.steps,
@@ -152,7 +149,6 @@ export async function POST(
 
   logger.info('run {runId} re-run as {newRunId} by {subject}', {
     component: 'web/agents',
-    tenantId,
     runId,
     newRunId: created.val.runId,
     subject: session.subject,

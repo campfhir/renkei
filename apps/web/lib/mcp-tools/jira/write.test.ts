@@ -191,7 +191,6 @@ async function tools(): Promise<Map<string, ToolHandler>> {
   await registerWriteTools(
     server,
     {
-      tenantId: 'tenant-1',
       accountId: 'acct-1',
       siteUrl: 'https://example.atlassian.net',
       apiBaseUrl,

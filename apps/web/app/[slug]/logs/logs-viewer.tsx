@@ -59,13 +59,11 @@ const COLUMNS: ExtraColumn[] = [
 
 export default function LogsViewer({
   slug,
-  tenantId,
   accountId,
   initial,
   initialWindow,
 }: {
   slug: string;
-  tenantId: string;
   accountId: string | null;
   initial: LogSearchResult;
   /** The window the server already searched, so the picker shows it. */
@@ -109,7 +107,7 @@ export default function LogsViewer({
       // rather than leaving a dead-end banner behind a filter change — the
       // server render of this page redirects for exactly the same verdict.
       if (result.signedOut) {
-        window.location.href = signInUrl(tenantId, `/${slug}/logs`);
+        window.location.href = signInUrl(tenantId, `/logs`);
         return;
       }
       setResult(result);
@@ -152,7 +150,7 @@ export default function LogsViewer({
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">Activity</h1>
         <Link
-          href={`/${slug}/connectors`}
+          href={`/connectors`}
           className="text-sm text-blue-600 hover:underline dark:text-blue-400"
         >
           Connectors
@@ -178,7 +176,7 @@ export default function LogsViewer({
           {signedOut && (
             <>
               {' '}
-              <a className="font-medium underline" href={signInUrl(tenantId, `/${slug}/logs`)}>
+              <a className="font-medium underline" href={signInUrl(tenantId, `/logs`)}>
                 Sign in again
               </a>
             </>

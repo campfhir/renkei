@@ -18,11 +18,9 @@ import AddConnectorModal, { type CatalogItem } from './add-connector-modal';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export function AddConnectorButton({
-  tenantId,
   items,
   emphasis = false,
 }: {
-  tenantId: string;
   items: CatalogItem[];
   /** The empty-state rendering: a primary button rather than a quiet one. */
   emphasis?: boolean;
@@ -57,10 +55,8 @@ export function AddConnectorButton({
  * single-product card lists one.
  */
 export function RemovableProducts({
-  tenantId,
   products,
 }: {
-  tenantId: string;
   products: Array<{ capabilityKey: string; label: string }>;
 }) {
   const router = useRouter();
@@ -73,7 +69,7 @@ export function RemovableProducts({
     setBusy(capabilityKey);
     setError(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/connector-selections`, {
+      const response = await fetch(`/api/connector-selections`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ connector: capabilityKey }),

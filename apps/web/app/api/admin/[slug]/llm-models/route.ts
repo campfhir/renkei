@@ -13,7 +13,6 @@ import { getDatabase } from '@renkei/db';
 import { encrypt, loadKeyring } from '@renkei/crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { parseModelPayload } from '@/lib/agents/llm-model-payload';
 
 export async function GET(
@@ -21,8 +20,6 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -43,7 +40,6 @@ export async function GET(
       'is_default',
       'encrypted_secrets',
     ])
-    .where('tenant_id', '=', tenant.id)
     .orderBy('label')
     .execute();
 
@@ -67,8 +63,6 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -98,7 +92,6 @@ export async function POST(
     const source = await db
       .selectFrom('llm_model_configs')
       .select(['encrypted_secrets'])
-      .where('tenant_id', '=', tenant.id)
       .where('id', '=', parsed.apiKeyFromId)
       .executeTakeFirst();
     if (!source?.encrypted_secrets) {
@@ -117,7 +110,6 @@ export async function POST(
       await db
         .updateTable('llm_model_configs')
         .set({ is_default: false, updated_at: sql`NOW()` })
-        .where('tenant_id', '=', tenant.id)
         .where('is_default', '=', true)
         .execute();
     }
@@ -125,7 +117,6 @@ export async function POST(
       .insertInto('llm_model_configs')
       .values({
         id,
-        tenant_id: tenant.id,
         label: parsed.label,
         provider: parsed.provider,
         model: parsed.model,

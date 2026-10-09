@@ -10,7 +10,6 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 
 export interface EnvTarget {
-  tenantId: string;
   subject: string;
 }
 
@@ -50,13 +49,12 @@ export async function upsertEnvSecret(
     .insertInto('sandbox_env_secrets')
     .values({
       id: randomUUID(),
-      tenant_id: input.tenantId,
       subject: input.subject,
       name: input.name,
       sealed: input.sealed,
     })
     .onConflict((oc) =>
-      oc.columns(['tenant_id', 'subject', 'name']).doUpdateSet({
+      oc.columns(['subject', 'name']).doUpdateSet({
         sealed: input.sealed,
         updated_at: new Date(),
       })
@@ -73,7 +71,6 @@ export async function listEnvSecrets(
   const rows = await db
     .selectFrom('sandbox_env_secrets')
     .select(SUMMARY_COLUMNS)
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .orderBy('name')
     .execute();
@@ -84,7 +81,6 @@ export async function countEnvSecrets(db: Kysely<DB>, target: EnvTarget): Promis
   const row = await db
     .selectFrom('sandbox_env_secrets')
     .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .executeTakeFirst();
   return row?.count ? Number(row.count) : 0;
@@ -98,7 +94,6 @@ export async function hasEnvSecret(
   const row = await db
     .selectFrom('sandbox_env_secrets')
     .select('id')
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .where('name', '=', name)
     .executeTakeFirst();
@@ -113,7 +108,6 @@ export async function listSealedEnv(
   return db
     .selectFrom('sandbox_env_secrets')
     .select(['id', 'name', 'sealed'])
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .orderBy('name')
     .execute();
@@ -135,7 +129,6 @@ export async function deleteEnvSecret(
 ): Promise<{ id: string; name: string } | undefined> {
   const row = await db
     .deleteFrom('sandbox_env_secrets')
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .where('name', '=', name)
     .returning(['id', 'name'])

@@ -102,7 +102,6 @@ const TENANT_ID = 'tenant-1';
 function workflowRunEvent(prNumbers: number[]): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: TENANT_ID,
     source: 'github',
     type: 'workflow_run',
     attempts: 1,

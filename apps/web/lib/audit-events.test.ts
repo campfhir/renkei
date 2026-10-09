@@ -49,7 +49,6 @@ beforeEach(() => {
 describe('recordAuditEvent', () => {
   it('writes an attributed, labelled row', async () => {
     recordAuditEvent({
-      tenantId: 'tenant-1',
       actorSubject: 'subject-1',
       action: 'connector.connected',
       targetKind: 'connector',
@@ -58,7 +57,6 @@ describe('recordAuditEvent', () => {
     await flush();
 
     expect(inserted[0]).toMatchObject({
-      tenant_id: 'tenant-1',
       actor_subject: 'subject-1',
       action: 'connector.connected',
       target_kind: 'connector',
@@ -69,7 +67,6 @@ describe('recordAuditEvent', () => {
 
   it('caps the target label at the schema limit', async () => {
     recordAuditEvent({
-      tenantId: 'tenant-1',
       actorSubject: 'subject-1',
       action: 'agent.created',
       targetKind: 'agent',
@@ -81,7 +78,6 @@ describe('recordAuditEvent', () => {
 
   it('serializes details and omits them when absent', async () => {
     recordAuditEvent({
-      tenantId: 'tenant-1',
       actorSubject: 'operator-1',
       action: 'agent.disabled',
       targetKind: 'agent',

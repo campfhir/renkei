@@ -12,13 +12,10 @@ import {
   sbImageRuleSet,
 } from '@renkei/sandbox-client';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { parseImageRulePayload } from '@/lib/code/image-rules';
 import { isUuid } from '@/lib/uuid';
 
 async function operatorTenant(slug: string): Promise<{ id: string } | NextResponse> {
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

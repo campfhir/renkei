@@ -72,7 +72,6 @@ export function refreshedOf(
 export function onbaseWorkerRefresh(connector: string): OnBaseRefresh {
   return async (refreshToken) => {
     const answer = await onbaseWorkerCall('token', {
-      tenantId: currentTenant(),
       connector,
       grant: { type: 'refresh_token', refreshToken },
     });

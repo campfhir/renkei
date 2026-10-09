@@ -38,7 +38,7 @@ test('knowledge panel: selection, purge, and no overflow', async ({ page }, test
       );
     }
 
-    await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}`);
+    await page.goto(`/agents/${AGENT_RICH_ID}`);
     // CollapsibleSection is a native <details> on desktop, shut by default.
     await page.locator('summary', { hasText: 'Knowledge' }).click();
     await expect(page.getByText('Short note')).toBeVisible();
@@ -68,7 +68,7 @@ test('knowledge panel: selection, purge, and no overflow', async ({ page }, test
       fullPage: true,
     });
   } finally {
-    await client.query(`DELETE FROM knowledge_chunks WHERE tenant_id = $1 AND provider = 'note'`, [
+    await client.query(`DELETE FROM knowledge_chunks WHERE provider = 'note'`, [
       E2E_TENANT_ID,
     ]);
     await client.end();

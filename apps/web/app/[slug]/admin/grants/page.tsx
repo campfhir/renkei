@@ -11,5 +11,5 @@ export default async function GrantsPage({
   params: Promise<{ slug: string }>;
 }): Promise<never> {
   const { slug } = await params;
-  redirect(`/${slug}/admin/access`);
+  redirect(`/admin/access`);
 }

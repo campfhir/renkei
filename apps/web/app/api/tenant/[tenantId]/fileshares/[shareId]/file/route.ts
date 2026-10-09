@@ -32,12 +32,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; shareId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, shareId } = await params;
+  const { shareId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const path = request.nextUrl.searchParams.get('path') ?? '';
-  const content = await fsReadFile({ tenantId, shareId, subject: session.subject }, path);
+  const content = await fsReadFile({ shareId, subject: session.subject }, path);
   if (!content.ok) {
     const failure = clientFailure(content.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });
@@ -57,7 +57,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; shareId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, shareId } = await params;
+  const { shareId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -76,7 +76,7 @@ export async function PUT(
   }
 
   const written = await fsWriteFile(
-    { tenantId, shareId, subject: session.subject },
+    { shareId, subject: session.subject },
     path,
     new Uint8Array(body)
   );

@@ -62,7 +62,6 @@ export async function findProcessedByPath(
     const rows = await db
       .selectFrom('batch_processed_files')
       .select(['content_hash', 'path', 'size', 'modified_at'])
-      .where('tenant_id', '=', tenantId)
       .where('share_id', '=', shareId)
       .where('path', 'in', chunk)
       .execute();
@@ -91,7 +90,6 @@ export async function findProcessedHashes(
     const rows = await db
       .selectFrom('batch_processed_files')
       .select('content_hash')
-      .where('tenant_id', '=', tenantId)
       .where('share_id', '=', shareId)
       .where('content_hash', 'in', chunk)
       .execute();
@@ -134,7 +132,6 @@ export async function recordProcessedFiles(
     .values(
       files.map((file) => ({
         id: randomUUID(),
-        tenant_id: tenantId,
         share_id: shareId,
         content_hash: file.contentHash,
         path: file.path,
@@ -145,7 +142,7 @@ export async function recordProcessedFiles(
       }))
     )
     .onConflict((oc) =>
-      oc.columns(['tenant_id', 'share_id', 'content_hash']).doUpdateSet({
+      oc.columns(['share_id', 'content_hash']).doUpdateSet({
         path: sql`excluded.path`,
         size: sql`excluded.size`,
         modified_at: sql`excluded.modified_at`,

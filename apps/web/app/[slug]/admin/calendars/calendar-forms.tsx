@@ -153,7 +153,7 @@ export default function CalendarForms({ slug }: { slug: string }) {
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ calendars: CalendarRow[] }>(
-      `/api/admin/${slug}/schedule-calendars`
+      `/api/admin/schedule-calendars`
     );
     if (loadError) setError(loadError);
     else setCalendars(data?.calendars ?? []);
@@ -168,11 +168,11 @@ export default function CalendarForms({ slug }: { slug: string }) {
     setBusy(true);
     setError(null);
     const saveError = draft.id
-      ? await sendJson(`/api/admin/${slug}/schedule-calendars/${draft.id}`, 'PUT', {
+      ? await sendJson(`/api/admin/schedule-calendars/${draft.id}`, 'PUT', {
           name: draft.name,
           dates: draft.dates,
         })
-      : await sendJson(`/api/admin/${slug}/schedule-calendars`, 'POST', {
+      : await sendJson(`/api/admin/schedule-calendars`, 'POST', {
           name: draft.name,
           dates: draft.dates,
         });
@@ -189,7 +189,7 @@ export default function CalendarForms({ slug }: { slug: string }) {
     setBusy(true);
     setError(null);
     const removeError = await sendJson(
-      `/api/admin/${slug}/schedule-calendars/${calendarId}`,
+      `/api/admin/schedule-calendars/${calendarId}`,
       'DELETE'
     );
     setBusy(false);

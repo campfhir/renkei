@@ -45,7 +45,7 @@ export default function InstanceConfigForm({
 
   const load = useCallback(async () => {
     const { data, error } = await getJson<InstanceResponse>(
-      `/api/admin/${slug}/mirth/${instanceId}`
+      `/api/admin/mirth/${instanceId}`
     );
     if (error || !data) {
       setStatus({ kind: 'error', text: error ?? 'Could not load the instance' });
@@ -80,7 +80,7 @@ export default function InstanceConfigForm({
     setBusy(true);
     setStatus(null);
     const error = await sendJson(
-      `/api/admin/${slug}/mirth/${instanceId}`,
+      `/api/admin/mirth/${instanceId}`,
       'PATCH',
       draftPayload(draft)
     );
@@ -102,7 +102,7 @@ export default function InstanceConfigForm({
       status?: number;
       version: string | null;
       error?: string;
-    }>(`/api/admin/${slug}/mirth/probe`, 'POST', {
+    }>(`/api/admin/mirth/probe`, 'POST', {
       baseUrl: draft.baseUrl,
       tlsVerify: draft.tlsVerify,
       caPem: draft.caPem || undefined,
@@ -120,13 +120,13 @@ export default function InstanceConfigForm({
     if (!window.confirm("Delete this instance? Everyone's stored connections to it go with it."))
       return;
     setBusy(true);
-    const error = await sendJson(`/api/admin/${slug}/mirth/${instanceId}`, 'DELETE');
+    const error = await sendJson(`/api/admin/mirth/${instanceId}`, 'DELETE');
     setBusy(false);
     if (error) {
       setStatus({ kind: 'error', text: error });
       return;
     }
-    router.push(`/${slug}/admin/mirth`);
+    router.push(`/admin/mirth`);
   };
 
   return (

@@ -23,7 +23,6 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -83,7 +82,6 @@ export async function PUT(
   }
 
   const created = await createAttachment(db, {
-    tenantId,
     ownerSubject: session.subject,
     chatId: chatId ?? null,
     projectId: chatId ? null : projectId,

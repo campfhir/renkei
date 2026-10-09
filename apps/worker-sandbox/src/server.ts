@@ -250,7 +250,7 @@ function targetOf(body: Record<string, unknown>): store.SandboxTarget | null {
   const tenantId = str(body.tenantId);
   const subject = str(body.subject);
   if (!tenantId || !subject) return null;
-  return { tenantId, subject };
+  return { subject };
 }
 
 const CHART_ERROR_STATUS: Record<ChartErrorType, number> = {
@@ -448,7 +448,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     if (!tenantId || !subject || !named.ok) {
       return sendError(response, 400, 'bad_request');
     }
-    const target = { tenantId, subject };
+    const target = { subject };
     const rawSource = url.searchParams.get('source') ?? '';
     const source = SOURCE_PATTERN.test(rawSource) ? rawSource : 'write';
     const batchId = batchIdOf(url.searchParams.get('batchId'));

@@ -41,11 +41,9 @@ const ORPHAN_GRACE_MINUTES = 60;
 export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
   const enqueueResume = async (run: {
     id: string;
-    tenant_id: string;
     agent_id: string;
   }): Promise<void> => {
     const result = await producer.enqueue({
-      tenantId: run.tenant_id,
       source: `agents:${run.agent_id}`,
       type: 'run',
       payload: { runId: run.id },
@@ -55,7 +53,6 @@ export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
       logger.warn('approval sweep could not enqueue resume for run {runId}', {
         component: 'worker-agents/approval-sweep',
         runId: run.id,
-        tenantId: run.tenant_id,
       });
     }
   };
@@ -64,7 +61,7 @@ export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
     // Arm 1: timeouts.
     const dueRuns = await db
       .selectFrom('agent_runs')
-      .select(['id', 'tenant_id', 'agent_id'])
+      .select(['id', 'agent_id'])
       .where('status', '=', 'waiting')
       .where('waiting_until', '<=', sql<Date>`NOW()`)
       .limit(100)
@@ -85,7 +82,6 @@ export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
       logger.info('approval wait expired for run {runId} (claimed: {claimed})', {
         component: 'worker-agents/approval-sweep',
         runId: run.id,
-        tenantId: run.tenant_id,
         claimed: Number(claimed.numUpdatedRows ?? 0) > 0,
       });
       // Enqueue REGARDLESS of the claim: a lost claim means a human decided
@@ -97,7 +93,7 @@ export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
     const stuck = await db
       .selectFrom('agent_runs as r')
       .innerJoin('actionable_items as c', 'c.run_id', 'r.id')
-      .select(['r.id', 'r.tenant_id', 'r.agent_id'])
+      .select(['r.id', 'r.agent_id'])
       .where('r.status', '=', 'waiting')
       .where('c.status', 'in', ['approved', 'declined', 'expired', 'answered'])
       .where(
@@ -111,7 +107,6 @@ export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
       logger.warn('waiting run {runId} has a decided card; re-enqueueing resume', {
         component: 'worker-agents/approval-sweep',
         runId: run.id,
-        tenantId: run.tenant_id,
       });
       await enqueueResume(run);
     }
@@ -120,7 +115,7 @@ export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
     const orphans = await db
       .selectFrom('agent_runs as r')
       .leftJoin('actionable_items as c', 'c.run_id', 'r.id')
-      .select(['r.id', 'r.tenant_id', 'r.agent_id'])
+      .select(['r.id', 'r.agent_id'])
       .where('r.status', '=', 'waiting')
       .where('c.id', 'is', null)
       .where(
@@ -134,7 +129,6 @@ export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
       logger.warn('waiting run {runId} has no approval card; re-driving the pause', {
         component: 'worker-agents/approval-sweep',
         runId: run.id,
-        tenantId: run.tenant_id,
       });
       await enqueueResume(run);
     }

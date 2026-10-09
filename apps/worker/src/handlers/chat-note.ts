@@ -34,12 +34,11 @@ async function sealNote(
   const chat = await db
     .selectFrom('chats')
     .select('owner_subject')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', chatId)
     .executeTakeFirst();
   if (!chat) throw new Error('the chat is gone');
   const key = await delegateClient().ensureResourceKey(
-    { tenantId, kind: 'chat', resourceId: chatId },
+    { kind: 'chat', resourceId: chatId },
     chat.owner_subject
   );
   if (!key.ok) throw new Error(`the chat's key could not be opened (${key.err.type})`);
@@ -59,7 +58,6 @@ export async function insertChatNote(
   await db
     .insertInto('chat_messages')
     .values({
-      tenant_id: tenantId,
       chat_id: chatId,
       turn_id: null,
       seq: sql<number>`(SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_messages WHERE chat_id = ${chatId})`,

@@ -22,7 +22,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -33,7 +32,6 @@ export async function POST(
     return jsonError(400, 'bad_request', 'Malformed delegations.');
   const days = automationDaysOfBody(body.automationDays);
   const delegated = await delegateClient().delegate({
-    tenantId,
     subject: session.subject,
     sessionId: session.id,
     session: sessionDelegations,
@@ -62,7 +60,6 @@ export async function POST(
   }
   if (automation.length > 0) {
     recordAuditEvent({
-      tenantId,
       actorSubject: session.subject,
       action: 'encryption-key.automation-renewed',
       details: { instances: automation.length, days: days ?? null },

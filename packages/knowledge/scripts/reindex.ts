@@ -72,8 +72,8 @@ function parseArgs(argv: readonly string[]): Args {
 async function tenantsWithChunks(tenant: string | null): Promise<string[]> {
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('database unavailable');
-  let query = dbResult.val.selectFrom('knowledge_chunks').select('tenant_id').distinct();
-  if (tenant) query = query.where('tenant_id', '=', tenant);
+  let query = dbResult.val.selectFrom('knowledge_chunks').distinct();
+  if (tenant) query = query;
   return (await query.execute()).map((row) => row.tenant_id);
 }
 

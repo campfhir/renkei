@@ -25,12 +25,10 @@ const COMPACT_COMMAND = {
 };
 
 export default function PromptPicker({
-  tenantId,
   onClose,
   onPick,
   onCompact,
 }: {
-  tenantId: string;
   onClose: () => void;
   onPick: (body: string) => void;
   /** Runs a compaction pass instead of inserting text. */
@@ -43,7 +41,7 @@ export default function PromptPicker({
 
   useEffect(() => {
     void getJson<{ prompts: PickerPrompt[] }>(
-      `/api/tenant/${tenantId}/chat/prompt-libraries/picker`
+      `/api/chat/prompt-libraries/picker`
     ).then((result) => {
       if (result.error) setError(result.error);
       setPrompts(result.data?.prompts ?? []);

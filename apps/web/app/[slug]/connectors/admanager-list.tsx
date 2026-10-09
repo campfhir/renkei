@@ -139,10 +139,8 @@ export function PermissionGrid({
 }
 
 export default function AdManagerList({
-  tenantId,
   instances: initialInstances,
 }: {
-  tenantId: string;
   instances: ConnectableAdManagerInstanceView[];
 }) {
   const [instances, setInstances] = useState(initialInstances);
@@ -163,7 +161,7 @@ export default function AdManagerList({
     setBusy(true);
     setError(null);
     const saveError = await sendJson(
-      `/api/tenant/${tenantId}/admanager/${instance.id}/connection`,
+      `/api/admanager/${instance.id}/connection`,
       'POST',
       {
         technicianName: draft.technicianName,
@@ -194,7 +192,7 @@ export default function AdManagerList({
     patchInstance(instance.id, { ...previous, permissions });
     setError(null);
     const saveError = await sendJson(
-      `/api/tenant/${tenantId}/admanager/${instance.id}/connection`,
+      `/api/admanager/${instance.id}/connection`,
       'POST',
       { permissions }
     );
@@ -215,7 +213,7 @@ export default function AdManagerList({
     setBusy(true);
     setError(null);
     const saveError = await sendJson(
-      `/api/tenant/${tenantId}/admanager/${instance.id}/connection`,
+      `/api/admanager/${instance.id}/connection`,
       'DELETE'
     );
     setBusy(false);

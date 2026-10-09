@@ -76,7 +76,7 @@ function change(overrides: Partial<ChangeRequest> = {}): ChangeRequest {
 
 function apply(body?: unknown) {
   const request = new NextRequest(
-    `http://localhost/api/tenant/${TENANT}/jira-admin/changes/${CHANGE}/apply`,
+    `http://localhost/api/jira-admin/changes/${CHANGE}/apply`,
     {
       method: 'POST',
       ...(body === undefined
@@ -84,7 +84,7 @@ function apply(body?: unknown) {
         : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
     }
   );
-  return POST(request, { params: Promise.resolve({ tenantId: TENANT, changeId: CHANGE }) });
+  return POST(request, { params: Promise.resolve({ changeId: CHANGE }) });
 }
 
 const ACCESS = {
@@ -99,7 +99,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest.mocked(getSessionFromRequest).mockResolvedValue({
     id: 'session-1',
-    tenantId: TENANT,
     subject: 'owner',
     roles: [],
     expiresAt: new Date(Date.now() + 3_600_000),
@@ -189,7 +188,6 @@ it('applies the stored operations — never the browser’s — and records how 
   });
   expect(recordAuditEvent).toHaveBeenCalledWith(
     expect.objectContaining({
-      tenantId: TENANT,
       actorSubject: 'owner',
       action: 'jira_admin.change_applied',
       targetLabel: 'Source (Ops context): add option “Vendor”',

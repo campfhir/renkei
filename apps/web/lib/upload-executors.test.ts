@@ -106,7 +106,6 @@ const { WebexClient: MockWebexClient } = jest.requireMock<{ WebexClient: jest.Mo
 function slotOf(kind: string, destination: unknown): UploadSlotRow {
   return {
     id: 'slot-1',
-    tenant_id: 'tenant-1',
     subject: 'subject-1',
     account_id: 'acct-1',
     kind,
@@ -182,7 +181,6 @@ describe('jira-attachment', () => {
     expect(auth.grantKey).toBe('atlassian:tenant-1:acct-1');
     expect(init.body).toBeInstanceOf(FormData);
     expect(mockDescribe).toHaveBeenCalledWith({
-      tenantId: 'tenant-1',
       provider: 'atlassian',
       accountId: 'acct-1',
     });
@@ -222,7 +220,6 @@ describe('jsm-attachment', () => {
     expect(jiraFetch).toHaveBeenCalledTimes(3);
     // The JSM grant is preferred, looked up by the slot's subject.
     expect(mockDescribe.mock.calls[0]![0]).toEqual({
-      tenantId: 'tenant-1',
       provider: 'atlassian-jsm',
       subject: 'subject-1',
     });

@@ -26,7 +26,6 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -41,7 +40,6 @@ export async function DELETE(
   const grantRow = await db
     .selectFrom('provider_grants')
     .select(['provider_account_id', 'metadata'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', MICROSOFT)
     .where('subject', '=', session.subject)
     .executeTakeFirst();
@@ -57,18 +55,16 @@ export async function DELETE(
   const subscriptions = await db
     .selectFrom('webhook_subscriptions')
     .select(['subscription_id'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', MICROSOFT)
     .where('account_id', '=', accountId)
     .execute();
-  const auth = grantFetch({ tenantId, provider: MICROSOFT, accountId });
+  const auth = grantFetch({ provider: MICROSOFT, accountId });
   for (const row of subscriptions) {
     if (!row.subscription_id) continue;
     const deleted = await deleteGraphSubscription(auth, row.subscription_id);
     if (!deleted.ok) {
       logger.warn('Could not delete Graph subscription on disconnect; it will lapse', {
         component: 'connectors/microsoft',
-        tenantId,
         subscriptionId: row.subscription_id,
       });
     }
@@ -76,7 +72,6 @@ export async function DELETE(
 
   await db
     .deleteFrom('webhook_subscriptions')
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', MICROSOFT)
     .where('account_id', '=', accountId)
     .execute();
@@ -94,17 +89,15 @@ export async function DELETE(
     if (!purged.ok) {
       logger.warn('Could not purge knowledge chunks on disconnect', {
         component: 'connectors/microsoft',
-        tenantId,
       });
     }
   }
 
-  const deleted = await delegateGrants().delete({ tenantId, provider: MICROSOFT, accountId });
+  const deleted = await delegateGrants().delete({ provider: MICROSOFT, accountId });
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'connector.disconnected',
     targetKind: 'connector',

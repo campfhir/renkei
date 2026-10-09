@@ -82,7 +82,6 @@ export type FileshareClientError =
 export type ClientResult<T> = { ok: true; val: T } | { ok: false; err: FileshareClientError };
 
 export interface FileshareTarget {
-  tenantId: string;
   shareId: string;
   subject: string;
 }
@@ -371,7 +370,6 @@ export async function fsRenameEntry(
 }
 
 export interface TestConnectionPayload {
-  tenantId: string;
   /** The stored share the credential is tried against. */
   shareId: string;
   credentials: ShareCredentials;

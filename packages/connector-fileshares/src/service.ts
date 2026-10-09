@@ -58,13 +58,11 @@ export interface ShareRef {
 }
 
 export interface ResolvedConnection {
-  tenantId: string;
   share: ShareSummary;
   credentials: ShareCredentials;
 }
 
 export interface SubjectTarget {
-  tenantId: string;
   shareId: string;
   subject: string;
   /**
@@ -100,7 +98,6 @@ export async function resolveConnection(
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
   if (target.credentials) {
     return ok({
-      tenantId: target.tenantId,
       share: share.val.summary,
       credentials: target.credentials,
     });
@@ -122,7 +119,7 @@ export async function resolveConnection(
     ciphertext.val
   );
   if (!credentials.ok) return err('bad_credentials' as const);
-  return ok({ tenantId: target.tenantId, share: share.val.summary, credentials: credentials.val });
+  return ok({ share: share.val.summary, credentials: credentials.val });
 }
 
 /**

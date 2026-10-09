@@ -53,7 +53,6 @@ maybe('token usage by model and by step', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: subject,
         name: 'Usage agent',
         steps: JSON.stringify(steps),
@@ -63,7 +62,7 @@ maybe('token usage by model and by step', () => {
 
     const big = { provider: 'anthropic', model: 'claude-big', llmModelId: null };
     const small = { provider: 'openai', model: 'gpt-small', llmModelId: null };
-    const base = { tenantId, subject, agentId, runId, stepId };
+    const base = { subject, agentId, runId, stepId };
     await recordLlmCall(db, {
       ...base,
       purpose: 'run',
@@ -82,7 +81,6 @@ maybe('token usage by model and by step', () => {
       model: big,
     });
     await recordLlmCall(db, {
-      tenantId,
       subject,
       agentId,
       purpose: 'optimize',
@@ -92,7 +90,6 @@ maybe('token usage by model and by step', () => {
     });
     // A chat turn: the person's own spend, no agent.
     await recordLlmCall(db, {
-      tenantId,
       subject,
       agentId: null,
       purpose: 'chat',
@@ -105,8 +102,8 @@ maybe('token usage by model and by step', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM llm_calls WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM llm_calls`.execute(db);
+    await sql`DELETE FROM agents`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });

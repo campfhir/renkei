@@ -33,7 +33,6 @@ maybe('resumeRunsNeedingSignIn', () => {
       .insertInto('agent_runs')
       .values({
         id,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: ownerSubject,
         trigger_kind: 'manual',
@@ -60,7 +59,6 @@ maybe('resumeRunsNeedingSignIn', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: owner,
         name: 'Parked agent',
         steps: JSON.stringify(steps),
@@ -70,8 +68,8 @@ maybe('resumeRunsNeedingSignIn', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_runs`.execute(db);
+    await sql`DELETE FROM agents`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
@@ -101,7 +99,6 @@ maybe('resumeRunsNeedingSignIn', () => {
     const rows = await db
       .selectFrom('agent_runs')
       .select(['id', 'status', 'error_kind', 'error'])
-      .where('tenant_id', '=', tenantId)
       .execute();
     const byId = new Map(rows.map((row) => [row.id, row]));
     expect(byId.get(parkedA)).toEqual({

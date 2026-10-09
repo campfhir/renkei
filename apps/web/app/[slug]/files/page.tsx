@@ -1,6 +1,5 @@
 import React from 'react';
 import { notFound, redirect } from 'next/navigation';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import FilesBrowser from './files-browser';
@@ -18,12 +17,10 @@ export default async function FilesPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/files`));
+    redirect(signInUrl(tenant.id, `/files`));
   }
 
   return (

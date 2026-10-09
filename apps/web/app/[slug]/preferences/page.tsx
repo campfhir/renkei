@@ -3,7 +3,6 @@ import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getImagePrefs, getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
 import { actsByConnector, ACT_CATEGORIES } from '@renkei/tool-outcomes';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
@@ -35,11 +34,9 @@ export default async function PreferencesPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/${slug}/preferences`));
+  if (!session) redirect(signInUrl(tenant.id, `/preferences`));
 
   const dbResult = getDatabase();
   const [
@@ -67,7 +64,6 @@ export default async function PreferencesPage({
       ? dbResult.val
           .selectFrom('agents')
           .select(['id', 'name'])
-          .where('tenant_id', '=', tenant.id)
           .where('owner_subject', '=', session.subject)
           .orderBy('name')
           .execute()

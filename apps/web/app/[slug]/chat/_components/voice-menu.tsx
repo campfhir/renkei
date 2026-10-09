@@ -36,7 +36,6 @@ import { VoiceWaveIcon } from './voice-wave';
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 
 export default function VoiceMenu({
-  tenantId,
   prefs,
   defaults,
   queueState,
@@ -60,7 +59,6 @@ export default function VoiceMenu({
    * in place of the speaker button and its own close.
    */
   embedded?: { onBack: () => void; onClose: () => void };
-  tenantId: string;
   prefs: VoicePrefs;
   defaults: { voice: string; locale: string };
   queueState: SpeechQueueState;

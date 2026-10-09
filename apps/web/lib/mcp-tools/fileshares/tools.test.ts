@@ -59,7 +59,6 @@ const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice', shareId: SHARE_ID
 
 function contextOf(): MCPToolContext {
   return {
-    tenantId: 'tenant-1',
     subject: 'auth0|alice',
     origin: 'https://renkei.example.test',
     maxAttachmentBytes: 1024 * 1024,
@@ -479,7 +478,6 @@ describe('PHI access trail', () => {
     expect(recordPhiAccess).toHaveBeenCalledTimes(1);
     const [event] = recordPhiAccess.mock.calls[0] as [Record<string, unknown>];
     expect(event).toEqual({
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       agentId: null,
       connector: 'fileshare',

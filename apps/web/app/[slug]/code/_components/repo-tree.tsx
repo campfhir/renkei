@@ -87,7 +87,6 @@ function size(value: number): string {
 const RepoTree = forwardRef<
   RepoTreeHandle,
   {
-    tenantId: string;
     projectId: string;
     /** Open a file; without it the tree is a look. */
     onOpen?: ((path: string) => void) | null;
@@ -111,7 +110,6 @@ const RepoTree = forwardRef<
   }
 >(function RepoTree(
   {
-    tenantId,
     projectId,
     onOpen = null,
     selected = null,
@@ -125,8 +123,8 @@ const RepoTree = forwardRef<
   },
   ref
 ) {
-  const base = `/api/tenant/${tenantId}/code/projects/${projectId}/tree`;
-  const filesBase = `/api/tenant/${tenantId}/code/projects/${projectId}/files`;
+  const base = `/api/code/projects/${projectId}/tree`;
+  const filesBase = `/api/code/projects/${projectId}/files`;
   const [listings, setListings] = useState<Record<string, Listing>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [source, setSource] = useState<Source | null>(null);

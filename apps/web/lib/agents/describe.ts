@@ -288,7 +288,6 @@ export async function generateAgentDescription(
   const failed = async (reason: string) => {
     logger.debug('agent description generation skipped: {reason}', {
       component: 'agents/describe',
-      tenantId,
       agentId: agent.id,
       reason,
     });
@@ -335,7 +334,6 @@ export async function generateAgentDescription(
             'agent description generation retry {attempt}: {error} (waiting {delay}ms before retry)',
             {
               component: 'agents/describe',
-              tenantId,
               agentId: agent.id,
               attempt,
               error: error.message,

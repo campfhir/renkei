@@ -42,7 +42,7 @@ export function userMirthAuth(context: MCPToolContext): MirthAuth {
     target() {
       const subject = context.subject;
       if (!subject) return NOT_AVAILABLE;
-      return { tenantId: context.tenantId, subject };
+      return { subject };
     },
 
     async listConnected() {

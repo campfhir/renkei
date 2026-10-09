@@ -32,7 +32,6 @@ const ARTIFACT_MAX_BYTES = 25_000_000;
 export function createTurnStore(
   db: Kysely<DB>,
   scope: {
-    tenantId: string;
     chatId: string;
     turnId: string;
     subject: string;
@@ -47,7 +46,6 @@ export function createTurnStore(
   return {
     async appendMessage(input) {
       const inserted = await insertMessage(db, {
-        tenantId: scope.tenantId,
         chatId: scope.chatId,
         turnId: scope.turnId,
         role: input.role,
@@ -79,7 +77,6 @@ export function createTurnStore(
     },
     async recordUsage(usage, model, durationMs) {
       await recordLlmCall(db, {
-        tenantId: scope.tenantId,
         subject: scope.subject,
         agentId: null,
         purpose: 'chat',
@@ -106,7 +103,6 @@ export function createTurnStore(
       // Fire-and-forget: the row above is what the wait reads; this is
       // reach for a person who is not looking at the chat.
       notifyChatToolPermission({
-        tenantId: scope.tenantId,
         ownerSubject: scope.subject,
         chatId: scope.chatId,
         chatTitle: scope.chatTitle,
@@ -125,7 +121,6 @@ export function createTurnStore(
       const kept: AttachmentView[] = [];
       for (const file of files) {
         const created = await createAttachment(db, {
-          tenantId: scope.tenantId,
           ownerSubject: scope.subject,
           chatId: scope.chatId,
           projectId: null,

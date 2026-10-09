@@ -36,7 +36,6 @@ import { sendPush, wasRecentlyWatchingChat } from '@renkei/notifications';
 import { logger } from '@/lib/logger';
 
 export function notifyChatReplyDesktop(input: {
-  tenantId: string;
   /** The chat's owner — the only one who can send it a message. */
   ownerSubject: string;
   chatId: string;
@@ -75,13 +74,12 @@ export function notifyChatReplyDesktop(input: {
 
     const title = input.chatTitle || 'New chat';
     const headline = `“${title}” has a new reply`;
-    const refUrl = `/${tenant.slug}/chat/${input.chatId}`;
+    const refUrl = `/chat/${input.chatId}`;
     const id = randomUUID();
     await dbResult.val
       .insertInto('agent_notifications')
       .values({
         id,
-        tenant_id: input.tenantId,
         subject: input.ownerSubject,
         kind: 'chat_reply',
         headline,
@@ -116,7 +114,6 @@ export function notifyChatReplyDesktop(input: {
   })().catch((error: unknown) => {
     logger.warn('chat-reply desktop notification not recorded', {
       component: 'chat/reply-notification',
-      tenantId: input.tenantId,
       chatId: input.chatId,
       error: error instanceof Error ? error.message : String(error),
     });

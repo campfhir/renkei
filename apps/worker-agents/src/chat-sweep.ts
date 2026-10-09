@@ -105,7 +105,6 @@ export function createChatRetentionSweep(
       const expired = await db
         .selectFrom('chats')
         .select('id')
-        .where('tenant_id', '=', tenant.id)
         .where('updated_at', '<', sql<Date>`NOW() - make_interval(days => ${days})`)
         .limit(RETENTION_BATCH)
         .execute();
@@ -115,18 +114,15 @@ export function createChatRetentionSweep(
       if (deletable.length === 0) continue;
       await db
         .deleteFrom('chats')
-        .where('tenant_id', '=', tenant.id)
         .where('id', 'in', deletable)
         .execute();
       await db
         .deleteFrom('resource_access_grants')
-        .where('tenant_id', '=', tenant.id)
         .where('resource_kind', '=', 'chat')
         .where('resource_id', 'in', deletable)
         .execute();
       logger.info('chat retention removed {count} chat(s)', {
         component: 'worker-agents/chat-retention',
-        tenantId: tenant.id,
         count: deletable.length,
       });
     }
@@ -161,7 +157,6 @@ async function deleteAttachmentBlobs(
   const attachments = await db
     .selectFrom('chat_attachments')
     .select(['id', 'chat_id', 'blob_key'])
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', 'in', chatIds)
     .execute();
   const blocked = new Set<string>();
@@ -178,7 +173,6 @@ async function deleteAttachmentBlobs(
       blocked.add(attachment.chat_id);
       logger.warn('chat retention could not delete a blob: {error}', {
         component: 'worker-agents/chat-retention',
-        tenantId,
         error: deleted.err.message ?? deleted.err.type,
       });
     }

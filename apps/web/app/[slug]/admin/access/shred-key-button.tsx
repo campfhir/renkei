@@ -36,7 +36,7 @@ export default function ShredKeyButton({
     setError(null);
     try {
       const response = await fetch(
-        `/api/admin/${slug}/access/${encodeURIComponent(subject)}/keys`,
+        `/api/admin/access/${encodeURIComponent(subject)}/keys`,
         { method: 'DELETE' }
       );
       const data: { success?: unknown; error?: unknown } = await response.json().catch(() => ({}));

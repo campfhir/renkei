@@ -24,13 +24,11 @@ interface Person {
 }
 
 export default function ShareModal({
-  tenantId,
   kind,
   resourceId,
   title,
   onClose,
 }: {
-  tenantId: string;
   kind: ResourceKind;
   resourceId: string;
   title: string;

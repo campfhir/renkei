@@ -12,7 +12,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; changeId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, changeId } = await params;
+  const { changeId } = await params;
 
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {

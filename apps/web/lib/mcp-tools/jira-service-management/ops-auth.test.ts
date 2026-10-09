@@ -34,7 +34,6 @@ const jiraAuth = authedFetch(async () => new Response('{}'), 'atlassian-jsm:tena
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     cloudId: 'cloud-1',
     jiraAuth,

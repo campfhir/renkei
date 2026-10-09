@@ -131,7 +131,6 @@ export async function confirmInstanceTrust(
   unknown: UnknownInstance[]
 ): Promise<void> {
   await trustInstances(
-    tenantId,
     unknown.map((instance) => instance.publicKey),
     status.instanceSigningKey
   );
@@ -221,7 +220,7 @@ export async function enrollInBrowser(
       failure: { code: 'no_instances', error: 'No key service is running to hold your key.' },
     };
   }
-  const answer = await post(`/api/tenant/${tenantId}/keys/enroll`, body);
+  const answer = await post(`/api/keys/enroll`, body);
   if (!answer.ok) return answer;
   await saveUserKey(tenantId, userKey);
   return { ok: true, outcome: { shown: formatUserKey(userKey), userKey } };
@@ -253,7 +252,7 @@ export async function delegateInBrowser(
       failure: { code: 'no_instances', error: 'No key service is running to hold your key.' },
     };
   }
-  const answer = await post(`/api/tenant/${tenantId}/keys/delegate`, {
+  const answer = await post(`/api/keys/delegate`, {
     session,
     automation: automationKey ? await sealToInstances(status.instances, automationKey) : [],
     automationDays: options.automationDays,
@@ -287,7 +286,7 @@ export async function rotateInBrowser(
   const trusted = await checkInstanceTrust(tenantId, status);
   if (!trusted.ok) return trusted;
   const next = randomBytes(32);
-  const answer = await post(`/api/tenant/${tenantId}/keys/rotate`, {
+  const answer = await post(`/api/keys/rotate`, {
     wrappedPrivateKey: await wrapBytes(privateKey, next),
     wrappedAutomationKey: await wrapBytes(automationKey, next),
     session: await sealToInstances(status.instances, next),
@@ -344,7 +343,7 @@ export async function askOtherDevices(
   tenantId: string
 ): Promise<{ ok: true; ask: DeviceAsk } | { ok: false; failure: FlowFailure }> {
   const pair = await generateKeyPair();
-  const answer = await post(`/api/tenant/${tenantId}/keys/devices`, {
+  const answer = await post(`/api/keys/devices`, {
     publicKey: bytesToBase64(pair.publicKey),
   });
   if (!answer.ok) return answer;
@@ -361,7 +360,7 @@ export async function pollDeviceAsk(
   ask: DeviceAsk
 ): Promise<Uint8Array | 'expired' | 'gone' | null> {
   try {
-    const response = await fetch(`/api/tenant/${tenantId}/keys/devices/${ask.id}`);
+    const response = await fetch(`/api/keys/devices/${ask.id}`);
     if (response.status === 404) return 'gone';
     const json: unknown = await response.json().catch(() => ({}));
     const record: Record<string, unknown> =
@@ -402,7 +401,7 @@ export async function approveDeviceAsk(
     };
   }
   const detail = await fetch(
-    `/api/tenant/${tenantId}/keys/devices/${requestId}?code=${encodeURIComponent(code)}`
+    `/api/keys/devices/${requestId}?code=${encodeURIComponent(code)}`
   ).catch(() => null);
   const json: unknown = detail ? await detail.json().catch(() => ({})) : {};
   const record: Record<string, unknown> =
@@ -420,7 +419,7 @@ export async function approveDeviceAsk(
   if (!publicKey || publicKey.length !== 32) {
     return { ok: false, failure: { code: 'gone', error: 'That request is gone.' } };
   }
-  const answer = await post(`/api/tenant/${tenantId}/keys/devices/${requestId}`, {
+  const answer = await post(`/api/keys/devices/${requestId}`, {
     code,
     sealedKey: await sealToPublicKey(publicKey, userKey),
   });
@@ -428,13 +427,13 @@ export async function approveDeviceAsk(
 }
 
 export async function denyDeviceAsk(tenantId: string, requestId: string): Promise<void> {
-  await post(`/api/tenant/${tenantId}/keys/devices/${requestId}`, {}, 'DELETE');
+  await post(`/api/keys/devices/${requestId}`, {}, 'DELETE');
 }
 
 export async function revokeAutomationInBrowser(
   tenantId: string
 ): Promise<{ ok: true } | { ok: false; failure: FlowFailure }> {
-  const answer = await post(`/api/tenant/${tenantId}/keys/automation`, {}, 'DELETE');
+  const answer = await post(`/api/keys/automation`, {}, 'DELETE');
   return answer.ok ? { ok: true } : answer;
 }
 
@@ -501,7 +500,7 @@ export function parseKeyStatus(json: unknown): KeyStatusView | null {
 
 export async function fetchKeyStatus(tenantId: string): Promise<KeyStatusView | null> {
   try {
-    const response = await fetch(`/api/tenant/${tenantId}/keys`, { cache: 'no-store' });
+    const response = await fetch(`/api/keys`, { cache: 'no-store' });
     if (!response.ok) return null;
     return parseKeyStatus(await response.json());
   } catch {

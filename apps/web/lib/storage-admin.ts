@@ -134,7 +134,6 @@ export async function saveStorage(
   if (merged === 'ERROR') return 'Could not read the stored configuration';
   if (!merged.secrets.key) return 'The account key is required the first time.';
   const written = await setConnectorConfig(
-    tenantId,
     BLOB_STORAGE_CONNECTOR,
     { enabled: input.enabled, settings: merged.settings, secrets: merged.secrets },
     key

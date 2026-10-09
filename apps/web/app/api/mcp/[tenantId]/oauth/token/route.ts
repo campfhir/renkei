@@ -34,7 +34,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const verdict = checkInboundLimit(`oauth/token:${tenantId}`, request, LIMITS);
   if (!verdict.allowed) {
@@ -64,9 +63,6 @@ export async function POST(
       .where('id', '=', tenantId)
       .executeTakeFirst();
 
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
 
     // Parse request body
     const contentType = request.headers.get('content-type');
@@ -160,7 +156,6 @@ async function handleAuthorizationCodeGrant(
       .selectFrom('oauth_clients')
       .selectAll()
       .where('client_id', '=', client_id)
-      .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
 
     // Constant-time comparison of digests; the secret itself is not stored.
@@ -201,7 +196,6 @@ async function handleAuthorizationCodeGrant(
       .selectFrom('oauth_authorization_codes')
       .selectAll()
       .where('code', '=', code)
-      .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
 
     if (!authCode) {
@@ -280,7 +274,6 @@ async function handleAuthorizationCodeGrant(
       .insertInto('oauth_refresh_tokens')
       .values({
         token_id: refreshTokenId,
-        tenant_id: tenantId,
         client_id,
         subject: authCode.subject,
         scope: authCode.scope,
@@ -298,7 +291,6 @@ async function handleAuthorizationCodeGrant(
     // Only the digest is stored; this is the sole record binding the token to a user.
     await storeAccessToken({
       token: accessToken,
-      tenantId,
       clientId: client_id,
       subject: authCode.subject,
       scope: authCode.scope,
@@ -359,7 +351,6 @@ async function handleRefreshTokenGrant(
       .selectFrom('oauth_clients')
       .selectAll()
       .where('client_id', '=', client_id)
-      .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
 
     // Constant-time comparison of digests; the secret itself is not stored.
@@ -412,7 +403,6 @@ async function handleRefreshTokenGrant(
         .selectFrom('oauth_refresh_tokens')
         .selectAll()
         .where('token_hash', '=', presentedHash)
-        .where('tenant_id', '=', tenantId)
         .forUpdate()
         .executeTakeFirst();
 
@@ -428,7 +418,6 @@ async function handleRefreshTokenGrant(
         // The family's time is up: every rotated predecessor goes with it.
         await trx
           .deleteFrom('oauth_refresh_tokens')
-          .where('tenant_id', '=', tenantId)
           .where('family_id', '=', token.family_id)
           .execute();
         return { error: 'Refresh token expired' } as const;
@@ -444,19 +433,16 @@ async function handleRefreshTokenGrant(
         // the browser; a thief's copies stop working now.
         await trx
           .deleteFrom('oauth_refresh_tokens')
-          .where('tenant_id', '=', tenantId)
           .where('family_id', '=', token.family_id)
           .execute();
         await trx
           .deleteFrom('oauth_access_tokens')
-          .where('tenant_id', '=', tenantId)
           .where('client_id', '=', client_id)
           .where('subject', '=', token.subject)
           .where('application', '=', 'jira')
           .execute();
         logger.warn('Refresh token reuse detected; family revoked', {
           component: 'auth/oauth-token',
-          tenantId,
           client_id,
           subject: token.subject,
           familyId: token.family_id,
@@ -482,7 +468,6 @@ async function handleRefreshTokenGrant(
         .insertInto('oauth_refresh_tokens')
         .values({
           token_id: randomUUID(),
-          tenant_id: tenantId,
           client_id,
           subject: token.subject,
           scope: token.scope,
@@ -501,7 +486,6 @@ async function handleRefreshTokenGrant(
       // must act as the same person, not as whoever holds the refresh token.
       await storeAccessToken({
         token: accessToken,
-        tenantId,
         clientId: client_id,
         subject: token.subject,
         scope: token.scope,
@@ -551,7 +535,6 @@ async function currentRolesFor(
   const live = await db
     .selectFrom('sessions')
     .select('roles')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('expires_at', '>', new Date())
     .orderBy('created_at', 'desc')

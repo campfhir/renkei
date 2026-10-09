@@ -36,8 +36,8 @@ maybe('batch-job schedule sweep', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM batch_jobs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM batch_job_schedules WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM batch_jobs`.execute(db);
+    await sql`DELETE FROM batch_job_schedules`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
@@ -51,7 +51,6 @@ maybe('batch-job schedule sweep', () => {
       .insertInto('batch_job_schedules')
       .values({
         id,
-        tenant_id: tenantId,
         subject,
         name: `sched-batch-${id.slice(0, 8)}`,
         kind: 'document-ocr-pipeline',

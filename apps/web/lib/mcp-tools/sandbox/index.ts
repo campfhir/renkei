@@ -286,7 +286,7 @@ export async function registerSandboxTools(
       if (typeof target === 'string') return errText(target);
       const path = str(args.path);
       const read = await fsReadFile(
-        { tenantId: target.tenantId, subject: target.subject, shareId: str(args.shareId) },
+        { subject: target.subject, shareId: str(args.shareId) },
         path,
         context.maxAttachmentBytes
       );

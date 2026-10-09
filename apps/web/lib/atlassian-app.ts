@@ -98,7 +98,6 @@ export async function getAtlassianConfluenceApp(
   origin: string
 ): Promise<AtlassianApp | null> {
   return readApp(
-    tenantId,
     origin,
     ATLASSIAN_CONFLUENCE_CONNECTOR,
     usableAtlassianConfluenceCeiling
@@ -131,7 +130,6 @@ async function readApp(
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/atlassian',
-      tenantId,
     });
     return null;
   }
@@ -140,7 +138,6 @@ async function readApp(
   if (!configResult.ok) {
     logger.error('Could not read atlassian connector config', {
       component: 'connectors/atlassian',
-      tenantId,
     });
     return null;
   }
@@ -152,7 +149,6 @@ async function readApp(
   if (typeof clientId !== 'string' || !clientId || !clientSecret) {
     logger.warn('atlassian connector config missing clientId or clientSecret', {
       component: 'connectors/atlassian',
-      tenantId,
     });
     return null;
   }

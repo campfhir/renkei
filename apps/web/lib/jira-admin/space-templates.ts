@@ -252,7 +252,6 @@ export type SaveResult =
 export async function saveSpaceTemplate(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     cloudId: string;
     siteUrl?: string;
     name: string;
@@ -265,7 +264,6 @@ export async function saveSpaceTemplate(
 ): Promise<SaveResult> {
   const name = input.name.trim().slice(0, TEMPLATE_NAME_MAX);
   const values = {
-    tenant_id: input.tenantId,
     cloud_id: input.cloudId,
     site_url: input.siteUrl || null,
     name,
@@ -277,7 +275,7 @@ export async function saveSpaceTemplate(
     updated_by: input.subject,
   };
   const insert = db.insertInto('jira_admin_space_templates').values(values);
-  const target = ['tenant_id', 'cloud_id', 'name_key'] as const;
+  const target = ['cloud_id', 'name_key'] as const;
   // Without overwrite a taken name is left alone — ON CONFLICT DO NOTHING
   // returns no row, which is the answer, even when two saves race.
   const row = input.overwrite
@@ -327,7 +325,7 @@ export async function findSpaceTemplate(
   const query = db
     .selectFrom('jira_admin_space_templates')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId);
+    ;
   const rows = isUuid(wanted)
     ? await query.where('id', '=', wanted).execute()
     : await query.where('name_key', '=', nameKeyOf(wanted)).execute();
@@ -343,7 +341,6 @@ export async function listSpaceTemplates(
   const rows = await db
     .selectFrom('jira_admin_space_templates')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .orderBy('name_key')
     .limit(200)
     .execute();
@@ -361,7 +358,6 @@ export async function deleteSpaceTemplate(
   if (!isUuid(id)) return false;
   const result = await db
     .deleteFrom('jira_admin_space_templates')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', id)
     .executeTakeFirst();
   return Number(result.numDeletedRows ?? 0) > 0;

@@ -22,7 +22,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -34,7 +33,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -45,7 +43,6 @@ export async function POST(
   const instructions = optionalString(body.instructions, PROJECT_INSTRUCTIONS_MAX_CHARS) ?? null;
   const toolConfig = body.toolConfig === undefined ? null : parseToolConfig(body.toolConfig);
   const projectId = await createProject(db, {
-    tenantId,
     ownerSubject: session.subject,
     name,
     description: description || null,

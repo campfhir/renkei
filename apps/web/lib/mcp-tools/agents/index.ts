@@ -553,7 +553,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .selectFrom('agent_triggers as t')
         .innerJoin('agents as a', 'a.id', 't.agent_id')
         .select(['a.id', 'a.name'])
-        .where('t.tenant_id', '=', context.tenantId)
         .where('t.kind', '=', 'agent')
         .where('t.enabled', '=', true)
         .where(sql<string>`t.config->>'callerAgentId'`, '=', agent.id)
@@ -896,7 +895,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         case 'decided': {
           logger.info('agent_approval_decide answered a paused run', {
             component: 'mcp/tool',
-            tenantId: context.tenantId,
             runId: result.runId,
             decision: result.decision,
           });
@@ -1046,7 +1044,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         case 'answered': {
           logger.info('agent_question_answer answered a paused run', {
             component: 'mcp/tool',
-            tenantId: context.tenantId,
             runId: result.runId,
           });
           return textResult(
@@ -1185,7 +1182,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .selectFrom('agent_runs')
         .select(['agent_id'])
         .where('id', '=', runId)
-        .where('tenant_id', '=', context.tenantId)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
       const access = await resolveAgentAccess(
@@ -1363,7 +1359,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .selectFrom('agent_runs')
         .select(['agent_id'])
         .where('id', '=', runId)
-        .where('tenant_id', '=', context.tenantId)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
       const access = await resolveAgentAccess(
@@ -1375,7 +1370,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!access) return errText('No run of yours has that id.');
 
       const result = await requestRunCancellation(db, agentJobsQueue().producer, {
-        tenantId: context.tenantId,
         agentId: access.agent.id,
         runId,
         ownerSubject: access.ownerSubject,
@@ -1443,7 +1437,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .selectFrom('agent_runs')
         .select(['agent_id', 'trigger_kind'])
         .where('id', '=', runId)
-        .where('tenant_id', '=', context.tenantId)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
       const access = await resolveAgentAccess(
@@ -1466,7 +1459,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       }
 
       const resumed = await resumeAgentRun(db, agentJobsQueue().producer, {
-        tenantId: context.tenantId,
         agentId: agent.id,
         runId,
         ownerSubject: access.ownerSubject,
@@ -1489,7 +1481,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       logger.info('agent_run_resume resumed a failed run', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         agentId: agent.id,
         runId,
         stepName: resumed.val.stepName ?? '(start)',
@@ -1625,7 +1616,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // read trigger.scheduledFor behave the same way they will tonight.
       const scheduledFor = new Date().toISOString();
       const result = await createAgentRun(db, agentJobsQueue().producer, {
-        tenantId: context.tenantId,
         agentId: agent.id,
         ownerSubject: access.ownerSubject,
         steps: agent.steps,
@@ -1641,7 +1631,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       logger.info('agent_run_now started a scheduled agent by hand', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         agentId: agent.id,
         runId: result.val.runId,
       });
@@ -1801,7 +1790,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         // Memory does not come back, so the wipe leaves a trace somewhere.
         logger.info('agent_memory_forget cleared an agent memory', {
           component: 'mcp/tool',
-          tenantId: context.tenantId,
           agentId: agent.id,
           entriesDeleted: result.entriesDeleted,
           summaryCleared: result.summaryCleared,
@@ -1964,7 +1952,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           continue;
         }
         const result = await createAgentNote(dbResult.val, {
-          tenantId: context.tenantId,
           agentId: agent.id,
           ownerEmail,
           title,
@@ -2033,7 +2020,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!current) return errText(noteErrorText.NOT_FOUND);
 
       const result = await updateAgentNote(dbResult.val, {
-        tenantId: context.tenantId,
         agentId: agent.id,
         ownerEmail,
         noteId,
@@ -2081,7 +2067,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       let failures = 0;
       for (const noteId of noteIds) {
         const result = await deleteAgentNote(dbResult.val, {
-          tenantId: context.tenantId,
           agentId: agent.id,
           ownerEmail,
           noteId,
@@ -2461,7 +2446,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       logger.info('agent_create persisted a new agent', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         agentId: result.agentId,
       });
       return textResult(
@@ -2605,7 +2589,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       logger.info('agent_patch_steps applied', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         agentId: agent.id,
       });
       return textResult(
@@ -2803,7 +2786,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       logger.info('agent_patch changed an agent definition', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         agentId: result.agentId,
       });
       return textResult(
@@ -2900,7 +2882,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       logger.info('agent_update rewrote an agent definition', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         agentId: result.agentId,
       });
       return textResult(

@@ -62,7 +62,6 @@ export async function listImageRules(
   const rows = await db
     .selectFrom('code_service_image_rules')
     .select(SUMMARY_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .orderBy('pattern')
     .execute();
   return rows.map(toSummary);
@@ -72,7 +71,6 @@ export async function countImageRules(db: Kysely<DB>, tenantId: string): Promise
   const row = await db
     .selectFrom('code_service_image_rules')
     .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
   return row?.count ? Number(row.count) : 0;
 }
@@ -92,7 +90,6 @@ export async function listImageRulesForMatching(
   const rows = await db
     .selectFrom('code_service_image_rules')
     .select(['id', 'pattern', 'registry_username', 'registry_sealed'])
-    .where('tenant_id', '=', tenantId)
     .execute();
   return rows.map((row) => ({
     id: row.id,
@@ -118,7 +115,6 @@ function isDuplicate(error: unknown): boolean {
 export async function insertImageRule(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     pattern: string;
     note: string | null;
     registryUsername: string | null;
@@ -129,7 +125,6 @@ export async function insertImageRule(
     const row = await db
       .insertInto('code_service_image_rules')
       .values({
-        tenant_id: input.tenantId,
         pattern: input.pattern,
         note: input.note,
         registry_username: input.registryUsername,
@@ -152,7 +147,6 @@ export async function insertImageRule(
 export async function updateImageRule(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     id: string;
     pattern: string;
     note: string | null;
@@ -175,7 +169,6 @@ export async function updateImageRule(
                 registry_sealed: input.credential.registrySealed,
               }),
       })
-      .where('tenant_id', '=', input.tenantId)
       .where('id', '=', input.id)
       .returning(SUMMARY_COLUMNS)
       .executeTakeFirst();
@@ -193,7 +186,6 @@ export async function deleteImageRule(
 ): Promise<boolean> {
   const result = await db
     .deleteFrom('code_service_image_rules')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', id)
     .executeTakeFirst();
   return Number(result.numDeletedRows ?? 0) > 0;
@@ -205,8 +197,8 @@ export async function restoreDefaultImageRules(db: Kysely<DB>, tenantId: string)
   for (const rule of DEFAULT_IMAGE_RULES) {
     const result = await db
       .insertInto('code_service_image_rules')
-      .values({ tenant_id: tenantId, pattern: rule.pattern, note: rule.note })
-      .onConflict((oc) => oc.columns(['tenant_id', 'pattern']).doNothing())
+      .values({ pattern: rule.pattern, note: rule.note })
+      .onConflict((oc) => oc.columns(['pattern']).doNothing())
       .executeTakeFirst();
     added += Number(result.numInsertedOrUpdatedRows ?? 0);
   }

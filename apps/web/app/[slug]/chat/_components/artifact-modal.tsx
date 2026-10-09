@@ -38,11 +38,9 @@ function sizeOf(bytes: number): string {
 }
 
 export default function ArtifactModal({
-  tenantId,
   artifact,
   onClose,
 }: {
-  tenantId: string;
   artifact: AttachmentView;
   onClose: () => void;
 }) {
@@ -101,7 +99,7 @@ export default function ArtifactModal({
           </p>
         </div>
         <DownloadLink
-          href={`/api/tenant/${tenantId}/chat/attachments/${artifact.id}`}
+          href={`/api/chat/attachments/${artifact.id}`}
           filename={artifact.filename}
           prefetch={artifact.sizeBytes <= 25 * 1024 * 1024}
           aria-label="Download"

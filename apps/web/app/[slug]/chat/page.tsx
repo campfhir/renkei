@@ -1,6 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listOwnedChats } from '@/lib/chat/store';
@@ -12,13 +11,11 @@ import { listOwnedChats } from '@/lib/chat/store';
  */
 export default async function ChatIndexPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/${slug}/chat`));
+  if (!session) redirect(signInUrl(tenant.id, `/chat`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
 
   const [latest] = await listOwnedChats(dbResult.val, tenant.id, session.subject);
-  redirect(latest ? `/${slug}/chat/${latest.id}` : `/${slug}/chat/new`);
+  redirect(latest ? `/chat/${latest.id}` : `/chat/new`);
 }

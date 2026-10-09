@@ -44,7 +44,6 @@ import { VoiceForm } from '@/app/[slug]/admin/connectors/forms/voice-form';
 /** Every admin form takes the same props, so the detail page can render any. */
 export interface AdminFormProps {
   slug: string;
-  tenantId: string;
   origin: string | null;
 }
 
@@ -88,9 +87,9 @@ const CONFIG_LABELS: Record<string, string> = {
 };
 
 const MANAGE_ELSEWHERE: Record<string, (slug: string) => string> = {
-  fileshares: (slug) => `/${slug}/admin/file-shares`,
-  mirth: (slug) => `/${slug}/admin/mirth`,
-  admanager: (slug) => `/${slug}/admin/admanager`,
+  fileshares: (slug) => `/admin/file-shares`,
+  mirth: (slug) => `/admin/mirth`,
+  admanager: (slug) => `/admin/admanager`,
 };
 
 function build(): ConnectorDefinition[] {

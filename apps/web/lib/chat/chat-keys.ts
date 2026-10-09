@@ -52,14 +52,12 @@ import {
 /** What a keyed resource is to this module: its id, tenant and owner. */
 export interface KeyedResource {
   id: string;
-  tenantId: string;
   ownerSubject: string;
 }
 
 export type KeyedKind = Extract<ResourceKeyKind, 'chat' | 'chat_project'>;
 
 const ref = (kind: KeyedKind, tenantId: string, resourceId: string): ResourceRef => ({
-  tenantId,
   kind,
   resourceId,
 });
@@ -97,7 +95,6 @@ async function activeGrantees(
   const rows = await db
     .selectFrom('resource_access_grants')
     .select('grantee_subject')
-    .where('tenant_id', '=', tenantId)
     .where('resource_kind', '=', kind)
     .where('resource_id', '=', resourceId)
     .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date())]))
@@ -123,7 +120,6 @@ async function ensureKey(
   if (!created.ok) {
     warn('key could not be created: {reason}', {
       kind,
-      tenantId: resource.tenantId,
       resourceId: resource.id,
       reason: created.err.type,
     });
@@ -134,7 +130,6 @@ async function ensureKey(
     if (!shared.ok) {
       warn('key could not be wrapped for an existing viewer: {reason}', {
         kind,
-        tenantId: resource.tenantId,
         resourceId: resource.id,
         reason: shared.err.type,
       });
@@ -163,7 +158,6 @@ export async function wrapKeyUnderProject(
   );
   if (!wrapped.ok) {
     warn('chat key could not be wrapped under its project: {reason}', {
-      tenantId: chat.tenantId,
       resourceId: chat.id,
       projectId,
       reason: wrapped.err.type,
@@ -185,7 +179,6 @@ export async function createKey(
   if (created.ok) return created.val;
   warn('key could not be created: {reason}', {
     kind,
-    tenantId: resource.tenantId,
     resourceId: resource.id,
     reason: created.err.type,
   });
@@ -267,7 +260,6 @@ export async function chatCipherById(
   const row = await db
     .selectFrom('chats')
     .select('owner_subject')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', chatId)
     .executeTakeFirst();
   if (!row) return unavailableCipher('no-key');
@@ -283,13 +275,11 @@ export async function projectCipherById(
   const row = await db
     .selectFrom('chat_projects')
     .select('owner_subject')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', projectId)
     .executeTakeFirst();
   if (!row) return unavailableCipher('no-key');
   return cipherAsOwner(db, 'chat_project', {
     id: projectId,
-    tenantId,
     ownerSubject: row.owner_subject,
   });
 }
@@ -310,7 +300,6 @@ export async function chatCiphersFor(
   if (chats.length === 0) return out;
   const keys = delegateClient();
   const asViewer = await keys.openResourceKeys(
-    tenantId,
     'chat',
     chats.map((chat) => ({ resourceId: chat.id, subject: viewerSubject }))
   );
@@ -322,7 +311,6 @@ export async function chatCiphersFor(
     (chat) => !asViewer.val.has(chat.id) && chat.ownerSubject !== viewerSubject
   );
   const asOwner = await keys.openResourceKeys(
-    tenantId,
     'chat',
     rest.map((chat) => ({ resourceId: chat.id, subject: chat.ownerSubject }))
   );
@@ -354,7 +342,6 @@ export async function shareKey(
   if (!shared.ok) {
     warn('key could not be shared: {reason}', {
       kind,
-      tenantId: resource.tenantId,
       resourceId: resource.id,
       reason: shared.err.type,
     });

@@ -33,18 +33,16 @@ const STATE_LABEL: Record<HostPipelineRun['state'], string> = {
 
 export default function ActionsPage({
   slug,
-  tenantId,
   projectId,
   projectName,
   repoFullName,
 }: {
   slug: string;
-  tenantId: string;
   projectId: string;
   projectName: string;
   repoFullName: string;
 }) {
-  const url = `/api/tenant/${tenantId}/code/projects/${projectId}/actions`;
+  const url = `/api/code/projects/${projectId}/actions`;
   const [runs, setRuns] = useState<HostPipelineRun[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -66,7 +64,7 @@ export default function ActionsPage({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-        <BackLink href={`/${slug}/code/${projectId}`} label={projectName} />
+        <BackLink href={`/code/${projectId}`} label={projectName} />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold">Actions</h1>
           <p className="truncate text-xs text-gray-500">

@@ -23,12 +23,10 @@ import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export default function RunNowButton({
   slug,
-  tenantId,
   agentId,
   agentName,
 }: {
   slug: string;
-  tenantId: string;
   agentId: string;
   agentName: string;
 }) {
@@ -74,7 +72,7 @@ export default function RunNowButton({
       </button>
       {startedRunId ? (
         <Link
-          href={`/${slug}/agents/${agentId}/runs/${startedRunId}`}
+          href={`/agents/${agentId}/runs/${startedRunId}`}
           className="text-xs text-blue-600 hover:underline dark:text-blue-400"
         >
           Run started — open it

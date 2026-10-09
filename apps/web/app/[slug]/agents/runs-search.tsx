@@ -17,7 +17,7 @@ export default function RunsSearch({
   status,
   initialQ,
 }: {
-  /** The runs page path without query, e.g. `/${slug}/agents/${agentId}/runs`. */
+  /** The runs page path without query, e.g. `/agents/${agentId}/runs`. */
   basePath: string;
   /** The active status filter, kept in the URL alongside the search. */
   status?: string;

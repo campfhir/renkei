@@ -42,7 +42,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; instanceId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, instanceId } = await params;
+  const { instanceId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -71,7 +71,6 @@ export async function POST(
     }
     const updated = await updateConnectionPermissions(
       db,
-      tenantId,
       instanceId,
       session.subject,
       exposure.permissions
@@ -92,7 +91,6 @@ export async function POST(
   // or expired authtoken is a 4xx here, never a stored credential that
   // fails later.
   const tested = await admanagerTestConnection({
-    tenantId,
     instanceId,
     credentials: parsed.credentials,
   });
@@ -131,7 +129,6 @@ export async function POST(
   }
 
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'admanager.connected',
     targetKind: 'admanager-instance',
@@ -145,7 +142,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; instanceId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, instanceId } = await params;
+  const { instanceId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -165,7 +162,6 @@ export async function DELETE(
 
   const instance = await getInstance(dbResult.val, tenantId, instanceId);
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'admanager.disconnected',
     targetKind: 'admanager-instance',

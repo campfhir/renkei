@@ -12,10 +12,8 @@ import FileshareList, { type ConnectableShareView } from './fileshare-list';
 export type { ConnectableShareView } from './fileshare-list';
 
 export default function FilesharesConnector({
-  tenantId,
   shares,
 }: {
-  tenantId: string;
   shares: ConnectableShareView[];
 }) {
   return (

@@ -174,7 +174,6 @@ export async function getUtilizationTotals(
           'chat_output_tokens'
         ),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where(inSpan('created_at', span, timeZone))
       .executeTakeFirst(),
@@ -184,7 +183,6 @@ export async function getUtilizationTotals(
         sql<string>`count(*)`.as('runs'),
         sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
       .where(inSpan('created_at', span, timeZone))
       .executeTakeFirst(),
@@ -194,7 +192,6 @@ export async function getUtilizationTotals(
         sql<string>`count(*)`.as('calls'),
         sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where(inSpan('started_at', span, timeZone))
       .executeTakeFirst(),
@@ -232,7 +229,6 @@ export async function getUtilizationSeries(
         fn.sum<string>('input_tokens').as('input_tokens'),
         fn.sum<string>('output_tokens').as('output_tokens'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where(inSpan('created_at', span, timeZone))
       .groupBy(sql`day`)
@@ -244,7 +240,6 @@ export async function getUtilizationSeries(
         sql<string>`count(*)`.as('runs'),
         sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
       .where(inSpan('created_at', span, timeZone))
       .groupBy(sql`day`)
@@ -256,7 +251,6 @@ export async function getUtilizationSeries(
         sql<string>`count(*)`.as('calls'),
         sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where(inSpan('started_at', span, timeZone))
       .groupBy(sql`day`)
@@ -308,7 +302,6 @@ export async function getAgentUtilization(
   const agents = await db
     .selectFrom('agents')
     .select(['id', 'name', 'enabled'])
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', subject)
     .orderBy('name')
     .execute();
@@ -325,7 +318,6 @@ export async function getAgentUtilization(
         sql<string>`count(*)`.as('runs'),
         sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
       .where('agent_id', 'in', ids)
       .where(inSpan('created_at', span, timeZone))
@@ -338,7 +330,6 @@ export async function getAgentUtilization(
         fn.sum<string>('input_tokens').as('input_tokens'),
         fn.sum<string>('output_tokens').as('output_tokens'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where('agent_id', 'in', ids)
       .where(inSpan('created_at', span, timeZone))
@@ -347,7 +338,6 @@ export async function getAgentUtilization(
     db
       .selectFrom('tool_calls')
       .select(['agent_id', sql<string>`count(*)`.as('calls')])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where('agent_id', 'in', ids)
       .where(inSpan('started_at', span, timeZone))
@@ -364,8 +354,7 @@ export async function getAgentUtilization(
         }>`
       SELECT DISTINCT ON (agent_id) agent_id, created_at, step_name, error_kind
       FROM agent_run_log
-      WHERE tenant_id = ${tenantId}
-        AND owner_subject = ${subject}
+      WHERE owner_subject = ${subject}
         AND agent_id IN (${sql.join(ids)})
         AND status = 'failed'
         AND created_at >= ${since}
@@ -379,8 +368,7 @@ export async function getAgentUtilization(
         }>`
       SELECT DISTINCT ON (agent_id) agent_id, created_at, step_name, error_kind
       FROM agent_run_log
-      WHERE tenant_id = ${tenantId}
-        AND owner_subject = ${subject}
+      WHERE owner_subject = ${subject}
         AND agent_id IN (${sql.join(ids)})
         AND status = 'failed'
         AND created_at >= ${since}
@@ -456,8 +444,7 @@ export async function getFailureSignatures(
       (ARRAY_AGG(f.error ORDER BY f.created_at DESC))[1] AS last_error
     FROM agent_run_log f
     JOIN agents a ON a.id = f.agent_id AND a.tenant_id = f.tenant_id
-    WHERE f.tenant_id = ${tenantId}
-      AND f.owner_subject = ${subject}
+    WHERE f.owner_subject = ${subject}
       AND f.status = 'failed'
       AND a.enabled
       AND ${inSpan('f.created_at', span, timeZone)}

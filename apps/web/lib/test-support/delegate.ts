@@ -96,7 +96,6 @@ export async function startTestDelegate(
     enrollPerson: async (tenantId, subject) =>
       (
         await enrollTestPerson(db, {
-          tenantId,
           subject,
           instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
         })

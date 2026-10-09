@@ -36,10 +36,8 @@ interface Draft {
 }
 
 export default function KnowledgePanel({
-  tenantId,
   agentId,
 }: {
-  tenantId: string;
   agentId: string;
 }) {
   // null until the first load answers: "No notes yet." must not flash
@@ -51,7 +49,7 @@ export default function KnowledgePanel({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [purgeArmed, setPurgeArmed] = useState(false);
 
-  const base = `/api/tenant/${tenantId}/agents/${agentId}/knowledge`;
+  const base = `/api/agents/${agentId}/knowledge`;
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ notes: NoteRow[] }>(base);

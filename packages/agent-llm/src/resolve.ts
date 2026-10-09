@@ -186,7 +186,6 @@ export async function resolveAgentLlm(
     let query = db
       .selectFrom('llm_model_configs')
       .select(['id', 'provider', 'model', 'base_url', 'settings', 'encrypted_secrets'])
-      .where('tenant_id', '=', tenantId)
       .where('enabled', '=', true)
       .where(chatModelsOnly);
     query = agentModelConfigId
@@ -269,7 +268,6 @@ export async function resolveImageModel(
     let query = db
       .selectFrom('llm_model_configs')
       .select(['id', 'label', 'provider', 'model', 'base_url', 'settings', 'encrypted_secrets'])
-      .where('tenant_id', '=', tenantId)
       .where('enabled', '=', true)
       .where(imageModelsOnly);
     if (modelConfigId) query = query.where('id', '=', modelConfigId);

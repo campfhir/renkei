@@ -79,7 +79,7 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     );
     await client.query('DELETE FROM chats WHERE id = $1', [ids.seededChatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.seededProjectId]);
-    await client.query(`DELETE FROM chat_projects WHERE tenant_id = $1 AND name = ANY($2)`, [
+    await client.query(`DELETE FROM chat_projects WHERE name = ANY($2)`, [
       E2E_TENANT_ID,
       [ids.newName, ids.createdRepoName],
     ]);
@@ -111,7 +111,7 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   try {
     await client.query('DELETE FROM chats WHERE id = $1', [ids.seededChatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.seededProjectId]);
-    await client.query(`DELETE FROM chat_projects WHERE tenant_id = $1 AND name = ANY($2)`, [
+    await client.query(`DELETE FROM chat_projects WHERE name = ANY($2)`, [
       E2E_TENANT_ID,
       [ids.newName, ids.createdRepoName],
     ]);
@@ -220,7 +220,6 @@ async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
   ];
   const client = await db();
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.seededChatId,
     ownerSubject: E2E_SUBJECT,
@@ -263,7 +262,7 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
     authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
     'content-type': 'application/json',
   };
-  const target = { tenantId: E2E_TENANT_ID, subject: `code-project:${ids.seededProjectId}` };
+  const target = { subject: `code-project:${ids.seededProjectId}` };
   const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
     method: 'POST',
     headers,
@@ -338,7 +337,7 @@ test.describe('code projects', () => {
       main.locator('section', { has: page.getByRole('heading', { level: 2, name }) });
 
     // ── The index: the seeded project under Mine, its repository beneath ──
-    await page.goto(`/${E2E_SLUG}/code`);
+    await page.goto(`/code`);
     await expect(page.getByRole('heading', { level: 1, name: 'Code' })).toBeVisible();
     const seededRow = main.getByRole('link', { name: ids.seededName });
     await expect(seededRow).toBeVisible();
@@ -463,7 +462,7 @@ test.describe('code projects', () => {
 
     // ── Back to Code, and in again ──
     await main.getByRole('link', { name: 'Back to Code' }).click();
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code$`));
+    await expect(page).toHaveURL(new RegExp(`/code$`));
     await seededRow.click();
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
 
@@ -528,10 +527,10 @@ test.describe('code projects', () => {
       timeout: 30_000,
     });
     const crumb = main.getByRole('link', { name: ids.seededName });
-    await expect(crumb).toHaveAttribute('href', `/${E2E_SLUG}/code/${ids.seededProjectId}`);
+    await expect(crumb).toHaveAttribute('href', `/code/${ids.seededProjectId}`);
     await expect(main.getByRole('link', { name: 'Back to project' })).toHaveAttribute(
       'href',
-      `/${E2E_SLUG}/code/${ids.seededProjectId}`
+      `/code/${ids.seededProjectId}`
     );
     // The code pane opens beside a code chat on a wide screen (its own
     // test below) and narrows the chat's column into its compact title
@@ -623,7 +622,7 @@ test.describe('code projects', () => {
     // ── A new code project through the form: the repository browsed on
     //    Bitbucket (workspace → project → repositories), a .env pasted,
     //    the brief there to start from; nothing cloned yet ──
-    await page.goto(`/${E2E_SLUG}/code/new`);
+    await page.goto(`/code/new`);
     await expect(page.getByRole('heading', { level: 1, name: 'New code project' })).toBeVisible();
     await expect(page.getByText('Connect Bitbucket first')).toHaveCount(0);
     const create = page.getByRole('button', { name: 'Create project' });
@@ -650,7 +649,7 @@ test.describe('code projects', () => {
     await shot('code-new.png');
     await expect(create).toBeEnabled();
     await create.click();
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code/[0-9a-f-]{36}$`));
+    await expect(page).toHaveURL(new RegExp(`/code/[0-9a-f-]{36}$`));
     await expect(page.getByRole('heading', { level: 1, name: ids.newName })).toBeVisible();
     const newRepo = sectionOf('Repository');
     await expect(newRepo.getByText('acme/notifications-gateway')).toBeVisible();
@@ -666,7 +665,7 @@ test.describe('code projects', () => {
       page.getByText(/checkout on the sandbox, its environment variables/)
     ).toBeVisible();
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code$`));
+    await expect(page).toHaveURL(new RegExp(`/code$`));
     await expect(main.getByRole('link', { name: ids.newName })).toHaveCount(0);
     await expect(main.getByRole('link', { name: ids.seededName })).toBeVisible();
   });
@@ -690,7 +689,7 @@ test.describe('code projects', () => {
       });
     const main = page.getByRole('main');
     await seedCheckout(ids);
-    await page.goto(`/${E2E_SLUG}/chat/${ids.seededChatId}`);
+    await page.goto(`/chat/${ids.seededChatId}`);
     await expect(page.getByRole('heading', { name: ids.seededChatTitle })).toBeVisible();
 
     if (mobile) {
@@ -773,7 +772,7 @@ test.describe('code projects', () => {
     await expect(tree.getByText('package.json')).toBeVisible({ timeout: 20_000 });
     await expect(main.locator('[data-testid="pane-branch"]')).toContainText('main');
     const back = main.getByRole('link', { name: 'Back to project' });
-    await expect(back).toHaveAttribute('href', `/${E2E_SLUG}/code/${ids.seededProjectId}`);
+    await expect(back).toHaveAttribute('href', `/code/${ids.seededProjectId}`);
     expect((await back.boundingBox())!.x).toBeLessThan((await tree.boundingBox())!.x);
     expect((await back.boundingBox())!.x).toBeLessThan((await openFiles.boundingBox())!.x);
     // The chat column is narrow beside the pane: its title bar folds.
@@ -874,7 +873,7 @@ test.describe('code projects', () => {
       });
     const main = page.getByRole('main');
     await seedCheckout(ids);
-    await page.goto(`/${E2E_SLUG}/chat/${ids.seededChatId}`);
+    await page.goto(`/chat/${ids.seededChatId}`);
     await expect(page.getByRole('heading', { name: ids.seededChatTitle })).toBeVisible();
 
     if (mobile) {
@@ -980,7 +979,7 @@ test.describe('code projects', () => {
           try {
             const rows = await client.query(
               `SELECT reason, sample_path FROM code_language_gaps
-                WHERE tenant_id = $1 AND extension = 'json' AND language = 'json'`,
+                WHERE extension = 'json' AND language = 'json'`,
               [E2E_TENANT_ID]
             );
             return rows.rows[0] ?? null;
@@ -1014,7 +1013,7 @@ test.describe('code projects', () => {
     // ── "Create new repository", beside "Choose existing": pick the
     //    workspace and project, name it, and an empty repo appears on
     //    Bitbucket — used exactly like one the browser would have found ──
-    await page.goto(`/${E2E_SLUG}/code/new`);
+    await page.goto(`/code/new`);
     await page.getByLabel(/^Name/).fill(ids.createdRepoName);
     await page.getByRole('tab', { name: 'Create new' }).click();
     const workspacePick = page.getByRole('combobox', { name: /^Workspace/ });
@@ -1048,7 +1047,7 @@ test.describe('code projects', () => {
     // First hit on these routes in this test (unlike the big walkthrough
     // above, which has already warmed them up) — dev-mode's on-demand
     // compile can outrun the default assertion timeout.
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code/[0-9a-f-]{36}$`), {
+    await expect(page).toHaveURL(new RegExp(`/code/[0-9a-f-]{36}$`), {
       timeout: 20_000,
     });
     await expect(page.getByRole('heading', { level: 1, name: ids.createdRepoName })).toBeVisible();

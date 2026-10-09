@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import { notFound, redirect } from 'next/navigation';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import ChatFrame from './_components/chat-frame';
@@ -21,10 +20,8 @@ export default async function ChatLayout({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/${slug}/chat`));
+  if (!session) redirect(signInUrl(tenant.id, `/chat`));
   return (
     <ChatFrame>
       <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white dark:bg-gray-950">

@@ -98,17 +98,14 @@ describe('DelegateClient', () => {
     await client.forRun('run-1').keyStatus('tenant-1', 'alice');
     await client.keyStatus('tenant-1', 'alice');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
-      tenantId: 'tenant-1',
       subject: 'alice',
       sessionId: 'session-1',
     });
     expect(JSON.parse(String(calls[1]!.init.body))).toEqual({
-      tenantId: 'tenant-1',
       subject: 'alice',
       runId: 'run-1',
     });
     expect(JSON.parse(String(calls[2]!.init.body))).toEqual({
-      tenantId: 'tenant-1',
       subject: 'alice',
     });
   });

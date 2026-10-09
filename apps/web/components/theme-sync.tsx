@@ -48,10 +48,8 @@ import {
 } from '@/lib/theme';
 
 export default function ThemeSync({
-  tenantId,
   mode,
 }: {
-  tenantId: string;
   mode: ThemeMode | null;
 }) {
   // The mode this tab is rendering right now: the saved preference until a

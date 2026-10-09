@@ -11,7 +11,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
-export default function ImportAgentButton({ slug, tenantId }: { slug: string; tenantId: string }) {
+export default function ImportAgentButton({ slug }: { slug: string; tenantId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const importAnchor = useCoachAnchor('agents-import');
@@ -23,7 +23,7 @@ export default function ImportAgentButton({ slug, tenantId }: { slug: string; te
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/agents/import`, {
+      const response = await fetch(`/api/agents/import`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ markdown }),
@@ -38,7 +38,7 @@ export default function ImportAgentButton({ slug, tenantId }: { slug: string; te
         );
         return;
       }
-      router.push(`/${slug}/agents/${body.agentId}`);
+      router.push(`/agents/${body.agentId}`);
     } finally {
       setBusy(false);
     }

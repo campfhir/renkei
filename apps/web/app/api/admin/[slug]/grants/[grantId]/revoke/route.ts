@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
@@ -23,10 +22,6 @@ export async function POST(
   { params }: { params: Promise<{ slug: string; grantId: string }> }
 ): Promise<NextResponse> {
   const { slug, grantId } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
   const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -50,7 +45,6 @@ export async function POST(
     .select(['provider_account_id', 'display_name', 'subject'])
     .where('provider_account_id', '=', grantId)
     .where('provider', '=', provider)
-    .where('tenant_id', '=', tenantRef.id)
     .executeTakeFirst();
   if (!grant) {
     return NextResponse.json({ error: 'Grant not found' }, { status: 404 });
@@ -60,7 +54,6 @@ export async function POST(
     .deleteFrom('provider_grants')
     .where('provider_account_id', '=', grantId)
     .where('provider', '=', provider)
-    .where('tenant_id', '=', tenantRef.id)
     .execute();
 
   // The subject's MCP bearer credentials go with the grant: an access token
@@ -70,18 +63,15 @@ export async function POST(
   if (grant.subject) {
     await db
       .deleteFrom('oauth_access_tokens')
-      .where('tenant_id', '=', tenantRef.id)
       .where('subject', '=', grant.subject)
       .execute();
     await db
       .deleteFrom('oauth_refresh_tokens')
-      .where('tenant_id', '=', tenantRef.id)
       .where('subject', '=', grant.subject)
       .execute();
   }
 
   recordAuditEvent({
-    tenantId: tenantRef.id,
     actorSubject: access.subject,
     action: 'connector.disconnected',
     targetKind: 'connector',

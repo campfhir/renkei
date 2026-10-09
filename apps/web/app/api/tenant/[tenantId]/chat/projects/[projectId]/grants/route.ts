@@ -10,7 +10,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   return listGrantsRoute(request, tenantId, 'chat_project', projectId);
 }
 
@@ -18,6 +18,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   return addGrantRoute(request, tenantId, 'chat_project', projectId);
 }

@@ -31,7 +31,6 @@ async function mayDelete(
   if (row.projectId) {
     const access = await resolveResourceAccess(
       db,
-      tenantId,
       subject,
       'chat_project',
       row.projectId
@@ -45,7 +44,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; attachmentId: string }> }
 ): Promise<Response> {
-  const { tenantId, attachmentId } = await params;
+  const { attachmentId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -82,7 +81,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; attachmentId: string }> }
 ): Promise<Response> {
-  const { tenantId, attachmentId } = await params;
+  const { attachmentId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;

@@ -31,14 +31,12 @@ interface ZoomConfig {
 
 export function ZoomForm({
   slug,
-  tenantId,
   origin,
 }: {
   slug: string;
-  tenantId: string;
   origin: string | null;
 }) {
-  const url = `/api/admin/${slug}/connectors/zoom`;
+  const url = `/api/admin/connectors/zoom`;
   const [state, reload] = useConnectorConfig<ZoomConfig>(url);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');

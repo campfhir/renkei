@@ -109,14 +109,12 @@ export function TriggerChooser({
 
 /** Detail mode — edit one attached trigger. */
 export function TriggerEditor({
-  tenantId,
   trigger,
   otherAgents,
   calendars,
   onChange,
 }: {
   /** For the filter pickers, which list the caller's own spaces and people. */
-  tenantId: string;
   trigger: BuilderTrigger;
   otherAgents: AgentChoice[];
   calendars: CalendarOption[];

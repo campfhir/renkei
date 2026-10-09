@@ -153,7 +153,6 @@ export function statusForGrantError(type: GrantError): number {
 }
 
 interface Pending {
-  tenantId: string;
   provider: string;
   accessToken: string;
   refreshToken: string;
@@ -431,7 +430,6 @@ export class Grants {
     let tokens: Record<string, unknown>;
     if (provider === ONBASE || provider === ONBASE_ADMIN) {
       const answer = await onbaseWorkerCall('token', {
-        tenantId,
         connector: provider,
         grant: {
           type: 'authorization_code',
@@ -491,7 +489,6 @@ export class Grants {
     const handle = randomUUID();
     this.sweepPending();
     this.pending.set(handle, {
-      tenantId,
       provider,
       accessToken: refreshed.accessToken,
       refreshToken: refreshed.refreshToken,
@@ -611,7 +608,6 @@ export class Grants {
         } else if (provider === ONBASE || provider === ONBASE_ADMIN) {
           const token = grant.refreshToken || grant.accessToken;
           const answer = await onbaseWorkerCall('revoke', {
-            tenantId,
             connector: provider,
             token,
             tokenTypeHint: grant.refreshToken ? 'refresh_token' : 'access_token',
@@ -621,7 +617,6 @@ export class Grants {
       } catch (error) {
         this.logger.warn('provider revocation failed; deleting the grant regardless', {
           component: 'worker-delegate/grants',
-          tenantId,
           provider,
           error: error instanceof Error ? error.message : String(error),
         });

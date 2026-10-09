@@ -77,7 +77,6 @@ export async function searchLogs(
   const ownGrant = await db
     .selectFrom('provider_grants')
     .select('provider_account_id')
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', 'atlassian')
     .where('subject', '=', session.subject)
     .executeTakeFirst();
@@ -148,7 +147,6 @@ async function resolveUserNames(
       ? db
           .selectFrom('identities')
           .select(['subject', 'display_name', 'email'])
-          .where('tenant_id', '=', tenantId)
           .where('subject', 'in', [...subjects])
           .execute()
       : Promise.resolve([]),
@@ -156,7 +154,6 @@ async function resolveUserNames(
       ? db
           .selectFrom('provider_grants')
           .select(['provider_account_id', 'display_name'])
-          .where('tenant_id', '=', tenantId)
           .where('provider_account_id', 'in', [...accountIds])
           .execute()
       : Promise.resolve([]),

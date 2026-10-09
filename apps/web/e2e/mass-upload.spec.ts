@@ -41,7 +41,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`mass-upload-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`mass-upload-e2e-session:${projectName}`),
     chatId: uuidFrom(`mass-upload-e2e-chat:${projectName}`),
     slug: `e2e-mass-upload-${projectName}`,
@@ -53,9 +52,9 @@ async function seed(fixture: ReturnType<typeof fixtureFor>): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM chats WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+    await client.query('DELETE FROM chats', [fixture.tenantId]);
+    await client.query('DELETE FROM sessions', [fixture.tenantId]);
+    await client.query('DELETE FROM identities', [fixture.tenantId]);
     await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
       fixture.tenantId,
@@ -93,7 +92,7 @@ async function seed(fixture: ReturnType<typeof fixtureFor>): Promise<void> {
 async function openChat(page: Page, fixture: ReturnType<typeof fixtureFor>) {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -132,7 +131,7 @@ async function openChat(page: Page, fixture: ReturnType<typeof fixtureFor>) {
       body: JSON.stringify({ results: ids.map((id) => ({ id, extractStatus: 'done' })) }),
     });
   });
-  await page.goto(`/${fixture.slug}/chat/${fixture.chatId}`);
+  await page.goto(`/chat/${fixture.chatId}`);
   await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
   return { uploaded, ocrRequests };
 }

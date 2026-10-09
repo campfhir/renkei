@@ -23,13 +23,11 @@ import MicrosoftProductCard from './microsoft-product-card';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export default function MicrosoftConnectBody({
-  tenantId,
   connected,
   ceiling,
   priorScopes,
   shownKeys,
 }: {
-  tenantId: string;
   connected: boolean;
   /** The org's allowed scopes — the most a user can grant. */
   ceiling: string[];
@@ -71,7 +69,7 @@ export default function MicrosoftConnectBody({
   }
 
   // The union, always — see the note on lifting selection state above.
-  const authorizeUrl = `/api/microsoft/${tenantId}/authorize?scopes=${encodeURIComponent(
+  const authorizeUrl = `/api/microsoft/authorize?scopes=${encodeURIComponent(
     scopesOfOptions(MICROSOFT_SCOPE_OPTIONS, selectedIds).join(' ')
   )}`;
 
@@ -97,7 +95,7 @@ export default function MicrosoftConnectBody({
     setBusy(true);
     setNotice(null);
     try {
-      const response = await fetch(`/api/microsoft/${tenantId}/grant`, { method: 'DELETE' });
+      const response = await fetch(`/api/microsoft/grant`, { method: 'DELETE' });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         setNotice(data.error ?? 'Could not disconnect');

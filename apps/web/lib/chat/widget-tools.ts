@@ -66,7 +66,6 @@ export type ConfirmWidgetToolResult =
 export async function confirmWidgetTool(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     subject: string;
     roles: string[];
     name: string;
@@ -97,7 +96,6 @@ export async function confirmWidgetTool(
   if (!descriptor?.appOnly) return { ok: false, reason: 'not-a-card-tool' };
 
   const token = await mintRunToken(db, {
-    tenantId: input.tenantId,
     subject: input.subject,
     agentId: null,
     ttlSeconds: CALL_TTL_SECONDS,
@@ -149,7 +147,6 @@ export type WidgetModelContextOutcome = { message: ChatMessageView; turn: Starte
 export async function recordWidgetModelContext(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     session: { subject: string; roles: string[] };
     chatId: string;
     text: string;
@@ -183,7 +180,6 @@ export async function recordWidgetModelContext(
     (await waitingOnSiblings(db, input.tenantId, input.chatId, input.stateKey))
   ) {
     const appended = await appendWidgetModelContext(db, {
-      tenantId: input.tenantId,
       chatId: input.chatId,
       text,
     });
@@ -191,7 +187,6 @@ export async function recordWidgetModelContext(
   }
 
   const started = await startChatTurn(db, {
-    tenantId: input.tenantId,
     session: input.session,
     chatId: input.chatId,
     text,
@@ -222,7 +217,6 @@ export async function recordWidgetModelContext(
     case 'MODEL_ERROR':
     case 'HISTORY': {
       const appended = await appendWidgetModelContext(db, {
-        tenantId: input.tenantId,
         chatId: input.chatId,
         text,
       });
@@ -317,7 +311,6 @@ export async function appendWidgetModelContext(
       .executeTakeFirst();
     if (await getActiveTurn(trx, input.chatId)) return { ok: false, reason: 'turn-running' };
     const inserted = await insertMessage(trx, {
-      tenantId: input.tenantId,
       chatId: input.chatId,
       turnId: null,
       role: 'user',
@@ -382,7 +375,6 @@ function noteView(row: {
 export async function recordWidgetDecision(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     chatId: string;
     subject: string;
     stateKey: string;
@@ -395,14 +387,13 @@ export async function recordWidgetDecision(
   await db
     .insertInto('chat_widget_decisions')
     .values({
-      tenant_id: input.tenantId,
       chat_id: input.chatId,
       state_key: stateKey,
       decision: input.decision,
       state: JSON.stringify(input.state),
       decided_by: input.subject,
     })
-    .onConflict((oc) => oc.columns(['tenant_id', 'state_key']).doNothing())
+    .onConflict((oc) => oc.columns(['state_key']).doNothing())
     .execute();
   return { ok: true };
 }
@@ -416,7 +407,6 @@ export async function getWidgetDecision(
   const row = await db
     .selectFrom('chat_widget_decisions')
     .select(['state'])
-    .where('tenant_id', '=', tenantId)
     .where('state_key', '=', stateKey)
     .executeTakeFirst();
   return row ? widgetDecisionStateOf(row.state) : null;
@@ -436,7 +426,6 @@ export async function listWidgetDecisions(
   const rows = await db
     .selectFrom('chat_widget_decisions')
     .select(['state_key', 'state'])
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .execute();
   const out = new Map<string, WidgetDecisionState>();

@@ -29,14 +29,12 @@ import { isRunSettled } from '@/lib/agents/run-labels';
 import type { OwnerRunPageData } from '@/lib/agents/run-page-data';
 
 export default function RunLive({
-  tenantId,
   slug,
   agentId,
   runId,
   agentName,
   initialData,
 }: {
-  tenantId: string;
   slug: string;
   agentId: string;
   runId: string;
@@ -59,7 +57,7 @@ export default function RunLive({
     if (isRunSettled(initialData.run.status)) return;
 
     const source = new EventSource(
-      `/api/tenant/${tenantId}/agents/${agentId}/runs/${runId}/stream`
+      `/api/agents/${agentId}/runs/${runId}/stream`
     );
     source.addEventListener('run', (event: MessageEvent<string>) => {
       try {
@@ -82,7 +80,7 @@ export default function RunLive({
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <BackLink href={`/${slug}/agents/${agentId}/runs`} label={`Runs of “${agentName}”`} />
+        <BackLink href={`/agents/${agentId}/runs`} label={`Runs of “${agentName}”`} />
         <h1 className="text-xl font-bold">Run</h1>
         <StatusPill status={run.status} errorKind={run.errorKind} />
         <span className="text-sm text-gray-500">

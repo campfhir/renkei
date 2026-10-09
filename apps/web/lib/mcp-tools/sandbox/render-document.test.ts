@@ -56,7 +56,6 @@ async function collect(context: MCPToolContext): Promise<Map<string, Registered>
 
 const context = (subject = 'auth0|alice'): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     subject,
     origin: 'https://renkei.example',
   }) as unknown as MCPToolContext;

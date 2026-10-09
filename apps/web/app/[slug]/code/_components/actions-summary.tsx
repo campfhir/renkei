@@ -40,12 +40,10 @@ const STATE_LABEL: Record<HostPipelineRun['state'], string> = {
 
 export default function ActionsSummary({
   href,
-  tenantId,
   projectId,
 }: {
   /** The project's Actions page. */
   href: string;
-  tenantId: string;
   projectId: string;
 }) {
   const [lastRun, setLastRun] = useState<HostPipelineRun | null | undefined>(undefined);
@@ -55,7 +53,7 @@ export default function ActionsSummary({
     let cancelled = false;
     void (async () => {
       const result = await getJson<{ lastRun: HostPipelineRun | null }>(
-        `/api/tenant/${tenantId}/code/projects/${projectId}/actions?view=summary`
+        `/api/code/projects/${projectId}/actions?view=summary`
       );
       if (cancelled) return;
       if (result.data) setLastRun(result.data.lastRun);

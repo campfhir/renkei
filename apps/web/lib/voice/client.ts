@@ -28,7 +28,7 @@ export interface SpeechRequest {
 /** The route's answer for a piece played as it arrives: raw samples, chunk by chunk. */
 export type SpeechStream = ReadableStream<Uint8Array>;
 
-const base = (tenantId: string) => `/api/tenant/${tenantId}/voice`;
+const base = (tenantId: string) => `/api/voice`;
 
 async function errorOf(response: Response, fallback: string): Promise<string> {
   const body: unknown = await response.json().catch(() => null);
@@ -144,7 +144,7 @@ export const voiceClient = {
 
   /** Save this person's voice preferences (the whole document). */
   savePrefs: (tenantId: string, prefs: VoicePrefs) =>
-    sendJsonFull<{ voice: VoicePrefs }>(`/api/tenant/${tenantId}/preferences`, 'PUT', {
+    sendJsonFull<{ voice: VoicePrefs }>(`/api/preferences`, 'PUT', {
       voice: prefs,
     }),
 };

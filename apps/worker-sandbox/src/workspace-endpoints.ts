@@ -179,7 +179,7 @@ function targetOf(body: Body): store.WorkspaceTarget | null {
   const tenantId = str(body.tenantId);
   const subject = str(body.subject);
   if (!tenantId || !subject) return null;
-  return { tenantId, subject };
+  return { subject };
 }
 
 /** A commit named by its hash or a prefix of it — never a ref, which could name anything. */
@@ -1400,7 +1400,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const id = url.searchParams.get('id') ?? '';
     if (!tenantId || !subject || !id) return sendError(response, 400, 'bad_request');
     if (!(await enabled(tenantId, response))) return;
-    const target = { tenantId, subject };
+    const target = { subject };
     const path = validateWorkspacePath(url.searchParams.get('path'), { forWrite: true });
     if (!path.ok || !path.path)
       return sendError(

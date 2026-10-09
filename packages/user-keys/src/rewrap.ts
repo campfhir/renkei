@@ -68,7 +68,7 @@ export const REWRAP_TARGETS: readonly RewrapTarget[] = [
   // Organization → Storage account key, which is a connector row).
   {
     table: 'connector_configs',
-    idColumns: ['tenant_id', 'connector'],
+    idColumns: ['connector'],
     column: 'encrypted_secrets',
     prefix: '',
     ring: 'token',

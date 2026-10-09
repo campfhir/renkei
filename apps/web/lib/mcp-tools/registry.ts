@@ -154,7 +154,6 @@ async function grantRow(
   return db
     .selectFrom('provider_grants')
     .select(['requested_scopes', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', provider)
     .where('subject', '=', subject)
     .limit(1)

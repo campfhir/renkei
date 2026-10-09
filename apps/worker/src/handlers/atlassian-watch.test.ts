@@ -86,7 +86,6 @@ function access(): AtlassianAccess {
 function jiraRow(cursor: string | null): WatchRow {
   return {
     id: 'watch-1',
-    tenant_id: 'tenant-1',
     provider: 'jira',
     account_id: 'acct-1',
     scope_type: 'project',
@@ -99,7 +98,6 @@ function jiraRow(cursor: string | null): WatchRow {
 function confluenceRow(cursor: string | null): WatchRow {
   return {
     id: 'watch-2',
-    tenant_id: 'tenant-1',
     provider: 'confluence',
     account_id: 'acct-1',
     scope_type: 'space',

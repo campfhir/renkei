@@ -69,7 +69,6 @@ describe('loadApprovalFieldSchema', () => {
     expect(loadFieldSchema).not.toHaveBeenCalled();
     // The approver's own grant, by subject — never someone else's.
     expect(describeMock).toHaveBeenCalledWith({
-      tenantId: 't1',
       provider: 'atlassian',
       subject: 'alice',
     });

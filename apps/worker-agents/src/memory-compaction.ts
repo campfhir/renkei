@@ -59,7 +59,7 @@ export function createMemoryCompactionSweep(db: Kysely<DB>) {
         sql<string>`count(*)`.as('entries'),
       ])
       .where('m.kind', '=', 'entry')
-      .groupBy(['m.tenant_id', 'm.agent_id', 'a.owner_subject'])
+      .groupBy(['m.agent_id', 'a.owner_subject'])
       .having(sql`count(*)`, '>', MEMORY_COMPACT_THRESHOLD)
       .orderBy(sql`count(*)`, 'desc')
       .limit(MAX_AGENTS_PER_PASS)
@@ -72,7 +72,6 @@ export function createMemoryCompactionSweep(db: Kysely<DB>) {
         logger.warn('memory compaction failed for agent {agentId}: {error}', {
           component: 'worker-agents/memory-compaction',
           agentId: candidate.agent_id,
-          tenantId: candidate.tenant_id,
           subject: candidate.owner_subject,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -92,7 +91,6 @@ async function compactOne(
   const entries = await db
     .selectFrom('agent_memories')
     .select(['id', 'content', 'created_at'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('kind', '=', 'entry')
     .orderBy('created_at', 'desc')
@@ -105,7 +103,6 @@ async function compactOne(
   const summaryRow = await db
     .selectFrom('agent_memories')
     .select(['content'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('kind', '=', 'summary')
     .executeTakeFirst();
@@ -181,7 +178,6 @@ async function compactOne(
   logger.info('compacted {folded} memory entr(ies) for agent {agentId}', {
     component: 'worker-agents/memory-compaction',
     agentId,
-    tenantId,
     subject: ownerSubject,
     folded: entries.length,
   });
@@ -197,7 +193,6 @@ async function enforceHardCap(
   const over = await db
     .selectFrom('agent_memories')
     .select(['id'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('kind', '=', 'entry')
     .orderBy('created_at', 'desc')
@@ -218,7 +213,6 @@ async function enforceHardCap(
     {
       component: 'worker-agents/memory-compaction',
       agentId,
-      tenantId,
       subject: ownerSubject,
       dropped: over.length,
     }

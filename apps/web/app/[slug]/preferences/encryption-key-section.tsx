@@ -35,10 +35,8 @@ function whenText(iso: string | null): string {
 }
 
 export default function EncryptionKeySection({
-  tenantId,
   initial,
 }: {
-  tenantId: string;
   initial: KeyStatusView;
 }) {
   const router = useRouter();
@@ -142,7 +140,6 @@ export default function EncryptionKeySection({
       if (!key) setFailure('This device does not hold your key, so it cannot share it.');
       else {
         const approved = await approveDeviceAsk(
-          tenantId,
           requestId,
           typedCodes[requestId] ?? '',
           key

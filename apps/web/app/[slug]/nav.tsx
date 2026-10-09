@@ -15,7 +15,6 @@ import { ChatList } from './chat/_components/chat-nav';
 
 interface NavProps {
   slug: string;
-  tenantId: string;
   /** Display name from the identity spine, falling back to email/subject. */
   userName: string;
   userEmail: string | null;
@@ -76,7 +75,6 @@ interface NavGroup {
  */
 export default function AppNav({
   slug,
-  tenantId,
   userName,
   userEmail,
   isOperator,
@@ -175,10 +173,10 @@ export default function AppNav({
       label: 'Workspace',
       coach: 'nav-workspace',
       items: [
-        { href: `/${slug}`, label: 'Home', icon: ICONS.home, exact: true },
-        { href: `/${slug}/agents`, label: 'Agents', icon: ICONS.agent },
-        { href: `/${slug}/knowledge`, label: 'Knowledge', icon: ICONS.book },
-        { href: `/${slug}/files`, label: 'Files', icon: ICONS.folder },
+        { href: `/`, label: 'Home', icon: ICONS.home, exact: true },
+        { href: `/agents`, label: 'Agents', icon: ICONS.agent },
+        { href: `/knowledge`, label: 'Knowledge', icon: ICONS.book },
+        { href: `/files`, label: 'Files', icon: ICONS.folder },
       ],
     },
     {
@@ -186,20 +184,20 @@ export default function AppNav({
       coach: 'nav-chat',
       items: [
         {
-          href: `/${slug}/chat`,
+          href: `/chat`,
           label: 'Chat',
           icon: ICONS.chat,
-          except: [`/${slug}/chat/projects`, `/${slug}/chat/prompts`, `/${slug}/chat/memory`],
-          plus: { href: `/${slug}/chat/new`, label: 'New chat' },
+          except: [`/chat/projects`, `/chat/prompts`, `/chat/memory`],
+          plus: { href: `/chat/new`, label: 'New chat' },
         },
-        { href: `/${slug}/chat/projects`, label: 'Projects', icon: ICONS.pages },
+        { href: `/chat/projects`, label: 'Projects', icon: ICONS.pages },
         // Code projects — a repository to work in. The menu only opens the
         // door: the projects are listed on the Code page and made there; the
         // chats inside each sit among the person's chats below, marked with
         // the same glyph and naming their project.
-        { href: `/${slug}/code`, label: 'Code', icon: ICONS.code },
-        { href: `/${slug}/chat/prompts`, label: 'Prompt libraries', icon: ICONS.promptLibrary },
-        { href: `/${slug}/chat/memory`, label: 'Memory', icon: ICONS.brain },
+        { href: `/code`, label: 'Code', icon: ICONS.code },
+        { href: `/chat/prompts`, label: 'Prompt libraries', icon: ICONS.promptLibrary },
+        { href: `/chat/memory`, label: 'Memory', icon: ICONS.brain },
       ],
       extra: chats ? <ChatList slug={slug} tenantId={tenantId} data={chats} /> : null,
     },
@@ -237,14 +235,14 @@ export default function AppNav({
   // organization console for operators. Groups are separated by rules.
   const accountGroups: NavItem[][] = [
     [
-      { href: `/${slug}/notifications`, label: 'Notifications', icon: ICONS.bell },
-      { href: `/${slug}/preferences`, label: 'Preferences', icon: ICONS.sliders },
-      { href: `/${slug}/connectors`, label: 'Connectors', icon: ICONS.plug },
+      { href: `/notifications`, label: 'Notifications', icon: ICONS.bell },
+      { href: `/preferences`, label: 'Preferences', icon: ICONS.sliders },
+      { href: `/connectors`, label: 'Connectors', icon: ICONS.plug },
       // The tours: replay one, or turn off the ones that start unasked.
       ...(toursEnabled
         ? [
             {
-              href: `/${slug}/tutorials`,
+              href: `/tutorials`,
               label: 'Tutorials',
               icon: ICONS.bulb,
               coach: 'account-tutorials' as const,
@@ -253,20 +251,20 @@ export default function AppNav({
         : []),
     ],
     [
-      { href: `/${slug}/batch-jobs`, label: 'Batch jobs', icon: ICONS.layers },
-      { href: `/${slug}/usage`, label: 'Tools', icon: ICONS.tool },
-      { href: `/${slug}/utilization`, label: 'My usage', icon: ICONS.chart },
+      { href: `/batch-jobs`, label: 'Batch jobs', icon: ICONS.layers },
+      { href: `/usage`, label: 'Tools', icon: ICONS.tool },
+      { href: `/utilization`, label: 'My usage', icon: ICONS.chart },
       // Mail review is deliberately unlinked: it existed to correct how a
       // person's own mail was classified on its way into the knowledge
       // index, and mail is no longer indexed at all (it is personal — read
       // live through the person's own grant). The route still answers
       // pending its removal; nothing should lead a person there.
-      { href: `/${slug}/logs`, label: 'Activity', icon: ICONS.activity },
+      { href: `/logs`, label: 'Activity', icon: ICONS.activity },
     ],
     ...(isOperator
-      ? [[{ href: `/${slug}/admin`, label: 'Organization', icon: ICONS.building }]]
+      ? [[{ href: `/admin`, label: 'Organization', icon: ICONS.building }]]
       : []),
-    [{ href: `/${slug}/about`, label: 'About', icon: ICONS.info }],
+    [{ href: `/about`, label: 'About', icon: ICONS.info }],
   ];
 
   async function signOut() {
@@ -361,7 +359,7 @@ export default function AppNav({
           <span className="h-0.5 w-5 rounded bg-gray-700 dark:bg-gray-300" />
         </button>
 
-        <Link href={`/${slug}`} className="flex items-center gap-2 font-semibold tracking-tight">
+        <Link href={`/`} className="flex items-center gap-2 font-semibold tracking-tight">
           <RenkeiMark className="h-6 w-6 shrink-0" />
           Renkei
           <span className="text-sm font-normal text-gray-500 dark:text-gray-400">{slug}</span>

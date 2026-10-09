@@ -50,7 +50,6 @@ export async function GET(
   }
 
   const configResult = await getConnectorConfig(
-    tenantId,
     ATLASSIAN_BITBUCKET_CONNECTOR,
     keyResult.val
   );
@@ -141,7 +140,6 @@ export async function PUT(
   if (redirectUri) settings.redirectUri = redirectUri;
 
   const writeResult = await setConnectorConfig(
-    tenantId,
     ATLASSIAN_BITBUCKET_CONNECTOR,
     {
       enabled,

@@ -16,13 +16,12 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; chatId: string }> }
 ): Promise<Response> {
-  const { tenantId, chatId } = await params;
+  const { chatId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
 
   const started = await startCompactionTurn(db, {
-    tenantId,
     session: { subject: session.subject, roles: session.roles },
     chatId,
   });

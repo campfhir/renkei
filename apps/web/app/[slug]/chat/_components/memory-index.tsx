@@ -28,16 +28,14 @@ export interface UserMemoryEntryView {
 }
 
 export default function MemoryIndex({
-  tenantId,
   initialSummary,
   initialEntries,
 }: {
-  tenantId: string;
   initialSummary: string | null;
   initialEntries: UserMemoryEntryView[];
 }) {
   const router = useRouter();
-  const base = `/api/tenant/${tenantId}/chat/memory`;
+  const base = `/api/chat/memory`;
   const [note, setNote] = useState('');
   const addAnchor = useCoachAnchor('memory-add');
   const [busy, setBusy] = useState(false);

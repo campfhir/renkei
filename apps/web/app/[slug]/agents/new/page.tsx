@@ -1,7 +1,6 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { loadBuilderData } from '@/lib/agents/builder-data';
@@ -13,12 +12,10 @@ export default async function NewAgentPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/agents/new`));
+    redirect(signInUrl(tenant.id, `/agents/new`));
   }
 
   const dbResult = getDatabase();

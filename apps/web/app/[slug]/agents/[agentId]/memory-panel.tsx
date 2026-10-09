@@ -17,10 +17,8 @@ import { unavailableReasonOf } from '@/lib/chat/chat-keys';
 const MAX_SHOWN_ENTRIES = 30;
 
 export default async function MemoryPanel({
-  tenantId,
   agentId,
 }: {
-  tenantId: string;
   agentId: string;
 }): Promise<React.ReactNode> {
   const dbResult = getDatabase();

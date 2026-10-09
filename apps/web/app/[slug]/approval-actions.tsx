@@ -24,10 +24,8 @@ import { useRefresh } from '@/lib/use-refresh';
  * decide from, not two.
  */
 export default function ApprovalActions({
-  tenantId,
   itemId,
 }: {
-  tenantId: string;
   itemId: string;
 }): React.ReactNode {
   const { refresh, pending } = useRefresh();
@@ -41,7 +39,7 @@ export default function ApprovalActions({
     setError(null);
     setNotice(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/actionable-items/${itemId}/approval`, {
+      const response = await fetch(`/api/actionable-items/${itemId}/approval`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision, comment: comment.trim() }),

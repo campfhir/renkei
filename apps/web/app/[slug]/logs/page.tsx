@@ -1,5 +1,4 @@
 import { notFound } from 'next/navigation';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { requireAuth } from '@/lib/require-auth';
 import { searchLogs } from './actions';
 import LogsViewer from './logs-viewer';
@@ -19,10 +18,8 @@ export default async function LogsPage({
 }) {
   const { slug } = await params;
   const { accountId } = await searchParams;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
-  await requireAuth(tenant.id, `/${slug}/logs`);
+  await requireAuth(tenant.id, `/logs`);
 
   // Computed here, not in both places: the server render and the picker the
   // client seeds from have to agree about what is being searched.

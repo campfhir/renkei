@@ -63,7 +63,6 @@ maybe('agent notifications', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: subject,
         name: 'Triage bot',
         steps: JSON.stringify({ version: 1, steps: [] }),
@@ -74,7 +73,6 @@ maybe('agent notifications', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: subject,
         trigger_kind: 'manual',
@@ -84,20 +82,19 @@ maybe('agent notifications', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_notifications WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_notifications`.execute(db);
+    await sql`DELETE FROM agent_runs`.execute(db);
+    await sql`DELETE FROM agents`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
 
   beforeEach(async () => {
-    await sql`DELETE FROM agent_notifications WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_notifications`.execute(db);
   });
 
   const notifier = (prefs: Partial<NotificationPrefs> = {}) =>
     createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       // Denormalized: the row keeps the name even after the agent is gone.
@@ -113,7 +110,6 @@ maybe('agent notifications', () => {
     db
       .selectFrom('agent_notifications')
       .selectAll()
-      .where('tenant_id', '=', tenantId)
       .orderBy('created_at')
       .execute();
 
@@ -177,7 +173,6 @@ maybe('agent notifications', () => {
   it('emails a batch act once per run, not once per call', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -231,7 +226,6 @@ maybe('agent notifications', () => {
   it('fires email/WebEx for a category wanted on those channels, independent of App', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -258,7 +252,6 @@ maybe('agent notifications', () => {
   it('skips email silently when the tool is not connected, and does not throw', async () => {
     const { mcp, toolsByName, calls } = fakeMcp([]); // Neither tool registered.
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -281,7 +274,6 @@ maybe('agent notifications', () => {
   it('never calls outlook_send_mail or webex_note_to_self when email/WebEx are off, even though both tools are connected and ready', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -323,7 +315,6 @@ maybe('agent notifications', () => {
   it('fires email/WebEx for a run starting and a successful finish, independent of App', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -354,7 +345,6 @@ maybe('agent notifications', () => {
   it('never sends email/WebEx for a failed run from here — that goes through the run.failed queue handler', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -377,7 +367,6 @@ maybe('agent notifications', () => {
   it('lets an agent override reach email/WebEx even when the general preference is off', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -405,7 +394,6 @@ maybe('agent notifications', () => {
     // happened, so this must be a warning and not an exception climbing
     // back into the run loop.
     const orphan = createNotifier(db, {
-      tenantId: randomUUID(),
       subject,
       agentId,
       agentName: 'Ghost',

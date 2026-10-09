@@ -156,7 +156,6 @@ async function callJson(op: string, body: unknown): Promise<OnBaseClientResult<u
 }
 
 export async function obDiscover(input: {
-  tenantId: string;
   /** 'onbase' (default) or 'onbase-admin' — which connector's IdP issuer. */
   connector?: string;
   issuer?: string;
@@ -184,7 +183,6 @@ export async function obDiscover(input: {
 }
 
 export async function obApi(input: {
-  tenantId: string;
   /** 'onbase' (default) or 'onbase-admin' — which connector's config/session. */
   connector?: string;
   /**
@@ -217,7 +215,6 @@ export async function obApi(input: {
 }
 
 export async function obContent(input: {
-  tenantId: string;
   connector?: string;
   /** See obApi: whose grant, and the worker's session key. */
   subject: string;
@@ -238,7 +235,6 @@ export async function obContent(input: {
 }
 
 export async function obPutBytes(input: {
-  tenantId: string;
   /** 'onbase' (default) or 'onbase-admin' — whose grant the delegate opens. */
   connector?: string;
   /** See obApi: whose grant, and the worker's session key. */
@@ -275,7 +271,6 @@ export async function obPutBytes(input: {
 }
 
 export async function obTestConnection(input: {
-  tenantId: string;
   connector?: string;
   unsaved?: { apiBaseUrl?: string; idpIssuer?: string; allowInsecureHttp?: boolean };
 }): Promise<OnBaseClientResult<WireTestConnection>> {

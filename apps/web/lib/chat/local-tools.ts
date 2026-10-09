@@ -19,7 +19,6 @@ import type { WidgetDecisionState } from './views';
 
 export interface LocalToolContext {
   db: Kysely<DB>;
-  tenantId: string;
   subject: string;
   chatId: string;
   /** How this chat's rows are sealed and opened (access.cipher). */

@@ -12,10 +12,8 @@ import MirthList, { type ConnectableMirthInstanceView } from './mirth-list';
 export type { ConnectableMirthInstanceView } from './mirth-list';
 
 export default function MirthConnector({
-  tenantId,
   instances,
 }: {
-  tenantId: string;
   instances: ConnectableMirthInstanceView[];
 }) {
   return (

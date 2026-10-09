@@ -89,7 +89,7 @@ test('talking while the reply is worked out queues the next message instead of s
   page.on('request', (request) => {
     if (/\/turns\/[^/]+\/cancel$/.test(request.url())) cancels += 1;
   });
-  await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${CHAT_ID}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
   await page.getByRole('button', { name: 'Voice', exact: true }).click();
   await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();

@@ -15,13 +15,11 @@ import { GITHUB_SCOPE_GROUPS, GITHUB_SCOPE_OPTIONS } from '@/lib/github-scopes';
  * GitHub grants (see github-scopes.ts).
  */
 export default function GitHubConnector({
-  tenantId,
   connected,
   displayName,
   ceiling,
   priorScopes,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   /** The org's allowed capabilities — the most a user can grant. */
@@ -29,7 +27,7 @@ export default function GitHubConnector({
   /** Capabilities on the user's previous grant, seeding the picker on reconnect. */
   priorScopes: string[] | null;
 }) {
-  const authorizePath = `/api/github/${tenantId}/authorize`;
+  const authorizePath = `/api/github/authorize`;
 
   return (
     <ConnectorShell anchor="card-github">
@@ -93,7 +91,7 @@ export default function GitHubConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/github/${tenantId}/grant`}
+          endpoint={`/api/github/grant`}
           confirmText="Disconnect GitHub? The GitHub tools stop working until you reconnect."
           buttonLabel="Disconnect GitHub"
         />

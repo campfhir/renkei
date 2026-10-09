@@ -210,7 +210,6 @@ export async function listRunsForOwner(
   let query = db
     .selectFrom('agent_runs')
     .select([...RUN_COLUMNS, FAILED_SNAPSHOT])
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId);
   if (options.status) query = query.where('status', '=', options.status);
@@ -285,7 +284,6 @@ async function openAttemptDetails<T extends { detail: Json | null }>(
 async function runDetail(
   db: Kysely<DB>,
   runRow: RunRow & {
-    tenant_id: string;
     owner_subject: string;
     steps_snapshot: Json;
     initial_state: Json | null;
@@ -379,13 +377,11 @@ export async function getRunForOwner(
     .selectFrom('agent_runs')
     .select([
       ...RUN_COLUMNS,
-      'tenant_id',
       'owner_subject',
       'steps_snapshot',
       'initial_state',
       'resume_guidance',
     ])
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId)
     .where('id', '=', runId)
@@ -405,7 +401,6 @@ export async function listRunsForAdmin(
   let query = db
     .selectFrom('agent_runs')
     .select([...RUN_COLUMNS, FAILED_SNAPSHOT])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId);
   if (options.status) query = query.where('status', '=', options.status);
   const q = options.q?.trim();
@@ -442,13 +437,11 @@ export async function getRunForAdmin(
     .selectFrom('agent_runs')
     .select([
       ...RUN_COLUMNS,
-      'tenant_id',
       'owner_subject',
       'steps_snapshot',
       FAILED_INITIAL_STATE,
       FAILED_RESUME_GUIDANCE,
     ])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('id', '=', runId)
     .executeTakeFirst();
@@ -480,7 +473,7 @@ export async function getAgentForAdmin(
   const agent = await db
     .selectFrom('agents as a')
     .leftJoin('identities as i', (join) =>
-      join.onRef('i.tenant_id', '=', 'a.tenant_id').onRef('i.subject', '=', 'a.owner_subject')
+      join.onRef('i.subject', '=', 'a.owner_subject')
     )
     .select([
       'a.id',
@@ -491,7 +484,6 @@ export async function getAgentForAdmin(
       'a.description_status',
       'i.email',
     ])
-    .where('a.tenant_id', '=', tenantId)
     .where('a.id', '=', agentId)
     .executeTakeFirst();
   if (!agent) return null;
@@ -534,10 +526,10 @@ async function listAgentRows(
   let query = db
     .selectFrom('agents as a')
     .leftJoin('identities as i', (join) =>
-      join.onRef('i.tenant_id', '=', 'a.tenant_id').onRef('i.subject', '=', 'a.owner_subject')
+      join.onRef('i.subject', '=', 'a.owner_subject')
     )
     .select(['a.id', 'a.name', 'a.owner_subject', 'a.enabled', 'a.description_status', 'i.email'])
-    .where('a.tenant_id', '=', tenantId);
+    ;
   if (ownerSubject !== null) query = query.where('a.owner_subject', '=', ownerSubject);
   const agents = await query.orderBy('a.name').execute();
 

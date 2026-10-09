@@ -24,7 +24,6 @@ import { logger } from '@/lib/logger';
 export const CHAT_PERMISSION_NOTIFICATION_KIND = 'chat_permission';
 
 export function notifyChatToolPermission(input: {
-  tenantId: string;
   /** The chat's owner — the only one who can answer. */
   ownerSubject: string;
   chatId: string;
@@ -48,13 +47,12 @@ export function notifyChatToolPermission(input: {
       input.toolName,
       null
     ).toLowerCase()}`;
-    const refUrl = `/${tenant.slug}/chat/${input.chatId}`;
+    const refUrl = `/chat/${input.chatId}`;
     const id = randomUUID();
     await dbResult.val
       .insertInto('agent_notifications')
       .values({
         id,
-        tenant_id: input.tenantId,
         subject: input.ownerSubject,
         kind: CHAT_PERMISSION_NOTIFICATION_KIND,
         tool: input.toolName,
@@ -89,7 +87,6 @@ export function notifyChatToolPermission(input: {
   })().catch((error: unknown) => {
     logger.warn('chat permission notification not recorded', {
       component: 'chat/permission-notification',
-      tenantId: input.tenantId,
       chatId: input.chatId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -112,7 +109,6 @@ export async function markChatToolPermissionRead(
     await dbResult.val
       .updateTable('agent_notifications')
       .set({ read_at: new Date() })
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where('kind', '=', CHAT_PERMISSION_NOTIFICATION_KIND)
       .where('ref_id', '=', toolUseId)
@@ -121,7 +117,6 @@ export async function markChatToolPermissionRead(
   } catch (error) {
     logger.warn('chat permission notification not marked read', {
       component: 'chat/permission-notification',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
   }

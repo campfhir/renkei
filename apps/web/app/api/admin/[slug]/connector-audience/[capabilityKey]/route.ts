@@ -16,7 +16,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { togglableConnectors } from '@/lib/connector-catalog';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -33,8 +32,6 @@ export async function GET(
   { params }: { params: Promise<{ slug: string; capabilityKey: string }> }
 ): Promise<NextResponse> {
   const { slug, capabilityKey } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -53,8 +50,6 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string; capabilityKey: string }> }
 ): Promise<NextResponse> {
   const { slug, capabilityKey } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   const session = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!knownKey(capabilityKey)) {
@@ -102,7 +97,6 @@ export async function PUT(
   // which tools register for whom.
   invalidateToolCatalogCache(tenantRef.id);
   recordAuditEvent({
-    tenantId: tenantRef.id,
     actorSubject: session.subject,
     action: 'connector.audience_updated',
     targetKind: 'connector',

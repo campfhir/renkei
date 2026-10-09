@@ -41,7 +41,7 @@ export async function listPipelineTemplates(
   let query = db
     .selectFrom('pipeline_templates')
     .select(['id', 'provider', 'name', 'description', 'body'])
-    .where('tenant_id', '=', tenantId);
+    ;
   if (provider) query = query.where('provider', '=', provider);
   const rows = await query.orderBy('provider').orderBy('name').execute();
   return rows.map((row) => ({
@@ -100,7 +100,6 @@ export async function createPipelineTemplate(
     const inserted = await db
       .insertInto('pipeline_templates')
       .values({
-        tenant_id: tenantId,
         provider: input.provider,
         name: input.name,
         description: input.description,
@@ -134,7 +133,6 @@ export async function updatePipelineTemplate(
         body: input.body,
         updated_at: sql`NOW()`,
       })
-      .where('tenant_id', '=', tenantId)
       .where('id', '=', templateId)
       .executeTakeFirst();
     if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'not-found' };
@@ -155,7 +153,6 @@ export async function deletePipelineTemplate(
   if (!isUuid(templateId)) return false;
   const result = await db
     .deleteFrom('pipeline_templates')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', templateId)
     .executeTakeFirst();
   return Number(result.numDeletedRows ?? 0) > 0;

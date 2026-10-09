@@ -27,11 +27,9 @@ import {
  * loss.
  */
 export default function QuestionActions({
-  tenantId,
   itemId,
   form,
 }: {
-  tenantId: string;
   itemId: string;
   form: FormNode[];
 }): React.ReactNode {
@@ -67,7 +65,7 @@ export default function QuestionActions({
     setNotice(null);
     setFieldErrors({});
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/actionable-items/${itemId}/question`, {
+      const response = await fetch(`/api/actionable-items/${itemId}/question`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ answers }),

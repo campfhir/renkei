@@ -29,7 +29,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const found = await pipelinesProjectContext(request, tenantId, projectId, { write: true });
   if (!found.ok) return found.response;
   const { project, subject, scopes } = found.context;
@@ -57,7 +57,6 @@ export async function PUT(
   );
   if (applied.added.length || applied.changed.length || applied.removed.length) {
     recordAuditEvent({
-      tenantId,
       actorSubject: subject,
       action: 'code.pipelines.variables.replaced',
       targetKind: 'code_project',

@@ -103,13 +103,12 @@ export async function legacyManagedKek(
   if (!master.ok) return err('MIGRATION_UNAVAILABLE' as const);
   await db
     .insertInto('user_encryption_keys')
-    .values({ tenant_id: tenantId, subject, salt: generateUserKeySalt().toString('base64') })
-    .onConflict((oc) => oc.columns(['tenant_id', 'subject']).doNothing())
+    .values({ subject, salt: generateUserKeySalt().toString('base64') })
+    .onConflict((oc) => oc.columns(['subject']).doNothing())
     .execute();
   const row = await db
     .selectFrom('user_encryption_keys')
     .select(['salt', 'mode', 'version'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .executeTakeFirstOrThrow();
   if (row.mode !== 'managed') return err('NOT_MANAGED' as const);
@@ -155,7 +154,6 @@ export async function legacyEnsureResourceKey(
         .on('g.holder', '=', ownerSubject)
     )
     .select(['k.id', 'g.wrapped_key'])
-    .where('k.tenant_id', '=', ref.tenantId)
     .where('k.resource_kind', '=', ref.kind)
     .where('k.resource_id', '=', ref.resourceId)
     .executeTakeFirst();
@@ -167,14 +165,13 @@ export async function legacyEnsureResourceKey(
   const key = generateDataKey();
   const inserted = await db
     .insertInto('resource_keys')
-    .values({ tenant_id: ref.tenantId, resource_kind: ref.kind, resource_id: ref.resourceId })
+    .values({ resource_kind: ref.kind, resource_id: ref.resourceId })
     .returning('id')
     .executeTakeFirstOrThrow();
   await db
     .insertInto('resource_key_grants')
     .values({
       resource_key_id: inserted.id,
-      tenant_id: ref.tenantId,
       holder_kind: 'user',
       holder: ownerSubject,
       wrapped_key: wrapKey(key, kek.val.key),
@@ -198,7 +195,6 @@ export async function legacyShareResourceKey(
     .insertInto('resource_key_grants')
     .values({
       resource_key_id: key.id,
-      tenant_id: tenantId,
       holder_kind: 'user',
       holder: toSubject,
       wrapped_key: wrapKey(key.key, kek.val.key),

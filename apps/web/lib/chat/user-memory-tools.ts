@@ -29,7 +29,6 @@ export function userMemoryTools(): LocalTool[] {
         const note = typeof input.note === 'string' ? input.note.trim() : '';
         if (!note) return errorResult('Nothing to remember: `note` is empty.');
         const id = await appendUserMemory(context.db, {
-          tenantId: context.tenantId,
           ownerSubject: context.subject,
           content: note,
           chatId: context.chatId,

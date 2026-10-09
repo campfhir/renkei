@@ -72,7 +72,7 @@ async function lookupGitHubIssue(
 ): Promise<GitHubIssueCard | null> {
   const [owner, repo] = fullName.split('/');
   if (!owner || !repo) return null;
-  const auth = githubAuthOf({ tenantId, subject, origin });
+  const auth = githubAuthOf({ subject, origin });
   const result = await ghJson(
     auth,
     ['repository'],
@@ -93,7 +93,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string; chatId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId, chatId } = await params;
+  const { projectId, chatId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
   const { db, session, project } = ready.context;
@@ -114,7 +114,6 @@ export async function GET(
     refs.jiraKey ? lookupJira(tenantId, session.subject, refs.jiraKey) : null,
     refs.githubIssueNumber && project.repo!.provider === 'github'
       ? lookupGitHubIssue(
-          tenantId,
           session.subject,
           originVal,
           project.repo!.fullName,

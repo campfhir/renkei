@@ -22,7 +22,6 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -37,7 +36,6 @@ export async function DELETE(
   const grantRow = await db
     .selectFrom('provider_grants')
     .select(['provider_account_id'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', ONBASE)
     .where('subject', '=', session.subject)
     .executeTakeFirst();
@@ -49,11 +47,10 @@ export async function DELETE(
 
   // The delegate revokes the refresh token at the IdP (the valuable one to
   // kill; revoking it usually invalidates the pair), then deletes the grant.
-  const revoked = await delegateGrants().revoke({ tenantId, provider: ONBASE, accountId });
+  const revoked = await delegateGrants().revoke({ provider: ONBASE, accountId });
   if (!revoked.ok) {
     logger.error('OnBase grant could not be deleted: {reason}', {
       component: 'connectors/onbase',
-      tenantId,
       reason: revoked.err.type,
     });
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
@@ -61,11 +58,9 @@ export async function DELETE(
   if (!revoked.val.revokedAtProvider) {
     logger.warn('OnBase token revocation failed; the grant was deleted regardless', {
       component: 'connectors/onbase',
-      tenantId,
     });
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'connector.disconnected',
     targetKind: 'connector',

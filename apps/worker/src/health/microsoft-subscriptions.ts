@@ -46,7 +46,6 @@ async function reapOrphanedGraphSubscriptions(
   if (!listed.ok) {
     logger.warn('could not list Graph subscriptions to reconcile: {message}', {
       component: COMPONENT,
-      tenantId,
       message: typeof listed.err.message === 'string' ? listed.err.message.slice(0, 200) : '',
     });
     return;
@@ -57,7 +56,6 @@ async function reapOrphanedGraphSubscriptions(
       await db
         .selectFrom('webhook_subscriptions')
         .select('subscription_id')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', MICROSOFT)
         .where('account_id', '=', accountId)
         .execute()
@@ -73,7 +71,6 @@ async function reapOrphanedGraphSubscriptions(
     const deleted = await deleteGraphSubscription(auth, subscription.id);
     logger.warn('deleted orphaned Graph subscription {subscriptionId} (no row here)', {
       component: COMPONENT,
-      tenantId,
       subscriptionId: subscription.id,
       resource: subscription.resource,
       succeeded: deleted.ok,
@@ -99,7 +96,7 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
   try {
     grants = await db
       .selectFrom('provider_grants')
-      .select(['tenant_id', 'provider_account_id'])
+      .select(['provider_account_id'])
       .where('provider', '=', MICROSOFT)
       .execute();
   } catch (error) {
@@ -115,7 +112,7 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
   const grantKeys = new Set(grants.map((g) => `${g.tenant_id}:${g.provider_account_id}`));
   const allRows = await db
     .selectFrom('webhook_subscriptions')
-    .select(['id', 'tenant_id', 'account_id'])
+    .select(['id', 'account_id'])
     .where('provider', '=', MICROSOFT)
     .execute();
   for (const row of allRows) {
@@ -123,12 +120,11 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
       await db.deleteFrom('webhook_subscriptions').where('id', '=', row.id).execute();
       logger.warn('dropped orphaned subscription row (grant gone)', {
         component: COMPONENT,
-        tenantId: row.tenant_id,
       });
     }
   }
 
-  for (const { tenant_id: tenantId, provider_account_id: accountId } of grants) {
+  for (const { provider_account_id: accountId } of grants) {
     try {
       const access = await resolveMicrosoftAccess(tenantId, accountId);
       const rows = await ensureMicrosoftSubscriptions(tenantId, access, baseUrl);
@@ -153,7 +149,6 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
       const stale = await db
         .selectFrom('webhook_subscriptions')
         .select(['id', 'resource', 'subscription_id', 'client_state', 'expires_at', 'delta_link'])
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', MICROSOFT)
         .where('account_id', '=', accountId)
         .where('updated_at', '<', new Date(staleBefore))
@@ -166,7 +161,6 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
           // were being missed until now.
           logger.warn('stale catch-up on {resource}: {changed} changed, {removed} removed', {
             component: COMPONENT,
-            tenantId,
             resource: row.resource,
             changed: synced.changed,
             removed: synced.removed,
@@ -176,7 +170,6 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
     } catch (error) {
       logger.warn('sweep skipped grant {accountId}: {error}', {
         component: COMPONENT,
-        tenantId,
         accountId,
         error: error instanceof Error ? error.message : String(error),
       });

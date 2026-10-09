@@ -23,7 +23,7 @@ import type { StartedTurn } from './start-turn';
 import type { ChatSearchHit } from './search-text';
 import type { WidgetModelContextOutcome } from './widget-tools';
 
-const base = (tenantId: string) => `/api/tenant/${tenantId}/chat`;
+const base = (tenantId: string) => `/api/chat`;
 
 export const chatClient = {
   sidebar: (tenantId: string) => getJson<ChatSidebarData>(`${base(tenantId)}/chats`),
@@ -120,7 +120,7 @@ export const chatClient = {
         shareName: string;
         connection: { username: string } | null;
       }[];
-    }>(`/api/tenant/${tenantId}/fileshares`),
+    }>(`/api/fileshares`),
 
   copyAttachment: (
     tenantId: string,

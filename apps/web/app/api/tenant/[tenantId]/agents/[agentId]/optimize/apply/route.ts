@@ -24,7 +24,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -64,7 +64,6 @@ export async function POST(
   ].join('\n');
 
   const draftId = await createDraft(db, {
-    tenantId,
     ownerSubject: session.subject,
     agentId,
     request: {
@@ -82,7 +81,6 @@ export async function POST(
   });
 
   const enqueued = await agentJobsQueue().producer.enqueue({
-    tenantId,
     source: 'agents',
     type: 'draft',
     payload: { draftId },
@@ -91,7 +89,6 @@ export async function POST(
   if (!enqueued.ok) {
     logger.error('could not enqueue optimizer draft {draftId}: {error}', {
       component: 'api/agents-optimize-apply',
-      tenantId,
       draftId,
       error: enqueued.err.message ?? 'unknown',
     });

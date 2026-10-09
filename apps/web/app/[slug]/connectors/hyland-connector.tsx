@@ -18,11 +18,9 @@ import OnBaseAdminConnector from './onbase-admin-connector';
  * its own.
  */
 export default function HylandConnector({
-  tenantId,
   onbase,
   onbaseAdmin,
 }: {
-  tenantId: string;
   /** Absent when the org has not enabled OnBase. */
   onbase?: { connected: boolean; displayName: string | null };
   /** Absent when the org has not enabled OnBase Administration. */

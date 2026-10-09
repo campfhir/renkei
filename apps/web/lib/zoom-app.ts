@@ -39,7 +39,6 @@ export async function getZoomApp(tenantId: string, origin: string): Promise<Zoom
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/zoom',
-      tenantId,
     });
     return null;
   }
@@ -48,7 +47,6 @@ export async function getZoomApp(tenantId: string, origin: string): Promise<Zoom
   if (!configResult.ok) {
     logger.error('Could not read zoom connector config', {
       component: 'connectors/zoom',
-      tenantId,
     });
     return null;
   }
@@ -60,7 +58,6 @@ export async function getZoomApp(tenantId: string, origin: string): Promise<Zoom
   if (typeof clientId !== 'string' || !clientId || !clientSecret) {
     logger.warn('zoom connector config missing clientId or clientSecret', {
       component: 'connectors/zoom',
-      tenantId,
     });
     return null;
   }

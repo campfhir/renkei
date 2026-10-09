@@ -64,13 +64,11 @@ function uuidFrom(seed: string): string {
 
 /** This project's own tenant/session/slug — isolated from every other project and spec. */
 function fixtureFor(projectName: string): {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`admanager-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`admanager-e2e-session:${projectName}`),
     slug: `e2e-admanager-${projectName}`,
     subject: `e2e-admanager-${projectName}@example.com`,
@@ -80,14 +78,14 @@ function fixtureFor(projectName: string): {
 type Fixture = ReturnType<typeof fixtureFor>;
 
 async function baseSeed(client: Client, fixture: Fixture): Promise<void> {
-  await client.query('DELETE FROM admanager_instance_connections WHERE tenant_id = $1', [
+  await client.query('DELETE FROM admanager_instance_connections', [
     fixture.tenantId,
   ]);
-  await client.query('DELETE FROM admanager_instances WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM user_encryption_keys WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+  await client.query('DELETE FROM admanager_instances', [fixture.tenantId]);
+  await client.query('DELETE FROM user_preferences', [fixture.tenantId]);
+  await client.query('DELETE FROM user_encryption_keys', [fixture.tenantId]);
+  await client.query('DELETE FROM sessions', [fixture.tenantId]);
+  await client.query('DELETE FROM identities', [fixture.tenantId]);
   await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
   await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
     fixture.tenantId,
@@ -179,7 +177,7 @@ async function seedUserTenant(fixture: Fixture): Promise<{ instanceId: string }>
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -204,7 +202,7 @@ test('admin: ADManager Plus instance registry — create, reachability, edit, de
   await seedAdminTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/admanager`);
+  await page.goto(`/admin/admanager`);
   await expect(page.getByRole('heading', { name: 'ADManager Plus', exact: true })).toBeVisible();
   await expect(page.getByText('No instances registered yet.')).toBeVisible();
   await shot(page, testInfo, 'admanager-admin-01-empty');
@@ -273,7 +271,7 @@ test('admin: ADManager Plus instance registry — create, reachability, edit, de
   // Delete, through the real DELETE route, back to the empty state.
   page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: 'Delete instance' }).click();
-  await expect(page).toHaveURL(new RegExp(`/${fixture.slug}/admin/admanager$`));
+  await expect(page).toHaveURL(new RegExp(`/admin/admanager$`));
   await expect(page.getByText('No instances registered yet.')).toBeVisible();
 });
 
@@ -284,7 +282,7 @@ test('admin: transport security off is refused for production or a public host, 
   await seedAdminTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/admanager`);
+  await page.goto(`/admin/admanager`);
   await expect(page.getByText('No instances registered yet.')).toBeVisible();
   await page.getByRole('button', { name: '+ New instance' }).click();
   await page.getByLabel('Name').fill('ADManager Plus lab');
@@ -341,7 +339,7 @@ test('user: an already-connected ADManager Plus card — real permission persist
   await seedUserTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/connectors`);
+  await page.goto(`/connectors`);
   await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
   const card = page.locator('[data-coach="card-admanager"]');
   await expect(card.getByRole('heading', { name: 'ADManager Plus' })).toBeVisible();

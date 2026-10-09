@@ -22,7 +22,6 @@ maybe('code project active chat', () => {
   const chatProjectId = randomUUID();
 
   const input = {
-    tenantId,
     ownerSubject: subject,
     llmModelId: null,
     toolConfig: null,
@@ -39,7 +38,6 @@ maybe('code project active chat', () => {
       .values([
         {
           id: codeProjectId,
-          tenant_id: tenantId,
           owner_subject: subject,
           name: 'Code',
           kind: 'code',
@@ -47,7 +45,7 @@ maybe('code project active chat', () => {
           repo_full_name: 'acme/billing',
           repo_branch: 'main',
         },
-        { id: chatProjectId, tenant_id: tenantId, owner_subject: subject, name: 'Chat' },
+        { id: chatProjectId, owner_subject: subject, name: 'Chat' },
       ])
       .execute();
   });
@@ -81,7 +79,7 @@ maybe('code project active chat', () => {
     if (!active) return;
     const turn = await db
       .insertInto('chat_turns')
-      .values({ tenant_id: tenantId, chat_id: active, status: 'running' })
+      .values({ chat_id: active, status: 'running' })
       .returning('id')
       .executeTakeFirstOrThrow();
 

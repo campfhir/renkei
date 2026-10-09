@@ -88,7 +88,6 @@ const stubAuth: JiraAdminAuth = {
 };
 
 const context = {
-  tenantId: 'tenant-1',
   subject: 'subject-1',
   origin: 'https://renkei.example',
   jiraAdminScopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
@@ -262,7 +261,6 @@ describe('jira_admin_save_space_template', () => {
     expect(result.isError).toBeUndefined();
     const input = jest.mocked(saveSpaceTemplate).mock.calls[0]?.[1];
     expect(input).toMatchObject({
-      tenantId: 'tenant-1',
       cloudId: 'cloud-1',
       sourceSpaceKey: 'OPS',
       subject: 'subject-1',

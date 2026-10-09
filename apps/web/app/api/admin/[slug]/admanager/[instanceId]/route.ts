@@ -10,7 +10,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { deleteInstance, getInstance, updateInstance } from '@renkei/connector-admanager';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { recordAuditEvent } from '@/lib/audit-events';
 import {
   checkInsecureTransport,
@@ -24,8 +23,6 @@ export async function GET(
   { params }: { params: Promise<{ slug: string; instanceId: string }> }
 ): Promise<NextResponse> {
   const { slug, instanceId } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -49,8 +46,6 @@ export async function PATCH(
   { params }: { params: Promise<{ slug: string; instanceId: string }> }
 ): Promise<NextResponse> {
   const { slug, instanceId } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   const session = await checkAccess(tenant.id, [ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -82,7 +77,6 @@ export async function PATCH(
   if (!updated.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: session.subject,
     action: 'admanager.instance.updated',
     targetKind: 'admanager-instance',
@@ -90,7 +84,6 @@ export async function PATCH(
   });
   if (insecureModes.length) {
     recordAuditEvent({
-      tenantId: tenant.id,
       actorSubject: session.subject,
       action: 'admanager.instance.insecure_transport_enabled',
       targetKind: 'admanager-instance',
@@ -110,8 +103,6 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string; instanceId: string }> }
 ): Promise<NextResponse> {
   const { slug, instanceId } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   const session = await checkAccess(tenant.id, [ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -129,7 +120,6 @@ export async function DELETE(
   if (!deleted.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: session.subject,
     action: 'admanager.instance.deleted',
     targetKind: 'admanager-instance',

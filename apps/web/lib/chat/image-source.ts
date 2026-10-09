@@ -78,7 +78,6 @@ export type SourceLoad = { ok: true; image: SourceImage } | { ok: false; reason:
 
 export interface SourceScope {
   db: Kysely<DB>;
-  tenantId: string;
   chatId: string;
 }
 

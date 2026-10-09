@@ -97,7 +97,6 @@ async function seedChat(client: Client, ids: Ids): Promise<void> {
     [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.chatId,
     ownerSubject: E2E_SUBJECT,
@@ -206,7 +205,7 @@ function pngSize(bytes: Buffer): { width: number; height: number } {
 test('a fenced svg block saves as a PNG or an .svg file; other blocks and broken SVG do not', async ({
   page,
 }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   const blocks = page.locator('.chat-code');
   await expect(blocks).toHaveCount(3, COLD);
   const [badge, broken, plain] = [blocks.nth(0), blocks.nth(1), blocks.nth(2)];
@@ -246,7 +245,7 @@ test('a fenced svg block saves as a PNG or an .svg file; other blocks and broken
 test('an svg mockup saves from its card and from the fullscreen viewer', async ({
   page,
 }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   const card = page.locator('figure', { hasText: 'Renkei logo' });
   await expect(card).toBeVisible(COLD);
 
@@ -270,7 +269,7 @@ test('an svg mockup saves from its card and from the fullscreen viewer', async (
 
 test('the save buttons fit at phone width', async ({ page }, testInfo) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   const card = page.locator('figure', { hasText: 'Renkei logo' });
   await expect(card).toBeVisible(COLD);
   await expect(

@@ -1,7 +1,6 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -15,12 +14,10 @@ export default async function EditAgentPage({
   params: Promise<{ slug: string; agentId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, agentId } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/agents/${agentId}/edit`));
+    redirect(signInUrl(tenant.id, `/agents/${agentId}/edit`));
   }
 
   const dbResult = getDatabase();

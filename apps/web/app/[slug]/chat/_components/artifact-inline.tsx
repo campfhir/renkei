@@ -527,10 +527,8 @@ function TextPage({
 }
 
 export default function ArtifactInline({
-  tenantId,
   artifact,
 }: {
-  tenantId: string;
   artifact: AttachmentView;
 }) {
   const kind = previewKind(artifact);

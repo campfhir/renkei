@@ -28,7 +28,7 @@ export async function invokeAgentRun(
   agentId: string,
   confirm = false
 ): Promise<InvokeAgentRunResult> {
-  return postConfirmable(`/api/tenant/${tenantId}/agents/${agentId}/invoke`, confirm);
+  return postConfirmable(`/api/agents/${agentId}/invoke`, confirm);
 }
 
 export async function rerunAgentRun(
@@ -37,7 +37,7 @@ export async function rerunAgentRun(
   runId: string,
   confirm = false
 ): Promise<InvokeAgentRunResult> {
-  return postConfirmable(`/api/tenant/${tenantId}/agents/${agentId}/runs/${runId}/rerun`, confirm);
+  return postConfirmable(`/api/agents/${agentId}/runs/${runId}/rerun`, confirm);
 }
 
 /**
@@ -53,7 +53,7 @@ export async function resumeAgentRun(
   confirm = false
 ): Promise<InvokeAgentRunResult> {
   const result = await sendJsonFull<{ runId?: string; code?: string }>(
-    `/api/tenant/${tenantId}/agents/${agentId}/runs/${runId}/resume`,
+    `/api/agents/${agentId}/runs/${runId}/resume`,
     'POST',
     { guidance, confirm }
   );

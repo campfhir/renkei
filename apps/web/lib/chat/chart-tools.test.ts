@@ -30,7 +30,6 @@ const client = jest.requireMock<{ sbChartRender: jest.Mock }>('@renkei/sandbox-c
 
 const context: LocalToolContext = {
   db: null as unknown as LocalToolContext['db'],
-  tenantId: 't1',
   subject: 'u1',
   chatId: 'c1',
   cipher: testCipher,

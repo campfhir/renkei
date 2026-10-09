@@ -38,7 +38,6 @@ export async function registerComponentTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_get_component invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -100,7 +99,6 @@ export async function registerComponentTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_create_component invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -187,7 +185,6 @@ export async function registerComponentTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_delete_component invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

@@ -43,7 +43,6 @@ const { enqueueKnowledgeEvent: mockEnqueueKnowledgeEvent } = jest.requireMock<{
 function event(override: { action: string; category?: string; senderKey?: string }): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: 'tenant-1',
     source: 'microsoft',
     type: 'message-override',
     payload: {

@@ -203,7 +203,6 @@ export function registerWebSearchTools(
         // the caller — say so rather than echoing a bare 401.
         logger.warn('web_search failed: {message}', {
           component: 'mcp/web-search',
-          tenantId: context.tenantId,
           subject: context.subject,
           kind: outcome.error.kind,
           message: outcome.error.message,

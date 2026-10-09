@@ -45,14 +45,12 @@ function uuidFrom(seed: string): string {
 
 /** This project's own tenant/session/project/slug — isolated from every other spec. */
 function fixtureFor(projectName: string): {
-  tenantId: string;
   sessionId: string;
   projectId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`project-tools-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`project-tools-e2e-session:${projectName}`),
     projectId: uuidFrom(`project-tools-e2e-project:${projectName}`),
     slug: `e2e-project-tools-${projectName}`,
@@ -66,11 +64,11 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
   try {
     // Delete-then-insert, same idempotent shape as e2e/seed.ts, scoped to
     // just this project's own tenant.
-    await client.query('DELETE FROM chats WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM chat_projects WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+    await client.query('DELETE FROM chats', [fixture.tenantId]);
+    await client.query('DELETE FROM chat_projects', [fixture.tenantId]);
+    await client.query('DELETE FROM user_preferences', [fixture.tenantId]);
+    await client.query('DELETE FROM sessions', [fixture.tenantId]);
+    await client.query('DELETE FROM identities', [fixture.tenantId]);
     await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
       fixture.tenantId,
@@ -131,7 +129,7 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
 async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -152,7 +150,7 @@ test('a new chat in a project starts from the project’s toolset, not the perso
   // "+ New" inside the project: the real creation path (chat/new/page.tsx)
   // — an empty chat with tool_config = NULL, same as clicking the
   // project's own "+ New chat" button.
-  await page.goto(`/${fixture.slug}/chat/new?project=${fixture.projectId}`);
+  await page.goto(`/chat/new?project=${fixture.projectId}`);
   await page.waitForURL(/\/chat\/[0-9a-f-]{36}$/);
 
   await page.getByRole('button', { name: 'Tools', exact: true }).click();

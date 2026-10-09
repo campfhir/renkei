@@ -237,7 +237,6 @@ export async function grantRow(
   let query = db
     .selectFrom('provider_grants')
     .select(['provider_account_id', 'subject'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', provider);
   if (by.accountId) query = query.where('provider_account_id', '=', by.accountId);
   else if (by.subject) query = query.where('subject', '=', by.subject);

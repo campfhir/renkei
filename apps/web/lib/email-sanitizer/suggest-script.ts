@@ -136,7 +136,6 @@ export async function suggestCleanerScript(
   if (!completion.ok) {
     logger.warn('script drafting failed: {kind} {message}', {
       component: 'email-sanitizer/suggest',
-      tenantId,
       kind: completion.err.type,
       message: completion.err.message?.slice(0, 300) ?? '',
     });

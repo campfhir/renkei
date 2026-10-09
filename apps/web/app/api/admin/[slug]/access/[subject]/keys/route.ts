@@ -12,7 +12,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 import { delegateClient } from '@renkei/delegate-client';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -23,8 +22,6 @@ export async function DELETE(
 ): Promise<NextResponse> {
   const { slug, subject: encoded } = await params;
   const subject = decodeURIComponent(encoded);
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (access.subject === subject) {
@@ -42,11 +39,9 @@ export async function DELETE(
   }
   await dbResult.val
     .deleteFrom('sessions')
-    .where('tenant_id', '=', tenantRef.id)
     .where('subject', '=', subject)
     .execute();
   recordAuditEvent({
-    tenantId: tenantRef.id,
     actorSubject: access.subject,
     action: 'encryption-key.shredded',
     targetKind: 'person',

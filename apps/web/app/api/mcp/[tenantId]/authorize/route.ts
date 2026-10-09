@@ -12,7 +12,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -27,9 +26,6 @@ export async function GET(
       .where('id', '=', tenantId)
       .executeTakeFirst();
 
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
 
     // The resulting grant is bound to whoever completes this flow, so the caller
     // must already be signed in. Without this, anyone holding a tenantId could
@@ -92,7 +88,6 @@ export async function GET(
         id: randomUUID(),
         state,
         nonce,
-        tenant_id: tenantId,
         subject: session.subject,
         scopes: effectiveScopes,
         expires_at: expiresAt.toISOString(),
@@ -115,7 +110,6 @@ export async function GET(
 
     logger.debug('Jira OAuth authorize redirect', {
       component: 'auth/oauth',
-      tenantId,
       clientId: app.clientId,
       redirectUri: app.redirectUri,
       urlLength: authUrl.toString().length,
@@ -129,7 +123,6 @@ export async function GET(
         'authorize URL is {length} chars; Atlassian CDN 414s near ~4k after nested re-encoding',
         {
           component: 'auth/oauth',
-          tenantId,
           length: authUrl.toString().length,
         }
       );
@@ -140,7 +133,6 @@ export async function GET(
   } catch (error) {
     logger.error('MCP authorize error: {error}', {
       component: 'auth/oauth',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return NextResponse.json({ error: 'Failed to initiate authorization' }, { status: 500 });

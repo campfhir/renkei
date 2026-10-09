@@ -95,7 +95,6 @@ export async function registerJsmCustomerTools(
       const invokerDisplayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_create_customer invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName: invokerDisplayName,
       });
@@ -160,7 +159,6 @@ export async function registerJsmCustomerTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_add_customer_to_servicedesk invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -227,7 +225,6 @@ export async function registerJsmCustomerTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_remove_customer_from_servicedesk invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -290,7 +287,6 @@ export async function registerJsmCustomerTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_invite_customers_to_servicedesk invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

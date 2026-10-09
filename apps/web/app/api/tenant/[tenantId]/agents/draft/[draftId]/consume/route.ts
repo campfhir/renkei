@@ -16,7 +16,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; draftId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, draftId } = await params;
+  const { draftId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 

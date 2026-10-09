@@ -64,7 +64,7 @@ type Banner =
   | { kind: 'trust'; unknown: UnknownInstance[] }
   | { kind: 'unavailable' };
 
-export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: string }) {
+export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
   const router = useRouter();
   const [banner, setBanner] = useState<Banner>({ kind: 'none' });
   // The attention-demanding states open front and center as a dialog.
@@ -276,7 +276,6 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
       const deviceKey = await loadUserKey(tenantId);
       if (deviceKey) {
         const approved = await approveDeviceAsk(
-          tenantId,
           requestId,
           typedCodes[requestId] ?? '',
           deviceKey

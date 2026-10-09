@@ -38,7 +38,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
   const summary = request.nextUrl.searchParams.get('view') === 'summary';
@@ -64,7 +64,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
   if (!ready.ok) return ready.response;
   if (!(await sandboxServicesEnabled(tenantId))) {
@@ -82,7 +82,6 @@ export async function POST(
     return jsonError(failure.status, 'sandbox', failure.message);
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: ready.context.session.subject,
     action: 'code.services.started',
     targetKind: 'code_project',

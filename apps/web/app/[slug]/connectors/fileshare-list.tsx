@@ -114,10 +114,8 @@ function ExposureBoxes({
 }
 
 export default function FileshareList({
-  tenantId,
   shares: initialShares,
 }: {
-  tenantId: string;
   shares: ConnectableShareView[];
 }) {
   const [shares, setShares] = useState(initialShares);
@@ -135,7 +133,7 @@ export default function FileshareList({
     setBusy(true);
     setError(null);
     const saveError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/connection`,
+      `/api/fileshares/${share.id}/connection`,
       'POST',
       {
         username: draft.username,
@@ -172,7 +170,7 @@ export default function FileshareList({
     });
     setError(null);
     const saveError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/connection`,
+      `/api/fileshares/${share.id}/connection`,
       'POST',
       { toolAccess: write ? 'read_write' : 'read', allowDelete: write && del }
     );
@@ -193,7 +191,7 @@ export default function FileshareList({
     setBusy(true);
     setError(null);
     const saveError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/connection`,
+      `/api/fileshares/${share.id}/connection`,
       'DELETE'
     );
     setBusy(false);

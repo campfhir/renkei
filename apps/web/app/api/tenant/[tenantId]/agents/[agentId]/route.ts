@@ -24,7 +24,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -40,7 +40,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -86,7 +86,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -99,7 +99,6 @@ export async function DELETE(
   const deleted = await deleteAgent(dbResult.val, tenantId, session.subject, agentId);
   if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'agent.deleted',
     targetKind: 'agent',

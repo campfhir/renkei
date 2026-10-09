@@ -32,7 +32,6 @@ maybe('refresh-token rotation', () => {
       .insertInto('oauth_refresh_tokens')
       .values({
         token_id: randomUUID(),
-        tenant_id: tenantId,
         client_id: clientId,
         subject,
         scope: 'openid',
@@ -47,7 +46,7 @@ maybe('refresh-token rotation', () => {
 
   async function refresh(token: string) {
     resetInboundLimits();
-    const request = new NextRequest(`http://localhost/api/mcp/${tenantId}/oauth/token`, {
+    const request = new NextRequest(`http://localhost/api/mcp/oauth/token`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -65,14 +64,12 @@ maybe('refresh-token rotation', () => {
     db
       .selectFrom('oauth_refresh_tokens')
       .select(['token_hash', 'rotated_at', 'family_id', 'roles', 'expires_at'])
-      .where('tenant_id', '=', tenantId)
       .execute();
 
   const accessTokens = () =>
     db
       .selectFrom('oauth_access_tokens')
       .select(['token_hash', 'roles'])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .execute();
 
@@ -88,7 +85,6 @@ maybe('refresh-token rotation', () => {
       .insertInto('oauth_clients')
       .values({
         client_id: clientId,
-        tenant_id: tenantId,
         client_name: 'rotation test',
         client_secret_hash: hashToken(clientSecret),
         redirect_uris: ['https://client.example/cb'],
@@ -97,19 +93,19 @@ maybe('refresh-token rotation', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('sessions').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('oauth_access_tokens').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('oauth_refresh_tokens').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('oauth_clients').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('tenant_settings').where('tenant_id', '=', tenantId).execute();
+    await db.deleteFrom('sessions').execute();
+    await db.deleteFrom('oauth_access_tokens').execute();
+    await db.deleteFrom('oauth_refresh_tokens').execute();
+    await db.deleteFrom('oauth_clients').execute();
+    await db.deleteFrom('tenant_settings').execute();
     await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
     await closeDatabase();
   });
 
   beforeEach(async () => {
-    await db.deleteFrom('sessions').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('oauth_access_tokens').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('oauth_refresh_tokens').where('tenant_id', '=', tenantId).execute();
+    await db.deleteFrom('sessions').execute();
+    await db.deleteFrom('oauth_access_tokens').execute();
+    await db.deleteFrom('oauth_refresh_tokens').execute();
   });
 
   it('rotates: a new refresh token in the same family, the old one retired, lifetime unchanged', async () => {
@@ -172,7 +168,6 @@ maybe('refresh-token rotation', () => {
       .insertInto('sessions')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         subject,
         roles: ['renkei-user'],
         expires_at: new Date(Date.now() + 60 * 60 * 1000),
@@ -195,7 +190,6 @@ maybe('refresh-token rotation', () => {
       .insertInto('sessions')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         subject,
         roles: ['renkei-user'],
         expires_at: new Date(Date.now() - 1000),

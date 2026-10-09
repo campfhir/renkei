@@ -126,7 +126,6 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
     [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.chatId,
     ownerSubject: E2E_SUBJECT,
@@ -281,7 +280,7 @@ test('a long group list stays inside a bounded, scrollable pane, with every grou
       });
     });
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
     const frame = page.frameLocator('iframe[title="Preview card"]');
@@ -358,7 +357,7 @@ test('the card still renders at phone width with a long group list', async ({ pa
   try {
     await seedChat(client, ids, randomUUID());
     await page.setViewportSize(MOBILE_VIEWPORT);
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
     const frame = page.frameLocator('iframe[title="Preview card"]');

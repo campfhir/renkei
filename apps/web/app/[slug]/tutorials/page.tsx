@@ -3,7 +3,6 @@ import { notFound, redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getCoachMarkPrefs } from '@renkei/user-prefs';
 import { getOrgSettings } from '@renkei/settings';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { ROLE_OPERATOR } from '@/lib/access';
@@ -27,11 +26,9 @@ export default async function TutorialsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/${slug}/tutorials`));
+  if (!session) redirect(signInUrl(tenant.id, `/tutorials`));
   const isOperator = session.roles.includes(ROLE_OPERATOR);
 
   const dbResult = getDatabase();

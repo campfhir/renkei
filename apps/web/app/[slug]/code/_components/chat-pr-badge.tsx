@@ -20,14 +20,14 @@ interface ChatPullRequest {
   host: 'github' | 'bitbucket';
 }
 
-export default function ChatPrBadge({ tenantId, chatId }: { tenantId: string; chatId: string }) {
+export default function ChatPrBadge({ chatId }: { tenantId: string; chatId: string }) {
   const [pullRequest, setPullRequest] = useState<ChatPullRequest | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       const result = await getJson<{ pullRequest: ChatPullRequest | null }>(
-        `/api/tenant/${tenantId}/chat/chats/${chatId}/pr-summary`
+        `/api/chat/chats/${chatId}/pr-summary`
       );
       if (!cancelled && result.data) setPullRequest(result.data.pullRequest);
     })();

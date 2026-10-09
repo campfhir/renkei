@@ -46,7 +46,6 @@ maybe('searchChatMessages', () => {
     db
       .insertInto('chat_messages')
       .values({
-        tenant_id: tenantId,
         chat_id: chatId,
         turn_id: null,
         seq: ++seq,
@@ -71,7 +70,6 @@ maybe('searchChatMessages', () => {
     const instance = await registerTestInstance(db);
     instanceId = instance.id;
     await enrollTestPerson(db, {
-      tenantId,
       subject,
       instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
     });
@@ -85,13 +83,12 @@ maybe('searchChatMessages', () => {
         .insertInto('chats')
         .values({
           id,
-          tenant_id: tenantId,
           owner_subject: subject,
           title,
           updated_at: new Date(updatedAt),
         })
         .execute();
-      const key = await createResourceKey(db, { tenantId, kind: 'chat', resourceId: id }, subject);
+      const key = await createResourceKey(db, { kind: 'chat', resourceId: id }, subject);
       if (!key.ok) throw new Error('no chat key');
       ciphers.set(id, resourceCipher(key.val));
     }
@@ -121,7 +118,7 @@ maybe('searchChatMessages', () => {
   afterAll(async () => {
     setKeyVault(null);
     await db.deleteFrom('delegate_instances').where('id', '=', instanceId).execute();
-    await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chats`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
@@ -141,7 +138,6 @@ maybe('searchChatMessages', () => {
   it('stays within the chats it was handed', async () => {
     const hits = await searchChatMessages(
       db,
-      tenantId,
       [chatOutside, chatB],
       'zoom webhook',
       ciphers

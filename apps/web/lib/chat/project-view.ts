@@ -69,7 +69,6 @@ export async function loadProjectView(
       ? await db
           .selectFrom('identities')
           .select(['subject', 'display_name', 'email'])
-          .where('tenant_id', '=', tenantId)
           .where('subject', 'in', unique)
           .execute()
       : [];

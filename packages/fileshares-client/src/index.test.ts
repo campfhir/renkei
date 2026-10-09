@@ -194,7 +194,6 @@ describe('JSON ops (list, stat, mkdir, remove, remove-preview, move, rename, tes
       .mockResolvedValue(new Response(JSON.stringify({ entries: 4 }), { status: 200 }));
 
     const payload = {
-      tenantId: 'tenant-1',
       shareId: 'share-1',
       credentials: { protocol: 'sftp' as const, username: 'alice', password: 'secret' },
     };

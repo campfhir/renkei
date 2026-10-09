@@ -139,7 +139,6 @@ export type AuditAction =
   | 'jira_admin.change_applied';
 
 export interface AuditEventInput {
-  tenantId: string;
   /** OIDC subject of who did it. */
   actorSubject: string | null;
   action: AuditAction;
@@ -159,7 +158,6 @@ export function recordAuditEvent(event: AuditEventInput): void {
     .insertInto('audit_events')
     .values({
       id: randomUUID(),
-      tenant_id: event.tenantId,
       actor_subject: event.actorSubject,
       action: event.action,
       target_kind: event.targetKind ?? null,
@@ -170,7 +168,6 @@ export function recordAuditEvent(event: AuditEventInput): void {
     .catch((error: unknown) => {
       logger.warn('audit event not recorded: {action}', {
         component: 'audit',
-        tenantId: event.tenantId,
         action: event.action,
         error: error instanceof Error ? error.message : String(error),
       });

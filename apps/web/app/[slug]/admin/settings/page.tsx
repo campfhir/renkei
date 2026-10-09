@@ -1,7 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
@@ -25,10 +24,8 @@ export default async function SettingsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
@@ -48,7 +45,6 @@ export default async function SettingsPage({
     dbResult.val
       .selectFrom('tenant_oidc')
       .select(['issuer', 'role_claim', 'operator_idp_value', 'user_idp_value', 'groups_claim'])
-      .where('tenant_id', '=', tenantRef.id)
       .executeTakeFirst(),
     observedIdpGroups(dbResult.val, tenantRef.id, '', 10_000),
     listSizeRequests(dbResult.val, tenantRef.id),
@@ -108,7 +104,7 @@ export default async function SettingsPage({
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Organization-wide controls. Changes take effect within a minute and are recorded in the{' '}
         <Link
-          href={`/${slug}/admin/audit`}
+          href={`/admin/audit`}
           className="text-blue-600 hover:underline dark:text-blue-400"
         >
           audit trail
@@ -128,7 +124,7 @@ export default async function SettingsPage({
           <li>
             Connector on/off switches and scope ceilings —{' '}
             <Link
-              href={`/${slug}/admin/connectors`}
+              href={`/admin/connectors`}
               className="text-blue-600 hover:underline dark:text-blue-400"
             >
               Connector setup
@@ -137,7 +133,7 @@ export default async function SettingsPage({
           <li>
             Redaction detectors and record-number formats —{' '}
             <Link
-              href={`/${slug}/admin/redaction`}
+              href={`/admin/redaction`}
               className="text-blue-600 hover:underline dark:text-blue-400"
             >
               Sensitive data
@@ -146,7 +142,7 @@ export default async function SettingsPage({
           <li>
             Agent run history retention —{' '}
             <Link
-              href={`/${slug}/admin/agents`}
+              href={`/admin/agents`}
               className="text-blue-600 hover:underline dark:text-blue-400"
             >
               Agent oversight

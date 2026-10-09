@@ -23,7 +23,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {

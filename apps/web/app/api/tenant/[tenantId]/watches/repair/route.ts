@@ -44,7 +44,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -61,14 +60,13 @@ export async function POST(
   // The caller's grant is resolved right now — a repair that rebinds a
   // watch onto another dead grant would only move the failure, not fix it.
   const access = await resolveAtlassianUserAccess(
-    tenantId,
     session.subject,
     grantProviderFor(provider)
   );
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
   const result = await repairWatch(
-    { tenantId, subject: session.subject, accountId: access.accountId },
+    { subject: session.subject, accountId: access.accountId },
     provider,
     SCOPE_TYPE[provider],
     scopeKey

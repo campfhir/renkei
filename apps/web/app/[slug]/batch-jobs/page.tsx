@@ -2,7 +2,6 @@ import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listBatches } from '@renkei/batch-jobs-store';
@@ -23,12 +22,10 @@ export default async function BatchJobsPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
   const { status } = await searchParams;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/batch-jobs`));
+    redirect(signInUrl(tenant.id, `/batch-jobs`));
   }
 
   const dbResult = getDatabase();
@@ -38,7 +35,7 @@ export default async function BatchJobsPage({
     : [];
 
   const tabHref = (tabStatus?: string) =>
-    tabStatus ? `/${slug}/batch-jobs?status=${tabStatus}` : `/${slug}/batch-jobs`;
+    tabStatus ? `/batch-jobs?status=${tabStatus}` : `/batch-jobs`;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -48,7 +45,7 @@ export default async function BatchJobsPage({
         <div className="flex shrink-0 items-center gap-2">
           <CoachTarget name="batch-jobs-schedules" as="span" className="inline-flex">
             <Link
-              href={`/${slug}/batch-jobs/schedules`}
+              href={`/batch-jobs/schedules`}
               className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
             >
               Schedules
@@ -56,7 +53,7 @@ export default async function BatchJobsPage({
           </CoachTarget>
           <CoachTarget name="batch-jobs-new" as="span" className="inline-flex">
             <Link
-              href={`/${slug}/batch-jobs/new`}
+              href={`/batch-jobs/new`}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
               New batch job
@@ -103,7 +100,7 @@ export default async function BatchJobsPage({
           {batches.map((batch) => (
             <li key={batch.id}>
               <Link
-                href={`/${slug}/batch-jobs/${batch.id}`}
+                href={`/batch-jobs/${batch.id}`}
                 className="flex items-center justify-between gap-3 rounded-md border border-gray-200 p-3 text-sm hover:border-blue-400 dark:border-gray-800"
               >
                 <span className="flex min-w-0 items-center gap-2">

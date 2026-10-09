@@ -2,7 +2,6 @@ import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { viewGate } from '@/lib/jira-admin/apply';
@@ -23,12 +22,10 @@ export default async function JiraAdminTemplatesPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/jira-admin/templates`));
+    redirect(signInUrl(tenant.id, `/jira-admin/templates`));
   }
 
   const dbResult = getDatabase();
@@ -41,7 +38,7 @@ export default async function JiraAdminTemplatesPage({
       <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
         <h1 className="min-w-0 truncate text-xl font-bold">Space templates</h1>
         <Link
-          href={`/${slug}/jira-admin/changes`}
+          href={`/jira-admin/changes`}
           className="shrink-0 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
         >
           Proposed changes

@@ -2,7 +2,6 @@ import React from 'react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import CoachTarget from '@/components/coach-marks/anchor';
@@ -28,7 +27,7 @@ interface AdminSection {
  * expired between two client-side navigations).
  */
 function adminSections(slug: string): AdminSection[] {
-  const admin = `/${slug}/admin`;
+  const admin = `/admin`;
   return [
     {
       label: 'Connections',
@@ -164,8 +163,6 @@ export default async function AdminPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
 
   const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (access) {
@@ -204,7 +201,7 @@ export default async function AdminPage({
 
   const session = await getSessionFromCookies(tenantRef.id);
   if (!session) {
-    redirect(signInUrl(tenantRef.id, `/${slug}/admin`));
+    redirect(signInUrl(tenantRef.id, `/admin`));
   }
   return (
     <div className="mx-auto max-w-lg">

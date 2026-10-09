@@ -52,7 +52,7 @@ export async function getImageTotals(
            COALESCE(SUM(input_tokens), 0) AS input_tokens,
            COALESCE(SUM(output_tokens), 0) AS output_tokens
     FROM image_usage
-    WHERE tenant_id = ${tenantId} AND ${inSpan('created_at', span, timeZone)}
+    WHERE ${inSpan('created_at', span, timeZone)}
       ${ownedBy(ownerSubject)}
   `.execute(db);
   const row = result.rows[0];
@@ -79,13 +79,12 @@ export async function getImageUsers(
              COALESCE(SUM(input_tokens), 0) AS input_tokens,
              COALESCE(SUM(output_tokens), 0) AS output_tokens
       FROM image_usage
-      WHERE tenant_id = ${tenantId} AND ${inSpan('created_at', span, timeZone)}
+      WHERE ${inSpan('created_at', span, timeZone)}
       GROUP BY subject
     `.execute(db),
     db
       .selectFrom('identities')
       .select(['subject', 'display_name', 'email'])
-      .where('tenant_id', '=', tenantId)
       .execute(),
   ]);
   const identityBySubject = new Map(identities.map((row) => [row.subject, row]));

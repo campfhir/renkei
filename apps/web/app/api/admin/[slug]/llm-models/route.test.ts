@@ -33,7 +33,6 @@ const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mo
 
 interface ModelConfigRow {
   id: string;
-  tenant_id: string;
   label: string;
   provider: string;
   model: string;
@@ -113,7 +112,6 @@ function fakeDb(seed: ModelConfigRow[]) {
             }
             const row: ModelConfigRow = {
               id: String(values.id),
-              tenant_id: String(values.tenant_id),
               label: String(values.label),
               provider: String(values.provider),
               model: String(values.model),
@@ -279,7 +277,6 @@ describe('POST .../llm-models', () => {
     const db = fakeDb([
       {
         id: 'existing-1',
-        tenant_id: TENANT.id,
         label: 'Existing',
         provider: 'anthropic',
         model: 'claude-sonnet-5',
@@ -334,7 +331,6 @@ describe('POST .../llm-models', () => {
     const db = fakeDb([
       {
         id: 'old-default',
-        tenant_id: TENANT.id,
         label: 'Old default',
         provider: 'anthropic',
         model: 'claude-sonnet-5',
@@ -366,7 +362,6 @@ describe('POST .../llm-models', () => {
     const db = fakeDb([
       {
         id: 'existing-1',
-        tenant_id: TENANT.id,
         label: 'Taken',
         provider: 'anthropic',
         model: 'claude-sonnet-5',
@@ -392,7 +387,6 @@ describe('GET .../llm-models', () => {
     const db = fakeDb([
       {
         id: 'row-1',
-        tenant_id: TENANT.id,
         label: 'Has key',
         provider: 'anthropic',
         model: 'claude-sonnet-5',
@@ -404,7 +398,6 @@ describe('GET .../llm-models', () => {
       },
       {
         id: 'row-2',
-        tenant_id: TENANT.id,
         label: 'No key',
         provider: 'openai',
         model: 'gpt-5',

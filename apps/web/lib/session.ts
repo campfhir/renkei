@@ -52,7 +52,6 @@ export function sessionCookieName(tenantId: string): string {
 
 export interface Session {
   id: string;
-  tenantId: string;
   subject: string;
   roles: string[];
   expiresAt: Date;
@@ -84,12 +83,11 @@ export async function createSession(
   try {
     await db
       .insertInto('sessions')
-      .values({ id, tenant_id: tenantId, subject, roles, expires_at: expiresAt })
+      .values({ id, subject, roles, expires_at: expiresAt })
       .execute();
   } catch (error) {
     logger.error('Failed to create session', {
       component: 'auth/session',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return err('SESSION_ERROR' as const);
@@ -97,7 +95,6 @@ export async function createSession(
 
   logger.info('Created', {
     component: 'auth/session',
-    tenantId,
     subject,
     roles,
     expiresAt: expiresAt.toISOString(),
@@ -118,9 +115,8 @@ export async function getSessionById(sessionId: string, tenantId: string): Promi
 
   const row = await db
     .selectFrom('sessions')
-    .select(['id', 'tenant_id', 'subject', 'roles', 'expires_at', 'last_used_at'])
+    .select(['id', 'subject', 'roles', 'expires_at', 'last_used_at'])
     .where('id', '=', sessionId)
-    .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
 
   if (!row) return null;
@@ -141,7 +137,6 @@ export async function getSessionById(sessionId: string, tenantId: string): Promi
     await db.deleteFrom('sessions').where('id', '=', sessionId).execute();
     logger.info('Idle session ended', {
       component: 'auth/session',
-      tenantId,
       sessionId,
       idleMinutes: Math.round(idleFor / 60_000),
     });
@@ -152,7 +147,6 @@ export async function getSessionById(sessionId: string, tenantId: string): Promi
 
   return {
     id: row.id,
-    tenantId: row.tenant_id,
     subject: row.subject,
     roles: row.roles,
     expiresAt: new Date(row.expires_at),

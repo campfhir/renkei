@@ -14,7 +14,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -30,8 +30,7 @@ export async function GET(
   const result = await sql<{ count: number }>`
     SELECT COUNT(*) AS count
     FROM agent_access_grants
-    WHERE tenant_id = ${tenantId}
-      AND agent_id = ${agentId}
+    WHERE agent_id = ${agentId}
       AND (expires_at IS NULL OR expires_at > NOW())
   `.execute(db);
 

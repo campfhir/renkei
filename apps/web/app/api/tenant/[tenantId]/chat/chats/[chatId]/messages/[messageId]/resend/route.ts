@@ -15,7 +15,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; chatId: string; messageId: string }> }
 ): Promise<Response> {
-  const { tenantId, chatId, messageId } = await params;
+  const { chatId, messageId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -36,7 +36,6 @@ export async function POST(
     typeof body.llmModelId === 'string' && isUuid(body.llmModelId) ? body.llmModelId : null;
 
   const resent = await resendFromMessage(db, {
-    tenantId,
     session: { subject: session.subject, roles: session.roles },
     chatId,
     messageId,

@@ -11,5 +11,5 @@
 import type { SandboxTarget } from '@renkei/sandbox-client';
 
 export function codeProjectTarget(tenantId: string, projectId: string): SandboxTarget {
-  return { tenantId, subject: `code-project:${projectId}` };
+  return { subject: `code-project:${projectId}` };
 }

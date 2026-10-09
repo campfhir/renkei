@@ -17,7 +17,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; shareId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, shareId } = await params;
+  const { shareId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -27,7 +27,7 @@ export async function POST(
     return NextResponse.json({ error: 'Unusable path' }, { status: 400 });
   }
 
-  const made = await fsMakeFolder({ tenantId, shareId, subject: session.subject }, raw);
+  const made = await fsMakeFolder({ shareId, subject: session.subject }, raw);
   if (!made.ok) {
     const failure = clientFailure(made.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });

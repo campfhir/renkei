@@ -15,7 +15,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string; grantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId, grantId } = await params;
+  const { agentId, grantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -30,7 +30,6 @@ export async function DELETE(
   if (!revoked) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'agent.access_revoked',
     targetKind: 'agent',

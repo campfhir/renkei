@@ -65,7 +65,6 @@ const PROBE_PATH = childEnvironment({
   .filter((dir) => !dir.startsWith('/nonexistent'));
 
 export interface LspOwner {
-  tenantId: string;
   subject: string;
 }
 

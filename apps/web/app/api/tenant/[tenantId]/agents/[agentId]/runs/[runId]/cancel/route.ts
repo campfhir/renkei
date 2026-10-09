@@ -23,7 +23,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string; runId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId, runId } = await params;
+  const { agentId, runId } = await params;
   if (!isUuid(agentId) || !isUuid(runId)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
@@ -39,7 +39,6 @@ export async function POST(
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const result = await requestRunCancellation(db, agentJobsQueue().producer, {
-    tenantId,
     agentId,
     runId,
     ownerSubject: access.ownerSubject,

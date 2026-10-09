@@ -45,17 +45,16 @@ maybe('chat_subagent_runs model', () => {
       .execute();
     await db
       .insertInto('chats')
-      .values({ id: chatId, tenant_id: tenantId, owner_subject: subject })
+      .values({ id: chatId, owner_subject: subject })
       .execute();
     await db
       .insertInto('chat_turns')
-      .values({ id: turnId, tenant_id: tenantId, chat_id: chatId, status: 'running' })
+      .values({ id: turnId, chat_id: chatId, status: 'running' })
       .execute();
     await db
       .insertInto('llm_model_configs')
       .values({
         id: fastModelId,
-        tenant_id: tenantId,
         label: 'Fast model',
         provider: 'anthropic',
         model: 'claude-haiku-4-5',
@@ -67,17 +66,16 @@ maybe('chat_subagent_runs model', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_subagent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chat_turns WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM llm_model_configs WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_subagent_runs`.execute(db);
+    await sql`DELETE FROM chat_turns`.execute(db);
+    await sql`DELETE FROM chats`.execute(db);
+    await sql`DELETE FROM llm_model_configs`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
 
   it('keeps the model a run started on and reads it back with its label, then without', async () => {
     const runId = await createSubagentRun(db, {
-      tenantId,
       chatId,
       turnId,
       toolUseId: 'toolu_fast',
@@ -117,7 +115,6 @@ maybe('chat_subagent_runs model', () => {
 
   it('records no model for a run started without one, as before the column existed', async () => {
     const runId = await createSubagentRun(db, {
-      tenantId,
       chatId,
       turnId,
       toolUseId: 'toolu_plain',

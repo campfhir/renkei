@@ -50,13 +50,11 @@ function outcomeLine(event: EventView): string {
 }
 
 export default function PrSubscribe({
-  tenantId,
   projectId,
   prNumber,
   prUrl,
   compact = false,
 }: {
-  tenantId: string;
   projectId: string;
   prNumber: number;
   prUrl?: string;
@@ -66,7 +64,7 @@ export default function PrSubscribe({
    * project screen for the common case. */
   compact?: boolean;
 }) {
-  const base = `/api/tenant/${tenantId}/code/projects/${projectId}/pr-subscriptions`;
+  const base = `/api/code/projects/${projectId}/pr-subscriptions`;
   const [state, setState] = useState<SubscriptionView | null>(null);
   const [lastEvent, setLastEvent] = useState<EventView | null>(null);
   const [busy, setBusy] = useState(false);

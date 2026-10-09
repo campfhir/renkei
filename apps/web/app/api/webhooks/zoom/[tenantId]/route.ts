@@ -46,7 +46,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   // Throttle, then the credential's shape, then a bounded body — all before
   // any config or database read (lib/webhook-intake.ts).
@@ -70,7 +69,6 @@ export async function POST(
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'zoom/webhook',
-      tenantId,
     });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
@@ -87,9 +85,6 @@ export async function POST(
     .select('id')
     .where('id', '=', tenantId)
     .executeTakeFirst();
-  if (!tenant) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
 
   const configResult = await readConnectorConfigCached(tenantId, ZOOM_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
@@ -100,7 +95,6 @@ export async function POST(
   if (!config || !config.enabled || typeof secretToken !== 'string' || !secretToken) {
     logger.warn('Delivery for a tenant without an enabled zoom connector (or no Secret Token)', {
       component: 'zoom/webhook',
-      tenantId,
     });
     return NextResponse.json({ error: 'Zoom connector not configured' }, { status: 503 });
   }
@@ -110,7 +104,6 @@ export async function POST(
   if (!verifyZoomSignature(rawBody, signature, timestamp, secretToken)) {
     logger.warn('Rejected delivery with bad signature or stale timestamp', {
       component: 'zoom/webhook',
-      tenantId,
     });
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
@@ -137,7 +130,6 @@ export async function POST(
   // and re-fetches everything of substance from the API under the host's
   // grant — webhook contents are routing hints, not trusted data.
   const enqueued = await eventsQueue.producer.enqueue({
-    tenantId,
     source: ZOOM_CONNECTOR,
     type: payload.val.type,
     payload: isRecord(body) ? body : {},
@@ -147,7 +139,6 @@ export async function POST(
   if (!enqueued.ok) {
     logger.error('Event NOT accepted: {error}', {
       component: 'zoom/webhook',
-      tenantId,
       error: enqueued.err.message ?? 'unknown',
     });
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });

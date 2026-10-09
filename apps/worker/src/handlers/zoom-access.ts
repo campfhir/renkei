@@ -29,7 +29,7 @@ export interface ZoomHostAccess {
 }
 
 function describeHost(tenantId: string, accountId: string) {
-  return delegateGrants().describe({ tenantId, provider: ZOOM, accountId });
+  return delegateGrants().describe({ provider: ZOOM, accountId });
 }
 
 /**
@@ -50,7 +50,6 @@ export async function resolveZoomHostAccess(
     const row = await dbResult.val
       .selectFrom('provider_grants')
       .select('provider_account_id')
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', ZOOM)
       .where(sql<string>`metadata->>'email'`, '=', hostEmail.toLowerCase())
       .executeTakeFirst();
@@ -61,7 +60,6 @@ export async function resolveZoomHostAccess(
     if (described.err.type === 'NO_GRANT') {
       logger.info('no zoom grant for host {host}; skipping', {
         component: 'zoom/ingest',
-        tenantId,
         host: hostId ?? hostEmail ?? '(unknown)',
       });
       return null;
@@ -81,7 +79,7 @@ export async function resolveZoomHostAccess(
   }
 
   return {
-    auth: grantFetch({ tenantId, provider: ZOOM, accountId: grant.accountId }),
+    auth: grantFetch({ provider: ZOOM, accountId: grant.accountId }),
     accountId: grant.accountId,
     hostEmail: email,
     subject: grant.subject,

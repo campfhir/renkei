@@ -41,20 +41,17 @@ export async function getMicrosoftApp(
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/microsoft',
-      tenantId,
     });
     return null;
   }
 
   const configResult = await readConnectorConfigCached(
-    tenantId,
     MICROSOFT_CONNECTOR,
     keyResult.val
   );
   if (!configResult.ok) {
     logger.error('Could not read microsoft connector config', {
       component: 'connectors/microsoft',
-      tenantId,
     });
     return null;
   }
@@ -73,7 +70,6 @@ export async function getMicrosoftApp(
   ) {
     logger.warn('microsoft connector config missing clientId, directoryTenantId or clientSecret', {
       component: 'connectors/microsoft',
-      tenantId,
     });
     return null;
   }

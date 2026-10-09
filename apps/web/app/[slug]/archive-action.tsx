@@ -9,11 +9,9 @@ import { useRefresh } from '@/lib/use-refresh';
  * untouched, and the history view still shows everything.
  */
 export default function ArchiveAction({
-  tenantId,
   itemId,
   archived,
 }: {
-  tenantId: string;
   itemId: string;
   archived: boolean;
 }): React.ReactNode {
@@ -25,7 +23,7 @@ export default function ArchiveAction({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/actionable-items/${itemId}/archive`, {
+      const response = await fetch(`/api/actionable-items/${itemId}/archive`, {
         method: archived ? 'DELETE' : 'POST',
       });
       if (!response.ok) {

@@ -135,7 +135,6 @@ export async function registerWorkTypeTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_work_types invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

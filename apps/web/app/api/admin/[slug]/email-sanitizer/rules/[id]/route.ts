@@ -5,7 +5,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { isEmailCategory, isClassifierMatchType } from '@/lib/email-sanitizer-guards';
 import { upsertClassifierRule, deleteClassifierRule } from '@renkei/email-sanitizer';
 
@@ -18,10 +17,6 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string; id: string }> }
 ): Promise<NextResponse> {
   const { slug, id } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
   const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -82,10 +77,6 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string; id: string }> }
 ): Promise<NextResponse> {
   const { slug, id } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
   const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

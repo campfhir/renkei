@@ -37,7 +37,7 @@ export default function ProjectTemplateForms({ slug }: { slug: string }) {
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ templates: TemplateRow[] }>(
-      `/api/admin/${slug}/project-templates`
+      `/api/admin/project-templates`
     );
     if (loadError) setError(loadError);
     else setTemplates(data?.templates ?? []);
@@ -57,8 +57,8 @@ export default function ProjectTemplateForms({ slug }: { slug: string }) {
       instructions: draft.instructions.trim(),
     };
     const saveError = draft.id
-      ? await sendJson(`/api/admin/${slug}/project-templates/${draft.id}`, 'PUT', payload)
-      : await sendJson(`/api/admin/${slug}/project-templates`, 'POST', payload);
+      ? await sendJson(`/api/admin/project-templates/${draft.id}`, 'PUT', payload)
+      : await sendJson(`/api/admin/project-templates`, 'POST', payload);
     setBusy(false);
     if (saveError) {
       setError(saveError);
@@ -72,7 +72,7 @@ export default function ProjectTemplateForms({ slug }: { slug: string }) {
     setBusy(true);
     setError(null);
     const removeError = await sendJson(
-      `/api/admin/${slug}/project-templates/${templateId}`,
+      `/api/admin/project-templates/${templateId}`,
       'DELETE'
     );
     setBusy(false);

@@ -79,7 +79,7 @@ async function resolveJiraGrant(
   tenantId: string,
   accountId: string
 ): Promise<JiraGrantContext | 'revoked' | 'failed'> {
-  const ref = { tenantId, provider: ATLASSIAN, accountId };
+  const ref = { provider: ATLASSIAN, accountId };
   const described = await delegateGrants().describe(ref);
   if (!described.ok) return described.err.type === 'NO_GRANT' ? 'revoked' : 'failed';
   const site = readAtlassianMetadata(described.val.metadata);
@@ -114,7 +114,6 @@ async function resolveJsmGrant(
   const row = await db
     .selectFrom('provider_grants')
     .select(['provider_account_id'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', ATLASSIAN_JSM)
     .where('subject', '=', subject)
     .limit(1)
@@ -129,7 +128,7 @@ async function resolveJsmGrant(
     return null;
   };
 
-  const ref = { tenantId, provider: ATLASSIAN_JSM, accountId: row.provider_account_id };
+  const ref = { provider: ATLASSIAN_JSM, accountId: row.provider_account_id };
   const described = await delegateGrants().describe(ref);
   if (!described.ok) return failed(`grant describe failed: ${described.err.type}`);
   const grant = described.val;
@@ -147,7 +146,6 @@ const handler = async (
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; transport: string }> }
 ): Promise<Response> => {
-  const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -182,7 +180,7 @@ const handler = async (
     // first — attributing every comment, transition and worklog to that account.
     const bearer = getBearerToken(request);
     if (!bearer) {
-      logger.warn('Request without bearer token', { component: 'mcp/transport', tenantId });
+      logger.warn('Request without bearer token', { component: 'mcp/transport' });
       return unauthorizedResponse(tenantId, origin, 'Authorization required');
     }
 
@@ -201,7 +199,6 @@ const handler = async (
     if (!tokenRecord) {
       logger.warn('Request with unknown or expired bearer token', {
         component: 'mcp/transport',
-        tenantId,
       });
       return unauthorizedResponse(tenantId, origin, 'Invalid or expired access token');
     }
@@ -257,7 +254,6 @@ const handler = async (
     const grants = await db
       .selectFrom('provider_grants')
       .select(['provider_account_id as account_id'])
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', 'atlassian')
       .where('subject', '=', subject)
       .limit(1)
@@ -420,7 +416,6 @@ const handler = async (
     if (!cachedHandler) {
       logger.debug('Creating new handler (cache miss)', {
         component: 'mcp/transport',
-        tenantId,
         accountId,
       });
 
@@ -441,7 +436,7 @@ const handler = async (
             // tools that actually register: the gates inside it drop the ones
             // this user may not have, and a tool that was never registered
             // cannot be called and so should never appear in usage.
-            const tracked = withUsageTracking(guarded, { tenantId, subject, agentId });
+            const tracked = withUsageTracking(guarded, { subject, agentId });
 
             // Outside usage tracking, so the timing it records includes the
             // filtering — that cost is real and belongs in the latency the
@@ -450,7 +445,6 @@ const handler = async (
             // same idiom withScopeGate uses for "gate not configured".
             const server = settings.redactionEnabled
               ? withRedaction(tracked, {
-                  tenantId,
                   detectors: knownDetectors(settings.redactionDetectors),
                   mrnFormats: settings.redactionMrnFormats,
                   policy: DEFAULT_MCP_POLICY,
@@ -459,7 +453,6 @@ const handler = async (
               : tracked;
 
             const context: MCPToolContext = {
-              tenantId,
               accountId,
               siteUrl: grant?.siteUrl ?? '',
               apiBaseUrl: grant ? `https://api.atlassian.com/ex/jira/${grant.cloudId}` : '',
@@ -542,13 +535,11 @@ const handler = async (
 
             logger.verbose('All tools registered', {
               component: 'mcp/transport',
-              tenantId,
               accountId,
             });
           } catch (err) {
             logger.error('Tool registration failed', {
               component: 'mcp/transport',
-              tenantId,
               accountId,
               error: err instanceof Error ? err.message : String(err),
               cause:

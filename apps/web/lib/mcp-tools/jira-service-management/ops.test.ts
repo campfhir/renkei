@@ -60,7 +60,6 @@ function stubAuth(): JsmOpsAuth {
 
 const context = (): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     cloudId: 'cloud-1',
     jiraAuth: null,

@@ -61,7 +61,6 @@ function stubDb(row: Record<string, unknown> | undefined) {
 function sessionRow(lastUsedAgoMs: number) {
   return {
     id: 'sess-1',
-    tenant_id: TENANT,
     subject: 'alice@example.com',
     roles: ['renkei-user'],
     expires_at: new Date(Date.now() + 29 * 24 * HOUR),

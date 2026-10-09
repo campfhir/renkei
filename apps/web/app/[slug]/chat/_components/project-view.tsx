@@ -56,7 +56,6 @@ const inputClass =
 
 export default function ProjectView({
   slug,
-  tenantId,
   initial,
   variant = 'chat',
   strip = null,
@@ -66,7 +65,6 @@ export default function ProjectView({
   usage = null,
 }: {
   slug: string;
-  tenantId: string;
   initial: ProjectViewData;
   /**
    * A code project is a chat project with a repository on it: the same
@@ -97,10 +95,10 @@ export default function ProjectView({
   const router = useRouter();
   const { project, role, files, memory, chats } = initial;
   const canEdit = role !== 'viewer';
-  const base = `/api/tenant/${tenantId}/chat/projects/${project.id}`;
-  const indexHref = variant === 'code' ? `/${slug}/code` : `/${slug}/chat/projects`;
+  const base = `/api/chat/projects/${project.id}`;
+  const indexHref = variant === 'code' ? `/code` : `/chat/projects`;
   const deleteRoute =
-    variant === 'code' ? `/api/tenant/${tenantId}/code/projects/${project.id}` : base;
+    variant === 'code' ? `/api/code/projects/${project.id}` : base;
 
   const [name, setName] = useState(project.name);
   const [renamingHeader, setRenamingHeader] = useState(false);
@@ -136,7 +134,7 @@ export default function ProjectView({
       setNewChatError(created.error ?? 'A new chat could not be started.');
       return;
     }
-    router.push(`/${slug}/chat/${created.data.chatId}`);
+    router.push(`/chat/${created.data.chatId}`);
   };
 
   const dirty =
@@ -254,7 +252,7 @@ export default function ProjectView({
     return (
       <li key={chat.id} data-history={chat.history ? 'true' : undefined}>
         <Link
-          href={`/${slug}/chat/${chat.id}`}
+          href={`/chat/${chat.id}`}
           className="flex items-center gap-2 py-1.5 hover:underline"
         >
           <Icon
@@ -457,7 +455,7 @@ export default function ProjectView({
           </button>
         ) : (
           <Link
-            href={`/${slug}/chat/new?project=${project.id}`}
+            href={`/chat/new?project=${project.id}`}
             // Opening it creates a chat in the project; only a click may do that.
             prefetch={false}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"

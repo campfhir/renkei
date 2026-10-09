@@ -85,7 +85,6 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
       [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.chatTitle]
     );
     const chatKey = await keyFor(client, {
-      tenantId: E2E_TENANT_ID,
       kind: 'chat',
       resourceId: ids.chatId,
       ownerSubject: E2E_SUBJECT,
@@ -255,7 +254,7 @@ test.describe('ordinary chat sub-agent', () => {
       });
     const main = page.getByRole('main');
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(main.getByText('Which issues slipped out of the last OPS sprint?')).toBeVisible();
 
     // ── The card, folded: a chat sub-agent is read-only by nature, ran on

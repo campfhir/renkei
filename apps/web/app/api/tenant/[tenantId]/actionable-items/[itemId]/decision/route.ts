@@ -22,7 +22,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; itemId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, itemId } = await params;
+  const { itemId } = await params;
 
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
@@ -48,7 +48,6 @@ export async function POST(
     .selectFrom('actionable_items')
     .select(['id', 'kind', 'status', 'suggested_action'])
     .where('id', '=', itemId)
-    .where('tenant_id', '=', tenantId)
     .where((eb) =>
       eb.or([eb('owner_subject', 'is', null), eb('owner_subject', '=', session.subject)])
     )

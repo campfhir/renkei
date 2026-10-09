@@ -2,7 +2,6 @@ import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listChangeRequests, stateOf, type ChangeRequest } from '@/lib/jira-admin/change-requests';
@@ -20,12 +19,10 @@ export default async function JiraAdminChangesPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/jira-admin/changes`));
+    redirect(signInUrl(tenant.id, `/jira-admin/changes`));
   }
 
   const dbResult = getDatabase();
@@ -39,7 +36,7 @@ export default async function JiraAdminChangesPage({
   const row = (change: ChangeRequest) => (
     <li key={change.id}>
       <Link
-        href={`/${slug}/jira-admin/changes/${change.id}`}
+        href={`/jira-admin/changes/${change.id}`}
         className="flex items-start justify-between gap-3 rounded-md border border-gray-200 p-3 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900"
       >
         <span className="min-w-0">
@@ -59,7 +56,7 @@ export default async function JiraAdminChangesPage({
       <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
         <h1 className="min-w-0 truncate text-xl font-bold">Jira admin changes</h1>
         <Link
-          href={`/${slug}/jira-admin/templates`}
+          href={`/jira-admin/templates`}
           className="shrink-0 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
         >
           Space templates

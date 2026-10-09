@@ -58,7 +58,6 @@ const iconButton =
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-900 dark:hover:text-gray-200';
 
 export default function CodePane({
-  tenantId,
   projectId,
   pane,
   layout,
@@ -72,7 +71,6 @@ export default function CodePane({
   onAsk,
   onClose,
 }: {
-  tenantId: string;
   projectId: string;
   pane: CodePaneHandle;
   /** Beside the chat, or the Code tab. */
@@ -97,7 +95,7 @@ export default function CodePane({
   /** Close the pane (beside the chat only). */
   onClose: () => void;
 }) {
-  const base = `/api/tenant/${tenantId}/code/projects/${projectId}`;
+  const base = `/api/code/projects/${projectId}`;
   const repoTreeRef = useRef<RepoTreeHandle>(null);
   const newFileAnchor = useCoachAnchor('code-tree-new-file');
   const [treeOpen, setTreeOpen] = useState(true);

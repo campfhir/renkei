@@ -84,12 +84,10 @@ async function postJson(url: string, body: unknown): Promise<string | null> {
 
 /** The "teach this system's format" flow: mark spans in the excerpt, name each one, save. */
 function TeachTemplate({
-  tenantId,
   senderKey,
   sample,
   onSaved,
 }: {
-  tenantId: string;
   senderKey: string;
   sample: string;
   onSaved: () => void;
@@ -121,7 +119,7 @@ function TeachTemplate({
     setBusy(true);
     setNotice(null);
     setError(null);
-    const failure = await postJson(`/api/tenant/${tenantId}/mail-review/templates`, {
+    const failure = await postJson(`/api/mail-review/templates`, {
       senderKey,
       sample,
       markedFields: fields,
@@ -200,11 +198,9 @@ function TeachTemplate({
 }
 
 function ReviewCard({
-  tenantId,
   item,
   onChanged,
 }: {
-  tenantId: string;
   item: ReviewItem;
   onChanged: () => void;
 }) {
@@ -224,7 +220,7 @@ function ReviewCard({
     setBusy(true);
     setNotice(null);
     setError(null);
-    const failure = await postJson(`/api/tenant/${tenantId}/mail-review/override`, {
+    const failure = await postJson(`/api/mail-review/override`, {
       refId: item.refId,
       action,
       category,
@@ -370,7 +366,7 @@ export default function ReviewList({ tenantId }: { tenantId: string }) {
       totalCount: number;
       counts: CategoryCounts;
     }>(
-      `/api/tenant/${tenantId}/mail-review?category=${category}&page=${page}&pageSize=${PAGE_SIZE}`
+      `/api/mail-review?category=${category}&page=${page}&pageSize=${PAGE_SIZE}`
     );
     if (err) {
       setError(err);

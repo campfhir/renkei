@@ -27,7 +27,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const verdict = checkInboundLimit(`oauth/register:${tenantId}`, request, LIMITS);
   if (!verdict.allowed) {
@@ -95,9 +94,6 @@ export async function POST(
       .where('id', '=', tenantId)
       .executeTakeFirst();
 
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
 
     // Generate client credentials
     const clientId = `client_${randomUUID()}`;
@@ -108,7 +104,6 @@ export async function POST(
       .insertInto('oauth_clients')
       .values({
         client_id: clientId,
-        tenant_id: tenantId,
         // Only the digest is stored; the secret itself exists solely in the
         // registration response below and in the client that receives it.
         client_secret_hash: hashToken(clientSecret),
@@ -123,7 +118,6 @@ export async function POST(
     // the trail records what: the Access page and the consent page both
     // show a client's name, and this is where that name came from.
     recordAuditEvent({
-      tenantId,
       actorSubject: null,
       action: 'oauth.client_registered',
       targetKind: 'oauth_client',

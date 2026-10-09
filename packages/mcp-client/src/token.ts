@@ -41,7 +41,6 @@ export async function ensureAgentRunnerClient(db: Kysely<DB>, tenantId: string):
     .insertInto('oauth_clients')
     .values({
       client_id: clientId,
-      tenant_id: tenantId,
       client_name: 'Renkei agent runner',
       // A hash with no known preimage — this client never authenticates.
       client_secret_hash: sha256Hex(generateSecret(32)),
@@ -55,7 +54,6 @@ export async function ensureAgentRunnerClient(db: Kysely<DB>, tenantId: string):
 export async function mintRunToken(
   db: Kysely<DB>,
   params: {
-    tenantId: string;
     subject: string;
     /**
      * The acting agent, or null when the work is the PERSON's rather than an
@@ -88,7 +86,6 @@ export async function mintRunToken(
     .insertInto('oauth_access_tokens')
     .values({
       token_hash: sha256Hex(token),
-      tenant_id: params.tenantId,
       client_id: clientId,
       subject: params.subject,
       application: params.application ?? 'agent',

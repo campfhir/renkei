@@ -5,7 +5,6 @@ import { redirect, notFound } from 'next/navigation';
 import { sql, type Kysely } from 'kysely';
 import { getDatabase, type DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -78,13 +77,13 @@ async function invocationCountsOf(
       COUNT(*) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)) AS year,
       COUNT(*) AS all_time
     FROM agent_run_log
-    WHERE tenant_id = ${tenantId} AND agent_id = ${agentId}
+    WHERE agent_id = ${agentId}
   `.execute(db);
   const row = result.rows[0];
   const orgResult = await sql<{ total: string }>`
     SELECT COUNT(*) AS total
     FROM agent_run_log
-    WHERE tenant_id = ${tenantId} AND created_at::date = CURRENT_DATE
+    WHERE created_at::date = CURRENT_DATE
   `.execute(db);
   return {
     today: Number(row?.today ?? 0),
@@ -110,12 +109,10 @@ export default async function AgentOverviewPage({
   params: Promise<{ slug: string; agentId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, agentId } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/agents/${agentId}`));
+    redirect(signInUrl(tenant.id, `/agents/${agentId}`));
   }
 
   const dbResult = getDatabase();
@@ -195,7 +192,7 @@ export default async function AgentOverviewPage({
       )}
       <CoachTarget name="agent-edit" as="span" className="inline-flex">
         <Link
-          href={`/${slug}/agents/${agentId}/edit`}
+          href={`/agents/${agentId}/edit`}
           className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700"
         >
           <Icon path={ICONS.pencil} />
@@ -221,7 +218,7 @@ export default async function AgentOverviewPage({
           this page to check. */}
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-start lg:justify-between">
         <div className="flex min-w-0 items-center gap-2 lg:flex-1">
-          <BackLink href={`/${slug}/agents`} label="All agents" />
+          <BackLink href={`/agents`} label="All agents" />
           <h1 className="min-w-0 truncate text-xl font-bold">{agent.name}</h1>
           <span className="ml-auto shrink-0">
             {access.viewerIsOwner ? (

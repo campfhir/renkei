@@ -66,7 +66,6 @@ async function askFor(
       'expires_at',
     ])
     .where('id', '=', requestId)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .executeTakeFirst();
   return row ?? null;
@@ -115,7 +114,7 @@ async function checkCode(
 }
 
 export async function GET(request: NextRequest, { params }: Params): Promise<Response> {
-  const { tenantId, requestId } = await params;
+  const { requestId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -154,7 +153,7 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
 }
 
 export async function POST(request: NextRequest, { params }: Params): Promise<Response> {
-  const { tenantId, requestId } = await params;
+  const { requestId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -188,7 +187,6 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
     return jsonError(404, 'not_found', 'That request is gone or already answered.');
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'encryption-key.device-approved',
     details: {
@@ -201,7 +199,7 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
 }
 
 export async function DELETE(request: NextRequest, { params }: Params): Promise<Response> {
-  const { tenantId, requestId } = await params;
+  const { requestId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -209,13 +207,11 @@ export async function DELETE(request: NextRequest, { params }: Params): Promise<
     .updateTable('device_key_requests')
     .set({ denied_at: new Date(), sealed_key: null })
     .where('id', '=', requestId)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', session.subject)
     .where('denied_at', 'is', null)
     .executeTakeFirst();
   if (Number(result.numUpdatedRows) > 0) {
     recordAuditEvent({
-      tenantId,
       actorSubject: session.subject,
       action: 'encryption-key.device-denied',
       details: { requestId },

@@ -54,7 +54,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -76,7 +75,6 @@ export async function POST(
   const watch = await db
     .selectFrom('content_watches')
     .select(['id', 'scope_label'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', session.subject)
     .where('provider', '=', provider)
     .where('scope_key', '=', scopeKey)

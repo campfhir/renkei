@@ -118,7 +118,6 @@ beforeEach(() => {
 
 const context = (): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
     origin: 'https://renkei.example',

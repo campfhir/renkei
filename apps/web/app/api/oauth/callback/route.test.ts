@@ -64,7 +64,6 @@ function stubDb(pending: Record<string, unknown> | undefined) {
 
 function pendingRow(overrides: Record<string, unknown> = {}) {
   return {
-    tenant_id: TENANT,
     expires_at: new Date(Date.now() + 60_000).toISOString(),
     subject: SUBJECT,
     provider: 'microsoft',
@@ -84,7 +83,7 @@ function callback(cookies: Record<string, string>): NextRequest {
 }
 
 function session(subject: string) {
-  return { id: 's', tenantId: TENANT, subject, roles: ['renkei-user'], expiresAt: new Date() };
+  return { id: 's', subject, roles: ['renkei-user'], expiresAt: new Date() };
 }
 
 describe('GET /api/oauth/callback browser binding', () => {

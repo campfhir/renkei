@@ -30,7 +30,6 @@ async function change(
   params: Promise<{ tenantId: string }>,
   apply: (added: string[], connector: string) => string[]
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 

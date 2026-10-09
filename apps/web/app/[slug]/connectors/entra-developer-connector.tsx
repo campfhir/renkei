@@ -21,13 +21,11 @@ import {
  * connect link with scope narrowing, confirm-gated disconnect.
  */
 export default function EntraDeveloperConnector({
-  tenantId,
   connected,
   displayName,
   ceiling,
   priorScopes,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   /** The org's allowed scopes — the most a user can grant. */
@@ -35,7 +33,7 @@ export default function EntraDeveloperConnector({
   /** Scopes on the user's previous grant, seeding the picker on reconnect. */
   priorScopes: string[] | null;
 }) {
-  const authorizePath = `/api/entra-developer/${tenantId}/authorize`;
+  const authorizePath = `/api/entra-developer/authorize`;
 
   return (
     <ConnectorShell anchor="card-entra-developer">
@@ -92,7 +90,7 @@ export default function EntraDeveloperConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/entra-developer/${tenantId}/grant`}
+          endpoint={`/api/entra-developer/grant`}
           confirmText="Disconnect Entra Developer? Its tools stop working until you reconnect. Your Microsoft 365 connection is not affected."
           buttonLabel="Disconnect Entra Developer"
         />

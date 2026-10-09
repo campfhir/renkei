@@ -150,7 +150,6 @@ export async function searchMyKnowledge(
   // has not configured one.
   if (!semanticQuery) {
     const recent = await listRecentKnowledge({
-      tenantId,
       userEmail,
       k: clampedK,
       verifiers,
@@ -183,7 +182,6 @@ export async function searchMyKnowledge(
   }
 
   const searched = await searchKnowledge({
-    tenantId,
     userEmail,
     query: semanticQuery,
     k: clampedK,

@@ -37,7 +37,6 @@ export interface DocumentPipelineConfig {
 }
 
 export interface StartDocumentOcrPipelineInput {
-  tenantId: string;
   subject: string;
   /** A human-readable name to tell this batch apart from others in the list. */
   name: string;
@@ -75,7 +74,6 @@ export async function startDocumentOcrPipeline(
   input: StartDocumentOcrPipelineInput
 ): Promise<BatchJobRow> {
   const batch = await createBatch(db, {
-    tenantId: input.tenantId,
     subject: input.subject,
     name: input.name,
     kind: DOCUMENT_OCR_PIPELINE_KIND,

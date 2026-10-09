@@ -3,7 +3,6 @@ import Link from 'next/link';
 import BackLink from '@/components/back-link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { batchKindLabel, getBatch, listItems } from '@renkei/batch-jobs-store';
@@ -43,12 +42,10 @@ export default async function BatchJobDetailPage({
 }): Promise<React.ReactNode> {
   const { slug, batchId } = await params;
   const { status } = await searchParams;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/batch-jobs/${batchId}`));
+    redirect(signInUrl(tenant.id, `/batch-jobs/${batchId}`));
   }
 
   const dbResult = getDatabase();
@@ -63,14 +60,14 @@ export default async function BatchJobDetailPage({
 
   const tabHref = (tabStatus?: string) =>
     tabStatus
-      ? `/${slug}/batch-jobs/${batchId}?status=${tabStatus}`
-      : `/${slug}/batch-jobs/${batchId}`;
+      ? `/batch-jobs/${batchId}?status=${tabStatus}`
+      : `/batch-jobs/${batchId}`;
 
   return (
     <div className="mx-auto max-w-3xl">
       <AutoRefresh />
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <BackLink href={`/${slug}/batch-jobs`} label="Batch Jobs" />
+        <BackLink href={`/batch-jobs`} label="Batch Jobs" />
         <h1 className="min-w-0 truncate text-xl font-bold">{batch.name}</h1>
         <BatchStatusPill status={batch.status} />
       </div>
@@ -83,7 +80,7 @@ export default async function BatchJobDetailPage({
           <p>
             <span className="font-medium">Schedule:</span>{' '}
             <Link
-              href={`/${slug}/batch-jobs/schedules/${batch.schedule_id}`}
+              href={`/batch-jobs/schedules/${batch.schedule_id}`}
               className="text-blue-600 hover:underline dark:text-blue-400"
             >
               Started by a schedule

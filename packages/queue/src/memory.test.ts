@@ -14,7 +14,6 @@ import type { ClaimedMessage } from './contract';
 
 function input(over: Partial<{ type: string; orderingKey: string | null }> = {}) {
   return {
-    tenantId: 'tenant-1',
     source: 'test',
     type: over.type ?? 'thing.happened',
     payload: { n: 1 },
@@ -289,7 +288,6 @@ describe('source fixation and fair claiming', () => {
 
 describe('discardPending — the other half of a rebuild', () => {
   const ingest = (refId: string, project: string, content: string) => ({
-    tenantId: 't1',
     source: 'knowledge',
     type: 'ingest.object',
     payload: { provider: 'jira', refId, content, metadata: { project } },
@@ -366,7 +364,6 @@ describe('coalescing', () => {
   it('drops a coalesced message while an identical one is still waiting, but not once it is claimed', async () => {
     const queue = new InMemoryQueue();
     const message = {
-      tenantId: 't1',
       source: 'microsoft',
       type: 'change-notification',
       payload: { subscriptionId: 's1' },
@@ -393,7 +390,6 @@ describe('coalescing', () => {
   it('coalesces nothing without an ordering key', async () => {
     const queue = new InMemoryQueue();
     const message = {
-      tenantId: 't1',
       source: 'x',
       type: 'y',
       payload: {},

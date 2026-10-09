@@ -28,7 +28,7 @@ export async function collectSharePointChanges(
   if (typeof access === 'string') return null;
 
   const watches = await listWatches(
-    { tenantId: context.tenantId, subject: context.subject, accountId: context.accountId },
+    { subject: context.subject, accountId: context.accountId },
     'sharepoint'
   );
   if (!watches.ok || watches.watches.length === 0) return null;

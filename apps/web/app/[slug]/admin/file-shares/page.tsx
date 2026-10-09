@@ -1,7 +1,6 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import ShareList from './share-list';
 
 /**
@@ -17,10 +16,8 @@ export default async function AdminFileSharesPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   return (

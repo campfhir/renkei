@@ -17,7 +17,6 @@ import { githubHostAdapter } from './repo-host-github';
 import { bitbucketHostAdapter } from './repo-host-bitbucket';
 
 export interface RepoHostContext {
-  tenantId: string;
   subject: string;
   origin: string;
 }

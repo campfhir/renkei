@@ -54,7 +54,7 @@ function stubDb(tenant: Record<string, unknown> | undefined, domains: string[] =
 }
 
 function verifyRequest(): NextRequest {
-  return new NextRequest(`http://localhost/api/tenant/${TENANT}/verify-domain`, {
+  return new NextRequest(`http://localhost/api/verify-domain`, {
     method: 'POST',
     headers: { 'x-forwarded-for': '203.0.113.9' },
   });

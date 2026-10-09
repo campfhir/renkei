@@ -31,20 +31,17 @@ export async function getEntraDeveloperApp(
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/entra-developer',
-      tenantId,
     });
     return null;
   }
 
   const configResult = await readConnectorConfigCached(
-    tenantId,
     ENTRA_DEVELOPER_CONNECTOR,
     keyResult.val
   );
   if (!configResult.ok) {
     logger.error('Could not read entra-developer connector config', {
       component: 'connectors/entra-developer',
-      tenantId,
     });
     return null;
   }
@@ -63,7 +60,7 @@ export async function getEntraDeveloperApp(
   ) {
     logger.warn(
       'entra-developer connector config missing clientId, directoryTenantId or clientSecret',
-      { component: 'connectors/entra-developer', tenantId }
+      { component: 'connectors/entra-developer' }
     );
     return null;
   }

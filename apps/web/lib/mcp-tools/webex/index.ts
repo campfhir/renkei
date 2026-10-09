@@ -947,7 +947,7 @@ export async function registerWebexUserTools(
         const messageId = str(args.messageId);
         if (!messageId) return errText('messageId is required');
         if (!context.subject) return errText('No signed-in identity on this request.');
-        const target = { tenantId: context.tenantId, subject: context.subject };
+        const target = { subject: context.subject };
         const scopes = webexScopeFor('webex_download_attachments');
 
         const message = await webexGet(auth, scopes, `/messages/${encodeURIComponent(messageId)}`);
@@ -1030,7 +1030,6 @@ export async function registerWebexUserTools(
 
         logger.info('webex_download_attachments staged', {
           component: 'mcp/tool',
-          tenantId: context.tenantId,
           messageId,
           staged,
           attempted: selected.length,
@@ -1093,7 +1092,6 @@ export async function registerWebexUserTools(
         .insertInto('actionable_items')
         .values({
           id: randomUUID(),
-          tenant_id: context.tenantId,
           source: 'webex',
           title,
           summary: text,
@@ -1118,7 +1116,6 @@ export async function registerWebexUserTools(
 
       logger.info('webex_capture_message captured', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         messageId,
       });
       return textResult(`Captured. It is now on the card feed awaiting a human decision.`);
@@ -1178,7 +1175,6 @@ export async function registerWebexUserTools(
       await recordSentWebexMessage(context.tenantId, str(sent.id), context.accountId);
       logger.info('webex_send_message sent', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         roomId: str(sent.roomId),
       });
       // Room id included so a 1:1 send's room is addressable afterward —
@@ -1249,7 +1245,6 @@ export async function registerWebexUserTools(
           await recordSentWebexMessage(context.tenantId, viaBot.val.id, context.accountId);
           logger.info('webex_note_to_self sent', {
             component: 'mcp/tool',
-            tenantId: context.tenantId,
             roomId: viaBot.val.roomId,
             via: 'bot',
           });
@@ -1269,7 +1264,6 @@ export async function registerWebexUserTools(
         }
         logger.warn('webex_note_to_self: the bot could not deliver; posting to the solo space', {
           component: 'mcp/tool',
-          tenantId: context.tenantId,
           reason: personEmail ? 'bot send failed' : 'no personEmail on the grant',
         });
       }
@@ -1336,7 +1330,6 @@ export async function registerWebexUserTools(
       await recordSentWebexMessage(context.tenantId, str(sent.id), context.accountId);
       logger.info('webex_note_to_self sent', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         roomId,
         created,
         via: 'self',
@@ -1443,7 +1436,6 @@ export async function registerWebexUserTools(
       if (!slot.ok) return errText(slot.error);
       logger.info('webex_request_attachment_upload minted {uploadId}', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         uploadId: slot.uploadId,
       });
       return textResult(slot.instructions);
@@ -1564,7 +1556,6 @@ export async function registerWebexUserTools(
       await recordSentWebexMessage(context.tenantId, str(sent.id), context.accountId);
       logger.info('webex_send_message_confirm sent', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         roomId: str(sent.roomId),
       });
       return textResult(

@@ -38,7 +38,6 @@ import type { Result } from '@campfhir/safe-functions/types';
 
 /** What a producer hands the queue. */
 export interface QueueMessageInput {
-  tenantId: string;
   /** The producing connector or subsystem ('webex', 'knowledge', ...). */
   source: string;
   /** The message kind within the source's namespace. */
@@ -68,7 +67,6 @@ export interface QueueMessageInput {
  */
 export interface ClaimedMessage {
   id: string;
-  tenant_id: string;
   source: string;
   type: string;
   payload: Json;
@@ -114,7 +112,6 @@ export interface QueueConsumer {
 
 export interface DeadLetter {
   id: string;
-  tenant_id: string;
   source: string;
   type: string;
   payload: Json;

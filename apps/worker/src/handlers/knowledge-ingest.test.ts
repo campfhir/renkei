@@ -66,7 +66,6 @@ const { resolveLinkedWebexUserAccess: mockResolveLinkedWebexUserAccess } = jest.
 function event(type: string, payload: Record<string, unknown>): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: 'tenant-1',
     source: 'knowledge',
     type,
     // The same round-trip the real queue's jsonb column performs.
@@ -352,7 +351,7 @@ describe('enrich.item', () => {
     // The guard: id + tenant + status='suggested' — never a blanket update.
     expect(capture.wheres).toEqual([
       ['id', '=', 'item-1'],
-      ['tenant_id', '=', 'tenant-1'],
+      ['=', 'tenant-1'],
       ['status', '=', 'suggested'],
     ]);
     // Only evidence (via jsonb_set) and updated_at are written.

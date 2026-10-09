@@ -121,7 +121,6 @@ export async function PUT(
   if (redirectUri) settings.redirectUri = redirectUri;
 
   const writeResult = await setConnectorConfig(
-    tenantId,
     ATLASSIAN_ADMIN_CONNECTOR,
     { enabled, settings, secrets: { clientSecret: mergedClientSecret } },
     keyResult.val

@@ -239,7 +239,6 @@ export async function registerJsmOpsTools(
       if (!response.ok) return errText(await describeOpsFailure(response));
       logger.info('jsm_ops_acknowledge_alert', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         alertId: str(args.alertId),
       });
@@ -269,7 +268,6 @@ export async function registerJsmOpsTools(
       if (!response.ok) return errText(await describeOpsFailure(response));
       logger.info('jsm_ops_close_alert', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         alertId: str(args.alertId),
       });
@@ -544,7 +542,6 @@ export async function registerJsmOpsTools(
       const alias = isRecord(created) ? str(created.alias) : '';
       logger.info('jsm_ops_create_override', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         scheduleId,
       });
@@ -608,7 +605,6 @@ export async function registerJsmOpsTools(
       if (!response.ok) return errText(await describeOpsFailure(response));
       logger.info('jsm_ops_delete_override', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         scheduleId: str(args.scheduleId),
         alias: str(args.alias),
@@ -712,7 +708,6 @@ export async function registerJsmOpsTools(
       if (!response.ok) return errText(await describeOpsFailure(response));
       logger.info('jsm_ops_update_rotation', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         rotationId: str(args.rotationId),
         fields: Object.keys(patch),
@@ -1034,7 +1029,6 @@ export async function registerJsmOpsTools(
       const maintenance = isRecord(created) ? created : {};
       logger.info('jsm_ops_create_maintenance', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         maintenanceId: str(maintenance.id),
         teamId: teamId || undefined,
@@ -1102,7 +1096,6 @@ export async function registerJsmOpsTools(
       if (!response.ok) return errText(await describeOpsFailure(response));
       logger.info('jsm_ops_cancel_maintenance', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         maintenanceId: str(args.maintenanceId),
         teamId: teamId || undefined,

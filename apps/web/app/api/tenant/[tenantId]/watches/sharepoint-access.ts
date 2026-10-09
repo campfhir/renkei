@@ -22,7 +22,7 @@ export async function resolveSharePointAccess(
   tenantId: string,
   subject: string
 ): Promise<SharePointAccess | string> {
-  const ref = { tenantId, provider: MICROSOFT, subject };
+  const ref = { provider: MICROSOFT, subject };
   const described = await delegateGrants().describe(ref);
   if (!described.ok) {
     switch (described.err.type) {

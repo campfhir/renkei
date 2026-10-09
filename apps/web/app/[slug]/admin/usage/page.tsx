@@ -1,7 +1,6 @@
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getOrgUsageReport } from './actions';
 import { DEFAULT_PERIOD_KEY } from './window';
 import OrgUsageViewer from './usage-viewer';
@@ -23,10 +22,8 @@ export default async function OrgUsagePage({
 }) {
   const { slug } = await params;
   const query = await searchParams;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const user = typeof query.user === 'string' ? query.user : null;

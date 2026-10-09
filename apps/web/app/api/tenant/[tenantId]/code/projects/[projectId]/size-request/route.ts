@@ -17,13 +17,12 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
     db,
-    tenantId,
     session.subject,
     'chat_project',
     projectId
@@ -41,7 +40,6 @@ export async function POST(
     return jsonError(400, 'bad-request', 'Say why you need more space (up to 1000 characters)');
 
   const created = await createSizeRequest(db, {
-    tenantId,
     projectId,
     projectName: project.name,
     requestedBy: session.subject,
@@ -52,7 +50,6 @@ export async function POST(
     return jsonError(409, 'already-pending', 'A request for this project is already waiting');
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'code.size_requested',
     targetKind: 'code_project',

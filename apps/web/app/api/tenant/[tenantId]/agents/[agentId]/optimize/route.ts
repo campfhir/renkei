@@ -24,7 +24,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -50,14 +50,12 @@ export async function POST(
   const settings = await getOrgSettings(tenantId);
   if (!settings.ok) return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
   const optimizationId = await createOptimization(db, {
-    tenantId,
     ownerSubject: session.subject,
     agentId,
     request: { windowDays: settings.val.agentOptimizerWindowDays },
   });
 
   const enqueued = await agentJobsQueue().producer.enqueue({
-    tenantId,
     source: 'agents',
     type: 'optimize',
     payload: { optimizationId },
@@ -66,7 +64,6 @@ export async function POST(
   if (!enqueued.ok) {
     logger.error('could not enqueue optimization {optimizationId}: {error}', {
       component: 'api/agents-optimize',
-      tenantId,
       optimizationId,
       error: enqueued.err.message ?? 'unknown',
     });
@@ -84,7 +81,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 

@@ -40,7 +40,6 @@ async function registerTools(): Promise<Map<string, ToolHandler>> {
   } as unknown as McpServer;
 
   const context = {
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     siteUrl: 'https://example.atlassian.net',
     apiBaseUrl,

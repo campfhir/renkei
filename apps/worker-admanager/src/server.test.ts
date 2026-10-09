@@ -136,7 +136,6 @@ describe('api', () => {
   it('sends the caller’s decrypted authtoken as Authorization, with no session dance', async () => {
     script = [ok('{"data":[]}')];
     const response = await post('/v1/api', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       subject: 'auth0|alice',
       method: 'GET',
@@ -161,7 +160,6 @@ describe('api', () => {
     // filter on a display name, a group name.
     script = [ok('{"data":[]}')];
     await post('/v1/api', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       subject: 'auth0|alice',
       method: 'PATCH',
@@ -177,7 +175,6 @@ describe('api', () => {
   it('sends AuthToken/PRODUCT_NAME as headers and query params for legacy /RestAPI/* paths, never Authorization', async () => {
     script = [ok('[{"status":"1"}]')];
     const response = await post('/v1/api', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       subject: 'auth0|alice',
       method: 'POST',
@@ -200,7 +197,6 @@ describe('api', () => {
 
   it('refuses a bad path or method before dialing anything', async () => {
     const badMethod = await post('/v1/api', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       subject: 'auth0|alice',
       method: 'PUT',
@@ -209,7 +205,6 @@ describe('api', () => {
     expect(badMethod.status).toBe(400);
 
     const badPath = await post('/v1/api', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       subject: 'auth0|alice',
       method: 'GET',
@@ -221,7 +216,6 @@ describe('api', () => {
 
   it('answers not_connected for an unknown instance/subject without leaking which', async () => {
     const response = await post('/v1/api', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       subject: 'auth0|mallory',
       method: 'GET',
@@ -235,7 +229,6 @@ describe('api', () => {
   it('forwards an upstream timeout as 504', async () => {
     script = [{ failed: 'timeout', detail: 'did not answer' }];
     const response = await post('/v1/api', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       subject: 'auth0|alice',
       method: 'GET',
@@ -249,7 +242,6 @@ describe('test-connection', () => {
   it('accepts an unsaved authtoken that the server answers 200 to', async () => {
     script = [ok('{"data":[]}')];
     const response = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       credentials: { authToken: 'tok-new' },
     });
@@ -261,7 +253,6 @@ describe('test-connection', () => {
   it('answers bad_credentials on a 401/403 from the server', async () => {
     script = [ok('', { status: 401 })];
     const response = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       credentials: { authToken: 'tok-wrong' },
     });
@@ -285,7 +276,6 @@ describe('probe', () => {
   it('probes an unsaved baseUrl before anything is stored', async () => {
     script = [ok('', { status: 401 })];
     const response = await post('/v1/probe', {
-      tenantId: 'tenant-1',
       unsaved: { baseUrl: 'https://new-admp.example:8080', tlsVerify: true },
     });
     expect(response.status).toBe(200);

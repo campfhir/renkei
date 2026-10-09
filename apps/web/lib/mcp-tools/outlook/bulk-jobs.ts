@@ -243,7 +243,6 @@ export function registerBulkJobTools(
         .insertInto('mail_bulk_jobs')
         .values({
           id: jobId,
-          tenant_id: context.tenantId,
           subject: context.subject,
           account_id: access.accountId,
           action,
@@ -253,7 +252,6 @@ export function registerBulkJobTools(
         .execute();
 
       const enqueued = await webhookEventsQueue().producer.enqueue({
-        tenantId: context.tenantId,
         source: 'mailjobs',
         type: 'bulk-action',
         payload: { jobId },
@@ -272,7 +270,6 @@ export function registerBulkJobTools(
 
       logger.info('outlook_start_bulk_mail_job accepted {jobId}', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         jobId,
         action,
       });
@@ -326,7 +323,6 @@ export function registerBulkJobTools(
         .selectFrom('mail_bulk_jobs')
         .selectAll()
         .where('id', '=', jobId)
-        .where('tenant_id', '=', context.tenantId)
         .where('subject', '=', context.subject)
         .executeTakeFirst();
       if (!job) return errText('No such job.');

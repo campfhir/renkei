@@ -188,13 +188,11 @@ export function createMailBulkJobHandler(): EventHandler {
           .selectFrom('mail_bulk_jobs')
           .selectAll()
           .where('id', '=', jobId)
-          .where('tenant_id', '=', tenantId)
           .executeTakeFirst()
       : undefined;
     if (!job) {
       logger.warn('mail bulk job {jobId} not found; dropping', {
         component: COMPONENT,
-        tenantId,
         jobId: jobId || '(missing)',
       });
       return;
@@ -367,7 +365,6 @@ export function createMailBulkJobHandler(): EventHandler {
         .execute();
       logger.info('mail bulk job {jobId} finished: {succeeded} ok, {failed} failed', {
         component: COMPONENT,
-        tenantId,
         jobId: job.id,
         action,
         succeeded,

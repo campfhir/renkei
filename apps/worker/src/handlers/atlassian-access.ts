@@ -40,7 +40,7 @@ export async function resolveAtlassianAccess(
   accountId: string,
   provider: string
 ): Promise<AtlassianAccess> {
-  const grant = { tenantId, provider, accountId };
+  const grant = { provider, accountId };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) {
     throw new Error(

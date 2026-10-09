@@ -28,10 +28,8 @@ function sizeOf(bytes: number): string {
 }
 
 export default function ArtifactsMenu({
-  tenantId,
   artifacts,
 }: {
-  tenantId: string;
   artifacts: AttachmentView[];
 }) {
   const [open, setOpen] = useState(false);

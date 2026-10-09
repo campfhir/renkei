@@ -100,7 +100,6 @@ export async function createOptimization(
   const row = await db
     .insertInto('agent_optimizations')
     .values({
-      tenant_id: params.tenantId,
       owner_subject: params.ownerSubject,
       agent_id: params.agentId,
       status: 'queued',
@@ -122,7 +121,6 @@ export async function getOptimization(
   const row = await db
     .selectFrom('agent_optimizations')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', optimizationId)
     .executeTakeFirst();
@@ -140,7 +138,6 @@ export async function latestOptimization(
   const row = await db
     .selectFrom('agent_optimizations')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId)
     .orderBy('created_at', 'desc')
@@ -158,7 +155,6 @@ export async function inFlightOptimization(
   const row = await db
     .selectFrom('agent_optimizations')
     .select('id')
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('status', 'in', ['queued', 'running'])
     .orderBy('created_at', 'desc')
@@ -237,7 +233,6 @@ export async function markOptimizationApplied(
       applied_at: new Date(),
       updated_at: new Date(),
     })
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', optimizationId)
     .execute();

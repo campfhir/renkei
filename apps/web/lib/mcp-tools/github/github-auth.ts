@@ -44,7 +44,7 @@ export function oauthGitHubAuth(context: MCPToolContext): GitHubAuth {
       const access = await resolveGitHubAccess(context);
       if (typeof access === 'string') return authFailure(access, 401);
       const result = await githubRequest(
-        { tenantId: context.tenantId, subject: context.subject },
+        { subject: context.subject },
         access,
         pathAndQuery,
         init

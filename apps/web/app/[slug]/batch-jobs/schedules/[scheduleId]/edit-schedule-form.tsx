@@ -33,7 +33,6 @@ export interface SourceValue {
 
 export default function EditScheduleForm({
   slug,
-  tenantId,
   scheduleId,
   initialName,
   initialSource,
@@ -43,7 +42,6 @@ export default function EditScheduleForm({
   calendars,
 }: {
   slug: string;
-  tenantId: string;
   scheduleId: string;
   initialName: string;
   initialSource: SourceValue;
@@ -94,7 +92,7 @@ export default function EditScheduleForm({
         ? { strategy: 'whole-file' as const }
         : { strategy: 'filename-pattern' as const, pattern };
     const submitError = await sendJson(
-      `/api/tenant/${tenantId}/batch-job-schedules/${scheduleId}`,
+      `/api/batch-job-schedules/${scheduleId}`,
       'PUT',
       {
         name: name.trim(),
@@ -112,7 +110,7 @@ export default function EditScheduleForm({
       setError(submitError);
       return;
     }
-    router.push(`/${slug}/batch-jobs/schedules`);
+    router.push(`/batch-jobs/schedules`);
     router.refresh();
   }
 
@@ -127,7 +125,7 @@ export default function EditScheduleForm({
     setDeleting(true);
     setError(null);
     const deleteError = await sendJson(
-      `/api/tenant/${tenantId}/batch-job-schedules/${scheduleId}`,
+      `/api/batch-job-schedules/${scheduleId}`,
       'DELETE'
     );
     setDeleting(false);
@@ -135,7 +133,7 @@ export default function EditScheduleForm({
       setError(deleteError);
       return;
     }
-    router.push(`/${slug}/batch-jobs/schedules`);
+    router.push(`/batch-jobs/schedules`);
     router.refresh();
   }
 

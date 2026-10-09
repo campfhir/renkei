@@ -17,13 +17,11 @@ import { rerunAgentRun } from '@/lib/agents/invoke-client';
 import ConfirmRunModal from '../../../confirm-run-modal';
 
 export default function RerunButton({
-  tenantId,
   slug,
   agentId,
   runId,
   agentName,
 }: {
-  tenantId: string;
   slug: string;
   agentId: string;
   runId: string;
@@ -49,7 +47,7 @@ export default function RerunButton({
         return;
       case 'started':
         setConfirmMessage(null);
-        if (result.runId) router.push(`/${slug}/agents/${agentId}/runs/${result.runId}`);
+        if (result.runId) router.push(`/agents/${agentId}/runs/${result.runId}`);
     }
   };
 

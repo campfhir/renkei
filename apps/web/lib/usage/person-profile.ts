@@ -41,7 +41,6 @@ export async function getPersonProfile(
     db
       .selectFrom('identities')
       .select(['subject', 'display_name', 'email', 'idp_groups'])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .executeTakeFirst(),
     // A grant's display name is the fallback name for someone who never
@@ -49,7 +48,6 @@ export async function getPersonProfile(
     db
       .selectFrom('provider_grants')
       .select('display_name')
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .orderBy('provider')
       .executeTakeFirst(),
@@ -57,7 +55,6 @@ export async function getPersonProfile(
     db
       .selectFrom('sessions')
       .select(sql<Date | null>`max(last_used_at)`.as('last_used_at'))
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .executeTakeFirst(),
   ]);

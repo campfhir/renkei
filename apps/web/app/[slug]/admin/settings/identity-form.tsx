@@ -46,7 +46,7 @@ export default function IdentityForm({
     setNotice(null);
     setError(null);
     try {
-      const response = await fetch(`/api/admin/${slug}/oidc-claims`, {
+      const response = await fetch(`/api/admin/oidc-claims`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),

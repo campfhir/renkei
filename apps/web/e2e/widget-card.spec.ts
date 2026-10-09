@@ -141,7 +141,6 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
     [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.chatId,
     ownerSubject: E2E_SUBJECT,
@@ -236,7 +235,6 @@ async function seedTwoCardChat(
     [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.chatId,
     ownerSubject: E2E_SUBJECT,
@@ -400,7 +398,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
       });
     });
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
     // The card, not a folded raw-JSON block: the widget iframe with its own
@@ -482,7 +480,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
     const freshContext = await page.context().browser()!.newContext();
     try {
       const freshPage = await freshContext.newPage();
-      await freshPage.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+      await freshPage.goto(`/chat/${ids.chatId}`);
       await expect(freshPage.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
       const freshFrame = freshPage.frameLocator('iframe[title="Preview card"]');
       await expect(freshFrame.locator('.done-headline')).toHaveText('Created issue OPS-99.', COLD);
@@ -511,7 +509,7 @@ test('cancelling the card is a decision too: the model replies to it', async ({
       await route.fulfill({ status: 500, json: { error: 'not expected' } });
     });
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
     const frame = page.frameLocator('iframe[title="Preview card"]');
     const cancelButton = frame.getByRole('button', { name: 'Cancel' });
@@ -563,7 +561,7 @@ test('a stale card refuses to re-run a confirm tool another device already decid
       if (req.url().includes('/widget/tool-call')) toolCallRequests.push(req.postDataJSON());
     });
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
     const frame = page.frameLocator('iframe[title="Preview card"]');
     const confirmButton = frame.getByRole('button', { name: 'Create' });
@@ -613,7 +611,7 @@ test('the card still renders at phone width', async ({ page }, testInfo) => {
   try {
     await seedChat(client, ids, randomUUID());
     await page.setViewportSize(MOBILE_VIEWPORT);
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
     const frame = page.frameLocator('iframe[title="Preview card"]');
@@ -657,7 +655,7 @@ test('two cards from one reply: deciding both opens exactly one turn, informed b
       });
     });
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
     const iframes = page.locator('iframe[title="Preview card"]');

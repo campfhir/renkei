@@ -39,7 +39,7 @@ export default function AdminRunLive({
   useEffect(() => {
     if (isRunSettled(initialRun.status)) return;
 
-    const source = new EventSource(`/api/admin/${slug}/agents/${agentId}/runs/${runId}/stream`);
+    const source = new EventSource(`/api/admin/agents/${agentId}/runs/${runId}/stream`);
     source.addEventListener('run', (event: MessageEvent<string>) => {
       try {
         const parsed: { run: RunDetail } = JSON.parse(event.data);
@@ -55,7 +55,7 @@ export default function AdminRunLive({
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <BackLink href={`/${slug}/admin/agents/${agentId}/runs`} label="Runs" />
+        <BackLink href={`/admin/agents/${agentId}/runs`} label="Runs" />
         <h1 className="text-xl font-bold">Run</h1>
         <StatusPill status={run.status} />
         <span className="text-sm text-gray-500">

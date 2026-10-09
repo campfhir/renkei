@@ -100,7 +100,6 @@ function prefs(
 
 function edit(): void {
   notifyAgentEdited({
-    tenantId: TENANT_ID,
     ownerSubject: OWNER_SUBJECT,
     actorSubject: 'editor-1',
     agentId: AGENT_ID,

@@ -22,11 +22,9 @@ import { WAVE_ACCENTS } from '../chat/_components/voice-wave';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export default function VoiceForm({
-  tenantId,
   initial,
   defaults,
 }: {
-  tenantId: string;
   initial: VoicePrefs;
   defaults: { voice: string; locale: string };
 }) {

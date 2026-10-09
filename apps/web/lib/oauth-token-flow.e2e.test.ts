@@ -8,7 +8,6 @@ import { encrypt, decrypt, parseEncryptionKey } from '@renkei/crypto';
 
 /** A `provider_grants` row as the production writer stores it. */
 interface GrantRow {
-  tenant_id: string;
   provider: string;
   provider_account_id: string;
   client_id: string;
@@ -79,7 +78,6 @@ describe('OAuth token flow (E2E with mock DB)', () => {
     const encryptedRefreshToken = encrypt(grant.refreshToken, encryptionKey);
 
     await db.insert('provider_grants', {
-      tenant_id: tenantId,
       provider: 'atlassian',
       provider_account_id: accountId,
       client_id: grant.atlassianClientId,
@@ -216,7 +214,6 @@ describe('OAuth token flow (E2E with mock DB)', () => {
         encrypted_refresh_token: encryptedRefreshToken,
         expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
       },
-      tenantId,
       accountId
     );
 

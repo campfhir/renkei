@@ -103,7 +103,7 @@ test.describe('code project templates', () => {
           [E2E_TENANT_ID, template.name, template.description, template.instructions]
         );
       }
-      await client.query(`DELETE FROM code_project_templates WHERE tenant_id = $1 AND name = $2`, [
+      await client.query(`DELETE FROM code_project_templates WHERE name = $2`, [
         E2E_TENANT_ID,
         customTemplateName,
       ]);
@@ -129,7 +129,7 @@ test.describe('code project templates', () => {
 
     // ── The new-project form: the seeded templates offered, nothing
     //    selected yet, the standing developer's brief already filled in ──
-    await page.goto(`/${E2E_SLUG}/code/new`);
+    await page.goto(`/code/new`);
     await expect(page.getByRole('heading', { level: 1, name: 'New code project' })).toBeVisible();
     const templatePicker = page.getByRole('combobox', { name: 'Start from a template' });
     await expect(templatePicker).toBeVisible();
@@ -145,7 +145,7 @@ test.describe('code project templates', () => {
 
     // ── The admin catalog: the seeded rows, no special "built-in" marker —
     //    they are ordinary rows an operator can rename, rewrite or delete ──
-    await page.goto(`/${E2E_SLUG}/admin/project-templates`);
+    await page.goto(`/admin/project-templates`);
     await expect(page.getByRole('heading', { level: 1, name: 'Project templates' })).toBeVisible();
     await expect(page.getByText('Generic developer brief')).toBeVisible();
     await expect(page.getByText('Microservice / API service')).toBeVisible();
@@ -175,7 +175,7 @@ test.describe('code project templates', () => {
     await shot('project-templates-admin-list-with-custom.png');
 
     // ── The org's own template now shows up in the new-project picker too ──
-    await page.goto(`/${E2E_SLUG}/code/new`);
+    await page.goto(`/code/new`);
     await expect(page.getByRole('combobox', { name: 'Start from a template' })).toContainText(
       customTemplateName
     );

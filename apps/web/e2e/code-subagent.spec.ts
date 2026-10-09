@@ -99,7 +99,6 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
       [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.chatTitle]
     );
     const chatKey = await keyFor(client, {
-      tenantId: E2E_TENANT_ID,
       kind: 'chat',
       resourceId: ids.chatId,
       ownerSubject: E2E_SUBJECT,
@@ -274,7 +273,7 @@ test.describe('code chat sub-agent model', () => {
       });
     const main = page.getByRole('main');
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(main.getByText('Why does the invoice job retry forever?')).toBeVisible();
 
     // ── The sub-agent's card, folded: the model it was sent on, beside

@@ -63,7 +63,6 @@ export async function listCleanerScripts(
       dbResult.val
         .selectFrom('email_cleaner_scripts')
         .select(['id', 'name', 'script', 'compiled', 'enabled', 'applies_to', 'last_error'])
-        .where('tenant_id', '=', tenantId)
         .orderBy('created_at', 'asc')
         .execute(),
     'DB_ERROR' as const
@@ -135,7 +134,6 @@ export async function upsertCleanerScript(
           last_error: null,
           updated_at: sql`now()`,
         })
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', input.id)
         .execute();
     } else {
@@ -143,7 +141,6 @@ export async function upsertCleanerScript(
         .insertInto('email_cleaner_scripts')
         .values({
           id,
-          tenant_id: tenantId,
           name: input.name,
           script: input.script,
           compiled: input.compiled ?? null,
@@ -175,7 +172,6 @@ export async function deleteCleanerScript(
     () =>
       dbResult.val
         .deleteFrom('email_cleaner_scripts')
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', id)
         .execute(),
     'DB_ERROR' as const
@@ -197,7 +193,6 @@ export async function recordCleanerScriptError(
       dbResult.val
         .updateTable('email_cleaner_scripts')
         .set({ last_error: error, updated_at: sql`now()` })
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', id)
         .execute(),
     'DB_ERROR' as const

@@ -11,7 +11,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { parseCalendarPayload } from '@/lib/agents/calendar-payload';
 
 export async function GET(
@@ -19,8 +18,6 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -31,7 +28,6 @@ export async function GET(
   const rows = await dbResult.val
     .selectFrom('schedule_calendars')
     .select(['id', 'name', 'dates', 'updated_at'])
-    .where('tenant_id', '=', tenant.id)
     .orderBy('name')
     .execute();
 
@@ -50,8 +46,6 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -69,7 +63,6 @@ export async function POST(
       .insertInto('schedule_calendars')
       .values({
         id,
-        tenant_id: tenant.id,
         name: parsed.name,
         dates: JSON.stringify(parsed.dates),
       })

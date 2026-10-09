@@ -84,7 +84,6 @@ interface RunDraft {
 
 export default function PipelinesPage({
   slug,
-  tenantId,
   projectId,
   projectName,
   repoFullName,
@@ -92,7 +91,6 @@ export default function PipelinesPage({
   canEdit,
 }: {
   slug: string;
-  tenantId: string;
   projectId: string;
   projectName: string;
   repoFullName: string;
@@ -100,7 +98,7 @@ export default function PipelinesPage({
   branch: string;
   canEdit: boolean;
 }) {
-  const url = `/api/tenant/${tenantId}/code/projects/${projectId}/pipelines`;
+  const url = `/api/code/projects/${projectId}/pipelines`;
   const [setup, setSetup] = useState<Setup | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -200,7 +198,7 @@ export default function PipelinesPage({
       templates
         ? Promise.resolve({ data: { templates }, error: null })
         : getJson<{ templates: PipelineTemplate[] }>(
-            `/api/tenant/${tenantId}/code/pipeline-templates?provider=atlassian-bitbucket`
+            `/api/code/pipeline-templates?provider=atlassian-bitbucket`
           ),
     ]);
     setBusy(false);
@@ -265,7 +263,7 @@ export default function PipelinesPage({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-        <BackLink href={`/${slug}/code/${projectId}`} label={projectName} />
+        <BackLink href={`/code/${projectId}`} label={projectName} />
         <div className="min-w-0 flex-1">
           <h1 className="flex items-center gap-2 text-sm font-semibold">
             <span className="truncate">Pipelines</span>

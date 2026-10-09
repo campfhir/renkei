@@ -36,7 +36,7 @@ interface WebSearchConfig {
  * approximate location and domain allow/block lists.
  */
 export function WebSearchForm({ slug }: { slug: string }) {
-  const url = `/api/admin/${slug}/connectors/web-search`;
+  const url = `/api/admin/connectors/web-search`;
   const [state, reload] = useConnectorConfig<WebSearchConfig>(url);
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');

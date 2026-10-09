@@ -78,7 +78,6 @@ export async function revokeGrantRoute(
   const { db, session } = ready.context;
   const revoked = await revokeResourceGrant(
     db,
-    tenantId,
     session.subject,
     kind,
     resourceId,

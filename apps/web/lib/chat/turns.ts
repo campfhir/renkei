@@ -76,7 +76,6 @@ export function parseTurnRunnerContext(raw: unknown): TurnRunnerContext | null {
 
 export interface TurnRow {
   id: string;
-  tenantId: string;
   chatId: string;
   status: TurnStatus;
   kind: TurnKind;
@@ -106,7 +105,6 @@ export interface TurnRow {
 
 const TURN_COLUMNS = [
   'id',
-  'tenant_id',
   'chat_id',
   'status',
   'kind',
@@ -148,7 +146,6 @@ export function isTurnSettled(status: TurnStatus): boolean {
 
 function rowOf(raw: {
   id: string;
-  tenant_id: string;
   chat_id: string;
   status: string;
   kind: string;
@@ -171,7 +168,6 @@ function rowOf(raw: {
 }): TurnRow {
   return {
     id: raw.id,
-    tenantId: raw.tenant_id,
     chatId: raw.chat_id,
     status: turnStatusOf(raw.status),
     kind: turnKindOf(raw.kind),
@@ -224,7 +220,6 @@ function isUniqueViolation(error: unknown): boolean {
 export async function createTurn(
   db: Kysely<DB> | Transaction<DB>,
   input: {
-    tenantId: string;
     chatId: string;
     llmModelId: string | null;
     thinkingBudget: number | null;
@@ -237,7 +232,6 @@ export async function createTurn(
     const inserted = await db
       .insertInto('chat_turns')
       .values({
-        tenant_id: input.tenantId,
         chat_id: input.chatId,
         status: 'running',
         kind: input.kind ?? 'reply',
@@ -268,7 +262,6 @@ export async function getTurn(
   const raw = await db
     .selectFrom('chat_turns')
     .select(TURN_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .where('id', '=', turnId)
     .executeTakeFirst();
@@ -467,7 +460,6 @@ export async function requestTurnCancel(
   const result = await db
     .updateTable('chat_turns')
     .set({ cancel_requested_at: sql<Date>`NOW()` })
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .where('id', '=', turnId)
     .where('status', '=', 'running')
@@ -512,7 +504,6 @@ export async function decideToolPermission(
         decidedAt: new Date().toISOString(),
       })}::jsonb`,
     })
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .where('id', '=', turnId)
     .where('status', '=', 'running')

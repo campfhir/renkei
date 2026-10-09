@@ -43,7 +43,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -55,7 +54,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -116,7 +114,6 @@ export async function POST(
   if (dotenv.length > DOTENV_MAX_CHARS) return jsonError(413, 'invalid', 'The .env is too large.');
 
   const projectId = await createProject(db, {
-    tenantId,
     ownerSubject: session.subject,
     name,
     description: description || null,
@@ -136,7 +133,6 @@ export async function POST(
     problems.push(...env.val.problems);
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'code.project.created',
     targetKind: 'code_project',

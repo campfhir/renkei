@@ -88,7 +88,6 @@ export async function suggestSanitizerRules(
   const corrected = await db
     .selectFrom('email_classification_log')
     .select(['excerpt', 'category', 'override_category'])
-    .where('tenant_id', '=', tenantId)
     .where('override_category', 'is not', null)
     .orderBy('overridden_at', 'desc')
     .limit(MAX_EXAMPLES)
@@ -98,7 +97,6 @@ export async function suggestSanitizerRules(
       ? await db
           .selectFrom('email_classification_log')
           .select(['excerpt', 'category'])
-          .where('tenant_id', '=', tenantId)
           .where('needs_review', '=', true)
           .where('override_category', 'is', null)
           .orderBy('created_at', 'desc')
@@ -125,7 +123,6 @@ export async function suggestSanitizerRules(
   const existing = await db
     .selectFrom('email_classifier_rules')
     .select(['match_type', 'match_value', 'category'])
-    .where('tenant_id', '=', tenantId)
     .where('enabled', '=', true)
     .execute();
   const existingKeys = new Set(
@@ -167,7 +164,6 @@ export async function suggestSanitizerRules(
   if (!completion.ok) {
     logger.warn('rule suggestion failed: {kind} {message}', {
       component: 'email-sanitizer/suggest',
-      tenantId,
       kind: completion.err.type,
       message: completion.err.message?.slice(0, 300) ?? '',
     });

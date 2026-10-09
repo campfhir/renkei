@@ -110,7 +110,6 @@ export async function saveAgent(
     const result = await createAgent(db, tenantId, subject, savedInput);
     if (result === 'NAME_TAKEN') return nameTaken;
     recordAuditEvent({
-      tenantId,
       actorSubject: subject,
       action: 'agent.created',
       targetKind: 'agent',
@@ -193,7 +192,6 @@ export async function saveAgent(
   // does. A save that flips enabled AND rewrites steps records both.
   if (existing.enabled !== normalized.enabled) {
     recordAuditEvent({
-      tenantId,
       actorSubject: subject,
       action: normalized.enabled ? 'agent.enabled' : 'agent.disabled',
       targetKind: 'agent',
@@ -203,7 +201,6 @@ export async function saveAgent(
   }
   if (describedChanged) {
     recordAuditEvent({
-      tenantId,
       actorSubject: subject,
       action: 'agent.updated',
       targetKind: 'agent',
@@ -213,7 +210,6 @@ export async function saveAgent(
   }
   if (owner !== subject && (describedChanged || existing.enabled !== normalized.enabled)) {
     notifyAgentEdited({
-      tenantId,
       ownerSubject: owner,
       actorSubject: subject,
       agentId,

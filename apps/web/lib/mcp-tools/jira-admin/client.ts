@@ -58,7 +58,7 @@ export async function resolveJiraAdminAccess(
 ): Promise<JiraAdminAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
 
-  const ref = { tenantId: context.tenantId, provider: ATLASSIAN_ADMIN, subject: context.subject };
+  const ref = { provider: ATLASSIAN_ADMIN, subject: context.subject };
   const described = await delegateGrants().describe(ref);
   if (!described.ok) {
     if (described.err.type === 'NO_GRANT') {
@@ -126,7 +126,6 @@ function truncateForLog(text: string): string {
 }
 
 interface JiraAdminLogScope {
-  tenantId: string;
   subject?: string;
 }
 
@@ -216,7 +215,6 @@ async function jiraAdminRequest(
     const timedOut = isTimeoutError(error);
     logger.warn('Jira admin API unreachable', {
       component: 'jira-admin/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       method,
       path: pathAndQuery,
@@ -241,7 +239,6 @@ async function jiraAdminRequest(
     // not a Jira status.
     logger.warn('Delegate refused the Jira admin call', {
       component: 'jira-admin/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       method,
       path: pathAndQuery,
@@ -259,7 +256,6 @@ async function jiraAdminRequest(
   if (!response.ok) {
     logger.warn('Jira admin API non-OK response', {
       component: 'jira-admin/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       method,
       path: pathAndQuery,

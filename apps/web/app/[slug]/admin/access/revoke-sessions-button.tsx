@@ -34,7 +34,7 @@ export default function RevokeSessionsButton({
     setOutcome(null);
     try {
       const response = await fetch(
-        `/api/admin/${slug}/access/${encodeURIComponent(subject)}/revoke-sessions`,
+        `/api/admin/access/${encodeURIComponent(subject)}/revoke-sessions`,
         { method: 'POST' }
       );
       const data: {

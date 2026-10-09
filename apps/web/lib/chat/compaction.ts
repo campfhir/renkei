@@ -106,7 +106,6 @@ export async function latestChatSummary(
   const row = await db
     .selectFrom('chat_summaries')
     .select(['id', 'content', 'through_seq', 'folded_count', 'created_by', 'created_at'])
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .orderBy('created_at', 'desc')
     .limit(1)
@@ -302,7 +301,6 @@ export interface CompactProgress {
 }
 
 export interface CompactChatInput {
-  tenantId: string;
   chatId: string;
   llm: ResolvedLlm;
   createdBy: ChatSummaryCreator;
@@ -391,7 +389,6 @@ export async function compactChat(
   const inserted = await db
     .insertInto('chat_summaries')
     .values({
-      tenant_id: input.tenantId,
       chat_id: input.chatId,
       content: sealed.val,
       through_seq: throughSeq,
@@ -437,7 +434,6 @@ export interface StartedCompactionTurn {
 export async function startCompactionTurn(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     session: { subject: string; roles: string[] };
     chatId: string;
     defer?: (task: () => Promise<void>) => void;
@@ -466,7 +462,6 @@ export async function startCompactionTurn(
   const llm = llmResult.val;
 
   const turn = await createTurn(db, {
-    tenantId: input.tenantId,
     chatId: chat.id,
     llmModelId: llm.modelConfigId,
     thinkingBudget: null,
@@ -483,7 +478,6 @@ export async function startCompactionTurn(
   const turnId = turn.val;
   defer(() =>
     runCompactionTurn(db, {
-      tenantId: input.tenantId,
       chatId: chat.id,
       turnId,
       llm,
@@ -496,7 +490,6 @@ export async function startCompactionTurn(
 async function runCompactionTurn(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     chatId: string;
     turnId: string;
     llm: ResolvedLlm;
@@ -508,7 +501,6 @@ async function runCompactionTurn(
   let error: string | null = null;
   try {
     await compactChat(db, {
-      tenantId: input.tenantId,
       chatId: input.chatId,
       llm: input.llm,
       createdBy: 'user',
@@ -521,7 +513,6 @@ async function runCompactionTurn(
     error = caught instanceof Error ? caught.message : String(caught);
     logger.warn('chat compaction turn failed: {message}', {
       component: 'chat/compaction',
-      tenantId: input.tenantId,
       chatId: input.chatId,
       turnId: input.turnId,
       message: error,

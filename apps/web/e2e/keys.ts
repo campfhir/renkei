@@ -217,7 +217,7 @@ export async function enrollForE2E(
     // worker) under these same keys: nothing to write, and above all
     // nothing to delete — their wrappings and delegations stand.
     const current = await client.query<{ public_key: string | null; mode: string }>(
-      `SELECT public_key, mode FROM user_encryption_keys WHERE tenant_id = $1 AND subject = $2`,
+      `SELECT public_key, mode FROM user_encryption_keys WHERE subject = $2`,
       [tenantId, subject]
     );
     const row = current.rows[0];
@@ -237,7 +237,6 @@ export async function enrollForE2E(
          wrapped_automation_key = EXCLUDED.wrapped_automation_key, enrolled_at = NOW(),
          verifier = NULL, sealed_kek = NULL, unlocked_until = NULL`,
       [
-        tenantId,
         subject,
         Buffer.alloc(32).toString('base64'),
         keys.publicKey.toString('base64'),
@@ -248,12 +247,10 @@ export async function enrollForE2E(
     // Anything the person held under an earlier key (a rotation in
     // keys.spec.ts, a pre-derivation run) is unopenable under these; a
     // spec that seeds reseeds.
-    await client.query(`DELETE FROM resource_key_grants WHERE tenant_id = $1 AND holder = $2`, [
-      tenantId,
+    await client.query(`DELETE FROM resource_key_grants WHERE holder = $2`, [
       subject,
     ]);
-    await client.query(`DELETE FROM key_delegations WHERE tenant_id = $1 AND subject = $2`, [
-      tenantId,
+    await client.query(`DELETE FROM key_delegations WHERE subject = $2`, [
       subject,
     ]);
     enrolled.set(cacheKey, keys);
@@ -265,7 +262,7 @@ export async function enrollForE2E(
     );
   }
   const sessions = await client.query<{ id: string; expires_at: Date }>(
-    `SELECT id, expires_at FROM sessions WHERE tenant_id = $1 AND subject = $2`,
+    `SELECT id, expires_at FROM sessions WHERE subject = $2`,
     [tenantId, subject]
   );
   for (const instance of instances) {
@@ -278,7 +275,6 @@ export async function enrollForE2E(
             SELECT 1 FROM key_delegations
              WHERE instance_id = $3::uuid AND session_id = $4::uuid AND scope = 'session')`,
         [
-          tenantId,
           subject,
           instance.id,
           session.id,
@@ -294,7 +290,7 @@ export async function enrollForE2E(
          SELECT $1::uuid, $2::text, $3::uuid, 'automation', NULL, $4::text, NOW() + interval '30 days'
           WHERE NOT EXISTS (
             SELECT 1 FROM key_delegations
-             WHERE instance_id = $3::uuid AND tenant_id = $1::uuid AND subject = $2::text
+             WHERE instance_id = $3::uuid::uuid AND subject = $2::text
                AND scope = 'automation')`,
         [tenantId, subject, instance.id, sealToPublicKey(instance.publicKey, keys.automationKey)]
       );
@@ -318,7 +314,6 @@ export interface SeededKey {
 export async function keyFor(
   client: Client,
   input: {
-    tenantId: string;
     kind: 'chat' | 'chat_project';
     resourceId: string;
     ownerSubject: string;

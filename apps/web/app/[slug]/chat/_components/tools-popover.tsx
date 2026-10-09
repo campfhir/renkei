@@ -28,7 +28,6 @@ function connectorLabel(key: string): string {
 }
 
 export default function ToolsPopover({
-  tenantId,
   selected,
   onChange,
   context = 'chat',
@@ -38,7 +37,6 @@ export default function ToolsPopover({
   saveDefault,
   projectDefault = null,
 }: {
-  tenantId: string;
   /** null = the core set. */
   selected: string[] | null;
   onChange: (next: string[] | null) => void;
@@ -209,7 +207,7 @@ export default function ToolsPopover({
                 {' — '}
                 {slug ? (
                   <a
-                    href={`/${slug}/connectors`}
+                    href={`/connectors`}
                     className="text-blue-600 hover:underline dark:text-blue-400"
                   >
                     not linked yet
@@ -272,7 +270,7 @@ export default function ToolsPopover({
               chats outside this project lives in{' '}
               {slug ? (
                 <a
-                  href={`/${slug}/preferences`}
+                  href={`/preferences`}
                   className="text-blue-600 hover:underline dark:text-blue-400"
                 >
                   Preferences

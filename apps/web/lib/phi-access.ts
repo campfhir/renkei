@@ -32,7 +32,6 @@ export type PhiConnector = 'mirth' | 'onbase' | 'fileshare';
 export type PhiAction = 'read' | 'search' | 'export' | 'download';
 
 export interface PhiAccessInput {
-  tenantId: string;
   /** The person whose access this is — a run's OWNER when an agent called. */
   subject: string;
   /** The acting agent, when one did the calling; the run comes from the call's context. */
@@ -60,7 +59,6 @@ export function phiActorOf(
 ): { tenantId: string; subject: string; agentId: string | null } | null {
   if (!context.subject) return null;
   return {
-    tenantId: context.tenantId,
     subject: context.subject,
     agentId: context.agent?.agentId ?? null,
   };
@@ -85,7 +83,6 @@ export async function recordPhiAccess(
   if (!dbResult.ok) {
     logger.warn('PHI access not recorded: database unavailable', {
       component: 'phi-access',
-      tenantId: input.tenantId,
       tool: input.toolName,
     });
     return false;
@@ -97,7 +94,6 @@ export async function recordPhiAccess(
     await dbResult.val
       .insertInto('phi_access_events')
       .values({
-        tenant_id: input.tenantId,
         subject: input.subject,
         agent_id: input.agentId ?? null,
         run_id: runId,
@@ -115,7 +111,6 @@ export async function recordPhiAccess(
   } catch (error) {
     logger.warn('PHI access not recorded: {error}', {
       component: 'phi-access',
-      tenantId: input.tenantId,
       subject: input.subject,
       tool: input.toolName,
       error: error instanceof Error ? error.message : String(error),
@@ -149,7 +144,6 @@ export async function listPhiAccessEvents(
   let query = db
     .selectFrom('phi_access_events')
     .selectAll()
-    .where('tenant_id', '=', tenantId)
     .orderBy('created_at', 'desc')
     .limit(Math.min(Math.max(options.limit ?? 100, 1), 500));
   if (options.subject) query = query.where('subject', '=', options.subject);

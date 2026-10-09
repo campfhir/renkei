@@ -15,7 +15,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; chatId: string; turnId: string }> }
 ): Promise<Response> {
-  const { tenantId, chatId, turnId } = await params;
+  const { chatId, turnId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;

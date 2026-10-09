@@ -1,6 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveProjectAccess } from '@/lib/chat/access';
@@ -27,10 +26,8 @@ export default async function CodeProjectPage({
 }) {
   const { slug, projectId } = await params;
   const { envProblems } = await searchParams;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/${slug}/code/${projectId}`));
+  if (!session) redirect(signInUrl(tenant.id, `/code/${projectId}`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;

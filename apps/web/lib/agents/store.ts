@@ -177,7 +177,6 @@ async function triggersOf(
       'last_fired_at',
       'last_error',
     ])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .orderBy('created_at')
     .execute();
@@ -271,7 +270,6 @@ export async function listAgents(
   const rows = await db
     .selectFrom('agents')
     .select(AGENT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .orderBy('created_at', 'desc')
     .execute();
@@ -295,7 +293,6 @@ export async function getAgent(
   const row = await db
     .selectFrom('agents')
     .select(AGENT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', agentId)
     .executeTakeFirst();
@@ -318,7 +315,6 @@ export async function getAgentWithOwner(
   const row = await db
     .selectFrom('agents')
     .select([...AGENT_COLUMNS, 'owner_subject'])
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', agentId)
     .executeTakeFirst();
   if (!row) return null;
@@ -427,7 +423,6 @@ async function reconcileTriggers(
   const existingRows = await db
     .selectFrom('agent_triggers')
     .select(['id', 'kind', 'config', 'next_run_at'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .execute();
   const existingById = new Map(existingRows.map((row) => [row.id, row]));
@@ -443,7 +438,6 @@ async function reconcileTriggers(
     const rows = await db
       .selectFrom('schedule_calendars')
       .select(['id', 'dates'])
-      .where('tenant_id', '=', tenantId)
       .execute();
     for (const row of rows) {
       calendars.set(row.id, Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : []);
@@ -498,7 +492,6 @@ async function reconcileTriggers(
           updated_at: sql`NOW()`,
         })
         .where('id', '=', match.id)
-        .where('tenant_id', '=', tenantId)
         .execute();
     } else {
       const id = randomUUID();
@@ -507,7 +500,6 @@ async function reconcileTriggers(
         .insertInto('agent_triggers')
         .values({
           id,
-          tenant_id: tenantId,
           agent_id: agentId,
           kind: payload.draft.kind,
           event_source: fields.event_source,
@@ -525,7 +517,6 @@ async function reconcileTriggers(
   if (removed.length > 0) {
     await db
       .deleteFrom('agent_triggers')
-      .where('tenant_id', '=', tenantId)
       .where('id', 'in', removed)
       .execute();
   }
@@ -556,7 +547,6 @@ export async function createAgent(
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: ownerSubject,
         name: input.name,
         steps: JSON.stringify(input.steps),
@@ -608,7 +598,6 @@ export async function updateAgent(
         ...(options.markDescriptionStale === false ? {} : { description_status: 'stale' }),
         updated_at: sql`NOW()`,
       })
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', ownerSubject)
       .where('id', '=', agentId)
       .executeTakeFirst();
@@ -632,7 +621,6 @@ export async function deleteAgent(
   // Runs and steps cascade; triggers cascade. The FK graph is the delete.
   const result = await db
     .deleteFrom('agents')
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', agentId)
     .executeTakeFirst();
@@ -657,14 +645,12 @@ export async function saveDescription(
         description_status: 'ok',
         updated_at: sql`NOW()`,
       })
-      .where('tenant_id', '=', tenantId)
       .where('id', '=', agentId)
       .execute();
   } else {
     await db
       .updateTable('agents')
       .set({ description_status: 'failed', updated_at: sql`NOW()` })
-      .where('tenant_id', '=', tenantId)
       .where('id', '=', agentId)
       .execute();
   }

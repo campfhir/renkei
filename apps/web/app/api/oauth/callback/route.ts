@@ -168,7 +168,6 @@ function exchangeFailed(
 ): NextResponse {
   logger.error('{label} token exchange failed: {reason}', {
     component: 'auth/oauth',
-    tenantId,
     label,
     reason: error.type,
     // The delegate relays the provider's own error_description — no token
@@ -194,7 +193,6 @@ function storeFailed(
 ): NextResponse {
   logger.error('Failed to store {label} grant: {reason}', {
     component: 'auth/oauth',
-    tenantId,
     label,
     reason: error.type,
     detail: error.message,
@@ -208,7 +206,6 @@ function logExchanged(label: string, tenantId: string, outcome: ExchangeOutcome)
   // tenant users — and the bytes are in the delegate anyway.
   logger.debug('{label} token exchange OK', {
     component: 'auth/oauth',
-    tenantId,
     label,
     expiresAt: outcome.expiresAt,
     hasRefreshToken: outcome.hasRefreshToken,
@@ -260,7 +257,7 @@ async function handleCallback(
     // provider's token endpoint the code must be exchanged at.
     const pendingSignIn = await db
       .selectFrom('pending_oidc_signin')
-      .select(['tenant_id', 'expires_at', 'subject', 'provider', 'scopes', 'code_verifier'])
+      .select(['expires_at', 'subject', 'provider', 'scopes', 'code_verifier'])
       .where('state', '=', state)
       .executeTakeFirst();
 
@@ -279,7 +276,6 @@ async function handleCallback(
       await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
       logger.warn('Connect flow state cookie missing or mismatched; rejecting callback', {
         component: 'auth/oauth',
-        tenantId: pendingSignIn.tenant_id,
         provider: pendingSignIn.provider ?? 'atlassian',
       });
       return NextResponse.json({ error: 'Invalid state' }, { status: 400 });
@@ -289,7 +285,6 @@ async function handleCallback(
       await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
       logger.warn('Connect flow completed by a different session than started it; rejecting', {
         component: 'auth/oauth',
-        tenantId: pendingSignIn.tenant_id,
         provider: pendingSignIn.provider ?? 'atlassian',
         signedIn: Boolean(session),
       });
@@ -305,7 +300,6 @@ async function handleCallback(
     if (!pendingSignIn.subject) {
       logger.error('Pending sign-in has no subject; cannot assign grant owner', {
         component: 'auth/oauth',
-        tenantId: pendingSignIn.tenant_id,
       });
       return NextResponse.json({ error: 'Sign in again before connecting Jira' }, { status: 400 });
     }
@@ -319,16 +313,6 @@ async function handleCallback(
       return NextResponse.json({ error: 'State expired' }, { status: 400 });
     }
 
-    // Verify tenant exists
-    const tenant = await db
-      .selectFrom('tenants')
-      .select(['id', 'slug'])
-      .where('id', '=', pendingSignIn.tenant_id)
-      .executeTakeFirst();
-
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 400 });
-    }
 
     // Dispatch on the provider the authorize step recorded. Null predates
     // the column and means Atlassian — the only provider that existed then.
@@ -437,7 +421,7 @@ async function handleCallback(
       );
     }
 
-    logger.debug('Jira callback', { component: 'auth/oauth', tenantId: tenant.id });
+    logger.debug('Jira callback', { component: 'auth/oauth' });
 
     // The org's Atlassian app registration, from connector config: the
     // redirect URI the authorize step used (the exchange must present the
@@ -455,7 +439,7 @@ async function handleCallback(
       );
     }
 
-    logger.debug('Exchanging code for tokens', { component: 'auth/oauth', tenantId: tenant.id });
+    logger.debug('Exchanging code for tokens', { component: 'auth/oauth' });
     const connect = await exchangeAtlassianCode(
       'Jira',
       tenant.id,
@@ -484,7 +468,6 @@ async function handleCallback(
       const prior = await db
         .selectFrom('provider_grants')
         .select(['metadata'])
-        .where('tenant_id', '=', tenant.id)
         .where('provider', '=', 'atlassian')
         .orderBy('updated_at', 'desc')
         .executeTakeFirst();
@@ -497,20 +480,17 @@ async function handleCallback(
       if (!cloudId) {
         logger.error('No accessible resources, no site ARI in code claims, no prior grant', {
           component: 'auth/oauth',
-          tenantId: tenant.id,
         });
         return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
       }
       logger.debug('No accessible resources (jira-less scopes); using fallback site identity', {
         component: 'auth/oauth',
-        tenantId: tenant.id,
         cloudId,
       });
     }
 
     logger.debug('Fetching user info', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       cloudId,
     });
     // Get user info via API gateway path for OAuth 2.0 3LO, on the pending token.
@@ -518,7 +498,6 @@ async function handleCallback(
     if (identity) {
       logger.debug('User info received', {
         component: 'auth/oauth',
-        tenantId: tenant.id,
         accountId: identity.accountId,
       });
     } else {
@@ -529,21 +508,18 @@ async function handleCallback(
       if (!accountId) {
         logger.error('Failed to fetch user info and no identity hint in code claims or grants', {
           component: 'auth/oauth',
-          tenantId: tenant.id,
         });
         return NextResponse.json({ error: 'Failed to get user info' }, { status: 400 });
       }
       const priorName = await db
         .selectFrom('provider_grants')
         .select('display_name')
-        .where('tenant_id', '=', tenant.id)
         .where('provider', '=', 'atlassian')
         .where('provider_account_id', '=', accountId)
         .executeTakeFirst();
       identity = { accountId, displayName: priorName?.display_name || null };
       logger.debug('User identity from code claims (jira-less scopes)', {
         component: 'auth/oauth',
-        tenantId: tenant.id,
         accountId,
       });
     }
@@ -555,7 +531,6 @@ async function handleCallback(
 
     logger.debug('Storing Jira grant', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       subject: pendingSignIn.subject,
     });
     // Seal the grant: the delegate stores the tokens it holds behind the
@@ -563,7 +538,6 @@ async function handleCallback(
     // Atlassian-specific, so it lives in metadata rather than as columns
     // every other provider would leave NULL.
     const stored = await delegateGrants().commit({
-      tenantId: tenant.id,
       provider: ATLASSIAN,
       handle,
       subject: pendingSignIn.subject,
@@ -579,9 +553,8 @@ async function handleCallback(
     });
     if (!stored.ok) return storeFailed('Jira', tenant.id, stored.err);
 
-    logger.info('Jira grant stored successfully', { component: 'auth/oauth', tenantId: tenant.id });
+    logger.info('Jira grant stored successfully', { component: 'auth/oauth' });
     recordAuditEvent({
-      tenantId: tenant.id,
       actorSubject: pendingSignIn.subject,
       action: 'connector.connected',
       targetKind: 'connector',
@@ -589,10 +562,9 @@ async function handleCallback(
     });
     invalidateToolCatalogCache(tenant.id, pendingSignIn.subject);
     // Back to the connectors page, which shows the fresh connection status.
-    const connectorsUrl = new URL(`/${tenant.slug}/connectors`, appOriginResult.val);
+    const connectorsUrl = new URL(`/connectors`, appOriginResult.val);
     logger.debug('Redirecting', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       url: connectorsUrl.toString(),
     });
     return NextResponse.redirect(connectorsUrl);
@@ -631,16 +603,15 @@ async function exchangeAtlassianCode(
   redirectUri: string
 ): Promise<AtlassianConnect | NextResponse> {
   const exchanged = await delegateGrants().exchange({
-    tenantId,
     provider,
     form: { grant_type: 'authorization_code', code, redirect_uri: redirectUri },
   });
   if (!exchanged.ok) return exchangeFailed(label, tenantId, exchanged.err);
   logExchanged(label, tenantId, exchanged.val);
   const handle = exchanged.val.handle;
-  const pending = grantFetch({ tenantId, provider, pending: handle });
+  const pending = grantFetch({ provider, pending: handle });
 
-  logger.debug('Fetching accessible resources', { component: 'auth/oauth', tenantId });
+  logger.debug('Fetching accessible resources', { component: 'auth/oauth' });
   const response = await pendingGet(
     pending,
     'https://api.atlassian.com/oauth/token/accessible-resources'
@@ -651,14 +622,12 @@ async function exchangeAtlassianCode(
     // (code claims, prior grants) take over, so this is a debug line.
     logger.debug('accessible-resources not readable on this token', {
       component: 'auth/oauth',
-      tenantId,
       status: response.status,
     });
   }
   const resources = isResourceArray(list) ? list : [];
   logger.debug('Resources received', {
     component: 'auth/oauth',
-    tenantId,
     resources: resources.map((resource) => ({ id: resource.id, url: resource.url })),
   });
   return { handle, pending, resources };
@@ -701,7 +670,6 @@ async function atlassianAccountIdOffline(
   const prior = await db
     .selectFrom('provider_grants')
     .select('provider_account_id')
-    .where('tenant_id', '=', tenantId)
     .where('provider', 'in', [ATLASSIAN, ATLASSIAN_JSM, ATLASSIAN_CONFLUENCE, ATLASSIAN_ADMIN])
     .where('subject', '=', subject)
     .orderBy('updated_at', 'desc')
@@ -718,7 +686,6 @@ async function callerJiraGrant(
   return db
     .selectFrom('provider_grants')
     .select(['display_name', 'metadata'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', ATLASSIAN)
     .where('subject', '=', subject)
     .executeTakeFirst();
@@ -733,7 +700,6 @@ async function priorCloudId(
   const prior = await db
     .selectFrom('provider_grants')
     .select('metadata')
-    .where('tenant_id', '=', tenantId)
     .where('provider', 'in', providers)
     .executeTakeFirst();
   if (prior && typeof prior.metadata === 'object' && prior.metadata !== null) {
@@ -757,7 +723,7 @@ async function handleAtlassianJsmCallback(
   code: string,
   requestedScopes: string | null
 ): Promise<NextResponse> {
-  logger.debug('Atlassian JSM callback', { component: 'auth/oauth', tenantId: tenant.id });
+  logger.debug('Atlassian JSM callback', { component: 'auth/oauth' });
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
   const db = dbResult.val;
@@ -789,7 +755,6 @@ async function handleAtlassianJsmCallback(
   if (!cloudId) {
     logger.error('Atlassian JSM callback could not resolve a cloud id', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
     });
     return NextResponse.json({ error: 'No Jira site resolvable for this token' }, { status: 502 });
   }
@@ -808,7 +773,6 @@ async function handleAtlassianJsmCallback(
   const displayName = jiraGrantRow?.display_name || accountId;
 
   const stored = await delegateGrants().commit({
-    tenantId: tenant.id,
     provider: ATLASSIAN_JSM,
     handle,
     subject,
@@ -822,18 +786,16 @@ async function handleAtlassianJsmCallback(
 
   logger.info('Atlassian JSM grant stored', {
     component: 'auth/oauth',
-    tenantId: tenant.id,
     subject,
   });
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: ATLASSIAN_JSM,
   });
   invalidateToolCatalogCache(tenant.id, subject);
-  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
 /**
@@ -852,7 +814,7 @@ async function handleAtlassianConfluenceCallback(
   code: string,
   requestedScopes: string | null
 ): Promise<NextResponse> {
-  logger.debug('Atlassian Confluence callback', { component: 'auth/oauth', tenantId: tenant.id });
+  logger.debug('Atlassian Confluence callback', { component: 'auth/oauth' });
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
   const db = dbResult.val;
@@ -888,7 +850,6 @@ async function handleAtlassianConfluenceCallback(
   if (!cloudId) {
     logger.error('Atlassian Confluence callback could not resolve a cloud id', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
     });
     return NextResponse.json(
       { error: 'No Confluence site resolvable for this token' },
@@ -910,7 +871,6 @@ async function handleAtlassianConfluenceCallback(
   const displayName = jiraGrantRow?.display_name || accountId;
 
   const stored = await delegateGrants().commit({
-    tenantId: tenant.id,
     provider: ATLASSIAN_CONFLUENCE,
     handle,
     subject,
@@ -924,18 +884,16 @@ async function handleAtlassianConfluenceCallback(
 
   logger.info('Atlassian Confluence grant stored', {
     component: 'auth/oauth',
-    tenantId: tenant.id,
     subject,
   });
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: ATLASSIAN_CONFLUENCE,
   });
   invalidateToolCatalogCache(tenant.id, subject);
-  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
 /**
@@ -957,7 +915,7 @@ async function handleAtlassianAdminCallback(
   code: string,
   requestedScopes: string | null
 ): Promise<NextResponse> {
-  logger.debug('Atlassian Jira Admin callback', { component: 'auth/oauth', tenantId: tenant.id });
+  logger.debug('Atlassian Jira Admin callback', { component: 'auth/oauth' });
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
   const db = dbResult.val;
@@ -995,7 +953,6 @@ async function handleAtlassianAdminCallback(
   if (!cloudId) {
     logger.error('Atlassian Jira Admin callback could not resolve a cloud id', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
     });
     return NextResponse.json({ error: 'No Jira site resolvable for this token' }, { status: 502 });
   }
@@ -1011,7 +968,6 @@ async function handleAtlassianAdminCallback(
   const displayName = myself?.displayName || jiraGrantRow?.display_name || accountId;
 
   const stored = await delegateGrants().commit({
-    tenantId: tenant.id,
     provider: ATLASSIAN_ADMIN,
     handle,
     subject,
@@ -1025,18 +981,16 @@ async function handleAtlassianAdminCallback(
 
   logger.info('Atlassian Jira Admin grant stored', {
     component: 'auth/oauth',
-    tenantId: tenant.id,
     subject,
   });
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: ATLASSIAN_ADMIN,
   });
   invalidateToolCatalogCache(tenant.id, subject);
-  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
 /**
@@ -1055,7 +1009,7 @@ async function handleAtlassianBitbucketCallback(
   code: string,
   requestedScopes: string | null
 ): Promise<NextResponse> {
-  logger.debug('Bitbucket callback', { component: 'auth/oauth', tenantId: tenant.id });
+  logger.debug('Bitbucket callback', { component: 'auth/oauth' });
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
@@ -1065,7 +1019,6 @@ async function handleAtlassianBitbucketCallback(
   }
 
   const exchanged = await delegateGrants().exchange({
-    tenantId: tenant.id,
     provider: ATLASSIAN_BITBUCKET,
     form: { grant_type: 'authorization_code', code },
   });
@@ -1073,7 +1026,6 @@ async function handleAtlassianBitbucketCallback(
   logExchanged('Bitbucket', tenant.id, exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({
-    tenantId: tenant.id,
     provider: ATLASSIAN_BITBUCKET,
     pending: handle,
   });
@@ -1087,7 +1039,6 @@ async function handleAtlassianBitbucketCallback(
   if (!userResponse.ok || !accountId) {
     logger.error('Bitbucket identity read failed', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       status: userResponse.status,
     });
     return NextResponse.json({ error: 'Could not read the Bitbucket account' }, { status: 502 });
@@ -1097,7 +1048,6 @@ async function handleAtlassianBitbucketCallback(
     (typeof user.display_name === 'string' && user.display_name) || username || accountId;
 
   const stored = await delegateGrants().commit({
-    tenantId: tenant.id,
     provider: ATLASSIAN_BITBUCKET,
     handle,
     subject,
@@ -1114,18 +1064,16 @@ async function handleAtlassianBitbucketCallback(
 
   logger.info('Bitbucket grant stored', {
     component: 'auth/oauth',
-    tenantId: tenant.id,
     subject,
   });
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: ATLASSIAN_BITBUCKET,
   });
   invalidateToolCatalogCache(tenant.id, subject);
-  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
 /* -------------------------------- WebEx -------------------------------- */
@@ -1145,7 +1093,6 @@ async function handleWebexUserCallback(
   if (!subject) {
     logger.error('WebEx pending flow has no subject; cannot assign grant owner', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
     });
     return NextResponse.json({ error: 'Sign in again before connecting WebEx' }, { status: 400 });
   }
@@ -1163,14 +1110,13 @@ async function handleWebexUserCallback(
   }
 
   const exchanged = await delegateGrants().exchange({
-    tenantId: tenant.id,
     provider: WEBEX_USER,
     form: { grant_type: 'authorization_code', code, redirect_uri: app.redirectUri },
   });
   if (!exchanged.ok) return exchangeFailed('WebEx', tenant.id, exchanged.err);
   logExchanged('WebEx', tenant.id, exchanged.val);
   const handle = exchanged.val.handle;
-  const pending = grantFetch({ tenantId: tenant.id, provider: WEBEX_USER, pending: handle });
+  const pending = grantFetch({ provider: WEBEX_USER, pending: handle });
 
   // Who granted this. personId is the durable account key; email is what the
   // access verifier checks room membership against. Requires the always-on
@@ -1182,7 +1128,6 @@ async function handleWebexUserCallback(
   if (!meResponse.ok || !personId) {
     logger.error('WebEx /people/me failed; cannot identify grantor', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       status: meResponse.status,
       hint:
         meResponse.status === 403
@@ -1206,7 +1151,6 @@ async function handleWebexUserCallback(
   const emails = Array.isArray(me?.emails) ? me.emails.filter((e) => typeof e === 'string') : [];
 
   const stored = await delegateGrants().commit({
-    tenantId: tenant.id,
     provider: WEBEX_USER,
     handle,
     subject,
@@ -1221,16 +1165,15 @@ async function handleWebexUserCallback(
   });
   if (!stored.ok) return storeFailed('WebEx', tenant.id, stored.err);
 
-  logger.info('WebEx user grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
+  logger.info('WebEx user grant stored', { component: 'auth/oauth', subject });
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: WEBEX_USER,
   });
   invalidateToolCatalogCache(tenant.id, subject);
-  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
 /* -------------------------------- GitHub -------------------------------- */
@@ -1255,7 +1198,6 @@ async function handleGitHubCallback(
   if (!subject) {
     logger.error('GitHub pending flow has no subject; cannot assign grant owner', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
     });
     return NextResponse.json({ error: 'Sign in again before connecting GitHub' }, { status: 400 });
   }
@@ -1273,14 +1215,13 @@ async function handleGitHubCallback(
   }
 
   const exchanged = await delegateGrants().exchange({
-    tenantId: tenant.id,
     provider: GITHUB,
     form: { grant_type: 'authorization_code', code, redirect_uri: app.redirectUri },
   });
   if (!exchanged.ok) return exchangeFailed('GitHub', tenant.id, exchanged.err);
   logExchanged('GitHub', tenant.id, exchanged.val);
   const handle = exchanged.val.handle;
-  const pending = grantFetch({ tenantId: tenant.id, provider: GITHUB, pending: handle });
+  const pending = grantFetch({ provider: GITHUB, pending: handle });
 
   // Who granted this. The account id (a stable numeric id, not the login,
   // which can be renamed) is the durable key; login is what API paths and
@@ -1294,7 +1235,6 @@ async function handleGitHubCallback(
   if (!meResponse.ok || !accountId || !login) {
     logger.error('GitHub /user failed; cannot identify grantor', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       status: meResponse.status,
     });
     return NextResponse.json({ error: 'Could not identify GitHub user' }, { status: 502 });
@@ -1302,7 +1242,6 @@ async function handleGitHubCallback(
   const displayName = typeof me?.name === 'string' && me.name ? me.name : login;
 
   const stored = await delegateGrants().commit({
-    tenantId: tenant.id,
     provider: GITHUB,
     handle,
     subject,
@@ -1314,16 +1253,15 @@ async function handleGitHubCallback(
   });
   if (!stored.ok) return storeFailed('GitHub', tenant.id, stored.err);
 
-  logger.info('GitHub grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
+  logger.info('GitHub grant stored', { component: 'auth/oauth', subject });
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: GITHUB,
   });
   invalidateToolCatalogCache(tenant.id, subject);
-  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
 /* ------------------------------- Microsoft ------------------------------- */
@@ -1346,7 +1284,6 @@ async function handleMicrosoftCallback(
   if (!subject) {
     logger.error('Microsoft pending flow has no subject; cannot assign grant owner', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
     });
     return NextResponse.json(
       { error: 'Sign in again before connecting Microsoft' },
@@ -1386,7 +1323,6 @@ async function handleMicrosoftCallback(
     const prior = await dbForPrefs.val
       .selectFrom('provider_grants')
       .select('metadata')
-      .where('tenant_id', '=', tenant.id)
       .where('provider', '=', MICROSOFT)
       .where('provider_account_id', '=', oid)
       .executeTakeFirst()
@@ -1404,7 +1340,6 @@ async function handleMicrosoftCallback(
   }
 
   const stored = await delegateGrants().commit({
-    tenantId: tenant.id,
     provider: MICROSOFT,
     handle,
     subject,
@@ -1422,7 +1357,6 @@ async function handleMicrosoftCallback(
   // Graph handshake POSTs to our webhook route while the create call is in
   // flight, and a backfill is minutes of work, not callback work.
   const enqueued = await webhookEventsQueue().producer.enqueue({
-    tenantId: tenant.id,
     source: MICROSOFT,
     type: 'grant.connected',
     payload: { accountId: oid, subject },
@@ -1431,25 +1365,22 @@ async function handleMicrosoftCallback(
   if (!enqueued.ok) {
     logger.error('Could not enqueue microsoft/grant.connected; sweep will bootstrap', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       error: enqueued.err.message ?? 'unknown',
     });
   }
 
   logger.info('Microsoft grant stored', {
     component: 'auth/oauth',
-    tenantId: tenant.id,
     subject,
   });
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: MICROSOFT,
   });
   invalidateToolCatalogCache(tenant.id, subject);
-  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
 /** What a Microsoft authorization code becomes, for either Entra app registration. */
@@ -1479,7 +1410,6 @@ async function exchangeMicrosoftCode(
   requestedScopes: string | null
 ): Promise<MicrosoftExchange | NextResponse> {
   const exchanged = await delegateGrants().exchange({
-    tenantId,
     provider,
     form: {
       grant_type: 'authorization_code',
@@ -1503,7 +1433,7 @@ async function exchangeMicrosoftCode(
   let email = typeof claims?.email === 'string' ? claims.email : null;
 
   if (!oid || !upn || !email) {
-    const pending = grantFetch({ tenantId, provider, pending: handle });
+    const pending = grantFetch({ provider, pending: handle });
     const meResponse = await pendingGet(pending, 'https://graph.microsoft.com/v1.0/me');
     const me = await jsonRecord(meResponse);
     if (meResponse.ok && me) {
@@ -1516,7 +1446,6 @@ async function exchangeMicrosoftCode(
   if (!oid || !upn) {
     logger.error('Could not identify {label} user from id_token claims or /me', {
       component: 'auth/oauth',
-      tenantId,
       label,
     });
     return NextResponse.json({ error: `Could not identify ${label} user` }, { status: 502 });
@@ -1542,7 +1471,6 @@ async function handleEntraDeveloperCallback(
   if (!subject) {
     logger.error('Entra Developer pending flow has no subject; cannot assign grant owner', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
     });
     return NextResponse.json(
       { error: 'Sign in again before connecting Entra Developer' },
@@ -1574,7 +1502,6 @@ async function handleEntraDeveloperCallback(
   const { handle, oid, tid, upn, displayName, email } = exchanged;
 
   const stored = await delegateGrants().commit({
-    tenantId: tenant.id,
     provider: ENTRA_DEVELOPER,
     handle,
     subject,
@@ -1590,18 +1517,16 @@ async function handleEntraDeveloperCallback(
 
   logger.info('Entra Developer grant stored', {
     component: 'auth/oauth',
-    tenantId: tenant.id,
     subject,
   });
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: ENTRA_DEVELOPER,
   });
   invalidateToolCatalogCache(tenant.id, subject);
-  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
 /* --------------------------------- Zoom --------------------------------- */
@@ -1624,7 +1549,6 @@ async function handleZoomCallback(
   if (!subject) {
     logger.error('Zoom pending flow has no subject; cannot assign grant owner', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
     });
     return NextResponse.json({ error: 'Sign in again before connecting Zoom' }, { status: 400 });
   }
@@ -1642,14 +1566,13 @@ async function handleZoomCallback(
   }
 
   const exchanged = await delegateGrants().exchange({
-    tenantId: tenant.id,
     provider: ZOOM,
     form: { grant_type: 'authorization_code', code, redirect_uri: app.redirectUri },
   });
   if (!exchanged.ok) return exchangeFailed('Zoom', tenant.id, exchanged.err);
   logExchanged('Zoom', tenant.id, exchanged.val);
   const handle = exchanged.val.handle;
-  const pending = grantFetch({ tenantId: tenant.id, provider: ZOOM, pending: handle });
+  const pending = grantFetch({ provider: ZOOM, pending: handle });
   // The token-response echo names what the app was actually minted —
   // always the full Marketplace set, which is exactly why narrowing gates
   // on requested. The delegate relays it; Zoom tokens carry no scope claim.
@@ -1662,7 +1585,6 @@ async function handleZoomCallback(
   if (scopeEcho && !scopeEcho.split(/[\s,]+/).includes('user:read:user')) {
     logger.error('Zoom token was minted without user:read:user; cannot identify grantor', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       scopeEcho,
     });
     // The echo names what WAS minted, which distinguishes the causes: an
@@ -1700,7 +1622,6 @@ async function handleZoomCallback(
     // this failure was undiagnosable from the log line alone.
     logger.error('Zoom /users/me failed; cannot identify grantor', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       status: meResponse.status,
       body: meBodyText.slice(0, 300),
       scopeEcho: scopeEcho ?? '(none echoed)',
@@ -1722,7 +1643,6 @@ async function handleZoomCallback(
         zoomUserId;
 
   const stored = await delegateGrants().commit({
-    tenantId: tenant.id,
     provider: ZOOM,
     handle,
     subject,
@@ -1734,16 +1654,15 @@ async function handleZoomCallback(
   });
   if (!stored.ok) return storeFailed('Zoom', tenant.id, stored.err);
 
-  logger.info('Zoom grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
+  logger.info('Zoom grant stored', { component: 'auth/oauth', subject });
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: ZOOM,
   });
   invalidateToolCatalogCache(tenant.id, subject);
-  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
 /* -------------------------------- OnBase -------------------------------- */
@@ -1795,7 +1714,6 @@ async function handleOnBaseCallback(
   if (!subject) {
     logger.error('{label} pending flow has no subject; cannot assign grant owner', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       label: spec.label,
     });
     return NextResponse.json(
@@ -1807,7 +1725,6 @@ async function handleOnBaseCallback(
     // Every OnBase authorize stores one; a row without it is not ours.
     logger.error('{label} pending flow carries no code_verifier', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       label: spec.label,
     });
     return NextResponse.json({ error: `Start the ${spec.label} connect again` }, { status: 400 });
@@ -1826,7 +1743,6 @@ async function handleOnBaseCallback(
   }
 
   const exchanged = await delegateGrants().exchange({
-    tenantId: tenant.id,
     provider: spec.grantProvider,
     form: {
       grant_type: 'authorization_code',
@@ -1845,7 +1761,6 @@ async function handleOnBaseCallback(
     // Without a subject there is no durable key to store the grant under.
     logger.error('{label} id_token carried no sub claim; cannot identify grantor', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       label: spec.label,
       hadIdToken: idToken !== null,
     });
@@ -1865,7 +1780,6 @@ async function handleOnBaseCallback(
     accountId;
 
   const stored = await delegateGrants().commit({
-    tenantId: tenant.id,
     provider: spec.grantProvider,
     handle,
     subject,
@@ -1883,7 +1797,6 @@ async function handleOnBaseCallback(
   if (!hasRefreshToken) {
     logger.warn('{label} grant stored without a refresh token (offline_access not granted?)', {
       component: 'auth/oauth',
-      tenantId: tenant.id,
       label: spec.label,
       subject,
     });
@@ -1891,17 +1804,15 @@ async function handleOnBaseCallback(
 
   logger.info('{label} grant stored', {
     component: 'auth/oauth',
-    tenantId: tenant.id,
     label: spec.label,
     subject,
   });
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: spec.grantProvider,
   });
   invalidateToolCatalogCache(tenant.id, subject);
-  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }

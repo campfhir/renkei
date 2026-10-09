@@ -27,7 +27,6 @@ import { keyVault } from './vault';
 export type KeyScope = 'session' | 'automation';
 
 export interface KeyRing {
-  tenantId: string;
   subject: string;
   /** `user_encryption_keys.version`: which key the wrappings are stamped with. */
   version: number;
@@ -83,7 +82,6 @@ export async function readKeyRow(
       'enrolled_at',
       'verifier',
     ])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .executeTakeFirst();
   return row ?? null;
@@ -104,7 +102,6 @@ async function liveDelegationsFor(
   return db
     .selectFrom('key_delegations')
     .select(['scope', 'session_id', 'sealed_key'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('instance_id', '=', instanceId)
     .where('expires_at', '>', new Date())
@@ -141,7 +138,6 @@ export function ringFromUserKey(
   const wrappedPrivate = row.wrapped_private_key;
   let privateKey: Buffer | null | undefined;
   return ok({
-    tenantId,
     subject,
     version: row.version,
     scope: 'session',
@@ -165,7 +161,6 @@ function ringFromAutomationKey(
 ): Result<KeyRing, 'DECRYPTION_ERROR'> {
   if (!row.public_key) return err('DECRYPTION_ERROR' as const);
   return ok({
-    tenantId,
     subject,
     version: row.version,
     scope: 'automation',
@@ -269,14 +264,12 @@ export async function delegationStatus(
       'enrolled_at',
       'verifier',
     ])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .executeTakeFirst();
   const live = new Set((await liveInstances(db)).map((instance) => instance.id));
   const delegations = await db
     .selectFrom('key_delegations')
     .select(['instance_id', 'scope', 'session_id', 'expires_at'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('expires_at', '>', new Date())
     .execute();

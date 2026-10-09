@@ -22,12 +22,10 @@ import DisconnectControl from './disconnect-control';
  * than sharing one at the suite level.
  */
 export default function OnBaseConnector({
-  tenantId,
   connected,
   displayName,
   nested = false,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   nested?: boolean;
@@ -57,7 +55,7 @@ export default function OnBaseConnector({
       {!connected && (
         <CoachTarget name="onbase-connect" as="span" className="mt-3 inline-block">
           <a
-            href={`/api/onbase/${tenantId}/authorize`}
+            href={`/api/onbase/authorize`}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >
             Connect OnBase
@@ -67,7 +65,7 @@ export default function OnBaseConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/onbase/${tenantId}/grant`}
+          endpoint={`/api/onbase/grant`}
           confirmText="Disconnect your OnBase account? The OnBase MCP tools stop working until you reconnect."
           buttonLabel="Disconnect OnBase"
         />

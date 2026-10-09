@@ -28,7 +28,7 @@ async function resolveSubjectAccess(
   subject: string,
   provider: typeof GITHUB | typeof ATLASSIAN_BITBUCKET
 ): Promise<RepoSubjectAccess | null> {
-  const described = await delegateGrants().describe({ tenantId, provider, subject });
+  const described = await delegateGrants().describe({ provider, subject });
   if (!described.ok) {
     if (described.err.type === 'NO_GRANT') return null;
     throw new Error(
@@ -42,7 +42,7 @@ async function resolveSubjectAccess(
       ? readGitHubMetadata(grant.metadata).login
       : readBitbucketMetadata(grant.metadata).username;
 
-  return { auth: grantFetch({ tenantId, provider, accountId: grant.accountId }), login };
+  return { auth: grantFetch({ provider, accountId: grant.accountId }), login };
 }
 
 export function resolveGitHubSubjectAccess(

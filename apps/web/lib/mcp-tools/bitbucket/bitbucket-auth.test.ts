@@ -36,7 +36,6 @@ import { oauthBitbucketAuth } from './bitbucket-auth';
 import type { MCPToolContext } from '../common';
 
 const context = {
-  tenantId: 'tenant-1',
   subject: 'subject-1',
   origin: 'https://renkei.example',
 } as unknown as MCPToolContext;

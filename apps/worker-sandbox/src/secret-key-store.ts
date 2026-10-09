@@ -24,7 +24,6 @@ import { envSecretsKey } from './env-secrets';
 import { logger } from './logger';
 
 export interface SecretOwner {
-  tenantId: string;
   subject: string;
 }
 

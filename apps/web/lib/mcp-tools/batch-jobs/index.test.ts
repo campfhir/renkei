@@ -99,7 +99,6 @@ describe('batch_start_document_pipeline', () => {
     });
 
     expect(createBatchMock).toHaveBeenCalledWith(FAKE_DB, {
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       kind: 'document-ocr-pipeline',

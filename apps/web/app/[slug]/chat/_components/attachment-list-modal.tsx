@@ -21,12 +21,10 @@ function statusOf(status: string): string | null {
 
 /** Every file attached to the message being written, when there are too many for chips. */
 export default function AttachmentListModal({
-  tenantId,
   attachments,
   onRemove,
   onClose,
 }: {
-  tenantId: string;
   attachments: AttachmentView[];
   onRemove: (attachment: AttachmentView) => void;
   onClose: () => void;

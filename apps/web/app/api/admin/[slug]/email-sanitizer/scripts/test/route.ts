@@ -7,7 +7,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { runCleanerScript, compileCleanerScript, MAX_SCRIPT_CHARS } from '@renkei/email-sanitizer';
 import { isContentKind } from '@/lib/email-sanitizer/content-kinds';
 
@@ -16,8 +15,6 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

@@ -94,7 +94,6 @@ export async function getLibrary(
   const raw = await db
     .selectFrom('prompt_libraries')
     .select(LIBRARY_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', libraryId)
     .executeTakeFirst();
   return raw ? libraryOf(raw) : null;
@@ -110,7 +109,6 @@ export async function listAccessibleLibraries(
     db
       .selectFrom('prompt_libraries')
       .select(LIBRARY_COLUMNS)
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
       .orderBy('updated_at', 'desc')
       .execute(),
@@ -122,7 +120,6 @@ export async function listAccessibleLibraries(
       ? await db
           .selectFrom('prompt_libraries')
           .select(LIBRARY_COLUMNS)
-          .where('tenant_id', '=', tenantId)
           .where('id', 'in', grantIds)
           .execute()
       : [];
@@ -148,7 +145,6 @@ export async function createLibrary(
   const inserted = await db
     .insertInto('prompt_libraries')
     .values({
-      tenant_id: input.tenantId,
       owner_subject: input.ownerSubject,
       name: input.name,
       description: input.description,
@@ -172,7 +168,6 @@ export async function updateLibrary(
       ...(patch.description !== undefined ? { description: patch.description } : {}),
       updated_at: sql<Date>`NOW()`,
     })
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', libraryId)
     .executeTakeFirst();
   return Number(result.numUpdatedRows) > 0;
@@ -187,7 +182,6 @@ export async function deleteLibrary(
   if (!isUuid(libraryId)) return false;
   const result = await db
     .deleteFrom('prompt_libraries')
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', libraryId)
     .executeTakeFirst();
@@ -195,7 +189,6 @@ export async function deleteLibrary(
   if (deleted) {
     await db
       .deleteFrom('resource_access_grants')
-      .where('tenant_id', '=', tenantId)
       .where('resource_kind', '=', 'prompt_library')
       .where('resource_id', '=', libraryId)
       .execute();
@@ -212,7 +205,6 @@ export async function listPrompts(
   const rows = await db
     .selectFrom('prompts')
     .selectAll()
-    .where('tenant_id', '=', tenantId)
     .where('library_id', '=', libraryId)
     .orderBy('position', 'asc')
     .orderBy('created_at', 'asc')
@@ -227,7 +219,6 @@ export async function createPrompt(
   const inserted = await db
     .insertInto('prompts')
     .values({
-      tenant_id: input.tenantId,
       library_id: input.libraryId,
       title: input.title,
       body: input.body,
@@ -259,7 +250,6 @@ export async function updatePrompt(
       updated_by_subject: subject,
       updated_at: sql<Date>`NOW()`,
     })
-    .where('tenant_id', '=', tenantId)
     .where('library_id', '=', libraryId)
     .where('id', '=', promptId)
     .executeTakeFirst();
@@ -277,7 +267,6 @@ export async function deletePrompt(
   if (!isUuid(libraryId) || !isUuid(promptId)) return false;
   const result = await db
     .deleteFrom('prompts')
-    .where('tenant_id', '=', tenantId)
     .where('library_id', '=', libraryId)
     .where('id', '=', promptId)
     .executeTakeFirst();
@@ -306,7 +295,6 @@ export async function listPickerPrompts(
   const rows = await db
     .selectFrom('prompts')
     .select(['id', 'library_id', 'title', 'body'])
-    .where('tenant_id', '=', tenantId)
     .where('library_id', 'in', [...names.keys()])
     .orderBy('library_id')
     .orderBy('position', 'asc')

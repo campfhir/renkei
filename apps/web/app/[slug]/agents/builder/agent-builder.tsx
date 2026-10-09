@@ -70,7 +70,6 @@ import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export interface AgentBuilderProps {
   slug: string;
-  tenantId: string;
   tools: ToolDescriptor[];
   /** The caller's other agents (for agent-finished triggers). */
   otherAgents: AgentChoice[];
@@ -124,7 +123,6 @@ function kindWord(node: AgentStepNode): string {
 
 export function AgentBuilder({
   slug,
-  tenantId,
   tools,
   otherAgents,
   calendars,
@@ -221,7 +219,7 @@ export function AgentBuilder({
           error?: string | null;
           errorDetail?: string | null;
         };
-      }>(`/api/tenant/${tenantId}/agents/draft/${draftId}`);
+      }>(`/api/agents/draft/${draftId}`);
       if (cancelled) return;
       const draft = result.data?.draft;
       if (!draft || draft.status === 'queued' || draft.status === 'running') return;
@@ -240,7 +238,7 @@ export function AgentBuilder({
         return;
       }
       // Taken, so it is not offered again on the next open.
-      void fetch(`/api/tenant/${tenantId}/agents/draft/${draftId}/consume`, { method: 'POST' });
+      void fetch(`/api/agents/draft/${draftId}/consume`, { method: 'POST' });
     }, 2_000);
     return () => {
       cancelled = true;
@@ -259,7 +257,7 @@ export function AgentBuilder({
     void (async () => {
       const query = agentId ? `?agentId=${encodeURIComponent(agentId)}` : '';
       const result = await getJson<{ draft?: { id: string; createdAt: string } | null }>(
-        `/api/tenant/${tenantId}/agents/draft${query}`
+        `/api/agents/draft${query}`
       );
       if (cancelled || !result.data?.draft) return;
       setPendingDraft({ id: result.data.draft.id, createdAt: result.data.draft.createdAt });
@@ -358,7 +356,7 @@ export function AgentBuilder({
     if (!waiting) return;
     const result = await getJson<{
       draft?: { result?: { name?: unknown; steps?: unknown } | null };
-    }>(`/api/tenant/${tenantId}/agents/draft/${waiting.id}`);
+    }>(`/api/agents/draft/${waiting.id}`);
     const drafted = result.data?.draft?.result;
     if (!drafted || !applyDraftResult(drafted)) {
       setDraftError('That draft could not be loaded.');
@@ -366,7 +364,7 @@ export function AgentBuilder({
       return;
     }
     setPendingDraft(null);
-    void fetch(`/api/tenant/${tenantId}/agents/draft/${waiting.id}/consume`, { method: 'POST' });
+    void fetch(`/api/agents/draft/${waiting.id}/consume`, { method: 'POST' });
   };
 
   // The effects below poll on a timer and must not re-subscribe every time
@@ -420,7 +418,7 @@ export function AgentBuilder({
     setDraftQuestions([]);
     setDraftConcerns([]);
     const result = await sendJsonFull<{ draftId?: string }>(
-      `/api/tenant/${tenantId}/agents/draft`,
+      `/api/agents/draft`,
       'POST',
       {
         text: prose,
@@ -454,7 +452,7 @@ export function AgentBuilder({
     if (!agentId || checking) return;
     setChecking(true);
     const started = await sendJsonFull(
-      `/api/tenant/${tenantId}/agents/${agentId}/describe`,
+      `/api/agents/${agentId}/describe`,
       'POST'
     );
     if (started.error) {
@@ -465,7 +463,7 @@ export function AgentBuilder({
     for (let polls = 0; polls < 22; polls += 1) {
       await new Promise((resolve) => setTimeout(resolve, 2_000));
       const result = await getJson<{ agent: StoredAgent }>(
-        `/api/tenant/${tenantId}/agents/${agentId}`
+        `/api/agents/${agentId}`
       );
       const agent = result.data?.agent;
       if (agent && agent.descriptionStatus !== 'stale') {
@@ -622,8 +620,8 @@ export function AgentBuilder({
       refreshDescription: true,
     };
     const url = agentId
-      ? `/api/tenant/${tenantId}/agents/${agentId}`
-      : `/api/tenant/${tenantId}/agents`;
+      ? `/api/agents/${agentId}`
+      : `/api/agents`;
     const result = await sendJsonFull<SaveResponse>(url, agentId ? 'PUT' : 'POST', payload);
     if (result.status === 422 && result.data?.issues) {
       setServerIssues(result.data.issues);
@@ -682,7 +680,7 @@ export function AgentBuilder({
     // `saving` deliberately stays on: the button keeps reading "Saving…"
     // until the overview page takes over, so the click can't repeat while
     // the navigation is in flight.
-    router.push(savedId ? `/${slug}/agents/${savedId}` : `/${slug}/agents`);
+    router.push(savedId ? `/agents/${savedId}` : `/agents`);
   };
 
   const handleSave = () => {
@@ -1314,7 +1312,7 @@ export function AgentBuilder({
               <button
                 type="button"
                 onClick={() =>
-                  router.push(agentId ? `/${slug}/agents/${agentId}` : `/${slug}/agents`)
+                  router.push(agentId ? `/agents/${agentId}` : `/agents`)
                 }
                 className="rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-700"
               >
@@ -1388,7 +1386,7 @@ export function AgentBuilder({
               // list. Drafting a brand-new one (agentId still null): nothing
               // to show yet, so the list is the only place to go.
               onClick={() =>
-                router.push(agentId ? `/${slug}/agents/${agentId}` : `/${slug}/agents`)
+                router.push(agentId ? `/agents/${agentId}` : `/agents`)
               }
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-700"
             >
@@ -1416,7 +1414,7 @@ export function AgentBuilder({
           onSave={() => void persistAndFinish()}
           onKeepEditing={() => setSaveModal(null)}
           // Same landing as a save without minted keys: the agent's page.
-          onDone={() => router.push(agentId ? `/${slug}/agents/${agentId}` : `/${slug}/agents`)}
+          onDone={() => router.push(agentId ? `/agents/${agentId}` : `/agents`)}
         />
       ) : null}
     </div>

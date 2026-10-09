@@ -238,7 +238,6 @@ export async function resolveKnowledge(tenantId: string): Promise<KnowledgeProvi
   if (!keyResult.ok) return null;
 
   const configResult = await readConnectorConfigCached(
-    tenantId,
     EMBEDDINGS_CONNECTOR,
     keyResult.val
   );

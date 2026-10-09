@@ -246,7 +246,7 @@ async function discover(db: Kysely<DB>, batch: BatchJobRow): Promise<DiscoverOut
   if ('error' in config) return { ok: false, error: config.error };
 
   const listed = await fsListFolder(
-    { tenantId: batch.tenant_id, shareId: config.shareId, subject: batch.subject },
+    { shareId: config.shareId, subject: batch.subject },
     config.path
   );
   if (!listed.ok) return { ok: false, error: fileshareClientFailure(listed.err).message };
@@ -413,7 +413,7 @@ async function runItem(
     return { ok: false, error: 'Item payload carries no share or source paths.' };
   }
   const sourcePaths = sources.map((source) => source.path);
-  const target: FileshareTarget = { tenantId: batch.tenant_id, shareId, subject: batch.subject };
+  const target: FileshareTarget = { shareId, subject: batch.subject };
 
   const mistralConfig = await resolveMistralOcrConfig(batch.tenant_id);
   if (!mistralConfig.ok) {
@@ -473,7 +473,7 @@ async function runItem(
 
   const assembled = sections.join('\n\n---\n\n');
   const staged = await sbWriteFile(
-    { tenantId: batch.tenant_id, subject: batch.subject },
+    { subject: batch.subject },
     {
       filename: `${documentKey}.md`,
       contentType: 'text/markdown',
@@ -507,7 +507,6 @@ async function runItem(
         'batch {batchJobId}: could not record processed files for "{documentKey}": {error}',
         {
           component: COMPONENT,
-          tenantId: batch.tenant_id,
           batchJobId: batch.id,
           documentKey,
           error: error instanceof Error ? error.message : String(error),

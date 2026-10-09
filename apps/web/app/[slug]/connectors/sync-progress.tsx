@@ -53,11 +53,9 @@ function StatusDot({ status }: { status: string }) {
 }
 
 export default function SyncProgress({
-  tenantId,
   connector,
   emptyHint,
 }: {
-  tenantId: string;
   connector: Connector;
   /** Shown when there is nothing to report — usually "how do I start one". */
   emptyHint?: string;
@@ -70,7 +68,7 @@ export default function SyncProgress({
 
     async function load() {
       try {
-        const response = await fetch(`/api/tenant/${tenantId}/sync-progress`);
+        const response = await fetch(`/api/sync-progress`);
         if (!response.ok) throw new Error('failed');
         const data = await response.json();
         if (!cancelled) setItems(Array.isArray(data[connector]) ? data[connector] : []);

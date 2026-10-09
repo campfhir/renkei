@@ -9,7 +9,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -25,16 +24,13 @@ export async function GET(
       .where('id', '=', tenantId)
       .executeTakeFirst();
 
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
 
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const baseUrl = originResult.val;
-    const tenantPath = `/api/mcp/${tenantId}`;
+    const tenantPath = `/api/mcp`;
     const settingsResult = await getOrgSettings(tenantId);
     const dcrEnabled = (settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS).enableDcr;
 

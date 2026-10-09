@@ -60,7 +60,7 @@ function stubDb(grantRow: Record<string, unknown> | undefined) {
 }
 
 function request(query = ''): NextRequest {
-  return new NextRequest(`http://localhost/api/tenant/${TENANT}/logs${query}`, { method: 'POST' });
+  return new NextRequest(`http://localhost/api/logs${query}`, { method: 'POST' });
 }
 
 function params() {
@@ -70,7 +70,6 @@ function params() {
 function session(subject: string, roles: string[]) {
   return {
     id: 'session-1',
-    tenantId: TENANT,
     subject,
     roles,
     expiresAt: new Date(Date.now() + 60_000),

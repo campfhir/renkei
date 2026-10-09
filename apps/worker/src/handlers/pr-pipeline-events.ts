@@ -84,7 +84,6 @@ async function activeSubscriptions(
       'repo_full_name',
       'pr_number',
     ])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', provider)
     .where('repo_full_name', '=', repoFullName)
     .where('status', '=', 'active')
@@ -186,7 +185,6 @@ async function actOnSubscription(
   } else if (conclusion === 'failure' && subscription.auto_fix && subscription.chat_id) {
     try {
       await insertChatNote(
-        tenantId,
         subscription.chat_id,
         fixNote(subscription.repo_full_name, subscription.pr_number)
       );
@@ -244,7 +242,6 @@ export function createGitHubPrPipelineHandler(): EventHandler {
       );
       if (!conclusion) continue;
       await actOnSubscription(
-        tenantId,
         GITHUB,
         subscription,
         parsed.runId,
@@ -300,7 +297,6 @@ export function createBitbucketPrPipelineHandler(): EventHandler {
       // commit on the same PR is treated as a new run, since Bitbucket
       // gives this path no single pipeline-run identifier to key off.
       await actOnSubscription(
-        tenantId,
         ATLASSIAN_BITBUCKET,
         subscription,
         head,

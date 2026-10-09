@@ -162,7 +162,6 @@ const RUN_BUDGET_ERROR = `The run exceeded its execution budget (${MAX_RUN_ATTEM
 
 export interface FinalizedRun {
   runId: string;
-  tenantId: string;
   agentId: string;
   ownerSubject: string;
   /**
@@ -209,7 +208,6 @@ export interface EngineDeps {
 
 interface RunRow {
   id: string;
-  tenant_id: string;
   agent_id: string;
   owner_subject: string;
   steps_snapshot: Json;
@@ -1041,7 +1039,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   const createClient =
     deps.createMcpClient ??
     ((tenantId: string, token: string, base: string, runId?: string) =>
-      new AgentMcpClient(`${base.replace(/\/+$/, '')}/api/mcp/${tenantId}/mcp`, token, {
+      new AgentMcpClient(`${base.replace(/\/+$/, '')}/api/mcp/mcp`, token, {
         ...(runId ? { runId } : {}),
       }));
   const mint = deps.mintToken ?? mintRunToken;
@@ -1065,7 +1063,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
   ): Promise<void> {
     if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
     const ledger = await recordLlmCall(db, {
-      tenantId: run.tenant_id,
       subject: run.owner_subject,
       agentId: run.agent_id,
       runId: run.id,
@@ -1088,7 +1085,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       logger.warn('token usage not recorded for run {runId}', {
         component: 'worker-agents/engine',
         runId: run.id,
-        tenantId: run.tenant_id,
         agentId: run.agent_id,
       });
     }
@@ -1113,7 +1109,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       .selectFrom('agent_runs')
       .select([
         'id',
-        'tenant_id',
         'agent_id',
         'owner_subject',
         'steps_snapshot',
@@ -1158,7 +1153,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
         logger.info('run {runId} handed back at step {stepId}: this executor is stopping', {
           component: 'worker-agents/engine',
           runId,
-          tenantId: run.tenant_id,
           stepId: run.current_step_id,
         });
         throw new MessageReleased('the agents worker is stopping'); // → back to the queue, at once
@@ -1168,7 +1162,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   };
 
   async function executeRun(run: RunRow): Promise<void> {
-    const { tenant_id: tenantId, id: runId } = run;
+    const { id: runId } = run;
 
     const settingsResult = await getOrgSettings(tenantId);
     if (!settingsResult.ok) throw new TransientFailure('org settings unavailable');
@@ -1228,7 +1222,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       logger.info('run {runId} parked: owner key not delegated', {
         component: 'worker-agents/engine',
         runId,
-        tenantId,
       });
       return;
     }
@@ -1331,7 +1324,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       return;
     }
     const token = await mint(db, {
-      tenantId,
       subject: run.owner_subject,
       agentId: run.agent_id,
       ttlSeconds: settings.agentRunTimeoutMinutes * 60 + TOKEN_SLACK_SECONDS,
@@ -1386,7 +1378,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // One preference read per run, beside the org settings — not one per
       // tool call, which a forty-item loop would turn into forty.
       context.notifier = await notifierFor(db, {
-        tenantId: run.tenant_id,
         subject: run.owner_subject,
         agentId: run.agent_id,
         agentName: await agentNameOf(run.tenant_id, run.agent_id),
@@ -1502,7 +1493,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
               logger.warn('branch {branchId} took its failure path in run {runId}', {
                 component: 'worker-agents/engine',
                 runId,
-                tenantId,
                 branchId: node.id,
               });
             }
@@ -1529,7 +1519,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
                 logger.info('loop {loopId} skipped: "{itemsVar}" is empty in run {runId}', {
                   component: 'worker-agents/engine',
                   runId,
-                  tenantId,
                   loopId: node.id,
                   itemsVar: node.itemsVar,
                 });
@@ -1541,7 +1530,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
                   {
                     component: 'worker-agents/engine',
                     runId,
-                    tenantId,
                     loopId: node.id,
                     total: items.length,
                     cap: node.maxIterations,
@@ -1638,7 +1626,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           logger.info('run {runId} waiting for approval at {stepId}', {
             component: 'worker-agents/engine',
             runId,
-            tenantId,
             stepId: node.id,
           });
           // Job acks; the decision route or the timeout sweep re-enqueues
@@ -1784,7 +1771,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const identity = await db
       .selectFrom('identities')
       .select(['email', 'display_name'])
-      .where('tenant_id', '=', run.tenant_id)
       .where('subject', '=', run.owner_subject)
       .executeTakeFirst();
     if (identity?.display_name) vars['user.name'] = identity.display_name;
@@ -1908,7 +1894,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       logger.warn('collected list "{collectVar}" truncated at {cap} entries in run {runId}', {
         component: 'worker-agents/engine',
         runId: run.id,
-        tenantId: run.tenant_id,
         collectVar,
         cap: MAX_COLLECTED_ITEMS,
       });
@@ -2212,7 +2197,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           .insertInto('actionable_items')
           .values({
             id: randomUUID(),
-            tenant_id: run.tenant_id,
             source: 'agents',
             status: 'suggested',
             kind: 'approval',
@@ -2254,7 +2238,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       await writeNotificationRow(
         db,
         {
-          tenantId: run.tenant_id,
           subject: run.owner_subject,
           agentId: run.agent_id,
           agentName,
@@ -2310,7 +2293,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           .insertInto('actionable_items')
           .values({
             id: randomUUID(),
-            tenant_id: run.tenant_id,
             source: 'agents',
             status: 'suggested',
             kind: 'question',
@@ -2345,7 +2327,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       await writeNotificationRow(
         db,
         {
-          tenantId: run.tenant_id,
           subject: run.owner_subject,
           agentId: run.agent_id,
           agentName,
@@ -3028,7 +3009,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           .insertInto('agent_run_steps')
           .values({
             id: rowId,
-            tenant_id: run.tenant_id,
             run_id: run.id,
             step_id: step.id,
             step_index: ordinals.get(step.id) ?? 0,
@@ -3238,7 +3218,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .insertInto('agent_run_steps')
         .values({
           id: rowId,
-          tenant_id: run.tenant_id,
           run_id: run.id,
           step_id: node.id,
           step_index: ordinals.get(node.id) ?? 0,
@@ -3305,7 +3284,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       .select('slug')
       .where('id', '=', run.tenant_id)
       .executeTakeFirst();
-    return tenant ? `/${tenant.slug}/agents/${run.agent_id}/runs/${run.id}` : null;
+    return tenant ? `/agents/${run.agent_id}/runs/${run.id}` : null;
   }
 
   /** The owner-facing run link approval cards and notifications carry —
@@ -3417,7 +3396,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           logger.warn('branch {branchId} evaluation exhausted; taking failure path', {
             component: 'worker-agents/engine',
             runId: run.id,
-            tenantId: run.tenant_id,
             branchId: branch.id,
           });
           return { kind: 'path', path: branch.failurePath, viaFailurePath: true };
@@ -3442,7 +3420,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           .insertInto('agent_run_steps')
           .values({
             id: rowId,
-            tenant_id: run.tenant_id,
             run_id: run.id,
             step_id: branch.id,
             step_index: ordinals.get(branch.id) ?? 0,
@@ -3516,7 +3493,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           logger.error('model error deciding branch {branchId} in run {runId}: {kind} {message}', {
             component: 'worker-agents/engine',
             runId: run.id,
-            tenantId: run.tenant_id,
             branchId: branch.id,
             kind,
             message: completion.err.message ?? '',
@@ -3754,7 +3730,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           .insertInto('agent_run_steps')
           .values({
             id: rowId,
-            tenant_id: run.tenant_id,
             run_id: run.id,
             step_id: loop.id,
             step_index: ordinals.get(loop.id) ?? 0,
@@ -3824,7 +3799,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           logger.error('model error deciding loop {loopId} in run {runId}: {kind} {message}', {
             component: 'worker-agents/engine',
             runId: run.id,
-            tenantId: run.tenant_id,
             loopId: loop.id,
             kind,
             message: completion.err.message ?? '',
@@ -4120,7 +4094,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
         logger.error('model error on step {stepId} in run {runId}: {kind} {message}', {
           component: 'worker-agents/engine',
           runId: run.id,
-          tenantId: run.tenant_id,
           stepId: step.id,
           kind,
           message: completion.err.message ?? '',
@@ -4276,7 +4249,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           let isError = false;
           try {
             const { inserted } = await appendAgentMemory(db, {
-              tenantId: run.tenant_id,
               agentId: run.agent_id,
               content: remembered.note,
               runId: run.id,
@@ -4424,7 +4396,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
         const toolFields = {
           component: 'worker-agents/engine',
           runId: run.id,
-          tenantId: run.tenant_id,
           agentId: run.agent_id,
           agentName: await agentNameOf(run.tenant_id, run.agent_id),
           userName: (await describeActor(db, run.tenant_id, run.owner_subject)).displayName,
@@ -4608,12 +4579,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
     if (!row || sealedDetailOf(row.detail) === null) return row;
     const owner = await db
       .selectFrom('agent_runs')
-      .select(['tenant_id', 'owner_subject'])
+      .select(['owner_subject'])
       .where('id', '=', runId)
       .executeTakeFirst();
     if (!owner) return row;
     const [opened] = await openAttemptDetails(
-      { tenant_id: owner.tenant_id, owner_subject: owner.owner_subject },
+      { owner_subject: owner.owner_subject },
       [row]
     );
     return opened;
@@ -4663,7 +4634,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const row = await db
         .selectFrom('agents')
         .select('name')
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', agentId)
         .executeTakeFirst();
       return row?.name?.trim() || '(unnamed agent)';
@@ -4733,7 +4703,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const common = {
       component: 'worker-agents/engine',
       runId: run.id,
-      tenantId: run.tenant_id,
       agentId: run.agent_id,
       agentName,
       // The agent's OWNER — agent activity in the logs attributes to the
@@ -4753,7 +4722,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // it started), and the names it needs are already in hand above.
     if (status === 'succeeded' || status === 'failed') {
       const notifier = await notifierFor(db, {
-        tenantId: run.tenant_id,
         subject: run.owner_subject,
         agentId: run.agent_id,
         agentName,
@@ -4792,7 +4760,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // usage page counts and the optimizer reads. Best effort, like the
     // log row written at creation.
     const logged = await recordAgentRunOutcome(db, {
-      tenantId: run.tenant_id,
       agentId: run.agent_id,
       runId: run.id,
       ownerSubject: run.owner_subject,
@@ -4806,7 +4773,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       logger.warn('run outcome not logged for run {runId}', {
         component: 'worker-agents/engine',
         runId: run.id,
-        tenantId: run.tenant_id,
         agentId: run.agent_id,
       });
     }
@@ -4820,7 +4786,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       try {
         await deps.onFinalized({
           runId: run.id,
-          tenantId: run.tenant_id,
           agentId: run.agent_id,
           ownerSubject: run.owner_subject,
           status,

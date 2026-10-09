@@ -116,13 +116,11 @@ function dayLabel(when: Date, today: Date): string {
 }
 
 export default function NotificationsList({
-  tenantId,
   slug,
   rows,
   unreadCount,
   initialHasMore,
 }: {
-  tenantId: string;
   slug: string;
   rows: NotificationCard[];
   /**
@@ -256,7 +254,7 @@ export default function NotificationsList({
       return next;
     });
     try {
-      await fetch(`/api/tenant/${tenantId}/notifications`, {
+      await fetch(`/api/notifications`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids, ...(read ? {} : { unread: true }) }),
@@ -283,7 +281,7 @@ export default function NotificationsList({
   async function markAllRead() {
     setMarkingAll(true);
     try {
-      await fetch(`/api/tenant/${tenantId}/notifications`, {
+      await fetch(`/api/notifications`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ all: true }),
@@ -317,7 +315,7 @@ export default function NotificationsList({
     }
     setLoadingMore(true);
     try {
-      const url = new URL(`/api/tenant/${tenantId}/notifications`, window.location.origin);
+      const url = new URL(`/api/notifications`, window.location.origin);
       url.searchParams.set('before', oldest.createdAt);
       url.searchParams.set('limit', '100');
       const response = await fetch(url.toString());
@@ -341,7 +339,7 @@ export default function NotificationsList({
   async function deleteIds(ids: string[]) {
     setBusy(true);
     try {
-      await fetch(`/api/tenant/${tenantId}/notifications`, {
+      await fetch(`/api/notifications`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids }),
@@ -414,7 +412,7 @@ export default function NotificationsList({
                   : `Open ${row.entity ?? 'link'}`;
               const runHref =
                 row.runId && row.agentId
-                  ? `/${slug}/agents/${row.agentId}/runs/${row.runId}`
+                  ? `/agents/${row.agentId}/runs/${row.runId}`
                   : null;
               // A batch row points at the batch's own page — in-app, like
               // the agent links below, and rendered through the same
@@ -432,7 +430,7 @@ export default function NotificationsList({
                       row.kind === 'agent_disabled' ||
                       row.kind === 'agent_shared') &&
                     row.agentId
-                  ? `/${slug}/agents/${row.agentId}`
+                  ? `/agents/${row.agentId}`
                   : null;
               const inAppLabel = batch ? 'Open batch' : 'Open agent';
               // Every row without a link of its own — a saved note, a

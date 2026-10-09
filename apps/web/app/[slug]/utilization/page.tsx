@@ -1,5 +1,4 @@
 import { notFound } from 'next/navigation';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { requireAuth } from '@/lib/require-auth';
 import { getUtilizationReport } from './actions';
 import { DEFAULT_PERIOD_KEY } from './window';
@@ -13,10 +12,8 @@ import UtilizationViewer from './utilization-viewer';
  */
 export default async function UtilizationPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
-  await requireAuth(tenant.id, `/${slug}/utilization`);
+  await requireAuth(tenant.id, `/utilization`);
 
   // The first render has no browser to ask, so it uses the zone the
   // viewer's proxy or CDN forwards when one does; the client re-fetches in

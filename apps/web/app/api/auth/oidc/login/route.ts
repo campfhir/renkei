@@ -92,7 +92,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .values({
         id: randomUUID(),
         state,
-        tenant_id: tenantId,
         nonce,
         expires_at: stateExpiresAt.toISOString(),
       })

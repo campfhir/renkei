@@ -156,7 +156,6 @@ async function seedChat(
     [CHAT_ID, E2E_TENANT_ID, E2E_SUBJECT, title, MODEL_ID, projectId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: CHAT_ID,
     ownerSubject: E2E_SUBJECT,
@@ -294,7 +293,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
   try {
     await seedChat(client, ids);
 
-    await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
+    await page.goto(`/chat/${CHAT_ID}`);
     await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     // The project the chat sits in reads as a subheading under the name.
     await expect(
@@ -520,7 +519,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     } finally {
       await client.query(
         `UPDATE user_preferences SET value = '{"mode":"auto","codeLineNumbers":false}'::jsonb
-         WHERE tenant_id = $1 AND subject = $2 AND key = 'theme'`,
+         WHERE subject = $2 AND key = 'theme'`,
         [E2E_TENANT_ID, E2E_SUBJECT]
       );
       await page.reload();
@@ -642,12 +641,12 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
 
     // "Chat" lands on the most recent chat; "+ New" on an empty one.
     // (Some chat — another project's fixture may be newer than this one's.)
-    await page.goto(`/${E2E_SLUG}/chat`);
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/chat/[0-9a-f-]{36}$`));
+    await page.goto(`/chat`);
+    await expect(page).toHaveURL(new RegExp(`/chat/[0-9a-f-]{36}$`));
     // "+ New" creates the empty chat up front and lands on its own address,
     // so the first Send never has to move the page.
-    await page.goto(`/${E2E_SLUG}/chat/new`);
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/chat/[0-9a-f-]{36}$`));
+    await page.goto(`/chat/new`);
+    await expect(page).toHaveURL(new RegExp(`/chat/[0-9a-f-]{36}$`));
     await expect(page.getByRole('heading', { level: 1, name: 'New chat' })).toBeVisible();
     const newChatId = page.url().match(/\/chat\/([0-9a-f-]{36})$/)?.[1] ?? null;
     expect(newChatId).not.toBeNull();
@@ -657,7 +656,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
     // The empty chat "+ New" made above.
     await client.query(
-      'DELETE FROM chats WHERE tenant_id = $1 AND owner_subject = $2 AND last_message_at IS NULL',
+      'DELETE FROM chats WHERE owner_subject = $2 AND last_message_at IS NULL',
       [E2E_TENANT_ID, E2E_SUBJECT]
     );
     await client.query('DELETE FROM chats WHERE id = $1', [ids.archivedId]);

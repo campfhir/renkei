@@ -1,7 +1,6 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 import { chatModelsOnly } from '@renkei/agent-llm';
 import RuleForms from './rule-forms';
@@ -23,10 +22,8 @@ export default async function AdminEmailSanitizerPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   // Rule suggestions need the org model; without one the feature is simply
@@ -36,7 +33,6 @@ export default async function AdminEmailSanitizerPage({
     ? (await dbResult.val
         .selectFrom('llm_model_configs')
         .select('id')
-        .where('tenant_id', '=', tenantRef.id)
         .where('enabled', '=', true)
         .where(chatModelsOnly)
         .limit(1)

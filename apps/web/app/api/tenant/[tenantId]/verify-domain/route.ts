@@ -26,7 +26,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const verdict = checkInboundLimit(`tenant/verify-domain:${tenantId}`, request, LIMITS);
   if (!verdict.allowed) {
@@ -50,9 +49,6 @@ export async function POST(
       .select(['id', 'domain_verification_token', 'domain_verified_at'])
       .where('id', '=', tenantId)
       .executeTakeFirst();
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
     if (tenant.domain_verified_at) {
       return NextResponse.json({ verified: true, alreadyVerified: true });
     }
@@ -69,7 +65,6 @@ export async function POST(
     const domains = await db
       .selectFrom('tenant_domains')
       .select('domain')
-      .where('tenant_id', '=', tenantId)
       .execute();
     if (domains.length === 0) {
       return NextResponse.json(
@@ -99,7 +94,6 @@ export async function POST(
 
     logger.info('Domain ownership not yet verified', {
       component: 'web/home-realm',
-      tenantId,
       outcomes: outcomes.map((o) => `${o.domain}:${o.reason}`).join(','),
     });
     return NextResponse.json(
@@ -115,7 +109,6 @@ export async function POST(
   } catch (error) {
     logger.error('Domain verification error: {error}', {
       component: 'web/home-realm',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return NextResponse.json({ error: 'Verification failed' }, { status: 500 });

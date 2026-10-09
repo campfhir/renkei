@@ -29,7 +29,6 @@ import { startChatTurn, type StartTurnError, type StartedTurn } from './start-tu
 export type ResendError = StartTurnError | 'NOT_PROMPT';
 
 export interface ResendInput {
-  tenantId: string;
   session: { subject: string; roles: string[] };
   chatId: string;
   messageId: string;
@@ -83,7 +82,6 @@ async function originalPromptText(
   const rows = await db
     .selectFrom('chat_messages')
     .select(['content'])
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .where('turn_id', '=', prompt.turn_id)
     .where('role', '=', 'user')
@@ -110,7 +108,6 @@ export async function resendFromMessage(
   const prompt = await db
     .selectFrom('chat_messages')
     .select(['id', 'seq', 'kind', 'content', 'turn_id'])
-    .where('tenant_id', '=', input.tenantId)
     .where('chat_id', '=', access.chat.id)
     .where('id', '=', input.messageId)
     .executeTakeFirst();
@@ -124,7 +121,6 @@ export async function resendFromMessage(
   const ownUploads = await db
     .selectFrom('chat_attachments')
     .select('id')
-    .where('tenant_id', '=', input.tenantId)
     .where('chat_id', '=', access.chat.id)
     .where('message_id', '=', prompt.id)
     .where('origin', '=', 'upload')
@@ -192,7 +188,6 @@ export async function resendFromMessage(
   }
 
   const started = await startChatTurn(db, {
-    tenantId: input.tenantId,
     session: input.session,
     chatId: access.chat.id,
     text,

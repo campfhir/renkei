@@ -147,7 +147,7 @@ function targetOf(body: Record<string, unknown>): SubjectTarget | null {
   const instanceId = str(body.instanceId);
   const subject = str(body.subject);
   if (!tenantId || !instanceId || !subject) return null;
-  return { tenantId, instanceId, subject };
+  return { instanceId, subject };
 }
 
 function tlsOf(instance: InstanceRow): TlsPolicy {

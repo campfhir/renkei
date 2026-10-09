@@ -3,7 +3,6 @@ import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { CONNECTOR_DEFINITIONS } from '@/lib/connectors/definitions';
 import ConnectorList, { type ConnectorRow } from './connector-list';
 
@@ -23,10 +22,8 @@ export default async function AdminConnectorsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const settings = await getOrgSettings(tenantRef.id);
@@ -38,7 +35,6 @@ export default async function AdminConnectorsPage({
     ? await dbResult.val
         .selectFrom('connector_configs')
         .select(['connector', 'enabled'])
-        .where('tenant_id', '=', tenantRef.id)
         .execute()
     : [];
   const configByKey = new Map(configs.map((row) => [row.connector, row.enabled]));

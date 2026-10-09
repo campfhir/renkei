@@ -46,7 +46,6 @@ const MAX_PAGES = 10;
 
 export interface WatchRow {
   id: string;
-  tenant_id: string;
   provider: string;
   account_id: string;
   scope_type: string;
@@ -161,7 +160,6 @@ async function syncJira(
       if (!content.trim()) continue;
 
       await enqueueKnowledgeEvent(
-        tenantId,
         'ingest.object',
         {
           provider: 'jira',
@@ -234,7 +232,6 @@ async function syncConfluence(
       if (!content.trim()) continue;
 
       await enqueueKnowledgeEvent(
-        tenantId,
         'ingest.object',
         {
           provider: 'confluence',

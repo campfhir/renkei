@@ -38,7 +38,7 @@ export default function ShareConfigForm({ slug, shareId }: { slug: string; share
 
   const load = useCallback(async () => {
     const { data, error } = await getJson<ShareResponse>(
-      `/api/admin/${slug}/file-shares/${shareId}`
+      `/api/admin/file-shares/${shareId}`
     );
     if (error || !data) {
       setStatus({ kind: 'error', text: error ?? 'Could not load the share' });
@@ -75,7 +75,7 @@ export default function ShareConfigForm({ slug, shareId }: { slug: string; share
     setBusy(true);
     setStatus(null);
     const error = await sendJson(
-      `/api/admin/${slug}/file-shares/${shareId}`,
+      `/api/admin/file-shares/${shareId}`,
       'PATCH',
       draftPayload(draft)
     );
@@ -93,13 +93,13 @@ export default function ShareConfigForm({ slug, shareId }: { slug: string; share
     if (!window.confirm("Delete this share? Everyone's stored connections to it go with it."))
       return;
     setBusy(true);
-    const error = await sendJson(`/api/admin/${slug}/file-shares/${shareId}`, 'DELETE');
+    const error = await sendJson(`/api/admin/file-shares/${shareId}`, 'DELETE');
     setBusy(false);
     if (error) {
       setStatus({ kind: 'error', text: error });
       return;
     }
-    router.push(`/${slug}/admin/file-shares`);
+    router.push(`/admin/file-shares`);
   };
 
   return (

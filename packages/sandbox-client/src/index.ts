@@ -46,7 +46,6 @@ export type SandboxClientError =
 export type ClientResult<T> = { ok: true; val: T } | { ok: false; err: SandboxClientError };
 
 export interface SandboxTarget {
-  tenantId: string;
   subject: string;
 }
 
@@ -436,7 +435,6 @@ export async function sbWriteFile(
   const cfg = sandboxConfig();
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   const query = new URLSearchParams({
-    tenantId: target.tenantId,
     subject: target.subject,
     filename: input.filename,
     ...(input.contentType ? { contentType: input.contentType } : {}),
@@ -1063,7 +1061,6 @@ export async function sbWorkspaceUpload(
   const cfg = sandboxConfig();
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   const query = new URLSearchParams({
-    tenantId: target.tenantId,
     subject: target.subject,
     id: input.id,
     path: input.path,
@@ -1769,7 +1766,7 @@ export async function sbImageRuleSet(
     clearCredential?: boolean;
   }
 ): Promise<ClientResult<{ rule: WireImageRule; dropped: string | null }>> {
-  const result = await callJson('services/rules/set', { tenantId, ...input });
+  const result = await callJson('services/rules/set', { ...input });
   if (!result.ok) return result;
   const rule = isRecord(result.val) ? imageRuleOf(result.val.rule) : null;
   if (!rule) return malformed();
@@ -1783,7 +1780,7 @@ export async function sbImageRuleDelete(
   tenantId: string,
   id: string
 ): Promise<ClientResult<{ id: string }>> {
-  const result = await callJson('services/rules/delete', { tenantId, id });
+  const result = await callJson('services/rules/delete', { id });
   if (!result.ok) return result;
   if (!isRecord(result.val) || !result.val.deleted) return malformed();
   return { ok: true, val: { id: str(result.val.id) } };

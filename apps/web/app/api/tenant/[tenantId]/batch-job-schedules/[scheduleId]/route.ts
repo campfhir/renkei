@@ -31,7 +31,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; scheduleId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, scheduleId } = await params;
+  const { scheduleId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -61,7 +61,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; scheduleId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, scheduleId } = await params;
+  const { scheduleId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -176,7 +176,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; scheduleId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, scheduleId } = await params;
+  const { scheduleId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 

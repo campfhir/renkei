@@ -48,7 +48,6 @@ function uuidFrom(seed: string): string {
 }
 
 interface Fixture {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
@@ -59,7 +58,6 @@ interface Fixture {
 
 function fixtureFor(name: string): Fixture {
   return {
-    tenantId: uuidFrom(`keys-e2e-tenant:${name}`),
     sessionId: uuidFrom(`keys-e2e-session:${name}`),
     slug: `e2e-keys-${name}`,
     subject: `e2e-keys-${name}@example.com`,
@@ -91,13 +89,13 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 /** A tenant and a signed-in person; with `chat`, one chat of theirs with two sealed messages. */
 async function seed(fixture: Fixture, options: { chat: boolean }): Promise<Buffer | null> {
   return withDb(async (client) => {
-    await client.query('DELETE FROM chats WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM resource_keys WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM user_encryption_keys WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM llm_model_configs WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+    await client.query('DELETE FROM chats', [fixture.tenantId]);
+    await client.query('DELETE FROM resource_keys', [fixture.tenantId]);
+    await client.query('DELETE FROM user_encryption_keys', [fixture.tenantId]);
+    await client.query('DELETE FROM llm_model_configs', [fixture.tenantId]);
+    await client.query('DELETE FROM user_preferences', [fixture.tenantId]);
+    await client.query('DELETE FROM sessions', [fixture.tenantId]);
+    await client.query('DELETE FROM identities', [fixture.tenantId]);
     await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
       fixture.tenantId,
@@ -137,7 +135,6 @@ async function seed(fixture: Fixture, options: { chat: boolean }): Promise<Buffe
     );
     const keys = await enrollForE2E(client, fixture.tenantId, fixture.subject);
     const chatKey = await keyFor(client, {
-      tenantId: fixture.tenantId,
       kind: 'chat',
       resourceId: fixture.chatId,
       ownerSubject: fixture.subject,
@@ -178,7 +175,7 @@ async function seed(fixture: Fixture, options: { chat: boolean }): Promise<Buffe
 async function signIn(page: Page, fixture: Fixture, sessionId = fixture.sessionId): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -200,7 +197,7 @@ async function delegationCount(fixture: Fixture, scope?: string): Promise<number
   return withDb(async (client) => {
     const result = await client.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM key_delegations
-        WHERE tenant_id = $1 AND subject = $2 AND expires_at > NOW()
+        WHERE subject = $2 AND expires_at > NOW()
           AND ($3::text IS NULL OR scope = $3)`,
       [fixture.tenantId, fixture.subject, scope ?? null]
     );
@@ -211,7 +208,7 @@ async function delegationCount(fixture: Fixture, scope?: string): Promise<number
 /** What a delegate restart leaves behind: rows nothing can open. Here, simply none. */
 async function dropDelegations(fixture: Fixture): Promise<void> {
   await withDb((client) =>
-    client.query('DELETE FROM key_delegations WHERE tenant_id = $1 AND subject = $2', [
+    client.query('DELETE FROM key_delegations WHERE subject = $2', [
       fixture.tenantId,
       fixture.subject,
     ])
@@ -224,7 +221,7 @@ async function recheck(page: Page): Promise<void> {
 }
 
 async function expectChatReadable(page: Page, fixture: Fixture): Promise<void> {
-  await page.goto(`/${fixture.slug}/chat/${fixture.chatId}`);
+  await page.goto(`/chat/${fixture.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Sprint slippage' })).toBeVisible();
   await expect(page.getByText(PROMPT_TEXT)).toBeVisible();
   await expect(page.getByText(REPLY_TEXT)).toBeVisible();
@@ -240,7 +237,7 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
 
   // Nothing asked of the person: the key exists by the time the page settles,
   // and is shown front and center in a dialog nothing else can dismiss.
-  await page.goto(`/${fixture.slug}`);
+  await page.goto(`/`);
   const dialog = page.getByRole('dialog', { name: 'Your encryption key is ready' });
   await expect(dialog).toBeVisible({ timeout: 30_000 });
   await expect(dialog.getByRole('button', { name: 'Close' })).toHaveCount(0);
@@ -249,7 +246,7 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
   await shot(page, testInfo, 'keys-01-enrolled-dialog');
   const enrolled = await withDb(async (client) => {
     const row = await client.query<{ mode: string; public_key: string | null }>(
-      `SELECT mode, public_key FROM user_encryption_keys WHERE tenant_id = $1 AND subject = $2`,
+      `SELECT mode, public_key FROM user_encryption_keys WHERE subject = $2`,
       [fixture.tenantId, fixture.subject]
     );
     return row.rows[0];
@@ -271,7 +268,7 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
   await expect(page.getByTestId('key-modal-write-down')).toHaveCount(0);
 
   // The preferences section says what the person now has.
-  await page.goto(`/${fixture.slug}/preferences`);
+  await page.goto(`/preferences`);
   const section = page.getByTestId('encryption-key');
   await expect(section.getByTestId('encryption-key-mode')).toContainText('You hold your own key');
   await expect(section.getByTestId('encryption-key-state')).toContainText(
@@ -346,7 +343,7 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
 
   // The delegate forgets: the chat says why, and the page asks for the key.
   await dropDelegations(fixture);
-  await page.goto(`/${fixture.slug}/chat/${fixture.chatId}`);
+  await page.goto(`/chat/${fixture.chatId}`);
   const notice = page.getByTestId('chat-key-unavailable-notice');
   await expect(notice).toBeVisible({ timeout: 30_000 });
   await expect(notice).toContainText('not connected to this session');
@@ -365,7 +362,7 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   await expect(notice).toHaveCount(0);
 
   // Rotation: a new key, shown once; the chat still opens afterwards.
-  await page.goto(`/${fixture.slug}/preferences`);
+  await page.goto(`/preferences`);
   const section = page.getByTestId('encryption-key');
   await section.getByTestId('encryption-key-rotate-start').click();
   await section.getByTestId('encryption-key-rotate-confirm').click();
@@ -396,7 +393,7 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   const second = await (browser satisfies Browser).newContext();
   const other = await second.newPage();
   await signIn(other, fixture, secondSession);
-  await other.goto(`/${fixture.slug}/chat/${fixture.chatId}`);
+  await other.goto(`/chat/${fixture.chatId}`);
   const otherNeeds = other.getByTestId('key-modal-needs-key');
   await expect(otherNeeds).toBeVisible({ timeout: 30_000 });
   await other.getByRole('button', { name: 'Ask my other devices' }).click();
@@ -444,7 +441,7 @@ test('a key service this browser has not met is confirmed by fingerprint before 
   // First use on this browser: the live instances are trusted on sight and
   // the device gets the key by typing it, sealing without a question.
   await dropDelegations(fixture);
-  await page.goto(`/${fixture.slug}/chat/${fixture.chatId}`);
+  await page.goto(`/chat/${fixture.chatId}`);
   await expect(page.getByTestId('key-modal-needs-key')).toBeVisible({ timeout: 30_000 });
   await page
     .getByTestId('key-unlock')
@@ -458,7 +455,7 @@ test('a key service this browser has not met is confirmed by fingerprint before 
   // signing key never signed — what a compromised web app would do. The
   // browser names its fingerprint and seals nothing until the person says so.
   const planted = randomBytes(32).toString('base64');
-  await page.route(`**/api/tenant/${fixture.tenantId}/keys`, async (route) => {
+  await page.route(`**/api/keys`, async (route) => {
     const response = await route.fetch();
     const json = await response.json();
     json.instances = [...json.instances, { id: randomUUID(), publicKey: planted }];
@@ -486,7 +483,7 @@ test('a key service this browser has not met is confirmed by fingerprint before 
   await expect
     .poll(() => delegationCount(fixture, 'session'), { timeout: 30_000 })
     .toBeGreaterThan(0);
-  await page.unroute(`**/api/tenant/${fixture.tenantId}/keys`);
+  await page.unroute(`**/api/keys`);
   await page.reload();
   await expect(page.getByTestId('key-modal-trust')).toHaveCount(0);
   await expect(page.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
@@ -497,7 +494,7 @@ test('the key dialog and the section at phone width', async ({ page }, testInfo)
   await seed(fixture, { chat: false });
   await signIn(page, fixture);
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto(`/${fixture.slug}`);
+  await page.goto(`/`);
   const dialog = page.getByTestId('key-modal-write-down');
   await expect(dialog).toBeVisible({ timeout: 30_000 });
   const box = await dialog.boundingBox();
@@ -506,7 +503,7 @@ test('the key dialog and the section at phone width', async ({ page }, testInfo)
   await expect(page.getByTestId('key-reveal-text')).toBeVisible();
   await shot(page, testInfo, 'keys-mobile-01-dialog');
   await page.getByTestId('key-reveal-confirm').click();
-  await page.goto(`/${fixture.slug}/preferences`);
+  await page.goto(`/preferences`);
   const section = page.getByTestId('encryption-key');
   await expect(section.getByTestId('encryption-key-mode')).toContainText('You hold your own key');
   const sectionBox = await section.boundingBox();
@@ -531,7 +528,7 @@ test('an operator removes a departed person’s key from the Access page, never 
   });
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/access`);
+  await page.goto(`/admin/access`);
   await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
   // The operator's own key is theirs to remove from Preferences only.
   await expect(page.getByTestId(`shred-key-${fixture.subject}`)).toHaveCount(0);
@@ -553,7 +550,7 @@ test('an operator removes a departed person’s key from the Access page, never 
   expect(
     await withDb(async (client) => {
       const row = await client.query(
-        'SELECT 1 FROM user_encryption_keys WHERE tenant_id = $1 AND subject = $2',
+        'SELECT 1 FROM user_encryption_keys WHERE subject = $2',
         [fixture.tenantId, leaver]
       );
       return row.rowCount;
@@ -565,15 +562,15 @@ test('an operator removes a departed person’s key from the Access page, never 
   await expect(button).toHaveCount(0, { timeout: 15_000 });
   const after = await withDb(async (client) => {
     const keys = await client.query(
-      'SELECT 1 FROM user_encryption_keys WHERE tenant_id = $1 AND subject = $2',
+      'SELECT 1 FROM user_encryption_keys WHERE subject = $2',
       [fixture.tenantId, leaver]
     );
     const grants = await client.query(
-      'SELECT 1 FROM resource_key_grants WHERE tenant_id = $1 AND holder = $2',
+      'SELECT 1 FROM resource_key_grants WHERE holder = $2',
       [fixture.tenantId, leaver]
     );
     const own = await client.query(
-      'SELECT 1 FROM user_encryption_keys WHERE tenant_id = $1 AND subject = $2',
+      'SELECT 1 FROM user_encryption_keys WHERE subject = $2',
       [fixture.tenantId, fixture.subject]
     );
     return { keys: keys.rowCount, grants: grants.rowCount, own: own.rowCount };

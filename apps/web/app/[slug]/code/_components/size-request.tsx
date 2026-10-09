@@ -25,12 +25,10 @@ function gb(value: number): string {
 }
 
 export default function SizeRequest({
-  tenantId,
   projectId,
   limitBytes,
   request,
 }: {
-  tenantId: string;
   projectId: string;
   limitBytes: number;
   request: CodeProjectView['code']['sizeRequest'];
@@ -46,7 +44,7 @@ export default function SizeRequest({
     setBusy(true);
     setError(null);
     const result = await sendJsonFull(
-      `/api/tenant/${tenantId}/code/projects/${projectId}/size-request`,
+      `/api/code/projects/${projectId}/size-request`,
       'POST',
       { requestedBytes: wanted * GB, reason }
     );

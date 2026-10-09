@@ -95,7 +95,6 @@ async function ownerOf(
   const row = await db
     .selectFrom(table)
     .select('owner_subject')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', resourceId)
     .executeTakeFirst();
   return row ? { ownerSubject: row.owner_subject } : null;
@@ -111,7 +110,6 @@ async function activeGrant(
   const row = await db
     .selectFrom('resource_access_grants')
     .select('role')
-    .where('tenant_id', '=', tenantId)
     .where('resource_kind', '=', kind)
     .where('resource_id', '=', resourceId)
     .where('grantee_subject', '=', granteeSubject)
@@ -148,7 +146,6 @@ export async function resolveProjectAccess(
 ): Promise<ProjectAccess | null> {
   const access = await resolveResourceAccess(
     db,
-    tenantId,
     viewerSubject,
     'chat_project',
     projectId
@@ -191,7 +188,6 @@ export async function resolveChatAccess(
   if (chat.projectId) {
     const project = await resolveResourceAccess(
       db,
-      tenantId,
       viewerSubject,
       'chat_project',
       chat.projectId
@@ -211,7 +207,6 @@ export async function listAccessibleProjectIds(
     db
       .selectFrom('chat_projects')
       .select('id')
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', viewerSubject)
       .execute(),
     listGrantedResources(db, tenantId, viewerSubject, 'chat_project'),
@@ -238,7 +233,6 @@ export async function grantResourceAccess(
   await db
     .insertInto('resource_access_grants')
     .values({
-      tenant_id: tenantId,
       resource_kind: kind,
       resource_id: resourceId,
       owner_subject: ownerSubject,
@@ -267,7 +261,7 @@ export async function listResourceGrants(
   const rows = await db
     .selectFrom('resource_access_grants as g')
     .leftJoin('identities as i', (join) =>
-      join.onRef('i.tenant_id', '=', 'g.tenant_id').onRef('i.subject', '=', 'g.grantee_subject')
+      join.onRef('i.subject', '=', 'g.grantee_subject')
     )
     .select([
       'g.id',
@@ -278,7 +272,6 @@ export async function listResourceGrants(
       'i.display_name',
       'i.email',
     ])
-    .where('g.tenant_id', '=', tenantId)
     .where('g.resource_kind', '=', kind)
     .where('g.resource_id', '=', resourceId)
     .where('g.owner_subject', '=', ownerSubject)
@@ -309,7 +302,6 @@ export async function revokeResourceGrant(
   if (!isUuid(resourceId) || !isUuid(grantId)) return null;
   const deleted = await db
     .deleteFrom('resource_access_grants')
-    .where('tenant_id', '=', tenantId)
     .where('resource_kind', '=', kind)
     .where('resource_id', '=', resourceId)
     .where('owner_subject', '=', ownerSubject)
@@ -329,7 +321,6 @@ export async function listGrantedResources(
   const rows = await db
     .selectFrom('resource_access_grants')
     .select(['resource_id', 'owner_subject', 'role', 'expires_at'])
-    .where('tenant_id', '=', tenantId)
     .where('resource_kind', '=', kind)
     .where('grantee_subject', '=', granteeSubject)
     .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`NOW()`)]))

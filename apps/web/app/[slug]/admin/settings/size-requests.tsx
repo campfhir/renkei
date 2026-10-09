@@ -29,7 +29,7 @@ function Row({ slug, item }: { slug: string; item: SizeRequestView }) {
     setBusy(true);
     setError(null);
     const result = await sendJsonFull(
-      `/api/admin/${slug}/sandbox-size-requests/${item.id}`,
+      `/api/admin/sandbox-size-requests/${item.id}`,
       'POST',
       decision === 'approved'
         ? { decision, note, approvedBytes: approveGb * GB }

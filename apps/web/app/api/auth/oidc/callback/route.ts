@@ -76,7 +76,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Look up pending OIDC state
     const pendingSignIn = await db
       .selectFrom('pending_oidc_signin')
-      .select(['tenant_id', 'expires_at', 'nonce'])
+      .select(['expires_at', 'nonce'])
       .where('state', '=', state)
       .executeTakeFirst();
 
@@ -102,7 +102,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
       logger.warn('OIDC state cookie missing or mismatched; rejecting callback', {
         component: 'auth/oidc',
-        tenantId,
       });
       const response = NextResponse.json({ error: 'Invalid state' }, { status: 400 });
       response.cookies.delete(`oidc_state_${tenantId}`);
@@ -170,7 +169,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       if (tokenUrlError instanceof BlockedUrlError) {
         logger.error('Token endpoint is not an allowed URL: {detail}', {
           component: 'auth/oidc',
-          tenantId,
           detail: tokenUrlError.message,
         });
         return NextResponse.json({ error: 'Invalid token endpoint' }, { status: 400 });
@@ -198,7 +196,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       if (tokenFetchError instanceof BlockedUrlError) {
         logger.error('Token endpoint is not an allowed URL: {detail}', {
           component: 'auth/oidc',
-          tenantId,
           detail: tokenFetchError.message,
         });
         return NextResponse.json({ error: 'Invalid token endpoint' }, { status: 400 });
@@ -226,7 +223,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!subject) {
       logger.error("No 'sub' claim in id_token; cannot establish session", {
         component: 'auth/oidc',
-        tenantId,
       });
       return NextResponse.json(
         { error: 'Identity provider did not return a subject claim' },
@@ -248,7 +244,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
       logger.error('id_token claim validation failed: {detail}', {
         component: 'auth/oidc',
-        tenantId,
         detail: claimError,
       });
       const response = NextResponse.json({ error: 'Invalid id_token' }, { status: 400 });
@@ -331,7 +326,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         .select('slug')
         .where('id', '=', tenantId)
         .executeTakeFirst();
-      redirect = tenantRow ? `/${tenantRow.slug}` : '/';
+      redirect = tenantRow ? `/` : '/';
     }
 
     // Create a server-side session. Subject and roles are stored in the database
@@ -343,7 +338,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // tying our own session to its (often hour-long) lifetime made every
     // sign-in expire far sooner than anyone signing in expects.
     const sessionResult = await createSession(
-      tenantId,
       subject,
       Array.from(userRoles),
       SESSION_TTL_SECONDS
@@ -351,7 +345,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!sessionResult.ok) {
       return NextResponse.json({ error: 'Failed to establish session' }, { status: 500 });
     }
-    recordAuditEvent({ tenantId, actorSubject: subject, action: 'user.signed_in' });
+    recordAuditEvent({ actorSubject: subject, action: 'user.signed_in' });
 
     const response = NextResponse.redirect(new URL(redirect, origin));
     response.cookies.set(

@@ -50,7 +50,7 @@ export async function sweepExpiredGrants(): Promise<void> {
   try {
     stale = await db
       .selectFrom('provider_grants')
-      .select(['tenant_id', 'provider', 'provider_account_id'])
+      .select(['provider', 'provider_account_id'])
       .where('expires_at', '<', sql<Date>`NOW() - make_interval(days => ${GRANT_STALE_DAYS})`)
       .limit(MAX_DELETES_PER_PASS)
       .execute();
@@ -67,7 +67,6 @@ export async function sweepExpiredGrants(): Promise<void> {
     try {
       await db
         .deleteFrom('provider_grants')
-        .where('tenant_id', '=', grant.tenant_id)
         .where('provider', '=', grant.provider)
         .where('provider_account_id', '=', grant.provider_account_id)
         // Re-checked in the delete itself: a refresh that landed between the
@@ -79,7 +78,6 @@ export async function sweepExpiredGrants(): Promise<void> {
       // my connection go" from the logs alone.
       logger.info('deleted expired {provider} grant for account {accountId}', {
         component: COMPONENT,
-        tenantId: grant.tenant_id,
         provider: grant.provider,
         accountId: grant.provider_account_id,
         staleDays: GRANT_STALE_DAYS,
@@ -87,7 +85,6 @@ export async function sweepExpiredGrants(): Promise<void> {
     } catch (error) {
       logger.warn('could not delete stale grant: {error}', {
         component: COMPONENT,
-        tenantId: grant.tenant_id,
         provider: grant.provider,
         error: error instanceof Error ? error.message : String(error),
       });

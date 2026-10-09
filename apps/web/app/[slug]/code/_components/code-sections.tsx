@@ -60,16 +60,14 @@ function bytes(value: number): string {
 
 /** The repository and its checkout's state: one line under the header. */
 export function CodeRepoStrip({
-  tenantId,
   projectId,
   code,
 }: {
-  tenantId: string;
   projectId: string;
   code: CodeProjectView['code'];
 }) {
   const router = useRouter();
-  const base = `/api/tenant/${tenantId}/code/projects/${projectId}`;
+  const base = `/api/code/projects/${projectId}`;
   const workspace = code.workspace;
   const cloning = workspace?.status === 'cloning';
 
@@ -152,14 +150,12 @@ export function CodeRepoStrip({
 /** The cards beside (or below) the chats: pulls, commits, CI, services, then the environment. */
 export function CodeRail({
   slug,
-  tenantId,
   projectId,
   code,
   canEdit,
   envProblems,
 }: {
   slug: string;
-  tenantId: string;
   projectId: string;
   code: CodeProjectView['code'];
   canEdit: boolean;
@@ -167,7 +163,7 @@ export function CodeRail({
   envProblems: string[];
 }) {
   const router = useRouter();
-  const base = `/api/tenant/${tenantId}/code/projects/${projectId}`;
+  const base = `/api/code/projects/${projectId}`;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [envOpen, setEnvOpen] = useState(false);
@@ -209,24 +205,24 @@ export function CodeRail({
   return (
     <>
       <PullsSummary
-        href={`/${slug}/code/${projectId}/pulls`}
+        href={`/code/${projectId}/pulls`}
         tenantId={tenantId}
         projectId={projectId}
       />
       <CommitsSummary
-        href={`/${slug}/code/${projectId}/commits`}
+        href={`/code/${projectId}/commits`}
         tenantId={tenantId}
         projectId={projectId}
       />
       {isGitHub ? (
         <ActionsSummary
-          href={`/${slug}/code/${projectId}/actions`}
+          href={`/code/${projectId}/actions`}
           tenantId={tenantId}
           projectId={projectId}
         />
       ) : (
         <PipelinesSummary
-          href={`/${slug}/code/${projectId}/pipelines`}
+          href={`/code/${projectId}/pipelines`}
           tenantId={tenantId}
           projectId={projectId}
           branch={code.branch}
@@ -234,7 +230,7 @@ export function CodeRail({
       )}
       {code.enabled ? (
         <ServicesSummaryCard
-          href={`/${slug}/code/${projectId}/services`}
+          href={`/code/${projectId}/services`}
           tenantId={tenantId}
           projectId={projectId}
         />

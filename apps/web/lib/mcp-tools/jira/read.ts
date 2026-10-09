@@ -112,7 +112,6 @@ export async function registerReadTools(
       const cachedDisplayName = getCachedDisplayName(context.accountId);
       logger.debug('whoami invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName: cachedDisplayName,
         siteUrl: context.siteUrl,
@@ -200,7 +199,6 @@ export async function registerReadTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_search_issues invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -548,7 +546,6 @@ export async function registerReadTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_count_issues invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -628,7 +625,6 @@ export async function registerReadTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_get_issue invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -758,7 +754,6 @@ export async function registerReadTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_boards invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -844,7 +839,6 @@ export async function registerReadTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_sprints invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

@@ -50,13 +50,11 @@ function uuidFrom(seed: string): string {
 
 /** This test's own tenant/session/slug — isolated from every other test and project. */
 function fixtureFor(name: string): {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`actionable-cards-e2e-tenant:${name}`),
     sessionId: uuidFrom(`actionable-cards-e2e-session:${name}`),
     slug: `e2e-actionable-cards-${name}`,
     subject: `e2e-actionable-cards-${name}@example.com`,
@@ -64,9 +62,9 @@ function fixtureFor(name: string): {
 }
 
 async function seedTenant(client: Client, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
-  await client.query('DELETE FROM actionable_items WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+  await client.query('DELETE FROM actionable_items', [fixture.tenantId]);
+  await client.query('DELETE FROM sessions', [fixture.tenantId]);
+  await client.query('DELETE FROM identities', [fixture.tenantId]);
   await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
   await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
     fixture.tenantId,
@@ -99,7 +97,7 @@ async function seedTenant(client: Client, fixture: ReturnType<typeof fixtureFor>
 async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -181,7 +179,7 @@ test('a Jira issue call renders as a structured issue card', async ({ page }, te
       }
     );
 
-    await page.goto(`/${fixture.slug}`);
+    await page.goto(`/`);
     await expect(page.getByText('Wants to call Create issue confirm')).toBeVisible();
 
     // Project/type header instead of raw "projectKey: CIO" / "issueType:
@@ -226,7 +224,7 @@ test('an Outlook send-mail call renders as a structured email card', async ({ pa
       },
     });
 
-    await page.goto(`/${fixture.slug}`);
+    await page.goto(`/`);
     await expect(page.getByText('Wants to call Send mail')).toBeVisible();
 
     await expect(page.getByText('To:')).toBeVisible();
@@ -261,7 +259,7 @@ test('a tool outside the dedicated cards still falls back to a JSON-safe arg lis
       },
     });
 
-    await page.goto(`/${fixture.slug}`);
+    await page.goto(`/`);
     await expect(page.getByText('Wants to call Deploy channels')).toBeVisible();
 
     await expect(page.getByText('[object Object]')).toHaveCount(0);
@@ -295,7 +293,7 @@ test('an executed Jira issue card links out through a new tab, not the PWA webvi
       url: 'https://example.atlassian.net/browse/OPS-42',
     });
 
-    await page.goto(`/${fixture.slug}`);
+    await page.goto(`/`);
     const link = page.getByRole('link', { name: 'OPS-42' });
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute('href', 'https://example.atlassian.net/browse/OPS-42');

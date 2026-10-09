@@ -240,7 +240,6 @@ export async function recordUnwritten(
   } catch (error) {
     logger.warn('could not record unwritten fields', {
       component: 'mcp/tool',
-      tenantId: context.tenantId,
       issueKey,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -311,7 +310,6 @@ export async function registerWriteTools(
     const displayName = getCachedDisplayName(context.accountId);
     logger.debug('jira_create_issue invoked', {
       component: 'mcp/tool',
-      tenantId: context.tenantId,
       accountId: context.accountId,
       displayName,
     });
@@ -460,7 +458,6 @@ export async function registerWriteTools(
     const displayName = getCachedDisplayName(context.accountId);
     logger.debug('jira_update_issue invoked', {
       component: 'mcp/tool',
-      tenantId: context.tenantId,
       accountId: context.accountId,
       displayName,
     });
@@ -788,7 +785,6 @@ export async function registerWriteTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_add_comment invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -862,7 +858,6 @@ export async function registerWriteTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_update_comment invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -956,7 +951,6 @@ export async function registerWriteTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_transition_issue invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -1079,7 +1073,6 @@ export async function registerWriteTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_log_work invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -1140,7 +1133,6 @@ export async function registerWriteTools(
     const displayName = getCachedDisplayName(context.accountId);
     logger.debug('jira_delete_issue invoked', {
       component: 'mcp/tool',
-      tenantId: context.tenantId,
       accountId: context.accountId,
       displayName,
     });
@@ -1289,7 +1281,6 @@ export async function registerWriteTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_delete_comment invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

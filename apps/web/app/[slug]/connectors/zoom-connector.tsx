@@ -16,14 +16,12 @@ import { ZOOM_SCOPE_GROUPS, ZOOM_SCOPE_OPTIONS } from '@/lib/zoom-scopes';
  * disconnect confirmation.
  */
 export default function ZoomConnector({
-  tenantId,
   connected,
   displayName,
   ceiling,
   priorScopes,
   missingScopes = [],
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   /** The org's allowed scopes — the most a user can grant. */
@@ -37,7 +35,7 @@ export default function ZoomConnector({
    */
   missingScopes?: string[];
 }) {
-  const authorizePath = `/api/zoom/${tenantId}/authorize`;
+  const authorizePath = `/api/zoom/authorize`;
 
   return (
     <ConnectorShell anchor="card-zoom">
@@ -110,7 +108,7 @@ export default function ZoomConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/zoom/${tenantId}/grant`}
+          endpoint={`/api/zoom/grant`}
           confirmText="Disconnect your Zoom account? The Zoom MCP tools stop working until you reconnect."
           buttonLabel="Disconnect Zoom"
         />

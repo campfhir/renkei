@@ -33,7 +33,6 @@ import { envSecretsKey } from './env-secrets';
 import { logger } from './logger';
 
 export interface BrowserStateTarget {
-  tenantId: string;
   subject: string;
 }
 

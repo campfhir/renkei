@@ -33,7 +33,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`access-revoke-e2e-tenant:${projectName}`),
     slug: `e2e-access-revoke-${projectName}`,
     operator: {
       sessionId: uuidFrom(`access-revoke-e2e-op-session:${projectName}`),
@@ -61,12 +60,12 @@ async function withDb<T>(fn: (client: Client) => Promise<T>): Promise<T> {
 
 async function seed(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    await client.query('DELETE FROM oauth_access_tokens WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM oauth_refresh_tokens WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM oauth_clients WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM audit_events WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+    await client.query('DELETE FROM oauth_access_tokens', [fixture.tenantId]);
+    await client.query('DELETE FROM oauth_refresh_tokens', [fixture.tenantId]);
+    await client.query('DELETE FROM oauth_clients', [fixture.tenantId]);
+    await client.query('DELETE FROM audit_events', [fixture.tenantId]);
+    await client.query('DELETE FROM sessions', [fixture.tenantId]);
+    await client.query('DELETE FROM identities', [fixture.tenantId]);
     await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
     await client.query(
       'INSERT INTO tenants (id, slug, domain_verified_at) VALUES ($1, $2, NOW())',
@@ -130,13 +129,13 @@ async function remaining(fixture: Fixture) {
       Number(
         (
           await client.query(
-            `SELECT count(*) FROM ${table} WHERE tenant_id = $1 AND subject = $2`,
+            `SELECT count(*) FROM ${table} WHERE subject = $2`,
             [fixture.tenantId, fixture.target.subject]
           )
         ).rows[0].count
       );
     const audit = await client.query(
-      `SELECT action, target_label FROM audit_events WHERE tenant_id = $1 AND action = 'user.sessions_revoked'`,
+      `SELECT action, target_label FROM audit_events WHERE action = 'user.sessions_revoked'`,
       [fixture.tenantId]
     );
     return {
@@ -151,7 +150,7 @@ async function remaining(fixture: Fixture) {
 async function signInAsOperator(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.operator.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -174,7 +173,7 @@ test('admin access: sign a person out everywhere', async ({ page }, testInfo) =>
   await seed(fixture);
   await signInAsOperator(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/access`);
+  await page.goto(`/admin/access`);
   await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
 
   const button = page.getByTestId(`revoke-sessions-${fixture.target.subject}`);

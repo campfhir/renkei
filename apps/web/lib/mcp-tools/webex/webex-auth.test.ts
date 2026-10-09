@@ -32,7 +32,6 @@ import type { MCPToolContext } from '../common';
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     subject: 'subject-1',
     origin: 'https://renkei.example.com',
     ...overrides,
@@ -64,7 +63,6 @@ describe('resolveWebexAccess', () => {
     expect(access.personEmail).toBe('alice@example.com');
     expect(access.auth.grantKey).toBe('webex:tenant-1:subject-1');
     expect(mockDescribe).toHaveBeenCalledWith({
-      tenantId: 'tenant-1',
       provider: 'webex',
       subject: 'subject-1',
     });

@@ -50,7 +50,6 @@ export async function GET(
   }
 
   const configResult = await getConnectorConfig(
-    tenantId,
     ATLASSIAN_CONFLUENCE_CONNECTOR,
     keyResult.val
   );
@@ -114,7 +113,6 @@ export async function PUT(
   // wholesale, so a blank/omitted secret is merged with the stored one here.
   // A secret is required only when none is stored yet.
   const existing = await getConnectorConfig(
-    tenantId,
     ATLASSIAN_CONFLUENCE_CONNECTOR,
     keyResult.val
   );
@@ -134,7 +132,6 @@ export async function PUT(
   if (redirectUri) settings.redirectUri = redirectUri;
 
   const writeResult = await setConnectorConfig(
-    tenantId,
     ATLASSIAN_CONFLUENCE_CONNECTOR,
     { enabled, settings, secrets: { clientSecret: mergedClientSecret } },
     keyResult.val

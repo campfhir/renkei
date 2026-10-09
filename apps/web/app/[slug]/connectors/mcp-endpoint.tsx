@@ -20,7 +20,7 @@ export default function McpEndpoint({ tenantId }: { tenantId: string }) {
   const endpointAnchor = useCoachAnchor('connectors-endpoint');
 
   useEffect(() => {
-    setUrl(`${window.location.origin}/api/mcp/${tenantId}/http`);
+    setUrl(`${window.location.origin}/api/mcp/http`);
   }, [tenantId]);
 
   async function copy() {

@@ -8,7 +8,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseBaseUrl } from '@renkei/connector-mirth';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { mirthClientFailure, mirthProbe } from '@/lib/mirth/service-client';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -20,8 +19,6 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

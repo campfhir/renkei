@@ -8,7 +8,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; chatId: string; grantId: string }> }
 ): Promise<Response> {
-  const { tenantId, chatId, grantId } = await params;
+  const { chatId, grantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;

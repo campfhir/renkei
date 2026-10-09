@@ -23,14 +23,12 @@ interface ChatToolOption {
 }
 
 export default function DefaultToolsForm({
-  tenantId,
   connectors,
   initialDefault,
   kind = 'chat',
   baseline,
   locked = [],
 }: {
-  tenantId: string;
   connectors: ChatToolOption[];
   /** null = no saved default yet — the built-in default for the kind applies. */
   initialDefault: string[] | null;

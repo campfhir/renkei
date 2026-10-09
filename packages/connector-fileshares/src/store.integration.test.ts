@@ -147,7 +147,6 @@ describeLive('file-share store (live database)', () => {
 
     const exposureOnly = await updateConnectionExposure(
       db,
-      tenantId,
       shareId,
       SUBJECT,
       'read_write',
@@ -220,7 +219,6 @@ describeLive('file-share store (live database)', () => {
     const orphan = await db
       .selectFrom('file_share_connections')
       .select('share_id')
-      .where('tenant_id', '=', tenantId)
       .where('share_id', '=', created.val)
       .executeTakeFirst();
     expect(orphan).toBeUndefined();

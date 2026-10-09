@@ -113,7 +113,6 @@ export function createAgentRunFailedHandler(): EventHandler {
     const bodyText = `Your agent “${agentName}” stopped on a failure: ${reason}${link ? `\n\nSee the run: ${link}` : ''}`;
 
     await deliverToOwnerChannels(db, {
-      tenantId,
       ownerSubject: payload.ownerSubject,
       email: wanted.email,
       webex: wanted.webex,

@@ -36,20 +36,17 @@ export async function getWebexUserApp(
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/webex-user',
-      tenantId,
     });
     return null;
   }
 
   const configResult = await readConnectorConfigCached(
-    tenantId,
     WEBEX_USER_CONNECTOR,
     keyResult.val
   );
   if (!configResult.ok) {
     logger.error('Could not read webex-user connector config', {
       component: 'connectors/webex-user',
-      tenantId,
     });
     return null;
   }
@@ -61,7 +58,6 @@ export async function getWebexUserApp(
   if (typeof clientId !== 'string' || !clientId || !clientSecret) {
     logger.warn('webex-user connector config missing clientId or clientSecret', {
       component: 'connectors/webex-user',
-      tenantId,
     });
     return null;
   }

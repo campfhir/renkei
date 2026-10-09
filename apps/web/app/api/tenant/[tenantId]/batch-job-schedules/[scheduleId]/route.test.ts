@@ -38,7 +38,6 @@ const paramsOf = () => Promise.resolve({ tenantId: 'tenant-1', scheduleId: SCHED
 function existingSchedule(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: SCHEDULE_ID,
-    tenant_id: 'tenant-1',
     subject: 'auth0|alice',
     name: 'Nightly OCR',
     kind: 'document-ocr-pipeline',

@@ -1,6 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { readUserMemory } from '@/lib/chat/user-memory';
@@ -16,10 +15,8 @@ export default async function ChatMemoryPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/${slug}/chat/memory`));
+  if (!session) redirect(signInUrl(tenant.id, `/chat/memory`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const memory = await readUserMemory(dbResult.val, tenant.id, session.subject, {

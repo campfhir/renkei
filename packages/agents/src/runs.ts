@@ -30,7 +30,6 @@ import type { Result } from '@campfhir/safe-functions/types';
 import { findNodeById, isAgentStepsDoc, type AgentStepsDoc } from './steps';
 
 export interface CreateAgentRunInput {
-  tenantId: string;
   agentId: string;
   ownerSubject: string;
   steps: AgentStepsDoc;
@@ -77,7 +76,6 @@ export async function createAgentRun(
       db
         .selectFrom('agent_runs')
         .select(({ fn }) => fn.countAll<string>().as('count'))
-        .where('tenant_id', '=', input.tenantId)
         .where('created_at', '>', sql<Date>`NOW() - INTERVAL '24 hours'`)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -96,7 +94,6 @@ export async function createAgentRun(
         .insertInto('agent_runs')
         .values({
           id: runId,
-          tenant_id: input.tenantId,
           agent_id: input.agentId,
           owner_subject: input.ownerSubject,
           trigger_id: input.triggerId,
@@ -116,7 +113,6 @@ export async function createAgentRun(
   if (!insertResult.ok) return insertResult;
 
   const enqueueResult = await producer.enqueue({
-    tenantId: input.tenantId,
     // The agent id is a fairness LANE on the source (like `knowledge:jira`
     // on the embedding queue): the ordering key below serializes THIS
     // agent's runs, and the lane keeps its backlog from delaying claims for
@@ -145,7 +141,6 @@ export async function createAgentRun(
         .insertInto('agent_run_log')
         .values({
           run_id: runId,
-          tenant_id: input.tenantId,
           agent_id: input.agentId,
           owner_subject: input.ownerSubject,
           trigger_kind: input.triggerKind,
@@ -175,7 +170,6 @@ export async function findInProgressRun(
   const row = await db
     .selectFrom('agent_runs')
     .select(['id', 'status'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('status', 'in', ['queued', 'running'])
     .orderBy('created_at', 'desc')
@@ -187,7 +181,6 @@ export async function findInProgressRun(
 export const RESUME_GUIDANCE_MAX_CHARS = 2_000;
 
 export interface ResumeAgentRunInput {
-  tenantId: string;
   agentId: string;
   runId: string;
   /** The run's owner_subject — whose grants it keeps acting under. */
@@ -256,7 +249,6 @@ export async function resumeAgentRun(
         .selectFrom('agent_runs')
         .select(['id', 'status', 'current_step_id', 'steps_snapshot', 'error', 'error_kind'])
         .where('id', '=', input.runId)
-        .where('tenant_id', '=', input.tenantId)
         .where('agent_id', '=', input.agentId)
         .where('owner_subject', '=', input.ownerSubject)
         .executeTakeFirst(),
@@ -360,7 +352,6 @@ export async function resumeAgentRun(
   const retiredAttempts = flipped.val;
 
   const enqueueResult = await producer.enqueue({
-    tenantId: input.tenantId,
     source: `agents:${input.agentId}`,
     type: 'run',
     payload: { runId: input.runId },
@@ -419,7 +410,6 @@ function uuidOrNull(value: string | null | undefined): string | null {
 }
 
 export interface RecordAgentRunOutcomeInput {
-  tenantId: string;
   agentId: string;
   runId: string;
   ownerSubject: string;
@@ -462,7 +452,6 @@ export async function recordAgentRunOutcome(
       db
         .selectFrom('agents')
         .select('steps_version')
-        .where('tenant_id', '=', input.tenantId)
         .where('id', '=', input.agentId)
         .executeTakeFirst(),
       db
@@ -530,7 +519,6 @@ export async function recordAgentRunOutcome(
 }
 
 export interface RecordLlmCallInput {
-  tenantId: string;
   /** Whose spend it is: the run's owner, or the person the call served. */
   subject: string;
   agentId: string | null;
@@ -579,7 +567,6 @@ export async function recordLlmCall(
       db
         .insertInto('llm_calls')
         .values({
-          tenant_id: input.tenantId,
           subject: input.subject,
           agent_id: input.agentId,
           run_id: input.runId ?? null,

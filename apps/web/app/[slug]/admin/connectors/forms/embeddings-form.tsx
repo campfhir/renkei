@@ -27,7 +27,7 @@ interface EmbeddingsConfig {
 }
 
 export function EmbeddingsForm({ slug }: { slug: string }) {
-  const url = `/api/admin/${slug}/connectors/embeddings`;
+  const url = `/api/admin/connectors/embeddings`;
   const [state, reload] = useConnectorConfig<EmbeddingsConfig>(url);
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
@@ -342,7 +342,7 @@ const secondaryButtonClass =
  */
 
 function ReindexPanel({ slug }: { slug: string }) {
-  const url = `/api/admin/${slug}/connectors/embeddings/reindex`;
+  const url = `/api/admin/connectors/embeddings/reindex`;
   const [runs, setRuns] = useState<ReindexRun[] | null>(null);
   const [busy, setBusy] = useState<{ kind: ReindexKind; action: ReindexAction } | null>(null);
   const [error, setError] = useState<string | null>(null);

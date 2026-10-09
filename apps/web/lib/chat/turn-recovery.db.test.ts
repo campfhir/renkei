@@ -34,7 +34,7 @@ maybe('turn recovery claims', () => {
     const id = randomUUID();
     await db
       .insertInto('chats')
-      .values({ id, tenant_id: tenantId, owner_subject: subject })
+      .values({ id, owner_subject: subject })
       .execute();
     return id;
   }
@@ -43,7 +43,6 @@ maybe('turn recovery claims', () => {
     const inserted = await db
       .insertInto('chat_turns')
       .values({
-        tenant_id: tenantId,
         chat_id: chatId,
         status: 'running',
         kind: 'reply',
@@ -66,7 +65,6 @@ maybe('turn recovery claims', () => {
     const claimed = await claimResumableTurns(db, options);
     expect(claimed.map((row) => row.id)).toEqual([turnId]);
     expect(claimed[0]).toMatchObject({
-      tenantId,
       status: 'running',
       iterations: 4,
       resumeCount: 1,
@@ -94,7 +92,6 @@ maybe('turn recovery claims', () => {
     const compaction = await db
       .insertInto('chat_turns')
       .values({
-        tenant_id: tenantId,
         chat_id: chatId,
         status: 'running',
         kind: 'compaction',
@@ -121,7 +118,6 @@ maybe('turn recovery claims', () => {
     const message = await db
       .insertInto('chat_messages')
       .values({
-        tenant_id: tenantId,
         chat_id: chatId,
         turn_id: turnId,
         seq: 1,

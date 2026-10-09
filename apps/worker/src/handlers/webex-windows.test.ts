@@ -180,7 +180,6 @@ describe('fetchWindowMessages', () => {
 describe('ingest.webex-window handler', () => {
   const event = (payload: Record<string, unknown>): ClaimedEvent => ({
     id: 'evt-1',
-    tenant_id: 'tenant-1',
     source: 'knowledge:webex',
     type: 'ingest.webex-window',
     // The same round-trip the real queue's jsonb column performs.

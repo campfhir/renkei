@@ -47,7 +47,7 @@ test.use({
     await use({
       cookies: [
         {
-          name: `renkei_session_${E2E_TENANT_ID}`,
+          name: `renkei_session`,
           value: sessionIdFor(testInfo.project.name),
           domain: '127.0.0.1',
           path: '/',
@@ -84,46 +84,46 @@ interface Walk {
 }
 const THREAD = /\/chat\/[0-9a-f-]{36}$/;
 const WALKS: Record<string, Walk> = {
-  'agent-detail': { path: `/${E2E_SLUG}/agents/${AGENT_RICH_ID}`, spotlight: true },
-  'agent-runs': { path: `/${E2E_SLUG}/agents/${AGENT_RICH_ID}/runs`, spotlight: true },
+  'agent-detail': { path: `/agents/${AGENT_RICH_ID}`, spotlight: true },
+  'agent-runs': { path: `/agents/${AGENT_RICH_ID}/runs`, spotlight: true },
   // The seed registers no file shares: the browser shows its empty note.
-  files: { path: `/${E2E_SLUG}/files`, spotlight: true },
-  chat: { path: `/${E2E_SLUG}/chat/new`, spotlight: true, settle: THREAD },
-  'chat-composer-more': { path: `/${E2E_SLUG}/chat/new`, spotlight: true, settle: THREAD },
+  files: { path: `/files`, spotlight: true },
+  chat: { path: `/chat/new`, spotlight: true, settle: THREAD },
+  'chat-composer-more': { path: `/chat/new`, spotlight: true, settle: THREAD },
   // A permission ask exists only while a turn waits on one; walked on a
   // plain thread, every step sits centred.
-  'chat-permission': { path: `/${E2E_SLUG}/chat/new`, spotlight: false, settle: THREAD },
-  project: { path: `/${E2E_SLUG}/chat/projects/${WALK_PROJECT_ID}`, spotlight: true },
-  'prompt-library': { path: `/${E2E_SLUG}/chat/prompts/${WALK_LIBRARY_ID}`, spotlight: true },
+  'chat-permission': { path: `/chat/new`, spotlight: false, settle: THREAD },
+  project: { path: `/chat/projects/${WALK_PROJECT_ID}`, spotlight: true },
+  'prompt-library': { path: `/chat/prompts/${WALK_LIBRARY_ID}`, spotlight: true },
   // The seeded organization has code workspaces on (e2e/seed.ts) but no
   // Bitbucket or GitHub connected: the index shows its access notice and
   // has no New code project link, and /code/new has nothing to offer.
-  code: { path: `/${E2E_SLUG}/code`, spotlight: false },
-  'code-new': { path: `/${E2E_SLUG}/code`, spotlight: false },
+  code: { path: `/code`, spotlight: false },
+  'code-new': { path: `/code`, spotlight: false },
   // The catalog greets its first opening; the walk opens it.
   'add-connector': {
-    path: `/${E2E_SLUG}/connectors`,
+    path: `/connectors`,
     spotlight: true,
     open: (page) => page.getByRole('button', { name: 'Add connector' }).click(),
   },
   // The seed connects Jira, which puts the Atlassian card — Jira and
   // Service Management — on the page. No other product is added, so every
   // other card tour is walked with its steps centred.
-  'connect-confluence': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-jira-admin': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-bitbucket': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-github': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-microsoft': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-entra-developer': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-webex': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-zoom': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-onbase': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-onbase-admin': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-fileshares': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'connect-mirth': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
-  'browser-secrets': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-confluence': { path: `/connectors`, spotlight: false },
+  'connect-jira-admin': { path: `/connectors`, spotlight: false },
+  'connect-bitbucket': { path: `/connectors`, spotlight: false },
+  'connect-github': { path: `/connectors`, spotlight: false },
+  'connect-microsoft': { path: `/connectors`, spotlight: false },
+  'connect-entra-developer': { path: `/connectors`, spotlight: false },
+  'connect-webex': { path: `/connectors`, spotlight: false },
+  'connect-zoom': { path: `/connectors`, spotlight: false },
+  'connect-onbase': { path: `/connectors`, spotlight: false },
+  'connect-onbase-admin': { path: `/connectors`, spotlight: false },
+  'connect-fileshares': { path: `/connectors`, spotlight: false },
+  'connect-mirth': { path: `/connectors`, spotlight: false },
+  'browser-secrets': { path: `/connectors`, spotlight: false },
   // A connector's own page: the seed registers Atlassian.
-  'admin-connector-detail': { path: `/${E2E_SLUG}/admin/connectors/atlassian`, spotlight: true },
+  'admin-connector-detail': { path: `/admin/connectors/atlassian`, spotlight: true },
 };
 
 let client: Client;

@@ -124,7 +124,6 @@ test('starts the pipeline and returns the new batch id', async () => {
   expect(startDocumentOcrPipeline).toHaveBeenCalledWith(
     {},
     {
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       shareId: SHARE_ID,

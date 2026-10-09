@@ -81,7 +81,6 @@ function stubDb(status: string | null) {
 
 const event = (payload: Record<string, unknown>): ClaimedEvent => ({
   id: 'evt-1',
-  tenant_id: 'tenant-1',
   source: 'knowledge:reindex',
   type: 'reindex.batch',
   payload: JSON.parse(JSON.stringify(payload)),

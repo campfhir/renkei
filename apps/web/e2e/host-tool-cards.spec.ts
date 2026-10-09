@@ -105,7 +105,6 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
 
 async function seedTurn(client: Client, chatId: string, turnId: string): Promise<void> {
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: chatId,
     ownerSubject: E2E_SUBJECT,
@@ -257,7 +256,7 @@ test.describe('git-host tool cards in an ordinary chat', () => {
 
     // ── The plain chat: no card at all — the pull request folds with the
     //    reads, three steps under one line ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(main.getByText(PROMPT)).toBeVisible();
     await expect(main.getByText('Pull request #12 is open against main.')).toBeVisible();
     await expect(main.locator('details[data-milestone]')).toHaveCount(0);
@@ -271,7 +270,7 @@ test.describe('git-host tool cards in an ordinary chat', () => {
     // ── The code project's chat: the two reads are steps inside the one
     //    folded line, and the pull request stands on its own with the
     //    host's link ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.codeChatId}`);
+    await page.goto(`/chat/${ids.codeChatId}`);
     await expect(main.getByText(PROMPT)).toBeVisible();
     await expect(main.locator('details[data-milestone="github_list_branches"]')).toHaveCount(0);
     await expect(main.locator('details[data-milestone="github_read_file"]')).toHaveCount(0);
@@ -297,7 +296,7 @@ test.describe('git-host tool cards in an ordinary chat', () => {
     await expect(main.locator('details[data-milestone]')).toHaveCount(1);
     await expectNoHorizontalOverflow(page);
     await shot('host-tool-cards-code-mobile.png');
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(main.getByText(PROMPT)).toBeVisible();
     await expect(main.locator('details[data-milestone]')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);

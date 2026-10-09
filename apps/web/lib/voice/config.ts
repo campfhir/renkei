@@ -34,7 +34,6 @@ export async function resolveVoiceConfig(tenantId: string): Promise<VoiceConfig 
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'voice/config',
-      tenantId,
     });
     return null;
   }

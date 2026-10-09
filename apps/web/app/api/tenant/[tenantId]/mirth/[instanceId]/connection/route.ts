@@ -42,7 +42,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; instanceId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, instanceId } = await params;
+  const { instanceId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -71,7 +71,6 @@ export async function POST(
     }
     const updated = await updateConnectionPermissions(
       db,
-      tenantId,
       instanceId,
       session.subject,
       exposure.permissions
@@ -91,7 +90,6 @@ export async function POST(
   // Validate against the live server before storing anything — a wrong
   // password is a 4xx here, never a stored credential that fails later.
   const tested = await mirthTestConnection({
-    tenantId,
     instanceId,
     credentials: parsed.credentials,
   });
@@ -130,7 +128,6 @@ export async function POST(
   }
 
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'mirth.connected',
     targetKind: 'mirth-instance',
@@ -144,7 +141,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; instanceId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, instanceId } = await params;
+  const { instanceId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -159,7 +156,7 @@ export async function DELETE(
 
   // End the Mirth session first, while the worker can still resolve the
   // instance; the stored credential goes right after regardless.
-  await mirthLogout({ tenantId, instanceId, subject: session.subject });
+  await mirthLogout({ instanceId, subject: session.subject });
 
   const deleted = await deleteConnection(dbResult.val, tenantId, instanceId, session.subject);
   if (!deleted.ok) {
@@ -168,7 +165,6 @@ export async function DELETE(
 
   const instance = await getInstance(dbResult.val, tenantId, instanceId);
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'mirth.disconnected',
     targetKind: 'mirth-instance',

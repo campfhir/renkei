@@ -51,7 +51,7 @@ export default function RecentRuns({
         </ul>
       )}
       <Link
-        href={`/${slug}/agents/${agentId}/runs`}
+        href={`/agents/${agentId}/runs`}
         className="mt-2 inline-block rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
       >
         View all runs →

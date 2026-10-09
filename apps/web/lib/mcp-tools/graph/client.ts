@@ -42,7 +42,6 @@ const LABEL = 'Microsoft';
  * watches the MCP tools do, so it needs the same client, not a second one.
  */
 export interface GraphCallContext {
-  tenantId: string;
   /** The caller's OIDC subject — whose grant is used. */
   subject?: string;
   /**
@@ -106,7 +105,7 @@ function truncateForLog(text: string): string {
 export async function resolveGraphAccess(context: GraphCallContext): Promise<GraphAccess | string> {
   if (!context.subject) return 'No signed-in identity on this request.';
 
-  const grant = { tenantId: context.tenantId, provider: MICROSOFT, subject: context.subject };
+  const grant = { provider: MICROSOFT, subject: context.subject };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) return grantRefusalText(described.err.type, LABEL);
 
@@ -143,7 +142,6 @@ async function graphCall(
   } catch (error) {
     logger.warn('Graph API unreachable', {
       component: 'graph/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       timedOut: isTimeoutError(error),
@@ -161,7 +159,6 @@ async function graphCall(
   if (!response.ok) {
     logger.warn('Graph API non-OK response', {
       component: 'graph/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       method,
@@ -258,7 +255,6 @@ export async function graphPutContent(
   if (!response.ok) {
     logger.warn('Graph upload failed', {
       component: 'graph/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       status: response.status,
@@ -316,7 +312,6 @@ export async function graphContentDownloadUrl(
   }
   logger.warn('Graph /content offered no redirect', {
     component: 'graph/fetch',
-    tenantId: context.tenantId,
     subject: context.subject,
     path,
     status: response.status,

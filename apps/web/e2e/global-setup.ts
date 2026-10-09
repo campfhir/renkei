@@ -27,11 +27,11 @@ async function warmRoutes(): Promise<void> {
   const base = 'http://127.0.0.1:3000';
   const missingChat = '00000000-0000-4000-8000-000000000000';
   try {
-    await fetch(`${base}/api/tenant/${E2E_TENANT_ID}/chat/chats/${missingChat}`, {
+    await fetch(`${base}/api/chat/chats/${missingChat}`, {
       method: 'PATCH',
       headers: {
         'content-type': 'application/json',
-        cookie: `renkei_session_${E2E_TENANT_ID}=${E2E_SESSION_ID}`,
+        cookie: `renkei_session=${E2E_SESSION_ID}`,
       },
       body: JSON.stringify({ title: 'warm-up' }),
       signal: AbortSignal.timeout(60_000),
@@ -76,7 +76,7 @@ export default async function globalSetup(): Promise<void> {
       {
         cookies: [
           {
-            name: `renkei_session_${E2E_TENANT_ID}`,
+            name: `renkei_session`,
             value: E2E_SESSION_ID,
             domain: '127.0.0.1',
             path: '/',

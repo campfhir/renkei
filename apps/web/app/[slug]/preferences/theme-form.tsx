@@ -22,10 +22,8 @@ const THEME_MODES: readonly { value: ThemeMode; label: string; hint: string }[] 
 ];
 
 export default function ThemeForm({
-  tenantId,
   initial,
 }: {
-  tenantId: string;
   initial: ThemePrefs;
 }) {
   const [prefs, setPrefs] = useState<ThemePrefs>(initial);
@@ -47,7 +45,7 @@ export default function ThemeForm({
   async function save() {
     setStatus('saving');
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/preferences`, {
+      const response = await fetch(`/api/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ theme: prefs }),

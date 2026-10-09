@@ -55,9 +55,9 @@ maybe('finalize hook', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_runs`.execute(db);
+    await sql`DELETE FROM agent_triggers`.execute(db);
+    await sql`DELETE FROM agents`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
@@ -68,7 +68,6 @@ maybe('finalize hook', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: owner,
         name: `${name}-${agentId.slice(0, 8)}`,
         steps: JSON.stringify(steps),
@@ -84,7 +83,6 @@ maybe('finalize hook', () => {
       .insertInto('agent_triggers')
       .values({
         id: triggerId,
-        tenant_id: tenantId,
         agent_id: targetAgentId,
         kind: 'agent',
         config: JSON.stringify({ callerAgentId }),
@@ -100,7 +98,6 @@ maybe('finalize hook', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: owner,
         trigger_kind: 'manual',
@@ -120,7 +117,6 @@ maybe('finalize hook', () => {
       .insertInto('agent_triggers')
       .values({
         id: triggerId,
-        tenant_id: tenantId,
         agent_id: agentId,
         kind: 'event',
         event_source: 'webex',
@@ -134,7 +130,6 @@ maybe('finalize hook', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: owner,
         trigger_id: triggerId,
@@ -154,7 +149,6 @@ maybe('finalize hook', () => {
     status: 'succeeded' | 'failed'
   ): FinalizedRun => ({
     runId,
-    tenantId,
     agentId,
     ownerSubject: owner,
     status,
@@ -181,7 +175,6 @@ maybe('finalize hook', () => {
     const child = await db
       .selectFrom('agent_runs')
       .select(['agent_id', 'parent_run_id', 'lineage', 'depth', 'trigger_kind', 'initial_state'])
-      .where('tenant_id', '=', tenantId)
       .where('agent_id', '=', b)
       .executeTakeFirstOrThrow();
     expect(child.parent_run_id).toBe(parentRunId);

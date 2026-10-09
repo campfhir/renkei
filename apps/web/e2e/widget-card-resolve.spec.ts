@@ -133,7 +133,6 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
     [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.chatId,
     ownerSubject: E2E_SUBJECT,
@@ -227,7 +226,7 @@ async function decisionRow(
   const { rows } = await client.query<{
     decision: string;
     state: { icon: string; headline: string; detail?: string };
-  }>('SELECT decision, state FROM chat_widget_decisions WHERE tenant_id = $1 AND state_key = $2', [
+  }>('SELECT decision, state FROM chat_widget_decisions WHERE state_key = $2', [
     E2E_TENANT_ID,
     `renkei-preview:${previewId}`,
   ]);
@@ -242,7 +241,7 @@ async function resolveFromTheComposer(
   previewId: string,
   screens: { before: string; ask: string; after: string }
 ): Promise<void> {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
   // The card is live: its form, its Create button. Scoped to the main
@@ -320,7 +319,7 @@ test('the model marks a card decided on the person’s word, and the open card f
     // direct call to the card's tools/call route answers already-decided
     // rather than creating the issue after all.
     const refused = await page.request.post(
-      `/api/tenant/${E2E_TENANT_ID}/chat/chats/${ids.chatId}/widget/tool-call`,
+      `/api/chat/chats/${ids.chatId}/widget/tool-call`,
       {
         data: {
           name: 'jira_create_issue_confirm',

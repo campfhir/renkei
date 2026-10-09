@@ -69,7 +69,6 @@ const stubAuth: JiraAdminAuth = {
 };
 
 const context = {
-  tenantId: 'tenant-1',
   subject: 'subject-1',
   origin: 'https://renkei.example',
   jiraAdminScopes: [

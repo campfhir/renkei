@@ -12,10 +12,8 @@ import AdManagerList, { type ConnectableAdManagerInstanceView } from './admanage
 export type { ConnectableAdManagerInstanceView } from './admanager-list';
 
 export default function AdManagerConnector({
-  tenantId,
   instances,
 }: {
-  tenantId: string;
   instances: ConnectableAdManagerInstanceView[];
 }) {
   return (

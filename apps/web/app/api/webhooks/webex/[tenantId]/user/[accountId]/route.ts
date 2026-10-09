@@ -29,7 +29,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; accountId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, accountId } = await params;
+  const { accountId } = await params;
 
   // Throttle, then the credential's shape, then a bounded body — all before
   // any database read (lib/webhook-intake.ts).
@@ -51,7 +51,6 @@ export async function POST(
   const grant = await dbResult.val
     .selectFrom('provider_grants')
     .select(['metadata', 'subject'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', WEBEX_USER)
     .where('provider_account_id', '=', accountId)
     .executeTakeFirst();
@@ -68,7 +67,6 @@ export async function POST(
   if (!verifyWebexSignature(rawBody, signature, metadata.allSpacesSecret)) {
     logger.warn('Rejected user delivery with bad signature', {
       component: 'webex/webhook',
-      tenantId,
     });
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
@@ -90,7 +88,6 @@ export async function POST(
   }
 
   const enqueued = await eventsQueue.producer.enqueue({
-    tenantId,
     source: 'webex',
     type: 'user-message.created',
     payload: { ...payload.val.data, accountId },
@@ -101,7 +98,6 @@ export async function POST(
   if (!enqueued.ok) {
     logger.error('Event NOT accepted: {error}', {
       component: 'webex/webhook',
-      tenantId,
       error: enqueued.err.message ?? 'unknown',
     });
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });

@@ -46,7 +46,7 @@ export default function InstanceConfigForm({
 
   const load = useCallback(async () => {
     const { data, error } = await getJson<InstanceResponse>(
-      `/api/admin/${slug}/admanager/${instanceId}`
+      `/api/admin/admanager/${instanceId}`
     );
     if (error || !data) {
       setStatus({ kind: 'error', text: error ?? 'Could not load the instance' });
@@ -82,7 +82,7 @@ export default function InstanceConfigForm({
     setBusy(true);
     setStatus(null);
     const error = await sendJson(
-      `/api/admin/${slug}/admanager/${instanceId}`,
+      `/api/admin/admanager/${instanceId}`,
       'PATCH',
       draftPayload(draft)
     );
@@ -103,7 +103,7 @@ export default function InstanceConfigForm({
       ok: boolean;
       status?: number;
       error?: string;
-    }>(`/api/admin/${slug}/admanager/probe`, 'POST', {
+    }>(`/api/admin/admanager/probe`, 'POST', {
       baseUrl: draft.baseUrl,
       tlsVerify: draft.tlsVerify,
       caPem: draft.caPem || undefined,
@@ -121,13 +121,13 @@ export default function InstanceConfigForm({
     if (!window.confirm("Delete this instance? Everyone's stored connections to it go with it."))
       return;
     setBusy(true);
-    const error = await sendJson(`/api/admin/${slug}/admanager/${instanceId}`, 'DELETE');
+    const error = await sendJson(`/api/admin/admanager/${instanceId}`, 'DELETE');
     setBusy(false);
     if (error) {
       setStatus({ kind: 'error', text: error });
       return;
     }
-    router.push(`/${slug}/admin/admanager`);
+    router.push(`/admin/admanager`);
   };
 
   return (

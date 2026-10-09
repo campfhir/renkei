@@ -35,7 +35,6 @@ function CreateOrganizationContent() {
   // save must present, and the TXT record to publish before the sign-in
   // page routes this domain here.
   const [onboarding, setOnboarding] = useState<{
-    tenantId: string;
     bootstrapSecret: string;
     record: string;
     recordDomain: string;
@@ -50,7 +49,7 @@ function CreateOrganizationContent() {
     if (!onboarding) return;
     setVerification({ state: 'checking' });
     try {
-      const response = await fetch(`/api/tenant/${onboarding.tenantId}/verify-domain`, {
+      const response = await fetch(`/api/verify-domain`, {
         method: 'POST',
       });
       const data = await response.json().catch(() => ({}));
@@ -170,7 +169,6 @@ function CreateOrganizationContent() {
         actualTenantId = created.tenantId;
         bootstrapSecret = created.bootstrapSecret ?? '';
         setOnboarding({
-          tenantId: created.tenantId,
           bootstrapSecret,
           record: created.domainVerification?.record ?? '',
           recordDomain: created.domainVerification?.domain ?? domain,
@@ -186,7 +184,7 @@ function CreateOrganizationContent() {
         return;
       }
 
-      const response = await fetch(`/api/tenant/${actualTenantId}/oidc`, {
+      const response = await fetch(`/api/oidc`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

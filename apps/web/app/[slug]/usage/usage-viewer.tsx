@@ -255,13 +255,11 @@ function ToolCard({ row, onOpen }: { row: Row; onOpen: () => void }) {
  */
 function ToolDetailDialog({
   row,
-  tenantId,
   days,
   scope,
   onClose,
 }: {
   row: Row;
-  tenantId: string;
   days: number;
   scope: 'self' | 'tenant';
   onClose: () => void;
@@ -478,12 +476,10 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 
 export default function UsageViewer({
   slug,
-  tenantId,
   initial,
   tools,
 }: {
   slug: string;
-  tenantId: string;
   initial: UsageReport;
   tools: ToolDescriptor[];
 }) {
@@ -501,7 +497,7 @@ export default function UsageViewer({
       // rather than leaving a dead-end banner behind a period change — the
       // server render of this page redirects for exactly the same verdict.
       if (next.signedOut) {
-        window.location.href = signInUrl(tenantId, `/${slug}/usage`);
+        window.location.href = signInUrl(tenantId, `/usage`);
         return;
       }
       setReport(next);
@@ -533,7 +529,7 @@ export default function UsageViewer({
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">Tools</h1>
         <Link
-          href={`/${slug}/connectors`}
+          href={`/connectors`}
           className="text-sm text-blue-600 hover:underline dark:text-blue-400"
         >
           Connectors
@@ -551,7 +547,7 @@ export default function UsageViewer({
           {report.signedOut && (
             <>
               {' '}
-              <a className="font-medium underline" href={signInUrl(tenantId, `/${slug}/usage`)}>
+              <a className="font-medium underline" href={signInUrl(tenantId, `/usage`)}>
                 Sign in again
               </a>
             </>
@@ -725,8 +721,8 @@ export default function UsageViewer({
                       <Link
                         href={
                           report.scope === 'tenant'
-                            ? `/${slug}/admin/agents/${agent.agentId}`
-                            : `/${slug}/agents/${agent.agentId}`
+                            ? `/admin/agents/${agent.agentId}`
+                            : `/agents/${agent.agentId}`
                         }
                         className="font-medium text-blue-600 hover:underline dark:text-blue-400"
                       >
@@ -787,7 +783,7 @@ export default function UsageViewer({
         {rows.length === 0 && (
           <p className="text-sm text-gray-500">
             No tools yet — connect an account on the{' '}
-            <Link href={`/${slug}/connectors`} className="text-blue-600 hover:underline">
+            <Link href={`/connectors`} className="text-blue-600 hover:underline">
               connectors page
             </Link>
             .

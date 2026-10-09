@@ -33,14 +33,12 @@ import BitbucketConnector from './bitbucket-connector';
  * own.
  */
 export default function AtlassianConnector({
-  tenantId,
   jira,
   jsm,
   jiraAdmin,
   confluence,
   bitbucket,
 }: {
-  tenantId: string;
   /** Absent when the org has not enabled that product. */
   jira?: {
     connected: boolean;

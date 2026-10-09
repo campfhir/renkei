@@ -23,7 +23,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; chatId: string }> }
 ): Promise<Response> {
-  const { tenantId, chatId } = await params;
+  const { chatId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -36,7 +36,7 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; chatId: string }> }
 ): Promise<Response> {
-  const { tenantId, chatId } = await params;
+  const { chatId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -72,7 +72,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; chatId: string }> }
 ): Promise<Response> {
-  const { tenantId, chatId } = await params;
+  const { chatId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;

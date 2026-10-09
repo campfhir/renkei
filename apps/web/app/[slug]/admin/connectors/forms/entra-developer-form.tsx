@@ -40,7 +40,7 @@ interface EntraDeveloperConfig {
  * without widening anyone's Microsoft 365 consent.
  */
 export function EntraDeveloperForm({ slug, origin }: { slug: string; origin: string | null }) {
-  const url = `/api/admin/${slug}/connectors/entra-developer`;
+  const url = `/api/admin/connectors/entra-developer`;
   const [state, reload] = useConnectorConfig<EntraDeveloperConfig>(url);
   const [clientId, setClientId] = useState('');
   const [directoryTenantId, setDirectoryTenantId] = useState('');

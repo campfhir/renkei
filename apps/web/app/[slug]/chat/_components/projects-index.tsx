@@ -12,12 +12,10 @@ import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export default function ProjectsIndex({
   slug,
-  tenantId,
   projects,
   openNew,
 }: {
   slug: string;
-  tenantId: string;
   projects: ProjectListItem[];
   openNew: boolean;
 }) {
@@ -33,7 +31,7 @@ export default function ProjectsIndex({
     setBusy(true);
     setError(null);
     const result = await sendJsonFull<{ projectId: string }>(
-      `/api/tenant/${tenantId}/chat/projects`,
+      `/api/chat/projects`,
       'POST',
       { name: name.trim(), description: description.trim() || null }
     );
@@ -42,7 +40,7 @@ export default function ProjectsIndex({
       setError(result.error ?? 'The project could not be created.');
       return;
     }
-    router.push(`/${slug}/chat/projects/${result.data.projectId}`);
+    router.push(`/chat/projects/${result.data.projectId}`);
     router.refresh();
   };
 
@@ -140,7 +138,7 @@ function ProjectGroup({
           {projects.map((project) => (
             <li key={project.id}>
               <Link
-                href={`/${slug}/chat/projects/${project.id}`}
+                href={`/chat/projects/${project.id}`}
                 className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-900"
               >
                 <Icon path={ICONS.folder} className="h-5 w-5 shrink-0 text-gray-400" />

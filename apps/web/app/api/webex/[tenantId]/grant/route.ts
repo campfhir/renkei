@@ -16,7 +16,6 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -30,7 +29,6 @@ export async function DELETE(
   const grant = await dbResult.val
     .selectFrom('provider_grants')
     .select('provider_account_id')
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', WEBEX_USER)
     .where('subject', '=', session.subject)
     .executeTakeFirst();
@@ -42,7 +40,6 @@ export async function DELETE(
   // WebEx offers no revocation endpoint for a user token; the delegate
   // deletes the grant and the token expires on its own.
   const deleted = await delegateGrants().delete({
-    tenantId,
     provider: WEBEX_USER,
     accountId: grant.provider_account_id,
   });
@@ -50,7 +47,6 @@ export async function DELETE(
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'connector.disconnected',
     targetKind: 'connector',

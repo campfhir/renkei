@@ -14,10 +14,8 @@ import SandboxSecretsBody, { type SecretView } from './sandbox-secrets-body';
 export type { SecretView } from './sandbox-secrets-body';
 
 export default function SandboxSecrets({
-  tenantId,
   secrets,
 }: {
-  tenantId: string;
   secrets: SecretView[];
 }) {
   return (

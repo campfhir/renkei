@@ -14,7 +14,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -39,7 +39,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -52,7 +52,6 @@ export async function POST(
   const settings = await getOrgSettings(tenantId);
   const redactor = settings.ok ? createOutboundRedactor(tenantId, settings.val) : null;
   const id = await appendProjectMemory(db, {
-    tenantId,
     projectId,
     content: redactor ? redactor.apply(content).text : content,
     authorSubject: session.subject,
@@ -67,7 +66,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -81,7 +80,6 @@ export async function DELETE(
     : [];
   const deleted = await forgetProjectMemory(
     db,
-    tenantId,
     projectId,
     body.all === true ? { kind: 'all' } : { kind: 'entries', ids }
   );

@@ -41,7 +41,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -55,14 +54,13 @@ export async function GET(
 
   if (provider === 'sharepoint') {
     return sharePointOptions(
-      { tenantId, subject: session.subject },
+      { subject: session.subject },
       request.nextUrl.searchParams.get('site')?.trim() ?? '',
       request.nextUrl.searchParams.get('q')?.trim() ?? ''
     );
   }
 
   const access = await resolveAtlassianUserAccess(
-    tenantId,
     session.subject,
     provider === 'jira' ? ATLASSIAN : ATLASSIAN_CONFLUENCE
   );

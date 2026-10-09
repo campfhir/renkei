@@ -55,7 +55,6 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     if (!batch) {
       logger.warn('batch {batchJobId} not found; dropping discover message', {
         component: COMPONENT,
-        tenantId: event.tenant_id,
         batchJobId: batchJobId || '(missing)',
       });
       return;
@@ -133,7 +132,6 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     );
     logger.info('batch {batchJobId} discovered {count} item(s), skipped {skipped}', {
       component: COMPONENT,
-      tenantId: event.tenant_id,
       batchJobId: claimed.id,
       count: created,
       skipped: skippedItems.length,
@@ -155,7 +153,6 @@ export function createBatchItemHandler(): EventHandler {
     if (!batch || !item || item.batch_id !== batch.id) {
       logger.warn('batch item {itemId} not found; dropping message', {
         component: COMPONENT,
-        tenantId: event.tenant_id,
         batchJobId: batchJobId || '(missing)',
         itemId: itemId || '(missing)',
       });

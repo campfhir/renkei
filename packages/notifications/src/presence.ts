@@ -31,9 +31,9 @@ export async function pingChatPresence(
   const updatedAt = new Date();
   await db
     .insertInto('chat_presence')
-    .values({ tenant_id: tenantId, subject, chat_id: chatId, updated_at: updatedAt })
+    .values({ subject, chat_id: chatId, updated_at: updatedAt })
     .onConflict((oc) =>
-      oc.columns(['tenant_id', 'subject', 'chat_id']).doUpdateSet({ updated_at: updatedAt })
+      oc.columns(['subject', 'chat_id']).doUpdateSet({ updated_at: updatedAt })
     )
     .execute();
 }
@@ -57,7 +57,6 @@ export async function wasRecentlyWatchingChat(
   const row = await db
     .selectFrom('chat_presence')
     .select('chat_id')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('chat_id', '=', chatId)
     .where('updated_at', '>', cutoff)

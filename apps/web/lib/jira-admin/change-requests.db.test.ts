@@ -30,7 +30,6 @@ maybe('jira_admin_change_requests', () => {
 
   const propose = (title = 'Source (Ops): add “Vendor”') =>
     createChangeRequest(db, {
-      tenantId,
       subject: owner,
       cloudId: 'cloud-1',
       siteUrl: 'https://acme.atlassian.net',
@@ -51,7 +50,7 @@ maybe('jira_admin_change_requests', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM jira_admin_change_requests WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM jira_admin_change_requests`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });

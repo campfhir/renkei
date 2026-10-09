@@ -126,10 +126,10 @@ test.describe('Code project services', () => {
         fullPage: false,
       });
     const main = page.getByRole('main');
-    const pagePath = `/${E2E_SLUG}/code/${ids.projectId}/services`;
+    const pagePath = `/code/${ids.projectId}/services`;
 
     // ── The project page: a card in the rail after the chats, before the environment ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
     });
@@ -159,7 +159,7 @@ test.describe('Code project services', () => {
     await expect(allowed.getByText('docker.io/library/postgres', { exact: true })).toBeVisible();
     await expect(
       allowed.getByRole('link', { name: 'Organization → Code services' })
-    ).toHaveAttribute('href', `/${E2E_SLUG}/admin/code-services`);
+    ).toHaveAttribute('href', `/admin/code-services`);
     await expectNoHorizontalOverflow(page);
     await shot('code-services-page-empty.png');
 

@@ -39,7 +39,6 @@ export async function registerWorklogTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_worklogs invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -128,7 +127,6 @@ export async function registerWorklogTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_bulk_get_worklogs invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -242,7 +240,6 @@ export async function registerWorklogTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_create_worklog invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -320,7 +317,6 @@ export async function registerWorklogTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_delete_worklog invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

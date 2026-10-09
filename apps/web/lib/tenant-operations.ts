@@ -62,7 +62,6 @@ export async function createTenantOidcIfAbsent(
         .insertInto('tenant_oidc')
         .values({
           id: randomUUID(),
-          tenant_id: tenantId,
           issuer: oidc.issuer,
           client_id: oidc.clientId,
           client_secret: encrypt(oidc.clientSecret, encryptionKey),
@@ -101,7 +100,6 @@ export async function setTenantOidc(
         .insertInto('tenant_oidc')
         .values({
           id: randomUUID(),
-          tenant_id: tenantId,
           issuer: oidc.issuer,
           client_id: oidc.clientId,
           client_secret: encryptedSecret,
@@ -148,13 +146,12 @@ export async function setOidcRoleMapping(
         .insertInto('oidc_role_mappings')
         .values({
           id: randomUUID(),
-          tenant_id: tenantId,
           idp_role: idpRole,
           renkei_role: renkeiRole,
           created_at: new Date().toISOString(),
         })
         .onConflict((oc) =>
-          oc.columns(['tenant_id', 'idp_role']).doUpdateSet({
+          oc.columns(['idp_role']).doUpdateSet({
             renkei_role: renkeiRole,
           })
         )
@@ -182,7 +179,6 @@ export async function getOidcRoleMapping(
       db
         .selectFrom('oidc_role_mappings')
         .select('renkei_role')
-        .where('tenant_id', '=', tenantId)
         .where('idp_role', '=', idpRole)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -219,7 +215,6 @@ export async function getTenantOidc(
           'user_idp_value',
           'groups_claim',
         ])
-        .where('tenant_id', '=', tenantId)
         .executeTakeFirst(),
     'DB_ERROR' as const
   );
@@ -259,7 +254,6 @@ export async function getTenantOidcClaims(
       dbResult.val
         .selectFrom('tenant_oidc')
         .select(['role_claim', 'operator_idp_value', 'user_idp_value', 'groups_claim'])
-        .where('tenant_id', '=', tenantId)
         .executeTakeFirst(),
     'DB_ERROR' as const
   );
@@ -291,7 +285,6 @@ export async function setTenantOidcClaims(
           user_idp_value: claims.userIdpValue || null,
           groups_claim: claims.groupsClaim || null,
         })
-        .where('tenant_id', '=', tenantId)
         .executeTakeFirst(),
     'DB_ERROR' as const
   );

@@ -43,7 +43,6 @@ maybe('jira_admin_space_templates', () => {
 
   const save = (overrides: Partial<Parameters<typeof saveSpaceTemplate>[1]> = {}) =>
     saveSpaceTemplate(db, {
-      tenantId,
       cloudId: 'cloud-1',
       siteUrl: 'https://acme.atlassian.net',
       name: 'Ops standard',
@@ -66,7 +65,7 @@ maybe('jira_admin_space_templates', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM jira_admin_space_templates WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM jira_admin_space_templates`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });

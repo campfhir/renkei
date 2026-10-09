@@ -163,7 +163,7 @@ export default function OversightCards({
               <li key={agent.id} className={CARD}>
                 <div className="flex items-start justify-between gap-3">
                   <Link
-                    href={`/${slug}/admin/agents/${agent.id}`}
+                    href={`/admin/agents/${agent.id}`}
                     className="min-w-0 truncate font-medium text-blue-600 hover:underline dark:text-blue-400"
                   >
                     {agent.name}

@@ -121,11 +121,7 @@ export async function listInstancesWithConnection(
         .selectFrom('admanager_instances')
         .leftJoin('admanager_instance_connections', (join) =>
           join
-            .onRef(
-              'admanager_instance_connections.tenant_id',
-              '=',
-              'admanager_instances.tenant_id'
-            )
+            
             .onRef('admanager_instance_connections.instance_id', '=', 'admanager_instances.id')
             .on('admanager_instance_connections.subject', '=', subject)
         )
@@ -134,7 +130,6 @@ export async function listInstancesWithConnection(
           'admanager_instance_connections.technician_name',
           'admanager_instance_connections.permissions',
         ])
-        .where('admanager_instances.tenant_id', '=', tenantId)
         .where('admanager_instances.enabled', '=', true)
         .orderBy('admanager_instances.name')
         .execute(),
@@ -186,7 +181,6 @@ export async function getConnection(
       db
         .selectFrom('admanager_instance_connections')
         .select(['technician_name', 'permissions'])
-        .where('tenant_id', '=', tenantId)
         .where('instance_id', '=', instanceId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -209,7 +203,6 @@ export async function readConnectionCiphertext(
       db
         .selectFrom('admanager_instance_connections')
         .select('encrypted_credentials')
-        .where('tenant_id', '=', tenantId)
         .where('instance_id', '=', instanceId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -240,7 +233,6 @@ export async function upsertConnection(
       db
         .insertInto('admanager_instance_connections')
         .values({
-          tenant_id: tenantId,
           instance_id: instanceId,
           subject,
           encrypted_credentials: input.encryptedCredentials,
@@ -275,7 +267,6 @@ export async function updateConnectionPermissions(
       db
         .updateTable('admanager_instance_connections')
         .set({ permissions: [...permissions], updated_at: new Date() })
-        .where('tenant_id', '=', tenantId)
         .where('instance_id', '=', instanceId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -296,7 +287,6 @@ export async function deleteConnection(
     () =>
       db
         .deleteFrom('admanager_instance_connections')
-        .where('tenant_id', '=', tenantId)
         .where('instance_id', '=', instanceId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -335,7 +325,6 @@ export async function resolveToolExposure(
           'admanager_instance_connections.instance_id'
         )
         .select(['admanager_instance_connections.permissions'])
-        .where('admanager_instance_connections.tenant_id', '=', tenantId)
         .where('admanager_instance_connections.subject', '=', subject)
         .where('admanager_instances.enabled', '=', true)
         .execute(),
@@ -374,7 +363,6 @@ export async function listInstances(
       db
         .selectFrom('admanager_instances')
         .selectAll()
-        .where('tenant_id', '=', tenantId)
         .orderBy('name')
         .execute(),
     'DB_ERROR' as const
@@ -393,7 +381,6 @@ export async function getInstance(
       db
         .selectFrom('admanager_instances')
         .selectAll()
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', instanceId)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -440,7 +427,6 @@ export async function createInstance(
       db
         .insertInto('admanager_instances')
         .values({
-          tenant_id: tenantId,
           name: input.name,
           environment: input.environment,
           base_url: input.baseUrl,
@@ -483,7 +469,6 @@ export async function updateInstance(
           enabled: input.enabled,
           updated_at: new Date().toISOString(),
         })
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', instanceId)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -503,7 +488,6 @@ export async function deleteInstance(
     () =>
       db
         .deleteFrom('admanager_instances')
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', instanceId)
         .executeTakeFirst(),
     'DB_ERROR' as const

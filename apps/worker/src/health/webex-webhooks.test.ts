@@ -34,7 +34,6 @@ const { getPublicBaseUrl: mockGetPublicBaseUrl, getOrgSettings: mockGetOrgSettin
   }>('@renkei/settings');
 
 interface GrantRow {
-  tenant_id: string;
   provider_account_id: string;
   metadata: unknown;
 }
@@ -57,7 +56,7 @@ function dbWithGrants(rows: GrantRow[]) {
             where: () => ({
               where: (_c: string, _o: string, accountId: string) => ({
                 execute: async () => {
-                  updates.push({ tenant_id: tenantId, provider_account_id: accountId });
+                  updates.push({ provider_account_id: accountId });
                 },
               }),
             }),
@@ -102,7 +101,6 @@ beforeEach(() => {
 
 describe('sweepWebexWebhooks', () => {
   const grant: GrantRow = {
-    tenant_id: 'tenant-1',
     provider_account_id: 'acct-1',
     metadata: { allSpaces: true, allSpacesSecret: 'secret-1' },
   };

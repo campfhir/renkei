@@ -33,7 +33,6 @@ function respondWith(body: FakeUser[] | Record<string, unknown>): void {
 }
 
 const CONTEXT = {
-  tenantId: 'tenant-a',
   apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
   // The grant's fetcher; never called here — jiraFetch is mocked.
   jiraAuth: authedFetch(async () => new Response('[]'), 'atlassian:tenant-a:acct-a'),
@@ -156,7 +155,6 @@ describe('resolveAccountId', () => {
   it('does not serve one tenant the account id resolved for another', async () => {
     const tenantB = {
       ...CONTEXT,
-      tenantId: 'tenant-b',
       jiraAuth: authedFetch(async () => new Response('[]'), 'atlassian:tenant-b:acct-b'),
     };
 

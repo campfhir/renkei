@@ -52,9 +52,9 @@ maybe('schedule sweep', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_runs`.execute(db);
+    await sql`DELETE FROM agent_triggers`.execute(db);
+    await sql`DELETE FROM agents`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
@@ -69,7 +69,6 @@ maybe('schedule sweep', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: subject,
         name: `sched-agent-${agentId.slice(0, 8)}`,
         steps: JSON.stringify(steps),
@@ -81,7 +80,6 @@ maybe('schedule sweep', () => {
       .insertInto('agent_triggers')
       .values({
         id: triggerId,
-        tenant_id: tenantId,
         agent_id: agentId,
         kind: 'schedule',
         config: JSON.stringify(config),
@@ -139,7 +137,6 @@ maybe('schedule sweep', () => {
       .insertInto('schedule_calendars')
       .values({
         id: calendarId,
-        tenant_id: tenantId,
         name: `holidays-${calendarId.slice(0, 8)}`,
         dates: JSON.stringify([{ annual: '12-25', label: 'Christmas' }]),
       })

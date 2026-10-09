@@ -13,11 +13,9 @@ import { useRefresh } from '@/lib/use-refresh';
  * the acknowledgment.
  */
 export default function CardActions({
-  tenantId,
   itemId,
   dismissOnly = false,
 }: {
-  tenantId: string;
   itemId: string;
   dismissOnly?: boolean;
 }): React.ReactNode {
@@ -30,7 +28,7 @@ export default function CardActions({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/actionable-items/${itemId}/decision`, {
+      const response = await fetch(`/api/actionable-items/${itemId}/decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(

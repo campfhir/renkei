@@ -114,7 +114,6 @@ type Phase =
   'starting' | 'listening' | 'recording' | 'transcribing' | 'thinking' | 'speaking' | 'error';
 
 export default function VoiceMode({
-  tenantId,
   locale,
   detectLanguage,
   onHeard,
@@ -136,7 +135,6 @@ export default function VoiceMode({
   onInterrupt,
   onClose,
 }: {
-  tenantId: string;
   /** The language to listen for — or, when detecting, the one to fall back to. */
   locale: string;
   /** Hear which language each utterance is in, rather than assume `locale`. */

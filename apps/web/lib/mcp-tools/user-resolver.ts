@@ -52,7 +52,6 @@ export function clearUserCache(): void {
 }
 
 interface ResolverContext {
-  tenantId: string;
   apiBaseUrl: string;
   /** The caller's Jira grant as a fetcher; null when Jira is not connected. */
   jiraAuth: AuthedFetch | null;
@@ -151,7 +150,6 @@ export async function resolveAccountId(
   });
   logger.debug('Resolved email to accountId', {
     component: 'jira/user-resolver',
-    tenantId: context.tenantId,
     accountId,
   });
 

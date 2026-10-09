@@ -36,7 +36,7 @@ maybe('the consent step of the authorization endpoint', () => {
   const challenge = computeS256(verifier);
 
   function cookie(id: string = sessionId): string {
-    return `renkei_session_${tenantId}=${id}`;
+    return `renkei_session=${id}`;
   }
 
   function authorize(overrides: Record<string, string | null> = {}, session = sessionId) {
@@ -54,7 +54,7 @@ maybe('the consent step of the authorization endpoint', () => {
       else query.set(key, value);
     }
     const request = new NextRequest(
-      `http://localhost/api/mcp/${tenantId}/oauth/authorize?${query.toString()}`,
+      `http://localhost/api/mcp/oauth/authorize?${query.toString()}`,
       { headers: { cookie: cookie(session) } }
     );
     return GET(request, { params: Promise.resolve({ tenantId }) });
@@ -72,7 +72,7 @@ maybe('the consent step of the authorization endpoint', () => {
     };
     const from = options.origin === undefined ? origin : options.origin;
     if (from) headers.origin = from;
-    const request = new NextRequest(`http://localhost/api/mcp/${tenantId}/oauth/authorize`, {
+    const request = new NextRequest(`http://localhost/api/mcp/oauth/authorize`, {
       method: 'POST',
       headers,
       body: new URLSearchParams({ request: requestId, decision }).toString(),
@@ -101,7 +101,7 @@ maybe('the consent step of the authorization endpoint', () => {
       client_secret: clientSecret,
     });
     if (codeVerifier !== undefined) body.set('code_verifier', codeVerifier);
-    const request = new NextRequest(`http://localhost/api/mcp/${tenantId}/oauth/token`, {
+    const request = new NextRequest(`http://localhost/api/mcp/oauth/token`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
@@ -128,7 +128,6 @@ maybe('the consent step of the authorization endpoint', () => {
       .insertInto('oauth_clients')
       .values({
         client_id: clientId,
-        tenant_id: tenantId,
         client_name: 'Test MCP client',
         client_secret_hash: hashToken(clientSecret),
         redirect_uris: [redirectUri],
@@ -140,7 +139,6 @@ maybe('the consent step of the authorization endpoint', () => {
         .insertInto('sessions')
         .values({
           id,
-          tenant_id: tenantId,
           subject: id === sessionId ? subject : `someone-else-${tenantId.slice(0, 8)}@example.com`,
           roles: ['renkei-user'],
           expires_at: inAnHour,
@@ -159,7 +157,7 @@ maybe('the consent step of the authorization endpoint', () => {
       'oauth_clients',
       'sessions',
     ] as const) {
-      await db.deleteFrom(table).where('tenant_id', '=', tenantId).execute();
+      await db.deleteFrom(table).execute();
     }
     await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
     await closeDatabase();
@@ -188,7 +186,6 @@ maybe('the consent step of the authorization endpoint', () => {
       await db
         .selectFrom('oauth_consent_requests')
         .selectAll()
-        .where('tenant_id', '=', tenantId)
         .execute()
     ).toHaveLength(0);
   });
@@ -213,7 +210,6 @@ maybe('the consent step of the authorization endpoint', () => {
       .where('id', '=', requestId)
       .executeTakeFirstOrThrow();
     expect(row).toMatchObject({
-      tenant_id: tenantId,
       client_id: clientId,
       session_id: sessionId,
       subject,
@@ -227,7 +223,6 @@ maybe('the consent step of the authorization endpoint', () => {
       await db
         .selectFrom('oauth_authorization_codes')
         .selectAll()
-        .where('tenant_id', '=', tenantId)
         .execute()
     ).toHaveLength(0);
   });
@@ -270,7 +265,6 @@ maybe('the consent step of the authorization endpoint', () => {
     const audit = await db
       .selectFrom('audit_events')
       .select(['action', 'actor_subject'])
-      .where('tenant_id', '=', tenantId)
       .where('action', '=', 'oauth.consent_denied')
       .execute();
     expect(audit).toEqual([{ action: 'oauth.consent_denied', actor_subject: subject }]);

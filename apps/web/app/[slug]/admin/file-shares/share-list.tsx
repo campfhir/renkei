@@ -37,7 +37,7 @@ export default function ShareList({ slug }: { slug: string }) {
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ shares: ShareRow[] }>(
-      `/api/admin/${slug}/file-shares`
+      `/api/admin/file-shares`
     );
     if (loadError) setError(loadError);
     else setShares(data?.shares ?? []);
@@ -51,7 +51,7 @@ export default function ShareList({ slug }: { slug: string }) {
     if (!draft) return;
     setBusy(true);
     setError(null);
-    const saveError = await sendJson(`/api/admin/${slug}/file-shares`, 'POST', draftPayload(draft));
+    const saveError = await sendJson(`/api/admin/file-shares`, 'POST', draftPayload(draft));
     setBusy(false);
     if (saveError) {
       setError(saveError);
@@ -93,7 +93,7 @@ export default function ShareList({ slug }: { slug: string }) {
                   </p>
                 </div>
                 <Link
-                  href={`/${slug}/admin/file-shares/${share.id}`}
+                  href={`/admin/file-shares/${share.id}`}
                   className="shrink-0 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
                 >
                   Manage

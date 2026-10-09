@@ -20,7 +20,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; chatId: string }> }
 ): Promise<Response> {
-  const { tenantId, chatId } = await params;
+  const { chatId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -38,7 +38,7 @@ export async function POST(
   const body = await readJsonBody(request);
   const note = noteFromInput(body.note);
   if (!note) return jsonError(400, 'invalid', 'That is not a note the pane writes.');
-  const appended = await appendChatNote(db, { tenantId, chatId: chat.id, note });
+  const appended = await appendChatNote(db, { chatId: chat.id, note });
   if (!appended.ok) {
     return appended.reason === 'turn-running'
       ? jsonError(409, 'turn-running', 'Wait for the current reply to finish first.')

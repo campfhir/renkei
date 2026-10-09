@@ -16,7 +16,6 @@ import { DelegateTransport, delegateConfigFromEnv, isRecord, type FetchLike } fr
 
 /** Whose grant a request rides on. One of subject, accountId or pending is required. */
 export interface GrantRef {
-  tenantId: string;
   provider: string;
   /** The person, when the caller knows them by OIDC subject. */
   subject?: string;
@@ -216,7 +215,6 @@ export class DelegateGrants {
   }
 
   async exchange(input: {
-    tenantId: string;
     provider: string;
     form: Record<string, string>;
     directoryTenantId?: string;
@@ -237,7 +235,6 @@ export class DelegateGrants {
   }
 
   async commit(input: {
-    tenantId: string;
     provider: string;
     handle: string;
     subject: string;
@@ -275,7 +272,6 @@ export class DelegateGrants {
 
   /** Revoke at the provider where one can (Zoom, OnBase), then delete our copy. */
   async revoke(input: {
-    tenantId: string;
     provider: string;
     accountId: string;
   }): Promise<Result<{ revokedAtProvider: boolean }, GrantOpError>> {
@@ -285,7 +281,6 @@ export class DelegateGrants {
   }
 
   async delete(input: {
-    tenantId: string;
     provider: string;
     accountId: string;
   }): Promise<Result<void, GrantOpError>> {
@@ -302,7 +297,6 @@ export class DelegateGrants {
    * it), else DELEGATE_WORKER_URL.
    */
   async gitTicket(input: {
-    tenantId: string;
     provider: string;
     subject: string;
     write: boolean;

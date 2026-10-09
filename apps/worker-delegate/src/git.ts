@@ -6,7 +6,7 @@
  * for the one clone, pull or push, and this module relays the smart-HTTP
  * exchange to the real host with the person's token attached.
  *
- *   grant/git-ticket  — `{ tenantId, provider, subject, write }`: a ticket
+ *   grant/git-ticket  — `{ provider, subject, write }`: a ticket
  *                       bound to one person, one provider's host and one
  *                       direction, good for a few minutes. Answers the
  *                       ticket and the host; the caller builds the proxy
@@ -132,7 +132,6 @@ export class GitTickets {
       .insertInto('delegate_git_tickets')
       .values({
         id,
-        tenant_id: tenantId,
         subject,
         provider,
         host: host.host,
@@ -174,7 +173,7 @@ export class GitTickets {
 
     const ticket = await this.db
       .selectFrom('delegate_git_tickets')
-      .select(['tenant_id', 'subject', 'provider', 'host', 'write', 'secret_hash', 'expires_at'])
+      .select(['subject', 'provider', 'host', 'write', 'secret_hash', 'expires_at'])
       .where('id', '=', id)
       .executeTakeFirst();
     if (

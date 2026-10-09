@@ -146,7 +146,7 @@ export default function ConnectorList({
             </h2>
             <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white dark:divide-gray-900 dark:border-gray-800 dark:bg-gray-950">
               {list.map((row) => {
-                const href = row.manageHref ?? `/${slug}/admin/connectors/${row.configKey}`;
+                const href = row.manageHref ?? `/admin/connectors/${row.configKey}`;
                 const allOff =
                   row.products.some((product) => product.togglable) &&
                   row.products

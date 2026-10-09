@@ -19,7 +19,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -32,9 +31,6 @@ export async function GET(
       .select('id')
       .where('id', '=', tenantId)
       .executeTakeFirst();
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
 
     // The resulting grant is bound to whoever completes this flow.
     const session = await getSessionFromRequest(request, tenantId);
@@ -84,7 +80,6 @@ export async function GET(
         id: randomUUID(),
         state,
         nonce: randomUUID(),
-        tenant_id: tenantId,
         subject: session.subject,
         provider: 'atlassian-admin',
         scopes: effectiveScopes,
@@ -104,7 +99,6 @@ export async function GET(
 
     logger.debug('Atlassian Jira Admin authorize redirect', {
       component: 'auth/oauth',
-      tenantId,
       clientId: app.clientId,
       urlLength: authUrl.toString().length,
     });
@@ -113,7 +107,6 @@ export async function GET(
   } catch (error) {
     logger.error('Atlassian Jira Admin authorize error: {error}', {
       component: 'auth/oauth',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return NextResponse.json({ error: 'Failed to initiate authorization' }, { status: 500 });

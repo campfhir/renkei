@@ -133,7 +133,6 @@ async function seedChat(client: Client, ids: Ids): Promise<void> {
     [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.chatId,
     ownerSubject: E2E_SUBJECT,
@@ -273,7 +272,7 @@ const zoomPercent = async (page: Page) =>
 test('a reply’s mockups are drawn inline, each in its format, and a refused call draws none', async ({
   page,
 }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
   // Three cards — the call the tool refused stays in the fold, no card for it.
@@ -321,7 +320,7 @@ test('a reply’s mockups are drawn inline, each in its format, and a refused ca
 test('clicking a card opens it full screen, live, with zoom, widths, pan and a way back', async ({
   page,
 }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   const opener = page.getByRole('button', { name: 'Open Settings page full screen' });
   await expect(opener).toBeVisible(COLD);
   await opener.click();
@@ -405,7 +404,7 @@ test('clicking a card opens it full screen, live, with zoom, widths, pan and a w
 });
 
 test('Escape and zoom keys still work while the mockup itself has focus', async ({ page }) => {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await page.getByRole('button', { name: 'Open Settings page full screen' }).click();
   const dialog = page.getByRole('dialog', { name: 'Mockup: Settings page' });
   const frame = dialog.frameLocator('iframe');
@@ -420,7 +419,7 @@ test('Escape and zoom keys still work while the mockup itself has focus', async 
 test('a mockup’s document can neither reach the network nor read cookies, and links go nowhere', async ({
   page,
 }) => {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await expect(inlineFrame(page, 'Mobile hero').getByRole('heading')).toBeVisible(COLD);
 
   const mockupFrame = page.frames().find((frame) => frame.url().includes('/mockups/'));
@@ -465,7 +464,7 @@ test('at a phone’s width the cards fit the screen and the viewer stays reachab
   page,
 }, testInfo) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await expect(page.locator('figure')).toHaveCount(3, COLD);
 
   // Frames load lazily, as they scroll near: bring each into view and wait for its design.

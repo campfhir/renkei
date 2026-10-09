@@ -51,14 +51,12 @@ describe('the draft job', () => {
     });
 
     await handler({
-      tenant_id: 'tenant-1',
       // A payload naming somebody else must change nothing.
       payload: { draftId: 'draft-1', ownerSubject: 'attacker@example.com' },
     });
 
     expect(mintRunToken).toHaveBeenCalledTimes(1);
     expect(mintRunToken.mock.calls[0][1]).toMatchObject({
-      tenantId: 'tenant-1',
       subject: 'real-owner@example.com',
       // Drafting acts as the person; there is usually no agent yet.
       agentId: null,

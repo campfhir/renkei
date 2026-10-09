@@ -17,13 +17,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
   const origin = await getOrigin(request);
   const adapter = hostAdapterFor(project.repo!.provider, {
-    tenantId,
     subject: session.subject,
     origin: origin.ok ? origin.val : '',
   });

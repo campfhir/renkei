@@ -48,13 +48,11 @@ function uuidFrom(seed: string): string {
 
 /** This project's own tenant/session/slug — isolated from every other project and spec. */
 function fixtureFor(projectName: string): {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`connectors-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`connectors-e2e-session:${projectName}`),
     slug: `e2e-connectors-${projectName}`,
     subject: `e2e-connectors-${projectName}@example.com`,
@@ -67,11 +65,11 @@ async function seedTenant(fixture: Fixture): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+    await client.query('DELETE FROM provider_grants', [fixture.tenantId]);
+    await client.query('DELETE FROM connector_configs', [fixture.tenantId]);
+    await client.query('DELETE FROM user_preferences', [fixture.tenantId]);
+    await client.query('DELETE FROM sessions', [fixture.tenantId]);
+    await client.query('DELETE FROM identities', [fixture.tenantId]);
     await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
       fixture.tenantId,
@@ -141,7 +139,7 @@ async function connectZoom(fixture: Fixture): Promise<void> {
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -166,7 +164,7 @@ test('connectors page: needs-setup ordering, live scope picker, real disconnect'
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/connectors`);
+  await page.goto(`/connectors`);
   await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
 
   // Both cards start unconnected: one "Needs setup" section, no "Connected"

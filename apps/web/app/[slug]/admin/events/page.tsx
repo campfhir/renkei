@@ -1,6 +1,5 @@
 import React from 'react';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import type { Json } from '@renkei/db';
@@ -56,10 +55,8 @@ export default async function EventsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
@@ -83,14 +80,12 @@ export default async function EventsPage({
     db
       .selectFrom('events')
       .select(['id', 'source', 'type', 'status', 'attempts', 'payload', 'created_at'])
-      .where('tenant_id', '=', tenantRef.id)
       .orderBy('created_at', 'desc')
       .limit(LIMIT)
       .execute(),
     db
       .selectFrom('events_dead_letters')
       .select(['id', 'source', 'type', 'attempts', 'payload', 'created_at'])
-      .where('tenant_id', '=', tenantRef.id)
       .orderBy('created_at', 'desc')
       .limit(LIMIT)
       .execute(),
@@ -128,7 +123,6 @@ export default async function EventsPage({
     ? await db
         .selectFrom('provider_grants')
         .select(['provider_account_id', 'subject'])
-        .where('tenant_id', '=', tenantRef.id)
         .where('provider_account_id', 'in', accountIds)
         .execute()
     : [];
@@ -151,7 +145,6 @@ export default async function EventsPage({
     ? await db
         .selectFrom('identities')
         .select(['subject', 'email', 'display_name'])
-        .where('tenant_id', '=', tenantRef.id)
         .where('subject', 'in', subjects)
         .execute()
     : [];

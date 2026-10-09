@@ -77,7 +77,7 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
   try {
     grantRows = await db
       .selectFrom('provider_grants')
-      .select(['tenant_id', 'provider_account_id', 'metadata'])
+      .select(['provider_account_id', 'metadata'])
       .where('provider', '=', 'webex')
       .where(sql<boolean>`metadata->>'allSpaces' = 'true'`)
       .execute();
@@ -131,7 +131,6 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     if (!access) {
       logger.warn('opted-in grant has no usable token; webhook may rot', {
         component: 'webex/webhook-health',
-        tenantId: row.tenant_id,
       });
       continue;
     }
@@ -150,7 +149,6 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
           webhookHealthCheckedAt: now.toISOString(),
         })}::jsonb`,
       })
-      .where('tenant_id', '=', row.tenant_id)
       .where('provider', '=', 'webex')
       .where('provider_account_id', '=', row.provider_account_id)
       .execute();
@@ -158,7 +156,6 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     if (!reconciled.ok) {
       logger.error('WebEx API error; will retry in {minutes}m: {kind} {message}', {
         component: 'webex/webhook-health',
-        tenantId: row.tenant_id,
         minutes: Math.round(dueMs / 60_000),
         kind: reconciled.err.type,
         message:
@@ -175,7 +172,6 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
         .join(', ');
       logger.warn('repaired all-spaces webhook: {repairs} — events were being lost', {
         component: 'webex/webhook-health',
-        tenantId: row.tenant_id,
         repairs,
       });
     }

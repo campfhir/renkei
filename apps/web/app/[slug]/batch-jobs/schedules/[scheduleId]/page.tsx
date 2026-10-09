@@ -2,7 +2,6 @@ import React from 'react';
 import BackLink from '@/components/back-link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getSchedule } from '@renkei/batch-jobs-store';
@@ -45,12 +44,10 @@ export default async function EditBatchJobSchedulePage({
   params: Promise<{ slug: string; scheduleId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, scheduleId } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/batch-jobs/schedules/${scheduleId}`));
+    redirect(signInUrl(tenant.id, `/batch-jobs/schedules/${scheduleId}`));
   }
 
   const dbResult = getDatabase();
@@ -68,7 +65,7 @@ export default async function EditBatchJobSchedulePage({
   return (
     <div className="mx-auto max-w-3xl">
       <div className="mb-4 flex items-center gap-2">
-        <BackLink href={`/${slug}/batch-jobs/schedules`} label="Schedules" />
+        <BackLink href={`/batch-jobs/schedules`} label="Schedules" />
         <h1 className="min-w-0 truncate text-xl font-bold">{schedule.name}</h1>
       </div>
       <EditScheduleForm

@@ -49,7 +49,7 @@ export default function AudienceControl({
     setNotice(null);
     setError(null);
     try {
-      const response = await fetch(`/api/admin/${slug}/connector-audience/${capabilityKey}`, {
+      const response = await fetch(`/api/admin/connector-audience/${capabilityKey}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ claimValues: next }),
@@ -76,7 +76,7 @@ export default function AudienceControl({
   }
 
   async function loadOptions(query: string): Promise<ChipOption[]> {
-    const response = await fetch(`/api/admin/${slug}/idp-groups?q=${encodeURIComponent(query)}`);
+    const response = await fetch(`/api/admin/idp-groups?q=${encodeURIComponent(query)}`);
     if (!response.ok) throw new Error('Could not load the groups seen at sign-in.');
     const body: { groups?: ChipOption[] } = await response.json();
     return body.groups ?? [];

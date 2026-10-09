@@ -76,7 +76,6 @@ export async function setGrant(
       db
         .insertInto('provider_grants')
         .values({
-          tenant_id: tenantId,
           provider,
           provider_account_id: grant.accountId,
           client_id: grant.clientId,
@@ -92,7 +91,7 @@ export async function setGrant(
           updated_at: new Date().toISOString(),
         })
         .onConflict((oc) =>
-          oc.columns(['tenant_id', 'provider', 'provider_account_id']).doUpdateSet({
+          oc.columns(['provider', 'provider_account_id']).doUpdateSet({
             encrypted_access_token: encryptedAccessToken,
             // A repeat authorization while a grant already exists can come
             // back with no refresh_token at all (observed on Bitbucket,
@@ -151,7 +150,6 @@ export async function getGrant(
           'granted_scopes',
           'subject',
         ])
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where('provider_account_id', '=', accountId)
         .executeTakeFirst(),
@@ -165,7 +163,6 @@ export async function getGrant(
 
   const accessTokenResult = await openGrantToken(
     db,
-    tenantId,
     row.subject,
     row.encrypted_access_token
   );
@@ -173,7 +170,6 @@ export async function getGrant(
 
   const refreshTokenResult = await openGrantToken(
     db,
-    tenantId,
     row.subject,
     row.encrypted_refresh_token
   );
@@ -206,7 +202,6 @@ export async function deleteGrant(
     () =>
       dbResult.val
         .deleteFrom('provider_grants')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where('provider_account_id', '=', accountId)
         .execute(),

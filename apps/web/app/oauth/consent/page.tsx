@@ -52,7 +52,6 @@ export default async function ConsentPage({
     .innerJoin('tenants as t', 't.id', 'r.tenant_id')
     .select([
       'r.id',
-      'r.tenant_id',
       'r.session_id',
       'r.subject',
       'r.redirect_uri',
@@ -87,7 +86,6 @@ export default async function ConsentPage({
   const identity = await db
     .selectFrom('identities')
     .select(['email', 'display_name'])
-    .where('tenant_id', '=', pending.tenant_id)
     .where('subject', '=', pending.subject)
     .executeTakeFirst();
 
@@ -103,7 +101,7 @@ export default async function ConsentPage({
     <main className="flex min-h-full flex-1 items-center justify-center bg-background px-4 py-10 text-foreground">
       <form
         method="post"
-        action={`/api/mcp/${pending.tenant_id}/oauth/authorize`}
+        action={`/api/mcp/oauth/authorize`}
         className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-950"
       >
         <input type="hidden" name="request" value={pending.id} />

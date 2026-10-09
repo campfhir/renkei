@@ -34,12 +34,10 @@ interface Summary {
 
 export default function PullsSummary({
   href,
-  tenantId,
   projectId,
 }: {
   /** The project's Pulls page. */
   href: string;
-  tenantId: string;
   projectId: string;
 }) {
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -49,7 +47,7 @@ export default function PullsSummary({
     let cancelled = false;
     void (async () => {
       const result = await getJson<Summary>(
-        `/api/tenant/${tenantId}/code/projects/${projectId}/pulls?view=summary`
+        `/api/code/projects/${projectId}/pulls?view=summary`
       );
       if (cancelled) return;
       if (result.data) setSummary(result.data);

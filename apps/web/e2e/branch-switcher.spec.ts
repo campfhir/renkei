@@ -95,7 +95,7 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
     authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
     'content-type': 'application/json',
   };
-  const target = { tenantId: E2E_TENANT_ID, subject: `code-project:${ids.projectId}` };
+  const target = { subject: `code-project:${ids.projectId}` };
   const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
     method: 'POST',
     headers,
@@ -268,7 +268,7 @@ test.describe('branch switcher', () => {
 
     // ── The project screen: about the repository as a whole, no branch
     //    picker or mention of one in the Repository card ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     const repository = main.locator('section', {
       has: page.getByRole('heading', { level: 2, name: 'Repository' }),
@@ -285,7 +285,7 @@ test.describe('branch switcher', () => {
     // ── The active chat's title bar: a plain read-only label, and
     //    "Switch branch" in the overflow menu opens the picker as a
     //    modal — the only path, at any width ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.activeChatId}`);
+    await page.goto(`/chat/${ids.activeChatId}`);
     await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
     const chatBranch = main.locator('[data-testid="chat-branch"]');
     await expect(chatBranch).toBeVisible();
@@ -303,7 +303,7 @@ test.describe('branch switcher', () => {
 
     // ── A history chat: the plain read-only label, no switcher and no
     //    "Switch branch" entry — it can no longer send turns ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.historyChatId}`);
+    await page.goto(`/chat/${ids.historyChatId}`);
     await expect(page.getByRole('heading', { name: ids.historyChatTitle })).toBeVisible();
     const historyBranch = main.locator('[data-testid="chat-branch"]');
     await expect(historyBranch).toBeVisible();
@@ -324,7 +324,7 @@ test.describe('branch switcher', () => {
 
     // ── Picking a branch on a dirty checkout: a modal names the problem,
     //    not an overlapping inline error, with a way through ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.activeChatId}`);
+    await page.goto(`/chat/${ids.activeChatId}`);
     await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
     const chatBranch = main.locator('[data-testid="chat-branch"]');
     await expect(chatBranch).toContainText('main');

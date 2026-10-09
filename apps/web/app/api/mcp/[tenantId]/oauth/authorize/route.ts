@@ -66,7 +66,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -80,9 +79,6 @@ export async function GET(
       .select('id')
       .where('id', '=', tenantId)
       .executeTakeFirst();
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
 
     const searchParams = request.nextUrl.searchParams;
     const responseType = searchParams.get('response_type');
@@ -108,7 +104,6 @@ export async function GET(
       .selectFrom('oauth_clients')
       .selectAll()
       .where('client_id', '=', clientId)
-      .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
     if (!client) {
       return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
@@ -157,7 +152,6 @@ export async function GET(
     // way past rather than carrying a scheduled job for a few bytes.
     await db
       .deleteFrom('oauth_consent_requests')
-      .where('tenant_id', '=', tenantId)
       .where('expires_at', '<', new Date())
       .execute();
 
@@ -166,7 +160,6 @@ export async function GET(
       .insertInto('oauth_consent_requests')
       .values({
         id: requestId,
-        tenant_id: tenantId,
         client_id: clientId,
         session_id: session.id,
         subject: session.subject,
@@ -207,7 +200,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const verdict = checkInboundLimit(`oauth/consent:${tenantId}`, request, POST_LIMITS);
   if (!verdict.allowed) {
@@ -257,7 +249,6 @@ export async function POST(
     const pending = await db
       .deleteFrom('oauth_consent_requests')
       .where('id', '=', requestId)
-      .where('tenant_id', '=', tenantId)
       .returningAll()
       .executeTakeFirst();
     if (!pending || pending.expires_at < new Date()) {
@@ -278,7 +269,6 @@ export async function POST(
 
     if (decision === 'deny') {
       recordAuditEvent({
-        tenantId,
         actorSubject: session.subject,
         action: 'oauth.consent_denied',
         targetKind: 'oauth_client',
@@ -295,7 +285,6 @@ export async function POST(
 
     const code = await mintAuthorizationCode(db, tenantId, pending, session);
     recordAuditEvent({
-      tenantId,
       actorSubject: session.subject,
       action: 'oauth.consent_granted',
       targetKind: 'oauth_client',
@@ -347,7 +336,6 @@ async function mintAuthorizationCode(
     .insertInto('oauth_authorization_codes')
     .values({
       code,
-      tenant_id: tenantId,
       client_id: pending.client_id,
       subject: session.subject,
       scope: pending.scope || 'openid profile email',

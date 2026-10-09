@@ -65,7 +65,6 @@ export async function getChatToolPermissionPrefs(
       dbResult.val
         .selectFrom('user_preferences')
         .select('value')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .where('key', '=', CHAT_TOOL_PERMISSIONS_PREF_KEY)
         .executeTakeFirst(),
@@ -95,14 +94,13 @@ export async function setChatToolPermissionPrefs(
       db
         .insertInto('user_preferences')
         .values({
-          tenant_id: tenantId,
           subject,
           key: CHAT_TOOL_PERMISSIONS_PREF_KEY,
           value,
           updated_at: now,
         })
         .onConflict((oc) =>
-          oc.columns(['tenant_id', 'subject', 'key']).doUpdateSet({ value, updated_at: now })
+          oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
         )
         .execute(),
     'DB_ERROR' as const

@@ -159,7 +159,6 @@ export interface StartedTurn {
 }
 
 export interface StartTurnInput {
-  tenantId: string;
   session: { subject: string; roles: string[] };
   chatId: string;
   text: string;
@@ -250,7 +249,6 @@ export async function startChatTurn(
   try {
     const opened = await db.transaction().execute(async (trx) => {
       const turn = await createTurn(trx, {
-        tenantId: input.tenantId,
         chatId: chat.id,
         llmModelId: llm.modelConfigId,
         thinkingBudget,
@@ -262,7 +260,6 @@ export async function startChatTurn(
       let user: InsertedMessage | null = null;
       for (const blocks of chunkedUserBlocks(redacted.text, extraBlocks)) {
         const inserted = await insertMessage(trx, {
-          tenantId: input.tenantId,
           chatId: chat.id,
           turnId: turn.val,
           role: 'user',
@@ -276,7 +273,6 @@ export async function startChatTurn(
       }
       if (!user) return err('CONTENT_KEY' as const);
       const assistant = await insertMessage(trx, {
-        tenantId: input.tenantId,
         chatId: chat.id,
         turnId: turn.val,
         role: 'assistant',
@@ -293,7 +289,6 @@ export async function startChatTurn(
         await trx
           .updateTable('chat_attachments')
           .set({ message_id: user.id })
-          .where('tenant_id', '=', input.tenantId)
           .where('chat_id', '=', chat.id)
           .where('owner_subject', '=', input.session.subject)
           .where('id', 'in', input.attachmentIds.filter(isUuid))
@@ -337,7 +332,6 @@ export async function startChatTurn(
     };
     defer(() =>
       executeChatTurn(db, {
-        tenantId: input.tenantId,
         session: input.session,
         chat: { ...chat, llmModelId: llm.modelConfigId },
         cipher: access.cipher,
@@ -352,7 +346,6 @@ export async function startChatTurn(
   } catch (error) {
     logger.warn('chat turn could not start: {error}', {
       component: 'chat/turn',
-      tenantId: input.tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return err('DB_ERROR' as const);
@@ -361,7 +354,6 @@ export async function startChatTurn(
 }
 
 export interface ExecuteTurnInput {
-  tenantId: string;
   session: { subject: string; roles: string[] };
   chat: ChatRow;
   /** The chat's cipher (access.cipher; chat-keys.ts for a resumed turn). */
@@ -440,7 +432,6 @@ async function executeTurnBody(
   prepared: () => void
 ): Promise<void> {
   const store = createTurnStore(db, {
-    tenantId: input.tenantId,
     chatId: input.chat.id,
     turnId: input.turnId,
     subject: input.session.subject,
@@ -459,7 +450,6 @@ async function executeTurnBody(
   ) =>
     logger[level](message, {
       component: 'chat/turn',
-      tenantId: input.tenantId,
       chatId: input.chat.id,
       turnId: input.turnId,
       ...fields,
@@ -518,7 +508,6 @@ async function executeTurnBody(
     // the turn's context is read. The release is taken the moment it is
     // known, so a failure among the other reads still revokes the token.
     const surfacing = resolveChatToolSurface(db, {
-      tenantId: input.tenantId,
       subject: input.session.subject,
       roles: input.session.roles,
       config: toolConfig,
@@ -562,7 +551,6 @@ async function executeTurnBody(
     if (needsCompaction(rows)) {
       try {
         const compacted = await compactChat(db, {
-          tenantId: input.tenantId,
           chatId: input.chat.id,
           llm: input.llm,
           createdBy: 'auto',
@@ -608,7 +596,6 @@ async function executeTurnBody(
     const chatSummary = await latestChatSummary(db, input.tenantId, input.chat.id, input.cipher);
     const localContext = {
       db,
-      tenantId: input.tenantId,
       subject: input.session.subject,
       chatId: input.chat.id,
       cipher: input.cipher,
@@ -622,7 +609,6 @@ async function executeTurnBody(
       recordImageUsage: (report: ImageUsageReport) =>
         recordImageUsage(db, {
           ...report,
-          tenantId: input.tenantId,
           subject: input.session.subject,
         }),
       recordUsage: (usage: LlmUsage, model?: LlmCallModel | null) =>
@@ -641,7 +627,6 @@ async function executeTurnBody(
       subagents: createSubagentRecorder(
         db,
         {
-          tenantId: input.tenantId,
           chatId: input.chat.id,
           turnId: input.turnId,
           cipher: input.cipher,
@@ -796,7 +781,6 @@ async function executeTurnBody(
     // only one waiting on it.
     if (outcome.status === 'completed') {
       notifyChatReplyDesktop({
-        tenantId: input.tenantId,
         ownerSubject: input.session.subject,
         chatId: input.chat.id,
         chatTitle: input.chat.title,
@@ -866,7 +850,6 @@ export async function chatPromptContext(
   const files = await db
     .selectFrom('chat_attachments')
     .select(['id', 'filename', 'content_type', 'size_bytes', 'chat_id', 'project_id'])
-    .where('tenant_id', '=', tenantId)
     .where((eb) =>
       eb.or([eb('chat_id', '=', chat.id), ...(project ? [eb('project_id', '=', project.id)] : [])])
     )

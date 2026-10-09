@@ -17,7 +17,6 @@ import {
 } from '@renkei/connector-sandbox';
 
 export interface ServiceTarget {
-  tenantId: string;
   subject: string;
 }
 
@@ -28,7 +27,6 @@ export interface StoredService extends SandboxServiceSummary, ServiceTarget {
 
 const COLUMNS = [
   'id',
-  'tenant_id',
   'subject',
   'name',
   'image',
@@ -66,7 +64,6 @@ function exportsOf(value: unknown): Record<string, string> {
 
 function toStored(row: {
   id: string;
-  tenant_id: string;
   subject: string;
   name: string;
   image: string;
@@ -83,7 +80,6 @@ function toStored(row: {
   const exports = exportsOf(row.exports);
   return {
     id: row.id,
-    tenantId: row.tenant_id,
     subject: row.subject,
     name: row.name,
     image: row.image,
@@ -112,7 +108,6 @@ export async function insertService(
     .insertInto('sandbox_services')
     .values({
       id: randomUUID(),
-      tenant_id: input.tenantId,
       subject: input.subject,
       name: input.name,
       image: input.image,
@@ -132,7 +127,6 @@ export async function listServices(
   const rows = await db
     .selectFrom('sandbox_services')
     .select(COLUMNS)
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .orderBy('name')
     .execute();
@@ -147,7 +141,6 @@ export async function getServiceByName(
   const row = await db
     .selectFrom('sandbox_services')
     .select(COLUMNS)
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .where('name', '=', name)
     .executeTakeFirst();

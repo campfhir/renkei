@@ -2,7 +2,6 @@ import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { sandboxServicesEnabled } from '@renkei/sandbox-client';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import ImageRuleForms from './image-rule-forms';
 
 /**
@@ -19,10 +18,8 @@ export default async function AdminCodeServicesPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
   const enabled = await sandboxServicesEnabled(tenantRef.id);
 

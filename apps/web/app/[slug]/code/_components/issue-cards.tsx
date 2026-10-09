@@ -66,11 +66,9 @@ function Card({
 }
 
 export default function IssueCards({
-  tenantId,
   projectId,
   chatId,
 }: {
-  tenantId: string;
   projectId: string;
   chatId: string;
 }) {
@@ -80,7 +78,7 @@ export default function IssueCards({
     let cancelled = false;
     void (async () => {
       const result = await getJson<IssuesResponse>(
-        `/api/tenant/${tenantId}/code/projects/${projectId}/chats/${chatId}/issues`
+        `/api/code/projects/${projectId}/chats/${chatId}/issues`
       );
       if (!cancelled && result.data) setIssues(result.data);
     })();

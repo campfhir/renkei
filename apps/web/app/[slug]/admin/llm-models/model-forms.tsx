@@ -207,7 +207,7 @@ export default function ModelForms({ slug }: { slug: string }) {
   };
 
   const reload = useCallback(async () => {
-    const result = await getJson<{ models: ModelRow[] }>(`/api/admin/${slug}/llm-models`);
+    const result = await getJson<{ models: ModelRow[] }>(`/api/admin/llm-models`);
     if (result.error || !result.data) setLoadError(result.error ?? 'Could not load models');
     else {
       setModels(result.data.models);
@@ -255,7 +255,7 @@ export default function ModelForms({ slug }: { slug: string }) {
     setListing(true);
     setListError(null);
     const result = await sendJsonFull<{ models: AvailableModelRow[] }>(
-      `/api/admin/${slug}/llm-models/available`,
+      `/api/admin/llm-models/available`,
       'POST',
       {
         provider: draft.provider,
@@ -281,7 +281,7 @@ export default function ModelForms({ slug }: { slug: string }) {
     setTestError(null);
     setTestReply(null);
     const result = await sendJsonFull<{ model: string; reply: string }>(
-      `/api/admin/${slug}/llm-models/test`,
+      `/api/admin/llm-models/test`,
       'POST',
       {
         provider: draft.provider,
@@ -329,8 +329,8 @@ export default function ModelForms({ slug }: { slug: string }) {
     };
     const result =
       editingId === 'new'
-        ? await sendJsonFull(`/api/admin/${slug}/llm-models`, 'POST', payload)
-        : await sendJsonFull(`/api/admin/${slug}/llm-models/${editingId}`, 'PUT', payload);
+        ? await sendJsonFull(`/api/admin/llm-models`, 'POST', payload)
+        : await sendJsonFull(`/api/admin/llm-models/${editingId}`, 'PUT', payload);
     setSaving(false);
     if (result.error) {
       setFormError(result.error);
@@ -349,7 +349,7 @@ export default function ModelForms({ slug }: { slug: string }) {
     ) {
       return;
     }
-    const result = await sendJsonFull(`/api/admin/${slug}/llm-models/${row.id}`, 'DELETE');
+    const result = await sendJsonFull(`/api/admin/llm-models/${row.id}`, 'DELETE');
     if (result.error) setLoadError(result.error);
     else await reload();
   };

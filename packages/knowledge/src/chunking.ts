@@ -109,7 +109,6 @@ export async function deleteObjectChunks(
     () =>
       dbResult.val
         .deleteFrom('knowledge_chunks')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where((eb) =>
           options.prefixOnly
@@ -145,7 +144,6 @@ export async function deleteChunksByMetadata(
     () =>
       dbResult.val
         .deleteFrom('knowledge_chunks')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where(sql<boolean>`metadata ->> ${key} = ${value}`)
         .executeTakeFirst(),
@@ -179,7 +177,6 @@ export async function readObjectMetadataBatch(
       dbResult.val
         .selectFrom('knowledge_chunks')
         .select(['ref_id', 'metadata'])
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where((eb) =>
           eb.or([eb('ref_id', 'in', [...refIds]), sql<boolean>`ref_id LIKE ANY(${patterns})`])
@@ -225,7 +222,6 @@ export async function deleteStaleScopeChunks(
     () =>
       dbResult.val
         .deleteFrom('knowledge_chunks')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where(sql<boolean>`metadata ->> ${scope.key} = ${scope.value}`)
         .where(sql<boolean>`metadata ->> ${epoch.key} IS DISTINCT FROM ${epoch.value}`)
@@ -343,7 +339,6 @@ export async function ingestObjectChunks(
 
   for (const [index, content] of pieces.entries()) {
     const upserted = await upsertChunkRow(
-      tenantId,
       {
         provider: object.provider,
         refId: chunkRefId(object.refId, index + 1, pieces.length),

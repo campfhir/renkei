@@ -94,13 +94,12 @@ describe('POST /api/admin/{slug}/access/{subject}/revoke-sessions', () => {
     ]);
     for (const del of deletes) {
       expect(del.filters).toEqual([
-        ['tenant_id', TENANT],
+        [TENANT],
         ['subject', TARGET],
       ]);
     }
     expect(mockAudit).toHaveBeenCalledWith(
       expect.objectContaining({
-        tenantId: TENANT,
         actorSubject: 'op@example.com',
         action: 'user.sessions_revoked',
         targetLabel: TARGET,

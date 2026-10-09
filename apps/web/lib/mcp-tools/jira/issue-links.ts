@@ -33,7 +33,6 @@ export async function registerIssueLinkTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_link_types invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -85,7 +84,6 @@ export async function registerIssueLinkTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_create_issue_link invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -212,7 +210,6 @@ export async function registerIssueLinkTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_create_remote_link invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -284,7 +281,6 @@ export async function registerIssueLinkTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_delete_issue_link invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

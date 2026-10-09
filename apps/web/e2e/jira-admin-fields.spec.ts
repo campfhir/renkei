@@ -49,7 +49,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`jira-admin-fields-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`jira-admin-fields-e2e-session:${projectName}`),
     slug: `e2e-jira-fields-${projectName}`,
     subject: `e2e-jira-fields-${projectName}@example.com`,
@@ -72,13 +71,13 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 async function seedTenant(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
     const tenant = [fixture.tenantId];
-    await client.query('DELETE FROM jira_admin_change_requests WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM audit_events WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', tenant);
+    await client.query('DELETE FROM jira_admin_change_requests', tenant);
+    await client.query('DELETE FROM audit_events', tenant);
+    await client.query('DELETE FROM provider_grants', tenant);
+    await client.query('DELETE FROM connector_configs', tenant);
+    await client.query('DELETE FROM user_preferences', tenant);
+    await client.query('DELETE FROM sessions', tenant);
+    await client.query('DELETE FROM identities', tenant);
     await client.query('DELETE FROM tenants WHERE id = $1', tenant);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
       fixture.tenantId,
@@ -206,7 +205,7 @@ async function stub(fixture: Fixture, pathAndQuery: string): Promise<Record<stri
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -247,7 +246,7 @@ test('a new field is reviewed with the screen another space shows, then created,
   await signIn(page, fixture);
 
   // --- Reviewed: each step, and the screen HR shows too, in the warning colour. ---
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${id}`);
+  await page.goto(`/jira-admin/changes/${id}`);
   await expect(page.getByRole('heading', { name: 'Review a Jira admin change' })).toBeVisible();
   await expect(main(page).getByTestId('change-title')).toHaveText('New field “Vendor” for OPS');
   const reach = main(page).getByTestId('change-reach');
@@ -308,7 +307,7 @@ test('a new field is reviewed with the screen another space shows, then created,
     .poll(async () =>
       withDb(async (client) => {
         const rows = await client.query(
-          `SELECT 1 FROM audit_events WHERE tenant_id = $1 AND action = 'jira_admin.change_applied'`,
+          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied'`,
           [fixture.tenantId]
         );
         return rows.rowCount;
@@ -340,7 +339,7 @@ test('a field of the same name made since stops it before a second is created', 
   });
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${id}`);
+  await page.goto(`/jira-admin/changes/${id}`);
   await page.getByRole('button', { name: 'Apply these 4 changes to Jira' }).click();
   await expect(main(page).getByTestId('change-state')).toHaveText('Failed', { timeout: 30_000 });
   const operations = main(page).getByTestId('change-operations').locator(':scope > li');

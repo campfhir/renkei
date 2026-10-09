@@ -20,18 +20,16 @@ const PAGE = 30;
 
 export default function CommitsPage({
   slug,
-  tenantId,
   projectId,
   projectName,
   repoFullName,
 }: {
   slug: string;
-  tenantId: string;
   projectId: string;
   projectName: string;
   repoFullName: string;
 }) {
-  const base = `/api/tenant/${tenantId}/code/projects/${projectId}/commits`;
+  const base = `/api/code/projects/${projectId}/commits`;
   const [commits, setCommits] = useState<HostCommit[] | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [max, setMax] = useState(PAGE);
@@ -61,7 +59,7 @@ export default function CommitsPage({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-        <BackLink href={`/${slug}/code/${projectId}`} label={projectName} />
+        <BackLink href={`/code/${projectId}`} label={projectName} />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold">Commits</h1>
           <p className="truncate text-xs text-gray-500">

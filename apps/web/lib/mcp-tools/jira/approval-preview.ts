@@ -211,7 +211,6 @@ export async function jiraIssueApprovalPreview(
   const subtitle = [projectKey, issueType].filter(Boolean).join(' · ') || issueKey;
 
   const schema = await loadApprovalFieldSchema(
-    tenantId,
     subject,
     tool === 'jira_create_issue' ? { projectKey, issueType } : { issueKey }
   );

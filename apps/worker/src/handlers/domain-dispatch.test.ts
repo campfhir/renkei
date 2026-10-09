@@ -36,7 +36,6 @@ const { markWebexWindowDirty: mockMarkDirty } = jest.requireMock<{
 function webexEvent(): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: 'tenant-1',
     source: 'domain:webex',
     type: 'message.received',
     payload: {
@@ -57,7 +56,6 @@ function webexEvent(): ClaimedEvent {
 function mailEvent(): ClaimedEvent {
   return {
     id: 'evt-2',
-    tenant_id: 'tenant-1',
     source: 'domain:microsoft',
     type: 'mail.received',
     payload: {
@@ -86,7 +84,6 @@ test('webex message: its room-day is marked dirty first, then agents fan out', a
     { fake: 'db' },
     expect.anything(),
     expect.objectContaining({
-      tenantId: 'tenant-1',
       source: 'webex',
       type: 'message.received',
       ownerSubject: 'auth0|watcher',

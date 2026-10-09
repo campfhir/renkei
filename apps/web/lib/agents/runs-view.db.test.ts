@@ -69,7 +69,6 @@ maybe('run detail with sealed attempt content', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: ownerSubject,
         name: `agent-${agentId.slice(0, 8)}`,
         steps: JSON.stringify(steps),
@@ -80,7 +79,6 @@ maybe('run detail with sealed attempt content', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: ownerSubject,
         trigger_kind: 'manual',
@@ -94,7 +92,6 @@ maybe('run detail with sealed attempt content', () => {
       .insertInto('agent_run_steps')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         run_id: runId,
         step_id: stepId,
         step_index: 0,
@@ -118,9 +115,9 @@ maybe('run detail with sealed attempt content', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('agent_runs').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('agents').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('user_encryption_keys').where('tenant_id', '=', tenantId).execute();
+    await db.deleteFrom('agent_runs').execute();
+    await db.deleteFrom('agents').execute();
+    await db.deleteFrom('user_encryption_keys').execute();
     await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
     await closeDatabase();
   });
@@ -128,7 +125,6 @@ maybe('run detail with sealed attempt content', () => {
   it('round-trips: the owner reads the attempt as the engine wrote it, and the row holds no content', async () => {
     const { clear, plaintext } = splitDetailForSealing(detail);
     const sealed = await delegateClient().sealForSubject(
-      tenantId,
       owner,
       [plaintext!],
       'automation'

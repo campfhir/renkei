@@ -48,7 +48,6 @@ export interface ResourceKey {
 }
 
 export interface ResourceRef {
-  tenantId: string;
   kind: ResourceKeyKind;
   resourceId: string;
 }
@@ -79,7 +78,6 @@ async function keyRow(db: Kysely<DB>, ref: ResourceRef): Promise<{ id: string } 
   const row = await db
     .selectFrom('resource_keys')
     .select('id')
-    .where('tenant_id', '=', ref.tenantId)
     .where('resource_kind', '=', ref.kind)
     .where('resource_id', '=', ref.resourceId)
     .executeTakeFirst();
@@ -109,7 +107,6 @@ async function upsertWrapping(
     .insertInto('resource_key_grants')
     .values({
       resource_key_id: keyId,
-      tenant_id: tenantId,
       holder_kind: holderKind,
       holder,
       wrapped_key: wrapped,
@@ -196,7 +193,6 @@ async function convertPublicWrapping(
   if (!ring.userKey) return;
   await upsertWrapping(
     db,
-    tenantId,
     keyId,
     'user',
     ring.subject,
@@ -278,7 +274,7 @@ export async function createResourceKey(
   const key = generateDataKey();
   const inserted = await db
     .insertInto('resource_keys')
-    .values({ tenant_id: ref.tenantId, resource_kind: ref.kind, resource_id: ref.resourceId })
+    .values({ resource_kind: ref.kind, resource_id: ref.resourceId })
     .onConflict((oc) => oc.columns(['resource_kind', 'resource_id']).doNothing())
     .returning('id')
     .executeTakeFirst();
@@ -298,7 +294,6 @@ async function wrapForRing(
   if (ring.userKey) {
     await upsertWrapping(
       db,
-      tenantId,
       keyId,
       'user',
       ring.subject,
@@ -310,7 +305,6 @@ async function wrapForRing(
   if (automation || !ring.userKey) {
     await upsertWrapping(
       db,
-      tenantId,
       keyId,
       'automation',
       ring.subject,
@@ -381,7 +375,6 @@ export async function openResourceKeys(
   const keys = await db
     .selectFrom('resource_keys')
     .select(['id', 'resource_id'])
-    .where('tenant_id', '=', tenantId)
     .where('resource_kind', '=', kind)
     .where(
       'resource_id',
@@ -513,7 +506,6 @@ export async function revokeResourceKey(
 export async function deleteResourceKey(db: Kysely<DB>, ref: ResourceRef): Promise<void> {
   await db
     .deleteFrom('resource_keys')
-    .where('tenant_id', '=', ref.tenantId)
     .where('resource_kind', '=', ref.kind)
     .where('resource_id', '=', ref.resourceId)
     .execute();

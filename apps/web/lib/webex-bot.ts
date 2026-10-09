@@ -38,14 +38,12 @@ export async function getWebexBot(tenantId: string): Promise<WebexBot | null> {
   if (!keyResult.ok) return null;
   try {
     const configResult = await readConnectorConfigCached(
-      tenantId,
       WEBEX_BOT_CONNECTOR,
       keyResult.val
     );
     if (!configResult.ok) {
       logger.warn('Could not read webex-bot connector config', {
         component: 'connectors/webex-bot',
-        tenantId,
       });
       return null;
     }
@@ -62,7 +60,6 @@ export async function getWebexBot(tenantId: string): Promise<WebexBot | null> {
   } catch (error) {
     logger.warn('webex-bot lookup errored: {error}', {
       component: 'connectors/webex-bot',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return null;

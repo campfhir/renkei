@@ -65,7 +65,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string; noteId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId, noteId } = await params;
+  const { agentId, noteId } = await params;
   const context = await ownedContext(request, tenantId, agentId);
   if (context instanceof NextResponse) return context;
 
@@ -75,7 +75,6 @@ export async function PUT(
   }
 
   const outcome = await updateAgentNote(context.db, {
-    tenantId,
     agentId,
     ownerEmail: context.ownerEmail,
     noteId,
@@ -90,12 +89,11 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string; noteId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId, noteId } = await params;
+  const { agentId, noteId } = await params;
   const context = await ownedContext(request, tenantId, agentId);
   if (context instanceof NextResponse) return context;
 
   const outcome = await deleteAgentNote(context.db, {
-    tenantId,
     agentId,
     ownerEmail: context.ownerEmail,
     noteId,

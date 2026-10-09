@@ -65,7 +65,6 @@ async function chatForPr(
   if (!activeChatId) return null;
   const rows = await listMessages(
     db,
-    tenantId,
     activeChatId,
     await chatCipherById(db, tenantId, activeChatId)
   );
@@ -82,7 +81,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
   const { db, session, project } = ready.context;
@@ -92,7 +91,6 @@ export async function GET(
   const row = await db
     .selectFrom('pr_subscriptions')
     .select(['id', 'watch_pipelines', 'auto_fix', 'auto_merge'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', project.repo!.provider)
     .where('repo_full_name', '=', project.repo!.fullName)
     .where('pr_number', '=', prNumber)
@@ -115,7 +113,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
   const { db, session, project } = ready.context;
@@ -132,7 +130,6 @@ export async function POST(
   await db
     .insertInto('pr_subscriptions')
     .values({
-      tenant_id: tenantId,
       project_id: projectId,
       chat_id: chatId,
       subscriber_subject: session.subject,
@@ -146,7 +143,7 @@ export async function POST(
     })
     .onConflict((oc) =>
       oc
-        .columns(['tenant_id', 'provider', 'repo_full_name', 'pr_number', 'subscriber_subject'])
+        .columns(['provider', 'repo_full_name', 'pr_number', 'subscriber_subject'])
         .doUpdateSet({
           chat_id: chatId,
           watch_pipelines: watchPipelines,
@@ -166,7 +163,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
   const { db, session, project } = ready.context;
@@ -178,7 +175,6 @@ export async function DELETE(
   await db
     .updateTable('pr_subscriptions')
     .set({ status: 'canceled', updated_at: new Date() })
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', project.repo!.provider)
     .where('repo_full_name', '=', project.repo!.fullName)
     .where('pr_number', '=', prNumber)

@@ -18,7 +18,6 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -32,7 +31,6 @@ export async function DELETE(
   const grantRow = await dbResult.val
     .selectFrom('provider_grants')
     .select(['provider_account_id'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', ENTRA_DEVELOPER)
     .where('subject', '=', session.subject)
     .executeTakeFirst();
@@ -41,7 +39,6 @@ export async function DELETE(
   }
 
   const deleted = await delegateGrants().delete({
-    tenantId,
     provider: ENTRA_DEVELOPER,
     accountId: grantRow.provider_account_id,
   });
@@ -49,7 +46,6 @@ export async function DELETE(
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'connector.disconnected',
     targetKind: 'connector',

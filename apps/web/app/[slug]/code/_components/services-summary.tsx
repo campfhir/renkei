@@ -20,12 +20,10 @@ const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800
 
 export default function ServicesSummaryCard({
   href,
-  tenantId,
   projectId,
 }: {
   /** The project's Services page. */
   href: string;
-  tenantId: string;
   projectId: string;
 }) {
   const [summary, setSummary] = useState<ServicesSummary | null>(null);
@@ -35,7 +33,7 @@ export default function ServicesSummaryCard({
     let cancelled = false;
     void (async () => {
       const result = await getJson<ServicesSummary>(
-        `/api/tenant/${tenantId}/code/projects/${projectId}/services?view=summary`
+        `/api/code/projects/${projectId}/services?view=summary`
       );
       if (cancelled) return;
       if (result.data) setSummary(result.data);

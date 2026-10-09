@@ -50,7 +50,6 @@ function fakeDb(result: unknown): {
 
 function contextWith(db: MCPToolContext['db']): MCPToolContext {
   return {
-    tenantId: 'tenant-1',
     accountId: 'acct-caller',
     siteUrl: 'https://example.atlassian.net',
     apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',

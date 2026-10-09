@@ -153,7 +153,6 @@ export async function registerProjectTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_projects invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -221,7 +220,6 @@ export async function registerProjectTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_components invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -318,7 +316,6 @@ export async function registerProjectTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_fields invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -485,7 +482,6 @@ export async function registerProjectTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_search_users invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -610,7 +606,6 @@ export async function registerProjectTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_transitions invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

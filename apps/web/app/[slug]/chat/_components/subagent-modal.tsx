@@ -80,13 +80,11 @@ function statusWord(run: SubagentRunView): string {
 }
 
 export default function SubagentModal({
-  tenantId,
   chatId,
   toolUseId,
   notStarted = false,
   onClose,
 }: {
-  tenantId: string;
   chatId: string;
   toolUseId: string;
   /**

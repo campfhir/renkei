@@ -84,14 +84,13 @@ export function noteLanguageGap(
     await db
       .insertInto('code_language_gaps')
       .values({
-        tenant_id: input.tenantId,
         extension: extensionOf(input.path),
         language: input.language.slice(0, 64),
         reason,
         sample_path: input.path.slice(0, 1_000),
       })
       .onConflict((conflict) =>
-        conflict.columns(['tenant_id', 'extension', 'language', 'reason']).doUpdateSet({
+        conflict.columns(['extension', 'language', 'reason']).doUpdateSet({
           open_count: sql`code_language_gaps.open_count + 1`,
           last_seen_at: sql`now()`,
           sample_path: input.path.slice(0, 1_000),
@@ -101,7 +100,6 @@ export function noteLanguageGap(
   })().catch((error: unknown) => {
     logger.warn('language gap not recorded for {path}: {error}', {
       component: 'code/language-gaps',
-      tenantId: input.tenantId,
       path: input.path,
       error: error instanceof Error ? error.message : String(error),
     });

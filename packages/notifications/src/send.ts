@@ -104,7 +104,6 @@ export interface PushWirePayload {
  * how to open it, nothing more.
  */
 export function pushClickTarget(input: {
-  tenantId: string;
   slug: string;
   refUrl: string | null;
   notificationId?: string;
@@ -117,7 +116,7 @@ export function pushClickTarget(input: {
       : `/${input.slug}/notifications`;
   const external = input.openInSourceApp && isExternalNotificationUrl(input.refUrl);
   const openUrl = input.notificationId
-    ? `/api/tenant/${input.tenantId}/notifications/${input.notificationId}/open`
+    ? `/api/notifications/${input.notificationId}/open`
     : external && input.refUrl
       ? input.refUrl
       : appUrl;
@@ -151,7 +150,6 @@ export async function sendPush(
     // app's root, the same as a payload with no link at all.
     const target = tenant
       ? pushClickTarget({
-          tenantId,
           slug: tenant.slug,
           refUrl: payload.refUrl,
           ...(payload.notificationId ? { notificationId: payload.notificationId } : {}),
@@ -185,7 +183,6 @@ export async function sendPush(
           }
           log?.('push send failed for tenant {tenantId}', {
             component: '@renkei/notifications',
-            tenantId,
             statusCode,
             error: error instanceof Error ? error.message : String(error),
           });
@@ -195,7 +192,6 @@ export async function sendPush(
   } catch (error) {
     log?.('push send skipped for tenant {tenantId}', {
       component: '@renkei/notifications',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
   }

@@ -1,7 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { readAtlassianMetadata } from '@renkei/provider-grants';
@@ -42,10 +41,8 @@ export default async function SitesPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
@@ -64,7 +61,6 @@ export default async function SitesPage({
     dbResult.val
       .selectFrom('provider_grants')
       .select(['provider', 'metadata', 'display_name', 'created_at'])
-      .where('tenant_id', '=', tenantRef.id)
       .where('provider', 'in', [
         'atlassian',
         'atlassian-jsm',
@@ -75,7 +71,6 @@ export default async function SitesPage({
     dbResult.val
       .selectFrom('content_watches')
       .select(['provider', 'scope_type', 'scope_label', 'scope_key', 'enabled', 'sync_status'])
-      .where('tenant_id', '=', tenantRef.id)
       .orderBy('provider')
       .execute(),
   ]);
@@ -113,7 +108,7 @@ export default async function SitesPage({
         The external places this organization reaches — derived from connected accounts and content
         watches. Access is per-person: manage it on{' '}
         <Link
-          href={`/${slug}/admin/access`}
+          href={`/admin/access`}
           className="text-blue-600 hover:underline dark:text-blue-400"
         >
           Access

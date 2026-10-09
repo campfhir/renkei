@@ -40,7 +40,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; accountId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, accountId } = await params;
+  const { accountId } = await params;
 
   // Throttled first (lib/webhook-intake.ts). Graph does not sign
   // notifications, so there is no signature header to check the shape of
@@ -85,7 +85,6 @@ export async function POST(
   const subscriptionRows = await db
     .selectFrom('webhook_subscriptions')
     .select(['subscription_id', 'client_state'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', MICROSOFT_SOURCE)
     .where('account_id', '=', accountId)
     .execute();
@@ -120,7 +119,6 @@ export async function POST(
             (verdict.suppressed > 0 ? ' ({suppressed} more since the last of these)' : ''),
           {
             component: 'microsoft/webhook',
-            tenantId,
             subscriptionId: subscriptionId ?? '(none)',
             suppressed: verdict.suppressed,
           }
@@ -134,7 +132,6 @@ export async function POST(
     const resourceData = isRecord(notification.resourceData) ? notification.resourceData : {};
 
     const enqueued = await eventsQueue.producer.enqueue({
-      tenantId,
       source: MICROSOFT_SOURCE,
       type: lifecycleEvent ? 'lifecycle' : 'change-notification',
       payload: {
@@ -164,7 +161,6 @@ export async function POST(
 
   logger.debug('Graph notifications accepted', {
     component: 'microsoft/webhook',
-    tenantId,
     accepted,
     delivered: notifications.length,
   });

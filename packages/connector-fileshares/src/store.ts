@@ -120,7 +120,6 @@ export async function listSharesWithConnection(
         .selectFrom('file_shares')
         .leftJoin('file_share_connections', (join) =>
           join
-            .onRef('file_share_connections.tenant_id', '=', 'file_shares.tenant_id')
             .onRef('file_share_connections.share_id', '=', 'file_shares.id')
             .on('file_share_connections.subject', '=', subject)
         )
@@ -130,7 +129,6 @@ export async function listSharesWithConnection(
           'file_share_connections.tool_access',
           'file_share_connections.allow_delete',
         ])
-        .where('file_shares.tenant_id', '=', tenantId)
         .where('file_shares.enabled', '=', true)
         .orderBy('file_shares.name')
         .execute(),
@@ -184,7 +182,6 @@ export async function getConnection(
       db
         .selectFrom('file_share_connections')
         .select(['username', 'tool_access', 'allow_delete'])
-        .where('tenant_id', '=', tenantId)
         .where('share_id', '=', shareId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -207,7 +204,6 @@ export async function readConnectionCiphertext(
       db
         .selectFrom('file_share_connections')
         .select('encrypted_credentials')
-        .where('tenant_id', '=', tenantId)
         .where('share_id', '=', shareId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -239,7 +235,6 @@ export async function upsertConnection(
       db
         .insertInto('file_share_connections')
         .values({
-          tenant_id: tenantId,
           share_id: shareId,
           subject,
           encrypted_credentials: input.encryptedCredentials,
@@ -277,7 +272,6 @@ export async function updateConnectionExposure(
       db
         .updateTable('file_share_connections')
         .set({ tool_access: toolAccess, allow_delete: allowDelete, updated_at: new Date() })
-        .where('tenant_id', '=', tenantId)
         .where('share_id', '=', shareId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -298,7 +292,6 @@ export async function deleteConnection(
     () =>
       db
         .deleteFrom('file_share_connections')
-        .where('tenant_id', '=', tenantId)
         .where('share_id', '=', shareId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -333,7 +326,6 @@ export async function resolveToolExposure(
         .selectFrom('file_share_connections')
         .innerJoin('file_shares', 'file_shares.id', 'file_share_connections.share_id')
         .select(['file_share_connections.tool_access', 'file_share_connections.allow_delete'])
-        .where('file_share_connections.tenant_id', '=', tenantId)
         .where('file_share_connections.subject', '=', subject)
         .where('file_shares.enabled', '=', true)
         .execute(),
@@ -365,7 +357,6 @@ export async function listShares(
       db
         .selectFrom('file_shares')
         .selectAll()
-        .where('tenant_id', '=', tenantId)
         .orderBy('name')
         .execute(),
     'DB_ERROR' as const
@@ -396,7 +387,6 @@ export async function getShare(
       db
         .selectFrom('file_shares')
         .selectAll()
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', shareId)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -440,7 +430,6 @@ export async function createShare(
       db
         .insertInto('file_shares')
         .values({
-          tenant_id: tenantId,
           name: input.name,
           protocol: input.protocol,
           host: input.host,
@@ -484,7 +473,6 @@ export async function updateShare(
           host_key_fingerprint: input.hostKeyFingerprint,
           updated_at: new Date().toISOString(),
         })
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', shareId)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -513,7 +501,6 @@ export async function recordHostKeyFingerprint(
       db
         .updateTable('file_shares')
         .set({ host_key_fingerprint: fingerprint, updated_at: new Date().toISOString() })
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', shareId)
         .where('host_key_fingerprint', 'is', null)
         .executeTakeFirst(),
@@ -532,7 +519,6 @@ export async function deleteShare(
     () =>
       db
         .deleteFrom('file_shares')
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', shareId)
         .executeTakeFirst(),
     'DB_ERROR' as const

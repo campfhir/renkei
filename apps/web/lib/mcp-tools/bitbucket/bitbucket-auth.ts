@@ -46,7 +46,7 @@ export function oauthBitbucketAuth(context: MCPToolContext): BitbucketAuth {
       const access = await resolveBitbucketAccess(context);
       if (typeof access === 'string') return authFailure(access, 401);
       const result = await bitbucketRequest(
-        { tenantId: context.tenantId, subject: context.subject },
+        { subject: context.subject },
         access,
         pathAndQuery,
         init

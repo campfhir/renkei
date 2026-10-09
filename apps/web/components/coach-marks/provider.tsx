@@ -108,7 +108,6 @@ function writePending(id: string): boolean {
 
 export default function CoachMarkProvider({
   slug,
-  tenantId,
   isOperator,
   enabled,
   autoStart: initialAutoStart,
@@ -116,7 +115,6 @@ export default function CoachMarkProvider({
   children,
 }: {
   slug: string;
-  tenantId: string;
   isOperator: boolean;
   /** The org's switch. Off, nothing starts — unasked or by hand — and nothing draws. */
   enabled: boolean;
@@ -201,7 +199,7 @@ export default function CoachMarkProvider({
         return next;
       });
       // keepalive: a Finish followed at once by a navigation still lands.
-      void fetch(`/api/tenant/${tenantId}/coach-marks`, {
+      void fetch(`/api/coach-marks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -307,7 +305,7 @@ export default function CoachMarkProvider({
     async (value: boolean): Promise<boolean> => {
       setAutoStartState(value);
       try {
-        const response = await fetch(`/api/tenant/${tenantId}/preferences`, {
+        const response = await fetch(`/api/preferences`, {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ coachMarks: { autoStart: value } }),

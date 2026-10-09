@@ -2,7 +2,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 import { WORKSPACE_LIMIT_MAX_BYTES, WORKSPACE_LIMIT_MIN_BYTES } from '@renkei/connector-sandbox';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -13,8 +12,6 @@ export async function POST(
   { params }: { params: Promise<{ slug: string; id: string }> }
 ): Promise<NextResponse> {
   const { slug, id } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!/^[0-9a-f-]{36}$/i.test(id)) {
@@ -49,7 +46,6 @@ export async function POST(
   if (!db.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   const outcome = await decideSizeRequest(db.val, {
-    tenantId: tenantRef.id,
     id,
     decision,
     decidedBy: access.subject,
@@ -60,7 +56,6 @@ export async function POST(
     return NextResponse.json({ error: 'That request is not pending' }, { status: 409 });
   }
   recordAuditEvent({
-    tenantId: tenantRef.id,
     actorSubject: access.subject,
     action: 'code.size_request_decided',
     targetKind: 'code_project',

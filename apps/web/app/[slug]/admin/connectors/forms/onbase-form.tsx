@@ -34,7 +34,7 @@ export interface OnBaseTestResult {
 }
 
 export function OnBaseForm({ slug, origin }: { slug: string; origin: string | null }) {
-  const url = `/api/admin/${slug}/connectors/onbase`;
+  const url = `/api/admin/connectors/onbase`;
   const [state, reload] = useConnectorConfig<OnBaseConfig>(url);
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [idpIssuer, setIdpIssuer] = useState('');

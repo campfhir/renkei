@@ -83,7 +83,6 @@ export async function listCoachMarkProgress(
       db
         .selectFrom('coach_mark_progress')
         .select(COLUMNS)
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .orderBy('tour_id')
         .execute(),
@@ -122,7 +121,6 @@ export async function recordCoachMarkEvent(
         const existing = await trx
           .selectFrom('coach_mark_progress')
           .select(COLUMNS)
-          .where('tenant_id', '=', tenantId)
           .where('subject', '=', subject)
           .where('tour_id', '=', record.tourId)
           .executeTakeFirst();
@@ -145,13 +143,12 @@ export async function recordCoachMarkEvent(
         await trx
           .insertInto('coach_mark_progress')
           .values({
-            tenant_id: tenantId,
             subject,
             tour_id: next.tourId,
             first_viewed_at: next.firstViewedAt,
             ...values,
           })
-          .onConflict((oc) => oc.columns(['tenant_id', 'subject', 'tour_id']).doUpdateSet(values))
+          .onConflict((oc) => oc.columns(['subject', 'tour_id']).doUpdateSet(values))
           .execute();
         return next;
       }),
@@ -185,7 +182,6 @@ export async function listCoachMarkReport(
         .leftJoin('identities', (join) =>
           join
             .onRef('identities.subject', '=', 'coach_mark_progress.subject')
-            .onRef('identities.tenant_id', '=', 'coach_mark_progress.tenant_id')
         )
         .select([
           'coach_mark_progress.subject as subject',
@@ -206,7 +202,6 @@ export async function listCoachMarkReport(
           'identities.display_name as display_name',
           'identities.email as email',
         ])
-        .where('coach_mark_progress.tenant_id', '=', tenantId)
         .orderBy('coach_mark_progress.updated_at', 'desc')
         .execute(),
     'DB_ERROR' as const

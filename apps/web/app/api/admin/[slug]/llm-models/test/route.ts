@@ -18,7 +18,6 @@ import { getDatabase } from '@renkei/db';
 import { decrypt, loadKeyring } from '@renkei/crypto';
 import { testLlmConnection, type TestConnectionError } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { API_SURFACES, SUPPORTED_PROVIDERS } from '@/lib/agents/llm-model-payload';
 
 /** The taxonomy, translated for the person watching the button spinner. */
@@ -50,8 +49,6 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -91,7 +88,6 @@ export async function POST(
     const row = await dbResult.val
       .selectFrom('llm_model_configs')
       .select(['encrypted_secrets'])
-      .where('tenant_id', '=', tenant.id)
       .where('id', '=', payload.modelConfigId)
       .executeTakeFirst();
     if (!row) return NextResponse.json({ error: 'Model config not found' }, { status: 404 });

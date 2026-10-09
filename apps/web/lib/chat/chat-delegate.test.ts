@@ -138,7 +138,6 @@ const writeFile: LocalTool = {
 function context(extra: Partial<LocalToolContext>): LocalToolContext {
   return {
     db: null as unknown as LocalToolContext['db'],
-    tenantId: 't',
     subject: 'u',
     chatId: 'c',
     cipher: testCipher,

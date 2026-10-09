@@ -81,7 +81,7 @@ export default function CleanerScripts({
   slug: string;
   canSuggest: boolean;
 }) {
-  const url = `/api/admin/${slug}/email-sanitizer/scripts`;
+  const url = `/api/admin/email-sanitizer/scripts`;
   const [scripts, setScripts] = useState<CleanerScript[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const scriptsAnchor = useCoachAnchor('admin-sanitizer-scripts');

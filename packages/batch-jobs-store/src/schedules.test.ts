@@ -32,7 +32,7 @@ maybe('batch_job_schedules store', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM batch_job_schedules WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM batch_job_schedules`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
@@ -40,7 +40,6 @@ maybe('batch_job_schedules store', () => {
   it('creates, reads, lists, updates, and deletes a schedule', async () => {
     const nextRunAt = new Date(Date.now() + 60_000);
     const created = await createSchedule(db, {
-      tenantId,
       subject,
       name: `Nightly OCR ${randomUUID().slice(0, 8)}`,
       kind: 'document-ocr-pipeline',
@@ -73,7 +72,6 @@ maybe('batch_job_schedules store', () => {
   it('enforces one name per tenant', async () => {
     const name = `Duplicate name ${randomUUID().slice(0, 8)}`;
     await createSchedule(db, {
-      tenantId,
       subject,
       name,
       kind: 'document-ocr-pipeline',
@@ -84,7 +82,6 @@ maybe('batch_job_schedules store', () => {
 
     await expect(
       createSchedule(db, {
-        tenantId,
         subject,
         name,
         kind: 'document-ocr-pipeline',
@@ -103,7 +100,6 @@ maybe('batch_job_schedules store', () => {
       .execute();
     try {
       const created = await createSchedule(db, {
-        tenantId,
         subject,
         name: `Tenant-scoped ${randomUUID().slice(0, 8)}`,
         kind: 'document-ocr-pipeline',

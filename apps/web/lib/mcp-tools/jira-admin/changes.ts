@@ -368,7 +368,6 @@ export async function registerChangeTools(
       if (!dbResult.ok) return errText('Database unavailable; nothing was proposed.');
       const reason = text(args.reason);
       const change = await createChangeRequest(dbResult.val, {
-        tenantId: context.tenantId,
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId: access.cloudId,

@@ -49,7 +49,6 @@ async function snapshotOf(
       ? await db
           .selectFrom('chat_attachments')
           .select(['id', 'filename', 'content_type', 'size_bytes', 'extract_status'])
-          .where('tenant_id', '=', tenantId)
           .where('origin', '=', 'model')
           .where(
             'message_id',
@@ -77,7 +76,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; chatId: string; turnId: string }> }
 ): Promise<Response> {
-  const { tenantId, chatId, turnId } = await params;
+  const { chatId, turnId } = await params;
   if (!isUuid(chatId) || !isUuid(turnId)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }

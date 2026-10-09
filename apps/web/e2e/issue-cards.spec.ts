@@ -119,7 +119,7 @@ test.describe('issue cards', () => {
       }
     );
 
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     const main = page.getByRole('main');
     await expect(main.getByRole('link', { name: /PROJ-9/ })).toBeVisible();
@@ -148,7 +148,7 @@ test.describe('issue cards', () => {
       }
     );
 
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     const main = page.getByRole('main');
     await expect(main.getByRole('link', { name: /PROJ-9/ })).toHaveCount(0);
@@ -167,7 +167,7 @@ test.describe('issue cards', () => {
       }
     );
 
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     const main = page.getByRole('main');
     await expect(main.getByRole('link', { name: /PROJ-9/ })).toHaveCount(0);

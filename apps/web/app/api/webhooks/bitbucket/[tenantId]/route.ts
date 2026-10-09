@@ -49,7 +49,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   // Throttle, then the credential's presence, then a bounded body — all
   // before any config or database read (lib/webhook-intake.ts). Bitbucket's
@@ -69,7 +68,6 @@ export async function POST(
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'bitbucket/webhook',
-      tenantId,
     });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
@@ -85,12 +83,8 @@ export async function POST(
     .select('id')
     .where('id', '=', tenantId)
     .executeTakeFirst();
-  if (!tenant) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
 
   const configResult = await readConnectorConfigCached(
-    tenantId,
     ATLASSIAN_BITBUCKET_CONNECTOR,
     keyResult.val
   );
@@ -102,7 +96,6 @@ export async function POST(
   if (!config || !config.enabled || typeof webhookSecret !== 'string' || !webhookSecret) {
     logger.warn('Delivery for a tenant with no Bitbucket webhook secret configured', {
       component: 'bitbucket/webhook',
-      tenantId,
     });
     return NextResponse.json(
       { error: 'Bitbucket connector not configured for webhooks' },
@@ -113,7 +106,6 @@ export async function POST(
   if (!verifyBitbucketSecret(providedSecret, webhookSecret)) {
     logger.warn('Rejected delivery with a missing or wrong secret', {
       component: 'bitbucket/webhook',
-      tenantId,
     });
     return NextResponse.json({ error: 'Invalid secret' }, { status: 401 });
   }
@@ -136,7 +128,6 @@ export async function POST(
   const repoFullName = typeof repository.full_name === 'string' ? repository.full_name : null;
 
   const enqueued = await eventsQueue.producer.enqueue({
-    tenantId,
     source: 'atlassian-bitbucket',
     type: 'repo:commit_status_updated',
     payload: body,
@@ -145,7 +136,6 @@ export async function POST(
   if (!enqueued.ok) {
     logger.error('Event NOT accepted: {error}', {
       component: 'bitbucket/webhook',
-      tenantId,
       error: enqueued.err.message ?? 'unknown',
     });
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });

@@ -21,7 +21,7 @@ export function str(value: unknown): string {
 
 export function targetOf(context: MCPToolContext): { tenantId: string; subject: string } | string {
   if (!context.subject) return 'No signed-in identity on this request.';
-  return { tenantId: context.tenantId, subject: context.subject };
+  return { subject: context.subject };
 }
 
 export function fileLine(file: WireSandboxFile): string {

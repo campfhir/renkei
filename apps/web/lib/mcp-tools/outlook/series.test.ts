@@ -164,7 +164,6 @@ async function tool(name: string, args: Record<string, unknown>): Promise<ToolRe
     },
   } as unknown as McpServer;
   const context = {
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
     siteUrl: '',

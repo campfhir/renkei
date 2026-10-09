@@ -23,7 +23,7 @@ import {
   type AfterProcessingValue,
 } from '@/lib/batch-jobs/pipeline-form-value';
 
-export default function NewBatchJobForm({ slug, tenantId }: { slug: string; tenantId: string }) {
+export default function NewBatchJobForm({ slug }: { slug: string; tenantId: string }) {
   const router = useRouter();
   const [name, setName] = useState('');
   const [shareId, setShareId] = useState('');
@@ -60,7 +60,7 @@ export default function NewBatchJobForm({ slug, tenantId }: { slug: string; tena
         ? { strategy: 'whole-file' as const }
         : { strategy: 'filename-pattern' as const, pattern };
     const { data, error: submitError } = await sendJsonFull<{ batchId: string }>(
-      `/api/tenant/${tenantId}/batch-jobs`,
+      `/api/batch-jobs`,
       'POST',
       {
         name: name.trim(),
@@ -76,7 +76,7 @@ export default function NewBatchJobForm({ slug, tenantId }: { slug: string; tena
       setError(submitError ?? 'Could not start the batch job.');
       return;
     }
-    router.push(`/${slug}/batch-jobs/${data.batchId}`);
+    router.push(`/batch-jobs/${data.batchId}`);
   }
 
   return (

@@ -128,7 +128,6 @@ export async function grantsFor(
   const rows = await db
     .selectFrom('provider_grants')
     .select(['provider', 'display_name', 'requested_scopes', 'granted_scopes', 'metadata'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .execute();
   const grants = new Map<string, GrantSummary>();
@@ -160,7 +159,6 @@ export async function resolveUserCatalog(
       db
         .selectFrom('connector_configs')
         .select('connector')
-        .where('tenant_id', '=', tenantId)
         .where('enabled', '=', true)
         .execute(),
       getOrgSettings(tenantId),

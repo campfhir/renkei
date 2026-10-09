@@ -35,7 +35,6 @@ async function projectFor(
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
     db,
-    tenantId,
     session.subject,
     'chat_project',
     projectId
@@ -59,7 +58,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const found = await projectFor(request, tenantId, projectId, false);
   if (!found.ok) return found.response;
   return NextResponse.json({ variables: await projectEnv(found.project) });
@@ -69,7 +68,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const found = await projectFor(request, tenantId, projectId, true);
   if (!found.ok) return found.response;
   const body = await readJsonBody(request);
@@ -78,7 +77,6 @@ export async function PUT(
   const replaced = await replaceProjectEnv(found.project, text);
   if (!replaced.ok) return jsonError(replaced.status, 'env', replaced.message);
   recordAuditEvent({
-    tenantId,
     actorSubject: found.session.subject,
     action: 'code.env.replaced',
     targetKind: 'code_project',
@@ -92,7 +90,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const found = await projectFor(request, tenantId, projectId, true);
   if (!found.ok) return found.response;
   if (!(await sandboxWorkspacesEnabled(tenantId))) {
@@ -107,7 +105,6 @@ export async function DELETE(
     return jsonError(failure.status, 'env', failure.message);
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: found.session.subject,
     action: 'code.env.deleted',
     targetKind: 'code_project',

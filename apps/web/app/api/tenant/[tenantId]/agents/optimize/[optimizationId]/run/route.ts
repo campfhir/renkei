@@ -23,7 +23,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; optimizationId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, optimizationId } = await params;
+  const { optimizationId } = await params;
 
   const token = getBearerToken(request);
   if (!token) return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
@@ -53,7 +53,6 @@ export async function POST(
 
     const outcome = await optimizeAgent(
       db,
-      tenantId,
       record.subject,
       agent,
       optimization.request.windowDays
@@ -74,7 +73,6 @@ export async function POST(
     // The pass's own spend, in the same ledger the page it serves reads —
     // attributed to the owner who asked, against the agent it was about.
     await recordLlmCall(db, {
-      tenantId,
       subject: record.subject,
       agentId: optimization.agentId,
       purpose: 'optimize',
@@ -89,7 +87,6 @@ export async function POST(
     const message = error instanceof Error ? error.message : String(error);
     logger.error('optimization {optimizationId} threw: {error}', {
       component: 'api/agents-optimize-run',
-      tenantId,
       optimizationId,
       error: message,
     });

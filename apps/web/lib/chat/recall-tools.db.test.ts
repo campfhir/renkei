@@ -48,7 +48,6 @@ maybe('chat_recall_chats', () => {
   const tool = recallTools()[0]!;
   const contextFor = (chatId: string, inProject: string | null): LocalToolContext => ({
     db,
-    tenantId,
     subject: me,
     chatId,
     // The tool reads other chats as their owners; this chat's own cipher is unused here.
@@ -69,13 +68,12 @@ maybe('chat_recall_chats', () => {
     await db
       .insertInto('chat_projects')
       .values([
-        { id: projectId, tenant_id: tenantId, owner_subject: me, name: 'Ledger', kind: 'code' },
-        { id: otherProjectId, tenant_id: tenantId, owner_subject: me, name: 'Billing' },
+        { id: projectId, owner_subject: me, name: 'Ledger', kind: 'code' },
+        { id: otherProjectId, owner_subject: me, name: 'Billing' },
       ])
       .execute();
     const chat = (id: string, owner: string, project: string | null, title: string) => ({
       id,
-      tenant_id: tenantId,
       owner_subject: owner,
       project_id: project,
       title,
@@ -92,7 +90,6 @@ maybe('chat_recall_chats', () => {
       .execute();
     const say = async (chatId: string, text: string) => {
       const row = await insertMessage(db, {
-        tenantId,
         chatId,
         turnId: null,
         role: 'user',

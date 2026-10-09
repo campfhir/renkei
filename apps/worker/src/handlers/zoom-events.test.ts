@@ -48,7 +48,6 @@ const { enqueueKnowledgeEvent: mockEnqueueKnowledgeEvent } = jest.requireMock<{
 function claimedEvent(type: string): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: 'tenant-1',
     source: 'zoom',
     type,
     payload: {

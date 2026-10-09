@@ -78,7 +78,6 @@ export async function getDefaultChatTools(
       dbResult.val
         .selectFrom('user_preferences')
         .select('value')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .where('key', '=', prefKey(kind))
         .executeTakeFirst(),
@@ -107,7 +106,6 @@ export async function setDefaultChatTools(
     if (config === null) {
       await db
         .deleteFrom('user_preferences')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .where('key', '=', key)
         .execute();
@@ -117,9 +115,9 @@ export async function setDefaultChatTools(
     const now = new Date().toISOString();
     await db
       .insertInto('user_preferences')
-      .values({ tenant_id: tenantId, subject, key, value, updated_at: now })
+      .values({ subject, key, value, updated_at: now })
       .onConflict((oc) =>
-        oc.columns(['tenant_id', 'subject', 'key']).doUpdateSet({ value, updated_at: now })
+        oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
       )
       .execute();
   }, 'DB_ERROR' as const);

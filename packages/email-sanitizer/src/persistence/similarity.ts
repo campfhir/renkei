@@ -61,8 +61,7 @@ export async function hasNearDuplicateChunk(
       sql<{ distance: number }>`
         SELECT (embedding <=> ${vector}::vector) AS distance
         FROM knowledge_chunks
-        WHERE tenant_id = ${tenantId}
-          AND ref_id LIKE ${`${scope.refIdPrefix}%`}
+        WHERE ref_id LIKE ${`${scope.refIdPrefix}%`}
           AND ref_id <> ${scope.refId}
           AND ref_id NOT LIKE ${`${scope.refId}#%`}
           AND created_at >= NOW() - ${NEAR_DUPLICATE_LOOKBACK_DAYS} * INTERVAL '1 day'

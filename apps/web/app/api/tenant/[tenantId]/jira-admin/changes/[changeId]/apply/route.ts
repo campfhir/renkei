@@ -40,7 +40,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; changeId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, changeId } = await params;
+  const { changeId } = await params;
 
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
@@ -70,7 +70,6 @@ export async function POST(
 
   const originResult = await getOrigin(request);
   const access = await resolveJiraAdminAccess({
-    tenantId,
     subject: session.subject,
     origin: originResult.ok ? originResult.val : undefined,
   });
@@ -99,11 +98,10 @@ export async function POST(
 
   let outcome: { status: 'applied' | 'partial' | 'failed'; results: OperationResult[] };
   try {
-    outcome = await applyChangeRequest({ tenantId, subject: session.subject }, access, change);
+    outcome = await applyChangeRequest({ subject: session.subject }, access, change);
   } catch (error) {
     logger.error('jira admin change apply threw', {
       component: 'jira-admin/apply',
-      tenantId,
       subject: session.subject,
       changeId: change.id,
       error: error instanceof Error ? error.message : String(error),
@@ -124,7 +122,6 @@ export async function POST(
 
   const done = outcome.results.filter((result) => result.outcome === 'done').length;
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'jira_admin.change_applied',
     targetKind: 'jira_admin_change',

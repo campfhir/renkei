@@ -115,7 +115,6 @@ export async function POST(
     .where('expires_at', '>', sql<Date>`NOW()`)
     .returning([
       'id',
-      'tenant_id',
       'subject',
       'account_id',
       'kind',
@@ -169,7 +168,6 @@ export async function POST(
   const outcome = await completeUploadSlot(db, claimed, bytes);
   logger.info('upload slot {slotId} {status}: {detail}', {
     component: 'upload/route',
-    tenantId: claimed.tenant_id,
     slotId: claimed.id,
     kind: claimed.kind,
     status: outcome.ok ? 'completed' : 'failed',

@@ -33,14 +33,13 @@ export async function saveSubscription(
     .insertInto('push_subscriptions')
     .values({
       id: randomUUID(),
-      tenant_id: tenantId,
       subject,
       endpoint: subscription.endpoint,
       p256dh: subscription.keys.p256dh,
       auth: subscription.keys.auth,
     })
     .onConflict((oc) =>
-      oc.columns(['tenant_id', 'endpoint']).doUpdateSet({
+      oc.columns(['endpoint']).doUpdateSet({
         subject,
         p256dh: subscription.keys.p256dh,
         auth: subscription.keys.auth,
@@ -59,7 +58,6 @@ export async function deleteSubscription(
 ): Promise<void> {
   await db
     .deleteFrom('push_subscriptions')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('endpoint', '=', endpoint)
     .execute();
@@ -74,7 +72,6 @@ export async function listSubscriptions(
   const rows = await db
     .selectFrom('push_subscriptions')
     .select(['endpoint', 'p256dh', 'auth'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .execute();
   return rows.map((row) => ({
@@ -92,7 +89,6 @@ export async function deleteSubscriptionByEndpoint(
 ): Promise<void> {
   await db
     .deleteFrom('push_subscriptions')
-    .where('tenant_id', '=', tenantId)
     .where('endpoint', '=', endpoint)
     .execute();
 }

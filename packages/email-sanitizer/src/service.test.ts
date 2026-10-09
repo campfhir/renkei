@@ -76,7 +76,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     mockHasNearDuplicateChunk.mockResolvedValue(ok(false));
 
     await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       refId: 'bob@example.com/msg/1',
       ownerUpn: 'bob@example.com',
@@ -116,7 +115,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     );
 
     const result = await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       refId: 'bob@example.com/msg/1',
       ownerUpn: 'bob@example.com',
@@ -151,7 +149,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     }>('./persistence/scripts');
 
     const result = await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       refId: 'bob@example.com/msg/1',
       ownerUpn: 'bob@example.com',
@@ -171,7 +168,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     mockHasRecentDuplicate.mockResolvedValue(ok(false));
 
     const result = await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       refId: 'bob@example.com/msg/1',
       ownerUpn: 'bob@example.com',
@@ -186,7 +182,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     mockHasRecentDuplicate.mockResolvedValue(ok(true));
 
     const result = await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       refId: 'bob@example.com/msg/1',
       ownerUpn: 'bob@example.com',
@@ -202,7 +197,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     mockHasRecentDuplicate.mockResolvedValue(ok(false));
 
     const result = await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       refId: 'bob@example.com/msg/1',
       ownerUpn: 'bob@example.com',
@@ -219,7 +213,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     const embed = jest.fn().mockResolvedValue(ok([[0.1, 0.2, 0.3]]));
 
     const result = await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       refId: 'bob@example.com/msg/1',
       ownerUpn: 'bob@example.com',
@@ -242,7 +235,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     const embed = jest.fn().mockResolvedValue(ok([[0.1, 0.2, 0.3]]));
 
     const result = await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       refId: 'bob@example.com/msg/1',
       ownerUpn: 'bob@example.com',
@@ -258,7 +250,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     const embed = jest.fn().mockResolvedValue({ ok: false, err: { type: 'EMBEDDING_FAILED' } });
 
     const result = await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       refId: 'bob@example.com/msg/1',
       ownerUpn: 'bob@example.com',
@@ -274,7 +265,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
     mockHasRecentDuplicate.mockResolvedValue(ok(true));
 
     await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       refId: 'bob@example.com/msg/1',
       ownerUpn: 'bob@example.com',
@@ -283,7 +273,6 @@ describe('sanitizeEmailForTenant — dedup', () => {
 
     expect(mockRecordClassification).toHaveBeenCalledWith(
       expect.objectContaining({
-        tenantId: 'tenant-1',
         result: expect.objectContaining({ action: 'excluded' }),
       })
     );

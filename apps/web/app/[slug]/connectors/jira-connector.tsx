@@ -23,14 +23,12 @@ import WatchManager from './watch-manager';
  * `provider_grants` row it reads for the other three products).
  */
 export default function JiraConnector({
-  tenantId,
   connected,
   displayName,
   ceiling,
   priorScopes,
   nested = false,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   /** The org's allowed scopes — the most a user can grant. */
@@ -45,7 +43,7 @@ export default function JiraConnector({
    */
   nested?: boolean;
 }) {
-  const authorizePath = `/api/mcp/${tenantId}/authorize`;
+  const authorizePath = `/api/mcp/authorize`;
 
   return (
     <ConnectorShell nested={nested} anchor="card-jira">
@@ -112,7 +110,7 @@ export default function JiraConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/mcp/${tenantId}/grant`}
+          endpoint={`/api/mcp/grant`}
           confirmText={
             <>
               Disconnect <strong>{displayName ?? 'your Jira account'}</strong>? Tools stop working

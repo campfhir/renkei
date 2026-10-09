@@ -61,7 +61,6 @@ export async function verifySession(
     .selectFrom('sessions')
     .select('expires_at')
     .where('id', '=', sessionId)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('expires_at', '>', new Date())
     .executeTakeFirst();

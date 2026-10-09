@@ -10,7 +10,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
@@ -41,7 +40,6 @@ export async function GET(
       'decided_at',
       'archived_at',
     ])
-    .where('tenant_id', '=', tenantId)
     .where((eb) =>
       eb.or([eb('owner_subject', 'is', null), eb('owner_subject', '=', session.subject)])
     )

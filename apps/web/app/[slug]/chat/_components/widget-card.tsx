@@ -68,14 +68,12 @@ const MAX_HEIGHT = 2000;
 const DEFAULT_HEIGHT = 96;
 
 export default function WidgetCard({
-  tenantId,
   chatId,
   resourceUri,
   toolInput,
   result,
   onModelContext = null,
 }: {
-  tenantId: string;
   chatId: string;
   resourceUri: string;
   toolInput: unknown;
@@ -198,7 +196,6 @@ export default function WidgetCard({
           // card already rendered locally before sending this.
           if (!stateKey || !state) return;
           void chatClient.reportWidgetDecision(
-            tenantId,
             chatId,
             stateKey,
             decision,

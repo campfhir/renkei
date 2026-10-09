@@ -139,10 +139,8 @@ export function PermissionGrid({
 }
 
 export default function MirthList({
-  tenantId,
   instances: initialInstances,
 }: {
-  tenantId: string;
   instances: ConnectableMirthInstanceView[];
 }) {
   const [instances, setInstances] = useState(initialInstances);
@@ -163,7 +161,7 @@ export default function MirthList({
     setBusy(true);
     setError(null);
     const saveError = await sendJson(
-      `/api/tenant/${tenantId}/mirth/${instance.id}/connection`,
+      `/api/mirth/${instance.id}/connection`,
       'POST',
       { username: draft.username, password: draft.password, permissions: draft.permissions }
     );
@@ -187,7 +185,7 @@ export default function MirthList({
     patchInstance(instance.id, { ...previous, permissions });
     setError(null);
     const saveError = await sendJson(
-      `/api/tenant/${tenantId}/mirth/${instance.id}/connection`,
+      `/api/mirth/${instance.id}/connection`,
       'POST',
       { permissions }
     );
@@ -208,7 +206,7 @@ export default function MirthList({
     setBusy(true);
     setError(null);
     const saveError = await sendJson(
-      `/api/tenant/${tenantId}/mirth/${instance.id}/connection`,
+      `/api/mirth/${instance.id}/connection`,
       'DELETE'
     );
     setBusy(false);

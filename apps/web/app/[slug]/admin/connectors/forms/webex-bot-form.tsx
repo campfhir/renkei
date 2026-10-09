@@ -29,7 +29,7 @@ interface WebexBotConfig {
  * beside "WebEx" (the Integration people grant their own access through).
  */
 export function WebexBotForm({ slug }: { slug: string }) {
-  const url = `/api/admin/${slug}/connectors/webex-bot`;
+  const url = `/api/admin/connectors/webex-bot`;
   const [state, reload] = useConnectorConfig<WebexBotConfig>(url);
   const [botToken, setBotToken] = useState('');
   const [enabled, setEnabled] = useState(true);

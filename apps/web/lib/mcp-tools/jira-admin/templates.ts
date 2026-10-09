@@ -122,7 +122,6 @@ export async function registerTemplateTools(
       if (!dbResult.ok) return errText('Database unavailable; nothing was saved.');
       const document = documentFromSpace(space);
       const saved = await saveSpaceTemplate(dbResult.val, {
-        tenantId: context.tenantId,
         cloudId: access.cloudId,
         siteUrl: access.siteUrl,
         name,

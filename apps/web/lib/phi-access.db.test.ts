@@ -36,7 +36,7 @@ maybe('phi_access_events', () => {
     await sql`ALTER TABLE phi_access_events DISABLE TRIGGER phi_access_events_no_update_delete`.execute(
       db
     );
-    await db.deleteFrom('phi_access_events').where('tenant_id', '=', tenantId).execute();
+    await db.deleteFrom('phi_access_events').execute();
     await sql`ALTER TABLE phi_access_events ENABLE TRIGGER phi_access_events_no_update_delete`.execute(
       db
     );
@@ -50,7 +50,6 @@ maybe('phi_access_events', () => {
     expect(
       await recordPhiAccess(
         {
-          tenantId,
           subject: alice,
           connector: 'mirth',
           instanceId: randomUUID(),
@@ -67,7 +66,6 @@ maybe('phi_access_events', () => {
     await withRun(runId, () =>
       recordPhiAccess(
         {
-          tenantId,
           subject: alice,
           connector: 'onbase',
           action: 'read',
@@ -80,7 +78,6 @@ maybe('phi_access_events', () => {
     await withRun(runId, () =>
       recordPhiAccess(
         {
-          tenantId,
           subject: alice,
           agentId,
           connector: 'fileshare',
@@ -113,7 +110,6 @@ maybe('phi_access_events', () => {
   it('is append-only: UPDATE and DELETE are refused by the table itself', async () => {
     await recordPhiAccess(
       {
-        tenantId,
         subject: bob,
         connector: 'onbase',
         action: 'search',
@@ -126,13 +122,11 @@ maybe('phi_access_events', () => {
       db
         .updateTable('phi_access_events')
         .set({ subject: alice })
-        .where('tenant_id', '=', tenantId)
         .execute()
     ).rejects.toThrow(/append-only/);
     await expect(
       db
         .deleteFrom('phi_access_events')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', bob)
         .execute()
     ).rejects.toThrow(/append-only/);
@@ -145,7 +139,6 @@ maybe('phi_access_events', () => {
   it('refuses a connector or action outside the vocabulary', async () => {
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     const bad = {
-      tenantId,
       subject: bob,
       connector: 'jira',
       action: 'read',

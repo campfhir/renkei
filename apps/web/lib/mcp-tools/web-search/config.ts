@@ -136,7 +136,6 @@ export async function resolveWebSearchConfig(tenantId: string): Promise<WebSearc
   if (!keyResult.ok) return null;
 
   const configResult = await readConnectorConfigCached(
-    tenantId,
     WEB_SEARCH_CONNECTOR,
     keyResult.val
   );

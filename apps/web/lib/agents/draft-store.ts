@@ -99,7 +99,6 @@ const DRAFT_COLUMNS = [
 export async function createDraft(
   db: Kysely<DB>,
   params: {
-    tenantId: string;
     ownerSubject: string;
     agentId: string | null;
     request: DraftRequest;
@@ -108,7 +107,6 @@ export async function createDraft(
   const row = await db
     .insertInto('agent_drafts')
     .values({
-      tenant_id: params.tenantId,
       owner_subject: params.ownerSubject,
       agent_id: params.agentId,
       status: 'queued',
@@ -131,7 +129,6 @@ export async function getDraft(
   const row = await db
     .selectFrom('agent_drafts')
     .select(DRAFT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', draftId)
     .executeTakeFirst();
@@ -156,7 +153,6 @@ export async function latestReadyDraft(
   let query = db
     .selectFrom('agent_drafts')
     .select(DRAFT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('status', '=', 'succeeded')
     // Not yet picked up. Without this the same result is offered on every
@@ -185,7 +181,6 @@ export async function consumeDraft(
   await db
     .updateTable('agent_drafts')
     .set({ consumed_at: new Date(), updated_at: new Date() })
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', draftId)
     .execute();

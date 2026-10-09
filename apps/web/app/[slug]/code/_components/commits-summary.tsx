@@ -21,12 +21,10 @@ const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800
 
 export default function CommitsSummary({
   href,
-  tenantId,
   projectId,
 }: {
   /** The project's Commits page. */
   href: string;
-  tenantId: string;
   projectId: string;
 }) {
   const [mostRecent, setMostRecent] = useState<HostCommit | null | undefined>(undefined);
@@ -36,7 +34,7 @@ export default function CommitsSummary({
     let cancelled = false;
     void (async () => {
       const result = await getJson<{ mostRecent: HostCommit | null }>(
-        `/api/tenant/${tenantId}/code/projects/${projectId}/commits?view=summary`
+        `/api/code/projects/${projectId}/commits?view=summary`
       );
       if (cancelled) return;
       if (result.data) setMostRecent(result.data.mostRecent);

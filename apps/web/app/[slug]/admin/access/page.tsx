@@ -4,7 +4,6 @@ import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { sql } from 'kysely';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { grantProviderLabel } from '@/lib/provider-labels';
 import ConnectorIcon from '@/components/connector-icon';
 import LocalTime from '@/components/local-time';
@@ -61,11 +60,9 @@ export default async function AccessPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   const session = await checkAccess(tenant.id, [ROLE_OPERATOR]);
   if (!session) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
@@ -85,18 +82,15 @@ export default async function AccessPage({
     db
       .selectFrom('identities')
       .select(['subject', 'display_name', 'email'])
-      .where('tenant_id', '=', tenant.id)
       .execute(),
     db
       .selectFrom('provider_grants')
       .select(['subject', 'provider', 'provider_account_id', 'display_name', 'expires_at'])
-      .where('tenant_id', '=', tenant.id)
       .orderBy('provider')
       .execute(),
     db
       .selectFrom('sessions')
       .select(['subject', sql<Date>`max(last_used_at)`.as('last_used_at')])
-      .where('tenant_id', '=', tenant.id)
       .groupBy('subject')
       .execute(),
     // Who holds an encryption key (docs/delegate-key-design.md): the one
@@ -104,7 +98,6 @@ export default async function AccessPage({
     db
       .selectFrom('user_encryption_keys')
       .select(['subject', 'mode'])
-      .where('tenant_id', '=', tenant.id)
       .execute(),
   ]);
   const keyModeBySubject = new Map(keyRows.map((row) => [row.subject, row.mode]));
@@ -160,7 +153,7 @@ export default async function AccessPage({
         encryption key is final: it is for someone who is gone and whose key is lost. A
         person&apos;s usage, groups and agents are on{' '}
         <Link
-          href={`/${slug}/admin/usage`}
+          href={`/admin/usage`}
           className="text-blue-600 hover:underline dark:text-blue-400"
         >
           Organization usage
@@ -195,7 +188,7 @@ export default async function AccessPage({
                   const personCell = (
                     <td className="px-3 py-2 align-top" rowSpan={Math.max(1, rows.length)}>
                       <Link
-                        href={`/${slug}/admin/usage?user=${encodeURIComponent(person.subject)}`}
+                        href={`/admin/usage?user=${encodeURIComponent(person.subject)}`}
                         className="font-medium text-blue-600 hover:underline dark:text-blue-400"
                       >
                         {person.name}

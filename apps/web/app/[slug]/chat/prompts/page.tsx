@@ -1,6 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listAccessibleLibraries } from '@/lib/chat/prompts';
@@ -13,10 +12,8 @@ export default async function PromptLibrariesPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/${slug}/chat/prompts`));
+  if (!session) redirect(signInUrl(tenant.id, `/chat/prompts`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const libraries = await listAccessibleLibraries(dbResult.val, tenant.id, session.subject);

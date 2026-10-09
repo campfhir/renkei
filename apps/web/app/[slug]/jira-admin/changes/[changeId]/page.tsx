@@ -2,7 +2,6 @@ import React from 'react';
 import BackLink from '@/components/back-link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getChangeRequest, stateOf, type OperationResult } from '@/lib/jira-admin/change-requests';
@@ -36,12 +35,10 @@ export default async function JiraAdminChangePage({
   params: Promise<{ slug: string; changeId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, changeId } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/jira-admin/changes/${changeId}`));
+    redirect(signInUrl(tenant.id, `/jira-admin/changes/${changeId}`));
   }
 
   const dbResult = getDatabase();
@@ -56,7 +53,6 @@ export default async function JiraAdminChangePage({
         .selectFrom('agents')
         .select('name')
         .where('id', '=', change.agentId)
-        .where('tenant_id', '=', tenant.id)
         .executeTakeFirst()
     : undefined;
 
@@ -73,7 +69,7 @@ export default async function JiraAdminChangePage({
   return (
     <div className="mx-auto max-w-3xl">
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <BackLink href={`/${slug}/jira-admin/changes`} label="Jira admin changes" />
+        <BackLink href={`/jira-admin/changes`} label="Jira admin changes" />
         <h1 className="min-w-0 truncate text-xl font-bold">Review a Jira admin change</h1>
         <ChangeStatePill state={state} />
       </div>

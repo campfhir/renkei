@@ -66,7 +66,6 @@ export async function registerUtilityTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('analyze_transcript invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -90,7 +89,6 @@ export async function registerUtilityTools(
 
         logger.debug('analyze_transcript results', {
           component: 'mcp/tool',
-          tenantId: context.tenantId,
           accountId: context.accountId,
           meetingType: analysis.meeting.type,
           meetingSource: analysis.meeting.source,
@@ -124,12 +122,11 @@ export async function registerUtilityTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_connect invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
       try {
-        const { db, tenantId } = context;
+        const { db } = context;
 
         if (!db) {
           return {
@@ -144,7 +141,6 @@ export async function registerUtilityTools(
         const existingGrant = await db
           .selectFrom('provider_grants')
           .select(['display_name', 'metadata'])
-          .where('tenant_id', '=', tenantId)
           .where('provider', '=', 'atlassian')
           .where('provider_account_id', '=', context.accountId)
           .executeTakeFirst();
@@ -170,7 +166,7 @@ export async function registerUtilityTools(
         // a signed-in session and mints real CSRF state. A hand-built
         // auth.atlassian.com URL cannot work here: its state would never match
         // a pending_oidc_signin row, so the callback would reject it.
-        const authUrl = `${context.origin ?? ''}/api/mcp/${tenantId}/authorize`;
+        const authUrl = `${context.origin ?? ''}/api/mcp/authorize`;
 
         const text =
           `**Jira is not connected yet.**\n\n` +

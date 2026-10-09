@@ -16,14 +16,12 @@ import { ATLASSIAN_JSM_SCOPE_GROUPS, ATLASSIAN_JSM_SCOPE_OPTIONS } from '@/lib/a
  * narrowing, confirm-gated disconnect.
  */
 export default function JsmConnector({
-  tenantId,
   connected,
   displayName,
   ceiling,
   priorScopes,
   nested = false,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   /** The org's allowed scopes — the most a user can grant. */
@@ -38,7 +36,7 @@ export default function JsmConnector({
    */
   nested?: boolean;
 }) {
-  const authorizePath = `/api/atlassian-jsm/${tenantId}/authorize`;
+  const authorizePath = `/api/atlassian-jsm/authorize`;
 
   return (
     <ConnectorShell nested={nested} anchor="card-jsm">
@@ -100,7 +98,7 @@ export default function JsmConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/atlassian-jsm/${tenantId}/grant`}
+          endpoint={`/api/atlassian-jsm/grant`}
           confirmText="Disconnect Service Management? The JSM and Operations tools stop working until you reconnect."
           buttonLabel="Disconnect Service Management"
         />

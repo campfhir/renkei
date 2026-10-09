@@ -162,7 +162,6 @@ export interface KnowledgeSearchResult {
 }
 
 export interface SearchOptions {
-  tenantId: string;
   /** Whose access the gate verifies. Nothing is disclosed without it. */
   userEmail: string;
   query: string;
@@ -336,7 +335,6 @@ function toHit(row: CandidateRow, contentKey: Buffer | null): KnowledgeHit {
 }
 
 export interface RecentOptions extends CandidateFilters {
-  tenantId: string;
   /** Whose access the gate verifies. Nothing is disclosed without it. */
   userEmail: string;
   k: number;
@@ -392,8 +390,7 @@ export async function listRecentKnowledge(
   const branch = (where: unknown) => sql`
     (SELECT provider, ref_id, content, metadata, keywords, source_at, 0 AS distance
      FROM knowledge_chunks
-     WHERE tenant_id = ${options.tenantId}
-       AND source_at IS NOT NULL
+     WHERE source_at IS NOT NULL
        AND ${where}
        AND ${owner}
        AND ${filters.after}

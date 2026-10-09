@@ -64,7 +64,6 @@ const access = (): MicrosoftAccess => ({
 
 const row = (over: Partial<DriveWatchRow> = {}): DriveWatchRow => ({
   id: 'watch-1',
-  tenant_id: 'tenant-1',
   account_id: 'acct-1',
   scope_key: 'drive-1',
   scope_label: 'Engineering / Shared Documents',

@@ -89,7 +89,7 @@ describe('POST /api/admin/{slug}/grants/{grantId}/revoke', () => {
     ]);
     for (const del of deletes.slice(1)) {
       expect(del.filters).toEqual([
-        ['tenant_id', TENANT],
+        [TENANT],
         ['subject', 'bob@example.com'],
       ]);
     }

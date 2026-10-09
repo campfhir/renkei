@@ -40,7 +40,6 @@ const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mo
 
 interface RunRow {
   id: string;
-  tenant_id: string;
   kind: string;
   status: string;
   cursor: string | null;
@@ -124,7 +123,6 @@ function fakeDb(seed: RunRow[]) {
             const kind = typeof values.kind === 'string' ? values.kind : '';
             const row: RunRow = {
               id,
-              tenant_id: tenantId,
               kind,
               status: 'queued',
               cursor: null,
@@ -185,7 +183,6 @@ describe('POST .../reindex', () => {
     const db = fakeDb([
       {
         id: 'run-1',
-        tenant_id: 'tenant-1',
         kind: 'lexical',
         status: 'running',
         cursor: null,
@@ -207,7 +204,6 @@ describe('POST .../reindex', () => {
     const db = fakeDb([
       {
         id: 'run-1',
-        tenant_id: 'tenant-1',
         kind: 'embed',
         status: 'running',
         cursor: 'row-50',
@@ -232,7 +228,6 @@ describe('POST .../reindex', () => {
     const db = fakeDb([
       {
         id: 'run-1',
-        tenant_id: 'tenant-1',
         kind: 'embed',
         status: 'done',
         cursor: null,
@@ -257,7 +252,6 @@ describe('POST .../reindex', () => {
     const db = fakeDb([
       {
         id: 'run-1',
-        tenant_id: 'tenant-1',
         kind: 'embed',
         status: 'failed',
         cursor: 'row-3328',
@@ -289,7 +283,6 @@ describe('POST .../reindex', () => {
     const db = fakeDb([
       {
         id: 'run-1',
-        tenant_id: 'tenant-1',
         kind: 'embed',
         status: 'paused',
         cursor: 'row-42',
@@ -314,7 +307,6 @@ describe('POST .../reindex', () => {
     const db = fakeDb([
       {
         id: 'run-1',
-        tenant_id: 'tenant-1',
         kind: 'embed',
         status: 'done',
         cursor: 'row-999',

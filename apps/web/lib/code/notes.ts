@@ -37,7 +37,6 @@ export async function appendChatNote(
       .executeTakeFirst();
     if (await getActiveTurn(trx, input.chatId)) return { ok: false, reason: 'turn-running' };
     const inserted = await insertMessage(trx, {
-      tenantId: input.tenantId,
       chatId: input.chatId,
       turnId: null,
       role: 'user',

@@ -30,7 +30,6 @@ export function memoryTools(): LocalTool[] {
         const note = typeof input.note === 'string' ? input.note.trim() : '';
         if (!note) return errorResult('Nothing to remember: `note` is empty.');
         const id = await appendProjectMemory(context.db, {
-          tenantId: context.tenantId,
           projectId: context.projectId,
           content: note,
           authorSubject: context.subject,

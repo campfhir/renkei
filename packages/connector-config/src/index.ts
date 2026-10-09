@@ -52,7 +52,6 @@ export async function getConnectorConfig(
       dbResult.val
         .selectFrom('connector_configs')
         .select(['enabled', 'settings', 'encrypted_secrets'])
-        .where('tenant_id', '=', tenantId)
         .where('connector', '=', connector)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -97,7 +96,6 @@ export async function setConnectorConfig(
       dbResult.val
         .insertInto('connector_configs')
         .values({
-          tenant_id: tenantId,
           connector,
           enabled: config.enabled,
           settings,
@@ -106,7 +104,7 @@ export async function setConnectorConfig(
           updated_at: new Date().toISOString(),
         })
         .onConflict((oc) =>
-          oc.columns(['tenant_id', 'connector']).doUpdateSet({
+          oc.columns(['connector']).doUpdateSet({
             enabled: config.enabled,
             settings,
             encrypted_secrets: encryptedSecrets,

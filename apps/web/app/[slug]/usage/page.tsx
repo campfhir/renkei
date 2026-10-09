@@ -1,5 +1,4 @@
 import { notFound } from 'next/navigation';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { requireAuth } from '@/lib/require-auth';
 import { getUsageReport, getAvailableTools } from './actions';
 import UsageViewer from './usage-viewer';
@@ -14,10 +13,8 @@ import UsageViewer from './usage-viewer';
  */
 export default async function UsagePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
-  await requireAuth(tenant.id, `/${slug}/usage`);
+  await requireAuth(tenant.id, `/usage`);
 
   const [initial, tools] = await Promise.all([
     getUsageReport(tenant.id, 7),

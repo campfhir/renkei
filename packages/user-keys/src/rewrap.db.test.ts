@@ -52,7 +52,6 @@ maybe('rewrap under the current key of the ring', () => {
       .insertInto('tenant_oidc')
       .values({
         id: oidcId,
-        tenant_id: tenantId,
         issuer: 'https://idp.test',
         client_id: 'client',
         client_secret: encrypt('oidc-secret', oldBare.val),
@@ -63,7 +62,6 @@ maybe('rewrap under the current key of the ring', () => {
       .insertInto('llm_model_configs')
       .values({
         id: modelId,
-        tenant_id: tenantId,
         provider: 'openai',
         model: 'gpt-test',
         label: 'test',
@@ -75,12 +73,10 @@ maybe('rewrap under the current key of the ring', () => {
       .insertInto('connector_configs')
       .values([
         {
-          tenant_id: tenantId,
           connector: 'rewrap-old',
           encrypted_secrets: encrypt(JSON.stringify({ s: 'old' }), oldBare.val),
         },
         {
-          tenant_id: tenantId,
           connector: 'rewrap-current',
           encrypted_secrets: encrypt(JSON.stringify({ s: 'current' }), newRing.val),
         },
@@ -91,7 +87,6 @@ maybe('rewrap under the current key of the ring', () => {
       .insertInto('sandbox_env_secrets')
       .values({
         id: envSecretId,
-        tenant_id: tenantId,
         subject: 'alice',
         name: 'NPM_TOKEN',
         sealed: `env1.${encrypt('npm-token', oldBare.val)}`,
@@ -101,13 +96,11 @@ maybe('rewrap under the current key of the ring', () => {
       .insertInto('code_service_image_rules')
       .values([
         {
-          tenant_id: tenantId,
           pattern: 'rewrap.test/old/*',
           registry_username: 'u',
           registry_sealed: `reg1.${encrypt('pull-token', oldRing.val)}`,
         },
         {
-          tenant_id: tenantId,
           pattern: 'rewrap.test/stranger/*',
           registry_username: 'u',
           registry_sealed: `reg1.${encrypt('lost', stranger.val)}`,
@@ -119,11 +112,11 @@ maybe('rewrap under the current key of the ring', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('code_service_image_rules').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('sandbox_env_secrets').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('connector_configs').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('llm_model_configs').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('tenant_oidc').where('tenant_id', '=', tenantId).execute();
+    await db.deleteFrom('code_service_image_rules').execute();
+    await db.deleteFrom('sandbox_env_secrets').execute();
+    await db.deleteFrom('connector_configs').execute();
+    await db.deleteFrom('llm_model_configs').execute();
+    await db.deleteFrom('tenant_oidc').execute();
     await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
     await closeDatabase();
   });
@@ -142,7 +135,6 @@ maybe('rewrap under the current key of the ring', () => {
     const connectors = await db
       .selectFrom('connector_configs')
       .select(['connector', 'encrypted_secrets'])
-      .where('tenant_id', '=', tenantId)
       .orderBy('connector')
       .execute();
     const env = await db
@@ -153,7 +145,6 @@ maybe('rewrap under the current key of the ring', () => {
     const rules = await db
       .selectFrom('code_service_image_rules')
       .select(['pattern', 'registry_sealed'])
-      .where('tenant_id', '=', tenantId)
       .orderBy('pattern')
       .execute();
     return { oidc, model, connectors, env, rules };

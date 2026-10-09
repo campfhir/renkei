@@ -31,11 +31,9 @@ export interface CatalogItem {
 }
 
 export default function AddConnectorModal({
-  tenantId,
   items,
   onClose,
 }: {
-  tenantId: string;
   items: CatalogItem[];
   onClose: () => void;
 }) {
@@ -73,7 +71,7 @@ export default function AddConnectorModal({
     setBusy(capabilityKey);
     setError(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/connector-selections`, {
+      const response = await fetch(`/api/connector-selections`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ connector: capabilityKey }),

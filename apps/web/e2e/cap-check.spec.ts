@@ -15,12 +15,12 @@ test('builder honours the org step ceiling', async ({ page }) => {
       [E2E_TENANT_ID]
     );
 
-    await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
+    await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await expect(page.getByText(/Keep the agent to 1 steps or fewer/)).toBeVisible();
   } finally {
     await client.query(
-      `DELETE FROM tenant_settings WHERE tenant_id = $1 AND key = 'agent_max_steps'`,
+      `DELETE FROM tenant_settings WHERE key = 'agent_max_steps'`,
       [E2E_TENANT_ID]
     );
     await client.end();

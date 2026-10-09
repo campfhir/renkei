@@ -35,7 +35,7 @@ export async function loadApprovalFieldSchema(
   try {
     // The approver's own grant, by subject — described by the delegate for
     // its site, fetched through the delegate for its token.
-    const ref = { tenantId, provider: ATLASSIAN, subject };
+    const ref = { provider: ATLASSIAN, subject };
     const described = await delegateGrants().describe(ref);
     if (!described.ok) return null;
     const grant = described.val;
@@ -43,7 +43,6 @@ export async function loadApprovalFieldSchema(
     if (!site.cloudId) return null;
 
     const context: MCPToolContext = {
-      tenantId,
       accountId: grant.accountId,
       siteUrl: site.siteUrl,
       apiBaseUrl: `https://api.atlassian.com/ex/jira/${site.cloudId}`,

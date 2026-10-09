@@ -136,7 +136,6 @@ function row(
 }
 
 const baseOptions = {
-  tenantId: 'tenant-1',
   userEmail: 'scott@example.com',
   query: 'anything',
   k: 5,
@@ -267,7 +266,6 @@ describe('owner-scoped candidate narrowing', () => {
 
   it('applies the same narrowing to the recency browse', async () => {
     await listRecentKnowledge({
-      tenantId: 'tenant-1',
       userEmail: 'scott@example.com',
       k: 5,
       verifiers: new Map([['microsoft', ownerScopedVerifier('microsoft')]]),
@@ -447,7 +445,6 @@ describe('searchKnowledge result shape', () => {
 
 describe('listRecentKnowledge', () => {
   const recentOptions = {
-    tenantId: 'tenant-1',
     userEmail: 'scott@example.com',
     k: 5,
     verifiers: new Map(),

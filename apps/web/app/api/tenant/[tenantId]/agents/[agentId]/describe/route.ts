@@ -31,7 +31,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -48,7 +48,6 @@ export async function POST(
   await db
     .updateTable('agents')
     .set({ description_status: 'stale', updated_at: sql`NOW()` })
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', agentId)
     .execute();
 

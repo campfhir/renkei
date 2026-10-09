@@ -33,7 +33,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -44,7 +43,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -58,14 +56,12 @@ export async function POST(
   const windowStart = new Date(Date.now() - REQUEST_TTL_MS);
   await db
     .deleteFrom('device_key_requests')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', session.subject)
     .where('created_at', '<', windowStart)
     .execute();
   const recent = await db
     .selectFrom('device_key_requests')
     .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', session.subject)
     .where('created_at', '>=', windowStart)
     .executeTakeFirst();
@@ -79,7 +75,6 @@ export async function POST(
   const inserted = await db
     .insertInto('device_key_requests')
     .values({
-      tenant_id: tenantId,
       subject: session.subject,
       public_key: publicKey,
       code: deviceCodeOf(new Uint8Array(raw)),

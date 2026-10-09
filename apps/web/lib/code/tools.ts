@@ -904,7 +904,6 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
           : [];
         const credential = await resolveWorkspaceGitAccess(
           {
-            tenantId: context.tenantId,
             subject: context.subject,
             origin: binding.origin,
             provider: binding.repoProvider,
@@ -949,7 +948,6 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const credential = await resolveWorkspaceGitAccess(
           {
-            tenantId: context.tenantId,
             subject: context.subject,
             origin: binding.origin,
             provider: binding.repoProvider,
@@ -992,7 +990,6 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const credential = await resolveWorkspaceGitAccess(
           {
-            tenantId: context.tenantId,
             subject: context.subject,
             origin: binding.origin,
             provider: binding.repoProvider,

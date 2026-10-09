@@ -70,12 +70,10 @@ const MAX_HEIGHT = 2000;
 const DEFAULT_HEIGHT = 220;
 
 export default function ApprovalWidgetCard({
-  tenantId,
   itemId,
   resourceUri,
   structuredContent,
 }: {
-  tenantId: string;
   itemId: string;
   resourceUri: string;
   structuredContent: Record<string, unknown>;
@@ -122,7 +120,7 @@ export default function ApprovalWidgetCard({
           const name = typeof params?.name === 'string' ? params.name : '';
           const decision = decisionOf(name, structuredContent);
           const args = plainObject(params?.arguments) ?? {};
-          void fetch(`/api/tenant/${tenantId}/actionable-items/${itemId}/approval`, {
+          void fetch(`/api/actionable-items/${itemId}/approval`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ decision, args }),
@@ -218,7 +216,7 @@ export default function ApprovalWidgetCard({
         ref={iframeRef}
         src={
           ready
-            ? `/api/tenant/${tenantId}/chat/widgets?${new URLSearchParams({ uri: resourceUri }).toString()}`
+            ? `/api/chat/widgets?${new URLSearchParams({ uri: resourceUri }).toString()}`
             : undefined
         }
         sandbox="allow-scripts"

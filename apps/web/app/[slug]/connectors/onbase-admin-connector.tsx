@@ -16,12 +16,10 @@ import DisconnectControl from './disconnect-control';
  * scope, so consent is all-or-nothing prose rather than checkboxes.
  */
 export default function OnBaseAdminConnector({
-  tenantId,
   connected,
   displayName,
   nested = false,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   nested?: boolean;
@@ -54,7 +52,7 @@ export default function OnBaseAdminConnector({
       {!connected && (
         <CoachTarget name="onbase-admin-connect" as="span" className="mt-3 inline-block">
           <a
-            href={`/api/onbase-admin/${tenantId}/authorize`}
+            href={`/api/onbase-admin/authorize`}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >
             Connect OnBase Administration
@@ -64,7 +62,7 @@ export default function OnBaseAdminConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/onbase-admin/${tenantId}/grant`}
+          endpoint={`/api/onbase-admin/grant`}
           confirmText="Disconnect your OnBase Administration account? The onbase_admin_* MCP tools stop working until you reconnect."
           buttonLabel="Disconnect OnBase Administration"
         />

@@ -345,33 +345,33 @@ function attemptDetail(input: {
 
 export async function seed(client: Client): Promise<void> {
   // Delete in FK-dependency order, then insert fresh.
-  await client.query('DELETE FROM events WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM events_dead_letters WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM agent_run_steps WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM agent_runs WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM agent_memories WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM agent_triggers WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM agents WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM tool_calls WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM events', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM events_dead_letters', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM agent_run_steps', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM agent_runs', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM agent_memories', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM agent_triggers', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM agents', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM tool_calls', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM connector_configs', [E2E_TENANT_ID]);
   // Chats pin a model, and a model row does not cascade from its tenant:
   // a chat spec's fixtures from an earlier run would otherwise block the
   // tenant's re-creation here.
-  await client.query('DELETE FROM chats WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM llm_model_configs WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM sessions WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM identities WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM chats', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM llm_model_configs', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM provider_grants', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM sessions', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM identities', [E2E_TENANT_ID]);
   // A chat turn that actually ran (widget-card.spec.ts) minted a run
   // token, and that registers one synthetic OAuth client per tenant
   // (packages/mcp-client/src/token.ts) — a row that does not cascade from
   // the tenant, so an earlier run's would block the re-creation here.
-  await client.query('DELETE FROM oauth_access_tokens WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM oauth_clients WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM oauth_access_tokens', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM oauth_clients', [E2E_TENANT_ID]);
   // Org settings do not cascade from the tenant: migration 151 writes one row
   // (the registration default) for every tenant that exists when it runs,
   // and the rows below put more there.
-  await client.query('DELETE FROM tenant_settings WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM tenant_settings', [E2E_TENANT_ID]);
   await client.query('DELETE FROM tenants WHERE id = $1', [E2E_TENANT_ID]);
 
   // Verified at creation: the sign-in page routes a domain only to a tenant

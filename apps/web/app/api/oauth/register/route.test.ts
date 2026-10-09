@@ -90,7 +90,7 @@ describe('POST /api/oauth/register (system-level)', () => {
     const { inserted } = stubDb({ id: REAL_TENANT });
     mockGetOrgSettings.mockResolvedValue({ ok: true, val: { enableDcr: false } });
     const response = await POST(
-      requestWith({ referer: `http://localhost/api/mcp/${REAL_TENANT}/http` })
+      requestWith({ referer: `http://localhost/api/mcp/http` })
     );
     expect(response.status).toBe(403);
     expect(mockGetOrgSettings).toHaveBeenCalledWith(REAL_TENANT);
@@ -102,7 +102,7 @@ describe('POST /api/oauth/register (system-level)', () => {
     mockGetDatabase.mockClear();
     const response = await POST(
       requestWith({
-        referer: `http://localhost/api/mcp/${REAL_TENANT}/http`,
+        referer: `http://localhost/api/mcp/http`,
         redirectUris: ['http://attacker.example/callback'],
       })
     );
@@ -118,14 +118,14 @@ describe('POST /api/oauth/register (system-level)', () => {
     stubDb({ id: REAL_TENANT });
     for (let i = 0; i < 10; i += 1) {
       const response = await POST(
-        requestWith({ referer: `http://localhost/api/mcp/${REAL_TENANT}/http` })
+        requestWith({ referer: `http://localhost/api/mcp/http` })
       );
       expect(response.status).not.toBe(429);
     }
     mockGetDatabase.mockClear();
 
     const throttled = await POST(
-      requestWith({ referer: `http://localhost/api/mcp/${REAL_TENANT}/http` })
+      requestWith({ referer: `http://localhost/api/mcp/http` })
     );
     expect(throttled.status).toBe(429);
     expect(throttled.headers.get('retry-after')).toMatch(/^\d+$/);
@@ -147,7 +147,7 @@ describe('POST /api/oauth/register (system-level)', () => {
   it('rejects when the Referer names a tenant that does not exist', async () => {
     stubDb(undefined);
     const response = await POST(
-      requestWith({ referer: `http://localhost/api/mcp/${REAL_TENANT}/http` })
+      requestWith({ referer: `http://localhost/api/mcp/http` })
     );
     expect(response.status).toBe(400);
     const body = await response.json();
@@ -157,7 +157,7 @@ describe('POST /api/oauth/register (system-level)', () => {
   it('registers the client under the tenant the Referer names', async () => {
     const { inserted } = stubDb({ id: REAL_TENANT });
     const response = await POST(
-      requestWith({ referer: `http://localhost/api/mcp/${REAL_TENANT}/http` })
+      requestWith({ referer: `http://localhost/api/mcp/http` })
     );
     expect(response.status).toBe(201);
     const body = await response.json();

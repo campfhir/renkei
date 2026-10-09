@@ -163,7 +163,6 @@ async function graphGet(
   } catch (error) {
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       timedOut: isTimeoutError(error),
@@ -175,7 +174,6 @@ async function graphGet(
   if (!response.ok) {
     logger.warn('Graph API non-OK response', {
       component: 'outlook/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       status: response.status,
@@ -222,7 +220,6 @@ async function graphPost(
   } catch (error) {
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       timedOut: isTimeoutError(error),
@@ -234,7 +231,6 @@ async function graphPost(
   if (!response.ok) {
     logger.warn('Graph API non-OK response', {
       component: 'outlook/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       method: 'POST',
@@ -283,7 +279,6 @@ async function graphPatch(
   } catch (error) {
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       timedOut: isTimeoutError(error),
@@ -295,7 +290,6 @@ async function graphPatch(
     const responseBody = await response.text().catch(() => '');
     logger.warn('Graph API non-OK response', {
       component: 'outlook/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       method: 'PATCH',
@@ -327,7 +321,6 @@ async function graphDelete(
     if (!response.ok) {
       logger.warn('Could not clean up an orphaned draft', {
         component: 'outlook/fetch',
-        tenantId: context.tenantId,
         subject: context.subject,
         path: pathAndQuery,
         status: response.status,
@@ -360,7 +353,6 @@ async function graphDeleteChecked(
   } catch (error) {
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       timedOut: isTimeoutError(error),
@@ -372,7 +364,6 @@ async function graphDeleteChecked(
     const responseBody = await response.text().catch(() => '');
     logger.warn('Graph API non-OK response', {
       component: 'outlook/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
       method: 'DELETE',
@@ -2037,7 +2028,6 @@ export async function registerOutlookTools(
       if (!result.ok) return errText(result.error);
       logger.info('outlook_send_mail sent', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         recipients: to.length + cc.length,
       });
       /*
@@ -2116,7 +2106,6 @@ export async function registerOutlookTools(
       if (!result.ok) return errText(result.error);
       logger.info('outlook_reply_message sent', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         messageId,
       });
       return {
@@ -2177,7 +2166,6 @@ export async function registerOutlookTools(
       if (!result.ok) return errText(result.error);
       logger.info('outlook_reply_all_message sent', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         messageId,
       });
       return {
@@ -2231,7 +2219,6 @@ export async function registerOutlookTools(
       if (!result.ok) return errText(result.error);
       logger.info('outlook_forward_message sent', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         messageId,
       });
       return {
@@ -2312,7 +2299,6 @@ export async function registerOutlookTools(
 
       logger.info('outlook_send_mail_preview drafted', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         recipients: to.length + cc.length + bcc.length,
       });
       const draft: DraftInfo = {
@@ -2399,7 +2385,6 @@ export async function registerOutlookTools(
         if (!created.ok) return errText(created.error);
         logger.info(`${preview.name} drafted`, {
           component: 'mcp/tool',
-          tenantId: context.tenantId,
           messageId,
         });
         return {
@@ -2448,7 +2433,6 @@ export async function registerOutlookTools(
       if (!created.ok) return errText(created.error);
       logger.info('outlook_forward_preview drafted', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         messageId,
       });
       return {
@@ -2513,7 +2497,6 @@ export async function registerOutlookTools(
       if (!sent.ok) return errText(sent.error);
       logger.info('outlook_send_draft_confirm sent', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         draftId,
       });
       return textResult('Sent.');
@@ -2546,7 +2529,6 @@ export async function registerOutlookTools(
       if (!deleted.ok) return errText(deleted.error);
       logger.info('outlook_discard_draft_confirm discarded', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         draftId,
       });
       return textResult('Draft discarded; nothing was sent.');
@@ -2904,7 +2886,6 @@ export async function registerOutlookTools(
       const event = result.body ?? {};
       logger.info('outlook_create_event created', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         eventId: str(event.id),
         recurring: recurrence.val !== null,
       });
@@ -3045,7 +3026,6 @@ export async function registerOutlookTools(
       if (!result.ok) return errText(result.error);
       logger.info('outlook_update_event updated', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         eventId: target.id,
         series: target.series,
         fields: Object.keys(patch),
@@ -3284,7 +3264,6 @@ export async function registerOutlookTools(
       if (!result.ok) return errText(result.error);
       logger.info('outlook_respond_event responded', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         eventId,
         response,
       });
@@ -3479,7 +3458,6 @@ export async function registerOutlookTools(
         if (!result.ok) return errText(result.error);
         logger.info('outlook_cancel_event_confirm cancelled event', {
           component: 'mcp/tool',
-          tenantId: context.tenantId,
           eventId: target.id,
           series: target.series,
           role: 'organizer',
@@ -3495,7 +3473,6 @@ export async function registerOutlookTools(
       if (!removal.ok) return errText(removal.error);
       logger.info('outlook_cancel_event_confirm removed event', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         eventId: target.id,
         series: target.series,
         role: 'attendee',

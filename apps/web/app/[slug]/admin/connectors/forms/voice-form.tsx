@@ -38,7 +38,7 @@ const PROVIDER_LABELS: Record<string, string> = {
  * to anyone until this is saved and enabled.
  */
 export function VoiceForm({ slug }: { slug: string }) {
-  const url = `/api/admin/${slug}/connectors/voice`;
+  const url = `/api/admin/connectors/voice`;
   const [state, reload] = useConnectorConfig<VoiceConfigView>(url);
   const [provider, setProvider] = useState('azure-speech');
   const [region, setRegion] = useState('');

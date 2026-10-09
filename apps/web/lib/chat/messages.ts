@@ -205,7 +205,6 @@ export async function listMessages(
   const rows = await db
     .selectFrom('chat_messages')
     .select(MESSAGE_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .orderBy('seq', 'asc')
     .execute();
@@ -222,7 +221,6 @@ export async function listTurnMessages(
   const rows = await db
     .selectFrom('chat_messages')
     .select(MESSAGE_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('turn_id', '=', turnId)
     .orderBy('seq', 'asc')
     .execute();
@@ -230,7 +228,6 @@ export async function listTurnMessages(
 }
 
 export interface NewMessage {
-  tenantId: string;
   chatId: string;
   turnId: string | null;
   role: MessageRole;
@@ -264,7 +261,6 @@ export async function insertMessage(
   const inserted = await db
     .insertInto('chat_messages')
     .values({
-      tenant_id: input.tenantId,
       chat_id: input.chatId,
       turn_id: input.turnId,
       seq: sql<number>`(SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_messages WHERE chat_id = ${input.chatId})`,
@@ -297,7 +293,6 @@ export async function attributeMessagesToSummary(
   await db
     .updateTable('chat_messages')
     .set({ summary_id: summaryId })
-    .where('tenant_id', '=', tenantId)
     .where('id', 'in', messageIds)
     .execute();
 }

@@ -20,7 +20,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -34,15 +33,12 @@ export async function GET(
     .where('id', '=', tenantId)
     .executeTakeFirst();
 
-  if (!tenant) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const tenantIssuer = `${originResult.val}/api/mcp/${tenantId}`;
+  const tenantIssuer = `${originResult.val}/api/mcp`;
 
   return NextResponse.json({
     resource: tenantIssuer,

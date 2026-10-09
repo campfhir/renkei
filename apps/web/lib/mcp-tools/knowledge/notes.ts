@@ -77,7 +77,6 @@ async function findNoteChunk(
   const row = await dbResult.val
     .selectFrom('knowledge_chunks')
     .select(['metadata', 'keywords'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
     .where((eb) =>
       eb.or([eb('ref_id', '=', refId), eb('ref_id', 'like', `${escapeLike(refId)}#%`)])
@@ -173,7 +172,6 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
 
       logger.info('knowledge_create_note saved', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         noteId,
         authoredBy: context.agent ? 'agent' : 'user',
       });
@@ -234,7 +232,6 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
         const chunks = await dbResult.val
           .selectFrom('knowledge_chunks')
           .select(['id', 'content', 'metadata', 'keywords'])
-          .where('tenant_id', '=', context.tenantId)
           .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
           .where((eb) =>
             eb.or([eb('ref_id', '=', refId), eb('ref_id', 'like', `${escapeLike(refId)}#%`)])
@@ -349,7 +346,6 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       const rows = await dbResult.val
         .selectFrom('knowledge_chunks')
         .select(['ref_id', 'metadata', 'source_at'])
-        .where('tenant_id', '=', context.tenantId)
         .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
         .where('ref_id', 'like', `${escapeLike(prefix)}%`)
         .orderBy('source_at', 'desc')

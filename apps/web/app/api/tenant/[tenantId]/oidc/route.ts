@@ -28,7 +28,6 @@ async function hasOidcConfig(db: Kysely<DB>, tenantId: string): Promise<boolean>
   const existing = await db
     .selectFrom('tenant_oidc')
     .select('client_id')
-    .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
   return Boolean(existing);
 }
@@ -58,7 +57,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -73,9 +71,6 @@ export async function POST(
       .where('id', '=', tenantId)
       .executeTakeFirst();
 
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
 
     // First configuration needs the one-time bootstrap secret; every change
     // after it is operator-only.
@@ -96,7 +91,6 @@ export async function POST(
       if (denied) {
         logger.warn('Rejected unauthorised attempt to change identity provider', {
           component: 'auth/oidc',
-          tenantId,
           status: denied.status,
         });
         return denied;
@@ -106,7 +100,6 @@ export async function POST(
       if (verdict !== 'ok') {
         logger.warn('Rejected identity-provider bootstrap without a valid secret ({verdict})', {
           component: 'auth/oidc',
-          tenantId,
           verdict,
         });
         return NextResponse.json(
@@ -180,7 +173,6 @@ export async function POST(
 
       logger.debug('Fetched issuer from discovery: {issuer}', {
         component: 'auth/oidc',
-        tenantId,
         issuer,
       });
     } catch (error) {
@@ -192,7 +184,6 @@ export async function POST(
       }
       logger.error('Failed to fetch discovery endpoint: {error}', {
         component: 'auth/oidc',
-        tenantId,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
@@ -218,7 +209,6 @@ export async function POST(
       if (!setResult.ok) {
         logger.error('Failed to save OIDC configuration: {error}', {
           component: 'auth/oidc',
-          tenantId,
           error: String(setResult.err),
         });
         return NextResponse.json({ error: 'Failed to save OIDC configuration' }, { status: 500 });
@@ -226,10 +216,9 @@ export async function POST(
 
       logger.info('Identity provider updated by operator', {
         component: 'auth/oidc',
-        tenantId,
         issuer,
       });
-      return NextResponse.json({ success: true, tenantId });
+      return NextResponse.json({ success: true });
     }
 
     // Unauthenticated bootstrap. Insert-only, so a configuration created while
@@ -239,7 +228,6 @@ export async function POST(
     if (!createResult.ok) {
       logger.error('Failed to save OIDC configuration: {error}', {
         component: 'auth/oidc',
-        tenantId,
         error: String(createResult.err),
       });
       return NextResponse.json({ error: 'Failed to save OIDC configuration' }, { status: 500 });
@@ -248,7 +236,6 @@ export async function POST(
     if (!createResult.val) {
       logger.warn('Bootstrap lost a race with an existing configuration', {
         component: 'auth/oidc',
-        tenantId,
       });
       return NextResponse.json(
         {
@@ -271,17 +258,15 @@ export async function POST(
     // decides who can become an operator.
     logger.warn('Identity provider claimed for previously unconfigured tenant', {
       component: 'auth/oidc',
-      tenantId,
       issuer,
       clientId: body.clientId,
       operatorIdpValue: body.operatorIdpValue || null,
     });
 
-    return NextResponse.json({ success: true, tenantId });
+    return NextResponse.json({ success: true });
   } catch (error) {
     logger.error('Config error: {error}', {
       component: 'auth/oidc',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -293,7 +278,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   // Operator-only, and checked before anything is read. This returns the
   // issuer, client id and the claim mapping that decides who becomes an
@@ -316,9 +300,6 @@ export async function GET(
       .where('id', '=', tenantId)
       .executeTakeFirst();
 
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
 
     // Get OIDC configuration
     const oidc = await db
@@ -331,7 +312,6 @@ export async function GET(
         'user_idp_value',
         'groups_claim',
       ])
-      .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
 
     if (!oidc) {
@@ -350,7 +330,6 @@ export async function GET(
   } catch (error) {
     logger.error('Config fetch error: {error}', {
       component: 'auth/oidc',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });

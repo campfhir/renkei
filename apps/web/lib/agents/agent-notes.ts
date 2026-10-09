@@ -79,7 +79,6 @@ async function agentNoteChunks(db: Kysely<DB>, tenantId: string, agentId: string
   return db
     .selectFrom('knowledge_chunks')
     .select(['ref_id', 'metadata', 'content', 'keywords', 'source_at'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
     .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
     .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
@@ -136,7 +135,6 @@ export async function listAgentNotes(
 export async function createAgentNote(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     agentId: string;
     ownerEmail: string;
     title: string;
@@ -185,7 +183,6 @@ async function noteExists(
   const row = await db
     .selectFrom('knowledge_chunks')
     .select(['ref_id'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
     .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
     .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
@@ -201,7 +198,6 @@ async function noteExists(
 export async function updateAgentNote(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     agentId: string;
     ownerEmail: string;
     noteId: string;
@@ -258,7 +254,6 @@ export async function updateAgentNote(
 export async function copyAgentNotes(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     sourceAgentId: string;
     targetAgentId: string;
     targetOwnerEmail: string;
@@ -267,7 +262,6 @@ export async function copyAgentNotes(
   const rows = await db
     .selectFrom('knowledge_chunks')
     .select(['ref_id'])
-    .where('tenant_id', '=', input.tenantId)
     .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
     .where(sql<boolean>`metadata ->> 'agentId' = ${input.sourceAgentId}`)
     .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
@@ -290,8 +284,7 @@ export async function copyAgentNotes(
              jsonb_set(metadata, '{agentId}', to_jsonb(${input.targetAgentId}::text)),
              content, embedding, keywords, search_text, source_at
       FROM knowledge_chunks
-      WHERE tenant_id = ${input.tenantId}
-        AND provider = ${NOTE_KNOWLEDGE_PROVIDER}
+      WHERE provider = ${NOTE_KNOWLEDGE_PROVIDER}
         AND (ref_id = ${oldBase} OR ref_id LIKE ${oldBase} || '#%')
     `.execute(db);
   }
@@ -322,7 +315,6 @@ export async function deleteAgentNote(
 export async function deleteAgentNotes(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     agentId: string;
     ownerEmail: string;
     noteIds?: string[];
@@ -338,7 +330,6 @@ export async function deleteAgentNotes(
   let failed = 0;
   for (const noteId of ids) {
     const outcome = await deleteAgentNote(db, {
-      tenantId: input.tenantId,
       agentId: input.agentId,
       ownerEmail: input.ownerEmail,
       noteId,

@@ -235,7 +235,7 @@ function PersonCard({
             )}
           </span>
           <Link
-            href={`/${slug}/admin/access`}
+            href={`/admin/access`}
             className="text-blue-600 hover:underline dark:text-blue-400"
           >
             Connectors on Access
@@ -277,7 +277,7 @@ function PersonCard({
               {person.agents.map((agent) => (
                 <li key={agent.id} className="flex items-center gap-2 text-sm">
                   <Link
-                    href={`/${slug}/admin/agents/${agent.id}`}
+                    href={`/admin/agents/${agent.id}`}
                     className="min-w-0 truncate text-blue-600 hover:underline dark:text-blue-400"
                   >
                     {agent.name}
@@ -314,11 +314,9 @@ function syncUrl(periodKey: string, subject: string | null): void {
 
 export default function OrgUsageViewer({
   slug,
-  tenantId,
   initial,
 }: {
   slug: string;
-  tenantId: string;
   initial: OrgUsageReport;
 }) {
   const [report, setReport] = useState(initial);
@@ -332,7 +330,6 @@ export default function OrgUsageViewer({
     startTransition(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const next = await getOrgUsageReport(
-        tenantId,
         periodKey,
         timeZone,
         nextIncludeAgents,
@@ -432,7 +429,7 @@ export default function OrgUsageViewer({
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">Organization usage</h1>
         <Link
-          href={`/${slug}/admin`}
+          href={`/admin`}
           className="text-sm text-blue-600 hover:underline dark:text-blue-400"
         >
           Organization
@@ -761,7 +758,7 @@ export default function OrgUsageViewer({
           keyOf={(row) => row.agentId}
           labelOf={(row) => (
             <Link
-              href={`/${slug}/admin/agents/${row.agentId}`}
+              href={`/admin/agents/${row.agentId}`}
               className="text-blue-600 hover:underline dark:text-blue-400"
             >
               {row.name}
@@ -779,7 +776,7 @@ export default function OrgUsageViewer({
           keyOf={(row) => row.agentId}
           labelOf={(row) => (
             <Link
-              href={`/${slug}/admin/agents/${row.agentId}`}
+              href={`/admin/agents/${row.agentId}`}
               className="text-blue-600 hover:underline dark:text-blue-400"
             >
               {row.name}

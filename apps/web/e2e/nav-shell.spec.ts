@@ -17,7 +17,7 @@ test.use({
 });
 
 test('app menu column: open by default, toggles and is remembered', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents`);
+  await page.goto(`/agents`);
   const column = page.getByRole('navigation', { name: 'Application' });
   const mobile = testInfo.project.name === 'mobile';
   const shot = (name: string) =>

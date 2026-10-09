@@ -34,12 +34,11 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   if (!(await sandboxBrowserEnabled(tenantId))) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const listed = await sbSecretsList({ tenantId, subject: session.subject });
+  const listed = await sbSecretsList({ subject: session.subject });
   if (!listed.ok) {
     const failure = clientFailure(listed.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });
@@ -51,7 +50,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   if (!(await sandboxBrowserEnabled(tenantId))) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -76,7 +74,7 @@ export async function POST(
   // The worker validates every field and phrases every refusal; this
   // route only shapes the request.
   const created = await sbSecretCreate(
-    { tenantId, subject: session.subject },
+    { subject: session.subject },
     {
       name: typeof body.name === 'string' ? body.name : '',
       fields: values,
@@ -94,7 +92,6 @@ export async function POST(
   }
 
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'sandbox.secret.created',
     targetKind: 'sandbox_secret',

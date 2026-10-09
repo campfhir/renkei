@@ -64,13 +64,12 @@ async function main(): Promise<void> {
     }
     for (const [key, owned] of byOwner) {
       if (skippedOwners.has(key)) continue;
-      const { tenant_id: tenantId, owner } = owned[0];
+      const { owner } = owned[0];
       if (dryRun) {
         sealed += owned.length;
         continue;
       }
       const envelopes = await delegate.sealForSubject(
-        tenantId,
         owner,
         owned.map((row) => row.content),
         'automation'

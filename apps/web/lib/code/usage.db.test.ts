@@ -26,7 +26,6 @@ maybe('loadCodeProjectUsage', () => {
     db
       .insertInto('chat_turns')
       .values({
-        tenant_id: tenantId,
         chat_id: chatId,
         status: 'completed',
         input_tokens: inputTokens,
@@ -45,7 +44,7 @@ maybe('loadCodeProjectUsage', () => {
     for (const id of [projectId, otherProjectId]) {
       await db
         .insertInto('chat_projects')
-        .values({ id, tenant_id: tenantId, owner_subject: subject, name: 'p', kind: 'code' })
+        .values({ id, owner_subject: subject, name: 'p', kind: 'code' })
         .execute();
     }
     for (const [id, projectFk] of [
@@ -55,7 +54,7 @@ maybe('loadCodeProjectUsage', () => {
     ] as const) {
       await db
         .insertInto('chats')
-        .values({ id, tenant_id: tenantId, owner_subject: subject, project_id: projectFk })
+        .values({ id, owner_subject: subject, project_id: projectFk })
         .execute();
     }
     // Chat A: two turns — an orchestrator's own call, then a turn whose
@@ -70,9 +69,9 @@ maybe('loadCodeProjectUsage', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_turns WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chat_projects WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_turns`.execute(db);
+    await sql`DELETE FROM chats`.execute(db);
+    await sql`DELETE FROM chat_projects`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });

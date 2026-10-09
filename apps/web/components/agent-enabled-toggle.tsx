@@ -35,11 +35,9 @@ function savePayloadOf(agent: StoredAgent, enabled: boolean) {
 }
 
 export default function AgentEnabledToggle({
-  tenantId,
   agent,
   onError,
 }: {
-  tenantId: string;
   agent: StoredAgent;
   onError?: (message: string) => void;
 }): React.ReactNode {
@@ -49,7 +47,7 @@ export default function AgentEnabledToggle({
   const toggle = async () => {
     setBusy(true);
     const result = await sendJsonFull(
-      `/api/tenant/${tenantId}/agents/${agent.id}`,
+      `/api/agents/${agent.id}`,
       'PUT',
       savePayloadOf(agent, !agent.enabled)
     );

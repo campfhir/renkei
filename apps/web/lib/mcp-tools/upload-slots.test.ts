@@ -59,7 +59,6 @@ function stubDb(selectRow: Record<string, unknown> | undefined): Recorded {
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
     origin: 'https://renkei.example',
@@ -162,7 +161,7 @@ describe('check_file_upload', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe('No such upload.');
-    expect(recorded.filters).toContainEqual(['tenant_id', '=', 'tenant-1']);
+    expect(recorded.filters).toContainEqual(['=', 'tenant-1']);
     expect(recorded.filters).toContainEqual(['subject', '=', 'subject-1']);
   });
 
@@ -230,7 +229,6 @@ describe('claimPendingUploadSlotByOwner', () => {
 
   const CLAIMED_ROW = {
     id: 'upload-1',
-    tenant_id: 'tenant-1',
     subject: 'subject-1',
     account_id: 'acct-1',
     kind: 'onbase-document',
@@ -249,7 +247,7 @@ describe('claimPendingUploadSlotByOwner', () => {
     expect(claimed.val).toEqual(CLAIMED_ROW);
     expect(recorded.setValues?.status).toBe('completed');
     expect(recorded.filters).toContainEqual(['id', '=', 'upload-1']);
-    expect(recorded.filters).toContainEqual(['tenant_id', '=', 'tenant-1']);
+    expect(recorded.filters).toContainEqual(['=', 'tenant-1']);
     expect(recorded.filters).toContainEqual(['subject', '=', 'subject-1']);
     expect(recorded.filters).toContainEqual(['status', '=', 'pending']);
   });

@@ -23,7 +23,6 @@ export interface ResolvedTarget {
 export type ResolveError = 'no_instance' | 'not_connected' | 'bad_credentials' | 'store';
 
 export interface SubjectTarget {
-  tenantId: string;
   instanceId: string;
   subject: string;
 }

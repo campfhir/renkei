@@ -12,10 +12,8 @@ interface Grant {
 }
 
 export default function SharedWithPanel({
-  tenantId,
   agentId,
 }: {
-  tenantId: string;
   agentId: string;
 }) {
   const [grants, setGrants] = useState<Grant[] | null>(null);
@@ -24,7 +22,7 @@ export default function SharedWithPanel({
   useEffect(() => {
     const load = async () => {
       try {
-        const response = await fetch(`/api/tenant/${tenantId}/agents/${agentId}/access`);
+        const response = await fetch(`/api/agents/${agentId}/access`);
         if (!response.ok) {
           setError('Could not load access grants');
           return;

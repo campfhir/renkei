@@ -60,7 +60,6 @@ export async function loadChatView(
       : db
           .selectFrom('identities')
           .select(['display_name', 'email'])
-          .where('tenant_id', '=', tenantId)
           .where('subject', '=', chat.ownerSubject)
           .executeTakeFirst(),
     db
@@ -74,7 +73,6 @@ export async function loadChatView(
         'message_id',
         'origin',
       ])
-      .where('tenant_id', '=', tenantId)
       .where('chat_id', '=', chat.id)
       .orderBy('created_at', 'asc')
       .execute(),

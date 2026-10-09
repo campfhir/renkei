@@ -44,7 +44,7 @@ function stubDb(row: Record<string, unknown> | undefined) {
 }
 
 function request(query = ''): NextRequest {
-  return new NextRequest(`http://localhost/api/tenant/${TENANT}/audit${query}`);
+  return new NextRequest(`http://localhost/api/audit${query}`);
 }
 
 function params() {
@@ -54,7 +54,6 @@ function params() {
 function session(subject: string, roles: string[]) {
   return {
     id: 'session-1',
-    tenantId: TENANT,
     subject,
     roles,
     expiresAt: new Date(Date.now() + 60_000),
@@ -81,7 +80,7 @@ describe('GET /api/tenant/{tenantId}/audit', () => {
     mockGetSession.mockResolvedValue(null);
     stubDb(undefined);
 
-    const headed = new NextRequest(`http://localhost/api/tenant/${TENANT}/audit`, {
+    const headed = new NextRequest(`http://localhost/api/audit`, {
       headers: { 'x-operator-key': 'anything' },
     });
     const response = await GET(headed, params());
@@ -106,7 +105,7 @@ describe('GET /api/tenant/{tenantId}/audit', () => {
     const body = await (await GET(request(), params())).json();
 
     expect(recorded.filters).toEqual([
-      ['tenant_id', '=', TENANT],
+      ['=', TENANT],
       ['provider', '=', 'atlassian'],
       ['subject', '=', 'user-a@example.com'],
     ]);

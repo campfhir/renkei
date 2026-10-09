@@ -168,7 +168,6 @@ describe('POST', () => {
     expect(createSchedule).toHaveBeenCalledWith(
       {},
       expect.objectContaining({
-        tenantId: 'tenant-1',
         subject: 'auth0|alice',
         name: 'Nightly OCR',
         kind: 'document-ocr-pipeline',

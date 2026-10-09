@@ -84,7 +84,6 @@ async function wasSentByRenkei(tenantId: string, messageId: string): Promise<boo
   const row = await dbResult.val
     .selectFrom('webex_sent_messages')
     .select('message_id')
-    .where('tenant_id', '=', tenantId)
     .where('message_id', '=', messageId)
     .executeTakeFirst();
   return row !== undefined;
@@ -123,7 +122,6 @@ export function createWebexUserMessageHandler(
       // itself rots away via 404s on the receipt route.
       logger.warn('no usable grant for all-spaces delivery; dropping', {
         component: 'webex/user-ingest',
-        tenantId: event.tenant_id,
       });
       return 'skipped';
     }
@@ -149,7 +147,6 @@ export function createWebexUserMessageHandler(
     if (!message.text) return 'skipped';
 
     await publish({
-      tenantId: event.tenant_id,
       provider: 'webex',
       type: 'message.received',
       // The WATCHER — the user whose all-spaces webhook delivered this,

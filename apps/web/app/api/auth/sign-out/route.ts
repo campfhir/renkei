@@ -26,7 +26,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const session = await getSessionFromRequest(request, tenantId);
       await destroySession(sessionId);
       if (session) {
-        recordAuditEvent({ tenantId, actorSubject: session.subject, action: 'user.signed_out' });
+        recordAuditEvent({ actorSubject: session.subject, action: 'user.signed_out' });
       }
     }
     response.cookies.delete(cookieName);

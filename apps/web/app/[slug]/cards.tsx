@@ -51,13 +51,11 @@ export interface ActionableItemRow {
  */
 export default async function ActionableCards({
   items,
-  tenantId,
   subject,
   slug,
   showArchived = false,
 }: {
   items: ActionableItemRow[];
-  tenantId: string;
   /** Whose feed this is — the approval widget resolves ITS OWN Jira
    * grant by this subject, same as any decision on these cards already
    * requires the card's owner_subject to match it. */
@@ -119,7 +117,7 @@ export default async function ActionableCards({
         {isPause && item.run_id && item.agent_id ? (
           <p className="mb-2 text-sm">
             <Link
-              href={`/${slug}/agents/${item.agent_id}/runs/${item.run_id}`}
+              href={`/agents/${item.agent_id}/runs/${item.run_id}`}
               className="text-blue-600 hover:underline dark:text-blue-400"
             >
               View the paused run →

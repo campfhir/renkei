@@ -3,7 +3,6 @@ import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getOrgSettings } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { resolvePublicOrigin } from '@/lib/public-origin';
 import { definitionFor } from '@/lib/connectors/definitions';
 import BackLink from '@/components/back-link';
@@ -26,10 +25,8 @@ export default async function AdminConnectorPage({
   params: Promise<{ slug: string; configKey: string }>;
 }): Promise<React.ReactNode> {
   const { slug, configKey } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const definition = definitionFor(configKey);
@@ -69,7 +66,7 @@ export default async function AdminConnectorPage({
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <div className="mb-1 flex items-center gap-2">
-          <BackLink href={`/${slug}/admin/connectors`} label="All connectors" />
+          <BackLink href={`/admin/connectors`} label="All connectors" />
           <ConnectorIcon
             capabilityKey={definition.entries[0].capabilityKey}
             label={definition.label}
@@ -113,7 +110,7 @@ export default async function AdminConnectorPage({
 
       <p className="text-xs text-gray-500 dark:text-gray-400">
         People connect their own account from{' '}
-        <Link href={`/${slug}/connectors`} className="underline">
+        <Link href={`/connectors`} className="underline">
           Connectors
         </Link>
         , where this appears in their catalog once it is enabled here.

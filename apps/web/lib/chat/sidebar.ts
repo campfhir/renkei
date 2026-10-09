@@ -106,7 +106,6 @@ async function projectMapFor(
   // of the worker's own table, never a worker call from the menu.
   const branches = await workspaceBranches(
     db,
-    tenantId,
     projects.filter((project) => project.kind === 'code').map((project) => project.workspaceId)
   );
   return new Map(
@@ -132,7 +131,6 @@ async function namesFor(
   const rows = await db
     .selectFrom('identities')
     .select(['subject', 'display_name', 'email'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', 'in', unique)
     .execute();
   return new Map(rows.map((row) => [row.subject, row.display_name ?? row.email ?? null]));
@@ -160,7 +158,6 @@ export async function loadChatSidebar(
   const [grantedAll, inProjects, projects, moreOwned] = await Promise.all([
     listChatsById(
       db,
-      tenantId,
       grants.map((grant) => grant.resourceId)
     ),
     listProjectChats(db, tenantId, projectIds, subject, since ? { since } : {}),

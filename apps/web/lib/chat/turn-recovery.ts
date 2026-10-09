@@ -163,7 +163,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   ) =>
     logger[level](message, {
       component: 'chat/turn-recovery',
-      tenantId: turn.tenantId,
       chatId: turn.chatId,
       turnId: turn.id,
       resumeCount: turn.resumeCount,
@@ -235,7 +234,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
       isError: true,
     }));
     const inserted = await insertMessage(db, {
-      tenantId: turn.tenantId,
       chatId: turn.chatId,
       turnId: turn.id,
       role: 'user',
@@ -247,7 +245,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     if (!inserted) return end('failed', 'The content encryption key is not configured.', seed);
   }
   const note = await insertMessage(db, {
-    tenantId: turn.tenantId,
     chatId: turn.chatId,
     turnId: turn.id,
     role: 'user',
@@ -258,7 +255,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   });
   if (!note) return end('failed', 'The content encryption key is not configured.', seed);
   const assistant = await insertMessage(db, {
-    tenantId: turn.tenantId,
     chatId: turn.chatId,
     turnId: turn.id,
     role: 'assistant',
@@ -278,7 +274,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     iterations: seed.iterations,
   });
   await executeChatTurn(db, {
-    tenantId: turn.tenantId,
     session: { subject: chat.ownerSubject, roles },
     chat: { ...chat, llmModelId: llm.modelConfigId },
     cipher,
@@ -305,7 +300,6 @@ async function latestSessionRoles(
   const row = await db
     .selectFrom('sessions')
     .select('roles')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .orderBy('last_used_at', 'desc')
     .limit(1)
@@ -342,7 +336,6 @@ export async function recoverOrphanedTurns(db: Kysely<DB>): Promise<number> {
     void resumeChatTurn(db, turn).catch((error: unknown) => {
       logger.error('chat turn resume crashed: {message}', {
         component: 'chat/turn-recovery',
-        tenantId: turn.tenantId,
         chatId: turn.chatId,
         turnId: turn.id,
         message: error instanceof Error ? error.message : String(error),

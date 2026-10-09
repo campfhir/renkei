@@ -79,7 +79,6 @@ export async function closeLogger(): Promise<void> {
 
 /** Log a Jira API error. */
 export function logJiraError(attrs: {
-  tenantId: string;
   accountId?: string;
   method: string;
   path: string;
@@ -92,7 +91,6 @@ export function logJiraError(attrs: {
   const logger = loggerResult.val;
 
   logger.error('Jira API error: {method} {path} returned {statusCode}', {
-    tenantId: attrs.tenantId,
     accountId: attrs.accountId || undefined,
     method: attrs.method,
     path: attrs.path,
@@ -104,7 +102,6 @@ export function logJiraError(attrs: {
 
 /** Log a grant/auth error. */
 export function logAuthError(attrs: {
-  tenantId: string;
   accountId?: string;
   reason: 'grant_missing' | 'grant_expired' | 'invalid_token' | 'token_revoked';
 }): Result<void, 'LOGGER_NOT_INITIALIZED'> {
@@ -120,7 +117,6 @@ export function logAuthError(attrs: {
   };
 
   logger.warn('Auth error: {reason}', {
-    tenantId: attrs.tenantId,
     accountId: attrs.accountId || undefined,
     reason: attrs.reason,
     message: messages[attrs.reason],
@@ -130,7 +126,6 @@ export function logAuthError(attrs: {
 
 /** Log a rate limit hit. */
 export function logRateLimit(attrs: {
-  tenantId: string;
   accountId: string;
   limit: number;
   windowMinutes: number;
@@ -140,7 +135,6 @@ export function logRateLimit(attrs: {
   const logger = loggerResult.val;
 
   logger.warn('Rate limit exceeded: {accountId} hit {limit} calls', {
-    tenantId: attrs.tenantId,
     accountId: attrs.accountId,
     limit: attrs.limit,
     windowMinutes: attrs.windowMinutes,
@@ -150,7 +144,6 @@ export function logRateLimit(attrs: {
 
 /** Log an MCP tool error. */
 export function logToolError(attrs: {
-  tenantId: string;
   accountId: string;
   tool: string;
   errorCode?: string;
@@ -161,7 +154,6 @@ export function logToolError(attrs: {
   const logger = loggerResult.val;
 
   logger.error('MCP tool error: {tool} - {message}', {
-    tenantId: attrs.tenantId,
     accountId: attrs.accountId,
     tool: attrs.tool,
     errorCode: attrs.errorCode || undefined,

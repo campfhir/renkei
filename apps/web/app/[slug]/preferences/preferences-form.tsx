@@ -211,7 +211,7 @@ function ChannelHints({
         <p key={channel.label} className="flex flex-wrap items-center gap-1.5">
           <span>{`${channel.label} isn’t connected with permission to send, so its boxes stay off.`}</span>
           <a
-            href={`/${slug}/connectors#${channel.anchor}`}
+            href={`/connectors#${channel.anchor}`}
             className="font-medium text-blue-600 hover:underline dark:text-blue-400"
           >
             {`Connect ${channel.label} →`}
@@ -223,14 +223,12 @@ function ChannelHints({
 }
 
 export default function PreferencesForm({
-  tenantId,
   slug,
   connectors,
   channels,
   initial,
   agents,
 }: {
-  tenantId: string;
   slug: string;
   connectors: ConnectorRow[];
   channels: ChannelAvailability;
@@ -467,7 +465,7 @@ export default function PreferencesForm({
   async function save() {
     setStatus('saving');
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/preferences`, {
+      const response = await fetch(`/api/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notifications: prefs }),

@@ -48,7 +48,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   // Throttle, then the credential's shape, then a bounded body — all before
   // any config or database read (lib/webhook-intake.ts).
@@ -67,7 +66,6 @@ export async function POST(
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'github/webhook',
-      tenantId,
     });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
@@ -84,9 +82,6 @@ export async function POST(
     .select('id')
     .where('id', '=', tenantId)
     .executeTakeFirst();
-  if (!tenant) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
 
   const configResult = await readConnectorConfigCached(tenantId, GITHUB_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
@@ -97,7 +92,6 @@ export async function POST(
   if (!config || !config.enabled || typeof webhookSecret !== 'string' || !webhookSecret) {
     logger.warn('Delivery for a tenant with no GitHub webhook secret configured', {
       component: 'github/webhook',
-      tenantId,
     });
     return NextResponse.json(
       { error: 'GitHub connector not configured for webhooks' },
@@ -106,7 +100,7 @@ export async function POST(
   }
 
   if (!verifyGitHubSignature(rawBody, signature, webhookSecret)) {
-    logger.warn('Rejected delivery with bad signature', { component: 'github/webhook', tenantId });
+    logger.warn('Rejected delivery with bad signature', { component: 'github/webhook' });
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
@@ -135,7 +129,6 @@ export async function POST(
   // subscriber's own grant — webhook contents are routing hints, not
   // trusted data.
   const enqueued = await eventsQueue.producer.enqueue({
-    tenantId,
     source: 'github',
     type: 'workflow_run',
     payload: body,
@@ -144,7 +137,6 @@ export async function POST(
   if (!enqueued.ok) {
     logger.error('Event NOT accepted: {error}', {
       component: 'github/webhook',
-      tenantId,
       error: enqueued.err.message ?? 'unknown',
     });
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });

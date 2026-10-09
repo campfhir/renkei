@@ -27,7 +27,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -63,7 +62,6 @@ export async function POST(
           await dbResult.val
             .selectFrom('agents')
             .select('id')
-            .where('tenant_id', '=', tenantId)
             .where('owner_subject', '=', session.subject)
             .where('id', '=', payload.agentId)
             .executeTakeFirst()
@@ -71,7 +69,6 @@ export async function POST(
       : null;
 
   const draftId = await createDraft(dbResult.val, {
-    tenantId,
     ownerSubject: session.subject,
     agentId,
     request: {
@@ -89,7 +86,6 @@ export async function POST(
   // draft it names. The reverse order would produce a job that looks like a
   // bug and is actually a race.
   const enqueued = await agentJobsQueue().producer.enqueue({
-    tenantId,
     source: 'agents',
     type: 'draft',
     payload: { draftId },
@@ -100,7 +96,6 @@ export async function POST(
   if (!enqueued.ok) {
     logger.error('could not enqueue draft job {draftId}: {error}', {
       component: 'api/agents-draft',
-      tenantId,
       draftId,
       error: enqueued.err.message ?? 'unknown',
     });
@@ -125,7 +120,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 

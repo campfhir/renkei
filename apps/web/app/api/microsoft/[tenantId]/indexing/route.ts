@@ -29,7 +29,6 @@ async function grantOf(tenantId: string, subject: string) {
   const row = await dbResult.val
     .selectFrom('provider_grants')
     .select(['provider_account_id', 'metadata'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', MICROSOFT)
     .where('subject', '=', subject)
     .limit(1)
@@ -45,7 +44,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -58,7 +56,6 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -82,7 +79,6 @@ export async function PUT(
       metadata: sql`metadata || jsonb_build_object('indexing', ${JSON.stringify(indexing)}::jsonb)`,
       updated_at: sql`NOW()`,
     })
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', MICROSOFT)
     .where('provider_account_id', '=', grant.provider_account_id)
     .execute();
@@ -91,7 +87,6 @@ export async function PUT(
   // to the new preference and runs the initial backfill for anything just
   // opted in. Best effort — the 15-minute sweep is the fallback.
   const enqueued = await webhookEventsQueue().producer.enqueue({
-    tenantId,
     source: MICROSOFT,
     type: 'grant.connected',
     payload: { accountId: grant.provider_account_id, subject: session.subject },
@@ -100,7 +95,6 @@ export async function PUT(
   if (!enqueued.ok) {
     logger.warn('indexing prefs saved but bootstrap not enqueued; sweep will apply', {
       component: 'microsoft/indexing',
-      tenantId,
       subject: session.subject,
     });
   }

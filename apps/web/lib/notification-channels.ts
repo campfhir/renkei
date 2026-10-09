@@ -38,7 +38,6 @@ export async function getChannelAvailability(
   const rows = await dbResult.val
     .selectFrom('provider_grants')
     .select(['provider', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('provider', 'in', [MICROSOFT, WEBEX_USER])
     .execute()

@@ -36,7 +36,7 @@ export default function ForceHaltButton({
     setBusy(true);
     setError(null);
     const result = await sendJsonFull<{ ok: true }>(
-      `/api/admin/${slug}/agents/${agentId}/runs/${runId}/force-halt`,
+      `/api/admin/agents/${agentId}/runs/${runId}/force-halt`,
       'POST'
     );
     setBusy(false);

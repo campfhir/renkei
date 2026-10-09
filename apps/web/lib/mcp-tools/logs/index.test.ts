@@ -55,7 +55,6 @@ function registerAll(context: Partial<MCPToolContext>): Map<string, Handler> {
   };
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   registerLogTools(server as unknown as McpServer, {
-    tenantId: 'tenant-1',
     accountId: 'account-1',
     siteUrl: '',
     apiBaseUrl: '',
@@ -184,7 +183,6 @@ test('renders rows but never the secure()-marked body/claim attributes', async (
         meta: {
           component: 'jira/fetch',
           status: 500,
-          tenantId: 'tenant-1',
           accountId: 'account-1',
           subject: 'auth0|alice',
           requestBody: 'super-secret-payload',

@@ -54,7 +54,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`jira-admin-changes-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`jira-admin-changes-e2e-session:${projectName}`),
     slug: `e2e-jira-changes-${projectName}`,
     subject: `e2e-jira-changes-${projectName}@example.com`,
@@ -80,13 +79,13 @@ const FULL_SCOPES = ['read:jira-user', 'read:jira-work', 'manage:jira-configurat
 async function seedTenant(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
     const tenant = [fixture.tenantId];
-    await client.query('DELETE FROM jira_admin_change_requests WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM audit_events WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', tenant);
+    await client.query('DELETE FROM jira_admin_change_requests', tenant);
+    await client.query('DELETE FROM audit_events', tenant);
+    await client.query('DELETE FROM provider_grants', tenant);
+    await client.query('DELETE FROM connector_configs', tenant);
+    await client.query('DELETE FROM user_preferences', tenant);
+    await client.query('DELETE FROM sessions', tenant);
+    await client.query('DELETE FROM identities', tenant);
     await client.query('DELETE FROM tenants WHERE id = $1', tenant);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
       fixture.tenantId,
@@ -222,7 +221,7 @@ async function liveOptions(fixture: Fixture): Promise<string[]> {
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -266,7 +265,7 @@ test('a proposal waits for review, and applying it changes Jira exactly as shown
   await signIn(page, fixture);
 
   // --- Nothing proposed yet. ---
-  await page.goto(`/${fixture.slug}/jira-admin/changes`);
+  await page.goto(`/jira-admin/changes`);
   await expect(page.getByRole('heading', { name: 'Jira admin changes', level: 1 })).toBeVisible();
   await expect(main(page).getByText('Nothing to review.')).toBeVisible();
   await shot(page, testInfo, 'jira-admin-changes-01-empty');
@@ -287,14 +286,14 @@ test('a proposal waits for review, and applying it changes Jira exactly as shown
   });
 
   // The Connectors page says one is waiting, and leads to it.
-  await page.goto(`/${fixture.slug}/connectors`);
+  await page.goto(`/connectors`);
   const card = page.locator('[data-coach="card-jira-admin"]');
   const waiting = card.getByTestId('jira-admin-changes-link');
   await expect(waiting).toHaveText('1 proposed change waiting for your review');
   // Client-side navigations: on a cold `next dev` a route compiles on its
   // first visit (the review page took ~5s), past the default 5s wait.
   await waiting.click();
-  await expect(page).toHaveURL(new RegExp(`/${fixture.slug}/jira-admin/changes$`), {
+  await expect(page).toHaveURL(new RegExp(`/jira-admin/changes$`), {
     timeout: 30_000,
   });
   await page.getByRole('link', { name: new RegExp('Source \\(Ops context\\)') }).click();
@@ -337,7 +336,7 @@ test('a proposal waits for review, and applying it changes Jira exactly as shown
       withDb(async (client) => {
         const rows = await client.query<{ actor_subject: string; details: { status: string } }>(
           `SELECT actor_subject, details FROM audit_events
-            WHERE tenant_id = $1 AND action = 'jira_admin.change_applied'`,
+            WHERE action = 'jira_admin.change_applied'`,
           [fixture.tenantId]
         );
         return rows.rows.map((row) => `${row.actor_subject}:${row.details.status}`);
@@ -348,12 +347,12 @@ test('a proposal waits for review, and applying it changes Jira exactly as shown
 
   // Applying twice is refused — the route, not only the missing button.
   const again = await page.request.post(
-    `/api/tenant/${fixture.tenantId}/jira-admin/changes/${id}/apply`
+    `/api/jira-admin/changes/${id}/apply`
   );
   expect(again.status()).toBe(409);
 
   // The list now files it under Recent.
-  await page.goto(`/${fixture.slug}/jira-admin/changes`);
+  await page.goto(`/jira-admin/changes`);
   await expect(main(page).getByText('Nothing to review.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recent' })).toBeVisible();
   await expect(main(page).getByTestId('change-state')).toHaveText('Applied');
@@ -361,7 +360,7 @@ test('a proposal waits for review, and applying it changes Jira exactly as shown
   // Mobile: a resized Chromium viewport, not a device descriptor.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await noHorizontalOverflow(page);
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${id}`);
+  await page.goto(`/jira-admin/changes/${id}`);
   await expect(main(page).getByTestId('change-title')).toBeVisible();
   await noHorizontalOverflow(page);
   await shot(page, testInfo, 'jira-admin-changes-04-mobile');
@@ -381,7 +380,7 @@ test('a stale or refused proposal changes nothing, and says why', async ({ page 
       { op: 'rename', renames: [{ optionId: '10002', from: 'Partner', to: 'Reseller' }] },
     ],
   });
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${stale}`);
+  await page.goto(`/jira-admin/changes/${stale}`);
   await page.getByRole('button', { name: 'Apply these 3 changes to Jira' }).click();
   await expect(main(page).getByTestId('change-state')).toHaveText('Partly applied', {
     timeout: 30_000,
@@ -401,7 +400,7 @@ test('a stale or refused proposal changes nothing, and says why', async ({ page 
     cloudId: 'some-other-site',
     operations: [{ op: 'add', values: ['Vendor'] }],
   });
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${elsewhere}`);
+  await page.goto(`/jira-admin/changes/${elsewhere}`);
   await page.getByRole('button', { name: 'Apply this change to Jira' }).click();
   // Filtered: Next's route announcer is a role="alert" too.
   await expect(page.getByRole('alert').filter({ hasText: /different Jira site/ })).toBeVisible();
@@ -414,7 +413,7 @@ test('a stale or refused proposal changes nothing, and says why', async ({ page 
     global: true,
     operations: [{ op: 'add', values: ['Vendor'] }],
   });
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${global}`);
+  await page.goto(`/jira-admin/changes/${global}`);
   await expect(main(page).getByTestId('change-reach')).toContainText(
     'it reaches every space that has no context of its own'
   );
@@ -424,7 +423,7 @@ test('a stale or refused proposal changes nothing, and says why', async ({ page 
   await withDb((client) =>
     client.query(
       `UPDATE provider_grants SET requested_scopes = $2
-        WHERE tenant_id = $1 AND provider = 'atlassian-admin'`,
+        WHERE provider = 'atlassian-admin'`,
       [fixture.tenantId, ['read:jira-user', 'read:jira-work', 'offline_access']]
     )
   );
@@ -432,7 +431,7 @@ test('a stale or refused proposal changes nothing, and says why', async ({ page 
   await expect(main(page).getByText(/does not include manage:jira-configuration/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Apply this change to Jira' })).toBeDisabled();
   const refused = await page.request.post(
-    `/api/tenant/${fixture.tenantId}/jira-admin/changes/${global}/apply`
+    `/api/jira-admin/changes/${global}/apply`
   );
   expect(refused.status()).toBe(403);
   expect(await statusOf(global)).toBe('pending');
@@ -450,11 +449,11 @@ test('a stale or refused proposal changes nothing, and says why', async ({ page 
     expired: true,
     operations: [{ op: 'add', values: ['Vendor'] }],
   });
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${expired}`);
+  await page.goto(`/jira-admin/changes/${expired}`);
   await expect(main(page).getByTestId('change-state')).toHaveText('Expired');
   await expect(page.getByRole('button', { name: /Apply/ })).toHaveCount(0);
   const late = await page.request.post(
-    `/api/tenant/${fixture.tenantId}/jira-admin/changes/${expired}/apply`
+    `/api/jira-admin/changes/${expired}/apply`
   );
   expect(late.status()).toBe(409);
 
@@ -466,11 +465,11 @@ test('a stale or refused proposal changes nothing, and says why', async ({ page 
   });
   // The page streams behind the tenant layout's loading state, so its
   // not-found arrives as content rather than a 404 status — assert on that.
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${theirs}`);
+  await page.goto(`/jira-admin/changes/${theirs}`);
   await expect(page.getByRole('heading', { name: 'This page could not be found.' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Review a Jira admin change' })).toHaveCount(0);
   const notYours = await page.request.post(
-    `/api/tenant/${fixture.tenantId}/jira-admin/changes/${theirs}/apply`
+    `/api/jira-admin/changes/${theirs}/apply`
   );
   expect(notYours.status()).toBe(404);
   expect(await statusOf(theirs)).toBe('pending');
@@ -486,7 +485,7 @@ test('an agent’s proposal can page its owner: Jira Administration has its own 
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/preferences`);
+  await page.goto(`/preferences`);
   const notifications = page.getByRole('region', { name: 'Notifications' });
   const summary = notifications.locator('summary').filter({ hasText: 'Jira Administration' });
   await expect(summary).toHaveCount(1);

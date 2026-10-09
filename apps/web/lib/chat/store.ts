@@ -15,7 +15,6 @@ import { createKey, deleteKey, wrapKeyUnderProject } from './chat-keys';
 
 export interface ChatRow {
   id: string;
-  tenantId: string;
   ownerSubject: string;
   projectId: string | null;
   title: string | null;
@@ -32,7 +31,6 @@ export interface ChatRow {
 
 const CHAT_COLUMNS = [
   'id',
-  'tenant_id',
   'owner_subject',
   'project_id',
   'title',
@@ -51,7 +49,6 @@ export const CHAT_LIST_LIMIT = 200;
 
 type RawChat = {
   id: string;
-  tenant_id: string;
   owner_subject: string;
   project_id: string | null;
   title: string | null;
@@ -68,7 +65,6 @@ type RawChat = {
 function rowOf(raw: RawChat): ChatRow {
   return {
     id: raw.id,
-    tenantId: raw.tenant_id,
     ownerSubject: raw.owner_subject,
     projectId: raw.project_id,
     title: raw.title,
@@ -92,7 +88,6 @@ export async function getChatRow(
   const raw = await db
     .selectFrom('chats')
     .select(CHAT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', chatId)
     .executeTakeFirst();
   return raw ? rowOf(raw) : null;
@@ -124,7 +119,6 @@ export async function listOwnedChats(
   let query = db
     .selectFrom('chats')
     .select(CHAT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject);
   if (!options.includeArchived) query = query.where('archived_at', 'is', null);
   if (options.since) query = query.where('updated_at', '>=', options.since);
@@ -146,7 +140,6 @@ export async function hasOwnedChatBefore(
   const row = await db
     .selectFrom('chats')
     .select('id')
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('updated_at', '<', before)
     .where('last_message_at', 'is not', null)
@@ -167,7 +160,6 @@ export async function listProjectChats(
   let query = db
     .selectFrom('chats')
     .select(CHAT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('project_id', 'in', projectIds)
     .where('archived_at', 'is', null);
   if (excludeOwner) query = query.where('owner_subject', '!=', excludeOwner);
@@ -186,7 +178,6 @@ export async function listChatsById(
   const rows = await db
     .selectFrom('chats')
     .select(CHAT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('id', 'in', ids)
     .orderBy('updated_at', 'desc')
     .execute();
@@ -196,7 +187,6 @@ export async function listChatsById(
 export async function createChat(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     ownerSubject: string;
     projectId: string | null;
     llmModelId: string | null;
@@ -209,7 +199,6 @@ export async function createChat(
   const inserted = await db
     .insertInto('chats')
     .values({
-      tenant_id: input.tenantId,
       owner_subject: input.ownerSubject,
       project_id: input.projectId,
       llm_model_id: input.llmModelId,
@@ -222,7 +211,7 @@ export async function createChat(
   // The chat's own key, wrapped for its owner (chat-keys.ts): every row
   // the chat will hold is sealed under it. In a project, also under the
   // project's key, so every member of the project opens it.
-  const chat = { id: inserted.id, tenantId: input.tenantId, ownerSubject: input.ownerSubject };
+  const chat = { id: inserted.id, ownerSubject: input.ownerSubject };
   await createKey(db, 'chat', chat);
   if (input.projectId) await wrapKeyUnderProject(db, chat, input.projectId);
   return inserted.id;
@@ -260,7 +249,6 @@ export async function updateChat(
         : {}),
       updated_at: sql<Date>`NOW()`,
     })
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', chatId)
     .executeTakeFirst();
@@ -279,7 +267,6 @@ export async function moveChatToProject(
   const result = await db
     .updateTable('chats')
     .set({ project_id: projectId, updated_at: sql<Date>`NOW()` })
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', chatId)
     .executeTakeFirst();
@@ -302,7 +289,6 @@ export async function deleteChat(
   if (!isUuid(chatId)) return false;
   const result = await db
     .deleteFrom('chats')
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', chatId)
     .executeTakeFirst();
@@ -310,7 +296,6 @@ export async function deleteChat(
   if (deleted) {
     await db
       .deleteFrom('resource_access_grants')
-      .where('tenant_id', '=', tenantId)
       .where('resource_kind', '=', 'chat')
       .where('resource_id', '=', chatId)
       .execute();

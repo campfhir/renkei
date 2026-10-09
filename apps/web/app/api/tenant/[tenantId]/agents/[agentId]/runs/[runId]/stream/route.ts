@@ -38,7 +38,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string; runId: string }> }
 ): Promise<Response> {
-  const { tenantId, agentId, runId } = await params;
+  const { agentId, runId } = await params;
   if (!isUuid(agentId) || !isUuid(runId)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
@@ -55,7 +55,6 @@ export async function GET(
 
   const initial = await getOwnerRunPageData(
     db,
-    tenantId,
     access.ownerSubject,
     access.viewerIsOwner,
     agentId,
@@ -105,7 +104,6 @@ export async function GET(
         if (closed) return;
         void getOwnerRunPageData(
           db,
-          tenantId,
           access.ownerSubject,
           access.viewerIsOwner,
           agentId,

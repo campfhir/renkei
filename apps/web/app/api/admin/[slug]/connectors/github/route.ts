@@ -130,7 +130,6 @@ export async function PUT(
   if (typeof appSlug === 'string' && appSlug) settings.appSlug = appSlug;
 
   const writeResult = await setConnectorConfig(
-    tenantId,
     GITHUB_CONNECTOR,
     {
       enabled,

@@ -33,7 +33,7 @@ export default function SuggestRulesPanel({ slug }: { slug: string }) {
     setSuggestions(null);
     setAdded(new Set());
     const result = await sendJsonFull<{ suggestions: Suggestion[] }>(
-      `/api/admin/${slug}/email-sanitizer/suggest-rules`,
+      `/api/admin/email-sanitizer/suggest-rules`,
       'POST'
     );
     setBusy(false);
@@ -47,7 +47,7 @@ export default function SuggestRulesPanel({ slug }: { slug: string }) {
   async function add(index: number, suggestion: Suggestion) {
     setAddBusy(index);
     setError(null);
-    const result = await sendJsonFull(`/api/admin/${slug}/email-sanitizer/rules`, 'POST', {
+    const result = await sendJsonFull(`/api/admin/email-sanitizer/rules`, 'POST', {
       category: suggestion.category,
       matchType: suggestion.matchType,
       matchValue: suggestion.matchValue,

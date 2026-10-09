@@ -76,7 +76,6 @@ async function ownerSubjectOf(
   const row = await db
     .selectFrom('agents')
     .select('owner_subject')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', agentId)
     .executeTakeFirst();
   return row?.owner_subject ?? null;
@@ -96,7 +95,6 @@ async function openContents(
   const sealedIndexes = stored.flatMap((value, index) => (isUserSealed(value) ? [index] : []));
   if (sealedIndexes.length === 0) return { ok: true, contents: stored };
   const opened = await delegateClient().openForSubject(
-    tenantId,
     ownerSubject,
     sealedIndexes.map((index) => stored[index])
   );
@@ -120,7 +118,6 @@ async function sealContent(
   content: string
 ): Promise<{ ok: true; sealed: string } | { ok: false; reason: KeyOpError }> {
   const sealed = await delegateClient().sealForSubject(
-    tenantId,
     ownerSubject,
     [content],
     'automation'
@@ -154,7 +151,6 @@ export async function readAgentMemory(
   const rows = await db
     .selectFrom('agent_memories')
     .select(['id', 'kind', 'content', 'created_at', 'updated_at'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .orderBy('created_at', 'desc')
     .orderBy('id', 'desc')
@@ -169,7 +165,6 @@ export async function readAgentMemory(
       (await db
         .selectFrom('agent_memories')
         .select(['id', 'kind', 'content', 'created_at', 'updated_at'])
-        .where('tenant_id', '=', tenantId)
         .where('agent_id', '=', agentId)
         .where('kind', '=', 'summary')
         .executeTakeFirst()) ?? null;
@@ -231,7 +226,6 @@ export async function appendAgentMemory(
     .insertInto('agent_memories')
     .values({
       id: randomUUID(),
-      tenant_id: input.tenantId,
       agent_id: input.agentId,
       kind: 'entry',
       content: sealed.sealed,
@@ -257,7 +251,6 @@ export async function writeAgentMemorySummary(
     .insertInto('agent_memories')
     .values({
       id: randomUUID(),
-      tenant_id: tenantId,
       agent_id: agentId,
       kind: 'summary',
       content: sealed.sealed,
@@ -343,7 +336,6 @@ export async function renderAgentKnowledgeNotes(
   const rows = await db
     .selectFrom('knowledge_chunks')
     .select(['ref_id', 'metadata', 'content', 'source_at'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', 'note')
     .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
     .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
@@ -427,7 +419,6 @@ export async function countAgentMemory(
   const rows = await db
     .selectFrom('agent_memories')
     .select(['kind', ({ fn }) => fn.countAll<string>().as('count')])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .groupBy('kind')
     .execute();
@@ -480,7 +471,6 @@ export async function forgetAgentMemory(
     const before = await countAgentMemory(db, tenantId, agentId);
     await db
       .deleteFrom('agent_memories')
-      .where('tenant_id', '=', tenantId)
       .where('agent_id', '=', agentId)
       .execute();
     return {
@@ -493,7 +483,6 @@ export async function forgetAgentMemory(
   if (target.kind === 'summary') {
     const deleted = await db
       .deleteFrom('agent_memories')
-      .where('tenant_id', '=', tenantId)
       .where('agent_id', '=', agentId)
       .where('kind', '=', 'summary')
       .executeTakeFirst();
@@ -522,7 +511,6 @@ export async function forgetAgentMemory(
   const found = await db
     .selectFrom('agent_memories')
     .select(['id'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('kind', '=', 'entry')
     .where('id', 'in', wellFormed)
@@ -531,7 +519,6 @@ export async function forgetAgentMemory(
   if (foundIds.length > 0) {
     await db
       .deleteFrom('agent_memories')
-      .where('tenant_id', '=', tenantId)
       .where('agent_id', '=', agentId)
       .where('kind', '=', 'entry')
       .where('id', 'in', foundIds)

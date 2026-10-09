@@ -9,6 +9,6 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; libraryId: string; grantId: string }> }
 ): Promise<Response> {
-  const { tenantId, libraryId, grantId } = await params;
+  const { libraryId, grantId } = await params;
   return revokeGrantRoute(request, tenantId, 'prompt_library', libraryId, grantId);
 }

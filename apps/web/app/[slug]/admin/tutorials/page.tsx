@@ -2,7 +2,6 @@ import React from 'react';
 import { notFound, redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { COACH_MARK_TOURS } from '@/lib/coach-marks/tours';
 import { stateLabel } from '@/lib/coach-marks/select';
 import { listCoachMarkReport } from '@/lib/coach-marks/store';
@@ -32,10 +31,8 @@ export default async function AdminTutorialsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();

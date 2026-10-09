@@ -121,7 +121,7 @@ function refOf(body: Record<string, unknown>): ResourceRef | null {
   const kind = kindOf(body.kind);
   const resourceId = str(body.resourceId);
   if (!tenantId || !kind || !resourceId) return null;
-  return { tenantId, kind, resourceId };
+  return { kind, resourceId };
 }
 
 function strings(value: unknown): string[] | null {
@@ -171,7 +171,6 @@ function delegationInputOf(body: Record<string, unknown>): DelegationInput | nul
   const automation = sealedDelegationsOf(body.automation ?? []);
   if (!tenantId || !subject || !sessionId || !session || !automation) return null;
   return {
-    tenantId,
     subject,
     sessionId,
     session,
@@ -213,7 +212,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       .selectFrom('agent_runs')
       .select('id')
       .where('id', '=', runId)
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
       .executeTakeFirst();
     return row !== undefined;
@@ -241,7 +239,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
         await access.record({
           caller: context.caller,
           op,
-          tenantId,
           subject,
           target: targetOf(body),
           outcome: outcomeOf(status),
@@ -292,7 +289,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       if (!tenantId || !subject) return sendError(response, 'bad_request');
       const status = await delegationStatus(
         db,
-        tenantId,
         subject,
         str(body.sessionId) || undefined
       );
@@ -427,7 +423,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const parentId = str(body.parentResourceId);
       if (!ref || !bySubject || !parentKind || !parentId) return sendError(response, 'bad_request');
       const wrapped = await wrapResourceKeyUnder(db, ref, bySubject, {
-        tenantId: ref.tenantId,
         kind: parentKind,
         resourceId: parentId,
       });
@@ -523,7 +518,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
 
   /** The proxy's grant header, for the access record: tenant, subject, provider — never the body. */
   function grantHeaderOf(request: IncomingMessage): {
-    tenantId: string;
     subject: string;
     provider: string;
   } {
@@ -532,7 +526,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const parsed: unknown = JSON.parse(Array.isArray(raw) ? raw[0] : (raw ?? ''));
       if (!isRecord(parsed)) return { tenantId: '', subject: '', provider: '' };
       return {
-        tenantId: str(parsed.tenantId),
         subject: str(parsed.subject) || str(parsed.accountId),
         provider: str(parsed.provider),
       };
@@ -548,7 +541,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       void access.record({
         caller,
         op,
-        tenantId: '',
         subject: '',
         outcome: 'refused',
         status: 403,
@@ -571,7 +563,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
           await access.record({
             caller: context.caller,
             op: `api ${method}`,
-            tenantId: grant.tenantId,
             subject: grant.subject,
             target: grant.provider || undefined,
             outcome: outcomeOf(status),
@@ -597,7 +588,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       await access.record({
         caller: context.caller,
         op,
-        tenantId: '',
         subject: '',
         outcome: outcomeOf(status),
         status,

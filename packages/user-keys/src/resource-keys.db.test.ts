@@ -65,9 +65,9 @@ maybe('held keys and the resource key store', () => {
   const chatId = randomUUID();
   const projectId = randomUUID();
   const projectChatId = randomUUID();
-  const ref = { tenantId, kind: 'chat' as const, resourceId: chatId };
-  const projectRef = { tenantId, kind: 'chat_project' as const, resourceId: projectId };
-  const projectChatRef = { tenantId, kind: 'chat' as const, resourceId: projectChatId };
+  const ref = { kind: 'chat' as const, resourceId: chatId };
+  const projectRef = { kind: 'chat_project' as const, resourceId: projectId };
+  const projectChatRef = { kind: 'chat' as const, resourceId: projectChatId };
   let ownerKeys: BrowserKeys;
   let ownerSession: string;
   let friendKeys: BrowserKeys;
@@ -84,23 +84,22 @@ maybe('held keys and the resource key store', () => {
     await db
       .insertInto('chats')
       .values([
-        { id: chatId, tenant_id: tenantId, owner_subject: owner },
-        { id: projectChatId, tenant_id: tenantId, owner_subject: owner },
+        { id: chatId, owner_subject: owner },
+        { id: projectChatId, owner_subject: owner },
       ])
       .execute();
     await db
       .insertInto('chat_projects')
-      .values({ id: projectId, tenant_id: tenantId, owner_subject: owner, name: 'P' })
+      .values({ id: projectId, owner_subject: owner, name: 'P' })
       .execute();
     instance = await registerTestInstance(db);
     const enrolledOwner = await enrollTestPerson(db, {
-      tenantId,
       subject: owner,
       instances: targets(),
     });
     ownerKeys = enrolledOwner.keys;
     ownerSession = enrolledOwner.sessionId;
-    friendKeys = (await enrollTestPerson(db, { tenantId, subject: friend, instances: targets() }))
+    friendKeys = (await enrollTestPerson(db, { subject: friend, instances: targets() }))
       .keys;
   });
 
@@ -115,7 +114,6 @@ maybe('held keys and the resource key store', () => {
     const row = await db
       .selectFrom('user_encryption_keys')
       .selectAll()
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', owner)
       .executeTakeFirstOrThrow();
     expect(row.mode).toBe('held');
@@ -142,7 +140,6 @@ maybe('held keys and the resource key store', () => {
     const sessionId = await ensureSession(db, tenantId, stranger);
     const sealed = sealDelegations(keys, { instances: targets() });
     const mismatched = await enroll(db, {
-      tenantId,
       subject: stranger,
       sessionId,
       publicKey: keys.pair.publicKey.toString('base64'),
@@ -154,7 +151,6 @@ maybe('held keys and the resource key store', () => {
     });
     expect(!mismatched.ok && mismatched.err.type).toBe('KEY_MISMATCH');
     const elsewhere = await enroll(db, {
-      tenantId,
       subject: stranger,
       sessionId,
       publicKey: keys.pair.publicKey.toString('base64'),
@@ -222,7 +218,7 @@ maybe('held keys and the resource key store', () => {
     const otherChat = randomUUID();
     await db
       .insertInto('chats')
-      .values({ id: otherChat, tenant_id: tenantId, owner_subject: friend })
+      .values({ id: otherChat, owner_subject: friend })
       .execute();
     const friends = await createResourceKey(db, { ...ref, resourceId: otherChat }, friend);
     expect(friends.ok).toBe(true);
@@ -251,7 +247,7 @@ maybe('held keys and the resource key store', () => {
     const agentChat = randomUUID();
     await db
       .insertInto('chats')
-      .values({ id: agentChat, tenant_id: tenantId, owner_subject: owner })
+      .values({ id: agentChat, owner_subject: owner })
       .execute();
     const minted = await createResourceKey(db, { ...ref, resourceId: agentChat }, owner);
     expect(minted.ok).toBe(true);
@@ -260,7 +256,6 @@ maybe('held keys and the resource key store', () => {
     ).toEqual(['automation']);
     // Back at the keyboard: a new session opens the agent's chat through the automation key too.
     ownerSession = await delegateTestSession(db, {
-      tenantId,
       subject: owner,
       keys: ownerKeys,
       instances: targets(),
@@ -275,7 +270,6 @@ maybe('held keys and the resource key store', () => {
     const viaAutomation = await openResourceKey(db, ref, owner);
     expect(viaAutomation.ok).toBe(true);
     ownerSession = await delegateTestSession(db, {
-      tenantId,
       subject: owner,
       keys: ownerKeys,
       instances: targets(),
@@ -316,7 +310,6 @@ maybe('held keys and the resource key store', () => {
     const sealAway = await sealForSubject(db, tenantId, owner, 'x', 'session');
     expect(!sealAway.ok && sealAway.err.type).toBe('NEEDS_SESSION');
     ownerSession = await delegateTestSession(db, {
-      tenantId,
       subject: owner,
       keys: ownerKeys,
       instances: targets(),
@@ -340,7 +333,6 @@ maybe('held keys and the resource key store', () => {
     const away = await getKeyRing(db, tenantId, friend);
     expect(!away.ok && away.err.type).toBe('NEEDS_DELEGATION');
     await delegateTestSession(db, {
-      tenantId,
       subject: friend,
       keys: friendKeys,
       instances: targets(),
@@ -354,12 +346,11 @@ maybe('held keys and the resource key store', () => {
     if (!before.ok || !memory.ok) return;
     await db
       .insertInto('chat_user_memories')
-      .values({ tenant_id: tenantId, owner_subject: owner, kind: 'entry', content: memory.val })
+      .values({ owner_subject: owner, kind: 'entry', content: memory.val })
       .execute();
     const next: BrowserKeys = { ...ownerKeys, userKey: randomBytes(32) };
     const sealed = sealDelegations(next, { instances: targets() });
     const rotated = await rotateUserKey(db, {
-      tenantId,
       subject: owner,
       sessionId: ownerSession,
       wrappedPrivateKey: wrapKey(next.pair.privateKey, next.userKey),
@@ -384,7 +375,6 @@ maybe('held keys and the resource key store', () => {
     const swapped = { ...next, automationKey: randomBytes(32) };
     const sealedSwapped = sealDelegations(swapped, { instances: targets() });
     const refused = await rotateUserKey(db, {
-      tenantId,
       subject: owner,
       sessionId: ownerSession,
       wrappedPrivateKey: wrapKey(swapped.pair.privateKey, swapped.userKey),
@@ -410,9 +400,9 @@ maybe('held keys and the resource key store', () => {
     const legacy = `legacy-${tenantId.slice(0, 8)}`;
     await db
       .insertInto('chats')
-      .values({ id: legacyChat, tenant_id: tenantId, owner_subject: legacy })
+      .values({ id: legacyChat, owner_subject: legacy })
       .execute();
-    const legacyRef = { tenantId, kind: 'chat' as const, resourceId: legacyChat };
+    const legacyRef = { kind: 'chat' as const, resourceId: legacyChat };
     const key = await legacyEnsureResourceKey(db, legacyRef, legacy);
     expect(key.ok).toBe(true);
     if (!key.ok) return;
@@ -422,7 +412,6 @@ maybe('held keys and the resource key store', () => {
     await db
       .insertInto('provider_grants')
       .values({
-        tenant_id: tenantId,
         provider: 'atlassian',
         provider_account_id: 'acct',
         subject: legacy,
@@ -440,7 +429,7 @@ maybe('held keys and the resource key store', () => {
     expect(!beforeEnroll.ok && beforeEnroll.err.type).toBe('NOT_ENROLLED');
     expect((await delegationStatus(db, tenantId, legacy)).legacy).toBe(true);
     expect(await enrollmentCensus(db, tenantId)).toEqual(expect.objectContaining({ managed: 1 }));
-    await enrollTestPerson(db, { tenantId, subject: legacy, instances: targets() });
+    await enrollTestPerson(db, { subject: legacy, instances: targets() });
     const opened = await openResourceKey(db, legacyRef, legacy);
     expect(opened.ok && opened.val.key.equals(key.val.key)).toBe(true);
     const grant = await db
@@ -476,7 +465,7 @@ maybe('held keys and the resource key store', () => {
     const orphan = randomUUID();
     await db
       .insertInto('resource_keys')
-      .values({ tenant_id: tenantId, resource_kind: 'chat', resource_id: orphan })
+      .values({ resource_kind: 'chat', resource_id: orphan })
       .execute();
     expect(await pruneOrphanResourceKeys(db)).toBeGreaterThanOrEqual(1);
   });

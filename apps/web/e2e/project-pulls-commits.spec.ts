@@ -249,7 +249,7 @@ test.describe('project pulls, commits and actions', () => {
     const main = page.getByRole('main');
 
     // ── The project screen: Pulls, Commits and Actions cards ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
 
     const pulls = main.locator('section', {
@@ -283,7 +283,7 @@ test.describe('project pulls, commits and actions', () => {
     await shot(page, testInfo, 'project-pulls-page.png');
 
     // ── The full Commits page, with Load more ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}/commits`);
+    await page.goto(`/code/${ids.projectId}/commits`);
     await expect(page.getByRole('heading', { level: 1, name: 'Commits' })).toBeVisible();
     await expect(page.getByText('Fix the timeout')).toBeVisible();
     const loadMore = page.getByRole('button', { name: 'Load more' });
@@ -295,7 +295,7 @@ test.describe('project pulls, commits and actions', () => {
     if (!mobile) return;
 
     // ── Mobile: the cards still render at phone width ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await page.setViewportSize(MOBILE_VIEWPORT);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     await expect(page.getByText('#42 Fix the timeout')).toBeVisible();
@@ -309,7 +309,7 @@ test.describe('project pulls, commits and actions', () => {
     await seedNoAccessFixture(ids);
     try {
       const main = page.getByRole('main');
-      await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+      await page.goto(`/code/${ids.projectId}`);
       await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
 
       const pulls = main.locator('section', {

@@ -130,14 +130,12 @@ function readTabs(chatId: string): { tabs: string[]; active: string | null } {
 }
 
 export function useCodePane({
-  tenantId,
   projectId,
   chatId,
   enabled,
   refreshKey,
   onNote,
 }: {
-  tenantId: string;
   projectId: string | null;
   chatId: string;
   /** The pane is on screen somewhere; nothing is fetched before it is. */
@@ -147,7 +145,7 @@ export function useCodePane({
   /** Tell the chat what was done to the checkout (a note row). */
   onNote: (note: ChatNote) => void;
 }): CodePaneHandle {
-  const base = `/api/tenant/${tenantId}/code/projects/${projectId ?? ''}`;
+  const base = `/api/code/projects/${projectId ?? ''}`;
   const [tabs, setTabs] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, CodePaneFile>>({});

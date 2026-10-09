@@ -163,13 +163,11 @@ function SwitchBlockedNotice({
  * the chat title bar's overflow menu (see this file's header comment).
  */
 export function BranchPickerModal({
-  tenantId,
   projectId,
   branch,
   onClose,
   onSwitched,
 }: {
-  tenantId: string;
   projectId: string;
   branch: string | null;
   onClose: () => void;
@@ -181,8 +179,8 @@ export function BranchPickerModal({
    */
   onSwitched?: (branch: string) => void;
 }) {
-  const base = `/api/tenant/${tenantId}/code/projects/${projectId}/branch`;
-  const discardBase = `/api/tenant/${tenantId}/code/projects/${projectId}/discard`;
+  const base = `/api/code/projects/${projectId}/branch`;
+  const discardBase = `/api/code/projects/${projectId}/discard`;
   const {
     branches,
     loadError,

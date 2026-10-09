@@ -101,7 +101,6 @@ export function createMicrosoftGrantConnectedHandler(): EventHandler {
     }
     logger.info('microsoft bootstrap complete: {subscriptions} subscriptions, {indexed} objects', {
       component: COMPONENT,
-      tenantId,
       subscriptions: rows.length,
       indexed,
     });
@@ -120,7 +119,6 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
     const row = await dbResult.val
       .selectFrom('webhook_subscriptions')
       .select(['id', 'resource', 'subscription_id', 'client_state', 'expires_at', 'delta_link'])
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', MICROSOFT)
       .where('account_id', '=', accountId)
       .where('subscription_id', '=', subscriptionId)
@@ -129,7 +127,6 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
       // Disconnected between delivery and processing — nothing to sync.
       logger.info('notification for a subscription that no longer exists; dropping', {
         component: COMPONENT,
-        tenantId,
         subscriptionId,
       });
       return 'skipped';
@@ -139,7 +136,6 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
     const synced = await runSubscriptionSync(tenantId, access, row);
     logger.debug('delta round for {resource}: {changed} changed, {removed} removed', {
       component: COMPONENT,
-      tenantId,
       resource: row.resource,
       changed: synced.changed,
       removed: synced.removed,
@@ -166,7 +162,6 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
         await db
           .updateTable('webhook_subscriptions')
           .set({ expires_at: renewed.val.expiresAt, updated_at: sql`NOW()` })
-          .where('tenant_id', '=', tenantId)
           .where('provider', '=', MICROSOFT)
           .where('subscription_id', '=', subscriptionId)
           .execute();
@@ -176,7 +171,6 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
       // recreates from scratch.
       logger.warn('reauthorization renewal failed; clearing for recreate', {
         component: COMPONENT,
-        tenantId,
         subscriptionId,
       });
     }
@@ -187,13 +181,11 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
     await db
       .updateTable('webhook_subscriptions')
       .set({ subscription_id: null, expires_at: null, updated_at: sql`NOW()` })
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', MICROSOFT)
       .where('subscription_id', '=', subscriptionId)
       .execute();
     logger.warn('lifecycle {lifecycleEvent}: subscription cleared for recreate', {
       component: COMPONENT,
-      tenantId,
       lifecycleEvent: lifecycleEvent || '(unknown)',
     });
   };
@@ -229,7 +221,6 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
       // message is still queued there, the shared ordering key puts this
       // delete after it — an inline delete could run first and lose the race.
       await enqueueKnowledgeEvent(
-        tenantId,
         'delete.object',
         { provider: MICROSOFT, refId },
         orderingKey
@@ -242,7 +233,6 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
     if (!embedder) {
       logger.warn('message-override skipped: knowledge layer is off for this org', {
         component: COMPONENT,
-        tenantId,
       });
       return;
     }
@@ -264,7 +254,6 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
     // record instead of improving it.
     const received = str(fetched.val.receivedDateTime);
     await enqueueKnowledgeEvent(
-      tenantId,
       'ingest.email',
       {
         provider: MICROSOFT,

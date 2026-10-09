@@ -38,7 +38,7 @@ interface GitHubConfig {
  * own capability ceiling (github-scopes.ts), never sent to GitHub.
  */
 export function GitHubForm({ slug, origin }: { slug: string; origin: string | null }) {
-  const url = `/api/admin/${slug}/connectors/github`;
+  const url = `/api/admin/connectors/github`;
   const [state, reload] = useConnectorConfig<GitHubConfig>(url);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');

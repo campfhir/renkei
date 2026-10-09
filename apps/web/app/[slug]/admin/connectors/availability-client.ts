@@ -8,7 +8,7 @@ export async function saveDisabledConnectors(
   disabled: ReadonlySet<string>
 ): Promise<string | null> {
   try {
-    const response = await fetch(`/api/admin/${slug}/connector-availability`, {
+    const response = await fetch(`/api/admin/connector-availability`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ disabledConnectors: [...disabled] }),

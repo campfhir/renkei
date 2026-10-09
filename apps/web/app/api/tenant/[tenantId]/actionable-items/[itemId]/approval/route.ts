@@ -29,7 +29,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; itemId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, itemId } = await params;
+  const { itemId } = await params;
 
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
@@ -51,7 +51,6 @@ export async function POST(
   const result = await decideApproval(
     dbResult.val,
     agentJobsQueue().producer,
-    tenantId,
     session.subject,
     { cardId: itemId, decision: body.decision, comment, argsOverride }
   );

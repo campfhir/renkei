@@ -22,7 +22,6 @@ type Handler = (args: Record<string, unknown>) => Promise<unknown>;
 type LooseServer = { registerTool: (name: string, config: unknown, handler?: Handler) => void };
 
 const context = (overrides: Partial<RedactionContext> = {}): RedactionContext => ({
-  tenantId: 'tenant-1',
   detectors: ['ssn', 'card', 'mrn', 'dob'],
   mrnFormats: [],
   policy: DEFAULT_MCP_POLICY,

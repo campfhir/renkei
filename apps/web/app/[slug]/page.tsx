@@ -1,7 +1,6 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import ActionableCards from './cards';
@@ -28,12 +27,10 @@ export default async function HomePage({
   searchParams: Promise<{ archived?: string; page?: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}`));
+    redirect(signInUrl(tenant.id, `/`));
   }
 
   const resolvedSearchParams = await searchParams;
@@ -63,7 +60,6 @@ export default async function HomePage({
           'actionable_items.archived_at as archived_at',
           'agents.name as agent_name',
         ])
-        .where('actionable_items.tenant_id', '=', tenant.id)
         .where((eb) =>
           eb.or([
             eb('actionable_items.owner_subject', 'is', null),

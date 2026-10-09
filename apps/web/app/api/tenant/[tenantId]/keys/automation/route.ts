@@ -14,14 +14,12 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
   const revoked = await delegateClient().revokeAutomation(tenantId, session.subject);
   if (!revoked.ok) return jsonError(503, 'delegate', 'The key service could not be reached.');
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'encryption-key.automation-revoked',
   });

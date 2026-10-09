@@ -30,8 +30,8 @@ import ChipListInput, { type ChipOption } from '@/components/chip-list-input';
 
 /** Where a picker's options come from. Mirrors FilterOptionSource. */
 const OPTION_ROUTES: Record<FilterOptionSource, (tenantId: string) => string> = {
-  'webex-rooms': (tenantId) => `/api/tenant/${tenantId}/webex/rooms`,
-  'microsoft-people': (tenantId) => `/api/tenant/${tenantId}/directory/people`,
+  'webex-rooms': (tenantId) => `/api/webex/rooms`,
+  'microsoft-people': (tenantId) => `/api/directory/people`,
 };
 
 const BROWSE_LABELS: Record<FilterOptionSource, { browse: string; search: string }> = {
@@ -67,12 +67,10 @@ function scalarOf(match: TriggerMatch, field: TriggerFilterField): string {
 }
 
 export default function TriggerFilterPanel({
-  tenantId,
   eventId,
   match,
   onChange,
 }: {
-  tenantId: string;
   eventId: string;
   match: TriggerMatch;
   onChange: (next: TriggerMatch) => void;

@@ -35,7 +35,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export interface BatchJobRow {
   id: string;
-  tenant_id: string;
   subject: string;
   name: string;
   kind: string;
@@ -69,7 +68,6 @@ export interface BatchJobItemRow {
 
 const BATCH_COLUMNS = [
   'id',
-  'tenant_id',
   'subject',
   'name',
   'kind',
@@ -90,7 +88,6 @@ const ITEM_COLUMNS = ['id', 'batch_id', 'status', 'payload', 'result', 'error'] 
 
 function batchOf(row: {
   id: string;
-  tenant_id: string;
   subject: string;
   name: string;
   kind: string;
@@ -125,7 +122,6 @@ function itemOf(row: {
 }
 
 export interface CreateBatchInput {
-  tenantId: string;
   subject: string;
   name: string;
   kind: string;
@@ -139,7 +135,6 @@ export async function createBatch(db: Kysely<DB>, input: CreateBatchInput): Prom
     .insertInto('batch_jobs')
     .values({
       id: randomUUID(),
-      tenant_id: input.tenantId,
       subject: input.subject,
       name: input.name,
       kind: input.kind,
@@ -160,7 +155,6 @@ export async function getBatch(
     .selectFrom('batch_jobs')
     .select(BATCH_COLUMNS)
     .where('id', '=', batchId)
-    .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
   return row ? batchOf(row) : undefined;
 }
@@ -181,7 +175,6 @@ export async function listBatches(
   let query = db
     .selectFrom('batch_jobs')
     .select(BATCH_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .orderBy('created_at', 'desc');
   if (options.status) query = query.where('status', '=', options.status);

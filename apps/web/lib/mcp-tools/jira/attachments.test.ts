@@ -69,7 +69,6 @@ async function attachmentHandlers(maxBytes?: number): Promise<Map<string, ToolHa
   } as unknown as McpServer;
 
   const context: MCPToolContext = {
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     siteUrl: 'https://example.atlassian.net',
     apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',

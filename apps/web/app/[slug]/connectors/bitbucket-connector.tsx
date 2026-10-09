@@ -19,14 +19,12 @@ import {
  * screen still shows the consumer's full set.
  */
 export default function BitbucketConnector({
-  tenantId,
   connected,
   displayName,
   ceiling,
   priorScopes,
   nested = false,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   /** The org's allowed scopes — the most a user can grant. */
@@ -40,7 +38,7 @@ export default function BitbucketConnector({
    */
   nested?: boolean;
 }) {
-  const authorizePath = `/api/atlassian-bitbucket/${tenantId}/authorize`;
+  const authorizePath = `/api/atlassian-bitbucket/authorize`;
 
   return (
     <ConnectorShell nested={nested} anchor="card-bitbucket">
@@ -103,7 +101,7 @@ export default function BitbucketConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/atlassian-bitbucket/${tenantId}/grant`}
+          endpoint={`/api/atlassian-bitbucket/grant`}
           confirmText="Disconnect Bitbucket? The Bitbucket tools stop working until you reconnect."
           buttonLabel="Disconnect Bitbucket"
         />

@@ -18,11 +18,9 @@ export interface LibraryListItem {
 
 export default function LibrariesIndex({
   slug,
-  tenantId,
   libraries,
 }: {
   slug: string;
-  tenantId: string;
   libraries: LibraryListItem[];
 }) {
   const router = useRouter();
@@ -37,7 +35,7 @@ export default function LibrariesIndex({
     setBusy(true);
     setError(null);
     const result = await sendJsonFull<{ libraryId: string }>(
-      `/api/tenant/${tenantId}/chat/prompt-libraries`,
+      `/api/chat/prompt-libraries`,
       'POST',
       { name: name.trim(), description: description.trim() || null }
     );
@@ -46,7 +44,7 @@ export default function LibrariesIndex({
       setError(result.error ?? 'The library could not be created.');
       return;
     }
-    router.push(`/${slug}/chat/prompts/${result.data.libraryId}`);
+    router.push(`/chat/prompts/${result.data.libraryId}`);
     router.refresh();
   };
 
@@ -139,7 +137,7 @@ function Group({
           {libraries.map((library) => (
             <li key={library.id}>
               <Link
-                href={`/${slug}/chat/prompts/${library.id}`}
+                href={`/chat/prompts/${library.id}`}
                 className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-900"
               >
                 <Icon path={ICONS.sparkle} className="h-5 w-5 shrink-0 text-gray-400" />

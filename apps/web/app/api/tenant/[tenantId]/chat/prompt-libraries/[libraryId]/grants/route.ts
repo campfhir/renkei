@@ -10,7 +10,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; libraryId: string }> }
 ): Promise<Response> {
-  const { tenantId, libraryId } = await params;
+  const { libraryId } = await params;
   return listGrantsRoute(request, tenantId, 'prompt_library', libraryId);
 }
 
@@ -18,6 +18,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; libraryId: string }> }
 ): Promise<Response> {
-  const { tenantId, libraryId } = await params;
+  const { libraryId } = await params;
   return addGrantRoute(request, tenantId, 'prompt_library', libraryId);
 }

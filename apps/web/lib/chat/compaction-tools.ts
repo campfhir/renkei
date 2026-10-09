@@ -29,7 +29,6 @@ export function compactionTools(): LocalTool[] {
         let result;
         try {
           result = await compactChat(context.db, {
-            tenantId: context.tenantId,
             chatId: context.chatId,
             llm: context.llm,
             createdBy: 'tool',

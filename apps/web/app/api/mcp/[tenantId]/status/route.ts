@@ -18,7 +18,6 @@ export const GET = async (
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> => {
-  const { tenantId } = await params;
 
   // Before any lookup: a session proves both who is asking and that the tenant
   // exists, since a session row cannot reference a tenant that does not.
@@ -39,7 +38,6 @@ export const GET = async (
     const grant = await db
       .selectFrom('provider_grants')
       .select(['provider_account_id', 'display_name', 'metadata'])
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', 'atlassian')
       .where('subject', '=', session.subject)
       .executeTakeFirst();

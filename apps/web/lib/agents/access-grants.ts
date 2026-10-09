@@ -72,7 +72,6 @@ export async function resolveAgentAccess(
   const grant = await db
     .selectFrom('agent_access_grants')
     .select(['id', 'owner_subject', 'expires_at'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('grantee_subject', '=', viewerSubject)
     .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`NOW()`)]))
@@ -103,7 +102,6 @@ export async function hasActiveGrant(
   const row = await db
     .selectFrom('agent_access_grants')
     .select('id')
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('grantee_subject', '=', viewerSubject)
     .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`NOW()`)]))
@@ -129,7 +127,6 @@ export async function grantAgentAccess(
     .insertInto('agent_access_grants')
     .values({
       id: randomUUID(),
-      tenant_id: tenantId,
       agent_id: agentId,
       owner_subject: ownerSubject,
       grantee_subject: input.granteeSubject,
@@ -156,7 +153,6 @@ export async function listAgentAccessGrants(
     .leftJoin('identities', (join) =>
       join
         .onRef('identities.subject', '=', 'agent_access_grants.grantee_subject')
-        .onRef('identities.tenant_id', '=', 'agent_access_grants.tenant_id')
     )
     .select([
       'agent_access_grants.id as id',
@@ -166,7 +162,6 @@ export async function listAgentAccessGrants(
       'identities.display_name as display_name',
       'identities.email as email',
     ])
-    .where('agent_access_grants.tenant_id', '=', tenantId)
     .where('agent_access_grants.agent_id', '=', agentId)
     .orderBy('agent_access_grants.created_at', 'asc')
     .execute();
@@ -193,7 +188,6 @@ export async function revokeAgentAccessGrant(
   if (!isUuid(grantId) || !isUuid(agentId)) return null;
   const row = await db
     .deleteFrom('agent_access_grants')
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', grantId)
@@ -217,7 +211,6 @@ export async function listAgentsSharedWith(
     .leftJoin('identities', (join) =>
       join
         .onRef('identities.subject', '=', 'agent_access_grants.owner_subject')
-        .onRef('identities.tenant_id', '=', 'agent_access_grants.tenant_id')
     )
     .select([
       'agent_access_grants.agent_id as agent_id',
@@ -226,7 +219,6 @@ export async function listAgentsSharedWith(
       'identities.display_name as owner_name',
       'identities.email as owner_email',
     ])
-    .where('agent_access_grants.tenant_id', '=', tenantId)
     .where('agent_access_grants.grantee_subject', '=', granteeSubject)
     .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`NOW()`)]))
     .orderBy('agent_access_grants.created_at', 'desc')

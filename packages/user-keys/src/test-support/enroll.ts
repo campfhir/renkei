@@ -75,7 +75,6 @@ export function sealDelegations(
 }
 
 export interface EnrollTestInput {
-  tenantId: string;
   subject: string;
   /** A sessions row is created when none is given. */
   sessionId?: string;
@@ -97,7 +96,6 @@ export async function ensureSession(
     .insertInto('sessions')
     .values({
       id: sessionId,
-      tenant_id: tenantId,
       subject,
       expires_at: new Date(Date.now() + 24 * 60 * 60_000),
     })
@@ -115,7 +113,6 @@ export async function enrollTestPerson(
   const sessionId = await ensureSession(db, input.tenantId, input.subject, input.sessionId);
   const sealed = sealDelegations(keys, { instances: input.instances });
   const request: EnrollInput = {
-    tenantId: input.tenantId,
     subject: input.subject,
     sessionId,
     publicKey: keys.pair.publicKey.toString('base64'),
@@ -135,7 +132,6 @@ export async function enrollTestPerson(
 export async function delegateTestSession(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     subject: string;
     keys: BrowserKeys;
     instances: { id: string; publicKey: Buffer }[];
@@ -147,7 +143,6 @@ export async function delegateTestSession(
   const sessionId = await ensureSession(db, input.tenantId, input.subject, input.sessionId);
   const sealed = sealDelegations(input.keys, { instances: input.instances });
   const stored = await storeDelegations(db, {
-    tenantId: input.tenantId,
     subject: input.subject,
     sessionId,
     session: sealed.session,

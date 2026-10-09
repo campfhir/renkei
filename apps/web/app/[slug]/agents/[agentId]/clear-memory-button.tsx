@@ -9,10 +9,8 @@ import { useRefresh } from '@/lib/use-refresh';
  * and a confirm dialog would be heavier than the action deserves.
  */
 export default function ClearMemoryButton({
-  tenantId,
   agentId,
 }: {
-  tenantId: string;
   agentId: string;
 }) {
   const { refresh, pending } = useRefresh();
@@ -22,7 +20,7 @@ export default function ClearMemoryButton({
   const clear = async () => {
     setBusy(true);
     try {
-      await fetch(`/api/tenant/${tenantId}/agents/${agentId}/memory`, { method: 'DELETE' });
+      await fetch(`/api/agents/${agentId}/memory`, { method: 'DELETE' });
       setArmed(false);
       refresh();
     } finally {

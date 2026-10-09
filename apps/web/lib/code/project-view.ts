@@ -61,12 +61,12 @@ export async function loadCodeProjectView(
   const readme =
     project.repo.provider === GITHUB
       ? readGitHubReadme(
-          githubAuthOf({ tenantId, subject: viewerSubject, origin }),
+          githubAuthOf({ subject: viewerSubject, origin }),
           project.repo.fullName,
           project.repo.branch
         )
       : readBitbucketReadme(
-          bitbucketAuthOf({ tenantId, subject: viewerSubject, origin }),
+          bitbucketAuthOf({ subject: viewerSubject, origin }),
           project.repo.fullName,
           project.repo.branch
         );

@@ -21,7 +21,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; documentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, documentId } = await params;
+  const { documentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -30,7 +30,7 @@ export async function GET(
   }
 
   const path = `/documents/${encodeURIComponent(documentId)}/revisions/latest/renditions/default/content`;
-  const content = await obContent({ tenantId, subject: session.subject, path });
+  const content = await obContent({ subject: session.subject, path });
   if (!content.ok) {
     // A grant the delegate would not open (not connected, revoked, not
     // refreshable) is the caller's to fix, so it reads as forbidden; a

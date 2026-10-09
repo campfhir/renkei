@@ -13,7 +13,6 @@ export async function listChatModels(db: Kysely<DB>, tenantId: string): Promise<
   const rows = await db
     .selectFrom('llm_model_configs')
     .select(['id', 'label', 'provider', 'model', 'is_default'])
-    .where('tenant_id', '=', tenantId)
     .where('enabled', '=', true)
     // An image generation model cannot answer chat: never in the picker.
     .where(chatModelsOnly)
@@ -44,7 +43,6 @@ export async function listImageModels(
   const rows = await db
     .selectFrom('llm_model_configs')
     .select(['id', 'label', 'model'])
-    .where('tenant_id', '=', tenantId)
     .where('enabled', '=', true)
     .where(imageModelsOnly)
     .orderBy('label', 'asc')

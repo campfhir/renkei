@@ -19,7 +19,6 @@ import {
  * with scope narrowing, confirm-gated disconnect.
  */
 export default function JiraAdminConnector({
-  tenantId,
   connected,
   displayName,
   ceiling,
@@ -29,7 +28,6 @@ export default function JiraAdminConnector({
   pendingChanges,
   nested = false,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   /** The org's allowed scopes — the most a user can grant. */
@@ -49,7 +47,7 @@ export default function JiraAdminConnector({
    */
   nested?: boolean;
 }) {
-  const authorizePath = `/api/atlassian-admin/${tenantId}/authorize`;
+  const authorizePath = `/api/atlassian-admin/authorize`;
 
   return (
     <ConnectorShell nested={nested} anchor="card-jira-admin">
@@ -130,7 +128,7 @@ export default function JiraAdminConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/atlassian-admin/${tenantId}/grant`}
+          endpoint={`/api/atlassian-admin/grant`}
           confirmText="Disconnect Jira Administration? Its tools stop working until you reconnect. Your Jira connection is not affected."
           buttonLabel="Disconnect Jira Administration"
         />

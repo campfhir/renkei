@@ -79,13 +79,13 @@ test.beforeAll(async () => {
 
 test('setup: the Voice connector in the admin catalog and its form', async ({ page }, testInfo) => {
   await mockVendor(page);
-  await page.goto(`/${E2E_SLUG}/admin/connectors`);
+  await page.goto(`/admin/connectors`);
   await expect(page.getByRole('heading', { name: 'Connector setup' })).toBeVisible();
   await page.getByLabel('Find a connector').fill('voice');
   await expect(page.getByRole('link', { name: 'Open Voice' })).toBeVisible();
   await shot(page, testInfo, 'voice-01-admin-catalog');
 
-  await page.goto(`/${E2E_SLUG}/admin/connectors/voice`);
+  await page.goto(`/admin/connectors/voice`);
   await expect(page.getByRole('heading', { level: 1, name: 'Voice' })).toBeVisible();
   await expect(page.getByLabel('Region')).toHaveValue('eastus');
   await expect(page.getByLabel('API key')).toHaveAttribute('placeholder', /Stored/);
@@ -98,7 +98,7 @@ test('setup: the Voice connector in the admin catalog and its form', async ({ pa
 
 test('setup: the Voice section under Preferences', async ({ page }, testInfo) => {
   await mockVendor(page);
-  await page.goto(`/${E2E_SLUG}/preferences`);
+  await page.goto(`/preferences`);
   const section = page.getByRole('region', { name: 'Voice' });
   await expect(section).toBeVisible();
   await expect(section.getByRole('combobox', { name: 'Voice' })).toContainText('Sonia');
@@ -113,7 +113,7 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
   page,
 }, testInfo) => {
   await mockVendor(page);
-  await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${CHAT_ID}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
 
   // The speaker menu: read-aloud, language, voice, speed, and the way in.
@@ -191,7 +191,7 @@ test('chat: an utterance heard in another language is resent in its words', asyn
   page.on('request', (request) => {
     if (/\/resend$/.test(request.url())) resends.push(request.postDataJSON());
   });
-  await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${CHAT_ID}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
   await page.getByRole('button', { name: 'Voice', exact: true }).click();
   await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();
@@ -219,7 +219,7 @@ test('chat: a voice conversation says what it is doing, and asks before it acts'
   page,
 }, testInfo) => {
   await mockVendor(page, { asks: true });
-  await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${CHAT_ID}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
   await page.getByRole('button', { name: 'Voice', exact: true }).click();
   await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();

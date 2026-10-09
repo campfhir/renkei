@@ -20,7 +20,6 @@ import { getIdentityDisplay } from '@/lib/identity';
 import { logger } from '@/lib/logger';
 
 export function notifyChatShared(input: {
-  tenantId: string;
   /** Who now has access — the notification's reader. */
   granteeSubject: string;
   /** Who shared it. */
@@ -46,13 +45,12 @@ export function notifyChatShared(input: {
           .select('slug')
           .where('id', '=', input.tenantId)
           .executeTakeFirst();
-        const refUrl = tenant ? `/${tenant.slug}/chat/${input.chatId}` : null;
+        const refUrl = tenant ? `/chat/${input.chatId}` : null;
         const id = randomUUID();
         await dbResult.val
           .insertInto('agent_notifications')
           .values({
             id,
-            tenant_id: input.tenantId,
             subject: input.granteeSubject,
             kind: 'chat_shared',
             headline,
@@ -86,18 +84,16 @@ export function notifyChatShared(input: {
       const grantee = await getIdentityDisplay(input.tenantId, input.granteeSubject);
       if (grantee?.email) {
         const access = await resolveGraphAccess({
-          tenantId: input.tenantId,
           subject: input.granteeSubject,
         });
         if (typeof access === 'string') {
           logger.warn('chat-shared mail not sent: {reason}', {
             component: 'chat/share-notification',
-            tenantId: input.tenantId,
             chatId: input.chatId,
             reason: access,
           });
         } else {
-          const context = { tenantId: input.tenantId, subject: input.granteeSubject };
+          const context = { subject: input.granteeSubject };
           const sent = await graphPost(context, access.auth, '/me/sendMail', {
             message: {
               subject: headline,
@@ -109,7 +105,6 @@ export function notifyChatShared(input: {
           if (!sent.ok) {
             logger.warn('chat-shared mail not sent: {reason}', {
               component: 'chat/share-notification',
-              tenantId: input.tenantId,
               chatId: input.chatId,
               reason: sent.error,
             });
@@ -125,7 +120,6 @@ export function notifyChatShared(input: {
         if (!sent.ok) {
           logger.warn('chat-shared WebEx note not sent for chat {chatId}', {
             component: 'chat/share-notification',
-            tenantId: input.tenantId,
             chatId: input.chatId,
           });
         }
@@ -134,7 +128,6 @@ export function notifyChatShared(input: {
   })().catch((error: unknown) => {
     logger.warn('chat-shared notification not recorded', {
       component: 'chat/share-notification',
-      tenantId: input.tenantId,
       chatId: input.chatId,
       error: error instanceof Error ? error.message : String(error),
     });

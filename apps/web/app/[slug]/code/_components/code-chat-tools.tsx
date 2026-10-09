@@ -106,14 +106,12 @@ export interface CodeChatToolsHandle {
  * the hook is inert.
  */
 export function useCodeChatTools({
-  tenantId,
   projectId,
   canEdit,
   running,
   messages,
   onAsk,
 }: {
-  tenantId: string;
   projectId: string | null;
   /** The person may change the environment and ask the chat to act. */
   canEdit: boolean;
@@ -124,7 +122,7 @@ export function useCodeChatTools({
   /** Sends a message to the chat as the person — the pull request ask. */
   onAsk: ((text: string) => Promise<boolean>) | null;
 }): CodeChatToolsHandle {
-  const base = `/api/tenant/${tenantId}/code/projects/${projectId ?? ''}`;
+  const base = `/api/code/projects/${projectId ?? ''}`;
   const [stat, setStat] = useState<{ added: number; deleted: number; files: number } | null>(null);
   // Closed, or open — on the working tree, or on one commit's diff.
   const [changes, setChanges] = useState<{ open: boolean; commit: string | null }>({

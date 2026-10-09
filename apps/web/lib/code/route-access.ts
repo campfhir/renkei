@@ -46,7 +46,6 @@ export async function codeProjectContext(
   }
   const access = await resolveResourceAccess(
     db,
-    tenantId,
     session.subject,
     'chat_project',
     projectId

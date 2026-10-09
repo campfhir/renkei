@@ -95,7 +95,6 @@ async function recoverCheckout(
     const origin = actor.origin ?? getPublicBaseUrl() ?? '';
     const credential = await resolveWorkspaceGitAccess(
       {
-        tenantId: project.tenantId,
         subject: actor.subject,
         origin,
         provider: project.repo.provider,
@@ -190,7 +189,6 @@ export async function codeProjectContext(
     const origin = actor.origin ?? getPublicBaseUrl() ?? '';
     const credential = await resolveWorkspaceGitAccess(
       {
-        tenantId: project.tenantId,
         subject: actor.subject,
         origin,
         provider: project.repo.provider,

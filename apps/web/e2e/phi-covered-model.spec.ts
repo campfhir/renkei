@@ -41,7 +41,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`phi-covered-model-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`phi-covered-model-e2e-session:${projectName}`),
     slug: `e2e-phi-model-${projectName}`,
     subject: `e2e-phi-model-${projectName}@example.com`,
@@ -52,9 +51,9 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM tenant_settings WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+    await client.query('DELETE FROM tenant_settings', [fixture.tenantId]);
+    await client.query('DELETE FROM sessions', [fixture.tenantId]);
+    await client.query('DELETE FROM identities', [fixture.tenantId]);
     await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
       fixture.tenantId,
@@ -93,7 +92,7 @@ async function storedValue(tenantId: string): Promise<unknown> {
   await client.connect();
   try {
     const result = await client.query<{ value: unknown }>(
-      `SELECT value FROM tenant_settings WHERE tenant_id = $1 AND key = 'phi_connectors_require_covered_model'`,
+      `SELECT value FROM tenant_settings WHERE key = 'phi_connectors_require_covered_model'`,
       [tenantId]
     );
     return result.rows[0]?.value;
@@ -105,7 +104,7 @@ async function storedValue(tenantId: string): Promise<unknown> {
 async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -128,7 +127,7 @@ test('admin: the PHI covered-model switch saves and reads back', async ({ page }
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/settings`);
+  await page.goto(`/admin/settings`);
   const toggle = page.getByRole('switch', { name: SWITCH });
   await expect(toggle).toBeVisible();
   // Off by default: an org without PHI connectors has nothing to gate.
@@ -147,7 +146,7 @@ test('admin: the PHI covered-model switch saves and reads back', async ({ page }
   // (the settings page itself may show the old value for up to a minute —
   // @renkei/settings caches per process, and a dev server renders pages
   // and routes in separate ones).
-  const readBack = await page.request.get(`/api/admin/${fixture.slug}/org-settings`);
+  const readBack = await page.request.get(`/api/admin/org-settings`);
   expect(readBack.ok()).toBe(true);
   const body: { settings: { phiConnectorsRequireCoveredModel: boolean } } = await readBack.json();
   expect(body.settings.phiConnectorsRequireCoveredModel).toBe(true);

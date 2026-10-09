@@ -38,14 +38,12 @@ async function calendarDatesOf(
   const row = await db
     .selectFrom('schedule_calendars')
     .select(['dates'])
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', calendarId)
     .executeTakeFirst();
   if (!row) {
     logger.warn('schedule calendar {calendarId} not found; firing without blackouts', {
       component: 'worker/batch-jobs-schedule',
       calendarId,
-      tenantId,
     });
     return [];
   }
@@ -56,7 +54,7 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
   return async function sweep(): Promise<void> {
     const due = await db
       .selectFrom('batch_job_schedules')
-      .select(['id', 'tenant_id', 'subject', 'name', 'kind', 'config', 'schedule_config', 'next_run_at'])
+      .select(['id', 'subject', 'name', 'kind', 'config', 'schedule_config', 'next_run_at'])
       .where('enabled', '=', true)
       .where('next_run_at', 'is not', null)
       .where('next_run_at', '<=', sql<Date>`NOW()`)
@@ -100,7 +98,6 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
 
       try {
         const batch = await createBatch(db, {
-          tenantId: row.tenant_id,
           subject: row.subject,
           name: row.name,
           kind: row.kind,
@@ -117,7 +114,6 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
           component: 'worker/batch-jobs-schedule',
           batchId: batch.id,
           scheduleId: row.id,
-          tenantId: row.tenant_id,
           subject: row.subject,
         });
       } catch (error) {

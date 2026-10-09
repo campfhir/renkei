@@ -101,7 +101,7 @@ export default function RedactionForm({ slug }: { slug: string }) {
   useEffect(() => {
     let live = true;
     void (async () => {
-      const response = await fetch(`/api/admin/${slug}/redaction`);
+      const response = await fetch(`/api/admin/redaction`);
       if (!response.ok || !live) return;
       const next = asConfig(await response.json());
       if (!next) return;
@@ -118,7 +118,7 @@ export default function RedactionForm({ slug }: { slug: string }) {
     setSaving(true);
     setStatus(null);
     try {
-      const response = await fetch(`/api/admin/${slug}/redaction`, {
+      const response = await fetch(`/api/admin/redaction`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(update),

@@ -1,6 +1,5 @@
 import React from 'react';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import AuditList, { type AuditEventRow } from './audit-list';
@@ -22,10 +21,8 @@ export default async function AuditPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
@@ -45,7 +42,6 @@ export default async function AuditPage({
     .leftJoin('identities', (join) =>
       join
         .onRef('identities.subject', '=', 'audit_events.actor_subject')
-        .onRef('identities.tenant_id', '=', 'audit_events.tenant_id')
     )
     .select([
       'audit_events.id as id',
@@ -57,7 +53,6 @@ export default async function AuditPage({
       'identities.display_name as display_name',
       'identities.email as email',
     ])
-    .where('audit_events.tenant_id', '=', tenantRef.id)
     .orderBy('audit_events.created_at', 'desc')
     .limit(200)
     .execute();

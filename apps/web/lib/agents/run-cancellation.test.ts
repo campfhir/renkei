@@ -38,7 +38,6 @@ function stubDb(options: {
 }
 
 const input = {
-  tenantId: 't',
   agentId: 'agent-1',
   runId: 'run-1',
   ownerSubject: 'alice',

@@ -112,14 +112,13 @@ export async function upsertIdentity(
       dbResult.val
         .insertInto('identities')
         .values({
-          tenant_id: tenantId,
           subject,
           email: claims.email,
           display_name: claims.displayName,
           idp_groups: claims.idpGroups,
         })
         .onConflict((oc) =>
-          oc.columns(['tenant_id', 'subject']).doUpdateSet({
+          oc.columns(['subject']).doUpdateSet({
             email: claims.email,
             display_name: claims.displayName,
             idp_groups: claims.idpGroups,
@@ -146,7 +145,6 @@ export async function getIdentityEmail(
       dbResult.val
         .selectFrom('identities')
         .select('email')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -171,7 +169,6 @@ export async function idpGroupsFor(
       db
         .selectFrom('identities')
         .select('idp_groups')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -197,7 +194,6 @@ export async function observedIdpGroups(
       sql<{ value: string }>`
         SELECT DISTINCT unnest(idp_groups) AS value
         FROM identities
-        WHERE tenant_id = ${tenantId}
         ORDER BY value
       `.execute(db),
     'DB_ERROR' as const
@@ -231,7 +227,6 @@ export async function listIdentities(tenantId: string): Promise<TenantPerson[]> 
       dbResult.val
         .selectFrom('identities')
         .select(['subject', 'email', 'display_name'])
-        .where('tenant_id', '=', tenantId)
         .orderBy('display_name', 'asc')
         .orderBy('email', 'asc')
         .execute(),
@@ -261,7 +256,6 @@ export async function getIdentityDisplay(
       dbResult.val
         .selectFrom('identities')
         .select(['email', 'display_name', 'idp_groups'])
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
     'DB_ERROR' as const

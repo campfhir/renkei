@@ -44,11 +44,9 @@ const activeClass = 'bg-gray-100 font-medium dark:bg-gray-900';
 
 export function ChatList({
   slug,
-  tenantId,
   data,
 }: {
   slug: string;
-  tenantId: string;
   data: ChatSidebarData;
 }) {
   const currentPath = usePathname();
@@ -198,7 +196,7 @@ export function ChatList({
                 chat={chat}
                 projects={data.projects}
                 snippet={hits.get(chat.id) ?? null}
-                active={currentPath === `/${slug}/chat/${chat.id}`}
+                active={currentPath === `/chat/${chat.id}`}
                 onDeleted={removeExtraChat}
               />
             ))}
@@ -215,7 +213,7 @@ export function ChatList({
                 chat={chat}
                 projects={data.projects}
                 snippet={hits.get(chat.id) ?? null}
-                active={currentPath === `/${slug}/chat/${chat.id}`}
+                active={currentPath === `/chat/${chat.id}`}
                 onDeleted={removeExtraChat}
               />
             ))}
@@ -390,7 +388,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 function ChatRow({
   slug,
-  tenantId,
   chat,
   projects,
   snippet,
@@ -398,7 +395,6 @@ function ChatRow({
   onDeleted,
 }: {
   slug: string;
-  tenantId: string;
   chat: ChatListItem;
   projects: ProjectListItem[];
   /** The line of the chat that matched the search, when one did. */
@@ -440,7 +436,7 @@ function ChatRow({
   return (
     <div className={`${rowClass} ${active ? activeClass : ''}`}>
       <Link
-        href={`/${slug}/chat/${chat.id}`}
+        href={`/chat/${chat.id}`}
         className={`flex min-w-0 flex-1 items-center gap-2 ${chat.archived ? 'text-gray-500' : ''}`}
       >
         <span
@@ -615,7 +611,7 @@ function ChatRow({
                 const result = await chatClient.deleteChat(tenantId, chat.id);
                 if (!result.error) {
                   onDeleted(chat.id);
-                  if (active) router.push(`/${slug}/chat`);
+                  if (active) router.push(`/chat`);
                 }
                 return result;
               })

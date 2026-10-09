@@ -72,7 +72,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
   const { db, session, access, project } = ready.context;
@@ -83,7 +83,6 @@ export async function GET(
   // A file the pane opens without a language server is counted (never
   // shown): which language to add next is a query on that table.
   noteLanguageGap(db, {
-    tenantId,
     target: codeProjectTarget(tenantId, projectId),
     path: path.path,
     language,
@@ -161,7 +160,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
@@ -210,7 +209,6 @@ export async function PUT(
     return jsonError(failure.status, 'upload', failure.message);
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: fromEditor ? 'code.files.saved' : 'code.files.uploaded',
     targetKind: 'code_project',
@@ -226,7 +224,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
@@ -257,7 +255,6 @@ export async function POST(
     }
     if (!made.val.created) return jsonError(409, 'exists', `${path.path} already exists.`);
     recordAuditEvent({
-      tenantId,
       actorSubject: session.subject,
       action: 'code.files.folder-created',
       targetKind: 'code_project',
@@ -281,7 +278,6 @@ export async function POST(
     return jsonError(failure.status, 'create', failure.message);
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'code.files.created',
     targetKind: 'code_project',
@@ -295,7 +291,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
@@ -317,7 +313,6 @@ export async function DELETE(
   if (!removed.val.deleted)
     return jsonError(404, 'not-found', `No such file or folder: ${path.path}`);
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'code.files.deleted',
     targetKind: 'code_project',
@@ -331,7 +326,7 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
@@ -357,7 +352,6 @@ export async function PATCH(
     return jsonError(failure.status, 'move', failure.message);
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'code.files.renamed',
     targetKind: 'code_project',

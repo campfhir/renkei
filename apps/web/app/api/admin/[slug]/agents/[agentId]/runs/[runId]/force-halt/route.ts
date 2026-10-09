@@ -7,7 +7,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { forceHaltRun } from '@/lib/agents/force-halt';
 import { isUuid } from '@/lib/uuid';
 
@@ -20,8 +19,6 @@ export async function POST(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   const session = await checkAccess(tenant.id, [ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -29,7 +26,6 @@ export async function POST(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   const result = await forceHaltRun(dbResult.val, {
-    tenantId: tenant.id,
     agentId,
     runId,
     haltedBySubject: session.subject,

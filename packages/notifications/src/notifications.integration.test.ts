@@ -164,7 +164,6 @@ describeLive('@renkei/notifications (live database)', () => {
 
       await sendPush(
         db,
-        tenantId,
         SUBJECT,
         encryptionKey,
         {

@@ -127,7 +127,7 @@ const emptyDraft: RuleDraft = {
 };
 
 function RulesCard({ slug }: { slug: string }) {
-  const url = `/api/admin/${slug}/email-sanitizer/rules`;
+  const url = `/api/admin/email-sanitizer/rules`;
   const [rules, setRules] = useState<ClassifierRule[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -435,7 +435,7 @@ function TemplateHealthCard({ slug }: { slug: string }) {
   useEffect(() => {
     void (async () => {
       const { data, error: err } = await getJson<{ templates: TemplateHealthRow[] }>(
-        `/api/admin/${slug}/email-sanitizer/templates`
+        `/api/admin/email-sanitizer/templates`
       );
       if (err) {
         setError(err);

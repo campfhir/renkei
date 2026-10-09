@@ -42,7 +42,6 @@ async function historyTool(): Promise<ToolHandler> {
   await registerHistoryTools(
     server,
     {
-      tenantId: 'tenant-1',
       accountId: 'acct-1',
       siteUrl: 'https://example.atlassian.net',
       apiBaseUrl,

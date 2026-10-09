@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { headers } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { getIdentityDisplay } from '@/lib/identity';
@@ -38,7 +37,7 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  return { manifest: `/api/manifest/${slug}` };
+  return { manifest: `/api/manifest` };
 }
 
 /**
@@ -72,15 +71,13 @@ export default async function TenantLayout({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
     // Back to the page they asked for, query and all — the proxy put it on
     // the request. Without it (the proxy's own error path), the home page.
     const requested = safeReturnPath((await headers()).get(PATHNAME_HEADER));
-    redirect(signInUrl(tenant.id, requested ?? `/${tenant.slug}`));
+    redirect(signInUrl(tenant.id, requested ?? `/`));
   }
   const isOperator = session.roles.includes(ROLE_OPERATOR);
 

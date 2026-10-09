@@ -52,7 +52,7 @@ function str(value: unknown): string {
 
 function targetOf(context: MCPToolContext): { tenantId: string; subject: string } | string {
   if (!context.subject) return 'No signed-in identity on this request.';
-  return { tenantId: context.tenantId, subject: context.subject };
+  return { subject: context.subject };
 }
 
 const groupingSchema = z.union([
@@ -153,7 +153,6 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       if (refusal) return errText(refusal);
 
       const batch = await startDocumentOcrPipeline(dbResult.val, {
-        tenantId: target.tenantId,
         subject: target.subject,
         name: str(args.name),
         shareId,

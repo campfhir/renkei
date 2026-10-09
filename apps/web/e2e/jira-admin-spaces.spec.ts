@@ -51,7 +51,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`jira-admin-spaces-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`jira-admin-spaces-e2e-session:${projectName}`),
     slug: `e2e-jira-spaces-${projectName}`,
     subject: `e2e-jira-spaces-${projectName}@example.com`,
@@ -112,14 +111,14 @@ const ALL_SCOPES = [
 async function seedTenant(fixture: Fixture, scopes = ALL_SCOPES): Promise<string> {
   return withDb(async (client) => {
     const tenant = [fixture.tenantId];
-    await client.query('DELETE FROM jira_admin_change_requests WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM jira_admin_space_templates WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM audit_events WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', tenant);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', tenant);
+    await client.query('DELETE FROM jira_admin_change_requests', tenant);
+    await client.query('DELETE FROM jira_admin_space_templates', tenant);
+    await client.query('DELETE FROM audit_events', tenant);
+    await client.query('DELETE FROM provider_grants', tenant);
+    await client.query('DELETE FROM connector_configs', tenant);
+    await client.query('DELETE FROM user_preferences', tenant);
+    await client.query('DELETE FROM sessions', tenant);
+    await client.query('DELETE FROM identities', tenant);
     await client.query('DELETE FROM tenants WHERE id = $1', tenant);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
       fixture.tenantId,
@@ -267,7 +266,7 @@ async function stubSpace(fixture: Fixture, key: string): Promise<Record<string, 
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -308,11 +307,11 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
   await signIn(page, fixture);
 
   // --- The organization's templates, from the Jira Administration card. ---
-  await page.goto(`/${fixture.slug}/connectors`);
+  await page.goto(`/connectors`);
   const card = page.locator('[data-coach="card-jira-admin"]');
   await card.getByTestId('jira-admin-templates-link').click();
   // A client-side navigation to a route that may compile on first visit.
-  await expect(page).toHaveURL(new RegExp(`/${fixture.slug}/jira-admin/templates$`), {
+  await expect(page).toHaveURL(new RegExp(`/jira-admin/templates$`), {
     timeout: 30_000,
   });
   const templateCard = main(page).getByTestId('space-template');
@@ -329,7 +328,7 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
   await shot(page, testInfo, 'jira-admin-spaces-01-templates');
 
   // --- The proposal, reviewed. ---
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${id}`);
+  await page.goto(`/jira-admin/changes/${id}`);
   await expect(page.getByRole('heading', { name: 'Review a Jira admin change' })).toBeVisible();
   await expect(main(page).getByTestId('change-reach')).toHaveText(
     'Where: A new space FIN on https://e2e.atlassian.net, running on the same schemes as ' +
@@ -423,7 +422,7 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
     .poll(async () =>
       withDb(async (client) => {
         const rows = await client.query(
-          `SELECT 1 FROM audit_events WHERE tenant_id = $1 AND action = 'jira_admin.change_applied'`,
+          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied'`,
           [fixture.tenantId]
         );
         return rows.rowCount;
@@ -435,7 +434,7 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
   // Mobile: a resized Chromium viewport, not a device descriptor.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await noHorizontalOverflow(page);
-  await page.goto(`/${fixture.slug}/jira-admin/templates`);
+  await page.goto(`/jira-admin/templates`);
   await expect(main(page).getByTestId('space-template')).toHaveCount(1);
   await noHorizontalOverflow(page);
   await shot(page, testInfo, 'jira-admin-spaces-04-mobile');
@@ -455,7 +454,7 @@ test('a key taken since the proposal stops it before anything is created', async
   });
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${id}`);
+  await page.goto(`/jira-admin/changes/${id}`);
   await page.getByRole('button', { name: 'Apply these 5 changes to Jira' }).click();
   await expect(main(page).getByTestId('change-state')).toHaveText('Failed', { timeout: 30_000 });
   const operations = main(page).getByTestId('change-operations').locator(':scope > li');
@@ -483,7 +482,7 @@ test('a new space with components waits for a connection that can add them', asy
   const id = await proposeSpace(fixture, templateId, 'FIN', 'Finance');
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/jira-admin/changes/${id}`);
+  await page.goto(`/jira-admin/changes/${id}`);
   await expect(
     main(page).getByText(
       'Your Jira Administration connection does not include manage:jira-project. Reconnect ' +

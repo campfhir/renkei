@@ -70,7 +70,6 @@ async function toolsOf(scopes?: string[]): Promise<Map<string, Handler>> {
     },
   } as unknown as McpServer;
   const context = {
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     siteUrl: '',
     apiBaseUrl: '',

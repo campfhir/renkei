@@ -58,7 +58,7 @@ function personLabel(person: { displayName?: string | null; email?: string | nul
  * long, grant; the list below shows who has access now (lapsed grants stay
  * visible, marked, until deleted) and revokes by deleting the entry.
  */
-function PeopleWithAccess({ tenantId, agentId }: { tenantId: string; agentId: string }) {
+function PeopleWithAccess({ agentId }: { tenantId: string; agentId: string }) {
   const [grants, setGrants] = useState<GrantRow[] | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [pickedSubject, setPickedSubject] = useState('');
@@ -67,7 +67,7 @@ function PeopleWithAccess({ tenantId, agentId }: { tenantId: string; agentId: st
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const response = await fetch(`/api/tenant/${tenantId}/agents/${agentId}/access`);
+    const response = await fetch(`/api/agents/${agentId}/access`);
     const body: { grants?: GrantRow[]; people?: Person[]; error?: string } = await response
       .json()
       .catch(() => ({}));
@@ -88,7 +88,7 @@ function PeopleWithAccess({ tenantId, agentId }: { tenantId: string; agentId: st
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/agents/${agentId}/access`, {
+      const response = await fetch(`/api/agents/${agentId}/access`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ granteeSubject: pickedSubject, expiresAt: expiryToIso(expiry) }),
@@ -109,7 +109,7 @@ function PeopleWithAccess({ tenantId, agentId }: { tenantId: string; agentId: st
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/agents/${agentId}/access/${grantId}`, {
+      const response = await fetch(`/api/agents/${agentId}/access/${grantId}`, {
         method: 'DELETE',
       });
       if (!response.ok) {
@@ -217,10 +217,8 @@ function PeopleWithAccess({ tenantId, agentId }: { tenantId: string; agentId: st
   );
 }
 export default function ShareAgentButton({
-  tenantId,
   agentId,
 }: {
-  tenantId: string;
   agentId: string;
 }) {
   const [open, setOpen] = useState(false);

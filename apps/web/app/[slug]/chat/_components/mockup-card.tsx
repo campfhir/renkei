@@ -27,12 +27,10 @@ const INLINE_MAX_HEIGHT = 440;
 const INITIAL_FRAME_HEIGHT = 400;
 
 export default function MockupCard({
-  tenantId,
   chatId,
   toolUseId,
   request,
 }: {
-  tenantId: string;
   chatId: string;
   toolUseId: string;
   request: MockupRequest;

@@ -11,7 +11,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getTenantOidcClaims, setTenantOidcClaims } from '@/lib/tenant-operations';
 import { recordAuditEvent } from '@/lib/audit-events';
 
@@ -31,8 +30,6 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -46,8 +43,6 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   const session = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -85,7 +80,6 @@ export async function PUT(
     return NextResponse.json({ error: 'Sign-in is not configured yet' }, { status: 409 });
   }
   recordAuditEvent({
-    tenantId: tenantRef.id,
     actorSubject: session.subject,
     action: 'settings.updated',
     targetKind: 'oidc-claims',

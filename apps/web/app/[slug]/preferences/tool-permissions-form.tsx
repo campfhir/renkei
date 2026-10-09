@@ -44,11 +44,9 @@ const RULES: readonly { rule: ToolPermissionRule; label: string; hint: string }[
 ];
 
 export default function ToolPermissionsForm({
-  tenantId,
   groups,
   initial,
 }: {
-  tenantId: string;
   groups: ActToolGroup[];
   initial: ChatToolPermissionPrefs;
 }) {

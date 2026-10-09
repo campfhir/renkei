@@ -34,12 +34,10 @@ const inputClass =
 
 export default function NewCodeProject({
   slug,
-  tenantId,
   bitbucketConnected,
   githubConnected,
 }: {
   slug: string;
-  tenantId: string;
   bitbucketConnected: boolean;
   githubConnected: boolean;
 }) {
@@ -70,7 +68,7 @@ export default function NewCodeProject({
 
   useEffect(() => {
     void getJson<{ templates: CodeProjectTemplate[] }>(
-      `/api/tenant/${tenantId}/code/project-templates`
+      `/api/code/project-templates`
     ).then((result) => setTemplates(result.data?.templates ?? []));
   }, [tenantId]);
 
@@ -79,7 +77,7 @@ export default function NewCodeProject({
     setBusy(true);
     setError(null);
     const result = await sendJsonFull<{ projectId: string; envProblems: string[] }>(
-      `/api/tenant/${tenantId}/code/projects`,
+      `/api/code/projects`,
       'POST',
       {
         name: name.trim() || chosen.name,
@@ -98,7 +96,7 @@ export default function NewCodeProject({
     }
     const problems = result.data.envProblems;
     router.push(
-      `/${slug}/code/${result.data.projectId}${problems.length ? `?envProblems=${encodeURIComponent(problems.join('\n'))}` : ''}`
+      `/code/${result.data.projectId}${problems.length ? `?envProblems=${encodeURIComponent(problems.join('\n'))}` : ''}`
     );
     router.refresh();
   };
@@ -107,7 +105,7 @@ export default function NewCodeProject({
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
         <Link
-          href={`/${slug}/code`}
+          href={`/code`}
           aria-label="Back to Code"
           title="Back to Code"
           className="rounded-md p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
@@ -157,7 +155,7 @@ export default function NewCodeProject({
         {!connected ? (
           <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
             Connect {provider === 'github' ? 'GitHub' : 'Bitbucket'} first —{' '}
-            <Link href={`/${slug}/connectors`} className="underline">
+            <Link href={`/connectors`} className="underline">
               on the Connectors page
             </Link>
             . A code project reads and clones its repository with your own access on the
@@ -360,7 +358,7 @@ export default function NewCodeProject({
 
         <div className="flex items-center justify-end gap-2">
           <Link
-            href={`/${slug}/code`}
+            href={`/code`}
             className="rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-900"
           >
             Cancel
@@ -447,17 +445,15 @@ function useGitHubAccounts(base: string, enabled: boolean) {
  * list is fetched as it is needed.
  */
 function RepositoryBrowser({
-  tenantId,
   provider,
   enabled,
   onChoose,
 }: {
-  tenantId: string;
   provider: RepoProvider;
   enabled: boolean;
   onChoose: (repo: RepoChoice) => void;
 }) {
-  const base = `/api/tenant/${tenantId}/code`;
+  const base = `/api/code`;
   const isGitHub = provider === 'github';
   const bitbucket = useWorkspaceAndProject(base, enabled && !isGitHub);
   const github = useGitHubAccounts(base, enabled && isGitHub);
@@ -633,17 +629,15 @@ function RepositoryBrowser({
  * the same either way.
  */
 function CreateRepository({
-  tenantId,
   provider,
   enabled,
   onCreated,
 }: {
-  tenantId: string;
   provider: RepoProvider;
   enabled: boolean;
   onCreated: (repo: RepoChoice) => void;
 }) {
-  const base = `/api/tenant/${tenantId}/code`;
+  const base = `/api/code`;
   const isGitHub = provider === 'github';
   const bitbucket = useWorkspaceAndProject(base, enabled && !isGitHub);
   const github = useGitHubAccounts(base, enabled && isGitHub);

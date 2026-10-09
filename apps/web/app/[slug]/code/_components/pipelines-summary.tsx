@@ -22,13 +22,11 @@ const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800
 
 export default function PipelinesSummary({
   href,
-  tenantId,
   projectId,
   branch,
 }: {
   /** The project's Pipelines page. */
   href: string;
-  tenantId: string;
   projectId: string;
   /** The project's branch; empty for the repository's default. */
   branch: string;
@@ -40,7 +38,7 @@ export default function PipelinesSummary({
     let cancelled = false;
     void (async () => {
       const result = await getJson<PipelineSummary>(
-        `/api/tenant/${tenantId}/code/projects/${projectId}/pipelines?view=summary`
+        `/api/code/projects/${projectId}/pipelines?view=summary`
       );
       if (cancelled) return;
       if (result.data) setSummary(result.data);

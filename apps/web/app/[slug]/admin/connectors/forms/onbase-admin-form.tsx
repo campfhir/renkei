@@ -25,7 +25,7 @@ import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
  * components alongside AtlassianForm/AtlassianJsmForm.
  */
 export function OnBaseAdminForm({ slug, origin }: { slug: string; origin: string | null }) {
-  const url = `/api/admin/${slug}/connectors/onbase-admin`;
+  const url = `/api/admin/connectors/onbase-admin`;
   const [state, reload] = useConnectorConfig<OnBaseConfig>(url);
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [idpIssuer, setIdpIssuer] = useState('');

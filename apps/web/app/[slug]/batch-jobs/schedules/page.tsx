@@ -3,7 +3,6 @@ import Link from 'next/link';
 import BackLink from '@/components/back-link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listSchedules } from '@renkei/batch-jobs-store';
@@ -16,12 +15,10 @@ export default async function BatchJobSchedulesPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/batch-jobs/schedules`));
+    redirect(signInUrl(tenant.id, `/batch-jobs/schedules`));
   }
 
   const dbResult = getDatabase();
@@ -33,11 +30,11 @@ export default async function BatchJobSchedulesPage({
     <div className="mx-auto max-w-3xl">
       <div className="mb-1 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <BackLink href={`/${slug}/batch-jobs`} label="Batch Jobs" />
+          <BackLink href={`/batch-jobs`} label="Batch Jobs" />
           <h1 className="truncate text-xl font-bold">Schedules</h1>
         </div>
         <Link
-          href={`/${slug}/batch-jobs/schedules/new`}
+          href={`/batch-jobs/schedules/new`}
           className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
         >
           New schedule
@@ -55,7 +52,7 @@ export default async function BatchJobSchedulesPage({
           {schedules.map((schedule) => (
             <li key={schedule.id}>
               <Link
-                href={`/${slug}/batch-jobs/schedules/${schedule.id}`}
+                href={`/batch-jobs/schedules/${schedule.id}`}
                 className="flex items-center justify-between gap-3 rounded-md border border-gray-200 p-3 text-sm hover:border-blue-400 dark:border-gray-800"
               >
                 <span className="flex min-w-0 items-center gap-2">

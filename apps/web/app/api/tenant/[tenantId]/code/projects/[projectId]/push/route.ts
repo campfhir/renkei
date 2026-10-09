@@ -21,7 +21,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
@@ -38,7 +38,6 @@ export async function POST(
   const origin = await getOrigin(request);
   const credential = await resolveWorkspaceGitAccess(
     {
-      tenantId,
       subject: session.subject,
       origin: origin.ok ? origin.val : '',
       provider: project.repo!.provider,
@@ -56,7 +55,6 @@ export async function POST(
     return jsonError(failure.status, 'push', failure.message);
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'code.push',
     targetKind: 'code_project',

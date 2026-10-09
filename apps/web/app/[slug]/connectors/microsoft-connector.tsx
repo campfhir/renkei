@@ -30,14 +30,12 @@ import MicrosoftConnectBody from './microsoft-connect-body';
  * it, live in `MicrosoftConnectBody` (a client island) below.
  */
 export default function MicrosoftConnector({
-  tenantId,
   connected,
   displayName,
   ceiling,
   priorScopes,
   shownKeys,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   /** The org's allowed scopes — the most a user can grant. */

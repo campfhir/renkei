@@ -74,7 +74,6 @@ export interface PostgresQueueConfig {
 
 interface DeadLetterRow {
   id: string;
-  tenant_id: string;
   source: string;
   type: string;
   payload: DeadLetter['payload'];
@@ -110,8 +109,7 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
                    ${JSON.stringify(message.payload)}::jsonb, ${key}
             WHERE NOT EXISTS (
               SELECT 1 FROM ${live()} q
-              WHERE q.tenant_id = ${message.tenantId}
-                AND q.source = ${message.source}
+              WHERE q.source = ${message.source}
                 AND q.type = ${message.type}
                 AND q.ordering_key = ${key}
                 AND q.status = 'pending'
@@ -279,7 +277,6 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
         return ok(
           result.rows.map((row) => ({
             id: row.id,
-            tenant_id: row.tenant_id,
             source: row.source,
             type: row.type,
             payload: row.payload,
@@ -359,8 +356,7 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
       try {
         const result = await sql`
           DELETE FROM ${live()}
-           WHERE tenant_id = ${tenantId}
-             AND type = ${type}
+           WHERE type = ${type}
              -- Pending only: a claimed message is being worked right now.
              AND status = 'pending'
              AND ${sql.join(predicates, sql` AND `)}

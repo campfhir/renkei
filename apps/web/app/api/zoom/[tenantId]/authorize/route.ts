@@ -28,7 +28,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -40,9 +39,6 @@ export async function GET(
     .select('id')
     .where('id', '=', tenantId)
     .executeTakeFirst();
-  if (!tenant) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
 
   // The resulting grant is bound to whoever completes this flow, so the
   // caller must already be signed in.
@@ -95,7 +91,6 @@ export async function GET(
       id: randomUUID(),
       state,
       nonce: randomUUID(),
-      tenant_id: tenantId,
       subject: session.subject,
       provider: ZOOM_CONNECTOR,
       scopes: effectiveScopes,

@@ -3,14 +3,14 @@
  * allow-list — dispatched from server.ts under `/v1/services/*`, the same
  * bearer-keyed JSON POST shape as every other sandbox operation.
  *
- *   services/start   { tenantId, subject, name, image, env?, exports? }
- *   services/list    { tenantId, subject }
- *   services/logs    { tenantId, subject, name, lines?, since?, match? }
- *   services/tail    { tenantId, subject, lines?, since?, match? }   every service, one stream
- *   services/stop    { tenantId, subject, name }
+ *   services/start   { subject, name, image, env?, exports? }
+ *   services/list    { subject }
+ *   services/logs    { subject, name, lines?, since?, match? }
+ *   services/tail    { subject, lines?, since?, match? }   every service, one stream
+ *   services/stop    { subject, name }
  *   services/rules/list     { tenantId }
- *   services/rules/set      { tenantId, id?, pattern, note?, registryUsername?, registrySecret?, clearCredential? }
- *   services/rules/delete   { tenantId, id }
+ *   services/rules/set      { id?, pattern, note?, registryUsername?, registrySecret?, clearCredential? }
+ *   services/rules/delete   { id }
  *   services/rules/restore  { tenantId }
  *
  * The service verbs are scoped by (tenantId, subject) like a checkout;
@@ -214,7 +214,6 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
           if (!UUID_PATTERN.test(id))
             return sendError(response, 400, 'bad_request', 'A rule id is a uuid.');
           const updated = await rules.updateImageRule(db, {
-            tenantId,
             id,
             pattern: normalized.rule.pattern,
             note,
@@ -232,7 +231,6 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
           );
         }
         const created = await rules.insertImageRule(db, {
-          tenantId,
           pattern: normalized.rule.pattern,
           note,
           registryUsername: credential ? credential.registryUsername : null,
@@ -256,7 +254,7 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
     }
     const subject = str(body.subject);
     if (!subject) return sendError(response, 400, 'bad_request');
-    const target: ServiceTarget = { tenantId, subject };
+    const target: ServiceTarget = { subject };
     return guarded(response, async () => {
       switch (op) {
         case 'list':

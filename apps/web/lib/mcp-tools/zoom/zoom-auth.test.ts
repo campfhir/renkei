@@ -27,7 +27,6 @@ import type { MCPToolContext } from '../common';
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     subject: 'subject-1',
     origin: 'https://renkei.example.com',
     ...overrides,
@@ -59,7 +58,6 @@ describe('resolveZoomAccess', () => {
     expect(access.email).toBe('alice@example.com');
     expect(access.auth.grantKey).toBe('zoom:tenant-1:subject-1');
     expect(mockDescribe).toHaveBeenCalledWith({
-      tenantId: 'tenant-1',
       provider: 'zoom',
       subject: 'subject-1',
     });

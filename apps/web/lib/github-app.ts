@@ -40,7 +40,6 @@ export async function getGitHubApp(tenantId: string, origin: string): Promise<Gi
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/github',
-      tenantId,
     });
     return null;
   }
@@ -49,7 +48,6 @@ export async function getGitHubApp(tenantId: string, origin: string): Promise<Gi
   if (!configResult.ok) {
     logger.error('Could not read github connector config', {
       component: 'connectors/github',
-      tenantId,
     });
     return null;
   }
@@ -61,7 +59,6 @@ export async function getGitHubApp(tenantId: string, origin: string): Promise<Gi
   if (typeof clientId !== 'string' || !clientId || !clientSecret) {
     logger.warn('github connector config missing clientId or clientSecret', {
       component: 'connectors/github',
-      tenantId,
     });
     return null;
   }

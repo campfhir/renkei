@@ -36,7 +36,6 @@ export async function loadCodeProjectUsage(
       fn.sum<string>('chat_turns.input_tokens').as('input_tokens'),
       fn.sum<string>('chat_turns.output_tokens').as('output_tokens'),
     ])
-    .where('chat_turns.tenant_id', '=', tenantId)
     .where('chats.project_id', '=', projectId)
     .groupBy('chat_turns.chat_id')
     .execute();

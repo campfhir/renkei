@@ -80,7 +80,7 @@ async function subscriptionRow(): Promise<{
   await client.connect();
   try {
     const { rows } = await client.query(
-      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE tenant_id = $1 AND subject = $2',
+      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE subject = $2',
       [E2E_TENANT_ID, E2E_SUBJECT]
     );
     return rows[0] ?? null;
@@ -93,7 +93,7 @@ async function clearSubscriptions(): Promise<void> {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM push_subscriptions WHERE tenant_id = $1 AND subject = $2', [
+    await client.query('DELETE FROM push_subscriptions WHERE subject = $2', [
       E2E_TENANT_ID,
       E2E_SUBJECT,
     ]);
@@ -113,7 +113,7 @@ test('flipping the switch on subscribes this device and records it, off removes 
   await context.grantPermissions(['notifications']);
   await mockPushManager(page);
 
-  await page.goto(`/${E2E_SLUG}/preferences`);
+  await page.goto(`/preferences`);
   const checkbox = page.getByRole('checkbox', { name: /Show system notifications/i });
   await expect(checkbox).toBeVisible();
   await expect(checkbox).not.toBeChecked();
@@ -178,7 +178,7 @@ test('subscribing remembers the tenant id where sw.js can find it after a browse
   await context.grantPermissions(['notifications']);
   await mockPushManager(page);
 
-  await page.goto(`/${E2E_SLUG}/preferences`);
+  await page.goto(`/preferences`);
   const checkbox = page.getByRole('checkbox', { name: /Show system notifications/i });
   await expect(checkbox).toBeVisible();
 
@@ -192,7 +192,7 @@ test('with the switch left off, nothing gets subscribed', async ({ page, context
   await context.grantPermissions(['notifications']);
   await mockPushManager(page);
 
-  await page.goto(`/${E2E_SLUG}/preferences`);
+  await page.goto(`/preferences`);
   const checkbox = page.getByRole('checkbox', { name: /Show system notifications/i });
   await expect(checkbox).toBeVisible();
   await expect(checkbox).not.toBeChecked();

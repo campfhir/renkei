@@ -82,7 +82,7 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
     authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
     'content-type': 'application/json',
   };
-  const target = { tenantId: E2E_TENANT_ID, subject: `code-project:${ids.projectId}` };
+  const target = { subject: `code-project:${ids.projectId}` };
   const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
     method: 'POST',
     headers,
@@ -164,7 +164,7 @@ test.describe('code pane file management', () => {
     if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
     const main = page.getByRole('main');
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { name: ids.chatTitle })).toBeVisible({
       timeout: 30_000,
     });
@@ -254,7 +254,7 @@ test.describe('code pane file management', () => {
     if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
     const main = page.getByRole('main');
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { name: ids.chatTitle })).toBeVisible({
       timeout: 30_000,
     });
@@ -295,7 +295,7 @@ test.describe('code pane file management', () => {
     if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
     const main = page.getByRole('main');
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { name: ids.chatTitle })).toBeVisible({
       timeout: 30_000,
     });

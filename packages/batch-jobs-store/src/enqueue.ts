@@ -18,7 +18,6 @@ export async function enqueueDiscover(
   batchJobId: string
 ): Promise<void> {
   const enqueued = await producer.enqueue({
-    tenantId,
     source: `${BATCH_JOB_SOURCE}:${batchJobId}`,
     type: 'discover',
     payload: { batchJobId },
@@ -33,7 +32,6 @@ export async function enqueueItem(
   itemId: string
 ): Promise<void> {
   const enqueued = await producer.enqueue({
-    tenantId,
     source: `${BATCH_JOB_SOURCE}:${batchJobId}`,
     type: 'item',
     payload: { batchJobId, itemId },

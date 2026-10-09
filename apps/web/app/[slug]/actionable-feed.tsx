@@ -46,7 +46,7 @@ export default function ActionableFeed({
     if (archived) params.set('archived', '1');
     if (targetPage > 1) params.set('page', String(targetPage));
     const query = params.toString();
-    return query ? `/${slug}?${query}` : `/${slug}`;
+    return query ? `/?${query}` : `/`;
   }
 
   function navigate(href: string): void {

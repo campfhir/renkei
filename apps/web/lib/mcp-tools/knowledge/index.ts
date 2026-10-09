@@ -136,7 +136,6 @@ async function subjectOf(tenantId: string, userEmail: string): Promise<string | 
   const row = await dbResult.val
     .selectFrom('identities')
     .select('subject')
-    .where('tenant_id', '=', tenantId)
     .where('email', '=', userEmail)
     .limit(1)
     .executeTakeFirst();
@@ -159,12 +158,12 @@ async function atlassianCredentialFor(
   const subject = await subjectOf(tenantId, userEmail);
   if (!subject) return null;
 
-  const described = await delegateGrants().describe({ tenantId, provider, subject });
+  const described = await delegateGrants().describe({ provider, subject });
   if (!described.ok) return null;
   const site = readAtlassianMetadata(described.val.metadata);
   if (!site.cloudId) return null;
   return {
-    auth: grantFetch({ tenantId, provider, accountId: described.val.accountId }),
+    auth: grantFetch({ provider, accountId: described.val.accountId }),
     cloudId: site.cloudId,
   };
 }
@@ -186,7 +185,7 @@ async function microsoftCredentialFor(
   const subject = await subjectOf(tenantId, userEmail);
   if (!subject) return null;
 
-  const described = await delegateGrants().describe({ tenantId, provider: MICROSOFT, subject });
+  const described = await delegateGrants().describe({ provider: MICROSOFT, subject });
   if (!described.ok) return null;
   const { accountId, grantedScopes, requestedScopes } = described.val;
 
@@ -194,13 +193,12 @@ async function microsoftCredentialFor(
   if (!scopes.includes('Files.Read.All')) {
     logger.info('microsoft grant lacks Files.Read.All; withholding drive results', {
       component: 'knowledge/verify',
-      tenantId,
       accountId,
     });
     return null;
   }
 
-  return { auth: grantFetch({ tenantId, provider: MICROSOFT, accountId }) };
+  return { auth: grantFetch({ provider: MICROSOFT, accountId }) };
 }
 
 function formatDistance(distance: number): string {
@@ -392,7 +390,6 @@ export async function registerKnowledgeTools(
     async (args: Record<string, unknown>) => {
       logger.debug('search_knowledge invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
       });
 
@@ -426,7 +423,6 @@ export async function registerKnowledgeTools(
       // org configures one.
       if (!query.trim()) {
         const recent = await listRecentKnowledge({
-          tenantId: context.tenantId,
           userEmail,
           k,
           verifiers,
@@ -457,7 +453,6 @@ export async function registerKnowledgeTools(
       }
 
       const searched = await searchKnowledge({
-        tenantId: context.tenantId,
         userEmail,
         query,
         k,
@@ -484,7 +479,6 @@ export async function registerKnowledgeTools(
       // only the split says which; the tool_calls row keeps the total.
       logger.info('search_knowledge timings', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         k,
         hits: searched.val.hits.length,
         elided: searched.val.elided,

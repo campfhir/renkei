@@ -124,7 +124,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .insertInto('oauth_clients')
       .values({
         client_id: clientId,
-        tenant_id: tenantId,
         // Only the digest is stored; the secret itself exists solely in the
         // registration response below and in the client that receives it.
         client_secret_hash: hashToken(clientSecret),
@@ -136,7 +135,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .execute();
 
     recordAuditEvent({
-      tenantId,
       actorSubject: null,
       action: 'oauth.client_registered',
       targetKind: 'oauth_client',

@@ -35,7 +35,7 @@ interface WebexUserConfig {
 }
 
 export function WebexUserForm({ slug, origin }: { slug: string; origin: string | null }) {
-  const url = `/api/admin/${slug}/connectors/webex-user`;
+  const url = `/api/admin/connectors/webex-user`;
   const [state, reload] = useConnectorConfig<WebexUserConfig>(url);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');

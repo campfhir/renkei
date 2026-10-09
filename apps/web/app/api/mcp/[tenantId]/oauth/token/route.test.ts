@@ -19,7 +19,7 @@ const { getOrgSettings: mockGetOrgSettings } = jest.requireMock<{ getOrgSettings
 const TENANT = '00000000-0000-4000-8000-000000000001';
 
 function tokenRequest(ip: string): NextRequest {
-  return new NextRequest(`http://localhost/api/mcp/${TENANT}/oauth/token`, {
+  return new NextRequest(`http://localhost/api/mcp/oauth/token`, {
     method: 'POST',
     headers: {
       'content-type': 'application/x-www-form-urlencoded',

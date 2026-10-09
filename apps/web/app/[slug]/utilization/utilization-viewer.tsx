@@ -177,7 +177,7 @@ function AgentTable({ agents, slug }: { agents: AgentUtilizationRow[]; slug: str
               <tr key={agent.agentId} className="border-t border-gray-200 dark:border-gray-800">
                 <td className="px-3 py-2">
                   <Link
-                    href={`/${slug}/agents/${agent.agentId}`}
+                    href={`/agents/${agent.agentId}`}
                     className="font-medium text-blue-600 hover:underline dark:text-blue-400"
                   >
                     {agent.name}
@@ -217,7 +217,7 @@ function AgentTable({ agents, slug }: { agents: AgentUtilizationRow[]; slug: str
                 </td>
                 <td className="px-3 py-2 text-right">
                   <Link
-                    href={`/${slug}/agents/${agent.agentId}#improve`}
+                    href={`/agents/${agent.agentId}#improve`}
                     className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
                   >
                     Improve
@@ -234,11 +234,9 @@ function AgentTable({ agents, slug }: { agents: AgentUtilizationRow[]; slug: str
 
 export default function UtilizationViewer({
   slug,
-  tenantId,
   initial,
 }: {
   slug: string;
-  tenantId: string;
   initial: UtilizationReport;
 }) {
   const [report, setReport] = useState(initial);
@@ -253,7 +251,7 @@ export default function UtilizationViewer({
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const next = await getUtilizationReport(tenantId, periodKey, timeZone);
       if (next.signedOut) {
-        window.location.href = signInUrl(tenantId, `/${slug}/utilization`);
+        window.location.href = signInUrl(tenantId, `/utilization`);
         return;
       }
       setReport(next);
@@ -276,7 +274,7 @@ export default function UtilizationViewer({
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">My usage</h1>
         <Link
-          href={`/${slug}/usage`}
+          href={`/usage`}
           className="text-sm text-blue-600 hover:underline dark:text-blue-400"
         >
           Tools
@@ -403,7 +401,7 @@ export default function UtilizationViewer({
         keyOf={(row) => row.agentId}
         labelOf={(row) => (
           <Link
-            href={`/${slug}/agents/${row.agentId}`}
+            href={`/agents/${row.agentId}`}
             className="text-blue-600 hover:underline dark:text-blue-400"
           >
             {row.name}
@@ -433,7 +431,7 @@ export default function UtilizationViewer({
                 className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm"
               >
                 <Link
-                  href={`/${slug}/agents/${signature.agentId}#improve`}
+                  href={`/agents/${signature.agentId}#improve`}
                   className="font-medium text-blue-700 hover:underline dark:text-blue-300"
                 >
                   {signature.agentName}
@@ -489,7 +487,7 @@ export default function UtilizationViewer({
         {report.agents.length === 0 ? (
           <p className="text-sm text-gray-500 dark:text-gray-400">
             You have no agents yet.{' '}
-            <Link href={`/${slug}/agents/new`} className="text-blue-600 hover:underline">
+            <Link href={`/agents/new`} className="text-blue-600 hover:underline">
               Create one
             </Link>
             .

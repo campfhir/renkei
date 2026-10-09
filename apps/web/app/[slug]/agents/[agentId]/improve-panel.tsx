@@ -75,12 +75,10 @@ type DraftState = 'queued' | 'running' | 'succeeded' | 'failed' | null;
 
 export default function ImprovePanel({
   slug,
-  tenantId,
   agentId,
   initial,
 }: {
   slug: string;
-  tenantId: string;
   agentId: string;
   initial: AgentOptimization | null;
 }) {
@@ -97,7 +95,7 @@ export default function ImprovePanel({
 
   const refresh = useCallback(async () => {
     const result = await getJson<{ optimization: AgentOptimization | null }>(
-      `/api/tenant/${tenantId}/agents/${agentId}/optimize`
+      `/api/agents/${agentId}/optimize`
     );
     if (result.data) setOptimization(result.data.optimization);
   }, [tenantId, agentId]);
@@ -117,7 +115,7 @@ export default function ImprovePanel({
     let cancelled = false;
     const poll = async () => {
       const result = await getJson<{ draft?: { status: string } | null }>(
-        `/api/tenant/${tenantId}/agents/draft/${draftId}`
+        `/api/agents/draft/${draftId}`
       );
       if (cancelled) return;
       const status = result.data?.draft?.status;
@@ -145,7 +143,7 @@ export default function ImprovePanel({
     setStarting(true);
     setError(null);
     const result = await sendJsonFull<{ optimizationId?: string; error?: string }>(
-      `/api/tenant/${tenantId}/agents/${agentId}/optimize`,
+      `/api/agents/${agentId}/optimize`,
       'POST',
       {}
     );
@@ -162,7 +160,7 @@ export default function ImprovePanel({
     setApplying(true);
     setError(null);
     const result = await sendJsonFull<{ draftId?: string; error?: string }>(
-      `/api/tenant/${tenantId}/agents/${agentId}/optimize/apply`,
+      `/api/agents/${agentId}/optimize/apply`,
       'POST',
       { optimizationId: optimization.id }
     );
@@ -270,7 +268,7 @@ export default function ImprovePanel({
                         review, then save or discard.
                       </p>
                       <Link
-                        href={`/${slug}/agents/${agentId}/edit`}
+                        href={`/agents/${agentId}/edit`}
                         className="mt-1.5 inline-block rounded-md bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700"
                       >
                         Review in the builder
@@ -285,7 +283,7 @@ export default function ImprovePanel({
                     <p className="text-gray-600 dark:text-gray-400">
                       A draft was made from this report.{' '}
                       <Link
-                        href={`/${slug}/agents/${agentId}/edit`}
+                        href={`/agents/${agentId}/edit`}
                         className="text-blue-600 hover:underline dark:text-blue-400"
                       >
                         Open the builder

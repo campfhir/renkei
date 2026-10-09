@@ -42,7 +42,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; shareId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, shareId } = await params;
+  const { shareId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -69,7 +69,6 @@ export async function POST(
     }
     const updated = await updateConnectionExposure(
       db,
-      tenantId,
       shareId,
       session.subject,
       exposure.toolAccess,
@@ -89,7 +88,7 @@ export async function POST(
 
   // Validate against the live server before storing anything — a wrong
   // password is a 4xx here, never a stored credential that fails later.
-  const tested = await fsTestConnection({ tenantId, shareId, credentials: parsed.credentials });
+  const tested = await fsTestConnection({ shareId, credentials: parsed.credentials });
   if (!tested.ok) {
     const failure = clientFailure(tested.err);
     const message =
@@ -128,7 +127,6 @@ export async function POST(
   }
 
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'fileshare.connected',
     targetKind: 'fileshare',
@@ -147,7 +145,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; shareId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, shareId } = await params;
+  const { shareId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -167,7 +165,6 @@ export async function DELETE(
 
   const share = await getShare(dbResult.val, tenantId, shareId);
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'fileshare.disconnected',
     targetKind: 'fileshare',

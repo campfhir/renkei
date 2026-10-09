@@ -187,7 +187,7 @@ function AtlassianAppForm({
    */
   showWebhookSecret?: boolean;
 }) {
-  const url = `/api/admin/${slug}/connectors/${connector}`;
+  const url = `/api/admin/connectors/${connector}`;
   const [state, reload] = useConnectorConfig<AtlassianConfig>(url);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');

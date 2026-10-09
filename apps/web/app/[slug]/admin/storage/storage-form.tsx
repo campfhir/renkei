@@ -34,7 +34,7 @@ export default function StorageForm({
     setBusy('save');
     setNotice(null);
     setError(null);
-    const result = await sendJsonFull<StorageView>(`/api/admin/${slug}/storage`, 'PUT', payload);
+    const result = await sendJsonFull<StorageView>(`/api/admin/storage`, 'PUT', payload);
     setBusy(null);
     if (result.error || !result.data) {
       setError(result.error ?? 'The configuration could not be saved.');
@@ -50,7 +50,7 @@ export default function StorageForm({
     setNotice(null);
     setError(null);
     const result = await sendJsonFull<{ ok: boolean; detail: string }>(
-      `/api/admin/${slug}/storage/test-connection`,
+      `/api/admin/storage/test-connection`,
       'POST',
       payload
     );

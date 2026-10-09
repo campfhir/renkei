@@ -82,7 +82,6 @@ const sha = (bytes: number[]) => createHash('sha256').update(Uint8Array.from(byt
 function batch(config: Record<string, unknown>): BatchJobRow {
   return {
     id: 'batch-1',
-    tenant_id: 'tenant-1',
     subject: 'auth0|alice',
     name: 'Test batch',
     kind: 'document-ocr-pipeline',

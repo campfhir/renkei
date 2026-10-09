@@ -61,7 +61,6 @@ function event(type: string, payload: Record<string, string>): ClaimedEvent {
 function batch(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: 'batch-1',
-    tenant_id: 'tenant-1',
     subject: 'auth0|alice',
     kind: 'document-ocr-pipeline',
     config: {},

@@ -56,7 +56,6 @@ function envPrefix(name: string): string {
 
 export default function ServicesPage({
   slug,
-  tenantId,
   projectId,
   projectName,
   repoFullName,
@@ -64,7 +63,6 @@ export default function ServicesPage({
   canEdit,
 }: {
   slug: string;
-  tenantId: string;
   projectId: string;
   projectName: string;
   repoFullName: string;
@@ -72,7 +70,7 @@ export default function ServicesPage({
   enabled: boolean;
   canEdit: boolean;
 }) {
-  const url = `/api/tenant/${tenantId}/code/projects/${projectId}/services`;
+  const url = `/api/code/projects/${projectId}/services`;
   const [view, setView] = useState<ServicesView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -135,7 +133,7 @@ export default function ServicesPage({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-        <BackLink href={`/${slug}/code/${projectId}`} label={projectName} />
+        <BackLink href={`/code/${projectId}`} label={projectName} />
         <div className="min-w-0 flex-1">
           <h1 className="flex items-center gap-2 text-sm font-semibold">
             <span className="truncate">Services</span>
@@ -314,7 +312,7 @@ export default function ServicesPage({
                   <p className="mb-2 text-xs text-gray-500">
                     A whole registry, a namespace on one, or a single repository at any tag. Set by
                     an operator under{' '}
-                    <Link href={`/${slug}/admin/code-services`} className="underline">
+                    <Link href={`/admin/code-services`} className="underline">
                       Organization &rarr; Code services
                     </Link>
                     .

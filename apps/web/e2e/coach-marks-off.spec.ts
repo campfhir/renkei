@@ -24,7 +24,6 @@ function idsFor(project: string) {
   const uuid = (offset: number) =>
     `${hex.slice(offset, offset + 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
   return {
-    tenantId: uuid(0),
     sessionId: uuid(4),
     slug: `e2e-tours-off-${project}`,
     subject: `e2e-tours-off-${project}@example.com`,
@@ -42,7 +41,7 @@ test.use({
     await use({
       cookies: [
         {
-          name: `renkei_session_${ids.tenantId}`,
+          name: `renkei_session`,
           value: ids.sessionId,
           domain: '127.0.0.1',
           path: '/',
@@ -76,8 +75,8 @@ let ids: ReturnType<typeof idsFor>;
 
 async function removeTenant(): Promise<void> {
   // tenant_settings does not cascade from tenants; sessions does not either.
-  await client.query('DELETE FROM tenant_settings WHERE tenant_id = $1', [ids.tenantId]);
-  await client.query('DELETE FROM sessions WHERE tenant_id = $1', [ids.tenantId]);
+  await client.query('DELETE FROM tenant_settings', [ids.tenantId]);
+  await client.query('DELETE FROM sessions', [ids.tenantId]);
   await client.query('DELETE FROM tenants WHERE id = $1', [ids.tenantId]);
 }
 
@@ -108,13 +107,13 @@ test('with the org switch off, no tour runs and the Tutorials door is closed', a
   page,
 }, testInfo) => {
   // The welcome tour would greet a newcomer here; the switch says no.
-  await page.goto(`/${ids.slug}`);
+  await page.goto(`/`);
   await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
   await page.waitForTimeout(1200);
   await expect(page.getByTestId('coach-mark')).toHaveCount(0);
 
   // Nor does a link that asks for one by name.
-  await page.goto(`/${ids.slug}?tour=welcome`);
+  await page.goto(`/?tour=welcome`);
   await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
   await page.waitForTimeout(1200);
   await expect(page.getByTestId('coach-mark')).toHaveCount(0);
@@ -127,13 +126,13 @@ test('with the org switch off, no tour runs and the Tutorials door is closed', a
   await page.keyboard.press('Escape');
 
   // The page itself still answers, and says why there is nothing to start.
-  await page.goto(`/${ids.slug}/tutorials`);
+  await page.goto(`/tutorials`);
   await expect(page.getByTestId('tutorials-off')).toBeVisible();
   await expect(page.getByRole('button', { name: /Start|Replay/ })).toHaveCount(0);
   await shot(page, testInfo, 'coach-off-tutorials');
 
   // Where the switch lives.
-  await page.goto(`/${ids.slug}/admin/settings`);
+  await page.goto(`/admin/settings`);
   const toggle = page.getByRole('switch', { name: 'Guided tours' });
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute('aria-checked', 'false');

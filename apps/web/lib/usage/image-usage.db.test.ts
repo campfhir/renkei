@@ -36,7 +36,6 @@ maybe('image usage ledger', () => {
     await db
       .insertInto('identities')
       .values({
-        tenant_id: tenantId,
         subject: ann,
         display_name: 'Ann Example',
         email: 'ann@example.test',
@@ -46,7 +45,6 @@ maybe('image usage ledger', () => {
     const base = { surface: 'images', provider: 'openai', model: 'gpt-image-1' };
     await recordImageUsage(db, {
       ...base,
-      tenantId,
       subject: ann,
       imageBytes: 3_000_000,
       width: 1024,
@@ -56,7 +54,6 @@ maybe('image usage ledger', () => {
     });
     await recordImageUsage(db, {
       ...base,
-      tenantId,
       subject: ann,
       imageBytes: 1_000_000,
       width: 1536,
@@ -68,7 +65,6 @@ maybe('image usage ledger', () => {
       surface: 'flux',
       provider: 'openai',
       model: 'FLUX.2-flex',
-      tenantId,
       subject: bo,
       imageBytes: 500_000,
       width: 1024,
@@ -77,7 +73,6 @@ maybe('image usage ledger', () => {
     // Another org's picture is not this org's.
     await recordImageUsage(db, {
       ...base,
-      tenantId: otherTenantId,
       subject: ann,
       imageBytes: 9_000_000,
     });
@@ -92,14 +87,14 @@ maybe('image usage ledger', () => {
     await sql`DELETE FROM image_usage WHERE tenant_id IN (${tenantId}, ${otherTenantId})`.execute(
       db
     );
-    await sql`DELETE FROM identities WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM identities`.execute(db);
     await sql`DELETE FROM tenants WHERE id IN (${tenantId}, ${otherTenantId})`.execute(db);
     await closeDatabase();
   });
 
   it('stores one content-free row per picture', async () => {
     const rows = await sql<Record<string, unknown>>`
-      SELECT * FROM image_usage WHERE tenant_id = ${tenantId} AND subject = ${bo}
+      SELECT * FROM image_usage WHERE subject = ${bo}
     `.execute(db);
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0]).toMatchObject({
@@ -126,7 +121,6 @@ maybe('image usage ledger', () => {
         'provider',
         'subject',
         'surface',
-        'tenant_id',
         'width',
       ].sort()
     );
@@ -236,7 +230,6 @@ maybe('image usage ledger', () => {
         surface: 'images',
         provider: 'openai',
         model: 'm',
-        tenantId: randomUUID(),
         subject: ann,
         imageBytes: 1,
       })

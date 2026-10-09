@@ -67,7 +67,6 @@ async function agentById(
   const row = await db
     .selectFrom('agents')
     .select(['id', 'owner_subject', 'name', 'steps', 'llm_model_id', 'enabled'])
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', agentId)
     .executeTakeFirst();
   return row ?? null;
@@ -83,7 +82,6 @@ async function apiTriggerForKey(
   const rows = await db
     .selectFrom('agent_triggers')
     .select(['id', 'config'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('kind', '=', 'api')
     .where('enabled', '=', true)
@@ -103,7 +101,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
@@ -195,7 +193,6 @@ export async function POST(
   }
 
   const result = await createAgentRun(db, agentJobsQueue().producer, {
-    tenantId,
     agentId,
     ownerSubject: agent.owner_subject,
     steps: agent.steps,

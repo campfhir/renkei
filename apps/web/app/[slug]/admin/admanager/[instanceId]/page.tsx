@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
 import { getInstance } from '@renkei/connector-admanager';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import InstanceConfigForm from './instance-config-form';
 
 /**
@@ -20,10 +19,8 @@ export default async function AdminAdManagerInstancePage({
   params: Promise<{ slug: string; instanceId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, instanceId } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
@@ -43,7 +40,7 @@ export default async function AdminAdManagerInstancePage({
     <div className="mx-auto max-w-3xl space-y-8">
       <div>
         <Link
-          href={`/${slug}/admin/admanager`}
+          href={`/admin/admanager`}
           className="text-sm text-blue-600 hover:underline dark:text-blue-400"
         >
           ← ADManager Plus

@@ -163,7 +163,6 @@ export interface ReplySpeech {
 }
 
 export default function MessageList({
-  tenantId,
   chatId,
   messages,
   pendingToolCalls,
@@ -180,7 +179,6 @@ export default function MessageList({
   onWidgetDecision = null,
   artifacts = [],
 }: {
-  tenantId: string;
   chatId: string;
   messages: ChatMessageView[];
   pendingToolCalls: string[];
@@ -387,11 +385,9 @@ function CompactionCard({ progress }: { progress: CompactionProgress }) {
 }
 
 function UserMessage({
-  tenantId,
   message,
   actions,
 }: {
-  tenantId: string;
   message: ChatMessageView;
   actions: PromptActions | null;
 }) {
@@ -476,7 +472,6 @@ function CopyButton({ text }: { text: string }) {
 }
 
 function Reply({
-  tenantId,
   chatId,
   messages,
   results,
@@ -492,7 +487,6 @@ function Reply({
   artifacts,
   resultRows,
 }: {
-  tenantId: string;
   chatId: string;
   messages: ChatMessageView[];
   results: Map<string, ToolResult>;

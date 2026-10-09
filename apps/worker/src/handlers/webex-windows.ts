@@ -80,9 +80,9 @@ export async function markWebexWindowDirty(
   if (!dbResult.ok) throw new Error('database unavailable to mark a WebEx window dirty');
   await dbResult.val
     .insertInto('webex_dirty_windows')
-    .values({ tenant_id: tenantId, room_id: roomId, day, subject, marked_at: sql`NOW()` })
+    .values({ room_id: roomId, day, subject, marked_at: sql`NOW()` })
     .onConflict((oc) =>
-      oc.columns(['tenant_id', 'room_id', 'day']).doUpdateSet({
+      oc.columns(['room_id', 'day']).doUpdateSet({
         marked_at: sql`NOW()`,
         // A watcher that is still around beats one that may have opted out.
         subject: sql`COALESCE(EXCLUDED.subject, webex_dirty_windows.subject)`,
@@ -185,7 +185,6 @@ export async function deleteLegacyMessageRows(
   const prefix = escapeLike(roomId);
   await dbResult.val
     .deleteFrom('knowledge_chunks')
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', 'webex')
     .where('ref_id', 'like', `${prefix}/%`)
     .where('ref_id', 'not like', `${prefix}/day/%`)
@@ -241,7 +240,6 @@ export function createKnowledgeIngestWebexWindowHandler(
     if (!access) {
       logger.info('no usable WebEx grant for {subject}; window {roomId}/{day} not rebuilt', {
         component: COMPONENT,
-        tenantId,
         subject,
         roomId,
         day,
@@ -256,7 +254,6 @@ export function createKnowledgeIngestWebexWindowHandler(
       if (/WebEx API 40[34]/.test(text)) {
         logger.info('watcher can no longer read room {roomId}; window not rebuilt', {
           component: COMPONENT,
-          tenantId,
           roomId,
         });
         return;
@@ -284,7 +281,6 @@ export function createKnowledgeIngestWebexWindowHandler(
     const participants = [...new Set(spoken.map((m) => m.personEmail).filter(Boolean))];
     const latest = spoken[spoken.length - 1]?.created ?? null;
     const ingested = await ingestObjectChunks(
-      tenantId,
       embedder,
       {
         provider: 'webex',
@@ -314,7 +310,6 @@ export function createKnowledgeIngestWebexWindowHandler(
 
     logger.debug('rebuilt window {roomId}/{day}: {messages} message(s), {chunks} chunk(s)', {
       component: COMPONENT,
-      tenantId,
       roomId,
       day,
       messages: spoken.length,

@@ -27,12 +27,10 @@ const inputClass =
 
 export default function LibraryView({
   slug,
-  tenantId,
   library,
   prompts,
 }: {
   slug: string;
-  tenantId: string;
   library: {
     id: string;
     name: string;
@@ -43,7 +41,7 @@ export default function LibraryView({
 }) {
   const router = useRouter();
   const canEdit = library.role !== 'viewer';
-  const base = `/api/tenant/${tenantId}/chat/prompt-libraries/${library.id}`;
+  const base = `/api/chat/prompt-libraries/${library.id}`;
   const [editing, setEditing] = useState<PromptItem | 'new' | null>(null);
   const [title, setTitle] = useState('');
   const shareAnchor = useCoachAnchor('library-share');
@@ -95,7 +93,7 @@ export default function LibraryView({
     const result = await sendJsonFull(base, 'DELETE');
     setBusy(false);
     if (!result.error) {
-      router.push(`/${slug}/chat/prompts`);
+      router.push(`/chat/prompts`);
       router.refresh();
     }
   };

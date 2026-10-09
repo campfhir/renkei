@@ -31,7 +31,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -65,7 +64,6 @@ export async function POST(
     if (!ensured.ok) {
       logger.warn('all-spaces webhook registration failed', {
         component: 'webex/all-spaces',
-        tenantId,
       });
       return NextResponse.json(
         { error: 'WebEx rejected the webhook registration — try again.' },
@@ -80,7 +78,6 @@ export async function POST(
           allSpacesSecret: secret,
         })}::jsonb`,
       })
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', 'webex')
       .where('provider_account_id', '=', access.accountId)
       .execute();
@@ -97,14 +94,12 @@ export async function POST(
       .set({
         metadata: sql`COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({ allSpaces: false })}::jsonb`,
       })
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', 'webex')
       .where('provider_account_id', '=', access.accountId)
       .execute();
   }
 
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: payload.enabled ? 'connector.connected' : 'connector.disconnected',
     targetKind: 'connector',

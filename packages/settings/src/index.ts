@@ -457,7 +457,6 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
       dbResult.val
         .selectFrom('tenant_settings')
         .select(['key', 'value'])
-        .where('tenant_id', '=', tenantId)
         .execute(),
     'DB_ERROR' as const
   );
@@ -639,13 +638,12 @@ export async function setOrgSettings(
         db
           .insertInto('tenant_settings')
           .values({
-            tenant_id: tenantId,
             key,
             value: JSON.stringify(value),
             updated_at: new Date().toISOString(),
           })
           .onConflict((oc) =>
-            oc.columns(['tenant_id', 'key']).doUpdateSet({
+            oc.columns(['key']).doUpdateSet({
               value: JSON.stringify(value),
               updated_at: new Date().toISOString(),
             })
@@ -681,7 +679,6 @@ export async function getWorkspaceLimitBytes(
       dbResult.val
         .selectFrom('sandbox_size_requests')
         .select('requested_bytes')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .where('status', '=', 'approved')
         .execute(),

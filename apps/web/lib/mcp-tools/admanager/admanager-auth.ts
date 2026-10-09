@@ -43,7 +43,7 @@ export function userAdManagerAuth(context: MCPToolContext): AdManagerAuth {
     target() {
       const subject = context.subject;
       if (!subject) return NOT_AVAILABLE;
-      return { tenantId: context.tenantId, subject };
+      return { subject };
     },
 
     async listConnected() {

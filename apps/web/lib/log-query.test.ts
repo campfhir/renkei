@@ -101,7 +101,6 @@ describe('buildEnforcedLogQuery', () => {
     it('should remove user-provided tenantId', () => {
       const result = buildEnforcedLogQuery(
         'level:error && tenantId:wrong-tenant',
-        tenantId,
         accountId
       );
       expect(result).toBeTruthy();
@@ -115,7 +114,6 @@ describe('buildEnforcedLogQuery', () => {
     it('should remove user-provided accountId', () => {
       const result = buildEnforcedLogQuery(
         'level:error && accountId:wrong-user',
-        tenantId,
         accountId
       );
       expect(result).toBeTruthy();
@@ -139,7 +137,6 @@ describe('buildEnforcedLogQuery', () => {
     it('should handle multiple restricted fields in query', () => {
       const result = buildEnforcedLogQuery(
         'level:error && tenantId:wrong-tenant && accountId:wrong-user && userId:attacker',
-        tenantId,
         accountId
       );
       expect(result).toBeTruthy();
@@ -158,7 +155,6 @@ describe('buildEnforcedLogQuery', () => {
     it('should preserve OR operators in user query', () => {
       const result = buildEnforcedLogQuery(
         '(level:error || level:warn) && tool:list_issues',
-        tenantId,
         accountId
       );
       expect(result).toBeTruthy();
@@ -176,7 +172,6 @@ describe('buildEnforcedLogQuery', () => {
       // If user only queries restricted fields, should become just enforced filters
       const result = buildEnforcedLogQuery(
         'tenantId:wrong && accountId:wrong',
-        tenantId,
         accountId
       );
       expect(result).toBeTruthy();
@@ -190,7 +185,6 @@ describe('buildEnforcedLogQuery', () => {
     it('should handle parenthesized restricted fields', () => {
       const result = buildEnforcedLogQuery(
         '(tenantId:wrong || level:error) && accountId:wrong',
-        tenantId,
         accountId
       );
       expect(result).toBeTruthy();
@@ -216,7 +210,6 @@ describe('buildEnforcedLogQuery', () => {
     it('should apply enforced filters through buildEnforcedLogQuery', () => {
       const options = buildLogQueryOptions(
         'level:error && tenantId:wrong-tenant',
-        tenantId,
         accountId
       );
       const filterStr = JSON.stringify(options.attributeFilter);

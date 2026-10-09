@@ -224,7 +224,7 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
     setState('saving');
     setError(null);
     const result = await sendJsonFull<{ settings: EditableSettings }>(
-      `/api/admin/${slug}/org-settings`,
+      `/api/admin/org-settings`,
       'PUT',
       values
     );

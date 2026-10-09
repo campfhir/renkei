@@ -19,14 +19,12 @@ import WatchManager from './watch-manager';
  * narrowing, confirm-gated disconnect.
  */
 export default function ConfluenceConnector({
-  tenantId,
   connected,
   displayName,
   ceiling,
   priorScopes,
   nested = false,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   /** The org's allowed scopes — the most a user can grant. */
@@ -41,7 +39,7 @@ export default function ConfluenceConnector({
    */
   nested?: boolean;
 }) {
-  const authorizePath = `/api/atlassian-confluence/${tenantId}/authorize`;
+  const authorizePath = `/api/atlassian-confluence/authorize`;
 
   return (
     <ConnectorShell nested={nested} anchor="card-confluence">
@@ -97,7 +95,7 @@ export default function ConfluenceConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/atlassian-confluence/${tenantId}/grant`}
+          endpoint={`/api/atlassian-confluence/grant`}
           confirmText="Disconnect Confluence? The Confluence tools stop working until you reconnect."
           buttonLabel="Disconnect Confluence"
         />

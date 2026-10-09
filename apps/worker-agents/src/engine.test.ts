@@ -197,7 +197,6 @@ maybe('agent run engine', () => {
     await db
       .insertInto('identities')
       .values({
-        tenant_id: tenantId,
         subject,
         email: 'owner@example.com',
         display_name: 'Test Owner',
@@ -207,15 +206,15 @@ maybe('agent run engine', () => {
 
   afterAll(async () => {
     // Cascades take agents/runs/steps/triggers/tokens with the tenant.
-    await db.deleteFrom('oauth_access_tokens').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('oauth_clients').where('tenant_id', '=', tenantId).execute();
-    await sql`DELETE FROM actionable_items WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_run_steps WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM identities WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenant_settings WHERE tenant_id = ${tenantId}`.execute(db);
+    await db.deleteFrom('oauth_access_tokens').execute();
+    await db.deleteFrom('oauth_clients').execute();
+    await sql`DELETE FROM actionable_items`.execute(db);
+    await sql`DELETE FROM agent_run_steps`.execute(db);
+    await sql`DELETE FROM agent_runs`.execute(db);
+    await sql`DELETE FROM agent_triggers`.execute(db);
+    await sql`DELETE FROM agents`.execute(db);
+    await sql`DELETE FROM identities`.execute(db);
+    await sql`DELETE FROM tenant_settings`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
@@ -229,7 +228,6 @@ maybe('agent run engine', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: subject,
         name: `agent-${agentId.slice(0, 8)}`,
         steps: JSON.stringify(steps),
@@ -241,7 +239,6 @@ maybe('agent run engine', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: subject,
         trigger_kind: options.triggerKind ?? 'manual',
@@ -526,7 +523,6 @@ maybe('agent run engine', () => {
       .insertInto('agent_memories')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         agent_id: agentId,
         kind: 'entry',
         content: 'Replied to message 123 about the outage.',
@@ -1131,7 +1127,6 @@ maybe('agent run engine', () => {
       .insertInto('agent_run_steps')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         run_id: runId,
         step_id: stepId,
         step_index: 0,
@@ -1652,7 +1647,6 @@ maybe('agent run engine', () => {
       },
     };
     const resumed = await resumeAgentRun(db, producer, {
-      tenantId,
       agentId,
       runId,
       ownerSubject: subject,
@@ -1693,7 +1687,6 @@ maybe('agent run engine', () => {
       resume_guidance: 'The CIO project has no Task type — file it as a Project.',
     });
     const again = await resumeAgentRun(db, producer, {
-      tenantId,
       agentId,
       runId,
       ownerSubject: subject,
@@ -2676,7 +2669,6 @@ maybe('agent run engine', () => {
     const syntheticStep = randomUUID();
     const synthetic = Array.from({ length: 250 }, (_, index) => ({
       id: randomUUID(),
-      tenant_id: tenantId,
       run_id: runId,
       step_id: syntheticStep,
       step_index: 0,
@@ -4757,15 +4749,15 @@ maybe('resolve_time — the free, deterministic clock', () => {
       .execute();
     await db
       .insertInto('identities')
-      .values({ tenant_id: tenantId, subject, email: 'owner@example.com', display_name: 'Owner' })
+      .values({ subject, email: 'owner@example.com', display_name: 'Owner' })
       .execute();
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_run_steps WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM identities WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_run_steps`.execute(db);
+    await sql`DELETE FROM agent_runs`.execute(db);
+    await sql`DELETE FROM agents`.execute(db);
+    await sql`DELETE FROM identities`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     // This suite reopened the pool the previous one closed; leave it shut so
     // the worker process exits instead of hanging on an idle connection.
@@ -4791,7 +4783,6 @@ maybe('resolve_time — the free, deterministic clock', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: subject,
         name: `agent-${agentId.slice(0, 8)}`,
         steps: JSON.stringify(doc),
@@ -4803,7 +4794,6 @@ maybe('resolve_time — the free, deterministic clock', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: subject,
         trigger_kind: 'manual',

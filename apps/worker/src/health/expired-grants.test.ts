@@ -19,7 +19,6 @@ maybe('sweepExpiredGrants', () => {
 
   function grantRow(accountId: string, expiresAt: Date) {
     return {
-      tenant_id: tenantId,
       provider: 'atlassian',
       provider_account_id: accountId,
       client_id: 'client-1',
@@ -61,7 +60,6 @@ maybe('sweepExpiredGrants', () => {
     const remaining = await db
       .selectFrom('provider_grants')
       .select('provider_account_id')
-      .where('tenant_id', '=', tenantId)
       .execute();
     const accounts = remaining.map((row) => row.provider_account_id);
     expect(accounts).not.toContain(staleAccount);

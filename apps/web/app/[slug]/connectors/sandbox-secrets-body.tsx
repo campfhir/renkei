@@ -71,10 +71,8 @@ function isUnlocked(secret: SecretView): boolean {
 }
 
 export default function SandboxSecretsBody({
-  tenantId,
   secrets: initialSecrets,
 }: {
-  tenantId: string;
   secrets: SecretView[];
 }) {
   const [secrets, setSecrets] = useState(initialSecrets);
@@ -90,7 +88,7 @@ export default function SandboxSecretsBody({
     hours: number;
   } | null>(null);
 
-  const base = `/api/tenant/${tenantId}/sandbox/secrets`;
+  const base = `/api/sandbox/secrets`;
 
   const refresh = async () => {
     const listed = await getJson<{ secrets: SecretView[] }>(base);

@@ -69,7 +69,6 @@ export async function sweepContentWatches(): Promise<void> {
       .selectFrom('content_watches')
       .select([
         'id',
-        'tenant_id',
         'provider',
         'account_id',
         'scope_type',
@@ -148,7 +147,6 @@ export async function sweepContentWatches(): Promise<void> {
       const actor = await actorForAccount(db, watch.tenant_id, watch.account_id);
       const fields = {
         component: COMPONENT,
-        tenantId: watch.tenant_id,
         provider: watch.provider,
         scope,
         scopeKey: watch.scope_key,
@@ -175,7 +173,6 @@ export async function sweepContentWatches(): Promise<void> {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn('watch sync failed for {provider} {scope}: {error}', {
         component: COMPONENT,
-        tenantId: watch.tenant_id,
         provider: watch.provider,
         scope: watch.scope_key,
         error: message,

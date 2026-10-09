@@ -28,7 +28,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -49,7 +48,6 @@ export async function POST(
   }
   const days = automationDaysOfBody(body.automationDays) ?? AUTOMATION_WINDOW_DEFAULT_DAYS;
   const enrolled = await delegateClient().enroll({
-    tenantId,
     subject: session.subject,
     sessionId: session.id,
     publicKey,
@@ -87,6 +85,6 @@ export async function POST(
   }
   await setAutomationDays(db, tenantId, session.subject, days);
   await resumeRunsNeedingSignIn(db, agentJobsQueue().producer, tenantId, session.subject);
-  recordAuditEvent({ tenantId, actorSubject: session.subject, action: 'encryption-key.enrolled' });
+  recordAuditEvent({ actorSubject: session.subject, action: 'encryption-key.enrolled' });
   return NextResponse.json({ version: enrolled.val.version, migrated: enrolled.val.migrated });
 }

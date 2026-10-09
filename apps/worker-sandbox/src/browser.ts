@@ -102,7 +102,6 @@ export class BrowserOpError extends Error {
 }
 
 export interface BrowserTarget {
-  tenantId: string;
   subject: string;
 }
 

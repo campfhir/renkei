@@ -17,7 +17,6 @@ import { getIdentityDisplay } from '@/lib/identity';
 import { logger } from '@/lib/logger';
 
 export function notifyAgentShared(input: {
-  tenantId: string;
   /** Who now has access — the notification's reader. */
   granteeSubject: string;
   /** Who shared it. */
@@ -42,7 +41,6 @@ export function notifyAgentShared(input: {
           .insertInto('agent_notifications')
           .values({
             id,
-            tenant_id: input.tenantId,
             subject: input.granteeSubject,
             kind: 'agent_shared',
             headline,
@@ -70,18 +68,16 @@ export function notifyAgentShared(input: {
       const grantee = await getIdentityDisplay(input.tenantId, input.granteeSubject);
       if (grantee?.email) {
         const access = await resolveGraphAccess({
-          tenantId: input.tenantId,
           subject: input.granteeSubject,
         });
         if (typeof access === 'string') {
           logger.warn('agent-shared mail not sent: {reason}', {
             component: 'agents/share-notification',
-            tenantId: input.tenantId,
             agentId: input.agentId,
             reason: access,
           });
         } else {
-          const context = { tenantId: input.tenantId, subject: input.granteeSubject };
+          const context = { subject: input.granteeSubject };
           const sent = await graphPost(context, access.auth, '/me/sendMail', {
             message: {
               subject: headline,
@@ -93,7 +89,6 @@ export function notifyAgentShared(input: {
           if (!sent.ok) {
             logger.warn('agent-shared mail not sent: {reason}', {
               component: 'agents/share-notification',
-              tenantId: input.tenantId,
               agentId: input.agentId,
               reason: sent.error,
             });
@@ -109,7 +104,6 @@ export function notifyAgentShared(input: {
         if (!sent.ok) {
           logger.warn('agent-shared WebEx note not sent for agent {agentId}', {
             component: 'agents/share-notification',
-            tenantId: input.tenantId,
             agentId: input.agentId,
           });
         }
@@ -118,7 +112,6 @@ export function notifyAgentShared(input: {
   })().catch((error: unknown) => {
     logger.warn('agent-shared notification not recorded', {
       component: 'agents/share-notification',
-      tenantId: input.tenantId,
       agentId: input.agentId,
       error: error instanceof Error ? error.message : String(error),
     });

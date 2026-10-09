@@ -3,7 +3,6 @@ import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getAgentForAdmin } from '@/lib/agents/runs-view';
 import {
   getAgentTokenUsage,
@@ -32,10 +31,8 @@ export default async function AdminAgentDetailPage({
   params: Promise<{ slug: string; agentId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, agentId } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
@@ -54,7 +51,6 @@ export default async function AdminAgentDetailPage({
     db
       .selectFrom('agents')
       .select('steps')
-      .where('tenant_id', '=', tenant.id)
       .where('id', '=', agentId)
       .executeTakeFirst(),
     getAgentToolUsage(db, tenant.id, agentId, TOOL_USAGE_WINDOW_DAYS),
@@ -64,11 +60,11 @@ export default async function AdminAgentDetailPage({
   return (
     <div className="mx-auto max-w-3xl">
       <div className="mb-1 flex flex-wrap items-center gap-3">
-        <BackLink href={`/${slug}/admin/agents`} label="Agent oversight" />
+        <BackLink href={`/admin/agents`} label="Agent oversight" />
         <h1 className="text-xl font-bold">{agent.name}</h1>
         <AdminAgentToggle slug={slug} agentId={agent.id} enabled={agent.enabled} />
         <Link
-          href={`/${slug}/admin/agents/${agent.id}/runs`}
+          href={`/admin/agents/${agent.id}/runs`}
           className="ml-auto text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
         >
           Run history

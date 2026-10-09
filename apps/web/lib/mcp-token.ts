@@ -125,7 +125,6 @@ export interface AccessTokenRecord {
 
 export async function storeAccessToken(params: {
   token: string;
-  tenantId: string;
   clientId: string;
   subject: string;
   scope: string | null;
@@ -149,7 +148,6 @@ export async function storeAccessToken(params: {
     .insertInto('oauth_access_tokens')
     .values({
       token_hash: hashToken(params.token),
-      tenant_id: params.tenantId,
       client_id: params.clientId,
       subject: params.subject,
       application: params.application ?? 'jira',
@@ -183,14 +181,12 @@ export async function resolveAccessToken(
       'client_id',
       'scope',
       'expires_at',
-      'tenant_id',
       'application',
       'agent_id',
       'roles',
       'tool_names',
     ])
     .where('token_hash', '=', tokenHash)
-    .where('tenant_id', '=', tenantId)
     .where('application', '=', application)
     .executeTakeFirst();
 
@@ -202,7 +198,7 @@ export async function resolveAccessToken(
 
   if (new Date(row.expires_at) < new Date()) {
     await db.deleteFrom('oauth_access_tokens').where('token_hash', '=', tokenHash).execute();
-    logger.debug('Expired access token discarded', { component: 'mcp/token', tenantId });
+    logger.debug('Expired access token discarded', { component: 'mcp/token' });
     return null;
   }
 
@@ -233,7 +229,7 @@ export function unauthorizedResponse(tenantId: string, origin: string, detail: s
         // It pointed at the authorization server metadata, so a client followed
         // it, looked for `authorization_servers`, found none, and never reached
         // the registration endpoint.
-        'WWW-Authenticate': `Bearer realm="renkei", error="invalid_token", resource_metadata="${origin}/api/mcp/${tenantId}/.well-known/oauth-protected-resource"`,
+        'WWW-Authenticate': `Bearer realm="renkei", error="invalid_token", resource_metadata="${origin}/api/mcp/.well-known/oauth-protected-resource"`,
       },
     }
   );

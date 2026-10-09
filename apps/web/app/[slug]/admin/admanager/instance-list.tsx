@@ -44,7 +44,7 @@ export default function InstanceList({ slug }: { slug: string }) {
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ instances: InstanceRow[] }>(
-      `/api/admin/${slug}/admanager`
+      `/api/admin/admanager`
     );
     if (loadError) setError(loadError);
     else setInstances(data?.instances ?? []);
@@ -60,7 +60,7 @@ export default function InstanceList({ slug }: { slug: string }) {
     setProbe(null);
     setError(null);
     const { data, error: probeError } = await sendJsonFull<ProbeResponse>(
-      `/api/admin/${slug}/admanager/probe`,
+      `/api/admin/admanager/probe`,
       'POST',
       {
         baseUrl: draft.baseUrl,
@@ -81,7 +81,7 @@ export default function InstanceList({ slug }: { slug: string }) {
     if (!draft) return;
     setBusy(true);
     setError(null);
-    const saveError = await sendJson(`/api/admin/${slug}/admanager`, 'POST', draftPayload(draft));
+    const saveError = await sendJson(`/api/admin/admanager`, 'POST', draftPayload(draft));
     setBusy(false);
     if (saveError) {
       setError(saveError);
@@ -132,7 +132,7 @@ export default function InstanceList({ slug }: { slug: string }) {
                   </p>
                 </div>
                 <Link
-                  href={`/${slug}/admin/admanager/${instance.id}`}
+                  href={`/admin/admanager/${instance.id}`}
                   className="shrink-0 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
                 >
                   Manage

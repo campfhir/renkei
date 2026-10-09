@@ -18,13 +18,12 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; libraryId: string; promptId: string }> }
 ): Promise<Response> {
-  const { tenantId, libraryId, promptId } = await params;
+  const { libraryId, promptId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
     db,
-    tenantId,
     session.subject,
     'prompt_library',
     libraryId
@@ -56,13 +55,12 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; libraryId: string; promptId: string }> }
 ): Promise<Response> {
-  const { tenantId, libraryId, promptId } = await params;
+  const { libraryId, promptId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
     db,
-    tenantId,
     session.subject,
     'prompt_library',
     libraryId

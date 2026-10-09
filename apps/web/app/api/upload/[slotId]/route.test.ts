@@ -75,7 +75,6 @@ function stubDb(
 
 const CLAIMED = {
   id: 'slot-1',
-  tenant_id: 'tenant-1',
   subject: 'subject-1',
   account_id: 'acct-1',
   kind: 'jira-attachment',

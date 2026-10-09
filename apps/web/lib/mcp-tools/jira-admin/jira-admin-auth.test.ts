@@ -65,7 +65,6 @@ describe('oauthJiraAdminAuth', () => {
     );
     // The admin grant, never the everyday Jira one.
     expect(describeMock).toHaveBeenCalledWith({
-      tenantId: 'tenant-1',
       provider: 'atlassian-admin',
       subject: 'subject-1',
     });

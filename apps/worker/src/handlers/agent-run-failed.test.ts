@@ -74,7 +74,6 @@ function prefs(runFailed: Partial<NotificationPrefs['runFailed']>): Notification
 function event(): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: TENANT_ID,
     source: 'agents',
     type: 'run.failed',
     attempts: 1,

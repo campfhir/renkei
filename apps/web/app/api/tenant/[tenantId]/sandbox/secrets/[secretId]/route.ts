@@ -27,7 +27,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; secretId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, secretId } = await params;
+  const { secretId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   if (!(await sandboxBrowserEnabled(tenantId))) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -36,7 +36,7 @@ export async function POST(
   if (!isRecord(body)) {
     return NextResponse.json({ error: 'A JSON body is required' }, { status: 400 });
   }
-  const target = { tenantId, subject: session.subject };
+  const target = { subject: session.subject };
 
   if (body.action === 'unlock') {
     const unlockHours = typeof body.unlockHours === 'number' ? body.unlockHours : undefined;
@@ -50,7 +50,6 @@ export async function POST(
       return NextResponse.json({ error: failure.message }, { status: failure.status });
     }
     recordAuditEvent({
-      tenantId,
       actorSubject: session.subject,
       action: 'sandbox.secret.unlocked',
       targetKind: 'sandbox_secret',
@@ -67,7 +66,6 @@ export async function POST(
       return NextResponse.json({ error: failure.message }, { status: failure.status });
     }
     recordAuditEvent({
-      tenantId,
       actorSubject: session.subject,
       action: 'sandbox.secret.locked',
       targetKind: 'sandbox_secret',
@@ -83,18 +81,17 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; secretId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, secretId } = await params;
+  const { secretId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   if (!(await sandboxBrowserEnabled(tenantId))) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const revoked = await sbSecretRevoke({ tenantId, subject: session.subject }, secretId);
+  const revoked = await sbSecretRevoke({ subject: session.subject }, secretId);
   if (!revoked.ok) {
     const failure = clientFailure(revoked.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'sandbox.secret.revoked',
     targetKind: 'sandbox_secret',

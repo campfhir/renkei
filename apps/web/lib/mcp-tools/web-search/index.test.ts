@@ -65,7 +65,6 @@ function setup(
     },
   };
   const context: MCPToolContext = {
-    tenantId: 'tenant-1',
     accountId: 'account-1',
     siteUrl: '',
     apiBaseUrl: '',
@@ -88,7 +87,6 @@ test('registers web_search as a read tool', () => {
   };
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   registerWebSearchTools(server as unknown as McpServer, {
-    tenantId: 't',
     accountId: '',
     siteUrl: '',
     apiBaseUrl: '',

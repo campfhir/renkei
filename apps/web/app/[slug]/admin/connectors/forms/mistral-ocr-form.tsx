@@ -24,7 +24,7 @@ interface MistralOcrConfig {
 }
 
 export function MistralOcrForm({ slug }: { slug: string }) {
-  const url = `/api/admin/${slug}/connectors/mistral-ocr`;
+  const url = `/api/admin/connectors/mistral-ocr`;
   const [state, reload] = useConnectorConfig<MistralOcrConfig>(url);
   const [endpoint, setEndpoint] = useState('');
   const [model, setModel] = useState('');

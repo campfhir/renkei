@@ -112,7 +112,6 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
       .selectFrom('knowledge_reindex_runs')
       .select(['status'])
       .where('id', '=', runId)
-      .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
     // A run the admin no longer has (deleted, or already ended) is done.
     if (!run || (run.status !== 'queued' && run.status !== 'running')) return 'skipped';
@@ -125,7 +124,6 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
         .execute();
       logger.warn('reindex {kind} run {runId} failed: {error}', {
         component: COMPONENT,
-        tenantId,
         kind,
         runId,
         error: message,
@@ -185,7 +183,6 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
         return;
       }
       const batch = await extractKeywordsBatch(
-        tenantId,
         extractor,
         key,
         BATCH_LIMIT.keywords,
@@ -223,7 +220,6 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
     if (outcome.done) {
       logger.info('reindex {kind} run {runId} finished', {
         component: COMPONENT,
-        tenantId,
         kind,
         runId,
       });
@@ -246,7 +242,6 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
     if (current?.status !== 'running') {
       logger.info('reindex {kind} run {runId} paused', {
         component: COMPONENT,
-        tenantId,
         kind,
         runId,
       });
@@ -254,7 +249,6 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
     }
 
     await enqueue(
-      tenantId,
       'reindex.batch',
       {
         provider: 'reindex',

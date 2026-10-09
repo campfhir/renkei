@@ -26,7 +26,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const found = await pipelinesProjectContext(request, tenantId, projectId);
   if (!found.ok) return found.response;
   const { project, subject } = found.context;
@@ -40,7 +40,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const found = await pipelinesProjectContext(request, tenantId, projectId, { write: true });
   if (!found.ok) return found.response;
   const { project, subject, scopes } = found.context;
@@ -63,7 +63,6 @@ export async function PUT(
   );
   if (!committed.ok) return jsonError(502, 'bitbucket', committed.error);
   recordAuditEvent({
-    tenantId,
     actorSubject: subject,
     action: 'code.pipelines.file.committed',
     targetKind: 'code_project',

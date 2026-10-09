@@ -24,7 +24,7 @@ const { getOrgSettings: mockGetOrgSettings } = jest.requireMock<{ getOrgSettings
 const TENANT = '00000000-0000-4000-8000-000000000001';
 
 function registration(redirectUris = ['https://client.example/cb']): NextRequest {
-  return new NextRequest(`http://localhost/api/mcp/${TENANT}/oauth/register`, {
+  return new NextRequest(`http://localhost/api/mcp/oauth/register`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.5' },
     body: JSON.stringify({ client_name: 'c', redirect_uris: redirectUris }),

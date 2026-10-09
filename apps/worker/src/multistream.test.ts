@@ -398,7 +398,6 @@ async function stopAll(loops: EventLoop[], running: Promise<void>[]): Promise<vo
 function insertWebex(events: InMemoryQueue, messageId: string): number {
   const at = Date.now();
   void events.producer.enqueue({
-    tenantId: 'tenant-1',
     source: 'webex',
     type: 'user-message.created',
     payload: { id: messageId, roomId: 'room-1', accountId: 'acct-w' },
@@ -409,7 +408,6 @@ function insertWebex(events: InMemoryQueue, messageId: string): number {
 
 function insertZoom(events: InMemoryQueue, uuid: string): void {
   void events.producer.enqueue({
-    tenantId: 'tenant-1',
     source: 'zoom',
     type: 'recording.transcript_completed',
     payload: { data: { meeting_uuid: uuid, topic: 'Standup', start_time: '2026-08-13T09:00:00Z' } },
@@ -419,7 +417,6 @@ function insertZoom(events: InMemoryQueue, uuid: string): void {
 
 function insertMicrosoft(events: InMemoryQueue): void {
   void events.producer.enqueue({
-    tenantId: 'tenant-1',
     source: 'microsoft',
     type: 'change-notification',
     payload: { accountId: 'acct-1', subscriptionId: 'graph-sub-1' },
@@ -457,7 +454,6 @@ beforeEach(() => {
       );
     }
     await embedding.producer.enqueue({
-      tenantId,
       // Mirrors the real enqueueKnowledgeEvent: the provider is a fairness
       // LANE on the source. Hardcoding 'knowledge' here would leave this
       // whole pipeline test proving something production never writes, and a
@@ -557,7 +553,6 @@ describe('multi-stream: hung embedding queue (Scenario B)', () => {
 
     // Seed the embedding queue directly with an ingest and let it wedge.
     await embedding.producer.enqueue({
-      tenantId: 'tenant-1',
       source: 'knowledge',
       type: 'ingest.object',
       payload: {
@@ -652,7 +647,6 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
     // Two keyed sequences plus an unkeyed straggler.
     for (const refId of ['alpha/1', 'alpha/2', 'alpha/3']) {
       await embedding.producer.enqueue({
-        tenantId: 'tenant-1',
         source: 'knowledge',
         type: 'ingest.object',
         payload: { provider: 'test', refId, content: encPayloadContent(refId) },
@@ -661,7 +655,6 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
     }
     for (const refId of ['beta/1', 'beta/2', 'beta/3']) {
       await embedding.producer.enqueue({
-        tenantId: 'tenant-1',
         source: 'knowledge',
         type: 'ingest.object',
         payload: { provider: 'test', refId, content: encPayloadContent(refId) },
@@ -669,7 +662,6 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
       });
     }
     await embedding.producer.enqueue({
-      tenantId: 'tenant-1',
       source: 'knowledge',
       type: 'ingest.object',
       payload: { provider: 'test', refId: 'solo/1', content: encPayloadContent('solo') },

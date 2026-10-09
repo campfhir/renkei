@@ -78,7 +78,6 @@ maybe('agent memory', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: 'owner-1',
         name: `mem-agent-${agentId.slice(0, 8)}`,
         steps: JSON.stringify({ version: 1, steps: [] }),
@@ -89,16 +88,16 @@ maybe('agent memory', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('agent_memories').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('agents').where('tenant_id', '=', tenantId).execute();
+    await db.deleteFrom('agent_memories').execute();
+    await db.deleteFrom('agents').execute();
     await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
     await closeDatabase();
   });
 
   it('writes an identical entry once — a fact remembered every run is one line', async () => {
-    const first = await appendAgentMemory(db, { tenantId, agentId, content: 'replied to 123' });
-    const again = await appendAgentMemory(db, { tenantId, agentId, content: ' replied to 123 ' });
-    const other = await appendAgentMemory(db, { tenantId, agentId, content: 'replied to 124' });
+    const first = await appendAgentMemory(db, { agentId, content: 'replied to 123' });
+    const again = await appendAgentMemory(db, { agentId, content: ' replied to 123 ' });
+    const other = await appendAgentMemory(db, { agentId, content: 'replied to 124' });
     expect(first).toEqual({ inserted: true });
     expect(again).toEqual({ inserted: false });
     expect(other).toEqual({ inserted: true });
@@ -111,8 +110,8 @@ maybe('agent memory', () => {
   });
 
   it('appends entries and reads them newest-first with the summary', async () => {
-    await appendAgentMemory(db, { tenantId, agentId, content: 'handled message 1' });
-    await appendAgentMemory(db, { tenantId, agentId, content: 'handled message 2' });
+    await appendAgentMemory(db, { agentId, content: 'handled message 1' });
+    await appendAgentMemory(db, { agentId, content: 'handled message 2' });
     await writeAgentMemorySummary(db, tenantId, agentId, 'the standing summary');
 
     const memory = await readAgentMemory(db, tenantId, agentId);
@@ -140,7 +139,7 @@ maybe('agent memory', () => {
   });
 
   it('writes no entry in plaintext, and still reads a plaintext row from before the sweep', async () => {
-    await appendAgentMemory(db, { tenantId, agentId, content: 'patient 123 was discharged' });
+    await appendAgentMemory(db, { agentId, content: 'patient 123 was discharged' });
     const stored = await db
       .selectFrom('agent_memories')
       .select(['content'])
@@ -156,7 +155,6 @@ maybe('agent memory', () => {
       .insertInto('agent_memories')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         agent_id: agentId,
         kind: 'entry',
         content: 'legacy plaintext note',
@@ -169,7 +167,7 @@ maybe('agent memory', () => {
       'patient 123 was discharged',
     ]);
     expect(
-      await appendAgentMemory(db, { tenantId, agentId, content: 'legacy plaintext note' })
+      await appendAgentMemory(db, { agentId, content: 'legacy plaintext note' })
     ).toEqual({ inserted: false });
   });
 
@@ -177,7 +175,6 @@ maybe('agent memory', () => {
     await writeAgentMemorySummary(db, tenantId, agentId, 'S'.repeat(5_000));
     for (let index = 0; index < 30; index += 1) {
       await appendAgentMemory(db, {
-        tenantId,
         agentId,
         content: `note ${index} ${'x'.repeat(400)}`,
       });
@@ -188,8 +185,8 @@ maybe('agent memory', () => {
   });
 
   it('forgets named entries and reports ids that matched nothing', async () => {
-    await appendAgentMemory(db, { tenantId, agentId, content: 'keep me' });
-    await appendAgentMemory(db, { tenantId, agentId, content: 'forget me' });
+    await appendAgentMemory(db, { agentId, content: 'keep me' });
+    await appendAgentMemory(db, { agentId, content: 'forget me' });
     const before = await readAgentMemory(db, tenantId, agentId);
     const doomed = before.entries.find((entry) => entry.content === 'forget me');
     const absent = randomUUID();
@@ -213,14 +210,13 @@ maybe('agent memory', () => {
       .insertInto('agents')
       .values({
         id: otherId,
-        tenant_id: tenantId,
         owner_subject: 'owner-1',
         name: `mem-agent-${otherId.slice(0, 8)}`,
         steps: JSON.stringify({ version: 1, steps: [] }),
         enabled: true,
       })
       .execute();
-    await appendAgentMemory(db, { tenantId, agentId: otherId, content: 'theirs' });
+    await appendAgentMemory(db, { agentId: otherId, content: 'theirs' });
     const theirs = (await readAgentMemory(db, tenantId, otherId)).entries[0];
 
     const result = await forgetAgentMemory(db, tenantId, agentId, {
@@ -234,7 +230,7 @@ maybe('agent memory', () => {
   });
 
   it('clears the summary alone, leaving entries in place', async () => {
-    await appendAgentMemory(db, { tenantId, agentId, content: 'still here' });
+    await appendAgentMemory(db, { agentId, content: 'still here' });
     await writeAgentMemorySummary(db, tenantId, agentId, 'the standing summary');
 
     const result = await forgetAgentMemory(db, tenantId, agentId, { kind: 'summary' });
@@ -246,8 +242,8 @@ maybe('agent memory', () => {
   });
 
   it('counts what is held, then all clears every row', async () => {
-    await appendAgentMemory(db, { tenantId, agentId, content: 'one' });
-    await appendAgentMemory(db, { tenantId, agentId, content: 'two' });
+    await appendAgentMemory(db, { agentId, content: 'one' });
+    await appendAgentMemory(db, { agentId, content: 'two' });
     await writeAgentMemorySummary(db, tenantId, agentId, 'summary');
 
     expect(await countAgentMemory(db, tenantId, agentId)).toEqual({
@@ -269,7 +265,7 @@ maybe('agent memory', () => {
   it('compaction folds old entries into the summary via the agent model', async () => {
     const total = MEMORY_COMPACT_THRESHOLD + 10;
     for (let index = 0; index < total; index += 1) {
-      await appendAgentMemory(db, { tenantId, agentId, content: `did thing ${index}` });
+      await appendAgentMemory(db, { agentId, content: `did thing ${index}` });
     }
     mockResolveLlm.mockResolvedValue({
       ok: true,
@@ -307,7 +303,7 @@ maybe('agent memory', () => {
   it('a failing model leaves everything in place for the next sweep', async () => {
     const total = MEMORY_COMPACT_THRESHOLD + 5;
     for (let index = 0; index < total; index += 1) {
-      await appendAgentMemory(db, { tenantId, agentId, content: `did thing ${index}` });
+      await appendAgentMemory(db, { agentId, content: `did thing ${index}` });
     }
     mockResolveLlm.mockResolvedValue({ ok: false, err: { type: 'NO_MODEL' } });
 

@@ -69,7 +69,6 @@ export function createZoomTranscriptHandler(
       // agents to fire under the owner-scoped fan-out rule.
       logger.info('host {hostEmail} has no zoom grant; transcript skipped', {
         component: COMPONENT,
-        tenantId,
         hostEmail: facts.hostEmail ?? facts.hostId ?? '(unknown)',
       });
       return 'skipped';
@@ -93,7 +92,6 @@ export function createZoomTranscriptHandler(
     if (!text.trim()) {
       logger.warn('transcript for {meetingUuid} was empty', {
         component: COMPONENT,
-        tenantId,
         meetingUuid: facts.meetingUuid,
       });
     }
@@ -108,7 +106,6 @@ export function createZoomTranscriptHandler(
       // chunk-and-embed does not.
       const refId = `${access.hostEmail}/${facts.meetingUuid}/transcript`;
       await enqueueKnowledgeEvent(
-        tenantId,
         'ingest.object',
         {
           provider: ZOOM,
@@ -131,13 +128,11 @@ export function createZoomTranscriptHandler(
       );
       logger.info('queued transcript for {meetingUuid} for indexing', {
         component: COMPONENT,
-        tenantId,
         meetingUuid: facts.meetingUuid,
       });
     } else if (!embedder) {
       logger.info('knowledge layer off; transcript not indexed', {
         component: COMPONENT,
-        tenantId,
       });
     }
 
@@ -147,7 +142,6 @@ export function createZoomTranscriptHandler(
     // `data` keys mirror the trigger catalog's provides, minus `trigger.`.
     if (!access.subject) return;
     await publish({
-      tenantId,
       provider: 'zoom',
       type: 'recording.transcript_completed',
       ownerSubject: access.subject,
@@ -186,7 +180,6 @@ export function createZoomSummaryHandler(
       // No grant → no owner subject → no agents to fire either; skip whole.
       logger.info('host {hostEmail} has no zoom grant; summary skipped', {
         component: COMPONENT,
-        tenantId,
         hostEmail: facts.hostEmail ?? facts.hostId ?? '(unknown)',
       });
       return 'skipped';
@@ -225,7 +218,6 @@ export function createZoomSummaryHandler(
     if (!text.trim()) {
       logger.warn('summary for {meetingId} carried no content', {
         component: COMPONENT,
-        tenantId,
         meetingId: facts.meetingId,
       });
     }
@@ -236,7 +228,6 @@ export function createZoomSummaryHandler(
     if (embedder && text.trim()) {
       const refId = `${access.hostEmail}/${facts.meetingUuid}/summary`;
       await enqueueKnowledgeEvent(
-        tenantId,
         'ingest.object',
         {
           provider: ZOOM,
@@ -256,17 +247,15 @@ export function createZoomSummaryHandler(
       );
       logger.info('queued AI summary for meeting {meetingId} for indexing', {
         component: COMPONENT,
-        tenantId,
         meetingId: facts.meetingId,
       });
     } else if (!embedder) {
-      logger.info('knowledge layer off; summary not indexed', { component: COMPONENT, tenantId });
+      logger.info('knowledge layer off; summary not indexed', { component: COMPONENT });
     }
 
     // Last act — see the transcript handler. Keys mirror the catalog row.
     if (!access.subject) return;
     await publish({
-      tenantId,
       provider: 'zoom',
       type: 'meeting.summary_completed',
       ownerSubject: access.subject,

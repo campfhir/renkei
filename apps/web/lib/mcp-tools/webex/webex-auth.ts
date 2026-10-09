@@ -55,7 +55,7 @@ export async function resolveWebexAccess(
   context: Pick<MCPToolContext, 'tenantId' | 'subject'>
 ): Promise<WebexAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const grant = { tenantId: context.tenantId, provider: WEBEX_USER, subject: context.subject };
+  const grant = { provider: WEBEX_USER, subject: context.subject };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) return grantRefusalText(described.err.type, LABEL);
   const personEmail =
@@ -136,7 +136,6 @@ export function oauthWebexAuth(context: MCPToolContext): WebexAuth {
       } catch {
         logger.warn('WebEx API unreachable', {
           component: 'webex/fetch',
-          tenantId: context.tenantId,
           subject: context.subject,
           path,
           method,
@@ -159,7 +158,6 @@ export function oauthWebexAuth(context: MCPToolContext): WebexAuth {
         .catch(() => '');
       const logFields = {
         component: 'webex/fetch',
-        tenantId: context.tenantId,
         subject: context.subject,
         path,
         method,

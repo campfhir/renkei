@@ -44,7 +44,6 @@ maybe('chat and project keys through the chat', () => {
   let chatId: string;
 
   const ref = (id: string, kind: 'chat' | 'chat_project' = 'chat') => ({
-    tenantId,
     kind,
     resourceId: id,
   });
@@ -81,7 +80,6 @@ maybe('chat and project keys through the chat', () => {
 
   it('a new chat has a key, and its owner writes under it', async () => {
     chatId = await createChat(db, {
-      tenantId,
       ownerSubject: owner,
       projectId: null,
       llmModelId: null,
@@ -95,7 +93,6 @@ maybe('chat and project keys through the chat', () => {
     if (!access) return;
     expect(access.cipher.keyId).not.toBeNull();
     const inserted = await insertMessage(db, {
-      tenantId,
       chatId,
       turnId: null,
       role: 'user',
@@ -184,7 +181,7 @@ maybe('chat and project keys through the chat', () => {
     const bareId = randomUUID();
     await db
       .insertInto('chats')
-      .values({ id: bareId, tenant_id: tenantId, owner_subject: owner })
+      .values({ id: bareId, owner_subject: owner })
       .execute();
     await grantResourceAccess(db, tenantId, owner, 'chat', bareId, {
       granteeSubject: friend,
@@ -202,7 +199,6 @@ maybe('chat and project keys through the chat', () => {
     if (!asOwner) throw new Error('owner lost access');
     expect(asOwner.cipher.keyId).toBe(asViewer.cipher.keyId);
     await insertMessage(db, {
-      tenantId,
       chatId: bareId,
       turnId: null,
       role: 'assistant',
@@ -229,7 +225,6 @@ maybe('chat and project keys through the chat', () => {
 
   it('a project’s instructions and memory are under the project’s key, shared with it', async () => {
     const projectId = await createProject(db, {
-      tenantId,
       ownerSubject: owner,
       name: 'Ledger',
       description: null,
@@ -254,7 +249,6 @@ maybe('chat and project keys through the chat', () => {
       await updateProject(db, tenantId, projectId, { instructions: 'Cite twice.' }, asOwner.cipher)
     ).toBe(true);
     await appendProjectMemory(db, {
-      tenantId,
       projectId,
       content: 'The ledger closes on the 5th.',
       authorSubject: owner,
@@ -284,7 +278,6 @@ maybe('chat and project keys through the chat', () => {
 
   it('a person’s memory is under their own key alone', async () => {
     await appendUserMemory(db, {
-      tenantId,
       ownerSubject: owner,
       content: 'prefers tables',
       chatId: null,
@@ -292,7 +285,6 @@ maybe('chat and project keys through the chat', () => {
     const stored = await db
       .selectFrom('chat_user_memories')
       .select('content')
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', owner)
       .executeTakeFirstOrThrow();
     // Under the person's user key alone (`upriv1:`), never the automation key.

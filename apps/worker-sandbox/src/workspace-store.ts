@@ -16,7 +16,6 @@ import {
 } from '@renkei/connector-sandbox';
 
 export interface WorkspaceTarget {
-  tenantId: string;
   subject: string;
 }
 
@@ -26,7 +25,6 @@ export interface StoredWorkspace extends SandboxWorkspaceSummary, WorkspaceTarge
 
 const COLUMNS = [
   'id',
-  'tenant_id',
   'subject',
   'provider',
   'repo_full_name',
@@ -46,7 +44,6 @@ function statusOf(value: string): WorkspaceStatus {
 
 function toStored(row: {
   id: string;
-  tenant_id: string;
   subject: string;
   provider: string;
   repo_full_name: string;
@@ -61,7 +58,6 @@ function toStored(row: {
 }): StoredWorkspace {
   return {
     id: row.id,
-    tenantId: row.tenant_id,
     subject: row.subject,
     provider: row.provider,
     repoFullName: row.repo_full_name,
@@ -93,7 +89,6 @@ export async function insertWorkspace(
     .insertInto('sandbox_workspaces')
     .values({
       id: randomUUID(),
-      tenant_id: input.tenantId,
       subject: input.subject,
       provider: input.provider,
       repo_full_name: input.repoFullName,
@@ -114,7 +109,6 @@ export async function listWorkspaces(
   const rows = await db
     .selectFrom('sandbox_workspaces')
     .select(COLUMNS)
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .orderBy('created_at', 'desc')
     .execute();
@@ -125,7 +119,6 @@ export async function countWorkspaces(db: Kysely<DB>, target: WorkspaceTarget): 
   const row = await db
     .selectFrom('sandbox_workspaces')
     .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .executeTakeFirst();
   return row?.count ? Number(row.count) : 0;
@@ -139,7 +132,6 @@ export async function getWorkspace(
   const row = await db
     .selectFrom('sandbox_workspaces')
     .select(COLUMNS)
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .where('id', '=', id)
     .executeTakeFirst();
@@ -190,7 +182,6 @@ export async function deleteWorkspace(
 ): Promise<StoredWorkspace | undefined> {
   const row = await db
     .deleteFrom('sandbox_workspaces')
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .where('id', '=', id)
     .returning(COLUMNS)

@@ -533,7 +533,6 @@ export function registerMirthTools(
       if (!audited.ok) {
         logger.warn('Mirth PHI audit event not recorded: {error}', {
           component: 'mcp/mirth',
-          tenantId: context.tenantId,
           subject: context.subject,
           instanceId,
           error: audited.message,
@@ -542,7 +541,6 @@ export function registerMirthTools(
     } catch (error) {
       logger.warn('Mirth PHI audit event not recorded: {error}', {
         component: 'mcp/mirth',
-        tenantId: context.tenantId,
         subject: context.subject,
         instanceId,
         error: error instanceof Error ? error.message : String(error),

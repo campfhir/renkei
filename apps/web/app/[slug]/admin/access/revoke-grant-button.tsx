@@ -31,7 +31,7 @@ export default function RevokeGrantButton({
     setError(null);
     try {
       const response = await fetch(
-        `/api/admin/${slug}/grants/${encodeURIComponent(accountId)}/revoke`,
+        `/api/admin/grants/${encodeURIComponent(accountId)}/revoke`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

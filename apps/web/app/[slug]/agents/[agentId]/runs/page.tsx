@@ -3,7 +3,6 @@ import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -31,12 +30,10 @@ export default async function AgentRunsPage({
 }): Promise<React.ReactNode> {
   const { slug, agentId } = await params;
   const { status, q } = await searchParams;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/agents/${agentId}/runs`));
+    redirect(signInUrl(tenant.id, `/agents/${agentId}/runs`));
   }
 
   const dbResult = getDatabase();
@@ -52,7 +49,7 @@ export default async function AgentRunsPage({
     ...(query ? { q: query } : {}),
   });
 
-  const basePath = `/${slug}/agents/${agentId}/runs`;
+  const basePath = `/agents/${agentId}/runs`;
   const tabHref = (tabStatus?: string) => {
     const params = new URLSearchParams();
     if (tabStatus) params.set('status', tabStatus);
@@ -64,7 +61,7 @@ export default async function AgentRunsPage({
   return (
     <div className="mx-auto max-w-3xl">
       <div className="mb-1 flex items-center gap-2">
-        <BackLink href={`/${slug}/agents/${agentId}`} label={`“${agent.name}”`} />
+        <BackLink href={`/agents/${agentId}`} label={`“${agent.name}”`} />
         <h1 className="min-w-0 truncate text-xl font-bold">Runs of “{agent.name}”</h1>
       </div>
       <CoachTarget name="runs-filters" className="mb-4 flex flex-wrap items-center gap-2 text-sm">
@@ -98,7 +95,7 @@ export default async function AgentRunsPage({
           {runs.map((run) => (
             <li key={run.id}>
               <Link
-                href={`/${slug}/agents/${agentId}/runs/${run.id}`}
+                href={`/agents/${agentId}/runs/${run.id}`}
                 className="flex items-center justify-between rounded-md border border-gray-200 p-3 text-sm hover:border-blue-400 dark:border-gray-800"
               >
                 <span className="flex items-center gap-2">

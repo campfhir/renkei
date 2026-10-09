@@ -16,7 +16,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; itemId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, itemId } = await params;
+  const { itemId } = await params;
 
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
@@ -36,7 +36,6 @@ export async function POST(
     .selectFrom('actionable_items')
     .select(['id', 'status', 'archived_at'])
     .where('id', '=', itemId)
-    .where('tenant_id', '=', tenantId)
     .where((eb) =>
       eb.or([eb('owner_subject', 'is', null), eb('owner_subject', '=', session.subject)])
     )
@@ -62,7 +61,6 @@ export async function POST(
       updated_at: sql`NOW()`,
     })
     .where('id', '=', itemId)
-    .where('tenant_id', '=', tenantId)
     .execute();
 
   return NextResponse.json({ status: 'archived' });
@@ -72,7 +70,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; itemId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, itemId } = await params;
+  const { itemId } = await params;
 
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
@@ -90,7 +88,6 @@ export async function DELETE(
     .updateTable('actionable_items')
     .set({ archived_at: null, archived_by: null, updated_at: sql`NOW()` })
     .where('id', '=', itemId)
-    .where('tenant_id', '=', tenantId)
     .where((eb) =>
       eb.or([eb('owner_subject', 'is', null), eb('owner_subject', '=', session.subject)])
     )

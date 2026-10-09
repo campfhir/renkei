@@ -27,13 +27,11 @@ import ConfirmRunModal from '../../../confirm-run-modal';
 const GUIDANCE_MAX = 2_000;
 
 export default function ResumeButton({
-  tenantId,
   agentId,
   runId,
   agentName,
   failedStepName,
 }: {
-  tenantId: string;
   agentId: string;
   runId: string;
   agentName: string;

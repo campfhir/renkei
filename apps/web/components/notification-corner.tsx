@@ -20,11 +20,9 @@ import NotificationPermissionNudge from '@/components/notification-permission-nu
  * get away from it.
  */
 export default function NotificationCorner({
-  tenantId,
   corner,
   toastsEnabled,
 }: {
-  tenantId: string;
   corner: 'bottom-left' | 'bottom-right';
   toastsEnabled: boolean;
 }) {

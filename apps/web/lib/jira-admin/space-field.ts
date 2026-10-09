@@ -38,7 +38,6 @@ import type { ScreenUse } from './space-screens';
 export const SPACE_FIELD_KIND = 'space_field';
 
 interface LogScope {
-  tenantId: string;
   subject?: string;
 }
 

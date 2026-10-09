@@ -351,7 +351,6 @@ export async function registerProposeSpaceTools(
       }
       const reason = text(args.reason);
       const change = await createChangeRequest(db, {
-        tenantId: context.tenantId,
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId: access.cloudId,

@@ -12,11 +12,9 @@ function sizeOf(bytes: number): string {
 }
 
 export default function AttachmentChip({
-  tenantId,
   attachment,
   onRemove,
 }: {
-  tenantId: string;
   attachment: AttachmentView;
   onRemove?: () => void;
 }) {

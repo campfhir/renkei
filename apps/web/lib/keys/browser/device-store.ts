@@ -20,7 +20,6 @@ const TRUST_STORE = 'trust';
 const VERSION = 2;
 
 interface StoredKey {
-  tenantId: string;
   deviceKey: CryptoKey;
   iv: Uint8Array<ArrayBuffer>;
   wrapped: Uint8Array<ArrayBuffer>;
@@ -84,7 +83,6 @@ async function read(tenantId: string): Promise<StoredKey | null> {
       found.deviceKey !== null
     ) {
       return {
-        tenantId,
         deviceKey: found.deviceKey,
         iv: copy(found.iv),
         wrapped: copy(found.wrapped),
@@ -145,7 +143,7 @@ export async function saveUserKey(
     const wrapped = new Uint8Array(
       await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, deviceKey, copy(userKey))
     );
-    return write({ tenantId, deviceKey, iv, wrapped, acknowledged: options.acknowledged === true });
+    return write({ deviceKey, iv, wrapped, acknowledged: options.acknowledged === true });
   } catch {
     return false;
   }
@@ -236,7 +234,7 @@ export async function trustInstances(
       db
         .transaction(TRUST_STORE, 'readwrite')
         .objectStore(TRUST_STORE)
-        .put({ tenantId, ...next })
+        .put({ ...next })
     );
     db.close();
     return done !== null;

@@ -55,7 +55,6 @@ export async function subjectForMicrosoftAccount(
   const row = await dbResult.val
     .selectFrom('provider_grants')
     .select('subject')
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', 'microsoft')
     .where('provider_account_id', '=', accountId)
     .executeTakeFirst();
@@ -63,7 +62,6 @@ export async function subjectForMicrosoftAccount(
 }
 
 export interface DomainEventInput {
-  tenantId: string;
   /**
    * Catalog source, e.g. 'webex' — becomes the `domain:{provider}` lane.
    * 'batch' is published by the batch-jobs worker (batch-jobs/lifecycle.ts)
@@ -97,7 +95,6 @@ export interface DomainEventInput {
  */
 export async function publishDomainEvent(event: DomainEventInput): Promise<void> {
   const enqueued = await eventsQueue.producer.enqueue({
-    tenantId: event.tenantId,
     source: `domain:${event.provider}`,
     type: event.type,
     payload: {

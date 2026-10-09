@@ -46,7 +46,6 @@ export async function loadBuilderData(
     db
       .selectFrom('llm_model_configs')
       .select(['id', 'label', 'is_default'])
-      .where('tenant_id', '=', tenantId)
       .where('enabled', '=', true)
       // An agent runs on a chat model; an image generation model cannot answer.
       .where(chatModelsOnly)
@@ -56,7 +55,6 @@ export async function loadBuilderData(
     db
       .selectFrom('schedule_calendars')
       .select(['id', 'name', 'dates'])
-      .where('tenant_id', '=', tenantId)
       .orderBy('name')
       .execute(),
   ]);

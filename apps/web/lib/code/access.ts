@@ -123,7 +123,6 @@ export async function grantScopes(
   const row = await db
     .selectFrom('provider_grants')
     .select(['requested_scopes', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', provider)
     .where('subject', '=', subject)
     .orderBy('updated_at', 'desc')
@@ -141,7 +140,6 @@ export async function codeProjectAccess(
   const row = await db
     .selectFrom('provider_grants')
     .select(['requested_scopes', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', provider)
     .where('subject', '=', subject)
     .limit(1)

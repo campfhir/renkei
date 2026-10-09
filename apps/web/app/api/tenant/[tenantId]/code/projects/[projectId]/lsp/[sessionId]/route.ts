@@ -26,7 +26,7 @@ export const runtime = 'nodejs';
 type Params = { params: Promise<{ tenantId: string; projectId: string; sessionId: string }> };
 
 export async function POST(request: NextRequest, { params }: Params): Promise<Response> {
-  const { tenantId, projectId, sessionId } = await params;
+  const { projectId, sessionId } = await params;
   if (!isUuid(sessionId)) return jsonError(404, 'not-found', 'No such session.');
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
 }
 
 export async function GET(request: NextRequest, { params }: Params): Promise<Response> {
-  const { tenantId, projectId, sessionId } = await params;
+  const { projectId, sessionId } = await params;
   if (!isUuid(sessionId)) return jsonError(404, 'not-found', 'No such session.');
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
 }
 
 export async function DELETE(request: NextRequest, { params }: Params): Promise<Response> {
-  const { tenantId, projectId, sessionId } = await params;
+  const { projectId, sessionId } = await params;
   if (!isUuid(sessionId)) return jsonError(404, 'not-found', 'No such session.');
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;

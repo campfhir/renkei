@@ -77,7 +77,7 @@ function request(body: unknown): NextRequest {
 }
 
 function params() {
-  return { params: Promise.resolve({ tenantId: TENANT, agentId: AGENT_ID, runId: RUN_ID }) };
+  return { params: Promise.resolve({ agentId: AGENT_ID, runId: RUN_ID }) };
 }
 
 beforeEach(() => {

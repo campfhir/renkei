@@ -21,7 +21,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -41,7 +40,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -51,7 +49,6 @@ export async function POST(
   const settings = await getOrgSettings(tenantId);
   const redactor = settings.ok ? createOutboundRedactor(tenantId, settings.val) : null;
   const id = await appendUserMemory(db, {
-    tenantId,
     ownerSubject: session.subject,
     content: redactor ? redactor.apply(content).text : content,
     chatId: null,
@@ -64,7 +61,6 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -77,7 +73,6 @@ export async function PATCH(
   const redactor = settings.ok ? createOutboundRedactor(tenantId, settings.val) : null;
   const updated = await editUserMemory(
     db,
-    tenantId,
     session.subject,
     id,
     redactor ? redactor.apply(content).text : content
@@ -90,7 +85,6 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -100,7 +94,6 @@ export async function DELETE(
     : [];
   const deleted = await forgetUserMemory(
     db,
-    tenantId,
     session.subject,
     body.all === true ? { kind: 'all' } : { kind: 'entries', ids }
   );

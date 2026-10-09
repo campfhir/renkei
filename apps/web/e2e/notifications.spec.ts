@@ -94,7 +94,7 @@ async function seedNotifications(): Promise<void> {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM agent_notifications WHERE tenant_id = $1', [E2E_TENANT_ID]);
+    await client.query('DELETE FROM agent_notifications', [E2E_TENANT_ID]);
     for (const [index, row] of ROWS.entries()) {
       await client.query(
         `INSERT INTO agent_notifications
@@ -134,7 +134,7 @@ async function seedManyNotifications(count: number): Promise<void> {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM agent_notifications WHERE tenant_id = $1', [E2E_TENANT_ID]);
+    await client.query('DELETE FROM agent_notifications', [E2E_TENANT_ID]);
     for (let index = 0; index < count; index += 1) {
       await client.query(
         `INSERT INTO agent_notifications
@@ -160,7 +160,7 @@ test('notifications — mark all as read reaches rows past the page, show more l
   page,
 }, testInfo) => {
   await seedManyNotifications(105);
-  await page.goto(`/${E2E_SLUG}/notifications`);
+  await page.goto(`/notifications`);
   await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
 
   // The banner reports the TRUE total, not just what rendered.
@@ -204,7 +204,7 @@ test('notifications — mark all as read reaches rows past the page, show more l
 });
 
 test('canvas — the fixed mark in the corner', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await page.goto(`/agents/${AGENT_DEEP_ID}/edit`);
   await expect(page.getByRole('button', { name: `Edit loop: ${DEEP_LOOP_NAME}` })).toBeVisible();
 
   // The mark is on the trigger cluster, the group, the foreach loop and the
@@ -218,7 +218,7 @@ test('canvas — the fixed mark in the corner', async ({ page }, testInfo) => {
 
 test('notifications — the whole row opens the link', async ({ page }, testInfo) => {
   await seedNotifications();
-  await page.goto(`/${E2E_SLUG}/notifications`);
+  await page.goto(`/notifications`);
   await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
 
   const linked = page.getByRole('link', { name: 'Created a Jira issue PROJ-1042' });
@@ -271,7 +271,7 @@ test('notifications — the whole row opens the link', async ({ page }, testInfo
 
 test('notifications — select and delete through the menu', async ({ page }, testInfo) => {
   await seedNotifications();
-  await page.goto(`/${E2E_SLUG}/notifications`);
+  await page.goto(`/notifications`);
   await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
 
   // "Select" in a card's menu enters selection mode: checkboxes replace
@@ -302,7 +302,7 @@ test('notifications — select and delete through the menu', async ({ page }, te
 });
 
 test('preferences — acts enumerated per connector', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/preferences`);
+  await page.goto(`/preferences`);
   await expect(page.getByRole('heading', { name: 'Preferences' })).toBeVisible();
 
   // No grid: the words that named its columns are gone.
@@ -331,8 +331,8 @@ test('toast — the card opens its link, the dismiss still dismisses', async ({ 
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM agent_notifications WHERE tenant_id = $1', [E2E_TENANT_ID]);
-    await page.goto(`/${E2E_SLUG}/agents`);
+    await client.query('DELETE FROM agent_notifications', [E2E_TENANT_ID]);
+    await page.goto(`/agents`);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     // The centre seeds its cursor from the FIRST poll, so a row written
     // before that one lands is backlog and deliberately never toasts.

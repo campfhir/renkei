@@ -77,7 +77,7 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
         [E2E_TENANT_ID, template.name, template.description, template.body]
       );
     }
-    await client.query(`DELETE FROM pipeline_templates WHERE tenant_id = $1 AND name = $2`, [
+    await client.query(`DELETE FROM pipeline_templates WHERE name = $2`, [
       E2E_TENANT_ID,
       customTemplateNameFor(ids.digit),
     ]);
@@ -183,12 +183,12 @@ test.describe('Code project pipelines', () => {
         fullPage: false,
       });
     const main = page.getByRole('main');
-    const pagePath = `/${E2E_SLUG}/code/${ids.projectId}/pipelines`;
+    const pagePath = `/code/${ids.projectId}/pipelines`;
 
     // ── The project page: a card in the rail after the chats, before the
     //    environment, summarizing what Bitbucket says — off, no file, no
     //    variables, the last run — and nothing to edit inline ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
     });
@@ -408,7 +408,7 @@ test.describe('Code project pipelines', () => {
   }, testInfo) => {
     const ids = idsFor(testInfo.project.name);
     const name = customTemplateNameFor(ids.digit);
-    await page.goto(`/${E2E_SLUG}/admin/pipeline-templates`);
+    await page.goto(`/admin/pipeline-templates`);
     await expect(page.getByRole('heading', { level: 1, name: 'Pipeline templates' })).toBeVisible({
       timeout: 30_000,
     });

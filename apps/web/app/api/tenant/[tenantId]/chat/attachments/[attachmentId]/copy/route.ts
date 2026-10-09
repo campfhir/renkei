@@ -22,7 +22,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; attachmentId: string }> }
 ): Promise<Response> {
-  const { tenantId, attachmentId } = await params;
+  const { attachmentId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -48,7 +48,6 @@ export async function POST(
     db,
     {
       id: randomUUID(),
-      tenant_id: tenantId,
       subject: session.subject,
       account_id: '',
       kind: 'fileshare-file',

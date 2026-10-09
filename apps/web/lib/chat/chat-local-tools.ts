@@ -50,7 +50,6 @@ export async function chatLocalTools(
   const hasFiles = await db
     .selectFrom('chat_attachments')
     .select('id')
-    .where('tenant_id', '=', context.tenantId)
     .where((eb) =>
       eb.or([
         eb('chat_id', '=', context.chatId),

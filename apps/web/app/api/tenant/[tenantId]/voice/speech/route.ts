@@ -42,7 +42,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -110,7 +109,6 @@ export async function POST(
     if (recorded || !dbResult.ok) return;
     recorded = true;
     void recordVoiceUsage(dbResult.val, {
-      tenantId,
       subject: session.subject,
       kind: 'speech',
       characters: text.length,

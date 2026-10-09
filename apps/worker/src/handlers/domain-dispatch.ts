@@ -84,7 +84,6 @@ const KNOWLEDGE_SUBSCRIBERS: Record<string, KnowledgeSubscriber> = {
     }
     if (!roomId || !messageId || !text) return;
     await markWebexWindowDirty(
-      tenantId,
       roomId,
       windowDayOf(payload.occurredAt),
       payload.ownerSubject
@@ -103,7 +102,6 @@ export function createDomainDispatchHandler(): EventHandler {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable for domain dispatch');
     const { started, filtered } = await fanOutAgentEvents(dbResult.val, queue.producer, {
-      tenantId: event.tenant_id,
       source: payload.provider,
       type: event.type,
       ownerSubject: payload.ownerSubject,
@@ -116,7 +114,6 @@ export function createDomainDispatchHandler(): EventHandler {
     if (started.length > 0) {
       logger.debug('{count} agent run(s) started for {source}/{type}', {
         component: 'worker/domain-dispatch',
-        tenantId: event.tenant_id,
         source: payload.provider,
         type: event.type,
         count: started.length,
@@ -129,7 +126,6 @@ export function createDomainDispatchHandler(): EventHandler {
       // indistinguishable from nothing having been listening at all.
       logger.info('{count} trigger(s) filtered out {source}/{type}', {
         component: 'worker/domain-dispatch',
-        tenantId: event.tenant_id,
         source: payload.provider,
         type: event.type,
         count: filtered,

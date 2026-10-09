@@ -79,14 +79,12 @@ function post(path: string, body: unknown, key: string | null = API_KEY): Promis
 // The credential the delegate attaches rides on the target; these tests
 // mock the service, so none is needed and the parsed field reads null.
 const TARGET = {
-  tenantId: 'tenant-1',
   shareId: 'share-1',
   subject: 'auth0|alice',
   credentials: null,
 };
 /** The write route addresses its target by query string; the credential rides a header, not the query. */
 const TARGET_QUERY = {
-  tenantId: TARGET.tenantId,
   shareId: TARGET.shareId,
   subject: TARGET.subject,
 };
@@ -276,7 +274,6 @@ describe('test-connection payload validation', () => {
   it('dispatches a valid credential against the stored share', async () => {
     mocked.serviceTestConnection.mockResolvedValue({ ok: true, val: { entries: 3 } });
     const response = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
       shareId: 'share-1',
       credentials: { protocol: 'sftp', username: 'alice', password: 'pw' },
     });
@@ -297,7 +294,6 @@ describe('test-connection payload validation', () => {
       { protocol: 'ftp', username: 'x' },
     ]) {
       const response = await post('/v1/test-connection', {
-        tenantId: 'tenant-1',
         shareId: 'share-1',
         credentials,
       });

@@ -33,7 +33,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const found = await pipelinesProjectContext(request, tenantId, projectId);
   if (!found.ok) return found.response;
   const { project, subject, scopes } = found.context;
@@ -56,7 +56,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const found = await pipelinesProjectContext(request, tenantId, projectId, { write: true });
   if (!found.ok) return found.response;
   const { project, subject, scopes } = found.context;
@@ -68,7 +68,6 @@ export async function PUT(
   const set = await setPipelinesEnabled(auth, project.repo.fullName, body.enabled);
   if (!set.ok) return jsonError(502, 'bitbucket', set.error);
   recordAuditEvent({
-    tenantId,
     actorSubject: subject,
     action: set.enabled ? 'code.pipelines.enabled' : 'code.pipelines.disabled',
     targetKind: 'code_project',

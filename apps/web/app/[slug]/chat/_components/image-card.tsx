@@ -42,13 +42,11 @@ function formatDuration(ms: number): string {
 export type ImageCardState = 'waiting' | 'pending' | 'done' | 'failed';
 
 export default function ImageCard({
-  tenantId,
   call,
   result,
   state,
   image,
 }: {
-  tenantId: string;
   call: CallBlock;
   result: ResultBlock | null;
   state: ImageCardState;

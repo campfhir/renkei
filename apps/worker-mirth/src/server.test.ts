@@ -290,7 +290,6 @@ describe('test-connection', () => {
       ok('', { status: 204 }),
     ];
     const response = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       credentials: { username: 'carol', password: 'pw2' },
     });
@@ -304,13 +303,11 @@ describe('test-connection', () => {
   it('answers 403 login_failed on a rejected credential and 404 on an unknown instance', async () => {
     script = [{ status: 401, headers: {}, body: Buffer.from('') }];
     const rejected = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       credentials: { username: 'carol', password: 'wrong' },
     });
     expect(rejected.status).toBe(403);
     const missing = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
       instanceId: 'other',
       credentials: { username: 'carol', password: 'pw' },
     });
@@ -322,7 +319,6 @@ describe('probe', () => {
   it('treats a 401 from an unsaved URL as reachable, and refuses plaintext unless allowed', async () => {
     script = [{ status: 401, headers: {}, body: Buffer.from('') }];
     const response = await post('/v1/probe', {
-      tenantId: 'tenant-1',
       unsaved: { baseUrl: 'https://new.example:8443/', tlsVerify: false },
     });
     expect(await response.json()).toEqual({ ok: true, status: 401, version: null });
@@ -330,7 +326,6 @@ describe('probe', () => {
     expect(calls[0].tls.verify).toBe(false);
 
     const plain = await post('/v1/probe', {
-      tenantId: 'tenant-1',
       unsaved: { baseUrl: 'http://lab.example:8080' },
     });
     expect(plain.status).toBe(400);

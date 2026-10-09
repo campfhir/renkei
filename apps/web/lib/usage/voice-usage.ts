@@ -47,7 +47,7 @@ export async function getVoiceTotals(
            COALESCE(SUM(characters), 0) AS characters,
            COALESCE(SUM(audio_ms), 0) AS audio_ms
     FROM voice_usage
-    WHERE tenant_id = ${tenantId} AND ${inSpan('created_at', span, timeZone)}
+    WHERE ${inSpan('created_at', span, timeZone)}
       ${ownedBy(ownerSubject)}
     GROUP BY kind
   `.execute(db);
@@ -79,13 +79,12 @@ export async function getVoiceUsers(
              COALESCE(SUM(characters), 0) AS characters,
              COALESCE(SUM(audio_ms), 0) AS audio_ms
       FROM voice_usage
-      WHERE tenant_id = ${tenantId} AND ${inSpan('created_at', span, timeZone)}
+      WHERE ${inSpan('created_at', span, timeZone)}
       GROUP BY subject, kind
     `.execute(db),
     db
       .selectFrom('identities')
       .select(['subject', 'display_name', 'email'])
-      .where('tenant_id', '=', tenantId)
       .execute(),
   ]);
   const identityBySubject = new Map(identities.map((row) => [row.subject, row]));

@@ -180,7 +180,6 @@ export function stateOf(
 export async function createChangeRequest(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     subject: string;
     agentId?: string;
     cloudId: string;
@@ -194,7 +193,6 @@ export async function createChangeRequest(
   const row = await db
     .insertInto('jira_admin_change_requests')
     .values({
-      tenant_id: input.tenantId,
       subject: input.subject,
       agent_id: input.agentId && isUuid(input.agentId) ? input.agentId : null,
       cloud_id: input.cloudId,
@@ -222,7 +220,6 @@ export async function getChangeRequest(
     .selectFrom('jira_admin_change_requests')
     .select(COLUMNS)
     .where('id', '=', id)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .executeTakeFirst();
   return row ? fromRow(row) : null;
@@ -238,7 +235,6 @@ export async function listChangeRequests(
   let query = db
     .selectFrom('jira_admin_change_requests')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject);
   if (options.pendingOnly) {
     query = query.where('status', '=', 'pending').where('expires_at', '>', sql<Date>`NOW()`);
@@ -259,7 +255,6 @@ export async function countPendingChangeRequests(
   const row = await db
     .selectFrom('jira_admin_change_requests')
     .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('status', '=', 'pending')
     .where('expires_at', '>', sql<Date>`NOW()`)
@@ -283,7 +278,6 @@ export async function claimChangeRequest(
     .updateTable('jira_admin_change_requests')
     .set({ status: 'applying', updated_at: sql<Date>`NOW()` })
     .where('id', '=', id)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('status', '=', 'pending')
     .where('expires_at', '>', sql<Date>`NOW()`)
@@ -331,7 +325,6 @@ export async function cancelChangeRequest(
       updated_at: sql<Date>`NOW()`,
     })
     .where('id', '=', id)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('status', '=', 'pending')
     .executeTakeFirst();

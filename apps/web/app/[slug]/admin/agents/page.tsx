@@ -4,7 +4,6 @@ import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { listAgentsForAdmin } from '@/lib/agents/runs-view';
 import {
   getTenantTokenUsage,
@@ -98,10 +97,8 @@ export default async function AdminAgentsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
@@ -115,12 +112,10 @@ export default async function AdminAgentsPage({
       sql<BucketRow>`
         SELECT ${BUCKET_COLUMNS}
         FROM agent_run_log
-        WHERE tenant_id = ${tenant.id}
       `.execute(db),
       sql<BucketRow & { agent_id: string }>`
         SELECT agent_id, ${BUCKET_COLUMNS}
         FROM agent_run_log
-        WHERE tenant_id = ${tenant.id}
         GROUP BY agent_id
       `.execute(db),
       getTenantTokenUsage(db, tenant.id),

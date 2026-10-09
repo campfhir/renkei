@@ -128,7 +128,7 @@ export async function registerWatchTools(
       const name = (await projectName(auth, projectKey)) ?? projectKey;
 
       const result = await upsertWatch(
-        { tenantId: context.tenantId, subject: context.subject, accountId: context.accountId },
+        { subject: context.subject, accountId: context.accountId },
         'jira',
         'project',
         projectKey,
@@ -163,7 +163,7 @@ export async function registerWatchTools(
       if (!projectKey) return toolError('projectKey is required');
 
       const result = await disableWatch(
-        { tenantId: context.tenantId, subject: context.subject, accountId: context.accountId },
+        { subject: context.subject, accountId: context.accountId },
         'jira',
         'project',
         projectKey
@@ -191,7 +191,7 @@ export async function registerWatchTools(
     async () => {
       if (!context.subject) return toolError('No signed-in subject on this MCP session.');
       const result = await listWatches(
-        { tenantId: context.tenantId, subject: context.subject, accountId: context.accountId },
+        { subject: context.subject, accountId: context.accountId },
         'jira'
       );
       if (!result.ok) return toolError(result.error);

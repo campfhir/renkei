@@ -17,7 +17,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -41,9 +40,6 @@ export async function POST(
       .where('id', '=', tenantId)
       .executeTakeFirst();
 
-    if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
 
     // Parse user query from request body
     let userQuery: string | null = null;
@@ -76,7 +72,6 @@ export async function POST(
       return NextResponse.json({
         role: 'renkei-operator',
         roles: [...userRoles],
-        tenantId,
         query: userQuery || undefined,
         logs: result.val,
         count: result.val.length,
@@ -93,7 +88,6 @@ export async function POST(
       const grant = await db
         .selectFrom('provider_grants')
         .select('provider_account_id')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', 'atlassian')
         .where('subject', '=', session.subject)
         .executeTakeFirst();
@@ -126,7 +120,6 @@ export async function POST(
       return NextResponse.json({
         role: 'renkei-user',
         roles: [...userRoles],
-        tenantId,
         accountId,
         query: userQuery || undefined,
         logs: result.val,

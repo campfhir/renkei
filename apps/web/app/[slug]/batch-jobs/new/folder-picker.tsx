@@ -49,14 +49,12 @@ function crumbsOf(path: string): Crumb[] {
 }
 
 export default function FolderPicker({
-  tenantId,
   shareId,
   shareName,
   initialPath,
   onCancel,
   onSelect,
 }: {
-  tenantId: string;
   shareId: string;
   shareName: string;
   initialPath: string;
@@ -73,7 +71,7 @@ export default function FolderPicker({
     setError(null);
     void (async () => {
       const { data, error: fetchError } = await getJson<{ entries: EntryView[] }>(
-        `/api/tenant/${tenantId}/fileshares/${shareId}/folder?path=${encodeURIComponent(path)}`
+        `/api/fileshares/${shareId}/folder?path=${encodeURIComponent(path)}`
       );
       if (cancelled) return;
       if (fetchError) {

@@ -46,7 +46,7 @@ export function RetentionForm({ slug, current }: { slug: string; current: number
           onClick={async () => {
             setState('saving');
             setError(null);
-            const failed = await sendJson(`/api/admin/${slug}/agents/retention`, 'PUT', {
+            const failed = await sendJson(`/api/admin/agents/retention`, 'PUT', {
               agentRunRetentionDays: value,
             });
             if (failed) {

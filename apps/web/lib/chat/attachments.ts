@@ -205,7 +205,6 @@ async function ocrOne(
   await db
     .updateTable('chat_attachments')
     .set({ extracted_text: sealed.val, extract_status: 'done' })
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', row.id)
     .execute();
   return 'done';
@@ -220,7 +219,6 @@ async function ocrOne(
 export async function ocrChatAttachments(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     ownerSubject: string;
     chatId: string;
     attachmentIds: string[];
@@ -235,7 +233,6 @@ export async function ocrChatAttachments(
     await db
       .selectFrom('chat_attachments')
       .select(COLUMNS)
-      .where('tenant_id', '=', input.tenantId)
       .where('owner_subject', '=', input.ownerSubject)
       .where('chat_id', '=', input.chatId)
       .where('extract_status', '=', NEEDS_OCR)
@@ -260,7 +257,6 @@ export async function ocrChatAttachments(
 export async function createAttachment(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     ownerSubject: string;
     chatId: string | null;
     projectId: string | null;
@@ -301,7 +297,6 @@ export async function createAttachment(
       .insertInto('chat_attachments')
       .values({
         id,
-        tenant_id: input.tenantId,
         owner_subject: input.ownerSubject,
         chat_id: input.chatId,
         project_id: input.projectId,
@@ -336,7 +331,6 @@ export async function listArtifacts(
   const rows = await db
     .selectFrom('chat_attachments')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .where('origin', '=', 'model')
     .orderBy('created_at', 'asc')
@@ -353,7 +347,6 @@ export async function getAttachment(
   const raw = await db
     .selectFrom('chat_attachments')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', attachmentId)
     .executeTakeFirst();
   return raw ? rowOf(raw) : null;
@@ -370,7 +363,6 @@ export async function getAttachmentText(
   const raw = await db
     .selectFrom('chat_attachments')
     .select('extracted_text')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', attachmentId)
     .executeTakeFirst();
   return raw?.extracted_text ? openText(raw.extracted_text, cipher) : null;
@@ -381,7 +373,7 @@ export async function listAttachments(
   tenantId: string,
   home: { chatId: string } | { projectId: string }
 ): Promise<AttachmentRow[]> {
-  let query = db.selectFrom('chat_attachments').select(COLUMNS).where('tenant_id', '=', tenantId);
+  let query = db.selectFrom('chat_attachments').select(COLUMNS);
   query =
     'chatId' in home
       ? query.where('chat_id', '=', home.chatId)
@@ -398,7 +390,6 @@ export async function deleteAttachment(
 ): Promise<boolean> {
   const result = await db
     .deleteFrom('chat_attachments')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', row.id)
     .executeTakeFirst();
   if (Number(result.numDeletedRows) === 0) return false;
@@ -426,7 +417,6 @@ export async function attachmentPromptBlocks(
   const rows = await db
     .selectFrom('chat_attachments')
     .select([...COLUMNS, 'extracted_text'])
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('chat_id', '=', chatId)
     .where('message_id', 'is', null)

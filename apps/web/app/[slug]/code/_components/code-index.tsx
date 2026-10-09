@@ -31,7 +31,7 @@ export default function CodeIndex({
         <h1 className="flex-1 text-sm font-semibold">Code</h1>
         {enabled && canCreate ? (
           <Link
-            href={`/${slug}/code/new`}
+            href={`/code/new`}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
             {...newAnchor}
           >
@@ -57,7 +57,7 @@ export default function CodeIndex({
             className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
           >
             {accessNotice}{' '}
-            <Link href={`/${slug}/connectors`} className="underline">
+            <Link href={`/connectors`} className="underline">
               Open Connectors
             </Link>
             . A code project clones, pushes and opens pull requests with your own access on the
@@ -97,7 +97,7 @@ function Group({
           {projects.map((project) => (
             <li key={project.id}>
               <Link
-                href={`/${slug}/code/${project.id}`}
+                href={`/code/${project.id}`}
                 className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-900"
               >
                 <Icon path={ICONS.code} className="h-5 w-5 shrink-0 text-gray-400" />

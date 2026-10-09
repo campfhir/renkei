@@ -135,12 +135,10 @@ export interface SharedAgentCard {
 
 export function AgentsList({
   slug,
-  tenantId,
   agents,
   shared = [],
 }: {
   slug: string;
-  tenantId: string;
   agents: StoredAgent[];
   /** Someone else's agents this viewer holds access grants on. */
   shared?: SharedAgentCard[];
@@ -198,7 +196,7 @@ export function AgentsList({
     }
     setBusy(agent.id);
     setError(null);
-    const result = await sendJsonFull(`/api/tenant/${tenantId}/agents/${agent.id}`, 'DELETE');
+    const result = await sendJsonFull(`/api/agents/${agent.id}`, 'DELETE');
     setBusy(null);
     if (result.error) setError(result.error);
     else refresh();
@@ -227,7 +225,7 @@ export function AgentsList({
         <div className="flex items-center justify-between gap-3">
           <span className="flex min-w-0 items-center gap-2">
             <Link
-              href={`/${slug}/agents/${agent.id}`}
+              href={`/agents/${agent.id}`}
               className="truncate text-sm font-semibold hover:underline"
             >
               {agent.name}
@@ -311,11 +309,11 @@ export function AgentsList({
                 onClick={() => runNow(agent)}
               />
             ) : null}
-            <IconButton label="Edit" icon="pencil" href={`/${slug}/agents/${agent.id}/edit`} />
+            <IconButton label="Edit" icon="pencil" href={`/agents/${agent.id}/edit`} />
             <IconButton
               label="Run history"
               icon="clock"
-              href={`/${slug}/agents/${agent.id}/runs`}
+              href={`/agents/${agent.id}/runs`}
             />
             {!sharedInfo ? (
               <IconButton

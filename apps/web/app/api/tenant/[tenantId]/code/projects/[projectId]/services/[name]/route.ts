@@ -23,7 +23,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string; name: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId, name: rawName } = await params;
+  const { projectId, name: rawName } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
   const name = validateServiceName(rawName);
@@ -51,7 +51,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string; name: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId, name: rawName } = await params;
+  const { projectId, name: rawName } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const name = validateServiceName(rawName);
@@ -69,7 +69,6 @@ export async function DELETE(
     return jsonError(failure.status, 'sandbox', failure.message);
   }
   recordAuditEvent({
-    tenantId,
     actorSubject: ready.context.session.subject,
     action: 'code.services.stopped',
     targetKind: 'code_project',

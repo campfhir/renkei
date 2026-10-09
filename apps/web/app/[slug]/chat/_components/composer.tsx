@@ -40,7 +40,6 @@ import { VoiceWaveIcon, type WaveAccent } from './voice-wave';
  * the big buttons and the voice read back.
  */
 export interface DictationSetup {
-  tenantId: string;
   /** The language to recognise — or, when detecting, the one to fall back to. */
   locale: string;
   /** Hear which language each utterance is in, rather than assume `locale`. */
@@ -78,7 +77,6 @@ const UPLOAD_CONCURRENCY = 4;
 const OCR_BATCH = 12;
 
 export default function Composer({
-  tenantId,
   chatId,
   disabled,
   running,
@@ -99,7 +97,6 @@ export default function Composer({
   editing,
   onCancelEdit,
 }: {
-  tenantId: string;
   chatId: string;
   disabled: boolean;
   running: boolean;
@@ -175,7 +172,6 @@ export default function Composer({
     if (!dictation || recorder.current) return;
     setDictationError(null);
     const {
-      tenantId: tenant,
       locale,
       detectLanguage,
       onHeard,

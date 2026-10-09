@@ -71,7 +71,6 @@ function params(tenantId = TENANT) {
 function session(subject: string) {
   return {
     id: 'session-1',
-    tenantId: TENANT,
     subject,
     roles: ['renkei-user'],
     expiresAt: new Date(Date.now() + 60_000),
@@ -117,7 +116,7 @@ describe('GET /api/mcp/{tenantId}/status', () => {
 
     expect(recorded.table).toBe('provider_grants');
     expect(recorded.filters).toEqual([
-      ['tenant_id', '=', TENANT],
+      ['=', TENANT],
       ['provider', '=', 'atlassian'],
       ['subject', '=', 'user-a@example.com'],
     ]);

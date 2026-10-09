@@ -45,10 +45,10 @@ export function notificationInAppPath(slug: string, row: NotificationTargetRow):
     (row.kind === 'agent_edited' || row.kind === 'agent_disabled' || row.kind === 'agent_shared') &&
     row.agentId
   ) {
-    return `/${slug}/agents/${row.agentId}`;
+    return `/agents/${row.agentId}`;
   }
-  if (row.runId && row.agentId) return `/${slug}/agents/${row.agentId}/runs/${row.runId}`;
-  return `/${slug}/notifications`;
+  if (row.runId && row.agentId) return `/agents/${row.agentId}/runs/${row.runId}`;
+  return `/notifications`;
 }
 
 export function notificationTarget(

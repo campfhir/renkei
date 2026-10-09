@@ -108,10 +108,8 @@ export function useNotifications(): NotificationState {
 }
 
 export function NotificationCenter({
-  tenantId,
   children,
 }: {
-  tenantId: string;
   children: ReactNode;
 }) {
   const [unread, setUnread] = useState(0);
@@ -131,7 +129,7 @@ export function NotificationCenter({
   const load = useCallback(async () => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
     try {
-      const url = new URL(`/api/tenant/${tenantId}/notifications`, window.location.origin);
+      const url = new URL(`/api/notifications`, window.location.origin);
       if (since.current) url.searchParams.set('since', since.current);
       const response = await fetch(url.toString());
       if (!response.ok) return;

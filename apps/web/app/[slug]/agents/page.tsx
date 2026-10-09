@@ -3,7 +3,6 @@ import ImportAgentButton from './import-agent-button';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listAgents } from '@/lib/agents/store';
@@ -23,12 +22,10 @@ export default async function AgentsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/agents`));
+    redirect(signInUrl(tenant.id, `/agents`));
   }
 
   const dbResult = getDatabase();
@@ -54,7 +51,7 @@ export default async function AgentsPage({
           <ImportAgentButton slug={slug} tenantId={tenant.id} />
           <CoachTarget name="agents-new" as="span" className="inline-flex shrink-0">
             <Link
-              href={`/${slug}/agents/new`}
+              href={`/agents/new`}
               className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
               New agent

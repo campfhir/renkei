@@ -79,7 +79,6 @@ const stubAuth: JiraAdminAuth = {
 };
 
 const context = {
-  tenantId: 'tenant-1',
   subject: 'subject-1',
   origin: 'https://renkei.example',
   jiraAdminScopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
@@ -196,7 +195,6 @@ describe('jira_admin_propose_option_changes', () => {
 
     const input = jest.mocked(createChangeRequest).mock.calls[0]?.[1];
     expect(input).toMatchObject({
-      tenantId: 'tenant-1',
       subject: 'subject-1',
       cloudId: 'cloud-1',
       kind: 'field_options',

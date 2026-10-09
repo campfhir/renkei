@@ -54,7 +54,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -66,7 +65,7 @@ export async function GET(
     );
   }
 
-  const result = await listWatches({ tenantId, subject: session.subject, accountId: '' }, provider);
+  const result = await listWatches({ subject: session.subject, accountId: '' }, provider);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
   return NextResponse.json({ watches: result.watches });
 }
@@ -82,7 +81,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -95,14 +93,13 @@ export async function POST(
 
   if (provider === 'sharepoint') {
     return watchLibrary(
-      { tenantId, subject: session.subject },
+      { subject: session.subject },
       str(rec(body).site).trim(),
       scopeKey
     );
   }
 
   const access = await resolveAtlassianUserAccess(
-    tenantId,
     session.subject,
     grantProviderFor(provider)
   );
@@ -112,7 +109,7 @@ export async function POST(
   if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: 400 });
 
   const result = await upsertWatch(
-    { tenantId, subject: session.subject, accountId: access.accountId },
+    { subject: session.subject, accountId: access.accountId },
     provider,
     SCOPE_TYPE[provider],
     resolved.key,
@@ -127,7 +124,6 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -138,7 +134,7 @@ export async function DELETE(
   }
 
   const result = await disableWatch(
-    { tenantId, subject: session.subject, accountId: '' },
+    { subject: session.subject, accountId: '' },
     provider,
     SCOPE_TYPE[provider],
     scopeKey
@@ -194,7 +190,7 @@ async function watchLibrary(
 
   const label = `${resolvedSite.name} / ${gstr(library.name)}`;
   const result = await upsertWatch(
-    { tenantId: owner.tenantId, subject: owner.subject, accountId: access.accountId },
+    { subject: owner.subject, accountId: access.accountId },
     'sharepoint',
     'drive',
     driveId,

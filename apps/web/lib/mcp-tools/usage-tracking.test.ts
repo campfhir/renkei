@@ -48,7 +48,6 @@ function harness(agentId?: string) {
     },
   } as unknown as McpServer;
   const wrapped = withUsageTracking(raw, {
-    tenantId: 'tenant-1',
     subject: 'subject-1',
     ...(agentId ? { agentId } : {}),
   });
@@ -76,7 +75,6 @@ describe('withUsageTracking', () => {
 
     expect(inserted).toHaveLength(1);
     expect(inserted[0]).toMatchObject({
-      tenant_id: 'tenant-1',
       subject: 'subject-1',
       agent_id: null,
       tool: 'jira_search_issues',

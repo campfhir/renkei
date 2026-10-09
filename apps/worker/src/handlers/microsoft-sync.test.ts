@@ -108,7 +108,6 @@ describe('runSubscriptionSync — the inbox is a trigger feed, not an index', ()
     expect(mockPublishDomainEvent).toHaveBeenCalledTimes(1);
     expect(mockPublishDomainEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        tenantId: 'tenant-1',
         provider: 'microsoft',
         type: 'mail.received',
         ownerSubject: 'subject-alice',

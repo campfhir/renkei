@@ -57,7 +57,7 @@ export default function ImageRuleForms({ slug }: { slug: string }) {
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ rules: RuleRow[] }>(
-      `/api/admin/${slug}/code-services/rules`
+      `/api/admin/code-services/rules`
     );
     if (loadError) setError(loadError);
     else setRules(data?.rules ?? []);
@@ -82,12 +82,12 @@ export default function ImageRuleForms({ slug }: { slug: string }) {
     };
     const result = draft.id
       ? await sendJsonFull<{ dropped: string | null }>(
-          `/api/admin/${slug}/code-services/rules/${draft.id}`,
+          `/api/admin/code-services/rules/${draft.id}`,
           'PUT',
           payload
         )
       : await sendJsonFull<{ dropped: string | null }>(
-          `/api/admin/${slug}/code-services/rules`,
+          `/api/admin/code-services/rules`,
           'POST',
           payload
         );
@@ -108,7 +108,7 @@ export default function ImageRuleForms({ slug }: { slug: string }) {
     setError(null);
     setNotice(null);
     const removeError = await sendJson(
-      `/api/admin/${slug}/code-services/rules/${ruleId}`,
+      `/api/admin/code-services/rules/${ruleId}`,
       'DELETE'
     );
     setBusy(false);
@@ -125,7 +125,7 @@ export default function ImageRuleForms({ slug }: { slug: string }) {
     setError(null);
     setNotice(null);
     const result = await sendJsonFull<{ added: number }>(
-      `/api/admin/${slug}/code-services/rules/restore`,
+      `/api/admin/code-services/rules/restore`,
       'POST'
     );
     setBusy(false);

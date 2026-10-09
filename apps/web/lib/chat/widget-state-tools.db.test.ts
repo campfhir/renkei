@@ -50,7 +50,6 @@ maybe('chat_widget_resolve', () => {
     db = result.val;
     context = {
       db,
-      tenantId,
       subject: me,
       chatId,
       projectId: null,
@@ -64,15 +63,14 @@ maybe('chat_widget_resolve', () => {
     await db
       .insertInto('chats')
       .values([
-        { id: chatId, tenant_id: tenantId, owner_subject: me, title: 'Vesta troubleshooting' },
-        { id: otherChatId, tenant_id: tenantId, owner_subject: me, title: 'Another chat' },
+        { id: chatId, owner_subject: me, title: 'Vesta troubleshooting' },
+        { id: otherChatId, owner_subject: me, title: 'Another chat' },
       ])
       .execute();
     await db
       .insertInto('chat_turns')
       .values({
         id: turnId,
-        tenant_id: tenantId,
         chat_id: chatId,
         status: 'completed',
         llm_model_id: null,
@@ -81,7 +79,6 @@ maybe('chat_widget_resolve', () => {
       })
       .execute();
     await insertMessage(db, {
-      tenantId,
       chatId,
       turnId,
       role: 'assistant',
@@ -95,7 +92,6 @@ maybe('chat_widget_resolve', () => {
       ],
     });
     await insertMessage(db, {
-      tenantId,
       chatId,
       turnId,
       role: 'user',
@@ -131,7 +127,6 @@ maybe('chat_widget_resolve', () => {
     });
     // A card in a different chat of the same tenant: never reachable from here.
     await insertMessage(db, {
-      tenantId,
       chatId: otherChatId,
       turnId: null,
       role: 'user',
@@ -151,10 +146,10 @@ maybe('chat_widget_resolve', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_widget_decisions WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chat_messages WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chat_turns WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_widget_decisions`.execute(db);
+    await sql`DELETE FROM chat_messages`.execute(db);
+    await sql`DELETE FROM chat_turns`.execute(db);
+    await sql`DELETE FROM chats`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
@@ -200,7 +195,6 @@ maybe('chat_widget_resolve', () => {
     const row = await db
       .selectFrom('chat_widget_decisions')
       .select(['chat_id', 'decision', 'decided_by'])
-      .where('tenant_id', '=', tenantId)
       .where('state_key', '=', `renkei-email:${draftId}`)
       .executeTakeFirst();
     expect(row).toEqual({ chat_id: chatId, decision: 'confirmed', decided_by: me });
@@ -250,7 +244,6 @@ maybe('chat_widget_resolve', () => {
     // wrote nothing, and reports the receipt the card actually shows.
     const raced = createLocalToolSet(widgetStateTools());
     const clicked = await recordWidgetDecision(db, {
-      tenantId,
       chatId,
       subject: me,
       stateKey: `renkei-preview:${previewId}`,
@@ -276,7 +269,6 @@ maybe('chat_widget_resolve', () => {
   it('defaults the receipt’s wording by outcome', async () => {
     const freshPreviewId = randomUUID();
     await insertMessage(db, {
-      tenantId,
       chatId,
       turnId: null,
       role: 'user',
@@ -307,7 +299,6 @@ maybe('chat_widget_resolve', () => {
     const row = await db
       .selectFrom('chat_widget_decisions')
       .select(['decision'])
-      .where('tenant_id', '=', tenantId)
       .where('state_key', '=', `renkei-preview:${freshPreviewId}`)
       .executeTakeFirst();
     expect(row).toEqual({ decision: 'cancelled' });

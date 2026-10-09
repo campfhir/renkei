@@ -45,7 +45,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`size-requests-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`size-requests-e2e-session:${projectName}`),
     projectId: uuidFrom(`size-requests-e2e-project:${projectName}`),
     slug: `e2e-size-requests-${projectName}`,
@@ -61,7 +60,7 @@ async function seed(fixture: Fixture): Promise<void> {
     authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
     'content-type': 'application/json',
   };
-  const target = { tenantId: fixture.tenantId, subject: `code-project:${fixture.projectId}` };
+  const target = { subject: `code-project:${fixture.projectId}` };
   const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
     method: 'POST',
     headers,
@@ -93,11 +92,11 @@ async function seed(fixture: Fixture): Promise<void> {
   await client.connect();
   try {
     const t = fixture.tenantId;
-    await client.query('DELETE FROM sandbox_size_requests WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM tenant_settings WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM chat_projects WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [t]);
+    await client.query('DELETE FROM sandbox_size_requests', [t]);
+    await client.query('DELETE FROM tenant_settings', [t]);
+    await client.query('DELETE FROM chat_projects', [t]);
+    await client.query('DELETE FROM sessions', [t]);
+    await client.query('DELETE FROM identities', [t]);
     await client.query('DELETE FROM tenants WHERE id = $1', [t]);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [t, fixture.slug]);
     await client.query(
@@ -133,7 +132,7 @@ async function seed(fixture: Fixture): Promise<void> {
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -179,8 +178,8 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   const fixture = fixtureFor(testInfo.project.name);
   await seed(fixture);
   await signIn(page, fixture);
-  const projectUrl = `/${fixture.slug}/code/${fixture.projectId}`;
-  const settingsUrl = `/${fixture.slug}/admin/settings`;
+  const projectUrl = `/code/${fixture.projectId}`;
+  const settingsUrl = `/admin/settings`;
   // Scoped to the main region: across a navigation the dev server can leave
   // the outgoing page's span in the DOM for a beat, and strict mode would
   // count two.
@@ -217,7 +216,7 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await shot(page, testInfo, '04-request-pending');
 
   // The server refuses a duplicate and a request at or under the limit.
-  const api = `/api/tenant/${fixture.tenantId}/code/projects/${fixture.projectId}/size-request`;
+  const api = `/api/code/projects/${fixture.projectId}/size-request`;
   const duplicate = await page.request.post(api, {
     data: { requestedBytes: 30 * GB, reason: 'again' },
   });
@@ -272,18 +271,18 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByText('Saved.')).toBeVisible();
   const stored = await dbRows<{ value: string }>(
-    `SELECT value FROM tenant_settings WHERE tenant_id = $1 AND key = 'sandbox_workspace_max_bytes'`,
+    `SELECT value FROM tenant_settings WHERE key = 'sandbox_workspace_max_bytes'`,
     [fixture.tenantId]
   );
   expect(Number(stored[0]?.value)).toBe(12 * GB);
-  const read = await page.request.get(`/api/admin/${fixture.slug}/org-settings`);
+  const read = await page.request.get(`/api/admin/org-settings`);
   expect((await read.json()).settings.sandboxWorkspaceMaxBytes).toBe(12 * GB);
   // Out of range is clamped, never stored as typed.
-  const clamped = await page.request.put(`/api/admin/${fixture.slug}/org-settings`, {
+  const clamped = await page.request.put(`/api/admin/org-settings`, {
     data: { sandboxWorkspaceMaxBytes: 500 * GB },
   });
   expect((await clamped.json()).settings.sandboxWorkspaceMaxBytes).toBe(64 * GB);
-  await page.request.put(`/api/admin/${fixture.slug}/org-settings`, {
+  await page.request.put(`/api/admin/org-settings`, {
     data: { sandboxWorkspaceMaxBytes: 12 * GB },
   });
   await shot(page, testInfo, '08-settings-org-limit');

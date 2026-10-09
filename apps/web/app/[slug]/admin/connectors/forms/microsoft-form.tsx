@@ -34,7 +34,7 @@ interface MicrosoftConfig {
 }
 
 export function MicrosoftForm({ slug, origin }: { slug: string; origin: string | null }) {
-  const url = `/api/admin/${slug}/connectors/microsoft`;
+  const url = `/api/admin/connectors/microsoft`;
   const [state, reload] = useConnectorConfig<MicrosoftConfig>(url);
   const [clientId, setClientId] = useState('');
   const [directoryTenantId, setDirectoryTenantId] = useState('');

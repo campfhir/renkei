@@ -114,7 +114,7 @@ function targetOf(body: Record<string, unknown>): SubjectTarget | null {
   const shareId = str(body.shareId);
   const subject = str(body.subject);
   if (!tenantId || !shareId || !subject) return null;
-  return { tenantId, shareId, subject, credentials: parseShareCredentials(body.credentials) };
+  return { shareId, subject, credentials: parseShareCredentials(body.credentials) };
 }
 
 /** For the raw `write` op, whose body is the file: the credential rides in a header. */
@@ -296,7 +296,6 @@ export function createFileshareServer(deps: FileshareServerDeps): Server {
     // query string so the payload needs no envelope (and no base64 tax).
     if (url.pathname === '/v1/write') {
       const target: SubjectTarget = {
-        tenantId: url.searchParams.get('tenantId') ?? '',
         shareId: url.searchParams.get('shareId') ?? '',
         subject: url.searchParams.get('subject') ?? '',
         credentials: credentialsFromHeader(request.headers['x-fileshare-credentials']),

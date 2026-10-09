@@ -16,7 +16,6 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { EmailCategory, MessageOverrideAction, SanitizeResult } from '../types';
 
 export interface ClassificationLogEntry {
-  tenantId: string;
   provider: string;
   refId: string;
   ownerUpn: string;
@@ -54,7 +53,6 @@ export async function recordClassification(
         .insertInto('email_classification_log')
         .values({
           id: randomUUID(),
-          tenant_id: entry.tenantId,
           provider: entry.provider,
           ref_id: entry.refId,
           owner_upn: ownerUpn,
@@ -64,7 +62,7 @@ export async function recordClassification(
         })
         .onConflict((oc) =>
           oc
-            .columns(['tenant_id', 'provider', 'ref_id'])
+            .columns(['provider', 'ref_id'])
             .doUpdateSet({ ...shared, updated_at: sql<Date>`NOW()` })
         )
         .execute(),
@@ -104,7 +102,6 @@ export async function hasRecentDuplicate(
       dbResult.val
         .selectFrom('email_classification_log')
         .select('id')
-        .where('tenant_id', '=', tenantId)
         .where('content_hash', '=', contentHash)
         .where('owner_upn', '=', scope.ownerUpn.toLowerCase())
         .where('ref_id', '<>', scope.refId)
@@ -220,7 +217,6 @@ export async function listForOwner(
     const rows = await db
       .selectFrom('email_classification_log')
       .select(OWN_ROW_COLUMNS)
-      .where('tenant_id', '=', tenantId)
       .where('owner_upn', '=', owner)
       .where('category', '=', options.category)
       // Needs-review rows first — a spot check should surface the rare thing
@@ -234,7 +230,6 @@ export async function listForOwner(
     const countRow = await db
       .selectFrom('email_classification_log')
       .select(({ fn }) => fn.countAll<number>().as('count'))
-      .where('tenant_id', '=', tenantId)
       .where('owner_upn', '=', owner)
       .where('category', '=', options.category)
       .executeTakeFirst();
@@ -261,7 +256,6 @@ export async function countByCategoryForOwner(
         .selectFrom('email_classification_log')
         .select('category')
         .select(({ fn }) => fn.countAll<number>().as('count'))
-        .where('tenant_id', '=', tenantId)
         .where('owner_upn', '=', ownerUpn.toLowerCase())
         .groupBy('category')
         .execute(),
@@ -303,7 +297,6 @@ export async function getOwnRow(
       dbResult.val
         .selectFrom('email_classification_log')
         .select(OWN_ROW_COLUMNS)
-        .where('tenant_id', '=', tenantId)
         .where('owner_upn', '=', ownerUpn.toLowerCase())
         .where('ref_id', '=', refId)
         .executeTakeFirst(),
@@ -341,7 +334,6 @@ export async function setOverride(
           overridden_at: sql`NOW()`,
           updated_at: sql`NOW()`,
         })
-        .where('tenant_id', '=', tenantId)
         .where('owner_upn', '=', ownerUpn.toLowerCase())
         .where('ref_id', '=', refId)
         .execute(),

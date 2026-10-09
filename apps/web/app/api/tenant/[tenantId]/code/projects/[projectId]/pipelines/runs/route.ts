@@ -23,7 +23,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
-  const { tenantId, projectId } = await params;
+  const { projectId } = await params;
   const found = await pipelinesProjectContext(request, tenantId, projectId, { write: true });
   if (!found.ok) return found.response;
   const { project, subject, scopes } = found.context;
@@ -35,7 +35,6 @@ export async function POST(
   const started = await triggerPipeline(auth, project.repo.fullName, input.input);
   if (!started.ok) return jsonError(502, 'bitbucket', started.error);
   recordAuditEvent({
-    tenantId,
     actorSubject: subject,
     action: 'code.pipelines.run',
     targetKind: 'code_project',

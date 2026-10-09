@@ -175,7 +175,6 @@ export function createKnowledgeIngestObjectHandler(): EventHandler {
       // contract); the index just stops growing.
       logger.info('knowledge layer off; ingest of {refId} dropped', {
         component: COMPONENT,
-        tenantId: event.tenant_id,
         refId,
       });
       return;
@@ -198,7 +197,6 @@ export function createKnowledgeIngestObjectHandler(): EventHandler {
     }
     logger.debug('ingested {refId} in {chunks} chunk(s)', {
       component: COMPONENT,
-      tenantId: event.tenant_id,
       refId,
       chunks: ingested.val.chunks,
     });
@@ -221,7 +219,6 @@ export function createKnowledgeIngestEmailHandler(): EventHandler {
     if (!embedder) {
       logger.info('knowledge layer off; ingest of {refId} dropped', {
         component: COMPONENT,
-        tenantId: event.tenant_id,
         refId,
       });
       return;
@@ -230,7 +227,6 @@ export function createKnowledgeIngestEmailHandler(): EventHandler {
     const provider = required(payload, 'provider');
     const override = overrideOfPayload(payload.override);
     const sanitized = await sanitizeEmailForTenant({
-      tenantId: event.tenant_id,
       provider,
       refId,
       ownerUpn,
@@ -344,7 +340,6 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
       if (status === 403 || downloaded.err.type === 'CONTENT_TOO_LARGE') {
         logger.warn('skipping {refId}: {reason}', {
           component: COMPONENT,
-          tenantId,
           refId,
           reason: status === 403 ? 'no longer readable by the indexing account' : 'too large',
         });
@@ -373,7 +368,6 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
       // file's format, its password, or its corruption.
       logger.debug('no text from {refId} ({reason})', {
         component: COMPONENT,
-        tenantId,
         refId,
         reason: extracted.err.type,
       });
@@ -450,7 +444,6 @@ export function createKnowledgeReconcileDriveHandler(): EventHandler {
     if (removed.val > 0) {
       logger.info('reconciled {driveId}: removed {removed} stale chunk(s)', {
         component: COMPONENT,
-        tenantId: event.tenant_id,
         driveId,
         removed: removed.val,
       });
@@ -489,7 +482,6 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
     // is no bot. No grant → webex refs stay default-denied, which is the
     // gate's contract, not a failure.
     const searched = await searchKnowledge({
-      tenantId: event.tenant_id,
       userEmail: accessSubject,
       query,
       k: 3,
@@ -530,13 +522,11 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
         updated_at: sql`NOW()`,
       })
       .where('id', '=', itemId)
-      .where('tenant_id', '=', event.tenant_id)
       .where('status', '=', 'suggested')
       .executeTakeFirst();
 
     logger.debug('enriched item {itemId} with {count} related hit(s)', {
       component: COMPONENT,
-      tenantId: event.tenant_id,
       itemId,
       count: Number(updated.numUpdatedRows ?? 0) === 0 ? 0 : related.length,
     });

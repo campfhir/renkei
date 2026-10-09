@@ -36,7 +36,6 @@ async function automationDaysOf(
   const row = await db
     .selectFrom('user_preferences')
     .select('value')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('key', '=', 'encryption_key')
     .executeTakeFirst();
@@ -59,14 +58,13 @@ export async function setAutomationDays(
   await db
     .insertInto('user_preferences')
     .values({
-      tenant_id: tenantId,
       subject,
       key: 'encryption_key',
       value: JSON.stringify({ automationDays: days }),
     })
     .onConflict((oc) =>
       oc
-        .columns(['tenant_id', 'subject', 'key'])
+        .columns(['subject', 'key'])
         .doUpdateSet({ value: JSON.stringify({ automationDays: days }) })
     )
     .execute();
@@ -85,7 +83,6 @@ export async function pendingDevicesOf(
   const rows = await db
     .selectFrom('device_key_requests')
     .select(['id', 'created_at', 'user_agent'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('sealed_key', 'is', null)
     .where('consumed_at', 'is', null)

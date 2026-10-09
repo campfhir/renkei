@@ -125,7 +125,6 @@ async function topToolsFor(
       sql<string>`count(*)`.as('calls'),
       sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
     ])
-    .where('tenant_id', '=', tenantId)
     .where('started_at', '>=', since);
   if (subject !== null) query = query.where('subject', '=', subject);
 
@@ -194,7 +193,6 @@ export async function getUsageReport(
         sql<string>`percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms)`.as('median_ms'),
         sql<string>`percentile_disc(0.95) WITHIN GROUP (ORDER BY duration_ms)`.as('p95_ms'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('started_at', '>=', since);
     if (!tenantWide) toolQuery = toolQuery.where('subject', '=', ownSubject);
 
@@ -214,7 +212,6 @@ export async function getUsageReport(
         sql<string>`count(*)`.as('calls'),
         sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('started_at', '>=', since);
     if (!tenantWide) trendQuery = trendQuery.where('subject', '=', ownSubject);
 
@@ -238,7 +235,6 @@ export async function getUsageReport(
         .leftJoin('identities', (join) =>
           join
             .onRef('identities.subject', '=', 'tool_calls.subject')
-            .onRef('identities.tenant_id', '=', 'tool_calls.tenant_id')
         )
         .select([
           'tool_calls.subject as subject',
@@ -247,7 +243,6 @@ export async function getUsageReport(
           sql<string>`count(*)`.as('calls'),
           sql<string>`count(*) FILTER (WHERE tool_calls.status <> 'ok')`.as('errors'),
         ])
-        .where('tool_calls.tenant_id', '=', tenantId)
         .where('tool_calls.started_at', '>=', since)
         .groupBy('tool_calls.subject')
         .orderBy(sql`count(*)`, 'desc')
@@ -297,7 +292,6 @@ export async function getUsageReport(
 
     const byAgent = await getAgentUsageSummaries(
       db,
-      tenantId,
       tenantWide ? null : ownSubject,
       days
     );
@@ -421,7 +415,6 @@ export async function getToolDetail(
         sql<string>`percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms)`.as('median_ms'),
         sql<string>`percentile_disc(0.95) WITHIN GROUP (ORDER BY duration_ms)`.as('p95_ms'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('tool', '=', tool)
       .where('started_at', '>=', since);
     if (!tenantWide) totalsQuery = totalsQuery.where('subject', '=', ownSubject);
@@ -436,7 +429,6 @@ export async function getToolDetail(
         sql<string>`count(*)`.as('calls'),
         sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('tool', '=', tool)
       .where('started_at', '>=', since);
     if (!tenantWide) trendQuery = trendQuery.where('subject', '=', ownSubject);
@@ -452,7 +444,6 @@ export async function getToolDetail(
       .leftJoin('identities', (join) =>
         join
           .onRef('identities.subject', '=', 'tool_calls.subject')
-          .onRef('identities.tenant_id', '=', 'tool_calls.tenant_id')
       )
       .select([
         'tool_calls.started_at as started_at',
@@ -462,7 +453,6 @@ export async function getToolDetail(
         'identities.display_name as display_name',
         'identities.email as email',
       ])
-      .where('tool_calls.tenant_id', '=', tenantId)
       .where('tool_calls.tool', '=', tool)
       .where('tool_calls.status', '<>', 'ok')
       .where('tool_calls.started_at', '>=', since);

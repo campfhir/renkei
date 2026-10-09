@@ -11,7 +11,6 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getRunForAdmin, type RunDetail } from '@/lib/agents/runs-view';
 import { isRunSettled } from '@/lib/agents/run-labels';
 import { isUuid } from '@/lib/uuid';
@@ -29,8 +28,6 @@ export async function GET(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

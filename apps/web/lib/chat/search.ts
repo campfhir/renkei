@@ -73,7 +73,6 @@ export async function searchChatMessages(
         'chat_messages.chat_id as chat_id',
         'chat_messages.content as content',
       ])
-      .where('chat_messages.tenant_id', '=', tenantId)
       .where('chat_messages.chat_id', 'in', ids)
       .where('chat_messages.kind', 'in', ['prompt', 'assistant'])
       .orderBy('chats.updated_at', 'desc')

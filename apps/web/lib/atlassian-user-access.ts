@@ -39,7 +39,7 @@ export async function resolveAtlassianUserAccess(
   provider: AtlassianUserProvider
 ): Promise<AtlassianUserAccess | string> {
   const label = LABELS[provider] ?? provider;
-  const ref = { tenantId, provider, subject };
+  const ref = { provider, subject };
 
   const described = await delegateGrants().describe(ref);
   if (!described.ok) {

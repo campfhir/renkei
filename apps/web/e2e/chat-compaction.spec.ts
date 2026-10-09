@@ -114,7 +114,6 @@ async function insertMessage(
 ): Promise<void> {
   const assistant = input.role === 'assistant';
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: input.chatId,
     ownerSubject: E2E_SUBJECT,
@@ -206,7 +205,7 @@ test.describe('chat compaction', () => {
         blocks: [{ type: 'text', text: 'Done — the earlier back-and-forth is now a summary.' }],
       });
 
-      await page.goto(`/${E2E_SLUG}/chat/${ids.iconChatId}`);
+      await page.goto(`/chat/${ids.iconChatId}`);
       await expect(page.getByRole('heading', { level: 1, name: ids.iconTitle })).toBeVisible();
 
       const work = page.locator('details.chat-fold', { hasText: '1 tool call' });
@@ -249,7 +248,7 @@ test.describe('chat compaction', () => {
         [ids.snapshotTurnId, E2E_TENANT_ID, ids.snapshotChatId, ids.modelId]
       );
 
-      await page.goto(`/${E2E_SLUG}/chat/${ids.snapshotChatId}`);
+      await page.goto(`/chat/${ids.snapshotChatId}`);
       await expect(page.getByRole('heading', { level: 1, name: ids.snapshotTitle })).toBeVisible();
       await expect(page.getByText('Compacting the conversation…')).toBeVisible();
       // No progress has been reported yet (a fresh reconnect) — the bar is
@@ -310,7 +309,7 @@ test.describe('chat compaction', () => {
         blocks: [{ type: 'text', text: 'Hello! What can I help with?' }],
       });
 
-      await page.goto(`/${E2E_SLUG}/chat/${ids.liveChatId}`);
+      await page.goto(`/chat/${ids.liveChatId}`);
       await expect(page.getByRole('heading', { level: 1, name: ids.liveTitle })).toBeVisible();
 
       // The literal slash command.
@@ -383,7 +382,7 @@ test.describe('chat compaction', () => {
         [ids.queueTurnId, E2E_TENANT_ID, ids.queueChatId, ids.modelId]
       );
 
-      await page.goto(`/${E2E_SLUG}/chat/${ids.queueChatId}`);
+      await page.goto(`/chat/${ids.queueChatId}`);
       await expect(page.getByRole('heading', { level: 1, name: ids.queueTitle })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Queue this message' })).toBeHidden();

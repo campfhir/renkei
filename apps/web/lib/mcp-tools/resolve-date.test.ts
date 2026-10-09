@@ -18,7 +18,6 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<{
 
 const context = (): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
   }) as unknown as MCPToolContext;

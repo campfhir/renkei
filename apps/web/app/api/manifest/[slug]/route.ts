@@ -9,7 +9,6 @@
  * page has run, same as the icon it points at.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { buildManifest } from '@/lib/app-manifest';
 
 export async function GET(
@@ -17,10 +16,8 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
 
-  return NextResponse.json(buildManifest(`/${tenant.slug}`), {
+  return NextResponse.json(buildManifest(`/`), {
     headers: { 'Content-Type': 'application/manifest+json' },
   });
 }

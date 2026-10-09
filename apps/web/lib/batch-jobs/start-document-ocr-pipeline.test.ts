@@ -33,7 +33,6 @@ describe('startDocumentOcrPipeline', () => {
     createBatchMock.mockResolvedValue({ id: 'batch-1' });
 
     const batch = await startDocumentOcrPipeline(FAKE_DB as never, {
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       shareId: 'share-1',
@@ -42,7 +41,6 @@ describe('startDocumentOcrPipeline', () => {
     });
 
     expect(createBatchMock).toHaveBeenCalledWith(FAKE_DB, {
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       kind: 'document-ocr-pipeline',
@@ -65,7 +63,6 @@ describe('startDocumentOcrPipeline', () => {
     createBatchMock.mockResolvedValue({ id: 'batch-2' });
 
     await startDocumentOcrPipeline(FAKE_DB as never, {
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       name: 'Scanner dump',
       shareId: 'share-1',

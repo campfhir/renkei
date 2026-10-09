@@ -69,7 +69,6 @@ function removalRefusal(share: ShareView | null): string | null {
 
 export default function SourceFields({
   slug,
-  tenantId,
   shareId,
   path,
   strategy,
@@ -85,7 +84,6 @@ export default function SourceFields({
   onReadyChange,
 }: {
   slug: string;
-  tenantId: string;
   shareId: string;
   path: string;
   strategy: GroupingStrategy;
@@ -108,7 +106,7 @@ export default function SourceFields({
   useEffect(() => {
     void (async () => {
       const { data, error: fetchError } = await getJson<{ shares: ShareView[] }>(
-        `/api/tenant/${tenantId}/fileshares`
+        `/api/fileshares`
       );
       if (fetchError) setLoadError(fetchError);
       else setShares(data?.shares ?? []);
@@ -155,7 +153,7 @@ export default function SourceFields({
           <p className="text-sm text-gray-500 dark:text-gray-400">
             You have not connected a file share yet. Connect one on the{' '}
             <Link
-              href={`/${slug}/connectors`}
+              href={`/connectors`}
               className="text-blue-600 hover:underline dark:text-blue-400"
             >
               Connectors page
@@ -185,7 +183,7 @@ export default function SourceFields({
                 {unconnectedCount} more share{unconnectedCount === 1 ? '' : 's'} not shown — connect
                 {unconnectedCount === 1 ? ' it' : ' them'} on the{' '}
                 <Link
-                  href={`/${slug}/connectors`}
+                  href={`/connectors`}
                   className="text-blue-600 hover:underline dark:text-blue-400"
                 >
                   Connectors page
@@ -375,7 +373,7 @@ export default function SourceFields({
           <p className={hintClass}>
             {removalBlocked}{' '}
             <Link
-              href={`/${slug}/connectors`}
+              href={`/connectors`}
               className="text-blue-600 hover:underline dark:text-blue-400"
             >
               Open Connectors

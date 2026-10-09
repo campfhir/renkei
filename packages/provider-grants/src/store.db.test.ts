@@ -42,7 +42,6 @@ maybe('provider grant store under per-user keys', () => {
     const instance = await registerTestInstance(result.val);
     instanceId = instance.id;
     await enrollTestPerson(result.val, {
-      tenantId,
       subject,
       instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
     });
@@ -72,7 +71,6 @@ maybe('provider grant store under per-user keys', () => {
     const row = await db.val
       .selectFrom('provider_grants')
       .select(['encrypted_access_token', 'encrypted_refresh_token'])
-      .where('tenant_id', '=', tenantId)
       .where('provider_account_id', '=', 'acct-1')
       .executeTakeFirstOrThrow();
     expect(isUserSealed(row.encrypted_access_token)).toBe(true);
@@ -108,7 +106,6 @@ maybe('provider grant store under per-user keys', () => {
         encrypted_access_token: encrypt('legacy-access', legacyKey),
         encrypted_refresh_token: encrypt('legacy-refresh', legacyKey),
       })
-      .where('tenant_id', '=', tenantId)
       .where('provider_account_id', '=', 'acct-1')
       .execute();
     const got = await getGrant('atlassian', tenantId, 'acct-1');
@@ -126,7 +123,7 @@ maybe('provider grant store under per-user keys', () => {
       refreshToken: 'r',
     });
     expect(set.ok).toBe(true);
-    await sql`UPDATE provider_grants SET subject = NULL WHERE tenant_id = ${tenantId} AND provider_account_id = 'acct-2'`.execute(
+    await sql`UPDATE provider_grants SET subject = NULL WHERE provider_account_id = 'acct-2'`.execute(
       db.val
     );
     const got = await getGrant('atlassian', tenantId, 'acct-2');

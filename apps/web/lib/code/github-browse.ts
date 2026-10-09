@@ -50,7 +50,7 @@ export async function githubAuthFor(
   subject: string
 ): Promise<GitHubAuth> {
   const origin = await getOrigin(request);
-  return githubAuthOf({ tenantId, subject, origin: origin.ok ? origin.val : '' });
+  return githubAuthOf({ subject, origin: origin.ok ? origin.val : '' });
 }
 
 /** The auth for one person outside a request (a server page). */

@@ -46,7 +46,6 @@ function uuidFrom(seed: string): string {
  */
 function fixtureFor(projectName: string, which: 'off' | 'on') {
   return {
-    tenantId: uuidFrom(`sandbox-settings-e2e-tenant-${which}:${projectName}`),
     slug: `e2e-sandbox-${which}-${projectName}`,
     sessionId: uuidFrom(`sandbox-settings-e2e-session-${which}:${projectName}`),
     subject: `e2e-sandbox-${which}-${projectName}@example.com`,
@@ -76,7 +75,7 @@ async function seed(fixture: Fixture): Promise<void> {
       'sessions',
       'identities',
     ]) {
-      await client.query(`DELETE FROM ${table} WHERE tenant_id = $1`, [t]);
+      await client.query(`DELETE FROM ${table}`, [t]);
     }
     await client.query('DELETE FROM tenants WHERE id = $1', [t]);
     await client.query(
@@ -118,7 +117,7 @@ async function seed(fixture: Fixture): Promise<void> {
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -139,7 +138,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 async function storedSetting(fixture: Fixture, key: string): Promise<unknown> {
   const stored = await withDb((client) =>
     client.query<{ value: unknown }>(
-      `SELECT value FROM tenant_settings WHERE tenant_id = $1 AND key = $2`,
+      `SELECT value FROM tenant_settings WHERE key = $2`,
       [fixture.tenantId, key]
     )
   );
@@ -157,16 +156,16 @@ test('sandbox features are the organization’s own switches', async ({ page }, 
   const notice = page.getByText('Code workspaces are not enabled for this organization');
 
   // ── Off by default: the Code index says so ──
-  await page.goto(`/${off.slug}/code`);
+  await page.goto(`/code`);
   await expect(notice).toBeVisible();
 
   // ── An organization with workspaces on gets the Code section proper ──
-  await page.goto(`/${on.slug}/code`);
+  await page.goto(`/code`);
   await expect(page.getByRole('heading', { name: 'Code' })).toBeVisible();
   await expect(notice).toHaveCount(0);
 
   // ── The switches, all off for the default organization ──
-  const settingsUrl = `/${off.slug}/admin/settings`;
+  const settingsUrl = `/admin/settings`;
   await page.goto(settingsUrl);
   const workspaces = page.getByRole('switch', { name: 'Code workspaces' });
   await expect(workspaces).toBeVisible();
@@ -191,7 +190,7 @@ test('sandbox features are the organization’s own switches', async ({ page }, 
   expect(await storedSetting(off, 'sandbox_workspaces_enabled')).toBe(true);
   expect(await storedSetting(off, 'sandbox_charts_enabled')).toBe(true);
   expect(await storedSetting(off, 'sandbox_browser_enabled')).toBeUndefined();
-  const read = await page.request.get(`/api/admin/${off.slug}/org-settings`);
+  const read = await page.request.get(`/api/admin/org-settings`);
   const settings = (await read.json()).settings;
   expect(settings.sandboxWorkspacesEnabled).toBe(true);
   expect(settings.sandboxChartsEnabled).toBe(true);
@@ -199,7 +198,7 @@ test('sandbox features are the organization’s own switches', async ({ page }, 
   await shot(page, testInfo, '02-saved');
 
   // ── The API takes only booleans ──
-  const refused = await page.request.put(`/api/admin/${off.slug}/org-settings`, {
+  const refused = await page.request.put(`/api/admin/org-settings`, {
     data: { sandboxScriptsEnabled: 'yes' },
   });
   expect(refused.status()).toBe(400);
@@ -207,7 +206,7 @@ test('sandbox features are the organization’s own switches', async ({ page }, 
   // ── Phone width: the switches still sit on their rows, and the
   //    organization seeded with workspaces on shows it that way ──
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`/${on.slug}/admin/settings`);
+  await page.goto(`/admin/settings`);
   await expect(page.getByRole('switch', { name: 'Code workspaces' })).toHaveAttribute(
     'aria-checked',
     'true'

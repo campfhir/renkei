@@ -40,7 +40,6 @@ export interface WireApiResponse {
 }
 
 export interface AdManagerTarget {
-  tenantId: string;
   instanceId: string;
   subject: string;
 }
@@ -161,7 +160,6 @@ export async function admanagerApi(
 }
 
 export interface TestConnectionPayload {
-  tenantId: string;
   /** The stored instance the credential is tried against. */
   instanceId: string;
   credentials: AdManagerCredentials;
@@ -196,7 +194,7 @@ export async function admanagerProbe(
         };
       }
 ): Promise<AdManagerClientResult<ProbeResult>> {
-  const result = await callOp('probe', { tenantId, ...target });
+  const result = await callOp('probe', { ...target });
   if (!result.ok) return result;
   const value = result.val;
   if (!isRecord(value) || typeof value.ok !== 'boolean') return malformed();

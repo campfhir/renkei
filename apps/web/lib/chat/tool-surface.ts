@@ -176,7 +176,6 @@ export interface ChatToolSurface {
 export async function resolveChatToolSurface(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     subject: string;
     roles: string[];
     config: ChatToolConfig;
@@ -212,7 +211,6 @@ export async function resolveChatToolSurface(
   }
 
   const token = await mintRunToken(db, {
-    tenantId: input.tenantId,
     subject: input.subject,
     agentId: null,
     ttlSeconds: input.ttlSeconds,
@@ -258,7 +256,6 @@ export async function resolveChatToolSurface(
     // person's: the turn proceeds without tools and says so in the log.
     logger.warn('chat tool surface unavailable: {error}', {
       component: 'chat/tools',
-      tenantId: input.tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     await release();

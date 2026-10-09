@@ -117,7 +117,7 @@ function post(
   options: { bootstrapSecret?: string | null } = {}
 ): NextRequest {
   const { bootstrapSecret = BOOTSTRAP.secret } = options;
-  return new NextRequest(`http://localhost/api/tenant/${tenantId}/oidc`, {
+  return new NextRequest(`http://localhost/api/oidc`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -141,7 +141,6 @@ function grantOperatorFor(tenantId: string) {
     tid === tenantId
       ? {
           id: 's1',
-          tenantId: tid,
           subject: 'op@example.com',
           roles: ['renkei-operator'],
           expiresAt: new Date(Date.now() + 60_000),

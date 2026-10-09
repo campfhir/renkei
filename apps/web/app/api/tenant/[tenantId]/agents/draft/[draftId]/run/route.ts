@@ -62,7 +62,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; draftId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, draftId } = await params;
+  const { draftId } = await params;
 
   const token = getBearerToken(request);
   if (!token) return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
@@ -96,7 +96,6 @@ export async function POST(
       ? await db
           .selectFrom('agents')
           .select(['id', 'name'])
-          .where('tenant_id', '=', tenantId)
           .where('owner_subject', '=', record.subject)
           .orderBy('name')
           .execute()
@@ -134,7 +133,6 @@ export async function POST(
     const message = error instanceof Error ? error.message : String(error);
     logger.error('draft {draftId} threw: {error}', {
       component: 'api/agents-draft-run',
-      tenantId,
       draftId,
       error: message,
     });

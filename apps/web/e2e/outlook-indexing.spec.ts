@@ -46,14 +46,12 @@ function uuidFrom(seed: string): string {
 }
 
 function fixtureFor(projectName: string): {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
   accountId: string;
 } {
   return {
-    tenantId: uuidFrom(`outlook-indexing-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`outlook-indexing-e2e-session:${projectName}`),
     slug: `e2e-outlook-indexing-${projectName}`,
     subject: `e2e-outlook-indexing-${projectName}@example.com`,
@@ -75,15 +73,15 @@ async function withDb<T>(run: (client: Client) => Promise<T>): Promise<T> {
 
 async function seedTenant(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    await client.query('DELETE FROM events WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM webhook_subscriptions WHERE tenant_id = $1', [
+    await client.query('DELETE FROM events', [fixture.tenantId]);
+    await client.query('DELETE FROM webhook_subscriptions', [
       fixture.tenantId,
     ]);
-    await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+    await client.query('DELETE FROM provider_grants', [fixture.tenantId]);
+    await client.query('DELETE FROM connector_configs', [fixture.tenantId]);
+    await client.query('DELETE FROM user_preferences', [fixture.tenantId]);
+    await client.query('DELETE FROM sessions', [fixture.tenantId]);
+    await client.query('DELETE FROM identities', [fixture.tenantId]);
     await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
     await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
       fixture.tenantId,
@@ -165,7 +163,7 @@ async function savedIndexing(fixture: Fixture): Promise<unknown> {
   return withDb(async (client) => {
     const result = await client.query<{ indexing: unknown }>(
       `SELECT metadata -> 'indexing' AS indexing FROM provider_grants
-        WHERE tenant_id = $1 AND provider = 'microsoft' AND subject = $2`,
+        WHERE provider = 'microsoft' AND subject = $2`,
       [fixture.tenantId, fixture.subject]
     );
     return result.rows[0]?.indexing;
@@ -175,7 +173,7 @@ async function savedIndexing(fixture: Fixture): Promise<unknown> {
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -200,7 +198,7 @@ test('Outlook opt-in: Mail is a trigger feed; Tasks and Calendar are gone', asyn
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/connectors`);
+  await page.goto(`/connectors`);
   await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
 
   const card = page.locator('[data-coach="card-microsoft"]');

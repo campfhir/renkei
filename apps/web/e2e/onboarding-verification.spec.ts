@@ -55,7 +55,6 @@ test('create: the save carries the onboarding secret, then the TXT record and ve
       status: 201,
       contentType: 'application/json',
       body: JSON.stringify({
-        tenantId: TENANT,
         alreadyExists: false,
         bootstrapSecret: SECRET,
         bootstrapSecretExpiresAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -64,16 +63,16 @@ test('create: the save carries the onboarding secret, then the TXT record and ve
     })
   );
   let bootstrapHeader: string | undefined;
-  await page.route(`**/api/tenant/${TENANT}/oidc`, (route) => {
+  await page.route(`**/api/oidc`, (route) => {
     bootstrapHeader = route.request().headers()['x-renkei-bootstrap-secret'];
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ success: true, tenantId: TENANT }),
+      body: JSON.stringify({ success: true }),
     });
   });
   let verifyCalls = 0;
-  await page.route(`**/api/tenant/${TENANT}/verify-domain`, (route) => {
+  await page.route(`**/api/verify-domain`, (route) => {
     verifyCalls += 1;
     return verifyCalls === 1
       ? route.fulfill({

@@ -2,7 +2,6 @@ import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { countPendingChangeRequests } from '@/lib/jira-admin/change-requests';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import AtlassianConnector from './atlassian-connector';
@@ -106,12 +105,10 @@ export default async function ConnectorsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
-    redirect(signInUrl(tenant.id, `/${slug}/connectors`));
+    redirect(signInUrl(tenant.id, `/connectors`));
   }
 
   const dbResult = getDatabase();
@@ -138,7 +135,6 @@ export default async function ConnectorsPage({
   const configs = await db
     .selectFrom('connector_configs')
     .select(['connector', 'settings'])
-    .where('tenant_id', '=', tenant.id)
     .where('enabled', '=', true)
     .execute();
   const settingsOf = (connector: string) =>
@@ -216,7 +212,7 @@ export default async function ConnectorsPage({
   // the card exists only where the deployment runs the sandbox browser, and
   // the listing is names, fields and hosts — no values.
   const browserSecrets = (await sandboxBrowserEnabled(tenant.id))
-    ? await sbSecretsList({ tenantId: tenant.id, subject: session.subject })
+    ? await sbSecretsList({ subject: session.subject })
     : null;
 
   // Filtered to catalog-known scopes: a ceiling saved before the granular
@@ -346,8 +342,8 @@ export default async function ConnectorsPage({
                     displayName: jiraAdminGrant?.displayName ?? null,
                     ceiling: jiraAdminCeiling,
                     priorScopes: jiraAdminGrant?.requestedScopes ?? null,
-                    changesHref: `/${slug}/jira-admin/changes`,
-                    templatesHref: `/${slug}/jira-admin/templates`,
+                    changesHref: `/jira-admin/changes`,
+                    templatesHref: `/jira-admin/templates`,
                     pendingChanges: pendingJiraAdminChanges,
                   }
                 : undefined

@@ -27,7 +27,6 @@ function registerAll(context: Partial<MCPToolContext>): Map<string, Handler> {
   };
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   registerCardTools(server as unknown as McpServer, {
-    tenantId: 'tenant-1',
     accountId: 'account-1',
     siteUrl: '',
     apiBaseUrl: '',

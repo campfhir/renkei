@@ -107,7 +107,7 @@ function childOf(folder: string, name: string): string {
 }
 
 function fileUrl(tenantId: string, shareId: string, path: string): string {
-  return `/api/tenant/${tenantId}/fileshares/${shareId}/file?path=${encodeURIComponent(path)}`;
+  return `/api/fileshares/${shareId}/file?path=${encodeURIComponent(path)}`;
 }
 
 type SortKey = 'name' | 'size' | 'modified';
@@ -304,7 +304,7 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
   useEffect(() => {
     void (async () => {
       const { data, error: loadError } = await getJson<{ shares: ShareView[] }>(
-        `/api/tenant/${tenantId}/fileshares`
+        `/api/fileshares`
       );
       if (loadError) setError(loadError);
       else setShares(data?.shares ?? []);
@@ -316,7 +316,7 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
       setLoading(true);
       setError(null);
       const { data, error: loadError } = await getJson<{ entries: EntryView[] }>(
-        `/api/tenant/${tenantId}/fileshares/${target.id}/folder?path=${encodeURIComponent(folderPath)}`
+        `/api/fileshares/${target.id}/folder?path=${encodeURIComponent(folderPath)}`
       );
       setLoading(false);
       if (loadError || !data) {
@@ -758,13 +758,11 @@ function ModalFooter({ onClose, action }: { onClose: () => void; action: ReactNo
 }
 
 function NewFolderModal({
-  tenantId,
   share,
   path,
   onClose,
   onDone,
 }: {
-  tenantId: string;
   share: ShareView;
   path: string;
   onClose: () => void;
@@ -779,7 +777,7 @@ function NewFolderModal({
     setBusy(true);
     setError(null);
     const createError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/folders`,
+      `/api/fileshares/${share.id}/folders`,
       'POST',
       { path: childOf(path, name.trim()) }
     );
@@ -826,13 +824,11 @@ function NewFolderModal({
 }
 
 function UploadModal({
-  tenantId,
   share,
   path,
   onClose,
   onDone,
 }: {
-  tenantId: string;
   share: ShareView;
   path: string;
   onClose: () => void;
@@ -952,12 +948,10 @@ interface EntryMeta {
  * download no longer fires on a bare row click.
  */
 function DetailsModal({
-  tenantId,
   share,
   entry,
   onClose,
 }: {
-  tenantId: string;
   share: ShareView;
   entry: EntryView;
   onClose: () => void;
@@ -968,7 +962,7 @@ function DetailsModal({
   useEffect(() => {
     void (async () => {
       const { data, error: loadError } = await getJson<EntryMeta>(
-        `/api/tenant/${tenantId}/fileshares/${share.id}/entry?path=${encodeURIComponent(entry.path)}`
+        `/api/fileshares/${share.id}/entry?path=${encodeURIComponent(entry.path)}`
       );
       if (loadError || !data) setError(loadError ?? 'Could not read the details');
       else setMeta(data);
@@ -1014,13 +1008,11 @@ function DetailsModal({
 }
 
 function RenameModal({
-  tenantId,
   share,
   entry,
   onClose,
   onDone,
 }: {
-  tenantId: string;
   share: ShareView;
   entry: EntryView;
   onClose: () => void;
@@ -1036,7 +1028,7 @@ function RenameModal({
     setBusy(true);
     setError(null);
     const opError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/entries`,
+      `/api/fileshares/${share.id}/entries`,
       'POST',
       { op: 'rename', from: entry.path, newName: trimmed }
     );
@@ -1086,14 +1078,12 @@ function RenameModal({
 }
 
 function MoveModal({
-  tenantId,
   share,
   entry,
   path,
   onClose,
   onDone,
 }: {
-  tenantId: string;
   share: ShareView;
   entry: EntryView;
   path: string;
@@ -1110,7 +1100,7 @@ function MoveModal({
     setBusy(true);
     setError(null);
     const opError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/entries`,
+      `/api/fileshares/${share.id}/entries`,
       'POST',
       { op: 'move', from: entry.path, toFolder: trimmed }
     );
@@ -1158,13 +1148,11 @@ function MoveModal({
 }
 
 function DeleteModal({
-  tenantId,
   share,
   entry,
   onClose,
   onDone,
 }: {
-  tenantId: string;
   share: ShareView;
   entry: EntryView;
   onClose: () => void;
@@ -1177,7 +1165,7 @@ function DeleteModal({
     setBusy(true);
     setError(null);
     const opError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/entries?path=${encodeURIComponent(entry.path)}`,
+      `/api/fileshares/${share.id}/entries?path=${encodeURIComponent(entry.path)}`,
       'DELETE'
     );
     setBusy(false);

@@ -19,13 +19,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; libraryId: string }> }
 ): Promise<Response> {
-  const { tenantId, libraryId } = await params;
+  const { libraryId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
     db,
-    tenantId,
     session.subject,
     'prompt_library',
     libraryId
@@ -54,13 +53,12 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; libraryId: string }> }
 ): Promise<Response> {
-  const { tenantId, libraryId } = await params;
+  const { libraryId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
     db,
-    tenantId,
     session.subject,
     'prompt_library',
     libraryId
@@ -86,7 +84,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; libraryId: string }> }
 ): Promise<Response> {
-  const { tenantId, libraryId } = await params;
+  const { libraryId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;

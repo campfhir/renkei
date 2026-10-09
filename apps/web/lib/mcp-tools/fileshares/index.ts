@@ -407,7 +407,7 @@ export function registerFileshareTools(
         toolName: 'fileshare_download_file',
         path: path.path,
       });
-      const url = `${base}/api/tenant/${context.tenantId}/fileshares/${stats.val.share.id}/file?path=${encodeURIComponent(path.path)}`;
+      const url = `${base}/api/fileshares/${stats.val.share.id}/file?path=${encodeURIComponent(path.path)}`;
       return textResult(
         `Download link for "${path.path}" (${stats.val.size ?? 'unknown'} bytes):\n${url}\n` +
           'Opening it requires being signed in to this Renkei org in the browser; the ' +

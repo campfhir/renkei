@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
 import { getShare } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import ShareConfigForm from './share-config-form';
 
 /**
@@ -19,10 +18,8 @@ export default async function AdminFileSharePage({
   params: Promise<{ slug: string; shareId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, shareId } = await params;
-  const tenantRef = await tenantForSlug(slug);
-  if (!tenantRef) notFound();
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
@@ -42,7 +39,7 @@ export default async function AdminFileSharePage({
     <div className="mx-auto max-w-3xl space-y-8">
       <div>
         <Link
-          href={`/${slug}/admin/file-shares`}
+          href={`/admin/file-shares`}
           className="text-sm text-blue-600 hover:underline dark:text-blue-400"
         >
           ← File shares

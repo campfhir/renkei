@@ -22,7 +22,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -33,7 +32,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<Response> {
-  const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -44,7 +42,6 @@ export async function POST(
     if (!isUuid(body.projectId)) return jsonError(404, 'not-found', 'No such project');
     const access = await resolveResourceAccess(
       db,
-      tenantId,
       session.subject,
       'chat_project',
       body.projectId
@@ -56,7 +53,6 @@ export async function POST(
     typeof body.llmModelId === 'string' && isUuid(body.llmModelId) ? body.llmModelId : null;
   const toolConfig = body.toolConfig === undefined ? null : parseToolConfig(body.toolConfig);
   const input = {
-    tenantId,
     ownerSubject: session.subject,
     llmModelId,
     toolConfig,

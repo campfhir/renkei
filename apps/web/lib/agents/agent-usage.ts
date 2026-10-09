@@ -166,7 +166,7 @@ export async function getAgentTokenUsage(
   const result = await sql<TokenBucketRow>`
     SELECT ${TOKEN_BUCKET_COLUMNS}
     FROM llm_calls
-    WHERE tenant_id = ${tenantId} AND agent_id IN (${sql.join(ids)})
+    WHERE agent_id IN (${sql.join(ids)})
   `.execute(db);
   return usageOf(result.rows[0]);
 }
@@ -206,7 +206,6 @@ export async function getAgentToolUsage(
       sql<string>`percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms)`.as('median_ms'),
       sql<string>`percentile_disc(0.95) WITHIN GROUP (ORDER BY duration_ms)`.as('p95_ms'),
     ])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', 'in', ids)
     .where('started_at', '>=', sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`)
     .groupBy('tool')
@@ -246,7 +245,7 @@ export async function getAgentUsageSummaries(
   ownerSubject: string | null,
   days: number
 ): Promise<AgentUsageSummary[]> {
-  let agentQuery = db.selectFrom('agents').select(['id', 'name']).where('tenant_id', '=', tenantId);
+  let agentQuery = db.selectFrom('agents').select(['id', 'name']);
   if (ownerSubject !== null) agentQuery = agentQuery.where('owner_subject', '=', ownerSubject);
   const agents = await agentQuery.orderBy('name').execute();
   if (agents.length === 0) return [];
@@ -261,7 +260,6 @@ export async function getAgentUsageSummaries(
         sql<string>`count(*)`.as('calls'),
         sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('agent_id', 'in', agentIds)
       .where('started_at', '>=', since)
       .groupBy('agent_id')
@@ -273,7 +271,6 @@ export async function getAgentUsageSummaries(
         fn.sum<string>('input_tokens').as('input_tokens'),
         fn.sum<string>('output_tokens').as('output_tokens'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('agent_id', 'in', agentIds)
       .where('created_at', '>=', since)
       .groupBy('agent_id')
@@ -336,7 +333,6 @@ export async function getAgentTokenTrend(
       fn.sum<string>('input_tokens').as('input_tokens'),
       fn.sum<string>('output_tokens').as('output_tokens'),
     ])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', 'in', ids)
     .where(
       'created_at',
@@ -359,7 +355,6 @@ export async function getTenantTokenUsage(db: Kysely<DB>, tenantId: string): Pro
   const result = await sql<TokenBucketRow>`
     SELECT ${TOKEN_BUCKET_COLUMNS}
     FROM llm_calls
-    WHERE tenant_id = ${tenantId}
   `.execute(db);
   return usageOf(result.rows[0]);
 }
@@ -378,7 +373,7 @@ export async function getTokenUsageByAgent(
   const result = await sql<TokenBucketRow & { agent_id: string }>`
     SELECT agent_id, ${TOKEN_BUCKET_COLUMNS}
     FROM llm_calls
-    WHERE tenant_id = ${tenantId} AND agent_id IS NOT NULL
+    WHERE agent_id IS NOT NULL
     GROUP BY agent_id
   `.execute(db);
   return Object.fromEntries(result.rows.map((row) => [row.agent_id, usageOf(row)]));
@@ -417,7 +412,6 @@ export async function getTokenUsageByModel(
   const result = await sql<ModelBucketRow>`
     SELECT provider, model, ${TOKEN_BUCKET_COLUMNS}
     FROM llm_calls
-    WHERE tenant_id = ${tenantId}
       ${ids === null ? sql`` : sql`AND agent_id IN (${sql.join(ids)})`}
     GROUP BY provider, model
     ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
@@ -484,7 +478,7 @@ export async function getAgentTokenUsageByStep(
       COUNT(*) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)) AS calls_year,
       COUNT(*) AS calls_all_time
     FROM llm_calls
-    WHERE tenant_id = ${tenantId} AND agent_id = ${agentId}
+    WHERE agent_id = ${agentId}
     GROUP BY step_id, provider, model
     ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
   `.execute(db);
@@ -567,7 +561,6 @@ export async function getTokenUsageByRun(
       fn.coalesce(fn.sum<string>('cache_write_input_tokens'), sql<string>`0`).as('cache_write'),
       fn.countAll<string>().as('calls'),
     ])
-    .where('tenant_id', '=', tenantId)
     .where('run_id', 'in', [...runIds])
     .groupBy('run_id')
     .execute();
@@ -606,7 +599,6 @@ export async function getRunTokenUsage(
       fn.coalesce(fn.sum<string>('cache_write_input_tokens'), sql<string>`0`).as('cache_write'),
       fn.countAll<string>().as('calls'),
     ])
-    .where('tenant_id', '=', tenantId)
     .where('run_id', '=', runId)
     .groupBy(['step_id', 'provider', 'model'])
     .orderBy(sql`SUM(input_tokens) + SUM(output_tokens)`, 'desc')

@@ -2063,7 +2063,6 @@ async function reviewDraftConcerns(
   if (completion === 'timeout' || !completion.ok) {
     logger.info('draft review skipped: {reason}', {
       component: 'agents/draft',
-      tenantId,
       reason: completion === 'timeout' ? 'timeout' : completion.err.type,
     });
     return null;
@@ -2104,7 +2103,6 @@ function refineFeedbackText(concerns: ReviewNote[]): string {
  */
 async function closeReviewGaps(context: {
   llm: ResolvedLlm;
-  tenantId: string;
   deadline: number;
   /** The drafting conversation so far — refinement continues it. */
   messages: LlmMessage[];
@@ -2133,7 +2131,6 @@ async function closeReviewGaps(context: {
 
   let concerns = await reviewDraftConcerns(
     llm,
-    tenantId,
     current,
     effectiveGuardrails(),
     deadline - Date.now()
@@ -2145,7 +2142,6 @@ async function closeReviewGaps(context: {
     if (remaining < REFINE_MIN_BUDGET_MS) break;
     logger.info('draft refine round {round}: {count} concern(s)', {
       component: 'agents/draft',
-      tenantId,
       round,
       count: concerns.length,
     });
@@ -2186,7 +2182,6 @@ async function closeReviewGaps(context: {
 
     const next = await reviewDraftConcerns(
       llm,
-      tenantId,
       current,
       effectiveGuardrails(),
       deadline - Date.now()
@@ -2286,7 +2281,6 @@ export async function draftAgentFromProse(
   const reportTiming = (result: string) => {
     logger.info('prose draft {result}: {calls} call(s) in {ms}ms', {
       component: 'agents/draft',
-      tenantId,
       result,
       calls: modelCalls,
       ms: Date.now() - startedAt,
@@ -2356,7 +2350,6 @@ export async function draftAgentFromProse(
     if (!completion.ok) {
       logger.warn('prose draft failed: {kind} {message}', {
         component: 'agents/draft',
-        tenantId,
         kind: completion.err.type,
         message: completion.err.message?.slice(0, 300) ?? '',
       });
@@ -2422,7 +2415,6 @@ export async function draftAgentFromProse(
     lastProblems = problems;
     logger.info('prose draft retry: {count} problem(s)', {
       component: 'agents/draft',
-      tenantId,
       count: problems.length,
     });
     messages.push(
@@ -2450,7 +2442,6 @@ export async function draftAgentFromProse(
     if (!options.refineWithReview) return usable;
     return closeReviewGaps({
       llm,
-      tenantId,
       deadline,
       messages,
       toolCatalog: tools,
@@ -2470,7 +2461,6 @@ export async function draftAgentFromProse(
   reportTiming('unusable');
   logger.warn('prose draft unusable after retry: {problems}', {
     component: 'agents/draft',
-    tenantId,
     problems: lastProblems.slice(0, 5).join(' | '),
   });
   return {

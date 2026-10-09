@@ -30,7 +30,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; notificationId: string }> }
 ): Promise<Response> {
-  const { tenantId, notificationId } = await params;
+  const { notificationId } = await params;
 
   // A banner click is a top-level navigation from whatever device the push
   // landed on, not a same-process fetch — `request.url` is this Next server's
@@ -58,7 +58,6 @@ export async function GET(
     db
       .selectFrom('agent_notifications')
       .select(['id', 'kind', 'ref_url', 'agent_id', 'run_id', 'meta'])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', session.subject)
       .where('id', '=', notificationId)
       .executeTakeFirst(),
@@ -92,7 +91,7 @@ export async function GET(
   // A custom scheme (webexteams://…) is not something every browser follows
   // a redirect into; a page that navigates itself is, and it leaves a way
   // back for a machine with no such application installed.
-  return new NextResponse(openerPage(target.url, `/${tenant.slug}/notifications`), {
+  return new NextResponse(openerPage(target.url, `/notifications`), {
     status: 200,
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
   });

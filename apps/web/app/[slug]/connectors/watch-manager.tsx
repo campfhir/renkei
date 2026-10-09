@@ -84,10 +84,8 @@ function statusDotClass(watch: Watch): string {
 }
 
 export default function WatchManager({
-  tenantId,
   provider,
 }: {
-  tenantId: string;
   provider: WatchProvider;
 }) {
   const noun = NOUN[provider];
@@ -102,7 +100,7 @@ export default function WatchManager({
 
   const loadWatches = useCallback(async () => {
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/watches?provider=${provider}`);
+      const response = await fetch(`/api/watches?provider=${provider}`);
       if (!response.ok) throw new Error('failed');
       const data = await response.json();
       setWatches(Array.isArray(data.watches) ? data.watches : []);
@@ -137,7 +135,7 @@ export default function WatchManager({
     if (provider === 'sharepoint') return;
     if (options !== null || optionsError !== null) return;
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/watches/options?provider=${provider}`);
+      const response = await fetch(`/api/watches/options?provider=${provider}`);
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         setOptionsError(data.error ?? `Could not list ${noun}s.`);
@@ -159,7 +157,7 @@ export default function WatchManager({
     setBusy(true);
     setNotice(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/watches`, {
+      const response = await fetch(`/api/watches`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, scopeKey, ...(site ? { site } : {}) }),
@@ -194,7 +192,7 @@ export default function WatchManager({
     setBusy(true);
     setNotice(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/watches/reindex`, {
+      const response = await fetch(`/api/watches/reindex`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, scopeKey: watch.scopeKey }),
@@ -230,7 +228,7 @@ export default function WatchManager({
     setBusy(true);
     setNotice(null);
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/watches/repair`, {
+      const response = await fetch(`/api/watches/repair`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, scopeKey: watch.scopeKey }),
@@ -257,7 +255,7 @@ export default function WatchManager({
     setNotice(null);
     try {
       const response = await fetch(
-        `/api/tenant/${tenantId}/watches?provider=${provider}&scopeKey=${encodeURIComponent(
+        `/api/watches?provider=${provider}&scopeKey=${encodeURIComponent(
           watch.scopeKey
         )}`,
         { method: 'DELETE' }
@@ -481,12 +479,10 @@ export default function WatchManager({
  * search box instead of showing a failure.
  */
 function SitePicker({
-  tenantId,
   busy,
   onPick,
   onCancel,
 }: {
-  tenantId: string;
   busy: boolean;
   onPick: (driveId: string, siteId: string) => void;
   onCancel: () => void;
@@ -505,7 +501,7 @@ function SitePicker({
       setError(null);
       try {
         const response = await fetch(
-          `/api/tenant/${tenantId}/watches/options?provider=sharepoint` +
+          `/api/watches/options?provider=sharepoint` +
             (search ? `&q=${encodeURIComponent(search)}` : '')
         );
         const data = await response.json().catch(() => ({}));
@@ -536,7 +532,7 @@ function SitePicker({
     setError(null);
     try {
       const response = await fetch(
-        `/api/tenant/${tenantId}/watches/options?provider=sharepoint&site=${encodeURIComponent(
+        `/api/watches/options?provider=sharepoint&site=${encodeURIComponent(
           chosen.id
         )}`
       );

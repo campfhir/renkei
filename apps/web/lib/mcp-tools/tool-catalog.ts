@@ -132,7 +132,6 @@ async function jiraScopesFor(
   const row = await db
     .selectFrom('provider_grants')
     .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', ATLASSIAN)
     .where('subject', '=', subject)
     .limit(1)
@@ -163,7 +162,6 @@ async function jsmGrantScopesFor(
   const row = await db
     .selectFrom('provider_grants')
     .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', ATLASSIAN_JSM)
     .where('subject', '=', subject)
     .limit(1)
@@ -270,7 +268,6 @@ export async function listAvailableTools(
   const projection = buildProjection({ settings, availability, roles, audience });
 
   const context: MCPToolContext = {
-    tenantId,
     accountId: jira.accountId ?? '',
     // Deliberately empty: enumeration must not be able to call a provider.
     siteUrl: '',
@@ -306,7 +303,6 @@ export async function listAvailableTools(
     // rather than fail outright.
     logger.warn('tool catalog enumeration failed: {error}', {
       component: 'mcp/catalog',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return [];

@@ -46,7 +46,6 @@ maybe('image generation models', () => {
       .insertInto('llm_model_configs')
       .values({
         id: values.id,
-        tenant_id: tenantId,
         label: values.label,
         provider: values.provider,
         model: values.model,
@@ -110,7 +109,7 @@ maybe('image generation models', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM llm_model_configs WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM llm_model_configs`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
     if (previousKey === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;

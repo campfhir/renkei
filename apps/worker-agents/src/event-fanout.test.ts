@@ -56,9 +56,9 @@ maybe('agent event fan-out', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_runs`.execute(db);
+    await sql`DELETE FROM agent_triggers`.execute(db);
+    await sql`DELETE FROM agents`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
@@ -77,7 +77,6 @@ maybe('agent event fan-out', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: ownerSubject,
         name: `fanout-agent-${agentId.slice(0, 8)}`,
         steps: JSON.stringify(steps),
@@ -88,7 +87,6 @@ maybe('agent event fan-out', () => {
       .insertInto('agent_triggers')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         agent_id: agentId,
         kind: 'event',
         event_source: options.eventSource ?? 'microsoft',
@@ -101,7 +99,6 @@ maybe('agent event fan-out', () => {
   }
 
   const mailEvent = (ownerSubject: string, overrides: Record<string, unknown> = {}) => ({
-    tenantId,
     source: 'microsoft',
     type: 'mail.received',
     ownerSubject,
@@ -189,7 +186,6 @@ maybe('agent event fan-out', () => {
 
   it('narrows WebEx to chosen spaces, and refuses a third space', async () => {
     const webexEvent = (roomId: string, messageId: string) => ({
-      tenantId,
       source: 'webex',
       type: 'message.received',
       ownerSubject: owner,
@@ -285,7 +281,6 @@ maybe('agent event fan-out', () => {
 
     const queue = new InMemoryQueue();
     const { started } = await fanOutAgentEvents(db, queue.producer, {
-      tenantId,
       source: 'zoom',
       type: 'recording.transcript_completed',
       ownerSubject: owner,

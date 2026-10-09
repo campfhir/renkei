@@ -123,7 +123,7 @@ export async function seedVoice(client: Client): Promise<void> {
 
 async function seedVoiceRows(client: Client): Promise<void> {
   // The org's speech service, as the admin form stores it.
-  await client.query('DELETE FROM connector_configs WHERE tenant_id = $1 AND connector = $2', [
+  await client.query('DELETE FROM connector_configs WHERE connector = $2', [
     E2E_TENANT_ID,
     'voice',
   ]);
@@ -144,7 +144,7 @@ async function seedVoiceRows(client: Client): Promise<void> {
   );
   // This person's own voice: a British voice, a touch faster than natural.
   await client.query(
-    'DELETE FROM user_preferences WHERE tenant_id = $1 AND subject = $2 AND key = $3',
+    'DELETE FROM user_preferences WHERE subject = $2 AND key = $3',
     [E2E_TENANT_ID, E2E_SUBJECT, 'voice']
   );
   await client.query(
@@ -180,7 +180,6 @@ async function seedVoiceRows(client: Client): Promise<void> {
     [CHAT_ID, E2E_TENANT_ID, E2E_SUBJECT, CHAT_TITLE, MODEL_ID]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: CHAT_ID,
     ownerSubject: E2E_SUBJECT,

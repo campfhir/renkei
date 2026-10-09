@@ -86,7 +86,7 @@ export async function ensurePushSubscription(tenantId: string): Promise<boolean>
     const registration = await navigator.serviceWorker.ready;
     let subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
-      const keyResponse = await fetch(`/api/tenant/${tenantId}/push/public-key`);
+      const keyResponse = await fetch(`/api/push/public-key`);
       if (!keyResponse.ok) return false;
       const body: unknown = await keyResponse.json();
       const publicKey =
@@ -104,7 +104,7 @@ export async function ensurePushSubscription(tenantId: string): Promise<boolean>
     const json = subscription.toJSON();
     if (typeof json.endpoint !== 'string' || !json.keys) return false;
 
-    const saveResponse = await fetch(`/api/tenant/${tenantId}/push/subscribe`, {
+    const saveResponse = await fetch(`/api/push/subscribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
@@ -149,7 +149,7 @@ export async function disableDesktopNotifications(tenantId: string): Promise<voi
 
     const endpoint = subscription.endpoint;
     await subscription.unsubscribe().catch(() => undefined);
-    await fetch(`/api/tenant/${tenantId}/push/unsubscribe`, {
+    await fetch(`/api/push/unsubscribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint }),

@@ -22,7 +22,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
 
   // Roles come from the server-side session, never from a client-supplied
   // header or cookie.
@@ -45,7 +44,6 @@ export async function GET(
         role: 'renkei-operator',
         roles: [...userRoles],
         type: 'tenant',
-        tenantId,
         message: 'Audit logs are stored with @campfhir/bored-logs',
         logsProvider: 'bored-logs',
         logContext: `mcp:${tenantId}`,
@@ -60,7 +58,6 @@ export async function GET(
       const grant = await db
         .selectFrom('provider_grants')
         .select('provider_account_id')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', 'atlassian')
         .where('subject', '=', session.subject)
         .executeTakeFirst();
@@ -83,7 +80,6 @@ export async function GET(
         role: 'renkei-user',
         roles: [...userRoles],
         type: 'user',
-        tenantId,
         accountId,
         message: 'Audit logs are stored with @campfhir/bored-logs',
         logsProvider: 'bored-logs',

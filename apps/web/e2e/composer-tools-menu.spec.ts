@@ -77,7 +77,7 @@ test.beforeEach(async ({ browserName: _browser }, testInfo) => {
 async function openChat(page: Page, project: string): Promise<void> {
   const ids = idsFor(project);
   await mockVendor(page);
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await expect(page.getByLabel('Message')).toBeVisible();
   // The dev server's floating "N" badge sits over the composer's left edge
   // at phone width, swallowing clicks and hiding the very buttons under test.

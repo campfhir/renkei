@@ -85,7 +85,6 @@ import { useCodePane } from '../../code/_components/use-code-pane';
 
 interface ThreadProps {
   slug: string;
-  tenantId: string;
   subject: string;
   initialChat: ChatView;
   initialMessages: ChatMessageView[];
@@ -100,7 +99,7 @@ interface ThreadProps {
 
 /** A code project's page lives under Code; a chat project's under Chat. */
 function projectHref(slug: string, projectId: string, kind: 'chat' | 'code' | null): string {
-  return kind === 'code' ? `/${slug}/code/${projectId}` : `/${slug}/chat/projects/${projectId}`;
+  return kind === 'code' ? `/code/${projectId}` : `/chat/projects/${projectId}`;
 }
 
 /** The typed text of a prompt row, without the attachment excerpts the model saw. */
@@ -164,7 +163,6 @@ function chatWrittenPaths(messages: ChatMessageView[]): Set<string> {
 
 export default function ChatThread({
   slug,
-  tenantId,
   initialChat,
   initialMessages,
   models,
@@ -385,7 +383,7 @@ export default function ChatThread({
         return;
       }
       const result = await sendJsonFull<{ message: ChatMessageView }>(
-        `/api/tenant/${tenantId}/chat/chats/${chat.id}/notes`,
+        `/api/chat/chats/${chat.id}/notes`,
         'POST',
         { note }
       );
@@ -395,7 +393,6 @@ export default function ChatThread({
     [codeProjectId, tenantId, chat.id]
   );
   const pane = useCodePane({
-    tenantId,
     projectId: codeProjectId,
     chatId: chat.id,
     enabled: paneVisible,
@@ -744,7 +741,7 @@ export default function ChatThread({
   const deleteChat = useCallback(() => {
     void runManage(async () => {
       const result = await chatClient.deleteChat(tenantId, chat.id);
-      if (!result.error) router.push(`/${slug}/chat`);
+      if (!result.error) router.push(`/chat`);
       return result;
     });
   }, [chat.id, tenantId, slug, router, runManage]);
@@ -757,7 +754,6 @@ export default function ChatThread({
     async (toolUseId: string, decision: ToolPermissionDecision): Promise<string | null> => {
       if (!activeTurnId) return 'The reply is no longer running.';
       const result = await chatClient.decideToolPermission(
-        tenantId,
         chat.id,
         activeTurnId,
         toolUseId,
@@ -886,7 +882,6 @@ export default function ChatThread({
   // A chat in a code project: its checkout's changes and environment are
   // a button away in the title bar.
   const codeTools = useCodeChatTools({
-    tenantId,
     projectId: codeProjectId,
     canEdit: isOwner && !history,
     running,
@@ -901,7 +896,7 @@ export default function ChatThread({
   // that creates it.
   const startNewChat = useCallback(async () => {
     if (!chat.projectId) {
-      router.push(`/${slug}/chat/new`);
+      router.push(`/chat/new`);
       return;
     }
     setError(null);
@@ -910,7 +905,7 @@ export default function ChatThread({
       setError(created.error ?? 'A new chat could not be started.');
       return;
     }
-    router.push(`/${slug}/chat/${created.data.chatId}`);
+    router.push(`/chat/${created.data.chatId}`);
   }, [chat.projectId, router, slug, tenantId]);
   const openCommit = codeTools.openChanges;
   const codeActions = useMemo(
@@ -1326,7 +1321,7 @@ export default function ChatThread({
                 </p>
                 <div className="mt-2">
                   <Link
-                    href={`/${slug}/preferences`}
+                    href={`/preferences`}
                     className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
                   >
                     Encryption key in Preferences
@@ -1351,7 +1346,7 @@ export default function ChatThread({
                 <div className="mt-2 flex flex-wrap gap-2">
                   {chat.projectActiveChatId ? (
                     <Link
-                      href={`/${slug}/chat/${chat.projectActiveChatId}`}
+                      href={`/chat/${chat.projectActiveChatId}`}
                       className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
                     >
                       Open the active chat
@@ -1404,7 +1399,6 @@ export default function ChatThread({
                 dictation={
                   voice
                     ? {
-                        tenantId,
                         locale: voicePrefs.locale ?? voice.defaultLocale,
                         detectLanguage: voicePrefs.detectLanguage,
                         onHeard: setHeardLocale,

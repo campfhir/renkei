@@ -8,7 +8,7 @@ import type { CoachMarkProgressView, CoachMarkTour } from './types';
 
 /** '/e2e/agents' → '/agents'; '/e2e' → '/'. A pathname outside the slug is returned as is. */
 export function slugRelativePath(pathname: string, slug: string): string {
-  const prefix = `/${slug}`;
+  const prefix = `/`;
   if (pathname === prefix) return '/';
   if (pathname.startsWith(`${prefix}/`)) return pathname.slice(prefix.length);
   return pathname;

@@ -16,14 +16,12 @@ import { WEBEX_SCOPE_GROUPS, WEBEX_USER_SCOPE_OPTIONS } from '@/lib/webex-scopes
  * given the server-known `connected`/`displayName`/`allSpaces`.
  */
 export default function WebexUserConnector({
-  tenantId,
   connected,
   displayName,
   allSpaces,
   ceiling,
   priorScopes,
 }: {
-  tenantId: string;
   connected: boolean;
   displayName: string | null;
   /** The opt-in all-spaces webhook: agents fire from every space they're in. */
@@ -33,7 +31,7 @@ export default function WebexUserConnector({
   /** Scopes on the user's previous grant, seeding the picker on reconnect. */
   priorScopes: string[] | null;
 }) {
-  const authorizePath = `/api/webex/${tenantId}/authorize`;
+  const authorizePath = `/api/webex/authorize`;
 
   return (
     <ConnectorShell anchor="card-webex">
@@ -74,7 +72,7 @@ export default function WebexUserConnector({
                 </p>
               </div>
               <ToggleControl
-                endpoint={`/api/webex/${tenantId}/all-spaces`}
+                endpoint={`/api/webex/all-spaces`}
                 checked={allSpaces}
                 ariaLabel="Watch all my spaces"
               />
@@ -116,7 +114,7 @@ export default function WebexUserConnector({
 
       {connected && (
         <DisconnectControl
-          endpoint={`/api/webex/${tenantId}/grant`}
+          endpoint={`/api/webex/grant`}
           confirmText="Disconnect your WebEx account? The WebEx MCP tools stop working until you reconnect."
           buttonLabel="Disconnect WebEx"
         />

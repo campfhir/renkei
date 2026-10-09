@@ -33,7 +33,6 @@ import { getOrgSettings } from '@renkei/settings';
 import { isReindexKind, REINDEX_KINDS, resolveEmbeddingProvider } from '@renkei/knowledge';
 import type { ReindexKind } from '@renkei/knowledge';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { recordAuditEvent } from '@/lib/audit-events';
 
 /** Runs listed back, newest first — enough to show each kind's latest. */
@@ -75,7 +74,6 @@ async function listRuns(tenantId: string): Promise<ReindexRunView[]> {
       'started_at',
       'finished_at',
     ])
-    .where('tenant_id', '=', tenantId)
     .orderBy('created_at', 'desc')
     .limit(RECENT_RUNS)
     .execute();
@@ -104,8 +102,6 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -131,8 +127,6 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   const access = await checkAccess(tenant.id, [ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -161,7 +155,6 @@ export async function POST(
       .updateTable('knowledge_reindex_runs')
       .set({ status: 'paused' })
       .where('id', '=', runId)
-      .where('tenant_id', '=', tenant.id)
       .where('kind', '=', kind)
       .where('status', 'in', ['queued', 'running'])
       .executeTakeFirst();
@@ -169,7 +162,6 @@ export async function POST(
       return NextResponse.json({ error: `No active ${kind} reindex to pause.` }, { status: 409 });
     }
     recordAuditEvent({
-      tenantId: tenant.id,
       actorSubject: access.subject,
       action: 'knowledge.reindex.paused',
       targetKind: 'knowledge',
@@ -186,7 +178,6 @@ export async function POST(
       .selectFrom('knowledge_reindex_runs')
       .select(['status', 'cursor'])
       .where('id', '=', runId)
-      .where('tenant_id', '=', tenant.id)
       .where('kind', '=', kind)
       .executeTakeFirst();
     if (!run || (run.status !== 'paused' && run.status !== 'failed')) {
@@ -210,7 +201,6 @@ export async function POST(
     }
 
     const enqueued = await embeddingJobsQueue().producer.enqueue({
-      tenantId: tenant.id,
       source: 'knowledge:reindex',
       type: 'reindex.batch',
       payload: { provider: 'reindex', runId, kind, ...(run.cursor ? { cursor: run.cursor } : {}) },
@@ -226,7 +216,6 @@ export async function POST(
     }
 
     recordAuditEvent({
-      tenantId: tenant.id,
       actorSubject: access.subject,
       action: 'knowledge.reindex.resumed',
       targetKind: 'knowledge',
@@ -241,7 +230,6 @@ export async function POST(
   const active = await db
     .selectFrom('knowledge_reindex_runs')
     .select('id')
-    .where('tenant_id', '=', tenant.id)
     .where('kind', '=', kind)
     .where('status', 'in', ['queued', 'running'])
     .executeTakeFirst();
@@ -252,11 +240,10 @@ export async function POST(
   const newRunId = randomUUID();
   await db
     .insertInto('knowledge_reindex_runs')
-    .values({ id: newRunId, tenant_id: tenant.id, kind, requested_by: access.subject })
+    .values({ id: newRunId, kind, requested_by: access.subject })
     .execute();
 
   const enqueued = await embeddingJobsQueue().producer.enqueue({
-    tenantId: tenant.id,
     source: 'knowledge:reindex',
     type: 'reindex.batch',
     payload: { provider: 'reindex', runId: newRunId, kind },
@@ -272,7 +259,6 @@ export async function POST(
   }
 
   recordAuditEvent({
-    tenantId: tenant.id,
     actorSubject: access.subject,
     action: 'knowledge.reindex.started',
     targetKind: 'knowledge',

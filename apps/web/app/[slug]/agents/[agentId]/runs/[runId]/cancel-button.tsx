@@ -13,11 +13,9 @@ import { useRefresh } from '@/lib/use-refresh';
 import { sendJsonFull } from '@/lib/fetch-json';
 
 export default function CancelButton({
-  tenantId,
   agentId,
   runId,
 }: {
-  tenantId: string;
   agentId: string;
   runId: string;
 }) {
@@ -31,7 +29,7 @@ export default function CancelButton({
     setBusy(true);
     setError(null);
     const result = await sendJsonFull<{ ok: true }>(
-      `/api/tenant/${tenantId}/agents/${agentId}/runs/${runId}/cancel`,
+      `/api/agents/${agentId}/runs/${runId}/cancel`,
       'POST'
     );
     setBusy(false);

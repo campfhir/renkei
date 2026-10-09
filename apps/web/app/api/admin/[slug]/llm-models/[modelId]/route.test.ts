@@ -31,7 +31,6 @@ const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mo
 
 interface ModelConfigRow {
   id: string;
-  tenant_id: string;
   label: string;
   provider: string;
   model: string;
@@ -134,7 +133,6 @@ const paramsOf = (modelId = 'row-1') => Promise.resolve({ slug: 'acme', modelId 
 
 const baseRow: ModelConfigRow = {
   id: 'row-1',
-  tenant_id: TENANT.id,
   label: 'Prod Claude',
   provider: 'anthropic',
   model: 'claude-sonnet-5',

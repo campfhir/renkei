@@ -33,7 +33,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -45,9 +44,6 @@ export async function GET(
     .select('id')
     .where('id', '=', tenantId)
     .executeTakeFirst();
-  if (!tenant) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
 
   // The resulting grant is bound to whoever completes this flow, so the
   // caller must already be signed in.
@@ -77,7 +73,7 @@ export async function GET(
   // Live discovery through the worker — no cached endpoint in settings, so
   // a stale URL cannot outlive the IdP that issued it. The worker holds its
   // own short cache.
-  const discovered = await obDiscover({ tenantId, connector: ONBASE_ADMIN_CONNECTOR });
+  const discovered = await obDiscover({ connector: ONBASE_ADMIN_CONNECTOR });
   if (!discovered.ok) {
     const failure = onbaseClientFailure(discovered.err);
     return NextResponse.json(
@@ -99,7 +95,6 @@ export async function GET(
       id: randomUUID(),
       state,
       nonce: randomUUID(),
-      tenant_id: tenantId,
       subject: session.subject,
       provider: ONBASE_ADMIN_CONNECTOR,
       scopes,

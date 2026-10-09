@@ -23,7 +23,6 @@ export async function workspaceBranches(
   const rows = await db
     .selectFrom('sandbox_workspaces')
     .select(['id', 'branch'])
-    .where('tenant_id', '=', tenantId)
     .where('id', 'in', ids)
     .where('status', '=', 'ready')
     .execute();

@@ -34,7 +34,7 @@ export default function AdminAgentToggle({
     setBusy(true);
     setError(null);
     const failed = await sendJson(
-      `/api/admin/${slug}/agents/${agentId}/${enabled ? 'disable' : 'enable'}`,
+      `/api/admin/agents/${agentId}/${enabled ? 'disable' : 'enable'}`,
       'POST'
     );
     setBusy(false);

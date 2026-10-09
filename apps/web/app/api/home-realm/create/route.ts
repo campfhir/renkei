@@ -68,7 +68,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Check if domain already exists
     const existing = await db
       .selectFrom('tenant_domains')
-      .select('tenant_id')
+      
       .where('domain', '=', domain.toLowerCase())
       .executeTakeFirst();
 
@@ -119,7 +119,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .insertInto('tenant_domains')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         domain: domain.toLowerCase(),
         created_at: new Date().toISOString(),
       })
@@ -138,7 +137,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(
       {
-        tenantId,
         alreadyExists: false,
         // Shown once; only its digest exists from here on.
         bootstrapSecret: bootstrap.secret,

@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { isRunStatus, listRunsForAdmin } from '@/lib/agents/runs-view';
 import { StatusPill } from '../../../../agents/run-timeline';
 import RunsSearch from '../../../../agents/runs-search';
@@ -24,10 +23,8 @@ export default async function AdminAgentRunsPage({
 }): Promise<React.ReactNode> {
   const { slug, agentId } = await params;
   const { status, q } = await searchParams;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
-    redirect(`/${slug}/admin`);
+    redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
@@ -36,7 +33,6 @@ export default async function AdminAgentRunsPage({
   const agent = await db
     .selectFrom('agents')
     .select(['name'])
-    .where('tenant_id', '=', tenant.id)
     .where('id', '=', agentId)
     .executeTakeFirst();
   if (!agent) notFound();
@@ -47,7 +43,7 @@ export default async function AdminAgentRunsPage({
     ...(query ? { q: query } : {}),
   });
 
-  const basePath = `/${slug}/admin/agents/${agentId}/runs`;
+  const basePath = `/admin/agents/${agentId}/runs`;
   const tabHref = (tabStatus?: string) => {
     const tabParams = new URLSearchParams();
     if (tabStatus) tabParams.set('status', tabStatus);
@@ -59,7 +55,7 @@ export default async function AdminAgentRunsPage({
   return (
     <div className="mx-auto max-w-3xl">
       <div className="mb-4 flex items-center gap-2">
-        <BackLink href={`/${slug}/admin/agents`} label="Agent oversight" />
+        <BackLink href={`/admin/agents`} label="Agent oversight" />
         <h1 className="min-w-0 truncate text-xl font-bold">Runs of “{agent.name}”</h1>
       </div>
       <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
@@ -92,7 +88,7 @@ export default async function AdminAgentRunsPage({
           {runs.map((run) => (
             <li key={run.id}>
               <Link
-                href={`/${slug}/admin/agents/${agentId}/runs/${run.id}`}
+                href={`/admin/agents/${agentId}/runs/${run.id}`}
                 className="flex items-center justify-between rounded-md border border-gray-200 p-3 text-sm hover:border-blue-400 dark:border-gray-800"
               >
                 <span className="flex items-center gap-2">

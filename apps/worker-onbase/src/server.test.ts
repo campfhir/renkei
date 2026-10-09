@@ -269,7 +269,6 @@ describe('worker-onbase server', () => {
   it('exchanges an authorization code with PKCE and client auth on the form', async () => {
     idpTokenMode = 'ok';
     const response = await post('token', {
-      tenantId: TENANT,
       grant: {
         type: 'authorization_code',
         code: 'code-1',
@@ -289,7 +288,6 @@ describe('worker-onbase server', () => {
   it('refreshes with a refresh token', async () => {
     idpTokenMode = 'ok';
     const response = await post('token', {
-      tenantId: TENANT,
       grant: { type: 'refresh_token', refreshToken: 'rt-0' },
     });
     expect(response.status).toBe(200);
@@ -300,7 +298,6 @@ describe('worker-onbase server', () => {
   it('maps an explicit invalid_grant, and only that, onto invalid_grant', async () => {
     idpTokenMode = 'invalid_grant';
     const revoked = await post('token', {
-      tenantId: TENANT,
       grant: { type: 'refresh_token', refreshToken: 'rt-dead' },
     });
     expect(revoked.status).toBe(400);
@@ -310,7 +307,6 @@ describe('worker-onbase server', () => {
 
     idpTokenMode = 'server_error';
     const flaky = await post('token', {
-      tenantId: TENANT,
       grant: { type: 'refresh_token', refreshToken: 'rt-0' },
     });
     expect(flaky.status).toBe(502);
@@ -319,14 +315,13 @@ describe('worker-onbase server', () => {
   });
 
   it('reports revocation as best-effort success', async () => {
-    const response = await post('revoke', { tenantId: TENANT, token: 'rt-1' });
+    const response = await post('revoke', { token: 'rt-1' });
     expect(response.status).toBe(200);
     expect(((await response.json()) as { revoked: boolean }).revoked).toBe(true);
   });
 
   it('proxies an api call and envelopes the upstream status', async () => {
     const good = await post('api', {
-      tenantId: TENANT,
       accessToken: 'good-token',
       method: 'GET',
       path: '/document-types',
@@ -337,7 +332,6 @@ describe('worker-onbase server', () => {
     expect(JSON.parse(envelope.body)).toEqual({ items: [{ id: '7', name: 'Invoices' }] });
 
     const unauthorized = await post('api', {
-      tenantId: TENANT,
       accessToken: 'stale-token',
       method: 'GET',
       path: '/document-types',
@@ -349,7 +343,6 @@ describe('worker-onbase server', () => {
   it('refuses paths that climb or smuggle a second URL', async () => {
     for (const path of ['document-types', '/a/../b', '/x/https://evil', '//evil/path']) {
       const response = await post('api', {
-        tenantId: TENANT,
         accessToken: 'good-token',
         method: 'GET',
         path,
@@ -363,7 +356,6 @@ describe('worker-onbase server', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${API_KEY}` },
       body: JSON.stringify({
-        tenantId: TENANT,
         accessToken: 'good-token',
         path: '/documents/1/revisions/latest/renditions/default/content',
       }),
@@ -374,7 +366,6 @@ describe('worker-onbase server', () => {
     expect(await content.text()).toBe('document body bytes');
 
     const stale = await post('content', {
-      tenantId: TENANT,
       accessToken: 'stale-token',
       path: '/documents/1/revisions/latest/renditions/default/content',
     });
@@ -417,7 +408,6 @@ describe('worker-onbase server', () => {
 
   it('tests the unsaved payload and treats an API 401 as reachable', async () => {
     const response = await post('test-connection', {
-      tenantId: TENANT,
       unsaved: {
         apiBaseUrl: `${onbaseUrl}/onbase/core`,
         idpIssuer: `${idpUrl}/identity`,
@@ -435,7 +425,6 @@ describe('worker-onbase server', () => {
 
   it('reports an unreachable API server without failing the request', async () => {
     const response = await post('test-connection', {
-      tenantId: TENANT,
       unsaved: {
         apiBaseUrl: 'http://127.0.0.1:1/onbase/core',
         idpIssuer: `${idpUrl}/identity`,
@@ -454,7 +443,6 @@ describe('worker-onbase server', () => {
     cookiesSeen.length = 0;
     const call = () =>
       post('api', {
-        tenantId: TENANT,
         subject: 'subject-1',
         accessToken: 'good-token',
         method: 'GET',
@@ -471,14 +459,12 @@ describe('worker-onbase server', () => {
   it('keeps one caller off another caller’s session', async () => {
     cookiesSeen.length = 0;
     await post('api', {
-      tenantId: TENANT,
       subject: 'subject-a',
       accessToken: 'good-token',
       method: 'GET',
       path: '/document-types',
     });
     await post('api', {
-      tenantId: TENANT,
       subject: 'subject-b',
       accessToken: 'good-token',
       method: 'GET',
@@ -491,7 +477,6 @@ describe('worker-onbase server', () => {
 
   it('ends a session on disconnect so the licence comes back early', async () => {
     await post('api', {
-      tenantId: TENANT,
       subject: 'subject-d',
       accessToken: 'good-token',
       method: 'GET',
@@ -499,7 +484,6 @@ describe('worker-onbase server', () => {
     });
 
     const first = await post('disconnect', {
-      tenantId: TENANT,
       subject: 'subject-d',
       accessToken: 'good-token',
     });
@@ -508,7 +492,6 @@ describe('worker-onbase server', () => {
     // Nothing left to disconnect: the API is not called just to be told to
     // close a session it would have had to open first.
     const second = await post('disconnect', {
-      tenantId: TENANT,
       subject: 'subject-d',
       accessToken: 'good-token',
     });
@@ -517,7 +500,6 @@ describe('worker-onbase server', () => {
 
   it('proxies an api call for the onbase-admin connector against its own base, not the Document API', async () => {
     const response = await post('api', {
-      tenantId: TENANT,
       connector: 'onbase-admin',
       accessToken: 'good-token',
       method: 'POST',
@@ -533,7 +515,6 @@ describe('worker-onbase server', () => {
   it('sends no OnBase session cookie for onbase-admin, even for a subject with a live Document session', async () => {
     // Prime a Document API session for this subject first.
     await post('api', {
-      tenantId: TENANT,
       subject: 'subject-admin',
       accessToken: 'good-token',
       method: 'GET',
@@ -541,7 +522,6 @@ describe('worker-onbase server', () => {
     });
     cookiesSeen.length = 0;
     await post('api', {
-      tenantId: TENANT,
       connector: 'onbase-admin',
       subject: 'subject-admin',
       accessToken: 'good-token',
@@ -555,7 +535,6 @@ describe('worker-onbase server', () => {
   it('sends PATCH bodies as application/json-patch+json, not plain JSON', async () => {
     lastContentType = null;
     const response = await post('api', {
-      tenantId: TENANT,
       connector: 'onbase-admin',
       accessToken: 'good-token',
       method: 'PATCH',
@@ -568,7 +547,6 @@ describe('worker-onbase server', () => {
 
   it('refuses onbase-admin calls for a tenant that never connected it', async () => {
     const response = await post('api', {
-      tenantId: TENANT_NO_ADMIN,
       connector: 'onbase-admin',
       accessToken: 'good-token',
       method: 'GET',
@@ -582,7 +560,6 @@ describe('worker-onbase server', () => {
 
   it('tests the onbase-admin connection against its own /api/document-types probe path', async () => {
     const response = await post('test-connection', {
-      tenantId: TENANT,
       connector: 'onbase-admin',
       unsaved: {
         apiBaseUrl: `${onbaseUrl}/onbase/administration`,

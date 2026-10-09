@@ -20,17 +20,16 @@ const CHANGE = '6f1d3c1e-8c1a-4f5e-9a55-2b7a0c9e4d11';
 
 function cancel() {
   const request = new NextRequest(
-    `http://localhost/api/tenant/${TENANT}/jira-admin/changes/${CHANGE}/cancel`,
+    `http://localhost/api/jira-admin/changes/${CHANGE}/cancel`,
     { method: 'POST' }
   );
-  return POST(request, { params: Promise.resolve({ tenantId: TENANT, changeId: CHANGE }) });
+  return POST(request, { params: Promise.resolve({ changeId: CHANGE }) });
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
   jest.mocked(getSessionFromRequest).mockResolvedValue({
     id: 'session-1',
-    tenantId: TENANT,
     subject: 'owner',
     roles: [],
     expiresAt: new Date(Date.now() + 3_600_000),

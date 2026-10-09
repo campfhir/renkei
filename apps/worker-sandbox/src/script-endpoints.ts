@@ -63,7 +63,7 @@ function targetOf(body: Body): store.SandboxTarget | null {
   const tenantId = str(body.tenantId);
   const subject = str(body.subject);
   if (!tenantId || !subject) return null;
-  return { tenantId, subject };
+  return { subject };
 }
 
 function fileWire(summary: SandboxFileSummary) {

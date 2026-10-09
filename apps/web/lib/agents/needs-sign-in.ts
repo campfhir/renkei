@@ -33,7 +33,6 @@ export async function resumeRunsNeedingSignIn(
   const rows = await db
     .updateTable('agent_runs')
     .set({ status: 'queued', error: null, error_kind: null, updated_at: sql`NOW()` })
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('status', '=', 'waiting')
     .where('error_kind', '=', NEEDS_SIGN_IN)
@@ -41,7 +40,6 @@ export async function resumeRunsNeedingSignIn(
     .execute();
   for (const row of rows) {
     await producer.enqueue({
-      tenantId,
       source: `agents:${row.agent_id}`,
       type: 'run',
       payload: { runId: row.id },

@@ -1,6 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { isUuid } from '@/lib/uuid';
@@ -33,12 +32,10 @@ export default async function NewChatPage({
 }) {
   const { slug } = await params;
   const { project: requestedProjectId } = await searchParams;
-  const tenant = await tenantForSlug(slug);
-  if (!tenant) notFound();
   const session = await getSessionFromCookies(tenant.id);
   if (!session) {
     const query = requestedProjectId ? `?project=${encodeURIComponent(requestedProjectId)}` : '';
-    redirect(signInUrl(tenant.id, `/${slug}/chat/new${query}`));
+    redirect(signInUrl(tenant.id, `/chat/new${query}`));
   }
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
@@ -58,7 +55,6 @@ export default async function NewChatPage({
     if (access) projectId = requestedProjectId;
   }
   const input = {
-    tenantId: tenant.id,
     ownerSubject: session.subject,
     llmModelId: null,
     toolConfig: null,
@@ -66,12 +62,12 @@ export default async function NewChatPage({
   };
   if (!projectId) {
     const chatId = await createChat(db, { ...input, projectId: null });
-    redirect(`/${slug}/chat/${chatId}`);
+    redirect(`/chat/${chatId}`);
   }
   const created = await createChatInProject(db, { ...input, projectId });
-  if (created.ok) redirect(`/${slug}/chat/${created.val}`);
+  if (created.ok) redirect(`/chat/${created.val}`);
   const project = await getProjectRow(db, tenant.id, projectId);
   redirect(
-    project?.activeChatId ? `/${slug}/chat/${project.activeChatId}` : `/${slug}/code/${projectId}`
+    project?.activeChatId ? `/chat/${project.activeChatId}` : `/code/${projectId}`
   );
 }

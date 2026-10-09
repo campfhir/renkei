@@ -21,7 +21,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -41,7 +41,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; agentId: string }> }
 ): Promise<NextResponse> {
-  const { tenantId, agentId } = await params;
+  const { agentId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -95,7 +95,6 @@ export async function POST(
   }
 
   recordAuditEvent({
-    tenantId,
     actorSubject: session.subject,
     action: 'agent.access_granted',
     targetKind: 'agent',
@@ -103,7 +102,6 @@ export async function POST(
     details: { granteeSubject, expiresAt: expiresAt ? expiresAt.toISOString() : null },
   });
   notifyAgentShared({
-    tenantId,
     granteeSubject,
     actorSubject: session.subject,
     agentId,
