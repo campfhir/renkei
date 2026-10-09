@@ -369,7 +369,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return response;
   } catch (error) {
-    console.error('OIDC callback error:', error);
+    console.error(
+      'OIDC callback error:',
+      JSON.stringify(error instanceof Error ? error.message : String(error))
+    );
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
   }
 }

@@ -44,6 +44,7 @@
  * docs/sandbox-workspaces-design.md says what that means for placement.
  */
 
+import { constants as fsConstants } from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
@@ -52,13 +53,12 @@ import {
   chown,
   lstat,
   mkdir,
+  open,
   readdir,
-  readFile as readFileBytes,
   realpath,
   rename,
   rm,
   stat,
-  writeFile as writeFileBytes,
 } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import {
@@ -831,21 +831,28 @@ export async function readWorkspaceFile(
   maxBytes: number
 ): Promise<ReadOutcome | { error: string }> {
   const path = await containedPath(dir, relativePath);
-  let info;
+  // One handle for the check and the read, so the file cannot be swapped
+  // between them.
+  let handle;
   try {
-    info = await stat(path);
+    handle = await open(path, 'r');
   } catch {
     return { error: `No such file: ${relativePath || '.'}` };
   }
-  if (info.isDirectory())
-    return { error: `${relativePath || '.'} is a directory; list it instead.` };
-  if (!info.isFile()) return { error: `${relativePath} is not a regular file.` };
-  if (info.size > maxBytes) {
-    return {
-      error: `${relativePath} is ${info.size} bytes — too large to read here (limit ${maxBytes}).`,
-    };
+  try {
+    const info = await handle.stat();
+    if (info.isDirectory())
+      return { error: `${relativePath || '.'} is a directory; list it instead.` };
+    if (!info.isFile()) return { error: `${relativePath} is not a regular file.` };
+    if (info.size > maxBytes) {
+      return {
+        error: `${relativePath} is ${info.size} bytes — too large to read here (limit ${maxBytes}).`,
+      };
+    }
+    return { bytes: await handle.readFile(), sizeBytes: info.size };
+  } finally {
+    await handle.close();
   }
-  return { bytes: await readFileBytes(path), sizeBytes: info.size };
 }
 
 /**
@@ -878,6 +885,16 @@ async function ensureParentDirs(
   }
 }
 
+/** The errno code of a thrown file-system error, or undefined for anything else. */
+function errnoCode(error: unknown): string | undefined {
+  return typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+    ? error.code
+    : undefined;
+}
+
 export async function writeWorkspaceFile(
   dir: string,
   relativePath: string,
@@ -885,23 +902,38 @@ export async function writeWorkspaceFile(
   identity: ExecIdentity | null
 ): Promise<{ created: boolean; sizeBytes: number }> {
   const path = await containedPath(dir, relativePath);
-  let created = true;
-  try {
-    const info = await lstat(path);
-    if (info.isSymbolicLink())
-      throw new WorkspacePathError(
-        `${relativePath} is a symbolic link; refusing to write through it.`
-      );
-    if (info.isDirectory()) throw new WorkspacePathError(`${relativePath} is a directory.`);
-    created = false;
-  } catch (error) {
-    if (error instanceof WorkspacePathError) throw error;
-  }
   // Parent directories the write creates belong to the caller like the file.
   const root = await realpath(dir);
   await ensureParentDirs(path, root, identity);
   const bytes = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
-  await writeFileBytes(path, bytes, { mode: 0o644 });
+  // Create exclusively first, else truncate in place; O_NOFOLLOW makes the
+  // kernel refuse a symbolic link at the final component, so there is no
+  // window between a check and the write for one to appear in.
+  const { O_WRONLY, O_CREAT, O_EXCL, O_TRUNC, O_NOFOLLOW } = fsConstants;
+  let created = true;
+  let handle;
+  try {
+    handle = await open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644);
+  } catch (error) {
+    if (errnoCode(error) !== 'EEXIST') throw error;
+    created = false;
+    try {
+      handle = await open(path, O_WRONLY | O_TRUNC | O_NOFOLLOW);
+    } catch (inner) {
+      const code = errnoCode(inner);
+      if (code === 'ELOOP')
+        throw new WorkspacePathError(
+          `${relativePath} is a symbolic link; refusing to write through it.`
+        );
+      if (code === 'EISDIR') throw new WorkspacePathError(`${relativePath} is a directory.`);
+      throw inner;
+    }
+  }
+  try {
+    await handle.writeFile(bytes);
+  } finally {
+    await handle.close();
+  }
   await chownIf(path, identity);
   return { created, sizeBytes: bytes.byteLength };
 }

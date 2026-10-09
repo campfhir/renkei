@@ -107,7 +107,9 @@ export function delegateConfigFromEnv(
     }
     return null;
   }
-  return { url: url.replace(/\/+$/, ''), apiKey };
+  let base = url;
+  while (base.endsWith('/')) base = base.slice(0, -1);
+  return { url: base, apiKey };
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

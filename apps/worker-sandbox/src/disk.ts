@@ -96,11 +96,13 @@ export async function writeStream(
 export async function readFile(storageKey: string): Promise<Buffer | undefined> {
   const path = resolvePath(storageKey);
   try {
-    await stat(path);
-  } catch {
-    return undefined;
+    return await readFileBytes(path);
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return undefined;
+    throw error;
   }
-  return readFileBytes(path);
 }
 
 /**

@@ -185,9 +185,10 @@ function str(value: unknown): string {
 
 function authorized(request: IncomingMessage, keys: string[]): boolean {
   if (keys.length === 0) return false;
-  const match = request.headers.authorization?.match(/^Bearer\s+(.+)$/i);
-  if (!match) return false;
-  const presented = match[1].trim();
+  const header = request.headers.authorization?.trim() ?? '';
+  if (header.length < 8 || header.slice(0, 7).toLowerCase() !== 'bearer ') return false;
+  const presented = header.slice(7).trim();
+  if (!presented) return false;
   return keys.some((key) => {
     const bufA = Buffer.from(presented);
     const bufB = Buffer.from(key);

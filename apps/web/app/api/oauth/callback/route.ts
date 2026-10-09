@@ -152,7 +152,11 @@ async function pendingGet(
   try {
     return await pending(url, { headers: { Accept: 'application/json', ...headers } });
   } catch (error) {
-    return new Response(error instanceof Error ? error.message : String(error), { status: 502 });
+    logger.warn('Identity lookup through the delegate failed: {detail}', {
+      component: 'oauth-callback',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return new Response('identity lookup failed', { status: 502 });
   }
 }
 

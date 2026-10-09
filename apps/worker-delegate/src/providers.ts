@@ -210,7 +210,7 @@ export function tokenEndpointFor(
   directoryTenantId?: string
 ): string | null {
   if (spec.tokenEndpoint) return spec.tokenEndpoint;
-  if (spec.hosts.includes('graph.microsoft.com')) {
+  if (spec.hosts.some((host) => host === 'graph.microsoft.com')) {
     const tid = directoryTenantId || settingOf(config, 'directoryTenantId');
     return tid
       ? `https://login.microsoftonline.com/${encodeURIComponent(tid)}/oauth2/v2.0/token`

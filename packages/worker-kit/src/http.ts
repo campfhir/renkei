@@ -52,14 +52,22 @@ function namedKeyOf(entry: string | NamedApiKey): NamedApiKey {
  * against every one of them, or null. The name tells a worker who is
  * calling; the key itself never travels further than this check.
  */
+/** The token after `Bearer ` (any case, any whitespace), or null when the header is not a bearer credential. */
+export function bearerToken(header: string | undefined): Buffer | null {
+  if (!header) return null;
+  const trimmed = header.trim();
+  if (trimmed.length < 8 || trimmed.slice(0, 7).toLowerCase() !== 'bearer ') return null;
+  const token = trimmed.slice(7).trim();
+  return token ? Buffer.from(token) : null;
+}
+
 export function matchApiKey(
   request: IncomingMessage,
   keys: readonly (string | NamedApiKey)[]
 ): NamedApiKey | null {
   if (keys.length === 0) return null;
-  const match = request.headers.authorization?.match(/^Bearer\s+(.+)$/i);
-  if (!match) return null;
-  const presented = Buffer.from(match[1].trim());
+  const presented = bearerToken(request.headers.authorization);
+  if (presented === null) return null;
   let matched: NamedApiKey | null = null;
   for (const entry of keys) {
     const named = namedKeyOf(entry);
