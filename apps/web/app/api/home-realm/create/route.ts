@@ -134,7 +134,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       console.warn(`[Domain] Could not seed classifier rules for ${tenantId}`);
     }
 
-    console.log(`[Domain] Created tenant for ${domain.replace(/[\r\n]+/g, ' ')}: ${tenantId}`);
+    console.log(`[Domain] Created tenant for ${JSON.stringify(domain)}: ${tenantId}`);
 
     return NextResponse.json(
       {
