@@ -20,12 +20,12 @@ import { getSessionFromRequest } from '@/lib/session';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
   // Roles come from the server-side session, never from a client-supplied
   // header or cookie.
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

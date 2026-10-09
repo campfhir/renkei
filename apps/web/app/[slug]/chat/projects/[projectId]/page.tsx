@@ -16,14 +16,14 @@ export default async function ProjectPage({
   params: Promise<{ slug: string; projectId: string }>;
 }) {
   const { slug, projectId } = await params;
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/chat/projects/${projectId}`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/chat/projects/${projectId}`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
-  const access = await resolveProjectAccess(db, tenant.id, session.subject, projectId);
+  const access = await resolveProjectAccess(db, session.subject, projectId);
   if (!access) notFound();
-  const view = await loadProjectView(db, tenant.id, session.subject, projectId, access);
+  const view = await loadProjectView(db, session.subject, projectId, access);
   if (!view) notFound();
-  return <ProjectView key={projectId} slug={slug} tenantId={tenant.id} initial={view} />;
+  return <ProjectView key={projectId} slug={slug} initial={view} />;
 }

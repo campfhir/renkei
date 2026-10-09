@@ -184,7 +184,7 @@ describe('worker-onbase server', () => {
     encryptionKey: Buffer.alloc(32),
     apiKeys: [API_KEY],
     maxTransferBytes: () => Promise.resolve(64),
-    resolveConfig: (tenantId, connector) => {
+    resolveConfig: (connector) => {
       const documentConfig: OnBaseTenantConfig = {
         apiBaseUrl: `${onbaseUrl}/onbase/core`,
         idpIssuer: `${idpUrl}/identity`,
@@ -245,14 +245,14 @@ describe('worker-onbase server', () => {
     const health = await fetch(`${workerUrl}/health`);
     expect(health.status).toBe(200);
 
-    const denied = await post('discover', { tenantId: TENANT }, null);
+    const denied = await post('discover', { }, null);
     expect(denied.status).toBe(401);
-    const wrongKey = await post('discover', { tenantId: TENANT }, 'not-the-key');
+    const wrongKey = await post('discover', { }, 'not-the-key');
     expect(wrongKey.status).toBe(401);
   });
 
   it('discovers the tenant IdP endpoints from stored config', async () => {
-    const response = await post('discover', { tenantId: TENANT });
+    const response = await post('discover', { });
     expect(response.status).toBe(200);
     const endpoints = (await response.json()) as Record<string, string>;
     expect(endpoints.authorizationEndpoint).toBe(`${idpUrl}/identity/connect/authorize`);
@@ -260,7 +260,7 @@ describe('worker-onbase server', () => {
   });
 
   it('refuses discovery for an unconfigured tenant', async () => {
-    const response = await post('discover', { tenantId: '22222222-2222-2222-2222-222222222222' });
+    const response = await post('discover', { });
     expect(response.status).toBe(503);
     const body = (await response.json()) as { error: { type: string } };
     expect(body.error.type).toBe('not_configured');

@@ -156,7 +156,6 @@ export function localBucketOf(
 
 export async function getUtilizationTotals(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   span: UsageSpan,
   timeZone: string
@@ -215,7 +214,6 @@ export async function getUtilizationTotals(
  */
 export async function getUtilizationSeries(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   span: UsageSpan,
   timeZone: string,
@@ -294,7 +292,6 @@ export async function getUtilizationSeries(
 /** Every agent this person owns, with its share of the window's usage. */
 export async function getAgentUtilization(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   span: UsageSpan,
   timeZone: string
@@ -417,7 +414,6 @@ export async function getAgentUtilization(
  */
 export async function getFailureSignatures(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   span: UsageSpan,
   timeZone: string,

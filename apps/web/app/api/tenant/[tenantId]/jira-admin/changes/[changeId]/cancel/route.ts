@@ -10,11 +10,11 @@ import { cancelChangeRequest, getChangeRequest } from '@/lib/jira-admin/change-r
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; changeId: string }> }
+  { params }: { params: Promise<{ changeId: string }> }
 ): Promise<NextResponse> {
   const { changeId } = await params;
 
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
@@ -25,11 +25,11 @@ export async function POST(
   }
   const db = dbResult.val;
 
-  const change = await getChangeRequest(db, tenantId, session.subject, changeId);
+  const change = await getChangeRequest(db, session.subject, changeId);
   if (!change) {
     return NextResponse.json({ error: 'Change request not found' }, { status: 404 });
   }
-  if (!(await cancelChangeRequest(db, tenantId, session.subject, change.id))) {
+  if (!(await cancelChangeRequest(db, session.subject, change.id))) {
     return NextResponse.json(
       { error: 'Only a change request waiting for review can be cancelled.' },
       { status: 409 }

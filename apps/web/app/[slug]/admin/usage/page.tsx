@@ -22,7 +22,7 @@ export default async function OrgUsagePage({
 }) {
   const { slug } = await params;
   const query = await searchParams;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
@@ -33,7 +33,7 @@ export default async function OrgUsagePage({
   // viewer's proxy or CDN forwards when one does; the client re-fetches in
   // its own zone the moment the period or person changes.
   const forwardedZone = (await headers()).get('x-vercel-ip-timezone') ?? undefined;
-  const initial = await getOrgUsageReport(tenant.id, period, forwardedZone, false, user);
+  const initial = await getOrgUsageReport(period, forwardedZone, false, user);
 
-  return <OrgUsageViewer slug={slug} tenantId={tenant.id} initial={initial} />;
+  return <OrgUsageViewer slug={slug} initial={initial} />;
 }

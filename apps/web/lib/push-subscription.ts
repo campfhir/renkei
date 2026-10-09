@@ -36,7 +36,7 @@ const PUSH_DB_STORE = 'config';
  * the worker would have no way to know which tenant to re-subscribe under
  * and re-POST to.
  */
-async function rememberTenantForPush(tenantId: string): Promise<void> {
+async function rememberTenantForPush(): Promise<void> {
   try {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const req = indexedDB.open(PUSH_DB_NAME, 1);
@@ -46,7 +46,7 @@ async function rememberTenantForPush(tenantId: string): Promise<void> {
     });
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(PUSH_DB_STORE, 'readwrite');
-      tx.objectStore(PUSH_DB_STORE).put(tenantId, 'tenantId');
+      tx.objectStore(PUSH_DB_STORE).put('tenantId');
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -78,9 +78,9 @@ function urlBase64ToUint8Array(base64url: string): Uint8Array<ArrayBuffer> {
  * already-subscribed device returns the existing subscription rather than
  * minting a new one, and the server upserts by endpoint either way.
  */
-export async function ensurePushSubscription(tenantId: string): Promise<boolean> {
+export async function ensurePushSubscription(): Promise<boolean> {
   if (!supportsPush() || Notification.permission !== 'granted') return false;
-  void rememberTenantForPush(tenantId);
+  void rememberTenantForPush();
 
   try {
     const registration = await navigator.serviceWorker.ready;
@@ -121,7 +121,7 @@ export async function ensurePushSubscription(tenantId: string): Promise<boolean>
  * `ensurePushSubscription` for the "already granted" half rather than
  * duplicating it.
  */
-export async function enableDesktopNotifications(tenantId: string): Promise<EnableOutcome> {
+export async function enableDesktopNotifications(): Promise<EnableOutcome> {
   if (!supportsPush()) return 'unsupported';
 
   let permission = Notification.permission;
@@ -134,13 +134,13 @@ export async function enableDesktopNotifications(tenantId: string): Promise<Enab
   }
   if (permission !== 'granted') return permission === 'denied' ? 'denied' : 'unsupported';
 
-  const subscribed = await ensurePushSubscription(tenantId);
+  const subscribed = await ensurePushSubscription();
   return subscribed ? 'granted' : 'subscribe-failed';
 }
 
 /** Best-effort: unsubscribes this browser's device and tells the server,
  *  even if one half fails — a stale row just gets pruned on its next 404. */
-export async function disableDesktopNotifications(tenantId: string): Promise<void> {
+export async function disableDesktopNotifications(): Promise<void> {
   if (!supportsPush()) return;
   try {
     const registration = await navigator.serviceWorker.getRegistration();

@@ -533,7 +533,7 @@ export default function ArtifactInline({
 }) {
   const kind = previewKind(artifact);
   const [ref, near] = useNearScreen<HTMLElement>();
-  const url = chatClient.attachmentUrl(tenantId, artifact.id);
+  const url = chatClient.attachmentUrl(artifact.id);
   const previewUrl = `${url}/preview`;
 
   let picture: ReactNode = null;

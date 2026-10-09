@@ -115,7 +115,7 @@ export default function MicrosoftConnectBody({
     // Nothing in Outlook is indexed (mail, calendar and To Do are personal),
     // so there is no progress to show and nothing to re-index: the one
     // control is the trigger-feed opt-in.
-    outlook: connected ? <OutlookIndexingPrefs tenantId={tenantId} /> : null,
+    outlook: connected ? <OutlookIndexingPrefs /> : null,
 
     // Gated on the grant actually carrying Sites.Read.All: without it,
     // listing sites, resolving a library and the background sweep all fail,
@@ -125,7 +125,7 @@ export default function MicrosoftConnectBody({
     // rather than hiding the feature from everyone on an old grant.
     sharepoint:
       connected && (priorScopes === null || priorScopes.includes('Sites.Read.All')) ? (
-        <WatchManager tenantId={tenantId} provider="sharepoint" />
+        <WatchManager provider="sharepoint" />
       ) : null,
 
     // Said plainly because the absence is otherwise indistinguishable from a

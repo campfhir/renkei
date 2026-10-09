@@ -80,6 +80,6 @@ export async function startDocumentOcrPipeline(
     config: { ...documentPipelineConfig(input) },
     scheduleId: input.scheduleId,
   });
-  await enqueueDiscover(batchJobsQueue().producer, input.tenantId, batch.id);
+  await enqueueDiscover(batchJobsQueue().producer, batch.id);
   return batch;
 }

@@ -75,7 +75,7 @@ function baseRefOf(refId: string): string {
 }
 
 /** Every chunk of this agent's notes, owner-scoped, ordered for rebuild. */
-async function agentNoteChunks(db: Kysely<DB>, tenantId: string, agentId: string) {
+async function agentNoteChunks(db: Kysely<DB>, agentId: string) {
   return db
     .selectFrom('knowledge_chunks')
     .select(['ref_id', 'metadata', 'content', 'keywords', 'source_at'])
@@ -89,10 +89,9 @@ async function agentNoteChunks(db: Kysely<DB>, tenantId: string, agentId: string
 /** The agent's notes, newest first, content rebuilt from ordered chunks. */
 export async function listAgentNotes(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<AgentNote[]> {
-  const rows = await agentNoteChunks(db, tenantId, agentId);
+  const rows = await agentNoteChunks(db, agentId);
   const keyResult = contentEncryptionKey();
   const contentKey = keyResult.ok ? keyResult.val : null;
   const notes = new Map<string, AgentNote>();
@@ -142,12 +141,11 @@ export async function createAgentNote(
     keywords?: NoteKeywords;
   }
 ): Promise<{ noteId: string } | AgentNoteError> {
-  const embedder = await resolveEmbeddingProvider(input.tenantId);
+  const embedder = await resolveEmbeddingProvider();
   if (!embedder) return 'EMBEDDINGS_OFF';
 
   const noteId = randomUUID();
   const ingested = await ingestObjectChunks(
-    input.tenantId,
     embedder,
     {
       provider: NOTE_KNOWLEDGE_PROVIDER,
@@ -176,7 +174,6 @@ export async function createAgentNote(
 /** The note must exist, belong to the owner, AND be this agent's. */
 async function noteExists(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   refId: string
 ): Promise<boolean> {
@@ -207,13 +204,12 @@ export async function updateAgentNote(
   }
 ): Promise<'OK' | AgentNoteError> {
   const refId = noteRefId(input.ownerEmail, input.noteId);
-  if (!(await noteExists(db, input.tenantId, input.agentId, refId))) return 'NOT_FOUND';
+  if (!(await noteExists(db, input.agentId, refId))) return 'NOT_FOUND';
 
-  const embedder = await resolveEmbeddingProvider(input.tenantId);
+  const embedder = await resolveEmbeddingProvider();
   if (!embedder) return 'EMBEDDINGS_OFF';
 
   const ingested = await ingestObjectChunks(
-    input.tenantId,
     embedder,
     {
       provider: NOTE_KNOWLEDGE_PROVIDER,
@@ -293,11 +289,11 @@ export async function copyAgentNotes(
 
 export async function deleteAgentNote(
   db: Kysely<DB>,
-  input: { tenantId: string; agentId: string; ownerEmail: string; noteId: string }
+  input: { agentId: string; ownerEmail: string; noteId: string }
 ): Promise<'OK' | AgentNoteError> {
   const refId = noteRefId(input.ownerEmail, input.noteId);
-  if (!(await noteExists(db, input.tenantId, input.agentId, refId))) return 'NOT_FOUND';
-  const deleted = await deleteObjectChunks(input.tenantId, NOTE_KNOWLEDGE_PROVIDER, refId);
+  if (!(await noteExists(db, input.agentId, refId))) return 'NOT_FOUND';
+  const deleted = await deleteObjectChunks(NOTE_KNOWLEDGE_PROVIDER, refId);
   return deleted.ok ? 'OK' : 'DB_ERROR';
 }
 
@@ -322,7 +318,7 @@ export async function deleteAgentNotes(
   }
 ): Promise<{ deleted: number; missing: number; failed: number }> {
   const ids = input.all
-    ? (await listAgentNotes(db, input.tenantId, input.agentId)).map((note) => note.noteId)
+    ? (await listAgentNotes(db, input.agentId)).map((note) => note.noteId)
     : (input.noteIds ?? []);
 
   let deleted = 0;

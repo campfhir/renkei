@@ -26,9 +26,9 @@ import {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);
@@ -83,8 +83,8 @@ export async function POST(
         return jsonError(503, 'delegate', 'The key service could not be reached.');
     }
   }
-  await setAutomationDays(db, tenantId, session.subject, days);
-  await resumeRunsNeedingSignIn(db, agentJobsQueue().producer, tenantId, session.subject);
+  await setAutomationDays(db, session.subject, days);
+  await resumeRunsNeedingSignIn(db, agentJobsQueue().producer, session.subject);
   recordAuditEvent({ actorSubject: session.subject, action: 'encryption-key.enrolled' });
   return NextResponse.json({ version: enrolled.val.version, migrated: enrolled.val.migrated });
 }

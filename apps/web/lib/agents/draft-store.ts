@@ -121,7 +121,6 @@ export async function createDraft(
 /** One draft, for its owner. Null for anyone else, which is the same answer. */
 export async function getDraft(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   draftId: string
 ): Promise<AgentDraft | null> {
@@ -146,7 +145,6 @@ export async function getDraft(
  */
 export async function latestReadyDraft(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string | null
 ): Promise<AgentDraft | null> {
@@ -173,7 +171,6 @@ export async function latestReadyDraft(
  */
 export async function consumeDraft(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   draftId: string
 ): Promise<void> {

@@ -56,8 +56,7 @@ function toSummary(row: {
 }
 
 export async function listImageRules(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<ImageRuleSummary[]> {
   const rows = await db
     .selectFrom('code_service_image_rules')
@@ -67,7 +66,7 @@ export async function listImageRules(
   return rows.map(toSummary);
 }
 
-export async function countImageRules(db: Kysely<DB>, tenantId: string): Promise<number> {
+export async function countImageRules(db: Kysely<DB>): Promise<number> {
   const row = await db
     .selectFrom('code_service_image_rules')
     .select((eb) => eb.fn.countAll<string>().as('count'))
@@ -77,8 +76,7 @@ export async function countImageRules(db: Kysely<DB>, tenantId: string): Promise
 
 /** Every rule with what a pull needs: the pattern, and the credential's sealed value when there is one. */
 export async function listImageRulesForMatching(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<
   Array<{
     id: string;
@@ -181,7 +179,6 @@ export async function updateImageRule(
 
 export async function deleteImageRule(
   db: Kysely<DB>,
-  tenantId: string,
   id: string
 ): Promise<boolean> {
   const result = await db
@@ -192,7 +189,7 @@ export async function deleteImageRule(
 }
 
 /** Put the seeded defaults back — the ones missing; rows an operator kept or changed are left alone. */
-export async function restoreDefaultImageRules(db: Kysely<DB>, tenantId: string): Promise<number> {
+export async function restoreDefaultImageRules(db: Kysely<DB>): Promise<number> {
   let added = 0;
   for (const rule of DEFAULT_IMAGE_RULES) {
     const result = await db

@@ -15,15 +15,15 @@ import { latestPrInTranscript } from '@/lib/code/chat-commits';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveChatAccess(db, tenantId, session.subject, chatId);
+  const access = await resolveChatAccess(db, session.subject, chatId);
   if (!access) return jsonError(404, 'not-found', 'No such chat');
-  const rows = await listMessages(db, tenantId, chatId, access.cipher);
+  const rows = await listMessages(db, chatId, access.cipher);
   const pullRequest = latestPrInTranscript(rows.map(toMessageView));
   return NextResponse.json({ pullRequest });
 }

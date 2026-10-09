@@ -15,10 +15,10 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const settings = await getOrgSettings(tenant.id);
+  const settings = await getOrgSettings();
   if (!settings.ok) return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
   return NextResponse.json({ agentRunRetentionDays: settings.val.agentRunRetentionDays });
 }
@@ -28,7 +28,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -43,7 +43,7 @@ export async function PUT(
     );
   }
 
-  const saved = await setOrgSettings(tenant.id, { agentRunRetentionDays: days });
+  const saved = await setOrgSettings({ agentRunRetentionDays: days });
   if (!saved.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   return NextResponse.json({ agentRunRetentionDays: days });
 }

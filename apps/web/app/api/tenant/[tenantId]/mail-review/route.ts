@@ -21,15 +21,15 @@ const MAX_PAGE_SIZE = 5;
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
 
-  const emailResult = await getIdentityEmail(tenantId, session.subject);
+  const emailResult = await getIdentityEmail(session.subject);
   const userEmail = emailResult.ok ? emailResult.val : null;
   if (!userEmail) {
     return NextResponse.json(
@@ -55,12 +55,12 @@ export async function GET(
       : MAX_PAGE_SIZE;
 
   const [pageResult, countsResult] = await Promise.all([
-    listForOwner(tenantId, userEmail, {
+    listForOwner(userEmail, {
       category: categoryParam,
       limit: pageSize,
       offset: (page - 1) * pageSize,
     }),
-    countByCategoryForOwner(tenantId, userEmail),
+    countByCategoryForOwner(userEmail),
   ]);
   if (!pageResult.ok) {
     return NextResponse.json({ error: 'Could not read your mail review queue' }, { status: 500 });

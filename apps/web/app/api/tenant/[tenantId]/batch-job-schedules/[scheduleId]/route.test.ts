@@ -33,7 +33,7 @@ const { nextRunAtFor } = jest.requireMock<{ nextRunAtFor: jest.Mock }>('@/lib/ba
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
 const SCHEDULE_ID = 'sched-1';
 const SCHEDULE_CONFIG = { recurrences: [{ every: 'hour' }], timezone: 'UTC' };
-const paramsOf = () => Promise.resolve({ tenantId: 'tenant-1', scheduleId: SCHEDULE_ID });
+const paramsOf = () => Promise.resolve({ scheduleId: SCHEDULE_ID });
 
 function existingSchedule(overrides: Partial<Record<string, unknown>> = {}) {
   return {

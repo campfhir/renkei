@@ -29,9 +29,9 @@ import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -43,7 +43,7 @@ export async function POST(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
 
-  const access = await resolveWebexUserAccess(tenantId, session.subject);
+  const access = await resolveWebexUserAccess(session.subject);
   if (!access) {
     return NextResponse.json({ error: 'Connect WebEx first' }, { status: 409 });
   }
@@ -52,7 +52,7 @@ export async function POST(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const targetUrl = webexUserWebhookTargetUrl(originResult.val, tenantId, access.accountId);
+  const targetUrl = webexUserWebhookTargetUrl(originResult.val, access.accountId);
   const client = new WebexClient(access.auth);
 
   const existingSecret =

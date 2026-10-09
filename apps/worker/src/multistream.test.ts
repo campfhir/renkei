@@ -139,11 +139,10 @@ jest.mock('./handlers/zoom-access', () => ({
 jest.mock('./enqueue', () => ({
   KNOWLEDGE_SOURCE: 'knowledge',
   enqueueKnowledgeEvent: (
-    tenantId: string,
     type: string,
     payload: Record<string, unknown>,
     orderingKey: string | null = null
-  ) => mockEnqueueImpl(tenantId, type, payload, orderingKey),
+  ) => mockEnqueueImpl(type, payload, orderingKey),
 }));
 // The worker's queue module reaches for Postgres; these suites bind the
 // loops to in-memory queues directly, so neuter the construction.
@@ -193,7 +192,6 @@ import { authedFetch } from '@renkei/delegate-client';
 const auth = authedFetch(async () => new Response(), 'test:tenant-1:acct-1');
 
 let mockEnqueueImpl: (
-  tenantId: string,
   type: string,
   payload: Record<string, unknown>,
   orderingKey: string | null
@@ -354,7 +352,7 @@ function registerAllHandlers(handled: Handled[]): void {
   // embedding queue nothing — so the Microsoft stream is a third
   // interactive-latency stream here, not a saturation source.
   registerHandler('microsoft', 'change-notification', async (event) => {
-    await runSubscriptionSync(event.tenant_id, microsoftAccess(), {
+    await runSubscriptionSync(microsoftAccess(), {
       id: 'sub-row-1',
       resource: "me/mailFolders('inbox')/messages",
       subscription_id: 'graph-sub-1',
@@ -438,7 +436,7 @@ beforeEach(() => {
   embedding = new InMemoryQueue();
   stubDb(dbState);
   registerAllHandlers(handled);
-  mockEnqueueImpl = async (tenantId, type, payload, orderingKey) => {
+  mockEnqueueImpl = async (type, payload, orderingKey) => {
     // Mirrors the real enqueueKnowledgeEvent's payload encryption too — the
     // consuming handlers are strict and would dead-letter plaintext, which
     // would read here as a drain failure instead of a crypto one.

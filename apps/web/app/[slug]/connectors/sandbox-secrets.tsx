@@ -20,7 +20,7 @@ export default function SandboxSecrets({
 }) {
   return (
     <ConnectorShell anchor="card-secrets">
-      <SandboxSecretsBody tenantId={tenantId} secrets={secrets} />
+      <SandboxSecretsBody secrets={secrets} />
     </ConnectorShell>
   );
 }

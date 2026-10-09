@@ -269,7 +269,7 @@ function ToolDetailDialog({
   useEffect(() => {
     let stale = false;
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    getToolDetail(tenantId, row.name, days, timeZone, scope).then((fetched) => {
+    getToolDetail(row.name, days, timeZone, scope).then((fetched) => {
       if (!stale) setDetail(fetched);
     });
     return () => {
@@ -492,12 +492,12 @@ export default function UsageViewer({
   function refresh(days: number, scope: 'self' | 'tenant') {
     startTransition(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const next = await getUsageReport(tenantId, days, timeZone, scope);
+      const next = await getUsageReport(days, timeZone, scope);
       // The session died while this page sat open. Send them to sign in
       // rather than leaving a dead-end banner behind a period change — the
       // server render of this page redirects for exactly the same verdict.
       if (next.signedOut) {
-        window.location.href = signInUrl(tenantId, `/usage`);
+        window.location.href = signInUrl(`/usage`);
         return;
       }
       setReport(next);
@@ -547,7 +547,7 @@ export default function UsageViewer({
           {report.signedOut && (
             <>
               {' '}
-              <a className="font-medium underline" href={signInUrl(tenantId, `/usage`)}>
+              <a className="font-medium underline" href={signInUrl(`/usage`)}>
                 Sign in again
               </a>
             </>
@@ -837,7 +837,6 @@ export default function UsageViewer({
       {selected && (
         <ToolDetailDialog
           row={selected}
-          tenantId={tenantId}
           days={report.days}
           scope={report.scope}
           onClose={() => setSelected(null)}

@@ -36,18 +36,18 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const summary = request.nextUrl.searchParams.get('view') === 'summary';
   const empty: ServicesView = { enabled: false, services: [], allowed: [] };
-  if (!(await sandboxServicesEnabled(tenantId))) {
+  if (!(await sandboxServicesEnabled())) {
     return NextResponse.json(summary ? summarizeServices(empty) : empty);
   }
-  const target = codeProjectTarget(tenantId, projectId);
-  const [listed, rules] = await Promise.all([sbServiceList(target), sbImageRulesList(tenantId)]);
+  const target = codeProjectTarget(projectId);
+  const [listed, rules] = await Promise.all([sbServiceList(target), sbImageRulesList()]);
   if (!listed.ok) {
     const failure = clientFailure(listed.err);
     return jsonError(failure.status, 'sandbox', failure.message);
@@ -62,12 +62,12 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
+  const ready = await codeProjectContext(request, projectId, { write: true });
   if (!ready.ok) return ready.response;
-  if (!(await sandboxServicesEnabled(tenantId))) {
+  if (!(await sandboxServicesEnabled())) {
     return jsonError(
       503,
       'unavailable',
@@ -76,7 +76,7 @@ export async function POST(
   }
   const input = parseServiceStartPayload(await readJsonBody(request));
   if ('error' in input) return jsonError(400, 'invalid', input.error);
-  const started = await sbServiceStart(codeProjectTarget(tenantId, projectId), input);
+  const started = await sbServiceStart(codeProjectTarget(projectId), input);
   if (!started.ok) {
     const failure = clientFailure(started.err);
     return jsonError(failure.status, 'sandbox', failure.message);

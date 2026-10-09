@@ -12,15 +12,15 @@ import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
+  const access = await resolveProjectAccess(db, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
-  const memory = await readProjectMemory(db, tenantId, projectId, access.cipher, {
+  const memory = await readProjectMemory(db, projectId, access.cipher, {
     maxEntries: 300,
   });
   return NextResponse.json({
@@ -37,20 +37,20 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
+  const access = await resolveProjectAccess(db, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   if (access.role === 'viewer') return jsonError(403, 'read-only', 'Only editors can add notes.');
   const body = await readJsonBody(request);
   const content = typeof body.content === 'string' ? body.content.trim() : '';
   if (!content) return jsonError(400, 'invalid', 'Write something first');
-  const settings = await getOrgSettings(tenantId);
-  const redactor = settings.ok ? createOutboundRedactor(tenantId, settings.val) : null;
+  const settings = await getOrgSettings();
+  const redactor = settings.ok ? createOutboundRedactor(settings.val) : null;
   const id = await appendProjectMemory(db, {
     projectId,
     content: redactor ? redactor.apply(content).text : content,
@@ -64,13 +64,13 @@ export async function POST(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
+  const access = await resolveProjectAccess(db, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   if (access.role === 'viewer')
     return jsonError(403, 'read-only', 'Only editors can remove notes.');

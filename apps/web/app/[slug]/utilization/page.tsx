@@ -13,14 +13,14 @@ import UtilizationViewer from './utilization-viewer';
 export default async function UtilizationPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
 
-  await requireAuth(tenant.id, `/utilization`);
+  await requireAuth(`/utilization`);
 
   // The first render has no browser to ask, so it uses the zone the
   // viewer's proxy or CDN forwards when one does; the client re-fetches in
   // its own zone the moment the period changes, and the footnote names
   // the zone in use either way.
   const forwardedZone = (await headers()).get('x-vercel-ip-timezone') ?? undefined;
-  const initial = await getUtilizationReport(tenant.id, DEFAULT_PERIOD_KEY, forwardedZone);
+  const initial = await getUtilizationReport(DEFAULT_PERIOD_KEY, forwardedZone);
 
-  return <UtilizationViewer slug={slug} tenantId={tenant.id} initial={initial} />;
+  return <UtilizationViewer slug={slug} initial={initial} />;
 }

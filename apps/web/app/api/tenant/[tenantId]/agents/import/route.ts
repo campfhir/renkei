@@ -24,7 +24,7 @@ import { parseAgentPayload } from '@/lib/agents/payload';
 import { saveAgent } from '@/lib/agents/save';
 
 /** The exported name, or the first "(imported)"-suffixed variant free. */
-async function availableName(db: Kysely<DB>, tenantId: string, wanted: string): Promise<string> {
+async function availableName(db: Kysely<DB>, wanted: string): Promise<string> {
   const base = wanted.trim().slice(0, 180) || 'Imported agent';
   const rows = await db
     .selectFrom('agents')
@@ -41,9 +41,9 @@ async function availableName(db: Kysely<DB>, tenantId: string, wanted: string): 
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -79,7 +79,7 @@ export async function POST(
   });
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const result = await saveAgent(db, tenantId, session.subject, parsed, { defer: after });
+  const result = await saveAgent(db, session.subject, parsed, { defer: after });
   if (result.outcome === 'invalid') {
     return NextResponse.json({ error: 'The definition does not validate.', issues: result.issues }, { status: 422 });
   }

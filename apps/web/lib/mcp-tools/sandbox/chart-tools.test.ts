@@ -118,7 +118,7 @@ describe('sandbox_render_chart', () => {
 
     expect(result.isError).toBeUndefined();
     expect(client.sbChartStage).toHaveBeenCalledWith(
-      { tenantId: 'tenant-1', subject: 'auth0|alice' },
+      { subject: 'auth0|alice' },
       {
         source: SOURCE,
         format: 'png',

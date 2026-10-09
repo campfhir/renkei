@@ -18,13 +18,13 @@ import { getActiveTurn } from '@/lib/chat/turns';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, tenantId, session.subject, chatId);
+  const chat = await getChatForOwner(db, session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
 
   const body = await readJsonBody(request);
@@ -43,13 +43,13 @@ export async function POST(
     projectId = body.projectId;
   }
   const codeProject = async (id: string | null) =>
-    id ? (await getProjectRow(db, tenantId, id))?.kind === 'code' : false;
+    id ? (await getProjectRow(db, id))?.kind === 'code' : false;
   if ((await codeProject(chat.projectId)) || (await codeProject(projectId))) {
     return jsonError(400, 'code-project', 'A code project’s chats stay with its repository.');
   }
   if (await getActiveTurn(db, chat.id)) {
     return jsonError(409, 'turn-running', 'Wait for the current reply to finish first.');
   }
-  await moveChatToProject(db, tenantId, session.subject, chat.id, projectId);
+  await moveChatToProject(db, session.subject, chat.id, projectId);
   return NextResponse.json({ ok: true, projectId });
 }

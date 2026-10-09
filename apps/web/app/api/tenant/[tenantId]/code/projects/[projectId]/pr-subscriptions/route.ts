@@ -58,7 +58,6 @@ interface SubscriptionView {
  */
 async function chatForPr(
   db: Parameters<typeof listMessages>[0],
-  tenantId: string,
   activeChatId: string | null,
   prNumber: number
 ): Promise<string | null> {
@@ -66,7 +65,7 @@ async function chatForPr(
   const rows = await listMessages(
     db,
     activeChatId,
-    await chatCipherById(db, tenantId, activeChatId)
+    await chatCipherById(db, activeChatId)
   );
   const pr = latestPrInTranscript(rows.map(toMessageView));
   return pr?.number === prNumber ? activeChatId : null;
@@ -79,10 +78,10 @@ function prNumberFrom(value: unknown): number | null {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const { db, session, project } = ready.context;
   const prNumber = prNumberFrom(request.nextUrl.searchParams.get('prNumber'));
@@ -111,10 +110,10 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const { db, session, project } = ready.context;
 
@@ -125,7 +124,7 @@ export async function POST(
   const autoFix = body.autoFix === true && watchPipelines;
   const autoMerge = body.autoMerge === true && watchPipelines;
 
-  const chatId = await chatForPr(db, tenantId, project.activeChatId, prNumber);
+  const chatId = await chatForPr(db, project.activeChatId, prNumber);
 
   await db
     .insertInto('pr_subscriptions')
@@ -161,10 +160,10 @@ export async function POST(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const { db, session, project } = ready.context;
 

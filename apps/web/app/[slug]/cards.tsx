@@ -77,7 +77,7 @@ export default async function ActionableCards({
     const isPause = item.kind === 'approval' || item.kind === 'question';
     const widgetPreview =
       item.kind === 'approval'
-        ? await widgetPreviewFor(item.suggested_action, item.status, tenantId, subject)
+        ? await widgetPreviewFor(item.suggested_action, item.status, subject)
         : null;
     cards.push(
       <div
@@ -105,7 +105,6 @@ export default async function ActionableCards({
         {item.kind === 'approval' &&
           (widgetPreview ? (
             <ApprovalWidgetCard
-              tenantId={tenantId}
               itemId={item.id}
               resourceUri={widgetPreview.resourceUri}
               structuredContent={widgetPreview.structuredContent}
@@ -132,16 +131,15 @@ export default async function ActionableCards({
             // has its own Confirm/Cancel for that (ApprovalWidgetCard,
             // above) — nothing left for this to add.
             widgetPreview ? null : (
-              <ApprovalActions tenantId={tenantId} itemId={item.id} />
+              <ApprovalActions itemId={item.id} />
             )
           ) : item.kind === 'question' ? (
             <QuestionActions
-              tenantId={tenantId}
               itemId={item.id}
               form={questionFormFrom(item.suggested_action)}
             />
           ) : (
-            <CardActions tenantId={tenantId} itemId={item.id} dismissOnly={item.kind === 'info'} />
+            <CardActions itemId={item.id} dismissOnly={item.kind === 'info'} />
           ))}
 
         {isPause && item.status !== 'suggested' && (
@@ -156,7 +154,6 @@ export default async function ActionableCards({
 
         {item.status !== 'suggested' && !isPause && (
           <ArchiveAction
-            tenantId={tenantId}
             itemId={item.id}
             archived={item.archived_at !== null}
           />
@@ -235,13 +232,12 @@ function proposedCallOf(
 async function widgetPreviewFor(
   suggestedAction: unknown,
   status: string,
-  tenantId: string,
   subject: string
 ): Promise<{ resourceUri: string; structuredContent: Record<string, unknown> } | null> {
   if (status !== 'suggested') return null;
   const call = proposedCallOf(suggestedAction);
   if (!call) return null;
-  return jiraIssueApprovalPreview(call.tool, call.args, tenantId, subject);
+  return jiraIssueApprovalPreview(call.tool, call.args, subject);
 }
 
 /** A decided card's own edit, if it has one (ApprovalWidgetCard's Confirm,

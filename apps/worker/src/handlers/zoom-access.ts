@@ -28,7 +28,7 @@ export interface ZoomHostAccess {
   subject: string | null;
 }
 
-function describeHost(tenantId: string, accountId: string) {
+function describeHost(accountId: string) {
   return delegateGrants().describe({ provider: ZOOM, accountId });
 }
 
@@ -37,13 +37,12 @@ function describeHost(tenantId: string, accountId: string) {
  * Delegate problems still throw — those belong on last_error.
  */
 export async function resolveZoomHostAccess(
-  tenantId: string,
   hostId: string | null,
   hostEmail: string | null
 ): Promise<ZoomHostAccess | null> {
   // host_id is the stored provider_account_id; email is the fallback for
   // deliveries that carry only host_email (or whose host_id has no grant).
-  let described = hostId ? await describeHost(tenantId, hostId) : null;
+  let described = hostId ? await describeHost(hostId) : null;
   if ((!described || (!described.ok && described.err.type === 'NO_GRANT')) && hostEmail) {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
@@ -53,7 +52,7 @@ export async function resolveZoomHostAccess(
       .where('provider', '=', ZOOM)
       .where(sql<string>`metadata->>'email'`, '=', hostEmail.toLowerCase())
       .executeTakeFirst();
-    if (row) described = await describeHost(tenantId, row.provider_account_id);
+    if (row) described = await describeHost(row.provider_account_id);
   }
   if (!described) return null;
   if (!described.ok) {

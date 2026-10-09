@@ -29,11 +29,11 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const settings = await getOrgSettings(tenantRef.id);
+  const settings = await getOrgSettings();
   if (!settings.ok) {
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
@@ -45,7 +45,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -68,12 +68,12 @@ export async function PUT(
     ),
   ];
 
-  const saved = await setOrgSettings(tenantRef.id, { disabledConnectors });
+  const saved = await setOrgSettings({ disabledConnectors });
   if (!saved.ok) {
     return NextResponse.json({ error: 'Could not save org settings' }, { status: 500 });
   }
   // Org-wide, not one caller's own — every cached catalog in this tenant
   // may now be wrong about which tools are registered.
-  invalidateToolCatalogCache(tenantRef.id);
+  invalidateToolCatalogCache();
   return NextResponse.json({ disabledConnectors });
 }

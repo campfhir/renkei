@@ -18,12 +18,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const response = NextResponse.json({ success: true });
   if (typeof tenantId === 'string' && tenantId) {
-    const cookieName = sessionCookieName(tenantId);
+    const cookieName = sessionCookieName();
     const sessionId = request.cookies.get(cookieName)?.value;
     if (sessionId) {
       // Resolve who this was BEFORE the session dies — afterwards the id
       // resolves to nobody and the sign-out would be unattributable.
-      const session = await getSessionFromRequest(request, tenantId);
+      const session = await getSessionFromRequest(request);
       await destroySession(sessionId);
       if (session) {
         recordAuditEvent({ actorSubject: session.subject, action: 'user.signed_out' });

@@ -27,9 +27,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -67,7 +67,7 @@ export async function POST(
   // credentials to it — otherwise discovery would just fail later with a
   // less helpful error once the batch is already running — and moving or
   // deleting on it must be within what they allowed on the Connectors page.
-  const shares = await listConnectedShares(dbResult.val, tenantId, session.subject);
+  const shares = await listConnectedShares(dbResult.val, session.subject);
   if (!shares.ok) return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
   const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
   if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });

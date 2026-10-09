@@ -35,7 +35,7 @@ export async function GET(
   if (!tenantId) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   }
-  const access = await checkAccess(tenantId, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -45,7 +45,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(tenantId, GITHUB_CONNECTOR, keyResult.val);
+  const configResult = await getConnectorConfig(GITHUB_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
@@ -78,7 +78,7 @@ export async function PUT(
   if (!tenantId) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   }
-  const access = await checkAccess(tenantId, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -105,7 +105,7 @@ export async function PUT(
   // Secrets survive settings-only saves: setConnectorConfig replaces secrets
   // wholesale, so a blank/omitted secret is merged with the stored one here.
   // A secret is required only when none is stored yet.
-  const existing = await getConnectorConfig(tenantId, GITHUB_CONNECTOR, keyResult.val);
+  const existing = await getConnectorConfig(GITHUB_CONNECTOR, keyResult.val);
   const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
   const mergedClientSecret =
     typeof clientSecret === 'string' && clientSecret.length > 0
@@ -145,7 +145,7 @@ export async function PUT(
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 
-  invalidateConnectorConfigCache(tenantId, GITHUB_CONNECTOR);
+  invalidateConnectorConfigCache(GITHUB_CONNECTOR);
   return NextResponse.json({
     connector: GITHUB_CONNECTOR,
     configured: true,

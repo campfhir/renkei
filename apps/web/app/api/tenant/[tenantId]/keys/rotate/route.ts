@@ -13,9 +13,9 @@ import { automationDaysOfBody, keyMaterialOf, sealedDelegationsOf } from '@/lib/
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
   const body = await readJsonBody(request);

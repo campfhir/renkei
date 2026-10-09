@@ -17,20 +17,20 @@
  * alone and the reply is interrupted with Stop instead of a voice.
  */
 
-const storageKey = (tenantId: string) => `renkei:${tenantId}:voice:echo-cancellation`;
+const storageKey = () => `renkei:${tenantId}:voice:echo-cancellation`;
 
-export function getEchoCancellation(tenantId: string): boolean {
+export function getEchoCancellation(): boolean {
   try {
     if (typeof window === 'undefined') return true;
-    return window.localStorage.getItem(storageKey(tenantId)) !== '0';
+    return window.localStorage.getItem(storageKey()) !== '0';
   } catch {
     return true;
   }
 }
 
-export function setEchoCancellation(tenantId: string, enabled: boolean): void {
+export function setEchoCancellation(enabled: boolean): void {
   try {
-    window.localStorage.setItem(storageKey(tenantId), enabled ? '1' : '0');
+    window.localStorage.setItem(storageKey(), enabled ? '1' : '0');
   } catch {
     // Storage blocked (private window, quota): the choice lasts the session.
   }
@@ -44,8 +44,8 @@ export function setEchoCancellation(tenantId: string, enabled: boolean): void {
   used, never an error.
 */
 
-const microphoneKey = (tenantId: string) => `renkei:${tenantId}:voice:microphone`;
-const outputKey = (tenantId: string) => `renkei:${tenantId}:voice:output`;
+const microphoneKey = () => `renkei:${tenantId}:voice:microphone`;
+const outputKey = () => `renkei:${tenantId}:voice:output`;
 
 function readDevice(key: string): string | null {
   try {
@@ -65,20 +65,20 @@ function writeDevice(key: string, deviceId: string | null): void {
   }
 }
 
-export function getMicrophone(tenantId: string): string | null {
-  return readDevice(microphoneKey(tenantId));
+export function getMicrophone(): string | null {
+  return readDevice(microphoneKey());
 }
 
-export function setMicrophone(tenantId: string, deviceId: string | null): void {
-  writeDevice(microphoneKey(tenantId), deviceId);
+export function setMicrophone(deviceId: string | null): void {
+  writeDevice(microphoneKey(), deviceId);
 }
 
-export function getAudioOutput(tenantId: string): string | null {
-  return readDevice(outputKey(tenantId));
+export function getAudioOutput(): string | null {
+  return readDevice(outputKey());
 }
 
-export function setAudioOutput(tenantId: string, deviceId: string | null): void {
-  writeDevice(outputKey(tenantId), deviceId);
+export function setAudioOutput(deviceId: string | null): void {
+  writeDevice(outputKey(), deviceId);
 }
 
 export interface AudioDevice {

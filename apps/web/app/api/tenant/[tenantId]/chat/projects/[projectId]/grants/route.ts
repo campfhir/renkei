@@ -8,16 +8,16 @@ void chatRequestContext;
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  return listGrantsRoute(request, tenantId, 'chat_project', projectId);
+  return listGrantsRoute(request, 'chat_project', projectId);
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  return addGrantRoute(request, tenantId, 'chat_project', projectId);
+  return addGrantRoute(request, 'chat_project', projectId);
 }

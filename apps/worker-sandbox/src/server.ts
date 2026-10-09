@@ -120,7 +120,7 @@ export interface SandboxServerDeps {
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /** The per-tenant per-file ceiling (the org's attachment limit). */
-  maxFileBytes?: (tenantId: string) => Promise<number>;
+  maxFileBytes?: () => Promise<number>;
   /**
    * What this worker CAN do (index.ts finds it once at boot; features.ts
    * explains the two-part decision). Each is a capability, not a switch:
@@ -175,8 +175,8 @@ function batchIdOf(value: unknown): string | null {
   return typeof value === 'string' && UUID_PATTERN.test(value) ? value : null;
 }
 
-export async function orgMaxFileBytes(tenantId: string): Promise<number> {
-  const settings = await getOrgSettings(tenantId);
+export async function orgMaxFileBytes(): Promise<number> {
+  const settings = await getOrgSettings();
   return settings.ok ? settings.val.maxAttachmentBytes : DEFAULT_MAX_FILE_BYTES;
 }
 
@@ -247,7 +247,7 @@ function summaryWire(summary: SandboxFileSummary) {
 }
 
 function targetOf(body: Record<string, unknown>): store.SandboxTarget | null {
-  const tenantId = str(body.tenantId);
+  const tenantId = str();
   const subject = str(body.subject);
   if (!tenantId || !subject) return null;
   return { subject };
@@ -327,7 +327,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
   const services = createServiceHandlers({
     db: deps.db,
     manager: deps.services ?? null,
-    enabledFor: async (tenantId) => (await orgFeatures(tenantId)).services,
+    enabledFor: async () => (await orgFeatures()).services,
   });
   const scripts = createScriptHandlers({
     db: deps.db,
@@ -339,7 +339,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
   const workspaces = createWorkspaceHandlers({
     db: deps.db,
     capable: capabilities.workspaces,
-    enabledFor: async (tenantId) => (await orgFeatures(tenantId)).workspaces,
+    enabledFor: async () => (await orgFeatures()).workspaces,
     // A running service's variables join every command's environment.
     ...(deps.services ? { serviceEnv: (target) => deps.services!.environmentFor(target) } : {}),
     lsp: deps.lsp,
@@ -385,7 +385,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     }
     const cap = batchId
       ? Math.min(DEFAULT_BATCH_MAX_FILE_BYTES, headroom.remaining)
-      : Math.min(await maxFileBytes(target.tenantId), DEFAULT_MAX_FILE_BYTES, headroom.remaining);
+      : Math.min(await maxFileBytes(), DEFAULT_MAX_FILE_BYTES, headroom.remaining);
 
     let upstream: Response;
     try {
@@ -412,7 +412,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       return sendError(response, 502, 'fetch_failed', 'The URL returned no content.');
     }
 
-    const storageKey = disk.newStorageKey(target.tenantId, target.subject);
+    const storageKey = disk.newStorageKey(target.subject);
     // Response.body is a WHATWG web ReadableStream; Readable.fromWeb bridges
     // it to a Node Readable, which writeStream's AsyncIterable<Uint8Array>
     // parameter is built for.
@@ -467,9 +467,9 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     }
     const cap = batchId
       ? Math.min(DEFAULT_BATCH_MAX_FILE_BYTES, headroom.remaining)
-      : Math.min(await maxFileBytes(tenantId), DEFAULT_MAX_FILE_BYTES, headroom.remaining);
+      : Math.min(await maxFileBytes(), DEFAULT_MAX_FILE_BYTES, headroom.remaining);
 
-    const storageKey = disk.newStorageKey(tenantId, subject);
+    const storageKey = disk.newStorageKey(subject);
     const written = await disk.writeStream(storageKey, request, cap);
     if (!written.ok) {
       return sendError(response, 413, 'too_large', `The file exceeds the ${cap}-byte limit.`);
@@ -577,7 +577,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       return null;
     }
     const cap = Math.min(
-      await maxFileBytes(target.tenantId),
+      await maxFileBytes(),
       DEFAULT_MAX_FILE_BYTES,
       headroom.remaining
     );
@@ -586,7 +586,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       sendError(response, 413, 'too_large', `The file exceeds the ${cap}-byte limit.`);
       return null;
     }
-    const storageKey = disk.newStorageKey(target.tenantId, target.subject);
+    const storageKey = disk.newStorageKey(target.subject);
     const written = await disk.writeStream(storageKey, Readable.from([produced.bytes]), cap);
     if (!written.ok) {
       sendError(response, 413, 'too_large', `The file exceeds the ${cap}-byte limit.`);
@@ -632,7 +632,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     }
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
-    if (!(await orgFeatures(target.tenantId)).browser) {
+    if (!(await orgFeatures()).browser) {
       return sendError(
         response,
         503,
@@ -762,7 +762,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     }
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
-    if (!(await orgFeatures(target.tenantId)).charts) {
+    if (!(await orgFeatures()).charts) {
       return sendError(
         response,
         503,

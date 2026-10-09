@@ -64,9 +64,9 @@ const client = jest.requireMock<{
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
 const SHARE = { id: SHARE_ID, name: 'Accounting' };
-const TARGET = { tenantId: 'tenant-1', shareId: SHARE_ID, subject: 'auth0|alice' };
-const paramsOf = () => Promise.resolve({ tenantId: 'tenant-1' });
-const shareParamsOf = (shareId: string) => Promise.resolve({ tenantId: 'tenant-1', shareId });
+const TARGET = { shareId: SHARE_ID, subject: 'auth0|alice' };
+const paramsOf = () => Promise.resolve({ });
+const shareParamsOf = (shareId: string) => Promise.resolve({ shareId });
 
 function reqOf(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(new Request(url, init));

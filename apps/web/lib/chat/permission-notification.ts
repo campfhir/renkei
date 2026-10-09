@@ -38,7 +38,7 @@ export function notifyChatToolPermission(input: {
     const tenant = await dbResult.val
       .selectFrom('tenants')
       .select('slug')
-      .where('id', '=', input.tenantId)
+      .where('id', '=')
       .executeTakeFirst();
     if (!tenant) return;
 
@@ -67,7 +67,6 @@ export function notifyChatToolPermission(input: {
     if (keyResult.ok) {
       void sendPush(
         dbResult.val,
-        input.tenantId,
         input.ownerSubject,
         keyResult.val,
         {
@@ -99,7 +98,6 @@ export function notifyChatToolPermission(input: {
  * badge count, never the decision.
  */
 export async function markChatToolPermissionRead(
-  tenantId: string,
   subject: string,
   toolUseId: string
 ): Promise<void> {

@@ -76,7 +76,6 @@ interface JiraGrantContext {
 }
 
 async function resolveJiraGrant(
-  tenantId: string,
   accountId: string
 ): Promise<JiraGrantContext | 'revoked' | 'failed'> {
   const ref = { provider: ATLASSIAN, accountId };
@@ -108,7 +107,6 @@ async function resolveJiraGrant(
  */
 async function resolveJsmGrant(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<{ auth: AuthedFetch; cloudId: string; accountId: string; scopes?: string[] } | null> {
   const row = await db
@@ -123,7 +121,7 @@ async function resolveJsmGrant(
   const failed = (reason: string): null => {
     logger.warn(
       'JSM grant exists but could not be resolved ({reason}); jsm_* tools are absent this request',
-      { component: 'mcp/transport', tenantId, subject, reason }
+      { component: 'mcp/transport', subject, reason }
     );
     return null;
   };
@@ -144,7 +142,7 @@ async function resolveJsmGrant(
 
 const handler = async (
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; transport: string }> }
+  { params }: { params: Promise<{ transport: string }> }
 ): Promise<Response> => {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -165,7 +163,7 @@ const handler = async (
     const tenant = await db
       .selectFrom('tenants')
       .select('id')
-      .where('id', '=', tenantId)
+      .where('id', '=')
       .executeTakeFirst();
 
     if (!tenant) {
@@ -181,7 +179,7 @@ const handler = async (
     const bearer = getBearerToken(request);
     if (!bearer) {
       logger.warn('Request without bearer token', { component: 'mcp/transport' });
-      return unauthorizedResponse(tenantId, origin, 'Authorization required');
+      return unauthorizedResponse(origin, 'Authorization required');
     }
 
     // Three token classes reach this endpoint: MCP-client tokens ('jira',
@@ -193,14 +191,14 @@ const handler = async (
     // applications — so accepting the others is a deliberate widening here,
     // not a loosening of the token store.
     const tokenRecord =
-      (await resolveAccessToken(bearer, tenantId)) ??
-      (await resolveAccessToken(bearer, tenantId, 'agent')) ??
-      (await resolveAccessToken(bearer, tenantId, 'widget'));
+      (await resolveAccessToken(bearer)) ??
+      (await resolveAccessToken(bearer, 'agent')) ??
+      (await resolveAccessToken(bearer, 'widget'));
     if (!tokenRecord) {
       logger.warn('Request with unknown or expired bearer token', {
         component: 'mcp/transport',
       });
-      return unauthorizedResponse(tenantId, origin, 'Invalid or expired access token');
+      return unauthorizedResponse(origin, 'Invalid or expired access token');
     }
 
     const subject = tokenRecord.subject;
@@ -228,7 +226,7 @@ const handler = async (
     // or gets rebuilt correctly as soon as a request computes the new
     // version, exactly the "reuse whatever is cached, next request corrects
     // it" fallback this cache is designed around.
-    const surfaceVersion = await toolSurfaceVersion(db, tenantId, subject);
+    const surfaceVersion = await toolSurfaceVersion(db, subject);
     // Roles ride in the cache key, not just surfaceVersion: they come from
     // the token, not a row surfaceVersion watches, and two tokens for the
     // same subject can carry different roles (a re-authorize after the IdP
@@ -263,7 +261,7 @@ const handler = async (
     // a caller with no Jira but a Microsoft grant gets their real (Jira-less)
     // tool set below, same relaxation the tool catalog applies. Shared with
     // the tools page so the list it shows is the list this route registers.
-    const availability = await resolveConnectorAvailability(db, tenantId, subject);
+    const availability = await resolveConnectorAvailability(db, subject);
     const anyOtherConnector =
       availability.knowledgeAvailable ||
       availability.webexAvailable ||
@@ -332,7 +330,7 @@ const handler = async (
 
     let grant: JiraGrantContext | null = null;
     if (grants.length > 0) {
-      const resolved = await resolveJiraGrant(tenantId, grants[0].account_id);
+      const resolved = await resolveJiraGrant(grants[0].account_id);
       if (resolved === 'failed') {
         return new Response(JSON.stringify({ error: 'Failed to retrieve Jira grant' }), {
           status: 500,
@@ -356,7 +354,7 @@ const handler = async (
     const accountId = grant ? grants[0].account_id : '';
 
     // Org policy (read-only mode, limits) comes from the database per tenant.
-    const settingsResult = await getOrgSettings(tenantId);
+    const settingsResult = await getOrgSettings();
     if (!settingsResult.ok) {
       return NextResponse.json({ error: 'Settings error' }, { status: 500 });
     }
@@ -372,7 +370,7 @@ const handler = async (
 
     // The caller's recorded email (identity spine): what the knowledge gate
     // verifies provider access against. Absent = the gate fails closed.
-    const emailResult = await getIdentityEmail(tenantId, subject);
+    const emailResult = await getIdentityEmail(subject);
     const userEmail = emailResult.ok ? emailResult.val : null;
 
     // Only what this scope still reads by name. The per-connector availability
@@ -403,7 +401,7 @@ const handler = async (
     // The second Atlassian app's grant ("Renkei JSM": JSM + Ops scopes) —
     // JSM/Ops tools run on this grant when it exists; absent, they fall back
     // to the main grant, the pre-split single-app shape.
-    const jsmGrant = await resolveJsmGrant(db, tenantId, subject);
+    const jsmGrant = await resolveJsmGrant(db, subject);
 
     // cacheKey (identity plus a version derived from the rows the tool
     // surface is built from) was captured above, before availability/settings/
@@ -423,7 +421,7 @@ const handler = async (
       cachedHandler = createMcpHandler(
         async (rawServer: McpServer) => {
           try {
-            logger.verbose('Server created', { component: 'mcp/transport', tenantId, accountId });
+            logger.verbose('Server created', { component: 'mcp/transport', accountId });
 
             // Outermost of all: an app-only tool that somehow registers for a
             // caller other than a widget-confirm token answers a refusal
@@ -448,7 +446,7 @@ const handler = async (
                   detectors: knownDetectors(settings.redactionDetectors),
                   mrnFormats: settings.redactionMrnFormats,
                   policy: DEFAULT_MCP_POLICY,
-                  pseudonymizer: createPseudonymizer(redactionKey, tenantId),
+                  pseudonymizer: createPseudonymizer(redactionKey),
                 })
               : tracked;
 
@@ -486,7 +484,7 @@ const handler = async (
             // audiences are resolved from the caller's recorded identity —
             // a run token carries no roles, and a restriction must hold for
             // an agent exactly as for the person it runs for.
-            const audience = await resolveAudience(db, tenantId, subject);
+            const audience = await resolveAudience(db, subject);
             const projection = buildProjection({ settings, availability, roles, audience });
             // A run token names the only tools it may see (migration 096):
             // an agent run's steps, plus the notifier's own. Everything
@@ -616,7 +614,7 @@ const handler = async (
       // Store in cache
       setHandler(cacheKey, cachedHandler);
     } else {
-      logger.debug('Using cached handler', { component: 'mcp/transport', tenantId, accountId });
+      logger.debug('Using cached handler', { component: 'mcp/transport', accountId });
     }
 
     // Handle the request with cached handler.

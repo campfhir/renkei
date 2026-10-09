@@ -32,7 +32,7 @@ const LIMITS = {
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
   const verdict = checkInboundLimit(`oauth/token:${tenantId}`, request, LIMITS);
@@ -43,7 +43,7 @@ export async function POST(
     );
   }
 
-  const settingsResult = await getOrgSettings(tenantId);
+  const settingsResult = await getOrgSettings();
   if (!settingsResult.ok) {
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
@@ -57,13 +57,6 @@ export async function POST(
 
   try {
     // Verify tenant exists
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('id')
-      .where('id', '=', tenantId)
-      .executeTakeFirst();
-
-
     // Parse request body
     const contentType = request.headers.get('content-type');
     let params: Record<string, string> = {};
@@ -97,9 +90,9 @@ export async function POST(
     // then authenticates the client and the grant it presents.
     // codeql[js/user-controlled-bypass]
     if (grantType === 'authorization_code') {
-      return handleAuthorizationCodeGrant(params, credentials, db, settings, tenantId);
+      return handleAuthorizationCodeGrant(params, credentials, db, settings);
     } else if (grantType === 'refresh_token') {
-      return handleRefreshTokenGrant(params, credentials, db, settings, tenantId);
+      return handleRefreshTokenGrant(params, credentials, db, settings);
     } else {
       return NextResponse.json(
         {
@@ -122,8 +115,7 @@ async function handleAuthorizationCodeGrant(
   params: Record<string, string>,
   credentials: ClientCredentials | null,
   db: Kysely<DB>,
-  settings: OrgSettings,
-  tenantId: string
+  settings: OrgSettings
 ): Promise<NextResponse> {
   const { code, redirect_uri, code_verifier } = params;
 
@@ -321,8 +313,7 @@ async function handleRefreshTokenGrant(
   params: Record<string, string>,
   credentials: ClientCredentials | null,
   db: Kysely<DB>,
-  settings: OrgSettings,
-  tenantId: string
+  settings: OrgSettings
 ): Promise<NextResponse> {
   const { refresh_token } = params;
 
@@ -457,7 +448,7 @@ async function handleRefreshTokenGrant(
       // session the frozen roles stand, bounded by the family's lifetime
       // below (there is no other durable store of a person's roles: the
       // IdP asserts them only at sign-in).
-      const roles = await currentRolesFor(trx, tenantId, token.subject, token.roles);
+      const roles = await currentRolesFor(trx, token.subject, token.roles);
 
       await trx
         .updateTable('oauth_refresh_tokens')
@@ -528,7 +519,6 @@ async function handleRefreshTokenGrant(
  */
 async function currentRolesFor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   fallback: string[]
 ): Promise<string[]> {

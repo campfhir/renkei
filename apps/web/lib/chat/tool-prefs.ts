@@ -48,7 +48,7 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-const cacheKey = (tenantId: string, subject: string, kind: ToolDefaultsKind) =>
+const cacheKey = (subject: string, kind: ToolDefaultsKind) =>
   `${tenantId} ${subject} ${kind}`;
 
 /**
@@ -61,12 +61,11 @@ const cacheKey = (tenantId: string, subject: string, kind: ToolDefaultsKind) =>
  * preference would be a worse failure than starting it with the core set.
  */
 export async function getDefaultChatTools(
-  tenantId: string,
   subject: string,
   options: { fresh?: boolean; kind?: ToolDefaultsKind } = {}
 ): Promise<ChatToolConfig | null> {
   const kind = options.kind ?? 'chat';
-  const key = cacheKey(tenantId, subject, kind);
+  const key = cacheKey(subject, kind);
   const cached = cache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
@@ -92,7 +91,6 @@ export async function getDefaultChatTools(
 
 /** Save, or clear (pass null) this person's default toolset of that kind. */
 export async function setDefaultChatTools(
-  tenantId: string,
   subject: string,
   config: ChatToolConfig | null,
   kind: ToolDefaultsKind = 'chat'
@@ -123,6 +121,6 @@ export async function setDefaultChatTools(
   }, 'DB_ERROR' as const);
   if (!written.ok) return written;
 
-  cache.delete(cacheKey(tenantId, subject, kind));
+  cache.delete(cacheKey(subject, kind));
   return ok();
 }

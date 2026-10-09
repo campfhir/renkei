@@ -39,9 +39,9 @@ export async function quotaHeadroom(
   batchId: string | null
 ): Promise<{ ok: true; remaining: number } | { ok: false; reason: 'too_many_files' }> {
   if (batchId) {
-    const count = await store.countFilesForBatch(db, target.tenantId, batchId);
+    const count = await store.countFilesForBatch(db, batchId);
     if (count >= MAX_FILES_PER_BATCH) return { ok: false, reason: 'too_many_files' };
-    const total = await store.totalStagedBytesForBatch(db, target.tenantId, batchId);
+    const total = await store.totalStagedBytesForBatch(db, batchId);
     return { ok: true, remaining: Math.max(0, DEFAULT_BATCH_QUOTA_BYTES - total) };
   }
   const count = await store.countFiles(db, target);
@@ -79,7 +79,7 @@ export async function stageBytes(
   if (headroom.remaining <= 0) return { ok: false, reason: 'quota_full' };
   const cap = Math.min(tenantMaxFileBytes, DEFAULT_MAX_FILE_BYTES, headroom.remaining);
   if (input.sizeBytes > cap) return { ok: false, reason: 'too_large', cap };
-  const storageKey = disk.newStorageKey(target.tenantId, target.subject);
+  const storageKey = disk.newStorageKey(target.subject);
   const written = await disk.writeStream(storageKey, Readable.from([await bytes()]), cap);
   if (!written.ok) return { ok: false, reason: 'too_large', cap };
   const file = await store.insertFile(db, {

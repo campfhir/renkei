@@ -22,7 +22,7 @@ export default function AttachmentChip({
     <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-900">
       <Icon path={ICONS.paperclip} className="h-3.5 w-3.5 shrink-0 text-gray-400" />
       <DownloadLink
-        href={chatClient.attachmentUrl(tenantId, attachment.id)}
+        href={chatClient.attachmentUrl(attachment.id)}
         filename={attachment.filename}
         className="truncate hover:underline"
         title={`${attachment.filename} · ${sizeOf(attachment.sizeBytes)}`}

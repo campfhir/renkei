@@ -130,10 +130,9 @@ export class ServiceManager {
 
   /** Which rule admits an image, and the credential its host pulls with — or the refusal. */
   private async admit(
-    tenantId: string,
     image: ImageReference
   ): Promise<{ auth: RegistryAuth | null }> {
-    const all = await rules.listImageRulesForMatching(this.db, tenantId);
+    const all = await rules.listImageRulesForMatching(this.db);
     const winner = matchImageRule(all, image);
     if (!winner) {
       const allowed = all.map((rule) => rule.pattern).sort();
@@ -205,7 +204,7 @@ export class ServiceManager {
         `A project runs at most ${SERVICE_MAX_PER_SUBJECT} services at once; stop one first.`
       );
     }
-    const { auth } = await this.admit(target.tenantId, image);
+    const { auth } = await this.admit(image);
 
     const row = await store.insertService(this.db, {
       ...target,

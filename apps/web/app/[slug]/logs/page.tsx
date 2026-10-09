@@ -19,13 +19,13 @@ export default async function LogsPage({
   const { slug } = await params;
   const { accountId } = await searchParams;
 
-  await requireAuth(tenant.id, `/logs`);
+  await requireAuth(`/logs`);
 
   // Computed here, not in both places: the server render and the picker the
   // client seeds from have to agree about what is being searched.
   const window = defaultLogWindow();
 
-  const initial = await searchLogs(tenant.id, {
+  const initial = await searchLogs({
     expr: null,
     levels: DEFAULT_LOG_LEVELS,
     start: window.start,
@@ -37,7 +37,6 @@ export default async function LogsPage({
   return (
     <LogsViewer
       slug={slug}
-      tenantId={tenant.id}
       accountId={accountId ?? null}
       initial={initial}
       initialWindow={window}

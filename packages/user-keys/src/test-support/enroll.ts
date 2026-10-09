@@ -87,7 +87,6 @@ export interface EnrollTestInput {
 
 export async function ensureSession(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   wanted?: string
 ): Promise<string> {
@@ -110,7 +109,7 @@ export async function enrollTestPerson(
   input: EnrollTestInput
 ): Promise<{ keys: BrowserKeys; sessionId: string }> {
   const keys = generateBrowserKeys();
-  const sessionId = await ensureSession(db, input.tenantId, input.subject, input.sessionId);
+  const sessionId = await ensureSession(db, input.subject, input.sessionId);
   const sealed = sealDelegations(keys, { instances: input.instances });
   const request: EnrollInput = {
     subject: input.subject,
@@ -140,7 +139,7 @@ export async function delegateTestSession(
     automationUntil?: Date | null;
   }
 ): Promise<string> {
-  const sessionId = await ensureSession(db, input.tenantId, input.subject, input.sessionId);
+  const sessionId = await ensureSession(db, input.subject, input.sessionId);
   const sealed = sealDelegations(input.keys, { instances: input.instances });
   const stored = await storeDelegations(db, {
     subject: input.subject,

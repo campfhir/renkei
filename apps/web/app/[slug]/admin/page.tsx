@@ -164,7 +164,7 @@ export default async function AdminPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (access) {
     return (
       <div className="mx-auto max-w-4xl">
@@ -199,9 +199,9 @@ export default async function AdminPage({
     );
   }
 
-  const session = await getSessionFromCookies(tenantRef.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenantRef.id, `/admin`));
+    redirect(signInUrl(`/admin`));
   }
   return (
     <div className="mx-auto max-w-lg">

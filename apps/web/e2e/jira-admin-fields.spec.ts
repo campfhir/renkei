@@ -119,8 +119,8 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       [
         fixture.tenantId,
         fixture.subject,
-        await sealForSubject(client, fixture.tenantId, fixture.subject, 'e2e-admin-access-token'),
-        await sealForSubject(client, fixture.tenantId, fixture.subject, 'e2e-admin-refresh-token'),
+        await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'),
+        await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'),
         new Date(Date.now() + 365 * 24 * 3_600_000),
         [
           'read:jira-user',

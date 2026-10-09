@@ -19,7 +19,7 @@ export async function POST(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const session = await checkAccess(tenant.id, [ROLE_OPERATOR]);
+  const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const dbResult = getDatabase();

@@ -347,7 +347,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
         ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
       });
       const result = await adapter.query(
-        buildLogQueryOptions(combineExprs(filterExpr, queryExpr), context.tenantId, accountId, {
+        buildLogQueryOptions(combineExprs(filterExpr, queryExpr), accountId, {
           levels,
           start,
           end,

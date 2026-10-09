@@ -116,7 +116,6 @@ export function codeProjectAccessOf(
  */
 export async function grantScopes(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   provider: string = ATLASSIAN_BITBUCKET
 ): Promise<string[] | null> {
@@ -133,7 +132,6 @@ export async function grantScopes(
 
 export async function codeProjectAccess(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   provider: string = ATLASSIAN_BITBUCKET
 ): Promise<CodeProjectAccess> {
@@ -150,12 +148,11 @@ export async function codeProjectAccess(
 /** Access on every git host a code project can use, keyed by provider — for the Code page. */
 export async function codeProjectProviderAccess(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Record<string, CodeProjectAccess>> {
   const [bitbucket, github] = await Promise.all([
-    codeProjectAccess(db, tenantId, subject, ATLASSIAN_BITBUCKET),
-    codeProjectAccess(db, tenantId, subject, GITHUB),
+    codeProjectAccess(db, subject, ATLASSIAN_BITBUCKET),
+    codeProjectAccess(db, subject, GITHUB),
   ]);
   return { [ATLASSIAN_BITBUCKET]: bitbucket, [GITHUB]: github };
 }

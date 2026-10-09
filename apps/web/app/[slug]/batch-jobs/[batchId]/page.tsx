@@ -43,14 +43,14 @@ export default async function BatchJobDetailPage({
   const { slug, batchId } = await params;
   const { status } = await searchParams;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/batch-jobs/${batchId}`));
+    redirect(signInUrl(`/batch-jobs/${batchId}`));
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const batch = await getBatch(dbResult.val, batchId, tenant.id);
+  const batch = await getBatch(dbResult.val, batchId);
   // A batch owned by someone else reads as "not found" — same discipline
   // batch_get_job uses (id alone is not an existence oracle).
   if (!batch || batch.subject !== session.subject) notFound();

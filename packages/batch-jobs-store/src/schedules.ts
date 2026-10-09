@@ -103,8 +103,7 @@ export async function createSchedule(
 
 export async function getSchedule(
   db: Kysely<DB>,
-  scheduleId: string,
-  tenantId: string
+  scheduleId: string
 ): Promise<BatchJobScheduleRow | undefined> {
   const row = await db
     .selectFrom('batch_job_schedules')
@@ -116,7 +115,6 @@ export async function getSchedule(
 
 export async function listSchedules(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<BatchJobScheduleRow[]> {
   const rows = await db
@@ -140,7 +138,6 @@ export interface UpdateScheduleInput {
 export async function updateSchedule(
   db: Kysely<DB>,
   scheduleId: string,
-  tenantId: string,
   input: UpdateScheduleInput
 ): Promise<BatchJobScheduleRow | undefined> {
   const row = await db
@@ -163,8 +160,7 @@ export async function updateSchedule(
 
 export async function deleteSchedule(
   db: Kysely<DB>,
-  scheduleId: string,
-  tenantId: string
+  scheduleId: string
 ): Promise<boolean> {
   const result = await db
     .deleteFrom('batch_job_schedules')

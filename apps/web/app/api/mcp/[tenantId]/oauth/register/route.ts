@@ -25,7 +25,7 @@ const LIMITS = {
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
   const verdict = checkInboundLimit(`oauth/register:${tenantId}`, request, LIMITS);
@@ -36,7 +36,7 @@ export async function POST(
     );
   }
 
-  const settingsResult = await getOrgSettings(tenantId);
+  const settingsResult = await getOrgSettings();
   const settings = settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS;
 
   if (!settings.enableDcr) {
@@ -88,13 +88,6 @@ export async function POST(
 
   try {
     // Verify tenant exists
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('id')
-      .where('id', '=', tenantId)
-      .executeTakeFirst();
-
-
     // Generate client credentials
     const clientId = `client_${randomUUID()}`;
     const clientSecret = generateSecret(32);

@@ -17,13 +17,13 @@ import CodeIndex from './_components/code-index';
  */
 export default async function CodePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/code`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/code`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const [sidebar, access] = await Promise.all([
-    loadChatSidebar(dbResult.val, tenant.id, session.subject),
-    codeProjectProviderAccess(dbResult.val, tenant.id, session.subject),
+    loadChatSidebar(dbResult.val, session.subject),
+    codeProjectProviderAccess(dbResult.val, session.subject),
   ]);
   const bitbucketAccess = access[ATLASSIAN_BITBUCKET]!;
   const githubAccess = access[GITHUB]!;
@@ -41,7 +41,7 @@ export default async function CodePage({ params }: { params: Promise<{ slug: str
     <CodeIndex
       slug={slug}
       projects={sidebar.code.projects}
-      enabled={await sandboxWorkspacesEnabled(tenant.id)}
+      enabled={await sandboxWorkspacesEnabled()}
       canCreate={canCreate}
       accessNotice={accessNotice}
     />

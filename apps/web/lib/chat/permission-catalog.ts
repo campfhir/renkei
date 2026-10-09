@@ -63,7 +63,7 @@ export function chatOwnActTools(): ActToolEntry[] {
 /** A code project's act tools, delegation included. */
 export function codeActTools(): ActToolEntry[] {
   const bound = codeTools({
-    target: { tenantId: '', subject: '' },
+    target: { subject: '' },
     workspaceId: '',
     repoFullName: '',
     repoProvider: '',
@@ -85,11 +85,10 @@ function connectorLabel(key: string): string {
 }
 
 export async function listChatActToolGroups(
-  tenantId: string,
   subject: string,
   roles: string[]
 ): Promise<ActToolGroup[]> {
-  const catalog = await listAvailableTools(tenantId, subject, { roles });
+  const catalog = await listAvailableTools(subject, { roles });
   const byConnector = new Map<string, ActToolEntry[]>();
   for (const descriptor of catalog) {
     if (descriptor.kind !== 'act' || descriptor.appOnly) continue;

@@ -21,12 +21,12 @@ export const runtime = 'nodejs';
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  if (!(await tenantBlobStoreConfigured(tenantId))) {
+  if (!(await tenantBlobStoreConfigured())) {
     return jsonError(
       503,
       'uploads-off',
@@ -44,13 +44,13 @@ export async function PUT(
   let cipher: ContentCipher;
   if (chatId) {
     const access = isUuid(chatId)
-      ? await resolveChatAccess(db, tenantId, session.subject, chatId)
+      ? await resolveChatAccess(db, session.subject, chatId)
       : null;
     if (!access || access.role !== 'owner') return jsonError(404, 'not-found', 'No such chat');
     cipher = access.cipher;
   } else if (projectId) {
     if (!isUuid(projectId)) return jsonError(404, 'not-found', 'No such project');
-    const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
+    const access = await resolveProjectAccess(db, session.subject, projectId);
     if (!access) return jsonError(404, 'not-found', 'No such project');
     if (access.role === 'viewer') {
       return jsonError(403, 'read-only', 'Only editors can add files to this project.');
@@ -60,7 +60,7 @@ export async function PUT(
     return jsonError(400, 'invalid', 'Say which chat or project the file belongs to.');
   }
 
-  const settingsResult = await getOrgSettings(tenantId);
+  const settingsResult = await getOrgSettings();
   const settings = settingsResult.ok ? settingsResult.val : null;
   const maxBytes = settings?.maxAttachmentBytes ?? 20_971_520;
   const declared = Number(request.headers.get('content-length') ?? '0');
@@ -89,7 +89,7 @@ export async function PUT(
     contentType: contentType ?? 'application/octet-stream',
     bytes,
     maxBytes,
-    redactor: settings ? createOutboundRedactor(tenantId, settings) : null,
+    redactor: settings ? createOutboundRedactor(settings) : null,
     cipher,
   });
   if (!created.ok) {

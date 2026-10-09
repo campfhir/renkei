@@ -45,13 +45,13 @@ export default function ShareModal({
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const result = await chatClient.grants(tenantId, kind, resourceId);
+    const result = await chatClient.grants(kind, resourceId);
     if (result.error) setError(result.error);
     else setGrants(result.data?.grants ?? []);
   }, [tenantId, kind, resourceId]);
   useEffect(() => {
     void load();
-    void chatClient.people(tenantId).then((result) => {
+    void chatClient.people().then((result) => {
       if (result.data) setPeople(result.data.people);
     });
   }, [load, tenantId]);
@@ -72,7 +72,7 @@ export default function ShareModal({
     if (!chosen) return;
     setBusy(true);
     setError(null);
-    const result = await chatClient.grant(tenantId, kind, resourceId, {
+    const result = await chatClient.grant(kind, resourceId, {
       granteeSubject: chosen.subject,
       role: kind === 'chat' ? 'viewer' : role,
       expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
@@ -91,7 +91,7 @@ export default function ShareModal({
 
   const revoke = async (grantId: string) => {
     setBusy(true);
-    const result = await chatClient.revoke(tenantId, kind, resourceId, grantId);
+    const result = await chatClient.revoke(kind, resourceId, grantId);
     setBusy(false);
     if (result.error) setError(result.error);
     await load();

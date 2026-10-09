@@ -118,7 +118,6 @@ export default function NewScheduleForm({
 
       <SourceFields
         slug={slug}
-        tenantId={tenantId}
         shareId={shareId}
         path={path}
         strategy={strategy}

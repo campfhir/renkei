@@ -25,7 +25,7 @@ import { normalizeDeviceCode } from '@renkei/crypto';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
 
-type Params = { params: Promise<{ tenantId: string; requestId: string }> };
+type Params = { params: Promise<{ requestId: string }> };
 
 /** Wrong codes a request survives; the next one denies it. */
 const MAX_ATTEMPTS = 5;
@@ -46,7 +46,6 @@ interface AskRow {
 
 async function askFor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   requestId: string
 ): Promise<AskRow | null> {
@@ -115,10 +114,10 @@ async function checkCode(
 
 export async function GET(request: NextRequest, { params }: Params): Promise<Response> {
   const { requestId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const row = await askFor(db, tenantId, session.subject, requestId);
+  const row = await askFor(db, session.subject, requestId);
   if (!row) return jsonError(404, 'not_found', 'No such request.');
   const expired = row.expires_at.getTime() <= Date.now();
 
@@ -154,7 +153,7 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
 
 export async function POST(request: NextRequest, { params }: Params): Promise<Response> {
   const { requestId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);
@@ -162,7 +161,7 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
   if (!sealedKey.startsWith('sbox1:') || sealedKey.length > 4096) {
     return jsonError(400, 'bad_request', 'The approval must carry a sealed key.');
   }
-  const row = await askFor(db, tenantId, session.subject, requestId);
+  const row = await askFor(db, session.subject, requestId);
   if (!row || !open(row)) {
     return jsonError(404, 'not_found', 'That request is gone or already answered.');
   }
@@ -200,7 +199,7 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
 
 export async function DELETE(request: NextRequest, { params }: Params): Promise<Response> {
   const { requestId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const result = await db

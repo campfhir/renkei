@@ -37,7 +37,6 @@ const MAX_PER_PASS = 25;
  */
 async function calendarDatesOf(
   db: Kysely<DB>,
-  tenantId: string,
   calendarId: string
 ): Promise<BlackoutEntry[]> {
   const row = await db
@@ -99,7 +98,7 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
       if (!observed) continue;
       const scheduledFor = observed.toISOString();
       const calendarDates = config.calendarId
-        ? await calendarDatesOf(db, row.tenant_id, config.calendarId)
+        ? await calendarDatesOf(db, config.calendarId)
         : [];
       let next: Date;
       try {

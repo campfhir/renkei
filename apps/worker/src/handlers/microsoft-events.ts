@@ -89,14 +89,14 @@ export function createMicrosoftGrantConnectedHandler(): EventHandler {
       throw new Error('public base URL not set; cannot mint Graph notification URLs');
     }
 
-    const access = await resolveMicrosoftAccess(tenantId, accountId);
-    const rows = await ensureMicrosoftSubscriptions(tenantId, access, baseUrl);
+    const access = await resolveMicrosoftAccess(accountId);
+    const rows = await ensureMicrosoftSubscriptions(access, baseUrl);
 
     // Initial backfill: one bounded delta round per resource. Idempotent —
     // a retry after a partial pass re-runs into upserts.
     let indexed = 0;
     for (const row of rows) {
-      const synced = await runSubscriptionSync(tenantId, access, row);
+      const synced = await runSubscriptionSync(access, row);
       indexed += synced.changed;
     }
     logger.info('microsoft bootstrap complete: {subscriptions} subscriptions, {indexed} objects', {
@@ -132,8 +132,8 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
       return 'skipped';
     }
 
-    const access = await resolveMicrosoftAccess(tenantId, accountId);
-    const synced = await runSubscriptionSync(tenantId, access, row);
+    const access = await resolveMicrosoftAccess(accountId);
+    const synced = await runSubscriptionSync(access, row);
     logger.debug('delta round for {resource}: {changed} changed, {removed} removed', {
       component: COMPONENT,
       resource: row.resource,
@@ -156,7 +156,7 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
     const db = dbResult.val;
 
     if (lifecycleEvent === 'reauthorizationRequired') {
-      const access = await resolveMicrosoftAccess(tenantId, accountId);
+      const access = await resolveMicrosoftAccess(accountId);
       const renewed = await renewGraphSubscription(access.auth, subscriptionId);
       if (renewed.ok) {
         await db
@@ -228,8 +228,8 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
       return;
     }
 
-    const access = await resolveMicrosoftAccess(tenantId, accountId);
-    const embedder = await resolveEmbeddingProvider(tenantId);
+    const access = await resolveMicrosoftAccess(accountId);
+    const embedder = await resolveEmbeddingProvider();
     if (!embedder) {
       logger.warn('message-override skipped: knowledge layer is off for this org', {
         component: COMPONENT,

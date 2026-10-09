@@ -21,14 +21,14 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string; name: string }> }
+  { params }: { params: Promise<{ projectId: string; name: string }> }
 ): Promise<Response> {
   const { projectId, name: rawName } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const name = validateServiceName(rawName);
   if (!name.ok) return jsonError(404, 'not-found', 'No such service');
-  if (!(await sandboxServicesEnabled(tenantId))) {
+  if (!(await sandboxServicesEnabled())) {
     return jsonError(
       503,
       'unavailable',
@@ -36,7 +36,7 @@ export async function GET(
     );
   }
   const lines = Number(request.nextUrl.searchParams.get('lines') ?? '');
-  const got = await sbServiceLogs(codeProjectTarget(tenantId, projectId), {
+  const got = await sbServiceLogs(codeProjectTarget(projectId), {
     name: name.name,
     ...(Number.isFinite(lines) && lines > 0 ? { lines } : {}),
   });
@@ -49,21 +49,21 @@ export async function GET(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string; name: string }> }
+  { params }: { params: Promise<{ projectId: string; name: string }> }
 ): Promise<Response> {
   const { projectId, name: rawName } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
+  const ready = await codeProjectContext(request, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const name = validateServiceName(rawName);
   if (!name.ok) return jsonError(404, 'not-found', 'No such service');
-  if (!(await sandboxServicesEnabled(tenantId))) {
+  if (!(await sandboxServicesEnabled())) {
     return jsonError(
       503,
       'unavailable',
       'Code project services are not enabled on this deployment.'
     );
   }
-  const stopped = await sbServiceStop(codeProjectTarget(tenantId, projectId), name.name);
+  const stopped = await sbServiceStop(codeProjectTarget(projectId), name.name);
   if (!stopped.ok) {
     const failure = clientFailure(stopped.err);
     return jsonError(failure.status, 'sandbox', failure.message);

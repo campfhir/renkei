@@ -62,7 +62,7 @@ function deps(): ServiceDeps {
 }
 
 function target() {
-  return { tenantId: 'tenant-1', shareId: SHARE_ID, subject: 'auth0|alice' };
+  return { shareId: SHARE_ID, subject: 'auth0|alice' };
 }
 
 function summary(overrides?: Partial<ShareSummary>): ShareSummary {

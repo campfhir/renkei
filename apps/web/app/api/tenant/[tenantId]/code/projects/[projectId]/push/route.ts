@@ -19,10 +19,10 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
+  const ready = await codeProjectContext(request, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
   if (!project.workspaceId)
@@ -45,7 +45,7 @@ export async function POST(
     { write: true }
   );
   if (typeof credential === 'string') return jsonError(409, 'git-credential', credential);
-  const pushed = await sbWorkspaceGitPush(codeProjectTarget(tenantId, projectId), {
+  const pushed = await sbWorkspaceGitPush(codeProjectTarget(projectId), {
     id: project.workspaceId,
     gitProxy: credential.gitProxy,
     ...(branch ? { branch } : {}),

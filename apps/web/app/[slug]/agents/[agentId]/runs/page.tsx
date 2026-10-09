@@ -31,20 +31,20 @@ export default async function AgentRunsPage({
   const { slug, agentId } = await params;
   const { status, q } = await searchParams;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/agents/${agentId}/runs`));
+    redirect(signInUrl(`/agents/${agentId}/runs`));
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const access = await resolveAgentAccess(dbResult.val, tenant.id, session.subject, agentId);
+  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
   if (!access) notFound();
   const agent = access.agent;
 
   const filter = isRunStatus(status) ? status : undefined;
   const query = typeof q === 'string' && q.trim() ? q.trim() : undefined;
-  const runs = await listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, {
+  const runs = await listRunsForOwner(dbResult.val, access.ownerSubject, agentId, {
     status: filter,
     ...(query ? { q: query } : {}),
   });

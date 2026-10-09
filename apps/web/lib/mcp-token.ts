@@ -164,7 +164,6 @@ export async function storeAccessToken(params: {
  */
 export async function resolveAccessToken(
   token: string,
-  tenantId: string,
   application: Application = 'jira'
 ): Promise<AccessTokenRecord | null> {
   const dbResult = getDatabase();
@@ -214,7 +213,7 @@ export async function resolveAccessToken(
 }
 
 /** RFC 6750 challenge for a missing or rejected bearer token. */
-export function unauthorizedResponse(tenantId: string, origin: string, detail: string): Response {
+export function unauthorizedResponse(origin: string, detail: string): Response {
   return new Response(
     JSON.stringify({
       jsonrpc: '2.0',

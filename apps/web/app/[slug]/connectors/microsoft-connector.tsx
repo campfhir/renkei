@@ -70,7 +70,6 @@ export default function MicrosoftConnector({
       </p>
 
       <MicrosoftConnectBody
-        tenantId={tenantId}
         connected={connected}
         ceiling={ceiling}
         priorScopes={priorScopes}

@@ -44,7 +44,6 @@ function toRule(row: RuleRow): ClassifierRule {
 }
 
 export async function listClassifierRules(
-  tenantId: string
 ): Promise<Result<ClassifierRule[], 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -81,7 +80,6 @@ export interface ClassifierRuleInput {
 }
 
 export async function upsertClassifierRule(
-  tenantId: string,
   rule: ClassifierRuleInput
 ): Promise<Result<string, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -132,7 +130,6 @@ export async function upsertClassifierRule(
  * clobbered.
  */
 export async function seedDefaultClassifierRules(
-  tenantId: string
 ): Promise<Result<{ inserted: number }, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -178,7 +175,6 @@ export async function seedDefaultClassifierRules(
 }
 
 export async function deleteClassifierRule(
-  tenantId: string,
   id: string
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();

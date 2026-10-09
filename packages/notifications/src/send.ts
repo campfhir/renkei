@@ -125,7 +125,6 @@ export function pushClickTarget(input: {
 
 export async function sendPush(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   encryptionKey: Buffer,
   payload: PushPayload,
@@ -133,7 +132,7 @@ export async function sendPush(
 ): Promise<void> {
   const { log, agent } = options;
   try {
-    const subscriptions = await listSubscriptions(db, tenantId, subject);
+    const subscriptions = await listSubscriptions(db, subject);
     if (subscriptions.length === 0) return;
 
     const [{ publicKey, privateKey }, tenant, prefs] = await Promise.all([
@@ -141,10 +140,10 @@ export async function sendPush(
       db
         .selectFrom('tenants')
         .select('slug')
-        .where('id', '=', tenantId)
+        .where('id', '=')
         .executeTakeFirst()
         .catch(() => undefined),
-      getNotificationPrefs(tenantId, subject),
+      getNotificationPrefs(subject),
     ]);
     // No slug means no tenant to land in; the click falls back to the
     // app's root, the same as a payload with no link at all.
@@ -178,7 +177,7 @@ export async function sendPush(
           // The browser itself revoked this subscription — no retry will
           // ever land, so it is dead weight from here on.
           if (statusCode === 404 || statusCode === 410) {
-            await deleteSubscriptionByEndpoint(db, tenantId, subscription.endpoint);
+            await deleteSubscriptionByEndpoint(db, subscription.endpoint);
             return;
           }
           log?.('push send failed for tenant {tenantId}', {

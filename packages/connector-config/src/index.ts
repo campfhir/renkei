@@ -40,7 +40,6 @@ function readStringRecord(value: unknown): Record<string, string> {
 }
 
 export async function getConnectorConfig(
-  tenantId: string,
   connector: string,
   encryptionKey: Buffer
 ): Promise<Result<ConnectorConfig | null, ConnectorConfigError>> {
@@ -80,7 +79,6 @@ export async function getConnectorConfig(
 }
 
 export async function setConnectorConfig(
-  tenantId: string,
   connector: string,
   config: { enabled: boolean; settings: Record<string, unknown>; secrets: Record<string, string> },
   encryptionKey: Buffer
@@ -134,7 +132,6 @@ export const CONFIG_CACHE_TTL_MS = 60_000;
  * are cached — an error must not be remembered as "not configured".
  */
 export async function readConnectorConfigCached(
-  tenantId: string,
   connector: string,
   encryptionKey: Buffer
 ): Promise<Result<ConnectorConfig | null, ConnectorConfigError>> {
@@ -142,7 +139,7 @@ export async function readConnectorConfigCached(
   const cached = configCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return ok(cached.value);
 
-  const result = await getConnectorConfig(tenantId, connector, encryptionKey);
+  const result = await getConnectorConfig(connector, encryptionKey);
   if (result.ok) {
     configCache.set(key, { value: result.val, expiresAt: Date.now() + CONFIG_CACHE_TTL_MS });
   }
@@ -150,7 +147,7 @@ export async function readConnectorConfigCached(
 }
 
 /** Drop a cached entry — used after setConnectorConfig and by tests. */
-export function invalidateConnectorConfigCache(tenantId?: string, connector?: string): void {
+export function invalidateConnectorConfigCache(connector?: string): void {
   if (!tenantId) {
     configCache.clear();
     return;

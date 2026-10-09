@@ -119,7 +119,6 @@ function fakeDb(seed: RunRow[]) {
         values: (values: Record<string, unknown>) => ({
           execute: async () => {
             const id = typeof values.id === 'string' ? values.id : '';
-            const tenantId = typeof values.tenant_id === 'string' ? values.tenant_id : '';
             const kind = typeof values.kind === 'string' ? values.kind : '';
             const row: RunRow = {
               id,

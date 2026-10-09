@@ -39,7 +39,7 @@ export async function GET(
   if (!tenantId) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   }
-  const access = await checkAccess(tenantId, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -49,7 +49,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(tenantId, EMBEDDINGS_CONNECTOR, keyResult.val);
+  const configResult = await getConnectorConfig(EMBEDDINGS_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
@@ -83,7 +83,7 @@ export async function PUT(
   if (!tenantId) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   }
-  const access = await checkAccess(tenantId, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -127,7 +127,7 @@ export async function PUT(
   // Secrets survive settings-only saves: setConnectorConfig replaces secrets
   // wholesale, so a blank/omitted secret is merged with the stored one here.
   // A key is required only when none is stored yet.
-  const existing = await getConnectorConfig(tenantId, EMBEDDINGS_CONNECTOR, keyResult.val);
+  const existing = await getConnectorConfig(EMBEDDINGS_CONNECTOR, keyResult.val);
   const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
   const mergedApiKey = typeof apiKey === 'string' && apiKey ? apiKey : storedSecrets.apiKey;
   if (!mergedApiKey) {
@@ -147,9 +147,9 @@ export async function PUT(
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 
-  invalidateConnectorConfigCache(tenantId, EMBEDDINGS_CONNECTOR);
+  invalidateConnectorConfigCache(EMBEDDINGS_CONNECTOR);
   // The knowledge tools register org-wide on this config, so every caller's
   // cached tool catalog may now be wrong — same as web-search/route.ts.
-  invalidateToolCatalogCache(tenantId);
+  invalidateToolCatalogCache();
   return NextResponse.json({ connector: EMBEDDINGS_CONNECTOR, configured: true, enabled });
 }

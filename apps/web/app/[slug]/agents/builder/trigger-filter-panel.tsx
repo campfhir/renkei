@@ -29,9 +29,9 @@ import ChipListInput, { type ChipOption } from '@/components/chip-list-input';
  */
 
 /** Where a picker's options come from. Mirrors FilterOptionSource. */
-const OPTION_ROUTES: Record<FilterOptionSource, (tenantId: string) => string> = {
-  'webex-rooms': (tenantId) => `/api/webex/rooms`,
-  'microsoft-people': (tenantId) => `/api/directory/people`,
+const OPTION_ROUTES: Record<FilterOptionSource, () => string> = {
+  'webex-rooms': () => `/api/webex/rooms`,
+  'microsoft-people': () => `/api/directory/people`,
 };
 
 const BROWSE_LABELS: Record<FilterOptionSource, { browse: string; search: string }> = {
@@ -40,11 +40,10 @@ const BROWSE_LABELS: Record<FilterOptionSource, { browse: string; search: string
 };
 
 async function loadOptions(
-  tenantId: string,
   source: FilterOptionSource,
   query: string
 ): Promise<ChipOption[]> {
-  const url = new URL(OPTION_ROUTES[source](tenantId), window.location.origin);
+  const url = new URL(OPTION_ROUTES[source](), window.location.origin);
   if (query) url.searchParams.set('q', query);
   const response = await fetch(url.toString());
   const parsed: unknown = await response.json().catch(() => null);
@@ -186,7 +185,7 @@ export default function TriggerFilterPanel({
                 validate={(value) =>
                   field.pattern && !field.pattern.test(value) ? field.invalidMessage : null
                 }
-                loadOptions={source ? (query) => loadOptions(tenantId, source, query) : undefined}
+                loadOptions={source ? (query) => loadOptions(source, query) : undefined}
                 browseLabel={wording?.browse}
                 searchPlaceholder={wording?.search}
                 emptyMeans="Empty means no limit here — every one of these events gets through."

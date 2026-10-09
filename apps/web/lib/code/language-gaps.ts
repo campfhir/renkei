@@ -58,7 +58,7 @@ let availability: { at: number; languages: string[] } | null = null;
 
 /** Which servers the worker can start, remembered for a minute; none when workspaces are off. */
 async function availableServers(target: SandboxTarget): Promise<string[]> {
-  if (!(await sandboxWorkspacesEnabled(target.tenantId))) return [];
+  if (!(await sandboxWorkspacesEnabled())) return [];
   const now = Date.now();
   if (availability && now - availability.at < AVAILABILITY_TTL_MS) return availability.languages;
   const listed = await sbLspLanguages(target);
@@ -75,7 +75,7 @@ export function resetLanguageAvailabilityForTests(): void {
 
 export function noteLanguageGap(
   db: Kysely<DB>,
-  input: { tenantId: string; target: SandboxTarget; path: string; language: string }
+  input: { target: SandboxTarget; path: string; language: string }
 ): void {
   void (async () => {
     const available = await availableServers(input.target);

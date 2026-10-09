@@ -123,7 +123,6 @@ function clip(value: unknown, max: number): string | null {
 /** Everything the prompt will be built from. */
 export async function gatherOptimizationEvidence(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agent: StoredAgent,
   windowDays: number
@@ -198,7 +197,7 @@ export async function gatherOptimizationEvidence(
       GROUP BY s.step_id
       ORDER BY sum_tokens DESC NULLS LAST
     `.execute(db),
-    listRunsForOwner(db, tenantId, ownerSubject, agent.id, {
+    listRunsForOwner(db, ownerSubject, agent.id, {
       status: 'failed',
       limit: MAX_SAMPLE_RUNS,
     }),
@@ -228,7 +227,7 @@ export async function gatherOptimizationEvidence(
 
   const samples: FailedRunSample[] = [];
   for (const summary of failedRuns) {
-    const run = await getRunForOwner(db, tenantId, ownerSubject, agent.id, summary.id);
+    const run = await getRunForOwner(db, ownerSubject, agent.id, summary.id);
     if (!run) continue;
     const snapshot = isAgentStepsDoc(run.stepsSnapshot) ? run.stepsSnapshot : agent.steps;
     samples.push({
@@ -402,18 +401,17 @@ export type OptimizeOutcome =
 /** The whole pass: evidence → prompt → the org's model → a parsed report. */
 export async function optimizeAgent(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agent: StoredAgent,
   windowDays: number
 ): Promise<OptimizeOutcome> {
-  const llmResult = await resolveAgentLlm(db, tenantId, agent.llmModelId);
+  const llmResult = await resolveAgentLlm(db, agent.llmModelId);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization yet.' };
   }
   const llm = llmResult.val;
 
-  const evidence = await gatherOptimizationEvidence(db, tenantId, ownerSubject, agent, windowDays);
+  const evidence = await gatherOptimizationEvidence(db, ownerSubject, agent, windowDays);
   if (evidence.stats.runs === 0 && evidence.failures.length === 0) {
     return {
       error: `This agent has not run in the last ${windowDays} days, so there is nothing to analyze yet.`,

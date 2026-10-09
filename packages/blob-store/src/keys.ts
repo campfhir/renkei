@@ -10,10 +10,9 @@ import type { Result } from '@campfhir/safe-functions/types';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function chatAttachmentKey(
-  tenantId: string,
   attachmentId: string
 ): Result<string, 'INVALID_KEY_PART'> {
-  if (!UUID.test(tenantId) || !UUID.test(attachmentId)) {
+  if (!UUID.test() || !UUID.test(attachmentId)) {
     return err('INVALID_KEY_PART' as const, { message: 'Object keys are built from UUIDs only.' });
   }
   return ok(`chat/${tenantId.toLowerCase()}/${attachmentId.toLowerCase()}`);

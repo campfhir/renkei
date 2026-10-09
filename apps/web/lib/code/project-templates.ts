@@ -25,8 +25,7 @@ export interface CodeProjectTemplate {
 }
 
 export async function listCodeProjectTemplates(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<CodeProjectTemplate[]> {
   const rows = await db
     .selectFrom('code_project_templates')
@@ -71,7 +70,6 @@ export function parseTemplatePayload(body: unknown): TemplateInput | { error: st
 
 export async function createCodeProjectTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   input: TemplateInput
 ): Promise<{ ok: true; id: string } | { ok: false; error: 'duplicate' }> {
   try {
@@ -98,7 +96,6 @@ export async function createCodeProjectTemplate(
 
 export async function updateCodeProjectTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   templateId: string,
   input: TemplateInput
 ): Promise<{ ok: true } | { ok: false; error: 'not-found' | 'duplicate' }> {
@@ -129,7 +126,6 @@ export async function updateCodeProjectTemplate(
 
 export async function deleteCodeProjectTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   templateId: string
 ): Promise<boolean> {
   if (!isUuid(templateId)) return false;

@@ -12,9 +12,9 @@ import { widgetHtmlForUri } from '@/lib/mcp-tools/widgets';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
 
   const uri = new URL(request.url).searchParams.get('uri') ?? '';

@@ -172,7 +172,7 @@ export default function WidgetCard({
           const args = plainObject(params?.arguments) ?? {};
           const stateKey = typeof params?.stateKey === 'string' ? params.stateKey : undefined;
           void chatClient
-            .confirmWidgetTool(tenantId, chatId, name, args, stateKey)
+            .confirmWidgetTool(chatId, name, args, stateKey)
             .then(({ data, error }) => {
               if (error || !data) {
                 post({
@@ -221,7 +221,7 @@ export default function WidgetCard({
           // this isn't, so effectively never) is simply lost.
           if (!text) return;
           void chatClient
-            .appendWidgetModelContext(tenantId, chatId, text, stateKey)
+            .appendWidgetModelContext(chatId, text, stateKey)
             .then(({ data }) => {
               if (data?.message) onModelContext?.(data);
             });
@@ -247,7 +247,7 @@ export default function WidgetCard({
     <div className="my-2 max-w-md overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
       <iframe
         ref={iframeRef}
-        src={ready ? chatClient.widgetResourceUrl(tenantId, resourceUri) : undefined}
+        src={ready ? chatClient.widgetResourceUrl(resourceUri) : undefined}
         sandbox="allow-scripts"
         style={{
           width: '100%',

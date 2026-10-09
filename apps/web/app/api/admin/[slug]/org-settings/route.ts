@@ -178,11 +178,11 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const settings = await getOrgSettings(tenantRef.id);
+  const settings = await getOrgSettings();
   if (!settings.ok) {
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
@@ -194,7 +194,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -205,7 +205,7 @@ export async function PUT(
   }
   const submitted: Record<string, unknown> = { ...body };
 
-  const current = await getOrgSettings(tenantRef.id);
+  const current = await getOrgSettings();
   if (!current.ok) {
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
@@ -273,7 +273,7 @@ export async function PUT(
   }
 
   if (Object.keys(updates).length > 0) {
-    const saved = await setOrgSettings(tenantRef.id, updates);
+    const saved = await setOrgSettings(updates);
     if (!saved.ok) {
       return NextResponse.json({ error: 'Could not save settings' }, { status: 500 });
     }
@@ -288,10 +288,10 @@ export async function PUT(
     // readOnly is the one editable setting here the tool catalog reads (the
     // scope gate strips mutating tools org-wide); every other key is inert
     // to it, so only invalidate when it actually moved.
-    if ('readOnly' in changed) invalidateToolCatalogCache(tenantRef.id);
+    if ('readOnly' in changed) invalidateToolCatalogCache();
   }
 
-  const after = await getOrgSettings(tenantRef.id);
+  const after = await getOrgSettings();
   return NextResponse.json({
     settings: after.ok ? editable(after.val) : { ...before, ...updates },
   });

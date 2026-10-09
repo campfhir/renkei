@@ -17,9 +17,9 @@ export default async function KnowledgePage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/knowledge`));
+    redirect(signInUrl(`/knowledge`));
   }
 
   return (
@@ -30,7 +30,7 @@ export default async function KnowledgePage({
         verified against the source system for your own access before it's shown — anything you
         couldn't open there is withheld, not just hidden.
       </p>
-      <KnowledgeSearch tenantId={tenant.id} />
+      <KnowledgeSearch />
     </div>
   );
 }

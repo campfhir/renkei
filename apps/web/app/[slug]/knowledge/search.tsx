@@ -410,7 +410,7 @@ function HitCard({ group, terms }: { group: DocumentGroup; terms: string[] }) {
   );
 }
 
-export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
+export default function KnowledgeSearch({  }: { }) {
   const [query, setQuery] = useState('');
   const [k, setK] = useState(10);
   const [sources, setSources] = useState<Set<string>>(new Set());
@@ -443,12 +443,12 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
         const days = DATE_PRESETS.find((preset) => preset.id === datePreset)?.days ?? null;
         const after =
           days === null ? undefined : new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
-        const res = await searchMyKnowledge(tenantId, currentQuery, k, {
+        const res = await searchMyKnowledge(currentQuery, k, {
           sources: [...sources],
           ...(after ? { after } : {}),
         });
         if (res.signedOut) {
-          window.location.href = signInUrl(tenantId, window.location.pathname);
+          window.location.href = signInUrl(window.location.pathname);
           return;
         }
         setResult(res);

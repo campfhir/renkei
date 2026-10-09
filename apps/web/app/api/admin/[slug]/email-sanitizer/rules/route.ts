@@ -19,12 +19,12 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const result = await listClassifierRules(tenantRef.id);
+  const result = await listClassifierRules();
   if (!result.ok) {
     return NextResponse.json({ error: 'Could not read classifier rules' }, { status: 500 });
   }
@@ -36,7 +36,7 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -76,7 +76,7 @@ export async function POST(
     typeof body.priority === 'number' && Number.isFinite(body.priority) ? body.priority : 100;
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
-  const result = await upsertClassifierRule(tenantRef.id, {
+  const result = await upsertClassifierRule({
     category,
     matchType,
     matchValue,

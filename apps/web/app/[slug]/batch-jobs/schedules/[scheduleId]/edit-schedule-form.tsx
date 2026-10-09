@@ -165,7 +165,6 @@ export default function EditScheduleForm({
 
       <SourceFields
         slug={slug}
-        tenantId={tenantId}
         shareId={shareId}
         path={path}
         strategy={strategy}

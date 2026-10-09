@@ -265,7 +265,6 @@ async function write(
     const quiet = row.kind === 'question' || row.kind === 'approval';
     void sendPush(
       db,
-      context.tenantId,
       context.subject,
       keyResult.val,
       {
@@ -454,6 +453,6 @@ export async function notifierFor(
   db: Kysely<DB>,
   context: Omit<NotifierContext, 'prefs'>
 ): Promise<Notifier> {
-  const prefs = await getNotificationPrefs(context.tenantId, context.subject);
+  const prefs = await getNotificationPrefs(context.subject);
   return createNotifier(db, { ...context, prefs });
 }

@@ -84,7 +84,7 @@ async function recoverCheckout(
   if (!project.repo) return { ok: false, message: 'the project names no repository.' };
   const started = Date.now();
   const seconds = () => Math.round((Date.now() - started) / 1000);
-  const fresh = (await getProjectRow(db, project.tenantId, project.id)) ?? project;
+  const fresh = (await getProjectRow(db, project.id)) ?? project;
   let current: WireWorkspace | null = null;
   if (fresh.workspaceId && fresh.workspaceId !== lostId) {
     const got = await sbWorkspaceGet(target, fresh.workspaceId);
@@ -158,9 +158,9 @@ export async function codeProjectContext(
   actor: { subject: string; origin?: string; auto?: boolean }
 ): Promise<CodeTurnContext | null> {
   if (project.kind !== 'code' || !project.repo) return null;
-  const target = codeProjectTarget(project.tenantId, project.id);
+  const target = codeProjectTarget(project.id);
   const envNamesNone: string[] = [];
-  const servicesEnabled = await sandboxServicesEnabled(project.tenantId);
+  const servicesEnabled = await sandboxServicesEnabled();
   const base = {
     repoFullName: project.repo.fullName,
     branch: project.repo.branch,
@@ -173,7 +173,7 @@ export async function codeProjectContext(
     prompt: { ...base, ...extra, ready: false, notReady },
     prelude: null,
   });
-  if (!(await sandboxWorkspacesEnabled(project.tenantId))) {
+  if (!(await sandboxWorkspacesEnabled())) {
     return unavailable('code workspaces are not enabled for this organization');
   }
 
@@ -208,7 +208,7 @@ export async function codeProjectContext(
   // rows the composer's own picker offers.
   const [env, subagentModels] = await Promise.all([
     sbEnvList(target),
-    listChatModels(db, project.tenantId),
+    listChatModels(db),
   ]);
   const envNames = env.ok ? env.val.map((variable) => variable.name) : [];
   const tools = codeTools({

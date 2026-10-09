@@ -66,7 +66,6 @@ interface SubscriptionRow {
 }
 
 async function activeSubscriptions(
-  tenantId: string,
   provider: string,
   repoFullName: string,
   prNumber?: number
@@ -140,7 +139,6 @@ export function isTerminal(conclusion: PipelineConclusion): boolean {
 }
 
 async function actOnSubscription(
-  tenantId: string,
   provider: typeof GITHUB | typeof ATLASSIAN_BITBUCKET,
   subscription: SubscriptionRow,
   providerRunId: string,
@@ -159,8 +157,8 @@ async function actOnSubscription(
   if (conclusion === 'success' && subscription.auto_merge) {
     const access =
       provider === GITHUB
-        ? await resolveGitHubSubjectAccess(tenantId, subscription.subscriber_subject)
-        : await resolveBitbucketSubjectAccess(tenantId, subscription.subscriber_subject);
+        ? await resolveGitHubSubjectAccess(subscription.subscriber_subject)
+        : await resolveBitbucketSubjectAccess(subscription.subscriber_subject);
     const merged = access
       ? provider === GITHUB
         ? await mergeGitHubPullRequest(access.auth, target, subscription.pr_number)
@@ -226,14 +224,14 @@ export function createGitHubPrPipelineHandler(): EventHandler {
     const candidates = (
       await Promise.all(
         parsed.prNumbers.map((number) =>
-          activeSubscriptions(tenantId, GITHUB, parsed.repoFullName, number)
+          activeSubscriptions(GITHUB, parsed.repoFullName, number)
         )
       )
     ).flat();
     if (candidates.length === 0) return 'skipped';
 
     for (const subscription of candidates) {
-      const access = await resolveGitHubSubjectAccess(tenantId, subscription.subscriber_subject);
+      const access = await resolveGitHubSubjectAccess(subscription.subscriber_subject);
       if (!access) continue;
       const conclusion = await getGitHubWorkflowRunConclusion(
         access.auth,
@@ -279,11 +277,11 @@ export function createBitbucketPrPipelineHandler(): EventHandler {
     if (!repoFullName) return 'skipped';
     const tenantId = event.tenant_id;
 
-    const candidates = await activeSubscriptions(tenantId, ATLASSIAN_BITBUCKET, repoFullName);
+    const candidates = await activeSubscriptions(ATLASSIAN_BITBUCKET, repoFullName);
     if (candidates.length === 0) return 'skipped';
 
     for (const subscription of candidates) {
-      const access = await resolveBitbucketSubjectAccess(tenantId, subscription.subscriber_subject);
+      const access = await resolveBitbucketSubjectAccess(subscription.subscriber_subject);
       if (!access) continue;
       const head = await bitbucketPrHead(access.auth, repoFullName, subscription.pr_number);
       if (!head) continue;

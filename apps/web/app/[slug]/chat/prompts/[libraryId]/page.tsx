@@ -13,26 +13,24 @@ export default async function PromptLibraryPage({
   params: Promise<{ slug: string; libraryId: string }>;
 }) {
   const { slug, libraryId } = await params;
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/chat/prompts/${libraryId}`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/chat/prompts/${libraryId}`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
   const access = await resolveResourceAccess(
     db,
-    tenant.id,
     session.subject,
     'prompt_library',
     libraryId
   );
-  const library = access ? await getLibrary(db, tenant.id, libraryId) : null;
+  const library = access ? await getLibrary(db, libraryId) : null;
   if (!access || !library) notFound();
-  const prompts = await listPrompts(db, tenant.id, libraryId);
+  const prompts = await listPrompts(db, libraryId);
   return (
     <LibraryView
       key={libraryId}
       slug={slug}
-      tenantId={tenant.id}
       library={{
         id: library.id,
         name: library.name,

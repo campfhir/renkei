@@ -54,7 +54,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const tenant = await db
       .selectFrom('tenants')
       .select('id')
-      .where('id', '=', tenantId)
+      .where('id', '=')
       .executeTakeFirst();
 
     if (!tenant) {
@@ -66,12 +66,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const home = new URL('/', request.url);
       home.searchParams.set('error', 'tenant_not_found');
       const stranded = NextResponse.redirect(home);
-      stranded.cookies.delete(sessionCookieName(tenantId));
+      stranded.cookies.delete(sessionCookieName());
       return stranded;
     }
 
     // Get OIDC config
-    const oidcResult = await getTenantOidc(tenantId);
+    const oidcResult = await getTenantOidc();
     if (!oidcResult.ok) {
       return NextResponse.json({ error: 'Failed to retrieve OIDC configuration' }, { status: 500 });
     }
@@ -155,7 +155,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // route allowed but unauthenticated, with no path back here. The callback
     // issues a fresh cookie; abandoning the flow now leaves the browser plainly
     // signed out instead of stuck.
-    response.cookies.delete(sessionCookieName(tenantId));
+    response.cookies.delete(sessionCookieName());
 
     response.cookies.set(`oidc_redirect_${tenantId}`, redirect, {
       httpOnly: true,

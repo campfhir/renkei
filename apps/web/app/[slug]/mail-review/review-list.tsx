@@ -327,7 +327,6 @@ function ReviewCard({
 
       {teaching && (
         <TeachTemplate
-          tenantId={tenantId}
           senderKey={item.senderKey ?? ''}
           sample={item.excerpt}
           onSaved={() => {
@@ -348,7 +347,7 @@ function ReviewCard({
   );
 }
 
-export default function ReviewList({ tenantId }: { tenantId: string }) {
+export default function ReviewList({  }: { }) {
   const [category, setCategory] = useState<Category>('human');
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<ReviewItem[] | null>(null);
@@ -426,7 +425,6 @@ export default function ReviewList({ tenantId }: { tenantId: string }) {
             {items.map((item) => (
               <ReviewCard
                 key={item.refId}
-                tenantId={tenantId}
                 item={item}
                 onChanged={() => void reload()}
               />

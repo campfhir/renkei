@@ -24,7 +24,6 @@ import type { DB } from '@renkei/db';
  */
 export async function pingChatPresence(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   chatId: string
 ): Promise<void> {
@@ -47,7 +46,6 @@ export async function pingChatPresence(
  */
 export async function wasRecentlyWatchingChat(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   chatId: string,
   windowSeconds: number

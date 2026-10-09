@@ -12,10 +12,10 @@ import { getAgent } from '@/lib/agents/store';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -23,7 +23,7 @@ export async function GET(
   const db = dbResult.val;
 
   // Verify owner
-  const agent = await getAgent(db, tenantId, session.subject, agentId);
+  const agent = await getAgent(db, session.subject, agentId);
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // Count unexpired grants only

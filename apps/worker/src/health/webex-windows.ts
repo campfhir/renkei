@@ -44,7 +44,7 @@ export interface WindowSweepDeps {
 }
 
 /** Any opted-in watcher of the tenant, for marks that did not record one. */
-async function anyWatcherSubject(tenantId: string): Promise<string | null> {
+async function anyWatcherSubject(): Promise<string | null> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
   const row = await dbResult.val
@@ -73,7 +73,7 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
     .execute();
 
   for (const row of rows) {
-    const subject = row.subject ?? (await anyWatcherSubject(row.tenant_id));
+    const subject = row.subject ?? (await anyWatcherSubject());
     if (!subject) {
       // Nobody in this org can read the room any more. Drop the mark:
       // keeping it would re-select it every pass forever.
@@ -92,7 +92,6 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
 
     try {
       await enqueue(
-        row.tenant_id,
         'ingest.webex-window',
         { provider: 'webex', roomId: row.room_id, day: row.day, subject },
         // Rebuilds of one room stay serial; different rooms embed in parallel.
@@ -137,7 +136,7 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
     .execute();
 
   for (const grant of grants) {
-    const access = await resolveAccess(grant.tenant_id, grant.provider_account_id);
+    const access = await resolveAccess(grant.provider_account_id);
     if (!access) continue; // token trouble; the webhook sweep will say so
     const client = makeClient(access.auth);
 

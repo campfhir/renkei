@@ -24,7 +24,7 @@ export default async function SettingsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
@@ -41,13 +41,13 @@ export default async function SettingsPage({
   }
 
   const [settingsResult, oidc, observedGroups, sizeRequests] = await Promise.all([
-    getOrgSettings(tenantRef.id),
+    getOrgSettings(),
     dbResult.val
       .selectFrom('tenant_oidc')
       .select(['issuer', 'role_claim', 'operator_idp_value', 'user_idp_value', 'groups_claim'])
       .executeTakeFirst(),
-    observedIdpGroups(dbResult.val, tenantRef.id, '', 10_000),
-    listSizeRequests(dbResult.val, tenantRef.id),
+    observedIdpGroups(dbResult.val, '', 10_000),
+    listSizeRequests(dbResult.val),
   ]);
   if (!settingsResult.ok) {
     return (

@@ -64,7 +64,7 @@ type Banner =
   | { kind: 'trust'; unknown: UnknownInstance[] }
   | { kind: 'unavailable' };
 
-export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
+export default function KeyGuard({ slug }: { slug: string }) {
   const router = useRouter();
   const [banner, setBanner] = useState<Banner>({ kind: 'none' });
   // The attention-demanding states open front and center as a dialog.
@@ -107,19 +107,19 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
     if (checking.current) return;
     checking.current = true;
     try {
-      const status = await fetchKeyStatus(tenantId);
+      const status = await fetchKeyStatus();
       statusRef.current = status;
       if (!status || status.unavailable) {
         setBanner((current) => (current.kind === 'write-down' ? current : { kind: 'unavailable' }));
         return;
       }
-      const deviceKey = await loadUserKey(tenantId);
+      const deviceKey = await loadUserKey();
       if (!status.enrolled) {
         if (status.legacy && status.legacyNeedsPassphrase) {
           setBanner({ kind: 'passphrase' });
           return;
         }
-        const enrolled = await enrollInBrowser(tenantId, status, {
+        const enrolled = await enrollInBrowser(status, {
           automationDays: status.automationDays,
         });
         if (!enrolled.ok) {
@@ -134,7 +134,7 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
       }
       if (deviceKey) {
         if (!status.sessionDelegated) {
-          const delegated = await delegateInBrowser(tenantId, status, deviceKey, {
+          const delegated = await delegateInBrowser(status, deviceKey, {
             automationDays: status.automationDays,
           });
           if (delegated.ok) settle();
@@ -150,7 +150,7 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
             (status.automationDays * 24 * 60 * 60_000) / 2
         ) {
           // Signing in extends the window (decision 4): renew when half of it has passed.
-          void delegateInBrowser(tenantId, status, deviceKey, {
+          void delegateInBrowser(status, deviceKey, {
             automationDays: status.automationDays,
           });
         }
@@ -158,7 +158,7 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
           setBanner({ kind: 'approve', requests: status.pendingDevices });
           return;
         }
-        if (!(await keyAcknowledged(tenantId))) {
+        if (!(await keyAcknowledged())) {
           setBanner({ kind: 'write-down', shown: formatUserKey(deviceKey) });
           return;
         }
@@ -190,7 +190,7 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
     let cancelled = false;
     const timer = setInterval(() => {
       void (async () => {
-        const answer = await pollDeviceAsk(tenantId, ask);
+        const answer = await pollDeviceAsk(ask);
         if (cancelled || answer === null) return;
         if (answer === 'expired' || answer === 'gone') {
           setAsk(null);
@@ -201,13 +201,13 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
         }
         const status = statusRef.current;
         if (!status) return;
-        const adopted = await adoptKeyInBrowser(tenantId, status, answer);
+        const adopted = await adoptKeyInBrowser(status, answer);
         setAsk(null);
         if (!adopted.ok) {
           setFailure(adopted.failure.error);
           return;
         }
-        await saveUserKey(tenantId, answer, { acknowledged: true });
+        await saveUserKey(answer, { acknowledged: true });
         setBanner({ kind: 'none' });
         settle();
       })();
@@ -228,7 +228,7 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
     }
     setBusy(true);
     setFailure(null);
-    const adopted = await adoptKeyInBrowser(tenantId, status, parsed.bytes);
+    const adopted = await adoptKeyInBrowser(status, parsed.bytes);
     setBusy(false);
     if (!adopted.ok) {
       if (untrusted(adopted.failure)) return;
@@ -242,7 +242,7 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
 
   async function startAsk(): Promise<void> {
     setFailure(null);
-    const started = await askOtherDevices(tenantId);
+    const started = await askOtherDevices();
     if (!started.ok) {
       setFailure(started.failure.error);
       return;
@@ -255,7 +255,7 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
     if (!status) return;
     setBusy(true);
     setFailure(null);
-    const enrolled = await enrollInBrowser(tenantId, status, {
+    const enrolled = await enrollInBrowser(status, {
       passphrase,
       automationDays: status.automationDays,
     });
@@ -273,7 +273,7 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
     setBusy(true);
     setFailure(null);
     if (approve) {
-      const deviceKey = await loadUserKey(tenantId);
+      const deviceKey = await loadUserKey();
       if (deviceKey) {
         const approved = await approveDeviceAsk(
           requestId,
@@ -291,14 +291,14 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
         }
       }
     } else {
-      await denyDeviceAsk(tenantId, requestId);
+      await denyDeviceAsk(requestId);
     }
     setBusy(false);
     await check();
   }
 
   async function confirmWrittenDown(): Promise<void> {
-    await acknowledgeKey(tenantId);
+    await acknowledgeKey();
     setBanner({ kind: 'none' });
   }
 
@@ -307,7 +307,7 @@ export default function KeyGuard({ slug }: { tenantId: string; slug: string }) {
     const status = statusRef.current;
     if (!status) return;
     setBusy(true);
-    await confirmInstanceTrust(tenantId, status, unknown);
+    await confirmInstanceTrust(status, unknown);
     setBusy(false);
     setBanner({ kind: 'none' });
     setDismissed(null);

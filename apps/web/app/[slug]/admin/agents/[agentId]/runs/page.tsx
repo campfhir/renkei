@@ -23,7 +23,7 @@ export default async function AdminAgentRunsPage({
 }): Promise<React.ReactNode> {
   const { slug, agentId } = await params;
   const { status, q } = await searchParams;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
@@ -38,7 +38,7 @@ export default async function AdminAgentRunsPage({
   if (!agent) notFound();
   const filter = isRunStatus(status) ? status : undefined;
   const query = typeof q === 'string' && q.trim() ? q.trim() : undefined;
-  const runs = await listRunsForAdmin(db, tenant.id, agentId, {
+  const runs = await listRunsForAdmin(db, agentId, {
     status: filter,
     ...(query ? { q: query } : {}),
   });

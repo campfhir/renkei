@@ -87,7 +87,6 @@ function promptOf(raw: {
 
 export async function getLibrary(
   db: Kysely<DB>,
-  tenantId: string,
   libraryId: string
 ): Promise<LibraryRow | null> {
   if (!isUuid(libraryId)) return null;
@@ -102,7 +101,6 @@ export async function getLibrary(
 /** Every library this person can open: theirs, and the ones shared with them. */
 export async function listAccessibleLibraries(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<{ library: LibraryRow; role: 'owner' | 'editor' | 'viewer' }[]> {
   const [owned, granted] = await Promise.all([
@@ -112,7 +110,7 @@ export async function listAccessibleLibraries(
       .where('owner_subject', '=', subject)
       .orderBy('updated_at', 'desc')
       .execute(),
-    listGrantedResources(db, tenantId, subject, 'prompt_library'),
+    listGrantedResources(db, subject, 'prompt_library'),
   ]);
   const grantIds = granted.map((grant) => grant.resourceId).filter(isUuid);
   const grantedRows =
@@ -140,7 +138,7 @@ export async function listAccessibleLibraries(
 
 export async function createLibrary(
   db: Kysely<DB>,
-  input: { tenantId: string; ownerSubject: string; name: string; description: string | null }
+  input: { ownerSubject: string; name: string; description: string | null }
 ): Promise<string> {
   const inserted = await db
     .insertInto('prompt_libraries')
@@ -156,7 +154,6 @@ export async function createLibrary(
 
 export async function updateLibrary(
   db: Kysely<DB>,
-  tenantId: string,
   libraryId: string,
   patch: { name?: string; description?: string | null }
 ): Promise<boolean> {
@@ -175,7 +172,6 @@ export async function updateLibrary(
 
 export async function deleteLibrary(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   libraryId: string
 ): Promise<boolean> {
@@ -198,7 +194,6 @@ export async function deleteLibrary(
 
 export async function listPrompts(
   db: Kysely<DB>,
-  tenantId: string,
   libraryId: string
 ): Promise<PromptRow[]> {
   if (!isUuid(libraryId)) return [];
@@ -214,7 +209,7 @@ export async function listPrompts(
 
 export async function createPrompt(
   db: Kysely<DB>,
-  input: { tenantId: string; libraryId: string; title: string; body: string; subject: string }
+  input: { libraryId: string; title: string; body: string; subject: string }
 ): Promise<string> {
   const inserted = await db
     .insertInto('prompts')
@@ -234,7 +229,6 @@ export async function createPrompt(
 
 export async function updatePrompt(
   db: Kysely<DB>,
-  tenantId: string,
   libraryId: string,
   promptId: string,
   patch: { title?: string; body?: string; position?: number },
@@ -260,7 +254,6 @@ export async function updatePrompt(
 
 export async function deletePrompt(
   db: Kysely<DB>,
-  tenantId: string,
   libraryId: string,
   promptId: string
 ): Promise<boolean> {
@@ -286,10 +279,9 @@ async function touchLibrary(db: Kysely<DB>, libraryId: string): Promise<void> {
 /** The composer's picker: every prompt in every library this person can open. */
 export async function listPickerPrompts(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<{ id: string; title: string; body: string; libraryName: string }[]> {
-  const libraries = await listAccessibleLibraries(db, tenantId, subject);
+  const libraries = await listAccessibleLibraries(db, subject);
   if (libraries.length === 0) return [];
   const names = new Map(libraries.map((entry) => [entry.library.id, entry.library.name]));
   const rows = await db

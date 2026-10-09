@@ -24,7 +24,6 @@ export interface RepoSubjectAccess {
 }
 
 async function resolveSubjectAccess(
-  tenantId: string,
   subject: string,
   provider: typeof GITHUB | typeof ATLASSIAN_BITBUCKET
 ): Promise<RepoSubjectAccess | null> {
@@ -46,15 +45,13 @@ async function resolveSubjectAccess(
 }
 
 export function resolveGitHubSubjectAccess(
-  tenantId: string,
   subject: string
 ): Promise<RepoSubjectAccess | null> {
-  return resolveSubjectAccess(tenantId, subject, GITHUB);
+  return resolveSubjectAccess(subject, GITHUB);
 }
 
 export function resolveBitbucketSubjectAccess(
-  tenantId: string,
   subject: string
 ): Promise<RepoSubjectAccess | null> {
-  return resolveSubjectAccess(tenantId, subject, ATLASSIAN_BITBUCKET);
+  return resolveSubjectAccess(subject, ATLASSIAN_BITBUCKET);
 }

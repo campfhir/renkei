@@ -52,7 +52,6 @@ export interface SessionCheck {
  */
 export async function verifySession(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   sessionId: string
 ): Promise<SessionCheck | null> {

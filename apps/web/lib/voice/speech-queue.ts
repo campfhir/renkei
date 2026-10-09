@@ -111,7 +111,6 @@ export class SpeechQueue {
   private sinkId: string | null = null;
 
   constructor(
-    private readonly tenantId: string,
     private readonly onError: (message: string) => void
   ) {}
 
@@ -337,14 +336,14 @@ export class SpeechQueue {
     const audio: Promise<Piece | null> = (
       streamed
         ? voiceClient
-            .synthesizeStream(this.tenantId, { text, ...this.settings }, controller.signal)
+            .synthesizeStream({ text, ...this.settings }, controller.signal)
             .then((result): Piece | null => {
               if (generation !== this.generation) return null;
               if (result.error) this.onError(result.error);
               return result.data ? { kind: 'streamed', stream: result.data } : null;
             })
         : voiceClient
-            .synthesize(this.tenantId, { text, ...this.settings }, controller.signal)
+            .synthesize({ text, ...this.settings }, controller.signal)
             .then(async (result): Promise<Piece | null> => {
               if (generation !== this.generation) return null;
               if (result.error) this.onError(result.error);

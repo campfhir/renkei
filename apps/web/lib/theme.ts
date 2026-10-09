@@ -17,7 +17,7 @@
 
 import type { ThemeMode } from '@renkei/user-prefs/prefs';
 
-export function themeStorageKey(tenantId: string): string {
+export function themeStorageKey(): string {
   return `renkei:theme:${tenantId}`;
 }
 
@@ -29,31 +29,31 @@ export function themeStorageKey(tenantId: string): string {
  * the system until they reloaded it. Module state rather than a DOM event:
  * the form and the shell share this one module instance.
  */
-const localListeners = new Set<(tenantId: string, mode: ThemeMode) => void>();
+const localListeners = new Set<(mode: ThemeMode) => void>();
 
 function isThemeMode(value: unknown): value is ThemeMode {
   return value === 'auto' || value === 'light' || value === 'dark';
 }
 
 /** Whatever this browser last knew, for this tenant — or null if nothing valid is cached. */
-export function getStoredThemeMode(tenantId: string): ThemeMode | null {
+export function getStoredThemeMode(): ThemeMode | null {
   try {
-    const stored = window.localStorage.getItem(themeStorageKey(tenantId));
+    const stored = window.localStorage.getItem(themeStorageKey());
     return isThemeMode(stored) ? stored : null;
   } catch {
     return null;
   }
 }
 
-export function setStoredThemeMode(tenantId: string, mode: ThemeMode): void {
+export function setStoredThemeMode(mode: ThemeMode): void {
   try {
-    window.localStorage.setItem(themeStorageKey(tenantId), mode);
+    window.localStorage.setItem(themeStorageKey(), mode);
   } catch {
     // The preference just won't stick in this browser.
   }
   // Told separately from the write: a browser that refuses localStorage
   // should still render the pick for the rest of this visit.
-  for (const listener of localListeners) listener(tenantId, mode);
+  for (const listener of localListeners) listener(mode);
 }
 
 /**
@@ -62,17 +62,16 @@ export function setStoredThemeMode(tenantId: string, mode: ThemeMode): void {
  * same browser (the `storage` event). Returns the unsubscribe.
  */
 export function subscribeStoredThemeMode(
-  tenantId: string,
   onChange: (mode: ThemeMode) => void
 ): () => void {
-  const key = themeStorageKey(tenantId);
+  const key = themeStorageKey();
   const onLocal = (changed: string, mode: ThemeMode) => {
     if (changed === tenantId) onChange(mode);
   };
   const onStorage = (event: StorageEvent) => {
     // A null key is `localStorage.clear()`, which took this key with it.
     if (event.key !== null && event.key !== key) return;
-    onChange(getStoredThemeMode(tenantId) ?? 'auto');
+    onChange(getStoredThemeMode() ?? 'auto');
   };
   localListeners.add(onLocal);
   window.addEventListener('storage', onStorage);

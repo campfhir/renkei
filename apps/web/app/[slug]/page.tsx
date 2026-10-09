@@ -28,9 +28,9 @@ export default async function HomePage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/`));
+    redirect(signInUrl(`/`));
   }
 
   const resolvedSearchParams = await searchParams;
@@ -91,7 +91,6 @@ export default async function HomePage({
         {dbResult.ok ? (
           <ActionableCards
             items={items}
-            tenantId={tenant.id}
             subject={session.subject}
             slug={slug}
             showArchived={showArchived}

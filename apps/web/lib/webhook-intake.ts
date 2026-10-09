@@ -46,7 +46,6 @@ export const WEBHOOK_LIMITS = {
 
 export function checkWebhookLimit(
   provider: string,
-  tenantId: string,
   request: Request
 ): RateLimitVerdict {
   return checkInboundLimit(`webhooks/${provider}:${tenantId}`, request, WEBHOOK_LIMITS);

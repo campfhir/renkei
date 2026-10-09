@@ -23,15 +23,15 @@ export default async function BatchJobsPage({
   const { slug } = await params;
   const { status } = await searchParams;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/batch-jobs`));
+    redirect(signInUrl(`/batch-jobs`));
   }
 
   const dbResult = getDatabase();
   const filter = STATUS_TABS.some((tab) => tab === status) ? status : undefined;
   const batches = dbResult.ok
-    ? await listBatches(dbResult.val, tenant.id, session.subject, { limit: 50, status: filter })
+    ? await listBatches(dbResult.val, session.subject, { limit: 50, status: filter })
     : [];
 
   const tabHref = (tabStatus?: string) =>

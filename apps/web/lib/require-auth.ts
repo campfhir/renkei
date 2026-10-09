@@ -15,10 +15,10 @@ import { signInUrl } from '@/lib/sign-in-url';
  * Redirects unsigned-out users to sign in. Returns the session if present.
  * Call this at the start of a server component, before any rendering logic.
  */
-export async function requireAuth(tenantId: string, returnUrl: string) {
-  const session = await getSessionFromCookies(tenantId);
+export async function requireAuth(returnUrl: string) {
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenantId, returnUrl));
+    redirect(signInUrl(returnUrl));
   }
   return session;
 }

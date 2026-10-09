@@ -96,7 +96,6 @@ export function chunkRefId(refId: string, index: number, total: number): string 
  * skip the exact-match arm and treat refId purely as a prefix.
  */
 export async function deleteObjectChunks(
-  tenantId: string,
   provider: string,
   refId: string,
   options: { prefixOnly?: boolean } = {}
@@ -132,7 +131,6 @@ export async function deleteObjectChunks(
  * without re-listing the whole project from the provider.
  */
 export async function deleteChunksByMetadata(
-  tenantId: string,
   provider: string,
   key: string,
   value: string
@@ -163,7 +161,6 @@ export async function deleteChunksByMetadata(
  * per object is kept and the rest discarded — all a cTag comparison needs.
  */
 export async function readObjectMetadataBatch(
-  tenantId: string,
   provider: string,
   refIds: readonly string[]
 ): Promise<Result<Map<string, Record<string, unknown>>, 'DB_ERROR'>> {
@@ -210,7 +207,6 @@ export async function readObjectMetadataBatch(
  * whatever still bears an older epoch is genuinely gone from the source.
  */
 export async function deleteStaleScopeChunks(
-  tenantId: string,
   provider: string,
   scope: { key: string; value: string },
   epoch: { key: string; value: string }
@@ -266,7 +262,6 @@ function isKeywordExtractor(
  * the object they came from.
  */
 export async function ingestObjectChunks(
-  tenantId: string,
   embedder: EmbeddingProvider,
   object: KnowledgeChunkInput,
   options: ChunkTextOptions & {
@@ -300,7 +295,7 @@ export async function ingestObjectChunks(
 > {
   const pieces = chunkText(object.content, options);
 
-  const cleared = await deleteObjectChunks(tenantId, object.provider, object.refId);
+  const cleared = await deleteObjectChunks(object.provider, object.refId);
   if (!cleared.ok) return cleared;
   if (pieces.length === 0) return ok({ chunks: 0, keywords: 0 });
 
@@ -313,7 +308,7 @@ export async function ingestObjectChunks(
   if (supplied !== undefined && supplied !== null && !isKeywordExtractor(supplied)) {
     keywords = normalizeKeywords(supplied);
   } else {
-    const extractor = supplied === undefined ? await resolveKeywordExtractor(tenantId) : supplied;
+    const extractor = supplied === undefined ? await resolveKeywordExtractor() : supplied;
     if (extractor) {
       const extracted = await extractor.extract({
         title: titleOf(object.metadata),

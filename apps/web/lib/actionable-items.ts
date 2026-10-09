@@ -51,7 +51,6 @@ export function readCreateIssueAction(suggestedAction: unknown): CreateIssueArgs
 }
 
 export async function executeCreateIssue(
-  tenantId: string,
   subject: string,
   args: CreateIssueArgs,
   projectKey: string

@@ -20,14 +20,14 @@ export default async function JiraAdminChangesPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/jira-admin/changes`));
+    redirect(signInUrl(`/jira-admin/changes`));
   }
 
   const dbResult = getDatabase();
   const changes = dbResult.ok
-    ? await listChangeRequests(dbResult.val, tenant.id, session.subject, { limit: 50 })
+    ? await listChangeRequests(dbResult.val, session.subject, { limit: 50 })
     : [];
   const now = new Date();
   const waiting = changes.filter((change) => stateOf(change, now) === 'pending');

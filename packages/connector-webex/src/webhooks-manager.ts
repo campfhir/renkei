@@ -47,12 +47,11 @@ export const USER_SPACES_WEBHOOKS: readonly RequiredWebhook[] = [
 /** The per-user receipt endpoint an all-spaces webhook must target. */
 export function webexUserWebhookTargetUrl(
   publicBaseUrl: string,
-  tenantId: string,
   accountId: string
 ): string {
   return (
     `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/webex/` +
-    `${encodeURIComponent(tenantId)}/user/${encodeURIComponent(accountId)}`
+    `${encodeURIComponent()}/user/${encodeURIComponent(accountId)}`
   );
 }
 

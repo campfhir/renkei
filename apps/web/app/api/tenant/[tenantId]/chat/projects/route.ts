@@ -20,20 +20,20 @@ import { loadChatSidebar } from '@/lib/chat/sidebar';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const sidebar = await loadChatSidebar(db, tenantId, session.subject);
+  const sidebar = await loadChatSidebar(db, session.subject);
   return NextResponse.json({ projects: sidebar.projects });
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);

@@ -37,7 +37,6 @@ function ownedBy(ownerSubject: string | null) {
 
 export async function getVoiceTotals(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null
@@ -69,7 +68,6 @@ export async function getVoiceTotals(
 /** Everyone who used voice in the span, with both measures; unranked. */
 export async function getVoiceUsers(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string
 ): Promise<VoiceUserRow[]> {

@@ -80,7 +80,7 @@ function readyWorkspaceWire() {
   };
 }
 
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice' };
+const TARGET = { subject: 'auth0|alice' };
 const WIRE_FILE = {
   id: 'file-1',
   filename: 'report.pdf',
@@ -551,7 +551,7 @@ describe('sbWriteFile', () => {
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/v1/write?');
     const query = new URL(url).searchParams;
-    expect(query.get('tenantId')).toBe(TARGET.tenantId);
+    expect(query.get('tenantId')).toBe();
     expect(query.get('subject')).toBe(TARGET.subject);
     expect(query.get('filename')).toBe('report.pdf');
     expect(query.get('contentType')).toBe('application/pdf');

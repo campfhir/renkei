@@ -109,7 +109,6 @@ export default function PullsPage({
                       </summary>
                       <div className="mt-1.5">
                         <PrSubscribe
-                          tenantId={tenantId}
                           projectId={projectId}
                           prNumber={pr.number}
                           prUrl={pr.url}
@@ -177,7 +176,6 @@ export default function PullsPage({
                           </summary>
                           <div className="mt-1.5 w-56">
                             <PrSubscribe
-                              tenantId={tenantId}
                               projectId={projectId}
                               prNumber={pr.number}
                               prUrl={pr.url}

@@ -9,16 +9,16 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string; id: string }> }
 ): Promise<NextResponse> {
   const { slug, id } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   // Named in the audit trail; after the delete there is no row to ask.
-  const existing = await listCleanerScripts(tenantRef.id);
+  const existing = await listCleanerScripts();
   const name = existing.ok ? existing.val.find((script) => script.id === id)?.name : undefined;
 
-  const deleted = await deleteCleanerScript(tenantRef.id, id);
+  const deleted = await deleteCleanerScript(id);
   if (!deleted.ok) return NextResponse.json({ error: 'Could not delete' }, { status: 500 });
 
   recordAuditEvent({

@@ -23,13 +23,13 @@ import { markChatToolPermissionRead } from '@/lib/chat/permission-notification';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string; turnId: string }> }
+  { params }: { params: Promise<{ chatId: string; turnId: string }> }
 ): Promise<Response> {
   const { chatId, turnId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, tenantId, session.subject, chatId);
+  const chat = await getChatForOwner(db, session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
 
   const body = await readJsonBody(request);
@@ -39,7 +39,7 @@ export async function POST(
     return jsonError(400, 'invalid-decision', 'Expected toolUseId and a decision');
   }
 
-  const turn = await getTurn(db, tenantId, chat.id, turnId);
+  const turn = await getTurn(db, chat.id, turnId);
   if (!turn) return jsonError(404, 'not-found', 'No such turn');
   const pending = turn.toolPermission;
   if (
@@ -52,7 +52,7 @@ export async function POST(
   }
 
   if (decision === 'always') {
-    const remembered = await allowChatToolAlways(tenantId, session.subject, pending.name);
+    const remembered = await allowChatToolAlways(session.subject, pending.name);
     if (!remembered.ok) {
       return jsonError(
         remembered.err.type === 'INVALID_NAME' ? 400 : 500,
@@ -62,11 +62,11 @@ export async function POST(
     }
   }
 
-  const written = await decideToolPermission(db, tenantId, chat.id, turnId, toolUseId, decision);
+  const written = await decideToolPermission(db, chat.id, turnId, toolUseId, decision);
   if (!written) return jsonError(409, 'not-pending', 'The chat is no longer waiting on this call');
   getTurnChannel(turnId)?.resolveToolPermission(toolUseId, decision);
   // The ask is answered — its notification row need not stay unread.
-  await markChatToolPermissionRead(tenantId, session.subject, toolUseId);
+  await markChatToolPermissionRead(session.subject, toolUseId);
 
   return NextResponse.json({ ok: true, decision });
 }

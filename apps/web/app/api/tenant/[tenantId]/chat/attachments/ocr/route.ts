@@ -21,9 +21,9 @@ const MAX_IDS_PER_REQUEST = 12;
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
 
@@ -37,16 +37,16 @@ export async function POST(
           .slice(0, MAX_IDS_PER_REQUEST)
       : [];
   const access = isUuid(chatId)
-    ? await resolveChatAccess(db, tenantId, session.subject, chatId)
+    ? await resolveChatAccess(db, session.subject, chatId)
     : null;
   if (!access || access.role !== 'owner') return jsonError(404, 'not-found', 'No such chat');
 
-  const settings = await getOrgSettings(tenantId);
+  const settings = await getOrgSettings();
   const results = await ocrChatAttachments(db, {
     ownerSubject: session.subject,
     chatId,
     attachmentIds: ids,
-    redactor: settings.ok ? createOutboundRedactor(tenantId, settings.val) : null,
+    redactor: settings.ok ? createOutboundRedactor(settings.val) : null,
     cipher: access.cipher,
   });
   return NextResponse.json({ results });

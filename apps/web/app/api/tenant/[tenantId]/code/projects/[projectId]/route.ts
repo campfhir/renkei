@@ -17,30 +17,30 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
+  const access = await resolveProjectAccess(db, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
-  const view = await loadCodeProjectView(db, tenantId, session.subject, projectId, access);
+  const view = await loadCodeProjectView(db, session.subject, projectId, access);
   if (!view) return jsonError(404, 'not-found', 'No such project');
   return NextResponse.json(view);
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const project = await getProjectRow(db, tenantId, projectId);
+  const project = await getProjectRow(db, projectId);
   const deleted = project
-    ? await deleteCodeProject(db, tenantId, session.subject, projectId)
+    ? await deleteCodeProject(db, session.subject, projectId)
     : false;
   if (!deleted || !project) return jsonError(404, 'not-found', 'No such project');
   recordAuditEvent({

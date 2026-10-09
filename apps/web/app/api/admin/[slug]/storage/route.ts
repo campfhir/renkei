@@ -13,9 +13,9 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const view = await readStorage(tenantRef.id);
+  const view = await readStorage();
   if (view === 'ERROR') {
     return NextResponse.json(
       { error: 'Could not read the storage configuration' },
@@ -30,11 +30,11 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const input = parseStorageInput(await request.json().catch(() => null));
   if (typeof input === 'string') return NextResponse.json({ error: input }, { status: 400 });
-  const saved = await saveStorage(tenantRef.id, input);
+  const saved = await saveStorage(input);
   if (typeof saved === 'string') {
     return NextResponse.json({ error: saved }, { status: saved.startsWith('The ') ? 400 : 500 });
   }

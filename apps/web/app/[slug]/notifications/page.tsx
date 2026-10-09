@@ -29,8 +29,8 @@ export default async function NotificationsPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/notifications`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/notifications`));
 
   const dbResult = getDatabase();
   // One extra row, never rendered, just to answer "is there more?" without
@@ -102,7 +102,6 @@ export default async function NotificationsPage({
         </p>
       ) : (
         <NotificationsList
-          tenantId={tenant.id}
           slug={slug}
           rows={cards}
           unreadCount={unreadCount}

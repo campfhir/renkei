@@ -26,11 +26,10 @@ const DOTENV_MAX_CHARS = 200_000;
 
 async function projectFor(
   request: NextRequest,
-  tenantId: string,
   projectId: string,
   edit: boolean
 ) {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return { ok: false as const, response: ready.response };
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
@@ -47,7 +46,7 @@ async function projectFor(
       response: jsonError(403, 'read-only', 'Only editors can change this project’s environment.'),
     };
   }
-  const project = await getProjectRow(db, tenantId, projectId);
+  const project = await getProjectRow(db, projectId);
   if (!project || project.kind !== 'code') {
     return { ok: false as const, response: jsonError(404, 'not-found', 'No such project') };
   }
@@ -56,20 +55,20 @@ async function projectFor(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await projectFor(request, tenantId, projectId, false);
+  const found = await projectFor(request, projectId, false);
   if (!found.ok) return found.response;
   return NextResponse.json({ variables: await projectEnv(found.project) });
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await projectFor(request, tenantId, projectId, true);
+  const found = await projectFor(request, projectId, true);
   if (!found.ok) return found.response;
   const body = await readJsonBody(request);
   const text = typeof body.env === 'string' ? body.env : '';
@@ -88,18 +87,18 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await projectFor(request, tenantId, projectId, true);
+  const found = await projectFor(request, projectId, true);
   if (!found.ok) return found.response;
-  if (!(await sandboxWorkspacesEnabled(tenantId))) {
+  if (!(await sandboxWorkspacesEnabled())) {
     return jsonError(503, 'unavailable', 'Code workspaces are not enabled on this deployment.');
   }
   const body = await readJsonBody(request);
   const name = validateEnvName(body.name);
   if (!name.ok) return jsonError(400, 'invalid', name.message);
-  const deleted = await sbEnvDelete(codeProjectTarget(tenantId, projectId), name.name);
+  const deleted = await sbEnvDelete(codeProjectTarget(projectId), name.name);
   if (!deleted.ok) {
     const failure = clientFailure(deleted.err);
     return jsonError(failure.status, 'env', failure.message);

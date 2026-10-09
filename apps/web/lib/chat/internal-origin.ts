@@ -6,7 +6,7 @@
  * compose file already sets.
  */
 
-export function internalMcpEndpoint(tenantId: string): string {
+export function internalMcpEndpoint(): string {
   const configured = (process.env.RENKEI_WEB_INTERNAL_URL ?? '').trim().replace(/\/+$/, '');
   const base = configured || `http://127.0.0.1:${process.env.PORT ?? '3000'}`;
   return `${base}/api/mcp/mcp`;

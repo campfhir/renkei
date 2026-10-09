@@ -21,9 +21,9 @@ import { logger } from '@/lib/logger';
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
@@ -55,7 +55,7 @@ export async function DELETE(
       : {};
   const email = typeof metadata.email === 'string' ? metadata.email.toLowerCase() : null;
   if (email) {
-    const purged = await deleteObjectChunks(tenantId, ZOOM, `${email}/`, { prefixOnly: true });
+    const purged = await deleteObjectChunks(ZOOM, `${email}/`, { prefixOnly: true });
     if (!purged.ok) {
       logger.warn('Could not purge knowledge chunks on disconnect', {
         component: 'connectors/zoom',
@@ -83,6 +83,6 @@ export async function DELETE(
     targetKind: 'connector',
     targetLabel: ZOOM,
   });
-  invalidateToolCatalogCache(tenantId, session.subject);
+  invalidateToolCatalogCache(session.subject);
   return NextResponse.json({ message: 'Zoom disconnected' });
 }

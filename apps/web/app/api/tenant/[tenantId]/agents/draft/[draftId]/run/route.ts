@@ -60,13 +60,13 @@ function parseTriggerVars(value: unknown): TriggerVarInfo[] {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; draftId: string }> }
+  { params }: { params: Promise<{ draftId: string }> }
 ): Promise<NextResponse> {
   const { draftId } = await params;
 
   const token = getBearerToken(request);
   if (!token) return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
-  const record = await resolveAccessToken(token, tenantId, 'agent');
+  const record = await resolveAccessToken(token, 'agent');
   if (!record) return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -75,7 +75,7 @@ export async function POST(
 
   // Owner-scoped by the TOKEN's subject: this is what stops a token minted
   // for one person from drafting with another person's tool catalog.
-  const draft = await getDraft(db, tenantId, record.subject, draftId);
+  const draft = await getDraft(db, record.subject, draftId);
   if (!draft) return NextResponse.json({ error: 'No such draft' }, { status: 404 });
 
   // The claim is the idempotency guard. A redelivered queue row — or a
@@ -101,8 +101,8 @@ export async function POST(
           .execute()
       : [];
 
-    const tools = await listAvailableTools(tenantId, record.subject);
-    const drafted = await draftAgentFromProse(db, tenantId, draft.request.text, tools, {
+    const tools = await listAvailableTools(record.subject);
+    const drafted = await draftAgentFromProse(db, draft.request.text, tools, {
       currentSteps,
       triggerVars: parseTriggerVars(draft.request.triggerVars),
       suggestTriggers,

@@ -14,12 +14,12 @@ import UsageViewer from './usage-viewer';
 export default async function UsagePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
 
-  await requireAuth(tenant.id, `/usage`);
+  await requireAuth(`/usage`);
 
   const [initial, tools] = await Promise.all([
-    getUsageReport(tenant.id, 7),
-    getAvailableTools(tenant.id),
+    getUsageReport(7),
+    getAvailableTools(),
   ]);
 
-  return <UsageViewer slug={slug} tenantId={tenant.id} initial={initial} tools={tools} />;
+  return <UsageViewer slug={slug} initial={initial} tools={tools} />;
 }

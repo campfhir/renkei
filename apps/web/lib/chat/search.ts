@@ -52,7 +52,6 @@ const PAGE_SIZE = 500;
  */
 export async function searchChatMessages(
   db: Kysely<DB>,
-  tenantId: string,
   chatIds: string[],
   query: string,
   ciphers: Map<string, ContentCipher> = new Map()

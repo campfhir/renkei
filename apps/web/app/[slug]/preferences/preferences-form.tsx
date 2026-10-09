@@ -266,7 +266,7 @@ export default function PreferencesForm({
   // since "allow notifications" is not the fix for it.
   const [subscribeError, setSubscribeError] = useState(false);
   useEffect(() => {
-    setDesktopEnabled(getDesktopNotificationsEnabled(tenantId));
+    setDesktopEnabled(getDesktopNotificationsEnabled());
     setPermission('Notification' in window ? Notification.permission : 'unsupported');
   }, [tenantId]);
 
@@ -282,19 +282,19 @@ export default function PreferencesForm({
     if (!on) {
       setDesktopEnabled(false);
       setSubscribeError(false);
-      setDesktopNotificationsEnabled(tenantId, false);
-      void disableDesktopNotifications(tenantId);
+      setDesktopNotificationsEnabled(false);
+      void disableDesktopNotifications();
       return;
     }
 
-    const outcome = await enableDesktopNotifications(tenantId);
+    const outcome = await enableDesktopNotifications();
     setPermission(
       outcome === 'unsupported' ? 'unsupported' : outcome === 'denied' ? 'denied' : 'granted'
     );
     setSubscribeError(outcome === 'subscribe-failed');
     const enabled = outcome === 'granted';
     setDesktopEnabled(enabled);
-    setDesktopNotificationsEnabled(tenantId, enabled);
+    setDesktopNotificationsEnabled(enabled);
   }
 
   /**
@@ -315,7 +315,7 @@ export default function PreferencesForm({
       setPermission(current);
       if (current !== 'granted') return;
     }
-    setSubscribeError(!(await ensurePushSubscription(tenantId)));
+    setSubscribeError(!(await ensurePushSubscription()));
   }
 
   function update(next: NotificationPrefs) {

@@ -454,7 +454,6 @@ export async function registerProposeFieldTools(
       if (replaces) {
         const cancelled = await cancelChangeRequest(
           db,
-          context.tenantId,
           context.subject,
           replaces
         );

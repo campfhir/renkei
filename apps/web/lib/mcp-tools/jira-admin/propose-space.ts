@@ -211,7 +211,7 @@ export async function registerProposeSpaceTools(
       let source: CreateSpacePayload['source'];
       const notes: string[] = [];
       if (templateRef) {
-        const template = await findSpaceTemplate(db, context.tenantId, access.cloudId, templateRef);
+        const template = await findSpaceTemplate(db, access.cloudId, templateRef);
         if (!template) {
           return errText(
             `No template is named “${templateRef}”. jira_admin_list_space_templates lists them.`
@@ -365,7 +365,6 @@ export async function registerProposeSpaceTools(
       if (replaces) {
         const cancelled = await cancelChangeRequest(
           db,
-          context.tenantId,
           context.subject,
           replaces
         );

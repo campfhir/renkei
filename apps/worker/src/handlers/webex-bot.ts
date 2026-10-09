@@ -12,7 +12,7 @@ import { readConnectorConfigCached } from '@renkei/connector-config';
 import { WebexClient, WEBEX_BOT_CONNECTOR } from '@renkei/connector-webex';
 import { logger } from '../logger';
 
-export async function webexBotClient(tenantId: string): Promise<WebexClient | null> {
+export async function webexBotClient(): Promise<WebexClient | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
   try {

@@ -109,7 +109,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // Get OIDC config
-    const oidcResult = await getTenantOidc(tenantId);
+    const oidcResult = await getTenantOidc();
     if (!oidcResult.ok) {
       return NextResponse.json({ error: 'Failed to retrieve OIDC configuration' }, { status: 500 });
     }
@@ -266,11 +266,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // record and every audience-scoped connector is closed to them.
       logger.warn(
         'id_token omits the groups claim (groups overage); audience rules fail closed for this subject',
-        { component: 'auth/oidc', tenantId, subject, groupsClaim }
+        { component: 'auth/oidc', subject, groupsClaim }
       );
     }
     if (identityClaims) {
-      const recorded = await upsertIdentity(tenantId, subject, identityClaims);
+      const recorded = await upsertIdentity(subject, identityClaims);
       if (!recorded.ok) {
         console.warn(
           `[OIDC ${tenantId}] could not record identity for subject; gates will fail closed`
@@ -324,7 +324,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const tenantRow = await db
         .selectFrom('tenants')
         .select('slug')
-        .where('id', '=', tenantId)
+        .where('id', '=')
         .executeTakeFirst();
       redirect = tenantRow ? `/` : '/';
     }
@@ -349,7 +349,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const response = NextResponse.redirect(new URL(redirect, origin));
     response.cookies.set(
-      sessionCookieName(tenantId),
+      sessionCookieName(),
       sessionResult.val.id,
       sessionCookieOptions(SESSION_TTL_SECONDS)
     );

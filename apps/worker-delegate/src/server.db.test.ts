@@ -166,7 +166,7 @@ describeDb('worker-delegate', () => {
       await db.val.deleteFrom('delegate_signing_keys').execute();
       await db.val.deleteFrom('resource_keys').execute();
       await db.val.deleteFrom('user_encryption_keys').execute();
-      await db.val.deleteFrom('tenants').where('id', '=', tenantId).execute();
+      await db.val.deleteFrom('tenants').where('id', '=').execute();
     }
     await closeDatabase();
   });
@@ -471,7 +471,7 @@ describeDb('worker-delegate', () => {
     });
     expect(closed.status).toBe(423);
     expect(errorType(closed.json)).toBe('NEEDS_DELEGATION');
-    const census = await op('keys/census', { tenantId });
+    const census = await op('keys/census', { });
     expect(census.json).toEqual({ held: 2, managed: 0, own: 0 });
 
     // The browser seals again, and the owner is back for the tests below.
@@ -541,7 +541,7 @@ describeDb('worker-delegate', () => {
 
   it('proxies a request on a stored grant with the token attached, and only to the provider', async () => {
     const accountId = `gh-${randomUUID().slice(0, 8)}`;
-    const saved = await setGrant(GITHUB, tenantId, {
+    const saved = await setGrant(GITHUB, {
       accountId,
       clientId: 'client',
       displayName: 'Octo',
@@ -706,7 +706,7 @@ describeDb('worker-delegate', () => {
 
   it('relays a workspace git exchange on a ticket with the token attached, and never a write on a read ticket', async () => {
     const accountId = `gh-${randomUUID().slice(0, 8)}`;
-    const saved = await setGrant(GITHUB, tenantId, {
+    const saved = await setGrant(GITHUB, {
       accountId,
       clientId: 'client',
       displayName: 'Octo',
@@ -824,7 +824,7 @@ describeDb('worker-delegate', () => {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
     const db = dbResult.val;
-    const instance = await createInstance(db, tenantId, {
+    const instance = await createInstance(db, {
       name: 'Dev',
       environment: 'dev',
       baseUrl: 'https://mirth.example.com',
@@ -840,7 +840,7 @@ describeDb('worker-delegate', () => {
       JSON.stringify({ username: 'alice', password: 'pw-secret' })
     );
     if (!sealed.ok) throw new Error('credential not sealed');
-    const stored = await upsertConnection(db, tenantId, instance.val, owner, {
+    const stored = await upsertConnection(db, instance.val, owner, {
       encryptedCredentials: sealed.val,
       username: 'alice',
       permissions: ['channels.read'],

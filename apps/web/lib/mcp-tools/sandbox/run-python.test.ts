@@ -171,7 +171,7 @@ describe('sandbox_run_python', () => {
       timeoutSeconds: 120,
     });
     expect(client.sbRunScript).toHaveBeenCalledWith(
-      { tenantId: 'tenant-1', subject: 'auth0|alice' },
+      { subject: 'auth0|alice' },
       { code: 'import pandas as pd\nprint("hi")', files: [INPUT_ID], timeoutMs: 120_000 }
     );
     expect(result.isError).toBeUndefined();

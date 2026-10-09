@@ -75,7 +75,6 @@ export function parseQueue(value: unknown): QueuedSend[] | null {
 
 export async function loadQueuedSends(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string
 ): Promise<QueuedSend[]> {
   const row = await db
@@ -88,7 +87,6 @@ export async function loadQueuedSends(
 
 export async function saveQueuedSends(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   queue: QueuedSend[]
 ): Promise<void> {

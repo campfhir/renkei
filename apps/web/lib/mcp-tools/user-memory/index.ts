@@ -49,7 +49,7 @@ export function registerUserMemoryTools(server: McpServer, context: MCPToolConte
       if (!context.subject) return errText(NO_SUBJECT);
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const memory = await readUserMemory(dbResult.val, context.tenantId, context.subject, {
+      const memory = await readUserMemory(dbResult.val, context.subject, {
         maxEntries: 100,
       });
       if (!memory.summary && memory.entries.length === 0) {

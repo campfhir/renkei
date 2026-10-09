@@ -46,7 +46,6 @@ export interface TenantOidcClaims {
  * earlier. Letting the database decide makes first-write-wins actually true.
  */
 export async function createTenantOidcIfAbsent(
-  tenantId: string,
   oidc: TenantOidc
 ): Promise<Result<boolean, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
   const dbResult = getDatabase();
@@ -82,7 +81,6 @@ export async function createTenantOidcIfAbsent(
 }
 
 export async function setTenantOidc(
-  tenantId: string,
   oidc: TenantOidc
 ): Promise<Result<void, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
   const dbResult = getDatabase();
@@ -132,7 +130,6 @@ export async function setTenantOidc(
  * Store OIDC role mapping (IDP role -> renkei role).
  */
 export async function setOidcRoleMapping(
-  tenantId: string,
   idpRole: string,
   renkeiRole: string
 ): Promise<Result<void, 'DB_ERROR'>> {
@@ -167,7 +164,6 @@ export async function setOidcRoleMapping(
  * Get renkei role for an IDP role.
  */
 export async function getOidcRoleMapping(
-  tenantId: string,
   idpRole: string
 ): Promise<Result<string | null, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -193,7 +189,6 @@ export async function getOidcRoleMapping(
  * Client secret is automatically decrypted.
  */
 export async function getTenantOidc(
-  tenantId: string
 ): Promise<Result<TenantOidc | null, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -245,7 +240,6 @@ export async function getTenantOidc(
  * re-entering a secret or re-running discovery.
  */
 export async function getTenantOidcClaims(
-  tenantId: string
 ): Promise<Result<TenantOidcClaims | null, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -270,7 +264,6 @@ export async function getTenantOidcClaims(
 
 /** Update only the claim mappings; false when the tenant has no OIDC row to update. */
 export async function setTenantOidcClaims(
-  tenantId: string,
   claims: TenantOidcClaims
 ): Promise<Result<boolean, 'DB_ERROR'>> {
   const dbResult = getDatabase();

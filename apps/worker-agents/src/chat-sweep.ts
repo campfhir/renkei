@@ -93,13 +93,13 @@ export function createChatTurnJanitor(db: Kysely<DB>) {
 
 export function createChatRetentionSweep(
   db: Kysely<DB>,
-  store: (tenantId: string) => Promise<BlobStore | null> = blobStore
+  store: () => Promise<BlobStore | null> = blobStore
 ) {
   return async function sweep(): Promise<void> {
     await deleteAbandonedChats(db);
     const tenants = await db.selectFrom('tenants').select('id').execute();
     for (const tenant of tenants) {
-      const settings = await getOrgSettings(tenant.id);
+      const settings = await getOrgSettings();
       if (!settings.ok || settings.val.chatRetentionDays <= 0) continue;
       const days = settings.val.chatRetentionDays;
       const expired = await db
@@ -110,7 +110,7 @@ export function createChatRetentionSweep(
         .execute();
       if (expired.length === 0) continue;
       const chatIds = expired.map((row) => row.id);
-      const deletable = await deleteAttachmentBlobs(db, tenant.id, chatIds, await store(tenant.id));
+      const deletable = await deleteAttachmentBlobs(db, chatIds, await store());
       if (deletable.length === 0) continue;
       await db
         .deleteFrom('chats')
@@ -150,7 +150,6 @@ async function deleteAbandonedChats(db: Kysely<DB>): Promise<void> {
 /** Chats whose attachment bytes are gone (or never existed); the rest wait. */
 async function deleteAttachmentBlobs(
   db: Kysely<DB>,
-  tenantId: string,
   chatIds: string[],
   store: BlobStore | null
 ): Promise<string[]> {
@@ -190,7 +189,7 @@ async function pruneOrphanGrants(db: Kysely<DB>): Promise<void> {
   await delegateClient().pruneOrphanResourceKeys();
 }
 
-async function blobStore(tenantId: string): Promise<BlobStore | null> {
-  const store = await resolveTenantBlobStore(tenantId);
+async function blobStore(): Promise<BlobStore | null> {
+  const store = await resolveTenantBlobStore();
   return store.ok ? store.val : null;
 }

@@ -18,15 +18,14 @@ export default async function ProjectsPage({
 }) {
   const { slug } = await params;
   const { new: openNew } = await searchParams;
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/chat/projects`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/chat/projects`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const sidebar = await loadChatSidebar(dbResult.val, tenant.id, session.subject);
+  const sidebar = await loadChatSidebar(dbResult.val, session.subject);
   return (
     <ProjectsIndex
       slug={slug}
-      tenantId={tenant.id}
       projects={sidebar.projects}
       openNew={openNew === '1'}
     />

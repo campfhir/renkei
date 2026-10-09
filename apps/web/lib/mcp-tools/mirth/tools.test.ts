@@ -43,10 +43,10 @@ type Handler = (args: Record<string, unknown>) => Promise<{
 }>;
 
 const INSTANCE_ID = '11111111-2222-3333-4444-555555555555';
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice', instanceId: INSTANCE_ID };
+const TARGET = { subject: 'auth0|alice', instanceId: INSTANCE_ID };
 
 function contextOf(): MCPToolContext {
-  return { tenantId: 'tenant-1', subject: 'auth0|alice' } as unknown as MCPToolContext;
+  return { subject: 'auth0|alice' } as unknown as MCPToolContext;
 }
 
 function summary(): MirthInstanceSummary {
@@ -73,7 +73,7 @@ function authOf(connection: InstanceConnection): MirthAuth {
   return {
     kind: 'user',
     target() {
-      return { tenantId: 'tenant-1', subject: 'auth0|alice' };
+      return { subject: 'auth0|alice' };
     },
     async listConnected() {
       return [{ instance: summary(), connection }];

@@ -91,12 +91,11 @@ function toPageHit(hit: KnowledgeHit, maxDistance: number | null): KnowledgeSear
  * produces no session for a tenant the caller has not signed into.
  */
 export async function searchMyKnowledge(
-  tenantId: string,
   query: string,
   k: number = DEFAULT_K,
   filters: KnowledgeSearchFilters = {}
 ): Promise<KnowledgeSearchResult> {
-  const session = await getSessionFromCookies(tenantId);
+  const session = await getSessionFromCookies();
   if (!session) {
     return { hits: [], elided: 0, error: 'Sign in to search your knowledge', signedOut: true };
   }
@@ -126,7 +125,7 @@ export async function searchMyKnowledge(
 
   // No recorded email = nothing can be verified = nothing is disclosed —
   // the same fail-closed rule search_knowledge enforces.
-  const emailResult = await getIdentityEmail(tenantId, session.subject);
+  const emailResult = await getIdentityEmail(session.subject);
   const userEmail = emailResult.ok ? emailResult.val : null;
   if (!userEmail) {
     return {
@@ -142,7 +141,7 @@ export async function searchMyKnowledge(
   // module) so this page and the tool can never drift apart on what a
   // source name means.
   const sourceFilters = sourceFiltersFor(filters.sources ?? []);
-  const verifiers = await buildKnowledgeVerifiers(tenantId);
+  const verifiers = await buildKnowledgeVerifiers();
 
   // No query yet: show the newest indexed items instead of an empty page,
   // so the filters double as a browser ("top 20 tasks", "top 20 WebEx").
@@ -170,7 +169,7 @@ export async function searchMyKnowledge(
     };
   }
 
-  const knowledge = await resolveKnowledge(tenantId);
+  const knowledge = await resolveKnowledge();
   if (!knowledge) {
     return {
       hits: [],

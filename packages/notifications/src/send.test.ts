@@ -1,6 +1,6 @@
 import { pushClickTarget } from './send';
 
-const base = { tenantId: 't1', slug: 'acme' };
+const base = { slug: 'acme' };
 
 describe('pushClickTarget', () => {
   it('routes a click through the row when there is one, whatever the target', () => {

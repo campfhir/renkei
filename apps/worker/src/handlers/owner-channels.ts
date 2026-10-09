@@ -62,7 +62,7 @@ export async function deliverToOwnerChannels(
           .where('subject', '=', ownerSubject)
           .executeTakeFirst();
         if (grant) {
-          const access = await resolveMicrosoftAccess(tenantId, grant.provider_account_id);
+          const access = await resolveMicrosoftAccess(grant.provider_account_id);
           const sent = await graphRequest(access.auth, '/me/sendMail', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -90,10 +90,10 @@ export async function deliverToOwnerChannels(
   // Channel 2: a WebEx note — from the org's bot, else the owner's own grant.
   if (message.webex) {
     try {
-      const access = await resolveWebexUserAccessBySubject(tenantId, ownerSubject);
+      const access = await resolveWebexUserAccessBySubject(ownerSubject);
       if (access) {
         const sent = await sendNoteToPerson({
-          bot: await webexBotClient(tenantId),
+          bot: await webexBotClient(),
           user: new WebexClient(access.auth),
           personEmail: access.personEmail,
           markdown: `**${message.heading}**\n\n${message.body}`,

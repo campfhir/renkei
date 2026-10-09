@@ -10,6 +10,6 @@
 
 import type { SandboxTarget } from '@renkei/sandbox-client';
 
-export function codeProjectTarget(tenantId: string, projectId: string): SandboxTarget {
+export function codeProjectTarget(projectId: string): SandboxTarget {
   return { subject: `code-project:${projectId}` };
 }

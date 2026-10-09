@@ -214,7 +214,6 @@ export class InMemoryQueue implements Queue {
    */
   readonly purger = {
     discardPending: async (
-      tenantId: string,
       type: string,
       match: readonly { path: readonly string[]; value: string }[]
     ) => {

@@ -70,10 +70,10 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const { db, session, access, project } = ready.context;
   const path = validateWorkspacePath(new URL(request.url).searchParams.get('path'));
@@ -83,14 +83,14 @@ export async function GET(
   // A file the pane opens without a language server is counted (never
   // shown): which language to add next is a query on that table.
   noteLanguageGap(db, {
-    target: codeProjectTarget(tenantId, projectId),
+    target: codeProjectTarget(projectId),
     path: path.path,
     language,
   });
 
-  const workspace = (await sandboxWorkspacesEnabled(tenantId)) ? await projectWorkspace(project) : null;
+  const workspace = (await sandboxWorkspacesEnabled()) ? await projectWorkspace(project) : null;
   if (workspace?.status === 'ready' && project.workspaceId) {
-    const read = await sbWorkspaceRead(codeProjectTarget(tenantId, projectId), {
+    const read = await sbWorkspaceRead(codeProjectTarget(projectId), {
       id: project.workspaceId,
       path: path.path,
     });
@@ -129,13 +129,13 @@ export async function GET(
   const isGitHub = project.repo!.provider === GITHUB;
   const file = isGitHub
     ? await readGitHubSourceFile(
-        await githubAuthFor(request, tenantId, session.subject),
+        await githubAuthFor(request, session.subject),
         project.repo!.fullName,
         project.repo!.branch,
         path.path
       )
     : await readBitbucketSourceFile(
-        await bitbucketAuthFor(request, tenantId, session.subject),
+        await bitbucketAuthFor(request, session.subject),
         project.repo!.fullName,
         project.repo!.branch,
         path.path
@@ -158,10 +158,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
+  const ready = await codeProjectContext(request, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
   if (!project.workspaceId)
@@ -178,7 +178,7 @@ export async function PUT(
   if (bytes.byteLength === 0) return jsonError(400, 'empty', 'The file is empty.');
   if (bytes.byteLength > UPLOAD_MAX_BYTES) return jsonError(413, 'too-large', tooLarge());
 
-  const target = codeProjectTarget(tenantId, projectId);
+  const target = codeProjectTarget(projectId);
   const fromEditor = request.headers.get('x-code-editor') === 'save';
   const ifMatch = request.headers.get('if-match');
   if (ifMatch !== null) {
@@ -222,10 +222,10 @@ export async function PUT(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
+  const ready = await codeProjectContext(request, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
   if (!project.workspaceId)
@@ -245,7 +245,7 @@ export async function POST(
       path.ok ? (isFolder ? 'Say where the folder goes.' : 'Say where the file goes.') : path.message
     );
 
-  const target = codeProjectTarget(tenantId, projectId);
+  const target = codeProjectTarget(projectId);
 
   if (isFolder) {
     const made = await sbWorkspaceMkdir(target, { id: project.workspaceId, path: path.path });
@@ -289,10 +289,10 @@ export async function POST(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
+  const ready = await codeProjectContext(request, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
   if (!project.workspaceId)
@@ -304,7 +304,7 @@ export async function DELETE(
   if (!path.ok || !path.path)
     return jsonError(400, 'invalid', path.ok ? 'Say which file or folder to remove.' : path.message);
 
-  const target = codeProjectTarget(tenantId, projectId);
+  const target = codeProjectTarget(projectId);
   const removed = await sbWorkspaceRemove(target, { id: project.workspaceId, path: path.path });
   if (!removed.ok) {
     const failure = clientFailure(removed.err);
@@ -324,10 +324,10 @@ export async function DELETE(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
+  const ready = await codeProjectContext(request, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
   if (!project.workspaceId)
@@ -341,7 +341,7 @@ export async function PATCH(
   if (!to.ok || !to.path)
     return jsonError(400, 'invalid', to.ok ? 'Say the new name or location.' : to.message);
 
-  const target = codeProjectTarget(tenantId, projectId);
+  const target = codeProjectTarget(projectId);
   const moved = await sbWorkspaceMove(target, {
     id: project.workspaceId,
     from: from.path,

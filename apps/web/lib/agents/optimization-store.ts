@@ -95,7 +95,7 @@ const COLUMNS = [
 /** Start a pass. The queue job that does the work is enqueued by the caller. */
 export async function createOptimization(
   db: Kysely<DB>,
-  params: { tenantId: string; ownerSubject: string; agentId: string; request: OptimizationRequest }
+  params: { ownerSubject: string; agentId: string; request: OptimizationRequest }
 ): Promise<string> {
   const row = await db
     .insertInto('agent_optimizations')
@@ -113,7 +113,6 @@ export async function createOptimization(
 /** One pass, for its owner. Null for anyone else — the same answer as "none". */
 export async function getOptimization(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   optimizationId: string
 ): Promise<AgentOptimization | null> {
@@ -130,7 +129,6 @@ export async function getOptimization(
 /** The newest pass for an agent, whatever its status — what the page shows. */
 export async function latestOptimization(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string
 ): Promise<AgentOptimization | null> {
@@ -149,7 +147,6 @@ export async function latestOptimization(
 /** A pass still queued or running for this agent — one at a time is plenty. */
 export async function inFlightOptimization(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<{ id: string } | null> {
   const row = await db
@@ -221,7 +218,6 @@ export async function finishOptimization(
  */
 export async function markOptimizationApplied(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   optimizationId: string,
   draftId: string

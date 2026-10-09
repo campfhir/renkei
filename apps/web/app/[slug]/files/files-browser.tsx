@@ -106,7 +106,7 @@ function childOf(folder: string, name: string): string {
   return folder === '/' ? `/${name}` : `${folder}/${name}`;
 }
 
-function fileUrl(tenantId: string, shareId: string, path: string): string {
+function fileUrl(shareId: string, path: string): string {
   return `/api/fileshares/${shareId}/file?path=${encodeURIComponent(path)}`;
 }
 
@@ -263,7 +263,7 @@ function PathBar({ path, onNavigate }: { path: string; onNavigate: (path: string
   );
 }
 
-export default function FilesBrowser({ tenantId }: { tenantId: string }) {
+export default function FilesBrowser({  }: { }) {
   const [shares, setShares] = useState<ShareView[] | null>(null);
   const [share, setShare] = useState<ShareView | null>(null);
   const [path, setPath] = useState('/');
@@ -626,7 +626,6 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
 
         {modal?.kind === 'newFolder' ? (
           <NewFolderModal
-            tenantId={tenantId}
             share={share}
             path={path}
             onClose={() => setModal(null)}
@@ -635,7 +634,6 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
         ) : null}
         {modal?.kind === 'upload' ? (
           <UploadModal
-            tenantId={tenantId}
             share={share}
             path={path}
             onClose={() => setModal(null)}
@@ -644,7 +642,6 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
         ) : null}
         {modal?.kind === 'details' ? (
           <DetailsModal
-            tenantId={tenantId}
             share={share}
             entry={modal.entry}
             onClose={() => setModal(null)}
@@ -652,7 +649,6 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
         ) : null}
         {modal?.kind === 'rename' ? (
           <RenameModal
-            tenantId={tenantId}
             share={share}
             entry={modal.entry}
             onClose={() => setModal(null)}
@@ -661,7 +657,6 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
         ) : null}
         {modal?.kind === 'move' ? (
           <MoveModal
-            tenantId={tenantId}
             share={share}
             entry={modal.entry}
             path={path}
@@ -671,7 +666,6 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
         ) : null}
         {modal?.kind === 'delete' ? (
           <DeleteModal
-            tenantId={tenantId}
             share={share}
             entry={modal.entry}
             onClose={() => setModal(null)}
@@ -845,7 +839,7 @@ function UploadModal({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(fileUrl(tenantId, share.id, childOf(path, file.name)), {
+      const response = await fetch(fileUrl(share.id, childOf(path, file.name)), {
         method: 'PUT',
         body: file,
       });
@@ -993,7 +987,7 @@ function DetailsModal({
         action={
           entry.kind === 'file' ? (
             <DownloadLink
-              href={fileUrl(tenantId, share.id, entry.path)}
+              href={fileUrl(share.id, entry.path)}
               filename={entry.name}
               onClick={onClose}
               className={primaryButton}

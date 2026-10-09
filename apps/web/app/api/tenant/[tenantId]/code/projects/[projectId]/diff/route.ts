@@ -29,10 +29,10 @@ const COMMIT_SHA = /^[0-9a-f]{4,40}$/i;
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
@@ -42,9 +42,9 @@ export async function GET(
     projectId
   );
   if (!access) return jsonError(404, 'not-found', 'No such project');
-  const project = await getProjectRow(db, tenantId, projectId);
+  const project = await getProjectRow(db, projectId);
   if (!project || project.kind !== 'code') return jsonError(404, 'not-found', 'No such project');
-  if (!(await sandboxWorkspacesEnabled(tenantId)) || !project.workspaceId) {
+  if (!(await sandboxWorkspacesEnabled()) || !project.workspaceId) {
     return NextResponse.json({
       branch: project.repo?.branch ?? '',
       diff: '',
@@ -61,7 +61,7 @@ export async function GET(
   const path = url.searchParams.get('path');
   const commit = url.searchParams.get('commit');
   const statOnly = url.searchParams.get('stat') === '1';
-  const target = codeProjectTarget(tenantId, projectId);
+  const target = codeProjectTarget(projectId);
   if (commit !== null) {
     if (!COMMIT_SHA.test(commit))
       return jsonError(400, 'invalid', 'A commit is named by its hash.');

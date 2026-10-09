@@ -30,7 +30,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -41,7 +41,6 @@ export async function GET(
   }
 
   const configResult = await getConnectorConfig(
-    tenantRef.id,
     ONBASE_ADMIN_CONNECTOR,
     keyResult.val
   );
@@ -90,7 +89,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -142,7 +141,7 @@ export async function PUT(
   // Secrets survive settings-only saves: a blank/omitted secret keeps the
   // stored one. Unlike the SaaS connectors no secret is required at all —
   // a Hyland IdP client may be public (PKCE only).
-  const existing = await getConnectorConfig(tenantRef.id, ONBASE_ADMIN_CONNECTOR, keyResult.val);
+  const existing = await getConnectorConfig(ONBASE_ADMIN_CONNECTOR, keyResult.val);
   const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
   const mergedClientSecret =
     typeof clientSecret === 'string' && clientSecret.length > 0
@@ -155,7 +154,6 @@ export async function PUT(
   }
 
   const writeResult = await setConnectorConfig(
-    tenantRef.id,
     ONBASE_ADMIN_CONNECTOR,
     {
       enabled,
@@ -168,7 +166,7 @@ export async function PUT(
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 
-  invalidateConnectorConfigCache(tenantRef.id, ONBASE_ADMIN_CONNECTOR);
+  invalidateConnectorConfigCache(ONBASE_ADMIN_CONNECTOR);
   if (insecureModes.length) {
     recordAuditEvent({
       actorSubject: access.subject,

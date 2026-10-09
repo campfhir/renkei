@@ -13,15 +13,15 @@ import { getSubagentRunByCall } from '@/lib/chat/subagent-runs';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string; toolUseId: string }> }
+  { params }: { params: Promise<{ chatId: string; toolUseId: string }> }
 ): Promise<Response> {
   const { chatId, toolUseId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveChatAccess(db, tenantId, session.subject, chatId);
+  const access = await resolveChatAccess(db, session.subject, chatId);
   if (!access) return jsonError(404, 'not-found', 'No such chat');
-  const run = await getSubagentRunByCall(db, tenantId, chatId, toolUseId, access.cipher);
+  const run = await getSubagentRunByCall(db, chatId, toolUseId, access.cipher);
   if (!run) return jsonError(404, 'not-found', 'No such sub-agent run');
   return NextResponse.json({ run });
 }

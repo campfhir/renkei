@@ -99,18 +99,18 @@ export async function sweepContentWatches(): Promise<void> {
   // read per tenant per pass, not per watch. An unreadable settings row
   // falls back to the floor — polling too often beats silently never.
   const dueMsByTenant = new Map<string, number>();
-  const dueMsFor = async (tenantId: string): Promise<number> => {
-    const cached = dueMsByTenant.get(tenantId);
+  const dueMsFor = async (): Promise<number> => {
+    const cached = dueMsByTenant.get();
     if (cached !== undefined) return cached;
-    const settings = await getOrgSettings(tenantId);
+    const settings = await getOrgSettings();
     const minutes = settings.ok ? Math.max(5, settings.val.contentPollMinutes) : 5;
     const ms = minutes * 60_000;
-    dueMsByTenant.set(tenantId, ms);
+    dueMsByTenant.set(ms);
     return ms;
   };
   const watches: WatchRow[] = [];
   for (const candidate of candidates) {
-    const dueMs = await dueMsFor(candidate.tenant_id);
+    const dueMs = await dueMsFor();
     if (
       candidate.last_synced_at === null ||
       new Date(candidate.last_synced_at).getTime() < now - dueMs
@@ -128,23 +128,22 @@ export async function sweepContentWatches(): Promise<void> {
   for (const watch of watches) {
     try {
       if (watch.provider === 'sharepoint') {
-        const access = await resolveMicrosoftAccess(watch.tenant_id, watch.account_id);
-        await runDriveWatchSync(watch.tenant_id, access, watch);
+        const access = await resolveMicrosoftAccess(watch.account_id);
+        await runDriveWatchSync(access, watch);
         continue;
       }
       const access = await resolveAtlassianAccess(
-        watch.tenant_id,
         watch.account_id,
         grantProviderFor(watch.provider)
       );
-      const result = await runWatchSync(watch.tenant_id, access, watch);
+      const result = await runWatchSync(access, watch);
       // The NAME, not the id: "349536260" tells a reader nothing, and the
       // watch row already carries the label the UI shows. The id stays in
       // the metadata, where searching for it still works.
       const scope = watch.scope_label ?? watch.scope_key;
       // The grant behind this watch names the person whose credential it
       // polls with — the one the indexed content is attributable to.
-      const actor = await actorForAccount(db, watch.tenant_id, watch.account_id);
+      const actor = await actorForAccount(db, watch.account_id);
       const fields = {
         component: COMPONENT,
         provider: watch.provider,

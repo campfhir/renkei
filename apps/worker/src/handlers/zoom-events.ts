@@ -63,7 +63,7 @@ export function createZoomTranscriptHandler(
     const facts = factsOf(event);
     const tenantId = event.tenant_id;
 
-    const access = await resolveZoomHostAccess(tenantId, facts.hostId, facts.hostEmail);
+    const access = await resolveZoomHostAccess(facts.hostId, facts.hostEmail);
     if (!access) {
       // No grant means no owner subject either — nothing to ingest AND no
       // agents to fire under the owner-scoped fan-out rule.
@@ -99,7 +99,7 @@ export function createZoomTranscriptHandler(
     // Knowledge indexing is optional (the embedder may be off, the text may
     // be empty) — agent triggers below fire regardless, so the embedder
     // check gates ONLY this enqueue.
-    const embedder = await resolveEmbeddingProvider(tenantId);
+    const embedder = await resolveEmbeddingProvider();
     if (embedder && text.trim()) {
       // Embedding is deferred to the embedding queue (Decision #20): the
       // bounded Zoom fetch/download above stays here, the network-bound
@@ -175,7 +175,7 @@ export function createZoomSummaryHandler(
     const facts = factsOf(event);
     const tenantId = event.tenant_id;
 
-    const access = await resolveZoomHostAccess(tenantId, facts.hostId, facts.hostEmail);
+    const access = await resolveZoomHostAccess(facts.hostId, facts.hostEmail);
     if (!access) {
       // No grant → no owner subject → no agents to fire either; skip whole.
       logger.info('host {hostEmail} has no zoom grant; summary skipped', {
@@ -224,7 +224,7 @@ export function createZoomSummaryHandler(
 
     // As in the transcript handler: the embedder gates ONLY the knowledge
     // enqueue; the domain event below publishes regardless.
-    const embedder = await resolveEmbeddingProvider(tenantId);
+    const embedder = await resolveEmbeddingProvider();
     if (embedder && text.trim()) {
       const refId = `${access.hostEmail}/${facts.meetingUuid}/summary`;
       await enqueueKnowledgeEvent(

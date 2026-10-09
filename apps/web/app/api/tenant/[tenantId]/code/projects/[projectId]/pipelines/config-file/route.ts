@@ -24,13 +24,13 @@ const MESSAGE_MAX_CHARS = 500;
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await pipelinesProjectContext(request, tenantId, projectId);
+  const found = await pipelinesProjectContext(request, projectId);
   if (!found.ok) return found.response;
   const { project, subject } = found.context;
-  const auth = await bitbucketAuthFor(request, tenantId, subject);
+  const auth = await bitbucketAuthFor(request, subject);
   const file = await readPipelineConfigFile(auth, project.repo.fullName, project.repo.branch);
   if (!file.ok) return jsonError(502, 'bitbucket', file.error);
   return NextResponse.json({ ref: file.ref, text: file.text });
@@ -38,10 +38,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await pipelinesProjectContext(request, tenantId, projectId, { write: true });
+  const found = await pipelinesProjectContext(request, projectId, { write: true });
   if (!found.ok) return found.response;
   const { project, subject, scopes } = found.context;
   const needs = missingScope(scopes, PIPELINES_FILE_SCOPE);
@@ -53,7 +53,7 @@ export async function PUT(
   const message =
     (typeof body.message === 'string' ? body.message.trim().slice(0, MESSAGE_MAX_CHARS) : '') ||
     'Add bitbucket-pipelines.yml';
-  const auth = await bitbucketAuthFor(request, tenantId, subject);
+  const auth = await bitbucketAuthFor(request, subject);
   const committed = await commitPipelineConfigFile(
     auth,
     project.repo.fullName,

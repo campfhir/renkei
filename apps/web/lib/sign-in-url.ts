@@ -7,8 +7,8 @@
  * bouncing between "sign in" prompts without ever reaching an identity
  * provider.
  */
-export function signInUrl(tenantId: string, redirectTo?: string): string {
-  const params = new URLSearchParams({ tenantId });
+export function signInUrl(redirectTo?: string): string {
+  const params = new URLSearchParams({ });
   if (redirectTo) params.set('redirect', redirectTo);
   return `/api/auth/oidc/login?${params.toString()}`;
 }

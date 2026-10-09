@@ -25,12 +25,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; secretId: string }> }
+  { params }: { params: Promise<{ secretId: string }> }
 ): Promise<NextResponse> {
   const { secretId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxBrowserEnabled(tenantId))) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled())) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body: unknown = await request.json().catch(() => null);
   if (!isRecord(body)) {
@@ -79,12 +79,12 @@ export async function POST(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; secretId: string }> }
+  { params }: { params: Promise<{ secretId: string }> }
 ): Promise<NextResponse> {
   const { secretId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxBrowserEnabled(tenantId))) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled())) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const revoked = await sbSecretRevoke({ subject: session.subject }, secretId);
   if (!revoked.ok) {

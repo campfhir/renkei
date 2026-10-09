@@ -47,7 +47,6 @@ export function isRecentMail(receivedDateTime: string): boolean {
 
 /** The Microsoft grant's owner — whose event a mailbox notification is. */
 export async function subjectForMicrosoftAccount(
-  tenantId: string,
   accountId: string
 ): Promise<string | null> {
   const dbResult = getDatabase();

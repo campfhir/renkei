@@ -25,7 +25,7 @@ export default async function AdminConnectorPage({
   params: Promise<{ slug: string; configKey: string }>;
 }): Promise<React.ReactNode> {
   const { slug, configKey } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
@@ -34,13 +34,13 @@ export default async function AdminConnectorPage({
   if (definition.manageHref) redirect(definition.manageHref(slug));
 
   const origin = await resolvePublicOrigin();
-  const settings = await getOrgSettings(tenantRef.id);
+  const settings = await getOrgSettings();
   const disabledConnectors = settings.ok ? settings.val.disabledConnectors : [];
   const audiences = settings.ok ? settings.val.connectorAudiences : {};
   const dbResult = getDatabase();
   const [observedGroups, oidcClaims] = await Promise.all([
-    dbResult.ok ? observedIdpGroups(dbResult.val, tenantRef.id, '', 10_000) : Promise.resolve([]),
-    getTenantOidcClaims(tenantRef.id),
+    dbResult.ok ? observedIdpGroups(dbResult.val, '', 10_000) : Promise.resolve([]),
+    getTenantOidcClaims(),
   ]);
   const groupsClaim = (oidcClaims.ok ? oidcClaims.val?.groupsClaim : null) || DEFAULT_GROUPS_CLAIM;
   const Form = definition.adminForm;
@@ -84,7 +84,7 @@ export default async function AdminConnectorPage({
 
       <CoachTarget name="admin-connector-form">
         {Form ? (
-          <Form slug={slug} tenantId={tenantRef.id} origin={origin} />
+          <Form slug={slug} origin={origin} />
         ) : (
           <section className="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
             Nothing to configure: Renkei provides this connector without credentials.

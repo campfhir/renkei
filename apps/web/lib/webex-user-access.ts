@@ -22,7 +22,6 @@ export interface WebexUserAccess {
 }
 
 export async function resolveWebexUserAccess(
-  tenantId: string,
   subject: string
 ): Promise<WebexUserAccess | null> {
   const described = await delegateGrants().describe({ provider: WEBEX_USER, subject });
@@ -40,7 +39,6 @@ export async function resolveWebexUserAccess(
  * their verified email, not their subject; identities is the bridge.
  */
 export async function resolveWebexUserAccessByEmail(
-  tenantId: string,
   email: string
 ): Promise<WebexUserAccess | null> {
   const dbResult = getDatabase();
@@ -51,5 +49,5 @@ export async function resolveWebexUserAccessByEmail(
     .where('email', '=', email.toLowerCase())
     .executeTakeFirst();
   if (!row) return null;
-  return resolveWebexUserAccess(tenantId, row.subject);
+  return resolveWebexUserAccess(row.subject);
 }

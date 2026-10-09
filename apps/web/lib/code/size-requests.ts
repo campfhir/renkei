@@ -93,13 +93,12 @@ export function validReason(value: unknown): string | null {
 /** This project's newest request, whatever its state, for its page. */
 export async function latestSizeRequest(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string
 ): Promise<SizeRequestView | null> {
   const row = await db
     .selectFrom('sandbox_size_requests')
     .selectAll()
-    .where('subject', '=', codeProjectTarget(tenantId, projectId).subject)
+    .where('subject', '=', codeProjectTarget(projectId).subject)
     .orderBy('created_at', 'desc')
     .limit(1)
     .executeTakeFirst();
@@ -120,7 +119,7 @@ export async function createSizeRequest(
   const row = await db
     .insertInto('sandbox_size_requests')
     .values({
-      subject: codeProjectTarget(input.tenantId, input.projectId).subject,
+      subject: codeProjectTarget(input.projectId).subject,
       requested_by: input.requestedBy,
       requested_bytes: input.requestedBytes,
       reason: input.reason,
@@ -136,7 +135,6 @@ export async function createSizeRequest(
 /** The org's requests, pending first then newest, for the admin page. */
 export async function listSizeRequests(
   db: Kysely<DB>,
-  tenantId: string,
   limit = 100
 ): Promise<SizeRequestView[]> {
   const rows = await db

@@ -19,13 +19,13 @@ export default async function AdminRunDetailPage({
   params: Promise<{ slug: string; agentId: string; runId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, agentId, runId } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const run = await getRunForAdmin(dbResult.val, tenant.id, agentId, runId);
+  const run = await getRunForAdmin(dbResult.val, agentId, runId);
   if (!run) notFound();
   const agentRow = await dbResult.val
     .selectFrom('agents')

@@ -26,7 +26,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -36,7 +36,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(tenantRef.id, MISTRAL_OCR_CONNECTOR, keyResult.val);
+  const configResult = await getConnectorConfig(MISTRAL_OCR_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
@@ -57,7 +57,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -80,7 +80,7 @@ export async function PUT(
   // Secrets survive settings-only saves: setConnectorConfig replaces secrets
   // wholesale, so a blank/omitted secret is merged with the stored one here.
   // A key is required only when none is stored yet.
-  const existing = await getConnectorConfig(tenantRef.id, MISTRAL_OCR_CONNECTOR, keyResult.val);
+  const existing = await getConnectorConfig(MISTRAL_OCR_CONNECTOR, keyResult.val);
   const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
   const mergedApiKey = typeof apiKey === 'string' && apiKey ? apiKey : storedSecrets.apiKey;
   if (!mergedApiKey) {
@@ -88,7 +88,6 @@ export async function PUT(
   }
 
   const writeResult = await setConnectorConfig(
-    tenantRef.id,
     MISTRAL_OCR_CONNECTOR,
     {
       enabled,
@@ -104,7 +103,7 @@ export async function PUT(
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 
-  invalidateConnectorConfigCache(tenantRef.id, MISTRAL_OCR_CONNECTOR);
+  invalidateConnectorConfigCache(MISTRAL_OCR_CONNECTOR);
   return NextResponse.json({
     connector: MISTRAL_OCR_CONNECTOR,
     configured: true,

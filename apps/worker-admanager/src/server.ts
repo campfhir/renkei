@@ -83,7 +83,6 @@ export interface AdManagerServerDeps {
     provided: AdManagerCredentials | null
   ) => Promise<Result<ResolvedTarget, ResolveError>>;
   resolveInstance?: (
-    tenantId: string,
     instanceId: string
   ) => Promise<Result<InstanceRow, 'no_instance' | 'store'>>;
 }
@@ -154,7 +153,7 @@ function sendError(response: ServerResponse, type: WorkerErrorType, message?: st
 }
 
 function targetOf(body: Record<string, unknown>): SubjectTarget | null {
-  const tenantId = str(body.tenantId);
+  const tenantId = str();
   const instanceId = str(body.instanceId);
   const subject = str(body.subject);
   if (!tenantId || !instanceId || !subject) return null;
@@ -221,7 +220,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       resolveTarget(deps.db, target, provided));
   const resolveOne =
     deps.resolveInstance ??
-    ((tenantId: string, instanceId: string) => resolveInstance(deps.db, tenantId, instanceId));
+    ((instanceId: string) => resolveInstance(deps.db, instanceId));
 
   /**
    * One forwarded request. `/api/v2/*` (and everything else that isn't
@@ -330,7 +329,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       // crosses the authenticated seam once, is re-validated here at the
       // trust boundary, and is tried against the STORED instance before
       // the web app seals and saves it.
-      const tenantId = str(body.tenantId);
+      const tenantId = str();
       const instanceId = str(body.instanceId);
       const credentials: AdManagerCredentials | null = parseAdManagerCredentials(body.credentials);
       if (!tenantId || !instanceId || !credentials) {
@@ -340,7 +339,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
           'tenantId, instanceId and credentials are required'
         );
       }
-      const instance = await resolveOne(tenantId, instanceId);
+      const instance = await resolveOne(instanceId);
       if (!instance.ok) return sendError(response, instance.err.type);
 
       const answer = await forward(
@@ -381,7 +380,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       // is listening and demanding a token. The unsaved form wins over
       // the stored row, so an operator tests what they are ABOUT to
       // save.
-      const tenantId = str(body.tenantId);
+      const tenantId = str();
       if (!tenantId) return sendError(response, 'bad_request', 'tenantId is required');
       let instance: InstanceRow;
       const unsaved = isRecord(body.unsaved) ? body.unsaved : null;
@@ -417,7 +416,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
         const instanceId = str(body.instanceId);
         if (!instanceId)
           return sendError(response, 'bad_request', 'instanceId or unsaved is required');
-        const stored = await resolveOne(tenantId, instanceId);
+        const stored = await resolveOne(instanceId);
         if (!stored.ok) return sendError(response, stored.err.type);
         instance = stored.val;
       }

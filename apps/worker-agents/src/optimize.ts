@@ -40,7 +40,6 @@ function payloadOf(value: unknown): OptimizeJobPayload | null {
  */
 async function ownerOf(
   db: Kysely<DB>,
-  tenantId: string,
   optimizationId: string
 ): Promise<{ subject: string; agentId: string } | null> {
   const row = await db
@@ -70,7 +69,7 @@ export function createOptimizeHandler(deps: {
     const payload = payloadOf(event.payload);
     if (!payload) throw new Error('optimize job payload missing optimizationId');
 
-    const owner = await ownerOf(deps.db, event.tenant_id, payload.optimizationId);
+    const owner = await ownerOf(deps.db, payload.optimizationId);
     if (!owner) {
       logger.debug('optimization {optimizationId} no longer exists; dropping the job', {
         component: 'worker-agents/optimize',

@@ -642,7 +642,7 @@ describe('fileshare-file', () => {
 
     expect(outcome.ok).toBe(true);
     expect(fsWriteFile).toHaveBeenCalledWith(
-      { tenantId: 'tenant-1', shareId: 'share-1', subject: 'subject-1' },
+      { shareId: 'share-1', subject: 'subject-1' },
       '/reports/report.pdf',
       expect.any(Uint8Array)
     );

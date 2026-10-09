@@ -41,7 +41,6 @@ function ownedBy(ownerSubject: string | null) {
 
 export async function getImageTotals(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null
@@ -67,7 +66,6 @@ export async function getImageTotals(
 /** Everyone who had an image drawn in the span; unranked. */
 export async function getImageUsers(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string
 ): Promise<ImageUserRow[]> {

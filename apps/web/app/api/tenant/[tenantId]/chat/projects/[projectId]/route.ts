@@ -24,28 +24,28 @@ import { loadProjectView } from '@/lib/chat/project-view';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
+  const access = await resolveProjectAccess(db, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
-  const view = await loadProjectView(db, tenantId, session.subject, projectId, access);
+  const view = await loadProjectView(db, session.subject, projectId, access);
   if (!view) return jsonError(404, 'not-found', 'No such project');
   return NextResponse.json(view);
 }
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
+  const access = await resolveProjectAccess(db, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   if (access.role === 'viewer')
     return jsonError(403, 'read-only', 'Only editors can change this project.');
@@ -66,20 +66,20 @@ export async function PATCH(
     if (!parsed) return jsonError(400, 'invalid', 'Invalid tool configuration');
     patch.toolConfig = parsed;
   }
-  const updated = await updateProject(db, tenantId, projectId, patch, access.cipher);
+  const updated = await updateProject(db, projectId, patch, access.cipher);
   if (!updated) return jsonError(404, 'not-found', 'No such project');
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const deleted = await deleteProject(db, tenantId, session.subject, projectId);
+  const deleted = await deleteProject(db, session.subject, projectId);
   if (!deleted) return jsonError(404, 'not-found', 'No such project');
   return NextResponse.json({ ok: true });
 }

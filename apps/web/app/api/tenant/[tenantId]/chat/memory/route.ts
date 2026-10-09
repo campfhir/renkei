@@ -19,12 +19,12 @@ import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const memory = await readUserMemory(db, tenantId, session.subject, { maxEntries: 300 });
+  const memory = await readUserMemory(db, session.subject, { maxEntries: 300 });
   return NextResponse.json({
     summary: memory.summary,
     entries: memory.entries.map((entry) => ({
@@ -38,16 +38,16 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);
   const content = typeof body.content === 'string' ? body.content.trim() : '';
   if (!content) return jsonError(400, 'invalid', 'Write something first');
-  const settings = await getOrgSettings(tenantId);
-  const redactor = settings.ok ? createOutboundRedactor(tenantId, settings.val) : null;
+  const settings = await getOrgSettings();
+  const redactor = settings.ok ? createOutboundRedactor(settings.val) : null;
   const id = await appendUserMemory(db, {
     ownerSubject: session.subject,
     content: redactor ? redactor.apply(content).text : content,
@@ -59,9 +59,9 @@ export async function POST(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);
@@ -69,8 +69,8 @@ export async function PATCH(
   const content = typeof body.content === 'string' ? body.content.trim() : '';
   if (!id) return jsonError(400, 'invalid', 'Missing id');
   if (!content) return jsonError(400, 'invalid', 'Write something first');
-  const settings = await getOrgSettings(tenantId);
-  const redactor = settings.ok ? createOutboundRedactor(tenantId, settings.val) : null;
+  const settings = await getOrgSettings();
+  const redactor = settings.ok ? createOutboundRedactor(settings.val) : null;
   const updated = await editUserMemory(
     db,
     session.subject,
@@ -83,9 +83,9 @@ export async function PATCH(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);

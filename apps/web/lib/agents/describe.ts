@@ -275,7 +275,6 @@ export function parseAgentReviewReply(
  */
 export async function generateAgentDescription(
   db: Kysely<DB>,
-  tenantId: string,
   agent: {
     id: string;
     name: string;
@@ -291,11 +290,11 @@ export async function generateAgentDescription(
       agentId: agent.id,
       reason,
     });
-    await saveDescription(db, tenantId, agent.id, { status: 'failed' });
+    await saveDescription(db, agent.id, { status: 'failed' });
     return { description: null, reviewNotes: [] };
   };
 
-  const llmResult = await resolveAgentLlm(db, tenantId, agent.llmModelId);
+  const llmResult = await resolveAgentLlm(db, agent.llmModelId);
   if (!llmResult.ok) return failed(llmResult.err.type);
   const llm = llmResult.val;
 
@@ -356,7 +355,7 @@ export async function generateAgentDescription(
     const parsed = parseAgentReviewReply(text);
     if (!parsed) return failed('unparseable reply');
 
-    await saveDescription(db, tenantId, agent.id, {
+    await saveDescription(db, agent.id, {
       status: 'ok',
       description: parsed.summary,
       reviewNotes: parsed.concerns,

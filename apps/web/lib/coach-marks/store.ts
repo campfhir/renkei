@@ -75,7 +75,6 @@ const COLUMNS = [
 /** Every tour this person has a row for. Never throws: a failure reads as nothing seen. */
 export async function listCoachMarkProgress(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<CoachMarkProgressView[]> {
   const result = await wrapAsync(
@@ -106,7 +105,6 @@ export async function listCoachMarkProgress(
  */
 export async function recordCoachMarkEvent(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   record: CoachMarkRecord
 ): Promise<Result<CoachMarkProgressView, 'DB_ERROR'>> {
@@ -172,8 +170,7 @@ export interface CoachMarkPersonReport {
  * most recent activity first, so the people currently exploring lead.
  */
 export async function listCoachMarkReport(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<CoachMarkPersonReport[]> {
   const result = await wrapAsync(
     () =>

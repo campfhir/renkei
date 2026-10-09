@@ -337,7 +337,7 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
   };
 
   const purger: QueuePurger = {
-    async discardPending(tenantId, type, match) {
+    async discardPending(type, match) {
       const dbResult = getDatabase();
       if (!dbResult.ok) return err('QUEUE_ERROR' as const, { message: 'database unavailable' });
       if (match.length === 0) {

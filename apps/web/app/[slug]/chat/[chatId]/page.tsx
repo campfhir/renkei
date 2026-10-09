@@ -21,28 +21,27 @@ export default async function ChatPage({
   params: Promise<{ slug: string; chatId: string }>;
 }) {
   const { slug, chatId } = await params;
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/chat/${chatId}`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/chat/${chatId}`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
 
-  const access = await resolveChatAccess(db, tenant.id, session.subject, chatId);
+  const access = await resolveChatAccess(db, session.subject, chatId);
   if (!access) notFound();
   const [view, models, uploadsEnabled, voice, orgSettings] = await Promise.all([
-    loadChatView(db, tenant.id, access, session.subject),
-    listChatModels(db, tenant.id),
-    tenantBlobStoreConfigured(tenant.id),
+    loadChatView(db, access, session.subject),
+    listChatModels(db),
+    tenantBlobStoreConfigured(),
     // Null when the org has no voice service: the thread then shows
     // nothing about voice at all.
-    loadVoiceAvailability(tenant.id, session.subject),
-    getOrgSettings(tenant.id),
+    loadVoiceAvailability(session.subject),
+    getOrgSettings(),
   ]);
   return (
     <ChatThread
       key={view.chat.id}
       slug={slug}
-      tenantId={tenant.id}
       subject={session.subject}
       initialChat={view.chat}
       initialMessages={view.messages}

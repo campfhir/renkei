@@ -106,7 +106,7 @@ export class GitTickets {
 
   /** `grant/git-ticket` */
   async issue(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
-    const tenantId = str(body.tenantId);
+    const tenantId = str();
     const provider = str(body.provider);
     const subject = str(body.subject);
     const write = body.write === true;
@@ -121,7 +121,7 @@ export class GitTickets {
     }
     // The grant must exist and open now, so a missing connection fails at
     // the ask and not minutes later inside git's output.
-    const access = await this.grants.accessFor(tenantId, provider, { subject });
+    const access = await this.grants.accessFor(provider, { subject });
     if (!access.ok) {
       return sendJson(response, access.status, { error: { type: access.error } });
     }
@@ -187,7 +187,7 @@ export class GitTickets {
     const writing = verb === 'git-receive-pack' || service === 'git-receive-pack';
     if (writing && !ticket.write) return refuse(response, 403, 'read_only_ticket');
 
-    const access = await this.grants.accessFor(ticket.tenant_id, ticket.provider, {
+    const access = await this.grants.accessFor(ticket.provider, {
       subject: ticket.subject,
     });
     if (!access.ok) return refuse(response, statusForGrantError(access.error), access.error);

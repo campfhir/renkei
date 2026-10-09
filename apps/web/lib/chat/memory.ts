@@ -39,7 +39,6 @@ function clip(text: string, max: number): string {
 
 export async function readProjectMemory(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string,
   cipher: ContentCipher,
   options: { maxEntries?: number } = {}
@@ -129,7 +128,6 @@ export async function appendProjectMemory(
 
 export async function forgetProjectMemory(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string,
   target: { kind: 'all' } | { kind: 'entries'; ids: string[] }
 ): Promise<number> {

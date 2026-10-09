@@ -20,9 +20,9 @@ import { automationDaysOfBody, sealedDelegationsOf, setAutomationDays } from '@/
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);
@@ -65,7 +65,7 @@ export async function POST(
       details: { instances: automation.length, days: days ?? null },
     });
   }
-  if (days) await setAutomationDays(db, tenantId, session.subject, days);
-  await resumeRunsNeedingSignIn(db, agentJobsQueue().producer, tenantId, session.subject);
+  if (days) await setAutomationDays(db, session.subject, days);
+  await resumeRunsNeedingSignIn(db, agentJobsQueue().producer, session.subject);
   return NextResponse.json({ ok: true });
 }

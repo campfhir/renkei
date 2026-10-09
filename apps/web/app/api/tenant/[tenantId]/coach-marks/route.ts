@@ -17,23 +17,23 @@ import { listCoachMarkProgress, recordCoachMarkEvent } from '@/lib/coach-marks/s
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
 
-  const progress = await listCoachMarkProgress(dbResult.val, tenantId, session.subject);
+  const progress = await listCoachMarkProgress(dbResult.val, session.subject);
   return NextResponse.json({ progress });
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -45,7 +45,7 @@ export async function POST(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
 
-  const written = await recordCoachMarkEvent(dbResult.val, tenantId, session.subject, record);
+  const written = await recordCoachMarkEvent(dbResult.val, session.subject, record);
   if (!written.ok) return NextResponse.json({ error: 'Could not record' }, { status: 500 });
   return NextResponse.json({ progress: written.val });
 }

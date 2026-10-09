@@ -110,7 +110,6 @@ async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promi
 
 async function seedCard(
   client: Client,
-  tenantId: string,
   itemId: string,
   title: string,
   suggestedAction: unknown
@@ -126,7 +125,6 @@ async function seedCard(
 /** An already-executed card (cards.tsx's ExecutionResult), result-only — no suggested_action. */
 async function seedExecutedCard(
   client: Client,
-  tenantId: string,
   itemId: string,
   title: string,
   result: unknown
@@ -161,7 +159,6 @@ test('a Jira issue call renders as a structured issue card', async ({ page }, te
     // tool still gets, and _confirm shares the exact same args contract.
     await seedCard(
       client,
-      fixture.tenantId,
       itemId,
       'Portfolio Updater — Create the approved issue',
       {
@@ -214,7 +211,7 @@ test('an Outlook send-mail call renders as a structured email card', async ({ pa
     await seedTenant(client, fixture);
     await signIn(page, fixture);
     const itemId = uuidFrom(`actionable-cards-e2e-email-item:${testInfo.project.name}`);
-    await seedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — Send the weekly digest', {
+    await seedCard(client, itemId, 'Portfolio Updater — Send the weekly digest', {
       tool: 'outlook_send_mail',
       args: {
         to: ['scott@example.com', 'dr.jew@example.com'],
@@ -251,7 +248,7 @@ test('a tool outside the dedicated cards still falls back to a JSON-safe arg lis
     await seedTenant(client, fixture);
     await signIn(page, fixture);
     const itemId = uuidFrom(`actionable-cards-e2e-generic-item:${testInfo.project.name}`);
-    await seedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — Deploy the channel', {
+    await seedCard(client, itemId, 'Portfolio Updater — Deploy the channel', {
       tool: 'mirth_deploy_channels',
       args: {
         channelIds: ['channel-a', 'channel-b'],
@@ -288,7 +285,7 @@ test('an executed Jira issue card links out through a new tab, not the PWA webvi
     await seedTenant(client, fixture);
     await signIn(page, fixture);
     const itemId = uuidFrom(`actionable-cards-e2e-executed-item:${testInfo.project.name}`);
-    await seedExecutedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — File the task', {
+    await seedExecutedCard(client, itemId, 'Portfolio Updater — File the task', {
       issueKey: 'OPS-42',
       url: 'https://example.atlassian.net/browse/OPS-42',
     });

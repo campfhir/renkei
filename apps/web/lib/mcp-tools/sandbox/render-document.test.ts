@@ -98,7 +98,7 @@ describe('sandbox_render_document', () => {
       { filename: string; contentType: string; source: string },
       Uint8Array,
     ];
-    expect(target).toEqual({ tenantId: 'tenant-1', subject: 'auth0|alice' });
+    expect(target).toEqual({ subject: 'auth0|alice' });
     expect(meta).toEqual({ filename: 'notes.md', contentType: 'text/markdown', source: 'docgen' });
     expect(Buffer.from(bytes).toString('utf8')).toBe('# Sprint notes\n\nDone.');
     expect(result.content[0]?.text).toMatch(/Staged .*notes\.md/);

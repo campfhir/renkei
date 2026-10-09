@@ -132,15 +132,15 @@ export interface ExecIdentity {
   gid: number;
 }
 
-export function identityFor(target: { tenantId: string; subject: string }): ExecIdentity | null {
+export function identityFor(target: { subject: string }): ExecIdentity | null {
   if (!canIsolateByUid()) return null;
-  const uid = execUidFor(target.tenantId, target.subject);
+  const uid = execUidFor(target.subject);
   return { uid, gid: uid };
 }
 
 /** A fresh storage key for a new checkout — persisted on the row. */
-export function newWorkspaceStorageKey(tenantId: string, subject: string): string {
-  return join(tenantId, subjectSegmentOf(subject), randomUUID());
+export function newWorkspaceStorageKey(subject: string): string {
+  return join(subjectSegmentOf(subject), randomUUID());
 }
 
 export function workspaceDir(storageKey: string): string {

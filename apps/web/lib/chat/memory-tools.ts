@@ -58,7 +58,7 @@ export function memoryTools(): LocalTool[] {
         }
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const id = typeof input.id === 'string' ? input.id : '';
-        const deleted = await forgetProjectMemory(context.db, context.tenantId, context.projectId, {
+        const deleted = await forgetProjectMemory(context.db, context.projectId, {
           kind: 'entries',
           ids: [id],
         });
@@ -78,7 +78,6 @@ export function memoryTools(): LocalTool[] {
         }
         const memory = await readProjectMemory(
           context.db,
-          context.tenantId,
           context.projectId,
           context.projectCipher,
           {

@@ -751,7 +751,7 @@ describe('webex_note_to_self', () => {
     // The ledger knows the bot's message too: it returns through the
     // user's own webhook like any other post Renkei made.
     expect(insertedRows).toEqual([
-      { tenant_id: 'tenant-1', message_id: 'msg-dm', account_id: undefined },
+      { message_id: 'msg-dm', account_id: undefined },
     ]);
   });
 
@@ -1103,11 +1103,11 @@ describe('webex_download_attachments', () => {
     );
     expect(mockWrite).toHaveBeenCalledTimes(2);
     const [target, input, bytes] = mockWrite.mock.calls[0] as [
-      { tenantId: string; subject: string },
+      { subject: string },
       { filename: string; contentType?: string; source?: string },
       Uint8Array,
     ];
-    expect(target).toEqual({ tenantId: 'tenant-1', subject: 'subject-1' });
+    expect(target).toEqual({ subject: 'subject-1' });
     expect(input).toEqual({
       filename: 'spec.pdf',
       contentType: 'application/pdf',

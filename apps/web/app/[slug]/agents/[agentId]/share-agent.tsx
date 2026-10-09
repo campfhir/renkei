@@ -58,7 +58,7 @@ function personLabel(person: { displayName?: string | null; email?: string | nul
  * long, grant; the list below shows who has access now (lapsed grants stay
  * visible, marked, until deleted) and revokes by deleting the entry.
  */
-function PeopleWithAccess({ agentId }: { tenantId: string; agentId: string }) {
+function PeopleWithAccess({ agentId }: { agentId: string }) {
   const [grants, setGrants] = useState<GrantRow[] | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [pickedSubject, setPickedSubject] = useState('');
@@ -279,7 +279,7 @@ export default function ShareAgentButton({
               document — they import it from the agents page and get their own disabled copy,
               running on their connections.
             </p>
-            <PeopleWithAccess tenantId={tenantId} agentId={agentId} />
+            <PeopleWithAccess agentId={agentId} />
           </div>
         </div>
       ) : null}

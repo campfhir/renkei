@@ -291,9 +291,9 @@ export default function VoiceMode({
     // Ask at once in the set language; with the language in question,
     // ask which it was as well, behind that (see Recognition).
     const recognise = (wav: ArrayBuffer): Recognition => ({
-      quick: voiceClient.transcribe(tenantId, wav, { locale, detectLanguage: false }),
+      quick: voiceClient.transcribe(wav, { locale, detectLanguage: false }),
       detection: detectLanguage
-        ? voiceClient.transcribe(tenantId, wav, { locale, detectLanguage: true })
+        ? voiceClient.transcribe(wav, { locale, detectLanguage: true })
         : null,
     });
     const instance = new UtteranceRecorder({
@@ -323,7 +323,7 @@ export default function VoiceMode({
         void (async () => {
           // Words or not is the question, in whichever language: the
           // quick answer is enough.
-          const result = await voiceClient.transcribe(tenantId, wav, {
+          const result = await voiceClient.transcribe(wav, {
             locale,
             detectLanguage: false,
           });

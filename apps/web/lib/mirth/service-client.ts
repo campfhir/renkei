@@ -185,7 +185,6 @@ export interface ProbeResult {
 
 /** The admin form's reachability test, against a stored or unsaved instance. */
 export async function mirthProbe(
-  tenantId: string,
   target:
     | { instanceId: string }
     | {

@@ -1172,7 +1172,7 @@ maybe('agent run engine', () => {
     // new is catching the deadline INSIDE that one attempt, once real time
     // (simulated here by the tool call's delay) carries the clock past it
     // before the attempt's next turn.
-    await setOrgSettings(tenantId, { agentRunTimeoutMinutes: 100 / 60_000 });
+    await setOrgSettings({ agentRunTimeoutMinutes: 100 / 60_000 });
     let completions = 0;
     const llm = stubLlm(() => {
       completions += 1;
@@ -1216,7 +1216,7 @@ maybe('agent run engine', () => {
     } finally {
       // Restore the default so later tests in this file (sharing tenantId)
       // don't inherit a hair-trigger deadline.
-      await setOrgSettings(tenantId, { agentRunTimeoutMinutes: 15 });
+      await setOrgSettings({ agentRunTimeoutMinutes: 15 });
     }
   });
 
@@ -1940,7 +1940,7 @@ maybe('agent run engine', () => {
   });
 
   it('refuses a run that reaches a PHI connector on a model without a recorded BAA, when the org requires one', async () => {
-    await setOrgSettings(tenantId, { phiConnectorsRequireCoveredModel: true });
+    await setOrgSettings({ phiConnectorsRequireCoveredModel: true });
     try {
       const phiStep = singleStep({
         tool: 'mirth_get_message',
@@ -2004,7 +2004,7 @@ maybe('agent run engine', () => {
         .executeTakeFirstOrThrow();
       expect(untouched.status).toBe('succeeded');
     } finally {
-      await setOrgSettings(tenantId, { phiConnectorsRequireCoveredModel: false });
+      await setOrgSettings({ phiConnectorsRequireCoveredModel: false });
     }
   });
 
@@ -3297,7 +3297,7 @@ maybe('agent run engine', () => {
     // to have opted in. The one test that leaves this alone (below) covers
     // the actual default.
     beforeAll(async () => {
-      await setNotificationPrefs(tenantId, subject, {
+      await setNotificationPrefs(subject, {
         ...DEFAULT_NOTIFICATION_PREFS,
         approvalNeeded: { email: true, webex: true },
       });
@@ -3470,7 +3470,7 @@ maybe('agent run engine', () => {
       // The card is never optional — only whether it ALSO pages outside the
       // app is a preference, and it starts off. Reset-then-restore so the
       // rest of this block keeps testing the delivery mechanism itself.
-      await setNotificationPrefs(tenantId, subject, DEFAULT_NOTIFICATION_PREFS);
+      await setNotificationPrefs(subject, DEFAULT_NOTIFICATION_PREFS);
       try {
         const { doc, gateId } = gatedDoc({ approvalTimeoutHours: 4 });
         const { runId } = await seedRun(doc);
@@ -3486,7 +3486,7 @@ maybe('agent run engine', () => {
         expect(card.step_id).toBe(gateId);
         expect(calls).toHaveLength(0);
       } finally {
-        await setNotificationPrefs(tenantId, subject, {
+        await setNotificationPrefs(subject, {
           ...DEFAULT_NOTIFICATION_PREFS,
           approvalNeeded: { email: true, webex: true },
         });
@@ -3942,7 +3942,7 @@ maybe('agent run engine', () => {
    */
   describe('act-approval policy', () => {
     afterEach(async () => {
-      await setOrgSettings(tenantId, { agentActStepsRequireApproval: 'externally_triggered' });
+      await setOrgSettings({ agentActStepsRequireApproval: 'externally_triggered' });
     });
 
     /** One ungated step calling `tool`. */
@@ -4059,7 +4059,7 @@ maybe('agent run engine', () => {
     });
 
     it("a high-risk tool pauses even on a manual run with the policy 'off'", async () => {
-      await setOrgSettings(tenantId, { agentActStepsRequireApproval: 'off' });
+      await setOrgSettings({ agentActStepsRequireApproval: 'off' });
       // jira_delete_issue rather than outlook_send_mail: the notifier mails
       // the owner about the pause through that very tool, which would make
       // "no call fired" ambiguous here.
@@ -4130,7 +4130,7 @@ maybe('agent run engine', () => {
     // Same reasoning as the needsApproval block above: most of this suite
     // tests the delivery mechanism, which needs opt-in to fire at all.
     beforeAll(async () => {
-      await setNotificationPrefs(tenantId, subject, {
+      await setNotificationPrefs(subject, {
         ...DEFAULT_NOTIFICATION_PREFS,
         questionAsked: { email: true, webex: true },
       });
@@ -4267,7 +4267,7 @@ maybe('agent run engine', () => {
     });
 
     it('delivers nothing by email or WebEx until the owner opts in — the card is still raised', async () => {
-      await setNotificationPrefs(tenantId, subject, DEFAULT_NOTIFICATION_PREFS);
+      await setNotificationPrefs(subject, DEFAULT_NOTIFICATION_PREFS);
       try {
         const { runId } = await seedAskableRun(true);
         const { mcp, calls } = recordingMcp(['outlook_send_mail', 'webex_note_to_self']);
@@ -4282,7 +4282,7 @@ maybe('agent run engine', () => {
         expect(card.kind).toBe('question');
         expect(calls).toHaveLength(0);
       } finally {
-        await setNotificationPrefs(tenantId, subject, {
+        await setNotificationPrefs(subject, {
           ...DEFAULT_NOTIFICATION_PREFS,
           questionAsked: { email: true, webex: true },
         });

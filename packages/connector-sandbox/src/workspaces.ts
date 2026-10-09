@@ -321,7 +321,7 @@ export const EXEC_UID_SPAN = 1_000_000_000;
  * collision between two callers would merely put them in one uid — the
  * span makes that a rounding error, not a plan.
  */
-export function execUidFor(tenantId: string, subject: string): number {
+export function execUidFor(subject: string): number {
   const digest = createHash('sha256').update(`${tenantId}\n${subject}`).digest();
   // Eight bytes are plenty for a modulus far below 2^53.
   const value = Number(digest.readBigUInt64BE(0) % BigInt(EXEC_UID_SPAN));

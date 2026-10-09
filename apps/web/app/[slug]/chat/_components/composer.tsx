@@ -246,7 +246,7 @@ export default function Composer({
       while (todo.length > 0) {
         const batch = todo.slice(0, OCR_BATCH);
         todo = todo.slice(OCR_BATCH);
-        const results = await chatClient.ocrAttachments(tenantId, chatId, batch);
+        const results = await chatClient.ocrAttachments(chatId, batch);
         const byId = new Map(results.map((result) => [result.id, result.extractStatus]));
         setAttachments((current) =>
           current.map((entry) =>
@@ -269,7 +269,7 @@ export default function Composer({
       const lane = async () => {
         while (next < list.length) {
           const file = list[next++];
-          const result = await chatClient.uploadAttachment(tenantId, { chatId }, file);
+          const result = await chatClient.uploadAttachment({ chatId }, file);
           setUploading((count) => count - 1);
           const attachment = result.data;
           if (result.error || !attachment) {
@@ -318,7 +318,7 @@ export default function Composer({
   const remove = useCallback(
     async (attachment: AttachmentView) => {
       setAttachments((current) => current.filter((entry) => entry.id !== attachment.id));
-      await chatClient.deleteAttachment(tenantId, attachment.id);
+      await chatClient.deleteAttachment(attachment.id);
     },
     [tenantId]
   );
@@ -523,7 +523,6 @@ export default function Composer({
               attachments.map((attachment) => (
                 <AttachmentChip
                   key={attachment.id}
-                  tenantId={tenantId}
                   attachment={attachment}
                   onRemove={() => void remove(attachment)}
                 />
@@ -543,7 +542,6 @@ export default function Composer({
         ) : null}
         {listOpen ? (
           <AttachmentListModal
-            tenantId={tenantId}
             attachments={attachments}
             onRemove={(attachment) => void remove(attachment)}
             onClose={() => setListOpen(false)}
@@ -710,7 +708,6 @@ export default function Composer({
       </p>
       {prompts ? (
         <PromptPicker
-          tenantId={tenantId}
           onClose={() => {
             setPrompts(false);
             textareaRef.current?.focus();

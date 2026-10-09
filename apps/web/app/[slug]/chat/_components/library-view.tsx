@@ -246,7 +246,6 @@ export default function LibraryView({
       ) : null}
       {share ? (
         <ShareModal
-          tenantId={tenantId}
           kind="prompt_library"
           resourceId={library.id}
           title={`Share “${library.name}”`}

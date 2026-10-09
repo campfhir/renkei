@@ -44,7 +44,6 @@ async function main(): Promise<void> {
       .innerJoin('agents as a', 'a.id', 'm.agent_id')
       .select([
         'm.id as id',
-        'm.tenant_id as tenant_id',
         'm.content as content',
         'a.owner_subject as owner',
       ])

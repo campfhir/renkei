@@ -17,12 +17,12 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const templates = await listPipelineTemplates(dbResult.val, tenant.id);
+  const templates = await listPipelineTemplates(dbResult.val);
   return NextResponse.json({ templates });
 }
 
@@ -31,7 +31,7 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const body: unknown = await request.json().catch(() => null);
@@ -39,7 +39,7 @@ export async function POST(
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const created = await createPipelineTemplate(dbResult.val, tenant.id, parsed);
+  const created = await createPipelineTemplate(dbResult.val, parsed);
   if (!created.ok) {
     return NextResponse.json({ error: 'A template with that name exists' }, { status: 409 });
   }

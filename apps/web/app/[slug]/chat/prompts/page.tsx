@@ -12,15 +12,14 @@ export default async function PromptLibrariesPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/chat/prompts`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/chat/prompts`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const libraries = await listAccessibleLibraries(dbResult.val, tenant.id, session.subject);
+  const libraries = await listAccessibleLibraries(dbResult.val, session.subject);
   return (
     <LibrariesIndex
       slug={slug}
-      tenantId={tenant.id}
       libraries={libraries.map(({ library, role }) => ({
         id: library.id,
         name: library.name,

@@ -13,15 +13,15 @@ import { getTurnChannel } from '@/lib/chat/turn-events';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string; turnId: string }> }
+  { params }: { params: Promise<{ chatId: string; turnId: string }> }
 ): Promise<Response> {
   const { chatId, turnId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, tenantId, session.subject, chatId);
+  const chat = await getChatForOwner(db, session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
-  const requested = await requestTurnCancel(db, tenantId, chat.id, turnId);
+  const requested = await requestTurnCancel(db, chat.id, turnId);
   getTurnChannel(turnId)?.requestCancel();
   return NextResponse.json({ ok: true, running: requested });
 }

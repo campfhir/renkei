@@ -35,7 +35,7 @@ import { oauthJiraAdminAuth } from './jira-admin-auth';
 import type { MCPToolContext } from '../common';
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
-  ({ tenantId: 'tenant-1', subject: 'subject-1', ...overrides }) as unknown as MCPToolContext;
+  ({ subject: 'subject-1', ...overrides }) as unknown as MCPToolContext;
 
 const described = (overrides: Record<string, unknown> = {}) => ({
   ok: true,

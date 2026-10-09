@@ -394,7 +394,6 @@ export default function WatchManager({
       {adding && provider === 'sharepoint' && (
         <div className="mt-2 rounded-md border border-gray-200 p-2 dark:border-gray-800">
           <SitePicker
-            tenantId={tenantId}
             busy={busy}
             onPick={(driveId, siteId) => void add(driveId, siteId)}
             onCancel={() => setAdding(false)}

@@ -33,7 +33,7 @@ export default function ThemeForm({
   function choose(mode: ThemeMode) {
     setPrefs((current) => ({ ...current, mode }));
     setStatus('idle');
-    setStoredThemeMode(tenantId, mode);
+    setStoredThemeMode(mode);
     applyThemeMode(mode);
   }
 

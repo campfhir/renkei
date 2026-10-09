@@ -18,9 +18,9 @@ export default async function FilesPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/files`));
+    redirect(signInUrl(`/files`));
   }
 
   return (
@@ -32,7 +32,7 @@ export default async function FilesPage({
         server.
       </p>
       <CoachTarget name="files-browser">
-        <FilesBrowser tenantId={tenant.id} />
+        <FilesBrowser />
       </CoachTarget>
     </div>
   );

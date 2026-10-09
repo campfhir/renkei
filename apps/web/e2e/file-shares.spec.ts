@@ -99,7 +99,7 @@ async function seedTenant(fixture: Fixture): Promise<void> {
     );
     // Enrolled already, so the first-sign-in "your encryption key is ready"
     // dialog does not sit over the form.
-    await enrollForE2E(client, fixture.tenantId, fixture.subject);
+    await enrollForE2E(client, fixture.subject);
   } finally {
     await client.end();
   }

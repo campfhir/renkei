@@ -50,10 +50,9 @@ const EMPTY_SEARCH: LogSearch = { expr: null, levels: [], start: null, end: null
  * read, and produces no session for a tenant the caller has not signed into.
  */
 export async function searchLogs(
-  tenantId: string,
   search: LogSearch = EMPTY_SEARCH
 ): Promise<LogSearchResult> {
-  const session = await getSessionFromCookies(tenantId);
+  const session = await getSessionFromCookies();
   if (!session) {
     return { logs: [], scope: null, error: 'Sign in to view activity', signedOut: true };
   }
@@ -101,7 +100,7 @@ export async function searchLogs(
     db,
     ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
   }).query(
-    buildLogQueryOptions(search.expr, tenantId, accountId ?? undefined, {
+    buildLogQueryOptions(search.expr, accountId ?? undefined, {
       levels: search.levels,
       // Without a start the adapter substitutes yesterday, which is not what an
       // empty date picker says. A cleared range means every record.
@@ -115,7 +114,7 @@ export async function searchLogs(
     return { logs: [], scope, error: result.err.message || 'Failed to query logs' };
   }
 
-  return { logs: await resolveUserNames(db, tenantId, result.val), scope, error: null };
+  return { logs: await resolveUserNames(db, result.val), scope, error: null };
 }
 
 /**
@@ -128,7 +127,6 @@ export async function searchLogs(
  */
 async function resolveUserNames(
   db: NonNullable<ReturnType<typeof getDatabase>['val']>,
-  tenantId: string,
   logs: LogRow[]
 ): Promise<LogRow[]> {
   const subjects = new Set<string>();

@@ -17,10 +17,10 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseImageRulePayload } from '@/lib/code/image-rules';
 
 async function operatorTenant(slug: string): Promise<{ id: string } | NextResponse> {
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (!(await sandboxServicesEnabled(tenant.id))) {
+  if (!(await sandboxServicesEnabled())) {
     return NextResponse.json(
       { error: 'Code project services are not enabled on this deployment', enabled: false },
       { status: 503 }
@@ -36,7 +36,7 @@ export async function GET(
   const { slug } = await params;
   const tenant = await operatorTenant(slug);
   if (tenant instanceof NextResponse) return tenant;
-  const listed = await sbImageRulesList(tenant.id);
+  const listed = await sbImageRulesList();
   if (!listed.ok) {
     const failure = clientFailure(listed.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });
@@ -54,7 +54,7 @@ export async function POST(
   const body: unknown = await request.json().catch(() => null);
   const parsed = parseImageRulePayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
-  const set = await sbImageRuleSet(tenant.id, parsed);
+  const set = await sbImageRuleSet(parsed);
   if (!set.ok) {
     const failure = clientFailure(set.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });

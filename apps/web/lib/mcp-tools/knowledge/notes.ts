@@ -69,7 +69,6 @@ function noteIdOfRefId(refId: string, ownerEmail: string): string {
 
 /** One stored chunk of the note, enough to prove existence and read metadata. */
 async function findNoteChunk(
-  tenantId: string,
   refId: string
 ): Promise<{ metadata: unknown; keywords: unknown } | null | 'DB_ERROR'> {
   const dbResult = getDatabase();
@@ -130,14 +129,13 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       // model call. Omitted stores none, which a reindex may fill later.
       const keywords = Array.isArray(args.keywords) ? keywordList(args.keywords) : null;
 
-      const embedder = await resolveEmbeddingProvider(context.tenantId);
+      const embedder = await resolveEmbeddingProvider();
       if (!embedder) {
         return errText('The knowledge layer is not configured for this organization.');
       }
 
       const noteId = randomUUID();
       const ingested = await ingestObjectChunks(
-        context.tenantId,
         embedder,
         {
           provider: NOTE_KNOWLEDGE_PROVIDER,
@@ -209,7 +207,7 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       }
 
       const refId = noteRefId(userEmail, noteId);
-      const existing = await findNoteChunk(context.tenantId, refId);
+      const existing = await findNoteChunk(refId);
       if (existing === 'DB_ERROR') return errText('Database unavailable.');
       if (!existing) return errText(`No note of yours has id ${noteId}.`);
       const existingMeta: Record<string, unknown> =
@@ -260,7 +258,7 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
         return textResult(title !== undefined ? 'Note title updated.' : 'Note keywords updated.');
       }
 
-      const embedder = await resolveEmbeddingProvider(context.tenantId);
+      const embedder = await resolveEmbeddingProvider();
       if (!embedder) {
         return errText('The knowledge layer is not configured for this organization.');
       }
@@ -268,7 +266,6 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       // (authoredBy/agentId — creation provenance survives edits).
       const { chunk: _chunk, chunkCount: _chunkCount, ...carriedMeta } = existingMeta;
       const ingested = await ingestObjectChunks(
-        context.tenantId,
         embedder,
         {
           provider: NOTE_KNOWLEDGE_PROVIDER,
@@ -312,11 +309,11 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       if (!noteId) return errText('noteId is required.');
 
       const refId = noteRefId(userEmail, noteId);
-      const existing = await findNoteChunk(context.tenantId, refId);
+      const existing = await findNoteChunk(refId);
       if (existing === 'DB_ERROR') return errText('Database unavailable.');
       if (!existing) return errText(`No note of yours has id ${noteId}.`);
 
-      const deleted = await deleteObjectChunks(context.tenantId, NOTE_KNOWLEDGE_PROVIDER, refId);
+      const deleted = await deleteObjectChunks(NOTE_KNOWLEDGE_PROVIDER, refId);
       if (!deleted.ok) return errText('The knowledge store could not be written.');
       return textResult('Note deleted.');
     }

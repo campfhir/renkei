@@ -91,7 +91,7 @@ describe('recordAuditEvent', () => {
   it('swallows a failed write with a warning, never a throw', async () => {
     insertFails = true;
     expect(() =>
-      recordAuditEvent({ tenantId: 'tenant-1', actorSubject: null, action: 'user.signed_in' })
+      recordAuditEvent({ actorSubject: null, action: 'user.signed_in' })
     ).not.toThrow();
     await flush();
     expect(logger.warn).toHaveBeenCalled();
@@ -99,7 +99,7 @@ describe('recordAuditEvent', () => {
 
   it('is a no-op when the database is unavailable', async () => {
     dbAvailable = false;
-    recordAuditEvent({ tenantId: 'tenant-1', actorSubject: null, action: 'user.signed_out' });
+    recordAuditEvent({ actorSubject: null, action: 'user.signed_out' });
     await flush();
     expect(inserted).toHaveLength(0);
   });

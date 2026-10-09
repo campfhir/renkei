@@ -13,14 +13,14 @@ export default async function NewAgentPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/agents/new`));
+    redirect(signInUrl(`/agents/new`));
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const data = await loadBuilderData(dbResult.val, tenant.id, session.subject);
+  const data = await loadBuilderData(dbResult.val, session.subject);
 
   // No width cap here: the builder manages its own — it self-centers while
   // reading and goes two-column (canvas + editor panel) on selection.
@@ -35,7 +35,6 @@ export default async function NewAgentPage({
       </div>
       <AgentBuilder
         slug={slug}
-        tenantId={tenant.id}
         tools={data.tools}
         otherAgents={data.otherAgents}
         calendars={data.calendars}

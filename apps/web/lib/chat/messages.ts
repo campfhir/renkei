@@ -197,7 +197,6 @@ function rowOf(
 
 export async function listMessages(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   cipher: ContentCipher
 ): Promise<StoredMessage[]> {
@@ -213,7 +212,6 @@ export async function listMessages(
 
 export async function listTurnMessages(
   db: Kysely<DB>,
-  tenantId: string,
   turnId: string,
   cipher: ContentCipher
 ): Promise<StoredMessage[]> {
@@ -285,7 +283,6 @@ export async function insertMessage(
  */
 export async function attributeMessagesToSummary(
   db: Kysely<DB> | Transaction<DB>,
-  tenantId: string,
   messageIds: string[],
   summaryId: string
 ): Promise<void> {

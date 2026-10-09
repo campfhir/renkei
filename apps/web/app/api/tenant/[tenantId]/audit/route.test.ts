@@ -48,7 +48,7 @@ function request(query = ''): NextRequest {
 }
 
 function params() {
-  return { params: Promise.resolve({ tenantId: TENANT }) };
+  return { params: Promise.resolve({ }) };
 }
 
 function session(subject: string, roles: string[]) {

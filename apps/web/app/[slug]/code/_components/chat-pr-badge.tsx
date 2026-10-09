@@ -20,7 +20,7 @@ interface ChatPullRequest {
   host: 'github' | 'bitbucket';
 }
 
-export default function ChatPrBadge({ chatId }: { tenantId: string; chatId: string }) {
+export default function ChatPrBadge({ chatId }: { chatId: string }) {
   const [pullRequest, setPullRequest] = useState<ChatPullRequest | null>(null);
 
   useEffect(() => {

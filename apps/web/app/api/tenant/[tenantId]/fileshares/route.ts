@@ -13,15 +13,15 @@ import { getSessionFromRequest } from '@/lib/session';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const shares = await listSharesWithConnection(dbResult.val, tenantId, session.subject);
+  const shares = await listSharesWithConnection(dbResult.val, session.subject);
   if (!shares.ok) {
     return NextResponse.json({ error: 'Could not read the shares' }, { status: 500 });
   }

@@ -44,12 +44,12 @@ const eventsQueue = webhookEventsQueue();
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
   // Throttle, then the credential's shape, then a bounded body — all before
   // any config or database read (lib/webhook-intake.ts).
-  const verdict = checkWebhookLimit('zoom', tenantId, request);
+  const verdict = checkWebhookLimit('zoom', request);
   if (!verdict.allowed) return tooManyRequests(verdict);
   const signature = request.headers.get('x-zm-signature');
   const timestamp = request.headers.get('x-zm-request-timestamp');
@@ -79,14 +79,7 @@ export async function POST(
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
-
-  const tenant = await db
-    .selectFrom('tenants')
-    .select('id')
-    .where('id', '=', tenantId)
-    .executeTakeFirst();
-
-  const configResult = await readConnectorConfigCached(tenantId, ZOOM_CONNECTOR, keyResult.val);
+  const configResult = await readConnectorConfigCached(ZOOM_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Connector configuration unavailable' }, { status: 500 });
   }
@@ -144,7 +137,7 @@ export async function POST(
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });
   }
 
-  logger.debug('Event accepted', { component: 'zoom/webhook', tenantId, type: payload.val.type });
+  logger.debug('Event accepted', { component: 'zoom/webhook', type: payload.val.type });
   return NextResponse.json({ accepted: true });
 }
 

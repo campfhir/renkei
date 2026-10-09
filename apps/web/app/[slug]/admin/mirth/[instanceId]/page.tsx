@@ -18,7 +18,7 @@ export default async function AdminMirthInstancePage({
   params: Promise<{ slug: string; instanceId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, instanceId } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
@@ -31,7 +31,7 @@ export default async function AdminMirthInstancePage({
     );
   }
 
-  const instance = await getInstance(dbResult.val, tenantRef.id, instanceId);
+  const instance = await getInstance(dbResult.val, instanceId);
   if (!instance.ok || !instance.val) notFound();
 
   const summary = instance.val.summary;

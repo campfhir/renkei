@@ -23,7 +23,7 @@ import { MICROSOFT, outlookIndexingOf, OUTLOOK_INDEXING_CATEGORIES } from '@renk
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
 
-async function grantOf(tenantId: string, subject: string) {
+async function grantOf(subject: string) {
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
   const row = await dbResult.val
@@ -42,21 +42,21 @@ function metadataRecord(value: unknown): Record<string, unknown> {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const grant = await grantOf(tenantId, session.subject);
+  const grant = await grantOf(session.subject);
   if (!grant) return NextResponse.json({ error: 'Microsoft is not connected' }, { status: 404 });
   return NextResponse.json({ indexing: outlookIndexingOf(metadataRecord(grant.metadata)) });
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -66,7 +66,7 @@ export async function PUT(
     indexing[category] = requested[category] === true;
   }
 
-  const grant = await grantOf(tenantId, session.subject);
+  const grant = await grantOf(session.subject);
   if (!grant) return NextResponse.json({ error: 'Microsoft is not connected' }, { status: 404 });
 
   const dbResult = getDatabase();

@@ -239,7 +239,6 @@ describe('createGitHubPrPipelineHandler', () => {
     await createGitHubPrPipelineHandler()(workflowRunEvent([42]));
 
     expect(mockInsertChatNote).toHaveBeenCalledWith(
-      TENANT_ID,
       'chat-1',
       expect.stringContaining('#42')
     );

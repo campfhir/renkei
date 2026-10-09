@@ -92,7 +92,7 @@ export default function ArtifactsMenu({
         </div>
       ) : null}
       {chosen ? (
-        <ArtifactModal tenantId={tenantId} artifact={chosen} onClose={() => setChosen(null)} />
+        <ArtifactModal artifact={chosen} onClose={() => setChosen(null)} />
       ) : null}
     </div>
   );

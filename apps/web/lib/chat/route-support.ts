@@ -19,10 +19,9 @@ export function jsonError(status: number, code: string, message: string): NextRe
 }
 
 export async function chatRequestContext(
-  request: NextRequest,
-  tenantId: string
+  request: NextRequest
 ): Promise<{ ok: true; context: ChatRequestContext } | { ok: false; response: NextResponse }> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return { ok: false, response: jsonError(401, 'unauthenticated', 'Not signed in') };
   const dbResult = getDatabase();
   if (!dbResult.ok) {

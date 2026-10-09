@@ -85,13 +85,13 @@ export interface SourceScope {
 export async function loadSourceImage(scope: SourceScope, wanted: string): Promise<SourceLoad> {
   let rows: AttachmentRow[];
   try {
-    rows = await listAttachments(scope.db, scope.tenantId, { chatId: scope.chatId });
+    rows = await listAttachments(scope.db, { chatId: scope.chatId });
   } catch {
     return { ok: false, reason: 'This chat’s files could not be read just now.' };
   }
   const picked = pickSourceImage(rows, wanted);
   if (!picked.ok) return picked;
-  const store = await resolveTenantBlobStore(scope.tenantId);
+  const store = await resolveTenantBlobStore();
   if (!store.ok) return { ok: false, reason: 'The file store is not available.' };
   const object = await store.val.getObject(picked.file.blobKey);
   if (!object.ok) {

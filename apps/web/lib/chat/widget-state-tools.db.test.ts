@@ -187,7 +187,7 @@ maybe('chat_widget_resolve', () => {
 
     // Keyed exactly as the email card keys itself (ui.ts's rememberDone),
     // so chat-view.ts joins it back onto the card as `resolved`.
-    expect(await getWidgetDecision(db, tenantId, `renkei-email:${draftId}`)).toEqual({
+    expect(await getWidgetDecision(db, `renkei-email:${draftId}`)).toEqual({
       icon: 'sent',
       headline: 'Sent manually from Outlook',
       detail: 'To michael@example.org',
@@ -222,7 +222,7 @@ maybe('chat_widget_resolve', () => {
     );
     expect(again.isError).toBe(true);
     expect(text(again)).toContain('already decided: Sent manually from Outlook');
-    expect(await getWidgetDecision(db, tenantId, `renkei-email:${draftId}`)).toMatchObject({
+    expect(await getWidgetDecision(db, `renkei-email:${draftId}`)).toMatchObject({
       icon: 'sent',
       headline: 'Sent manually from Outlook',
     });
@@ -235,7 +235,7 @@ maybe('chat_widget_resolve', () => {
       expect(missing.isError).toBe(true);
       expect(text(missing)).toContain(`No preview card "${widget}" in this chat`);
     }
-    expect(await getWidgetDecision(db, tenantId, `renkei-preview:${otherPreviewId}`)).toBeNull();
+    expect(await getWidgetDecision(db, `renkei-preview:${otherPreviewId}`)).toBeNull();
   });
 
   it('loses to a button click that lands first, and says so', async () => {
@@ -259,7 +259,7 @@ maybe('chat_widget_resolve', () => {
     );
     expect(late.isError).toBe(true);
     expect(text(late)).toContain('already decided: Created issue OPS-7.');
-    expect(await getWidgetDecision(db, tenantId, `renkei-preview:${previewId}`)).toEqual({
+    expect(await getWidgetDecision(db, `renkei-preview:${previewId}`)).toEqual({
       icon: 'sent',
       headline: 'Created issue OPS-7.',
     });
@@ -292,7 +292,7 @@ maybe('chat_widget_resolve', () => {
     );
     expect(cancelled.isError).toBe(false);
     expect(text(cancelled)).toContain('Marked "Vesta sync" as cancelled: Cancelled.');
-    expect(await getWidgetDecision(db, tenantId, `renkei-preview:${freshPreviewId}`)).toEqual({
+    expect(await getWidgetDecision(db, `renkei-preview:${freshPreviewId}`)).toEqual({
       icon: 'cancelled',
       headline: 'Cancelled',
     });

@@ -46,12 +46,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
   // Throttle, then the credential's shape, then a bounded body — all before
   // any config or database read (lib/webhook-intake.ts).
-  const verdict = checkWebhookLimit('github', tenantId, request);
+  const verdict = checkWebhookLimit('github', request);
   if (!verdict.allowed) return tooManyRequests(verdict);
   const signature = request.headers.get('x-hub-signature-256');
   if (!hasSignatureShape(signature, GITHUB_SIGNATURE_SHAPE)) return malformedSignature();
@@ -76,14 +76,7 @@ export async function POST(
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
-
-  const tenant = await db
-    .selectFrom('tenants')
-    .select('id')
-    .where('id', '=', tenantId)
-    .executeTakeFirst();
-
-  const configResult = await readConnectorConfigCached(tenantId, GITHUB_CONNECTOR, keyResult.val);
+  const configResult = await readConnectorConfigCached(GITHUB_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Connector configuration unavailable' }, { status: 500 });
   }
@@ -142,6 +135,6 @@ export async function POST(
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });
   }
 
-  logger.debug('Event accepted', { component: 'github/webhook', tenantId, type: eventType });
+  logger.debug('Event accepted', { component: 'github/webhook', type: eventType });
   return NextResponse.json({ accepted: true });
 }

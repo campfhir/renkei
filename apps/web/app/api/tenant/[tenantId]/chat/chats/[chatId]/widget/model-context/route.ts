@@ -16,13 +16,13 @@ import { recordWidgetModelContext } from '@/lib/chat/widget-tools';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, tenantId, session.subject, chatId);
+  const chat = await getChatForOwner(db, session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
 
   const body = await readJsonBody(request);

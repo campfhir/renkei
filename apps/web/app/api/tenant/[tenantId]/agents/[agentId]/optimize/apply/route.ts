@@ -22,17 +22,17 @@ import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  const access = await resolveAgentAccess(db, session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!access.viewerIsOwner) {
     return NextResponse.json({ error: 'Only the owner can revise this agent.' }, { status: 403 });
@@ -43,7 +43,7 @@ export async function POST(
   const payload: { optimizationId?: unknown } =
     typeof body === 'object' && body !== null ? body : {};
   const optimizationId = typeof payload.optimizationId === 'string' ? payload.optimizationId : '';
-  const optimization = await getOptimization(db, tenantId, session.subject, optimizationId);
+  const optimization = await getOptimization(db, session.subject, optimizationId);
   if (!optimization || optimization.agentId !== agentId) {
     return NextResponse.json({ error: 'No such report' }, { status: 404 });
   }
@@ -99,6 +99,6 @@ export async function POST(
     );
   }
 
-  await markOptimizationApplied(db, tenantId, session.subject, optimizationId, draftId);
+  await markOptimizationApplied(db, session.subject, optimizationId, draftId);
   return NextResponse.json({ draftId, status: 'queued' }, { status: 202 });
 }

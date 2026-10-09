@@ -238,7 +238,7 @@ describe('ordering keys — the horizontal-scaling contract', () => {
 
 describe('source fixation and fair claiming', () => {
   function fromSource(source: string, type: string) {
-    return { tenantId: 'tenant-1', source, type, payload: { n: 1 }, orderingKey: null };
+    return { source, type, payload: { n: 1 }, orderingKey: null };
   }
 
   it('a sources filter fixates the consumer, leaving other sources untouched', async () => {
@@ -325,7 +325,7 @@ describe('discardPending — the other half of a rebuild', () => {
 
   it('leaves another tenant’s work alone', async () => {
     const queue = new InMemoryQueue();
-    await queue.producer.enqueue({ ...ingest('ENG-1', 'ENG', 'old'), tenantId: 't2' });
+    await queue.producer.enqueue({ ...ingest('ENG-1', 'ENG', 'old') });
 
     const discarded = await queue.purger.discardPending('t1', 'ingest.object', [
       { path: ['provider'], value: 'jira' },

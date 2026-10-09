@@ -15,8 +15,8 @@ import { LSP_IDLE_MS } from '@renkei/connector-sandbox';
 import { FrameReader, LspSessions, frame, type OpenSessionInput } from './lsp-sessions';
 
 const FAKE = join(__dirname, 'test-support', 'fake-language-server.mjs');
-const OWNER = { tenantId: 'tenant-1', subject: 'code-project:p1' };
-const OTHER = { tenantId: 'tenant-1', subject: 'code-project:p2' };
+const OWNER = { subject: 'code-project:p1' };
+const OTHER = { subject: 'code-project:p2' };
 
 function fakeSpawn(env: Record<string, string> = {}) {
   return () =>

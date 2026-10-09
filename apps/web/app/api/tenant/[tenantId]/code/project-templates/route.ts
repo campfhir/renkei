@@ -12,10 +12,10 @@ import { listCodeProjectTemplates } from '@/lib/code/project-templates';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const templates = await listCodeProjectTemplates(ready.context.db, tenantId);
+  const templates = await listCodeProjectTemplates(ready.context.db);
   return NextResponse.json({ templates });
 }

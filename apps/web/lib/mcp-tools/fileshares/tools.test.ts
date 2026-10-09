@@ -55,7 +55,7 @@ type Handler = (args: Record<string, unknown>) => Promise<{
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
 const SHARE = { id: SHARE_ID, name: 'Accounting' };
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice', shareId: SHARE_ID };
+const TARGET = { subject: 'auth0|alice', shareId: SHARE_ID };
 
 function contextOf(): MCPToolContext {
   return {
@@ -88,7 +88,7 @@ function authOf(connection: ShareConnection): FileshareAuth {
   return {
     kind: 'user',
     target() {
-      return { tenantId: 'tenant-1', subject: 'auth0|alice' };
+      return { subject: 'auth0|alice' };
     },
     async listConnected() {
       return [{ share: summary(), connection }];

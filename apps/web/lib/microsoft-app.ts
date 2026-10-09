@@ -34,7 +34,6 @@ export interface MicrosoftApp {
 
 /** The tenant's Entra app registration, or null when not (fully) configured. */
 export async function getMicrosoftApp(
-  tenantId: string,
   origin: string
 ): Promise<MicrosoftApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');

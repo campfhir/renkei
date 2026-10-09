@@ -52,9 +52,9 @@ const QUEUED_WORK: Record<string, { type: string; scopePath: string[] }> = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const body = await request.json().catch(() => null);
@@ -81,7 +81,7 @@ export async function POST(
     .executeTakeFirst();
   if (!watch) return NextResponse.json({ error: 'No such watch' }, { status: 404 });
 
-  const purged = await deleteChunksByMetadata(tenantId, provider, metadataKey, scopeKey);
+  const purged = await deleteChunksByMetadata(provider, metadataKey, scopeKey);
   if (!purged.ok) {
     return NextResponse.json({ error: 'Could not clear the indexed content.' }, { status: 500 });
   }
@@ -98,7 +98,7 @@ export async function POST(
   //
   // Discarding costs nothing that is not reproducible: the sweep re-reads the
   // whole scope from the provider anyway, which is the point of the rebuild.
-  const discarded = await embeddingJobsQueue().purger.discardPending(tenantId, queued.type, [
+  const discarded = await embeddingJobsQueue().purger.discardPending(queued.type, [
     { path: ['provider'], value: provider },
     { path: queued.scopePath, value: scopeKey },
   ]);

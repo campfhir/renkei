@@ -23,7 +23,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -40,6 +40,6 @@ export async function GET(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const events = await listPhiAccessEvents(dbResult.val, tenant.id, { subject, limit, before });
+  const events = await listPhiAccessEvents(dbResult.val, { subject, limit, before });
   return NextResponse.json({ events });
 }

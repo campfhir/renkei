@@ -36,7 +36,7 @@ export function createRetentionSweep(db: Kysely<DB>) {
     const tenants = await db.selectFrom('agent_runs').distinct().execute();
 
     for (const { tenant_id: tenantId } of tenants) {
-      const settingsResult = await getOrgSettings(tenantId);
+      const settingsResult = await getOrgSettings();
       if (!settingsResult.ok) continue;
       const days = settingsResult.val.agentRunRetentionDays;
 
@@ -80,7 +80,7 @@ export function createNotificationRetentionSweep(db: Kysely<DB>) {
       .execute();
 
     for (const { tenant_id: tenantId } of tenants) {
-      const settingsResult = await getOrgSettings(tenantId);
+      const settingsResult = await getOrgSettings();
       if (!settingsResult.ok) continue;
       const days = settingsResult.val.agentNotificationRetentionDays;
 
@@ -211,7 +211,6 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
         if (encryptionKeyResult.ok) {
           void sendPush(
             db,
-            agent.tenant_id,
             agent.owner_subject,
             encryptionKeyResult.val,
             { title: headline, body: agent.name, tag: id, refUrl: null, notificationId: id },
@@ -246,7 +245,7 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
  */
 export function createUsageRetentionSweep(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
-    const tenants = await sql<{ tenant_id: string }>`
+    const tenants = await sql<{ }>`
       SELECT tenant_id FROM agent_run_log
       UNION
       SELECT tenant_id FROM llm_calls
@@ -257,7 +256,7 @@ export function createUsageRetentionSweep(db: Kysely<DB>) {
     `.execute(db);
 
     for (const { tenant_id: tenantId } of tenants.rows) {
-      const settingsResult = await getOrgSettings(tenantId);
+      const settingsResult = await getOrgSettings();
       if (!settingsResult.ok) continue;
       const days = settingsResult.val.agentUsageRetentionDays;
 

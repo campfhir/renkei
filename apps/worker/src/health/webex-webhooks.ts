@@ -73,7 +73,7 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
   }
   const db = dbResult.val;
 
-  let grantRows: Array<{ tenant_id: string; provider_account_id: string; metadata: unknown }>;
+  let grantRows: Array<{ provider_account_id: string; metadata: unknown }>;
   try {
     grantRows = await db
       .selectFrom('provider_grants')
@@ -93,16 +93,16 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
   // grant may go unchecked. Settings are cached (60s) per tenant, so this
   // costs one read per tenant per pass, not per grant.
   const dueMsByTenant = new Map<string, number>();
-  const dueMsFor = async (tenantId: string): Promise<number> => {
-    const cached = dueMsByTenant.get(tenantId);
+  const dueMsFor = async (): Promise<number> => {
+    const cached = dueMsByTenant.get();
     if (cached !== undefined) return cached;
     const floorMinutes = MIN_CHECK_DUE_MS / 60_000;
-    const settings = await getOrgSettings(tenantId);
+    const settings = await getOrgSettings();
     const minutes = settings.ok
       ? Math.max(floorMinutes, settings.val.webexWebhookHealthMinutes)
       : floorMinutes;
     const ms = minutes * 60_000;
-    dueMsByTenant.set(tenantId, ms);
+    dueMsByTenant.set(ms);
     return ms;
   };
 
@@ -118,7 +118,7 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       typeof metadata.webhookHealthCheckedAt === 'string'
         ? new Date(metadata.webhookHealthCheckedAt)
         : null;
-    const dueMs = await dueMsFor(row.tenant_id);
+    const dueMs = await dueMsFor();
     if (
       checkedAt &&
       !Number.isNaN(checkedAt.getTime()) &&
@@ -127,7 +127,7 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       continue; // checked recently enough; leave this grant's token quota alone
     }
 
-    const access = await resolveAccess(row.tenant_id, row.provider_account_id);
+    const access = await resolveAccess(row.provider_account_id);
     if (!access) {
       logger.warn('opted-in grant has no usable token; webhook may rot', {
         component: 'webex/webhook-health',
@@ -136,7 +136,7 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     }
 
     const reconciled = await ensureWebexWebhooks(makeClient(access.auth), {
-      targetUrl: webexUserWebhookTargetUrl(baseUrl, row.tenant_id, row.provider_account_id),
+      targetUrl: webexUserWebhookTargetUrl(baseUrl, row.provider_account_id),
       secret,
     });
     // Recorded regardless of outcome — including a 429 — so a failing check

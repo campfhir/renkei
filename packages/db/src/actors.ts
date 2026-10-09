@@ -39,7 +39,6 @@ const cache = new Map<string, CacheEntry>();
  */
 export async function describeActor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string | null | undefined
 ): Promise<Actor> {
   if (!subject) return { subject: '(none)', displayName: '(none)' };
@@ -72,7 +71,6 @@ export async function describeActor(
  */
 export async function describeAccountActor(
   db: Kysely<DB>,
-  tenantId: string,
   accountId: string | null | undefined
 ): Promise<Actor> {
   if (!accountId) return { subject: '(none)', displayName: '(none)' };
@@ -91,7 +89,7 @@ export async function describeAccountActor(
       .executeTakeFirst();
     if (grant?.subject) {
       subject = grant.subject;
-      const resolved = await describeActor(db, tenantId, grant.subject);
+      const resolved = await describeActor(db, grant.subject);
       displayName = resolved.displayName;
     } else if (grant?.display_name) {
       displayName = grant.display_name;

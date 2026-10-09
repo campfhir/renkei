@@ -109,7 +109,7 @@ maybe('token usage by model and by step', () => {
   });
 
   it('splits the whole org by model, chat and optimizer spend included', async () => {
-    const rows = await getTokenUsageByModel(db, tenantId, null);
+    const rows = await getTokenUsageByModel(db, null);
     expect(
       rows.map((row) => [
         row.provider,
@@ -127,17 +127,17 @@ maybe('token usage by model and by step', () => {
   });
 
   it('narrows to one agent, leaving the chat out', async () => {
-    const rows = await getTokenUsageByModel(db, tenantId, agentId);
+    const rows = await getTokenUsageByModel(db, agentId);
     expect(rows.map((row) => [row.model, row.input.allTime])).toEqual([
       ['claude-big', 1_200],
       ['gpt-small', 1_000],
       [null, 7],
     ]);
-    expect(await getTokenUsageByModel(db, tenantId, [])).toEqual([]);
+    expect(await getTokenUsageByModel(db, [])).toEqual([]);
   });
 
   it('splits one agent by step and model, named from its definition', async () => {
-    const rows = labelStepUsage(steps, await getAgentTokenUsageByStep(db, tenantId, agentId));
+    const rows = labelStepUsage(steps, await getAgentTokenUsageByStep(db, agentId));
     expect(
       rows.map((row) => [
         row.stepName,
@@ -156,7 +156,7 @@ maybe('token usage by model and by step', () => {
   });
   it('totals one run at a time for a listing, absent when the ledger has nothing', async () => {
     const other = randomUUID();
-    const byRun = await getTokenUsageByRun(db, tenantId, [runId, other]);
+    const byRun = await getTokenUsageByRun(db, [runId, other]);
     expect(byRun[runId]).toEqual({
       input: 1_207,
       output: 33,
@@ -165,11 +165,11 @@ maybe('token usage by model and by step', () => {
       calls: 3,
     });
     expect(byRun[other]).toBeUndefined();
-    expect(await getTokenUsageByRun(db, tenantId, [])).toEqual({});
+    expect(await getTokenUsageByRun(db, [])).toEqual({});
   });
 
   it('splits one run by step and model, named from the steps it ran with', async () => {
-    const rows = labelStepUsage(steps, await getRunTokenUsage(db, tenantId, runId));
+    const rows = labelStepUsage(steps, await getRunTokenUsage(db, runId));
     expect(
       rows.map((row) => [
         row.stepNumber,
@@ -185,6 +185,6 @@ maybe('token usage by model and by step', () => {
       [1, 'Read the inbox', 'claude-big', 1_200, 30, 900, 40, 2],
       [1, 'Read the inbox', null, 7, 3, 0, 0, 1],
     ]);
-    expect(await getRunTokenUsage(db, tenantId, randomUUID())).toEqual([]);
+    expect(await getRunTokenUsage(db, randomUUID())).toEqual([]);
   });
 });

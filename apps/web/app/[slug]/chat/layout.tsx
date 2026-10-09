@@ -20,8 +20,8 @@ export default async function ChatLayout({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/chat`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/chat`));
   return (
     <ChatFrame>
       <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white dark:bg-gray-950">

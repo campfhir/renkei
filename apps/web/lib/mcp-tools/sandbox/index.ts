@@ -118,7 +118,7 @@ export async function registerSandboxTools(
   // Which of the worker's features this organization gets: its own
   // settings (admin → Settings → Sandbox) and what the worker reports it
   // can do, resolved once per catalog (@renkei/sandbox-client).
-  const features = await sandboxFeatures(context.tenantId);
+  const features = await sandboxFeatures();
   // The browser verbs register only where the worker runs one — see ./browser.ts.
   if (features.browser) registerSandboxBrowserTools(server, context);
   // Likewise the chart renderer — see ./charts.ts.

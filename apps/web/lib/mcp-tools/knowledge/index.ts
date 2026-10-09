@@ -68,7 +68,6 @@ export const KNOWLEDGE_CONNECTOR = 'knowledge';
  * sets built separately would drift the moment a connector is added.
  */
 export async function buildKnowledgeVerifiers(
-  tenantId: string
 ): Promise<ReadonlyMap<string, AccessVerifier>> {
   const verifiers = new Map<string, AccessVerifier>();
 
@@ -80,7 +79,7 @@ export async function buildKnowledgeVerifiers(
     WEBEX_CONNECTOR,
     createWebexUserAccessVerifier(async (userEmail) => {
       const { resolveWebexUserAccessByEmail } = await import('@/lib/webex-user-access');
-      const access = await resolveWebexUserAccessByEmail(tenantId, userEmail);
+      const access = await resolveWebexUserAccessByEmail(userEmail);
       // Interactive: this client exists to answer a live search.
       return access ? new WebexClient(access.auth, { lane: 'interactive' }) : null;
     })
@@ -104,12 +103,12 @@ export async function buildKnowledgeVerifiers(
   // silently withheld, which looks identical to "nothing is indexed".
   verifiers.set(
     JIRA_KNOWLEDGE_PROVIDER,
-    createJiraAccessVerifier((userEmail) => atlassianCredentialFor(tenantId, userEmail, ATLASSIAN))
+    createJiraAccessVerifier((userEmail) => atlassianCredentialFor(userEmail, ATLASSIAN))
   );
   verifiers.set(
     CONFLUENCE_KNOWLEDGE_PROVIDER,
     createConfluenceAccessVerifier((userEmail) =>
-      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN_CONFLUENCE)
+      atlassianCredentialFor(userEmail, ATLASSIAN_CONFLUENCE)
     )
   );
 
@@ -119,7 +118,7 @@ export async function buildKnowledgeVerifiers(
   // unconditionally for the same reason as the pair above.
   verifiers.set(
     SHAREPOINT_KNOWLEDGE_PROVIDER,
-    createSharepointAccessVerifier((userEmail) => microsoftCredentialFor(tenantId, userEmail))
+    createSharepointAccessVerifier((userEmail) => microsoftCredentialFor(userEmail))
   );
 
   return verifiers;
@@ -130,7 +129,7 @@ export async function buildKnowledgeVerifiers(
  * EMAIL (the identity spine's key), while grants are keyed by subject — so
  * every credential lookup below hops identities → the delegate's grant.
  */
-async function subjectOf(tenantId: string, userEmail: string): Promise<string | null> {
+async function subjectOf(userEmail: string): Promise<string | null> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
   const row = await dbResult.val
@@ -151,11 +150,10 @@ async function subjectOf(tenantId: string, userEmail: string): Promise<string | 
  * fetcher itself.
  */
 async function atlassianCredentialFor(
-  tenantId: string,
   userEmail: string,
   provider: string
 ): Promise<{ auth: AuthedFetch; cloudId: string } | null> {
-  const subject = await subjectOf(tenantId, userEmail);
+  const subject = await subjectOf(userEmail);
   if (!subject) return null;
 
   const described = await delegateGrants().describe({ provider, subject });
@@ -179,10 +177,9 @@ async function atlassianCredentialFor(
  * 403s and gives one place to see why a user's SharePoint results are empty.
  */
 async function microsoftCredentialFor(
-  tenantId: string,
   userEmail: string
 ): Promise<{ auth: AuthedFetch } | null> {
-  const subject = await subjectOf(tenantId, userEmail);
+  const subject = await subjectOf(userEmail);
   if (!subject) return null;
 
   const described = await delegateGrants().describe({ provider: MICROSOFT, subject });
@@ -416,7 +413,7 @@ export async function registerKnowledgeTools(
         ? args.sources.filter((source): source is string => typeof source === 'string')
         : [];
       const sourceFilters = sourceFiltersFor(sources);
-      const verifiers = await buildKnowledgeVerifiers(context.tenantId);
+      const verifiers = await buildKnowledgeVerifiers();
 
       // No query: answer with the newest indexed items rather than an
       // error. Needs no embedder, so "what's in here?" works even before an
@@ -439,7 +436,7 @@ export async function registerKnowledgeTools(
         return { content: [{ type: 'text' as const, text: renderHits(recent.val, true, null) }] };
       }
 
-      const knowledge = await resolveKnowledge(context.tenantId);
+      const knowledge = await resolveKnowledge();
       if (!knowledge) {
         return {
           content: [

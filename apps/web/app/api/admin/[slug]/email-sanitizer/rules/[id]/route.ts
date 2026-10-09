@@ -17,7 +17,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string; id: string }> }
 ): Promise<NextResponse> {
   const { slug, id } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -57,7 +57,7 @@ export async function PUT(
     typeof body.priority === 'number' && Number.isFinite(body.priority) ? body.priority : 100;
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
-  const result = await upsertClassifierRule(tenantRef.id, {
+  const result = await upsertClassifierRule({
     id,
     category,
     matchType,
@@ -77,12 +77,12 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string; id: string }> }
 ): Promise<NextResponse> {
   const { slug, id } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const result = await deleteClassifierRule(tenantRef.id, id);
+  const result = await deleteClassifierRule(id);
   if (!result.ok) {
     return NextResponse.json({ error: 'Could not delete the rule' }, { status: 500 });
   }

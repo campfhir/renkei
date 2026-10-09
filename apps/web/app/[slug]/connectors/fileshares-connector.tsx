@@ -25,7 +25,7 @@ export default function FilesharesConnector({
         the servers still have the final say.
       </p>
 
-      <FileshareList tenantId={tenantId} shares={shares} />
+      <FileshareList shares={shares} />
     </ConnectorShell>
   );
 }

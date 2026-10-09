@@ -117,7 +117,7 @@ maybe('rewrap under the current key of the ring', () => {
     await db.deleteFrom('connector_configs').execute();
     await db.deleteFrom('llm_model_configs').execute();
     await db.deleteFrom('tenant_oidc').execute();
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });
 

@@ -14,10 +14,10 @@ import { startCompactionTurn } from '@/lib/chat/compaction';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
 

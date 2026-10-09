@@ -74,7 +74,7 @@ export default function ToolPermissionsForm({
 
   async function save() {
     setStatus('saving');
-    const result = await chatClient.setToolPermissions(tenantId, prefs);
+    const result = await chatClient.setToolPermissions(prefs);
     if (result.data) {
       const stored = parseChatToolPermissionPrefs(result.data);
       setPrefs(stored);

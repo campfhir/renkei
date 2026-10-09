@@ -42,12 +42,12 @@ export interface RoomOption {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const access = await resolveWebexUserAccess(tenantId, session.subject);
+  const access = await resolveWebexUserAccess(session.subject);
   if (!access) {
     return NextResponse.json(
       { error: 'Connect WebEx first, then your spaces can be listed here.' },

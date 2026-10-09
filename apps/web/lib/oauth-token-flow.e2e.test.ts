@@ -29,12 +29,12 @@ describe('OAuth token flow (E2E with mock DB)', () => {
       return { id: key };
     }
 
-    async selectOne(table: string, tenantId: string, accountId: string) {
+    async selectOne(table: string, accountId: string) {
       const key = `${table}:${tenantId}:${accountId}`;
       return this.store.get(key) || null;
     }
 
-    async update(table: string, data: Partial<GrantRow>, tenantId: string, accountId: string) {
+    async update(table: string, data: Partial<GrantRow>, accountId: string) {
       const key = `${table}:${tenantId}:${accountId}`;
       const existing = this.store.get(key);
       if (existing) {
@@ -58,7 +58,6 @@ describe('OAuth token flow (E2E with mock DB)', () => {
 
   const simulateSetJiraGrant = async (
     db: MockDatabase,
-    tenantId: string,
     accountId: string,
     encryptionKey: Buffer,
     grant: {
@@ -93,11 +92,10 @@ describe('OAuth token flow (E2E with mock DB)', () => {
 
   const simulateGetJiraGrant = async (
     db: MockDatabase,
-    tenantId: string,
     accountId: string,
     encryptionKey: Buffer
   ) => {
-    const row = await db.selectOne('provider_grants', tenantId, accountId);
+    const row = await db.selectOne('provider_grants', accountId);
     if (!row) return null;
 
     const accessTokenResult = decrypt(row.encrypted_access_token, encryptionKey);
@@ -147,7 +145,7 @@ describe('OAuth token flow (E2E with mock DB)', () => {
 
     // Step 2: Store grant in database (encrypted)
     const expiresAt = new Date(Date.now() + oauthResponse.expires_in * 1000);
-    await simulateSetJiraGrant(db, tenantId, accountId, encryptionKey, {
+    await simulateSetJiraGrant(db, accountId, encryptionKey, {
       accountId,
       atlassianClientId: clientId,
       cloudId: '00000000-0000-4000-8000-0000000000c1',
@@ -159,14 +157,14 @@ describe('OAuth token flow (E2E with mock DB)', () => {
     });
 
     // Step 3: Verify grant was stored
-    const storedGrant = await db.selectOne('provider_grants', tenantId, accountId);
+    const storedGrant = await db.selectOne('provider_grants', accountId);
     if (!storedGrant) throw new Error('grant was not stored');
     expect(storedGrant.encrypted_access_token).not.toBe(oauthResponse.access_token);
     expect(storedGrant.encrypted_refresh_token).not.toBe(oauthResponse.refresh_token);
     console.log('✓ Grant stored with encryption');
 
     // Step 4: Retrieve and decrypt grant
-    const retrievedGrant = await simulateGetJiraGrant(db, tenantId, accountId, encryptionKey);
+    const retrievedGrant = await simulateGetJiraGrant(db, accountId, encryptionKey);
     expect(retrievedGrant).toBeDefined();
     expect(retrievedGrant?.accountId).toBe(accountId);
     expect(retrievedGrant?.accessToken).toBe(oauthResponse.access_token);
@@ -197,7 +195,7 @@ describe('OAuth token flow (E2E with mock DB)', () => {
       expiresAt: new Date().toISOString(),
     };
 
-    await simulateSetJiraGrant(db, tenantId, accountId, encryptionKey, initialGrant);
+    await simulateSetJiraGrant(db, accountId, encryptionKey, initialGrant);
 
     // Simulate token refresh: new tokens from refresh endpoint
     const refreshedAccessToken = 'new_access_token_after_refresh';
@@ -218,7 +216,7 @@ describe('OAuth token flow (E2E with mock DB)', () => {
     );
 
     // Verify new tokens are stored and retrievable
-    const updatedGrant = await simulateGetJiraGrant(db, tenantId, accountId, encryptionKey);
+    const updatedGrant = await simulateGetJiraGrant(db, accountId, encryptionKey);
     expect(updatedGrant?.accessToken).toBe(refreshedAccessToken);
     expect(updatedGrant?.refreshToken).toBe(refreshedRefreshToken);
     console.log('✓ Token refresh and update successful');
@@ -240,7 +238,7 @@ describe('OAuth token flow (E2E with mock DB)', () => {
       expiresAt: new Date().toISOString(),
     };
 
-    await simulateSetJiraGrant(db, tenantId, accountId, encryptionKey, grant);
+    await simulateSetJiraGrant(db, accountId, encryptionKey, grant);
 
     // Try to decrypt with wrong key
     const wrongKeyEnv = generateValidKey();
@@ -248,7 +246,7 @@ describe('OAuth token flow (E2E with mock DB)', () => {
     expect(wrongKeyResult.ok).toBe(true);
     const wrongKey = wrongKeyResult.ok ? wrongKeyResult.val : Buffer.alloc(0);
 
-    const row = await db.selectOne('provider_grants', tenantId, accountId);
+    const row = await db.selectOne('provider_grants', accountId);
     if (!row) throw new Error('grant was not stored');
     const decryptResult = decrypt(row.encrypted_access_token, wrongKey);
 
@@ -271,11 +269,11 @@ describe('OAuth token flow (E2E with mock DB)', () => {
       expiresAt: new Date().toISOString(),
     };
 
-    await simulateSetJiraGrant(db, tenantId, accountId, encryptionKey, grant);
+    await simulateSetJiraGrant(db, accountId, encryptionKey, grant);
 
     // Simulate concurrent retrievals
     const promises = Array.from({ length: 5 }, () =>
-      simulateGetJiraGrant(db, tenantId, accountId, encryptionKey)
+      simulateGetJiraGrant(db, accountId, encryptionKey)
     );
 
     const results = await Promise.all(promises);

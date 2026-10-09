@@ -211,7 +211,6 @@ export async function createChangeRequest(
 /** One of this person's requests, or null — someone else's reads the same as none. */
 export async function getChangeRequest(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   id: string
 ): Promise<ChangeRequest | null> {
@@ -228,7 +227,6 @@ export async function getChangeRequest(
 /** This person's requests, newest first; `pendingOnly` leaves out expired ones too. */
 export async function listChangeRequests(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   options: { limit?: number; pendingOnly?: boolean } = {}
 ): Promise<ChangeRequest[]> {
@@ -249,7 +247,6 @@ export async function listChangeRequests(
 /** How many of this person's requests are waiting for them, for the connector card. */
 export async function countPendingChangeRequests(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<number> {
   const row = await db
@@ -269,7 +266,6 @@ export async function countPendingChangeRequests(
  */
 export async function claimChangeRequest(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   id: string
 ): Promise<boolean> {
@@ -312,7 +308,6 @@ export async function finishChangeRequest(
 /** Withdraw a pending request. False when it is not this person's, or no longer pending. */
 export async function cancelChangeRequest(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   id: string
 ): Promise<boolean> {

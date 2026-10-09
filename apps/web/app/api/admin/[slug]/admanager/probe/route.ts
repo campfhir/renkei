@@ -20,7 +20,7 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -47,7 +47,7 @@ export async function POST(
     };
   }
 
-  const probed = await admanagerProbe(tenant.id, target);
+  const probed = await admanagerProbe(target);
   if (!probed.ok) {
     const failure = admanagerClientFailure(probed.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });

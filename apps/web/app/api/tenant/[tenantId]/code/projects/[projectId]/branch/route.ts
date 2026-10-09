@@ -32,10 +32,10 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
   const origin = await getOrigin(request);
@@ -52,10 +52,10 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
+  const ready = await codeProjectContext(request, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { db, session, project } = ready.context;
   if (!project.workspaceId)
@@ -78,7 +78,7 @@ export async function POST(
     }
   }
 
-  const target = codeProjectTarget(tenantId, projectId);
+  const target = codeProjectTarget(projectId);
   const status = await sbWorkspaceGitStatus(target, { id: project.workspaceId });
   if (!status.ok) {
     const failure = clientFailure(status.err);

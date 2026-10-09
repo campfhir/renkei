@@ -11,10 +11,10 @@ import { createPrompt, PROMPT_BODY_MAX_CHARS, PROMPT_TITLE_MAX_CHARS } from '@/l
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; libraryId: string }> }
+  { params }: { params: Promise<{ libraryId: string }> }
 ): Promise<Response> {
   const { libraryId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(

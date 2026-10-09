@@ -23,15 +23,15 @@ export default async function JiraAdminTemplatesPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/jira-admin/templates`));
+    redirect(signInUrl(`/jira-admin/templates`));
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const gate = await viewGate(dbResult.val, tenant.id, session.subject);
-  const templates = gate.ok ? await listSpaceTemplates(dbResult.val, tenant.id) : [];
+  const gate = await viewGate(dbResult.val, session.subject);
+  const templates = gate.ok ? await listSpaceTemplates(dbResult.val) : [];
 
   return (
     <div className="mx-auto max-w-3xl">

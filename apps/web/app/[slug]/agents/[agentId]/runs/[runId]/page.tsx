@@ -24,19 +24,18 @@ export default async function AgentRunDetailPage({
 }): Promise<React.ReactNode> {
   const { slug, agentId, runId } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/agents/${agentId}/runs/${runId}`));
+    redirect(signInUrl(`/agents/${agentId}/runs/${runId}`));
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const access = await resolveAgentAccess(dbResult.val, tenant.id, session.subject, agentId);
+  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
   if (!access) notFound();
   const agent = access.agent;
   const data = await getOwnerRunPageData(
     dbResult.val,
-    tenant.id,
     access.ownerSubject,
     access.viewerIsOwner,
     agentId,
@@ -47,7 +46,6 @@ export default async function AgentRunDetailPage({
   return (
     <div className="mx-auto max-w-3xl">
       <RunLive
-        tenantId={tenant.id}
         slug={slug}
         agentId={agentId}
         runId={runId}

@@ -66,7 +66,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const settingsResult = await getOrgSettings(tenantId);
+  const settingsResult = await getOrgSettings();
   const settings = settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS;
   if (!settings.enableDcr) {
     return NextResponse.json(
@@ -107,7 +107,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const tenant = await db
       .selectFrom('tenants')
       .select('id')
-      .where('id', '=', tenantId)
+      .where('id', '=')
       .executeTakeFirst();
 
     if (!tenant) {

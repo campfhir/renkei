@@ -55,7 +55,7 @@ async function tools(scopes?: string[]): Promise<Map<string, ToolHandler>> {
   } as unknown as McpServer;
   await registerJiraAdminTools(
     server,
-    { tenantId: 'tenant-1', subject: 'subject-1', jiraAdminScopes: scopes } as MCPToolContext,
+    { subject: 'subject-1', jiraAdminScopes: scopes } as MCPToolContext,
     stubAuth
   );
   return registered;
@@ -116,7 +116,7 @@ describe('registration', () => {
     } as unknown as McpServer;
     await registerJiraAdminTools(
       server,
-      { tenantId: 'tenant-1', subject: 'subject-1' } as MCPToolContext,
+      { subject: 'subject-1' } as MCPToolContext,
       stubAuth
     );
     expect(configs.length).toBe(14);

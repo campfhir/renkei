@@ -14,13 +14,13 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
 
   const query = request.nextUrl.searchParams.get('q') ?? '';
-  const values = await observedIdpGroups(dbResult.val, tenantRef.id, query.slice(0, 200));
+  const values = await observedIdpGroups(dbResult.val, query.slice(0, 200));
   return NextResponse.json({ groups: values.map((value) => ({ key: value, label: value })) });
 }

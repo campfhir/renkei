@@ -75,7 +75,8 @@ interface Resealer {
 async function resealerFor(
   db: Kysely<DB>,
   kind: 'chat' | 'chat_project',
-  resource: { id: string; tenant_id: string; owner_subject: string },
+  resource: { id: string;
+ owner_subject: string },
   contentKey: Buffer
 ): Promise<Resealer | null> {
   const ref = { kind, resourceId: resource.id };
@@ -95,7 +96,6 @@ async function resealerFor(
     const shared = await legacyShareResourceKey(
       db,
       key.val,
-      resource.tenant_id,
       resource.owner_subject,
       grantee.grantee_subject
     );
@@ -152,7 +152,8 @@ async function resealAttachments(
 
 async function rekeyChat(
   db: Kysely<DB>,
-  chat: { id: string; tenant_id: string; owner_subject: string },
+  chat: { id: string;
+ owner_subject: string },
   contentKey: Buffer
 ): Promise<{ rows: number; skipped: number }> {
   const resealer = await resealerFor(db, 'chat', chat, contentKey);
@@ -223,7 +224,8 @@ async function rekeyChat(
 /** A project: its instructions, its memory, and its files under the project's key. */
 async function rekeyProject(
   db: Kysely<DB>,
-  project: { id: string; tenant_id: string; owner_subject: string; instructions: string | null },
+  project: { id: string;
+ owner_subject: string; instructions: string | null },
   contentKey: Buffer
 ): Promise<{ rows: number; skipped: number }> {
   const resealer = await resealerFor(db, 'chat_project', project, contentKey);
@@ -285,7 +287,7 @@ async function rekeyUserMemories(db: Kysely<DB>, contentKey: Buffer): Promise<vo
   for (const row of rows) {
     const text = openLegacy(row.content, contentKey, false);
     if (text === null) continue;
-    const sealed = await legacySealForSubject(db, row.tenant_id, row.owner_subject, text);
+    const sealed = await legacySealForSubject(db, row.owner_subject, text);
     if (!sealed.ok) continue;
     await db
       .updateTable('chat_user_memories')
@@ -354,7 +356,7 @@ async function rekeyCredentials(
       );
       continue;
     }
-    const sealed = await legacySealForSubject(db, row.tenant_id, row.subject, opened.val);
+    const sealed = await legacySealForSubject(db, row.subject, opened.val);
     if (!sealed.ok) {
       console.warn(`  ${table}: ${row.subject} could not be sealed (${sealed.err.type}); skipped`);
       continue;
@@ -400,7 +402,7 @@ async function rekeyProviderGrants(db: Kysely<DB>, legacyKey: Buffer): Promise<v
         broken = true;
         break;
       }
-      const sealed = await legacySealForSubject(db, row.tenant_id, row.subject, opened.val);
+      const sealed = await legacySealForSubject(db, row.subject, opened.val);
       if (!sealed.ok) {
         broken = true;
         break;

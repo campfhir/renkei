@@ -43,7 +43,6 @@ function payloadOf(value: unknown): DraftJobPayload | null {
  */
 async function ownerOf(
   db: Kysely<DB>,
-  tenantId: string,
   draftId: string
 ): Promise<{ subject: string; agentId: string | null } | null> {
   const row = await db
@@ -80,7 +79,7 @@ export function createDraftHandler(deps: {
     const payload = payloadOf(event.payload);
     if (!payload) throw new Error('draft job payload missing draftId');
 
-    const owner = await ownerOf(deps.db, event.tenant_id, payload.draftId);
+    const owner = await ownerOf(deps.db, payload.draftId);
     if (!owner) {
       // The draft was deleted, or its agent was and took it with it. Nothing
       // to do and nothing wrong — retrying would never find it.

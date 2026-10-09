@@ -178,7 +178,6 @@ export function createMailBulkJobHandler(): EventHandler {
   return async (event) => {
     const payload: unknown = event.payload;
     const jobId = isRecord(payload) ? str(payload.jobId) : '';
-    const tenantId = event.tenant_id;
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable for mail bulk job');
     const db = dbResult.val;
@@ -241,7 +240,7 @@ export function createMailBulkJobHandler(): EventHandler {
     };
 
     try {
-      const access = await resolveMicrosoftAccess(tenantId, job.account_id);
+      const access = await resolveMicrosoftAccess(job.account_id);
 
       const selection = isRecord(job.selection) ? job.selection : {};
       const expanded = await expandSelection(access.auth, selection);

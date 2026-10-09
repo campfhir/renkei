@@ -40,7 +40,7 @@ maybe('phi_access_events', () => {
     await sql`ALTER TABLE phi_access_events ENABLE TRIGGER phi_access_events_no_update_delete`.execute(
       db
     );
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });
 
@@ -89,7 +89,7 @@ maybe('phi_access_events', () => {
         db
       )
     );
-    const rows = await listPhiAccessEvents(db, tenantId, { subject: alice });
+    const rows = await listPhiAccessEvents(db, { subject: alice });
     expect(rows).toHaveLength(3);
     expect(rows.map((row) => row.toolName)).toEqual([
       'fileshare_download_file',
@@ -130,10 +130,10 @@ maybe('phi_access_events', () => {
         .where('subject', '=', bob)
         .execute()
     ).rejects.toThrow(/append-only/);
-    const bobs = await listPhiAccessEvents(db, tenantId, { subject: bob });
+    const bobs = await listPhiAccessEvents(db, { subject: bob });
     expect(bobs).toHaveLength(1);
     // The listing is per person: Alice's rows are not Bob's.
-    expect((await listPhiAccessEvents(db, tenantId)).length).toBe(4);
+    expect((await listPhiAccessEvents(db)).length).toBe(4);
   });
 
   it('refuses a connector or action outside the vocabulary', async () => {

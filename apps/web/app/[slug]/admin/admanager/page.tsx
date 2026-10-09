@@ -18,7 +18,7 @@ export default async function AdminAdManagerPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 

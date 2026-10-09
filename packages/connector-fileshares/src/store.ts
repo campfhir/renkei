@@ -111,7 +111,6 @@ export interface ShareWithConnection {
  */
 export async function listSharesWithConnection(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<ShareWithConnection[], StoreError>> {
   const rows = await wrapAsync(
@@ -158,10 +157,9 @@ export async function listSharesWithConnection(
 /** The shares this subject has connected — what the tools and browser list. */
 export async function listConnectedShares(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<ConnectedShare[], StoreError>> {
-  const all = await listSharesWithConnection(db, tenantId, subject);
+  const all = await listSharesWithConnection(db, subject);
   if (!all.ok) return all;
   return ok(
     all.val.flatMap((entry) =>
@@ -173,7 +171,6 @@ export async function listConnectedShares(
 /** One connection's exposure row (no credential), or null if not connected. */
 export async function getConnection(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   subject: string
 ): Promise<Result<ShareConnection | null, StoreError>> {
@@ -195,7 +192,6 @@ export async function getConnection(
 /** The sealed credential for one connection — only the worker decrypts it. */
 export async function readConnectionCiphertext(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   subject: string
 ): Promise<Result<string | null, StoreError>> {
@@ -225,7 +221,6 @@ export interface ConnectionInput {
 /** Store or replace this subject's connection to a share. */
 export async function upsertConnection(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   subject: string,
   input: ConnectionInput
@@ -261,7 +256,6 @@ export async function upsertConnection(
 /** Change only the exposure choice, keeping the stored credential. */
 export async function updateConnectionExposure(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   subject: string,
   toolAccess: ShareConnection['toolAccess'],
@@ -284,7 +278,6 @@ export async function updateConnectionExposure(
 /** Remove this subject's connection (credential included). */
 export async function deleteConnection(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   subject: string
 ): Promise<Result<boolean, StoreError>> {
@@ -317,7 +310,6 @@ export interface ToolExposure {
  */
 export async function resolveToolExposure(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<ToolExposure, StoreError>> {
   const rows = await wrapAsync(
@@ -349,8 +341,7 @@ export async function resolveToolExposure(
 // ---------------------------------------------------------------------------
 
 export async function listShares(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<Result<ShareRow[], StoreError>> {
   const rows = await wrapAsync(
     () =>
@@ -379,7 +370,6 @@ export async function listShares(
 
 export async function getShare(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string
 ): Promise<Result<ShareRow | null, StoreError>> {
   const row = await wrapAsync(
@@ -422,7 +412,6 @@ export interface ShareInput {
 
 export async function createShare(
   db: Kysely<DB>,
-  tenantId: string,
   input: ShareInput
 ): Promise<Result<string, StoreError | 'DUPLICATE_NAME'>> {
   const inserted = await wrapAsync(
@@ -453,7 +442,6 @@ export async function createShare(
 
 export async function updateShare(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   input: ShareInput
 ): Promise<Result<boolean, StoreError | 'DUPLICATE_NAME'>> {
@@ -492,7 +480,6 @@ export async function updateShare(
  */
 export async function recordHostKeyFingerprint(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   fingerprint: string
 ): Promise<Result<boolean, StoreError>> {
@@ -512,7 +499,6 @@ export async function recordHostKeyFingerprint(
 
 export async function deleteShare(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string
 ): Promise<Result<boolean, StoreError>> {
   const deleted = await wrapAsync(

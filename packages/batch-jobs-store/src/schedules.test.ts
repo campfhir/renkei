@@ -51,22 +51,22 @@ maybe('batch_job_schedules store', () => {
     expect(created.next_run_at?.getTime()).toBe(nextRunAt.getTime());
     expect(created.config).toEqual({ shareId: 'share-1', path: '/inbox', grouping: { strategy: 'whole-file' } });
 
-    const fetched = await getSchedule(db, created.id, tenantId);
+    const fetched = await getSchedule(db, created.id);
     expect(fetched?.name).toBe(created.name);
 
-    const listed = await listSchedules(db, tenantId, subject);
+    const listed = await listSchedules(db, subject);
     expect(listed.map((s) => s.id)).toContain(created.id);
 
-    const updated = await updateSchedule(db, created.id, tenantId, {
+    const updated = await updateSchedule(db, created.id, {
       enabled: false,
       name: `${created.name} (renamed)`,
     });
     expect(updated?.enabled).toBe(false);
     expect(updated?.name).toBe(`${created.name} (renamed)`);
 
-    const deleted = await deleteSchedule(db, created.id, tenantId);
+    const deleted = await deleteSchedule(db, created.id);
     expect(deleted).toBe(true);
-    expect(await getSchedule(db, created.id, tenantId)).toBeUndefined();
+    expect(await getSchedule(db, created.id)).toBeUndefined();
   });
 
   it('enforces one name per tenant', async () => {
@@ -108,12 +108,12 @@ maybe('batch_job_schedules store', () => {
         nextRunAt: new Date(),
       });
 
-      expect(await getSchedule(db, created.id, otherTenantId)).toBeUndefined();
-      expect(await updateSchedule(db, created.id, otherTenantId, { enabled: false })).toBeUndefined();
-      expect(await deleteSchedule(db, created.id, otherTenantId)).toBe(false);
+      expect(await getSchedule(db, created.id)).toBeUndefined();
+      expect(await updateSchedule(db, created.id, { enabled: false })).toBeUndefined();
+      expect(await deleteSchedule(db, created.id)).toBe(false);
 
       // Still there under the real tenant.
-      expect(await getSchedule(db, created.id, tenantId)).toBeDefined();
+      expect(await getSchedule(db, created.id)).toBeDefined();
     } finally {
       await sql`DELETE FROM tenants WHERE id = ${otherTenantId}`.execute(db);
     }

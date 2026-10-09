@@ -17,7 +17,7 @@ export interface CalendarOption {
   dates: BlackoutEntry[];
 }
 
-export async function loadCalendarOptions(db: Kysely<DB>, tenantId: string): Promise<CalendarOption[]> {
+export async function loadCalendarOptions(db: Kysely<DB>): Promise<CalendarOption[]> {
   const rows = await db
     .selectFrom('schedule_calendars')
     .select(['id', 'name', 'dates'])

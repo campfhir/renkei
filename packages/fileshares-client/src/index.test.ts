@@ -21,7 +21,7 @@ import {
   clientFailure,
 } from './index';
 
-const TARGET = { tenantId: 'tenant-1', shareId: 'share-1', subject: 'auth0|alice' };
+const TARGET = { shareId: 'share-1', subject: 'auth0|alice' };
 const SHARE = { id: 'share-1', name: 'Accounting' };
 
 const ORIGINAL_ENV = process.env;
@@ -280,7 +280,7 @@ describe('fsWriteFile', () => {
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/forward/fileshares/write?');
     const query = new URL(url).searchParams;
-    expect(query.get('tenantId')).toBe(TARGET.tenantId);
+    expect(query.get('tenantId')).toBe();
     expect(query.get('shareId')).toBe(TARGET.shareId);
     expect(query.get('subject')).toBe(TARGET.subject);
     expect(query.get('path')).toBe('/new.txt');

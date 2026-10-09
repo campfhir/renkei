@@ -265,7 +265,7 @@ describe('test-connection', () => {
 describe('probe', () => {
   it('treats a 401 from the server as reachable, unauthenticated', async () => {
     script = [ok('', { status: 401 })];
-    const response = await post('/v1/probe', { tenantId: 'tenant-1', instanceId: INSTANCE_ID });
+    const response = await post('/v1/probe', { instanceId: INSTANCE_ID });
     expect(response.status).toBe(200);
     const body = (await response.json()) as { ok: boolean; status: number };
     expect(body.ok).toBe(true);
@@ -284,7 +284,7 @@ describe('probe', () => {
 
   it('reports a real failure as ok: false rather than an HTTP error', async () => {
     script = [{ failed: 'unreachable', detail: 'connection refused' }];
-    const response = await post('/v1/probe', { tenantId: 'tenant-1', instanceId: INSTANCE_ID });
+    const response = await post('/v1/probe', { instanceId: INSTANCE_ID });
     expect(response.status).toBe(200);
     const body = (await response.json()) as { ok: boolean; error?: string };
     expect(body.ok).toBe(false);

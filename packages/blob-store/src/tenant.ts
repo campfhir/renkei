@@ -67,11 +67,10 @@ export function blobStoreConfigOfRow(
 
 /** The configuration in force for an org: its own row, else the environment. */
 export async function resolveTenantBlobConfig(
-  tenantId: string
 ): Promise<Result<BlobStoreConfig, 'BLOB_UNCONFIGURED'>> {
   const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (key.ok) {
-    const row = await readConnectorConfigCached(tenantId, BLOB_STORAGE_CONNECTOR, key.val);
+    const row = await readConnectorConfigCached(BLOB_STORAGE_CONNECTOR, key.val);
     if (row.ok && row.val && row.val.enabled) {
       return blobStoreConfigOfRow(row.val.settings, row.val.secrets);
     }
@@ -85,21 +84,20 @@ export function blobStoreFor(config: BlobStoreConfig): BlobStore {
 }
 
 export async function resolveTenantBlobStore(
-  tenantId: string
 ): Promise<Result<BlobStore, 'BLOB_UNCONFIGURED'>> {
-  const config = await resolveTenantBlobConfig(tenantId);
+  const config = await resolveTenantBlobConfig();
   if (!config.ok) return config;
   const fingerprint = JSON.stringify(config.val);
-  const known = stores().get(tenantId);
+  const known = stores().get();
   if (known && known.fingerprint === fingerprint) return ok(known.store);
   const store = blobStoreFor(config.val);
-  stores().set(tenantId, { store, fingerprint });
+  stores().set({ store, fingerprint });
   return ok(store);
 }
 
 /** Whether this org can hold files at all — the "attachments on" switch. */
-export async function tenantBlobStoreConfigured(tenantId: string): Promise<boolean> {
-  return (await resolveTenantBlobConfig(tenantId)).ok;
+export async function tenantBlobStoreConfigured(): Promise<boolean> {
+  return (await resolveTenantBlobConfig()).ok;
 }
 
 /** Test hook. */

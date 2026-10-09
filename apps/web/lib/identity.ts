@@ -100,7 +100,6 @@ export function identityClaimsFromIdToken(
 
 /** Record (or refresh) who a subject is. Upserted on every sign-in. */
 export async function upsertIdentity(
-  tenantId: string,
   subject: string,
   claims: IdentityClaims
 ): Promise<Result<void, 'DB_ERROR'>> {
@@ -134,7 +133,6 @@ export async function upsertIdentity(
 
 /** The recorded email for a subject, or null when none is on record. */
 export async function getIdentityEmail(
-  tenantId: string,
   subject: string
 ): Promise<Result<string | null, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -161,7 +159,6 @@ export async function getIdentityEmail(
  */
 export async function idpGroupsFor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<string[], 'DB_ERROR'>> {
   const rowResult = await wrapAsync(
@@ -184,7 +181,6 @@ export async function idpGroupsFor(
  */
 export async function observedIdpGroups(
   db: Kysely<DB>,
-  tenantId: string,
   query = '',
   limit = 50
 ): Promise<string[]> {
@@ -218,7 +214,7 @@ export interface TenantPerson {
  * signed in has no subject yet and cannot be picked, which is correct: a
  * grant is addressed to a subject.
  */
-export async function listIdentities(tenantId: string): Promise<TenantPerson[]> {
+export async function listIdentities(): Promise<TenantPerson[]> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return [];
 
@@ -245,7 +241,6 @@ export async function listIdentities(tenantId: string): Promise<TenantPerson[]> 
  * Null when the subject has never signed in with claims we could record.
  */
 export async function getIdentityDisplay(
-  tenantId: string,
   subject: string
 ): Promise<IdentityClaims | null> {
   const dbResult = getDatabase();

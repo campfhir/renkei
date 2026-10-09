@@ -265,14 +265,12 @@ export default function MessageList({
             {group.prompts.map((message) => (
               <UserMessage
                 key={message.id}
-                tenantId={tenantId}
                 message={message}
                 actions={promptActions}
               />
             ))}
             {group.replies.length > 0 ? (
               <Reply
-                tenantId={tenantId}
                 chatId={chatId}
                 messages={group.replies}
                 results={results}
@@ -405,7 +403,7 @@ function UserMessage({
         {message.attachments.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {message.attachments.map((attachment) => (
-              <AttachmentChip key={attachment.id} tenantId={tenantId} attachment={attachment} />
+              <AttachmentChip key={attachment.id} attachment={attachment} />
             ))}
           </div>
         ) : null}
@@ -661,7 +659,6 @@ function Reply({
             return (
               <ImageCard
                 key={step.block.id}
-                tenantId={tenantId}
                 call={step.block}
                 result={step.result}
                 state={
@@ -688,7 +685,6 @@ function Reply({
             return (
               <MockupCard
                 key={part.step.block.id}
-                tenantId={tenantId}
                 chatId={chatId}
                 toolUseId={part.step.block.id}
                 request={part.request}
@@ -703,7 +699,6 @@ function Reply({
             return result && resourceUri ? (
               <WidgetCard
                 key={part.step.block.id}
-                tenantId={tenantId}
                 chatId={chatId}
                 resourceUri={resourceUri}
                 toolInput={part.step.block.input}
@@ -728,7 +723,7 @@ function Reply({
       })}
       {segments.length === 0 && streaming ? <Cursor /> : null}
       {inline.map((artifact) => (
-        <ArtifactInline key={artifact.id} tenantId={tenantId} artifact={artifact} />
+        <ArtifactInline key={artifact.id} artifact={artifact} />
       ))}
       {permission ? <PermissionCard prompt={permission} call={askedCall} /> : null}
       {last.status === 'failed' && last.error ? (

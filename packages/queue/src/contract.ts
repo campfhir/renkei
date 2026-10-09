@@ -154,7 +154,6 @@ export interface QueuePurger {
    * compared as JSON text at the given path. Returns how many went.
    */
   discardPending(
-    tenantId: string,
     type: string,
     match: readonly { path: readonly string[]; value: string }[]
   ): Promise<Result<number, 'QUEUE_ERROR'>>;

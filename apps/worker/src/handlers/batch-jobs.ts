@@ -51,7 +51,7 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     if (!dbResult.ok) throw new Error('database unavailable for batch discovery');
     const db = dbResult.val;
 
-    const batch = batchJobId ? await store.getBatch(db, batchJobId, event.tenant_id) : undefined;
+    const batch = batchJobId ? await store.getBatch(db, batchJobId) : undefined;
     if (!batch) {
       logger.warn('batch {batchJobId} not found; dropping discover message', {
         component: COMPONENT,
@@ -121,7 +121,7 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     let created = 0;
     for (const itemPayload of items) {
       const item = await store.insertItem(db, claimed.id, itemPayload);
-      await enqueueItem(producer, event.tenant_id, claimed.id, item.id);
+      await enqueueItem(producer, claimed.id, item.id);
       created += 1;
     }
     // Activation can itself be the terminal transition when every item
@@ -148,7 +148,7 @@ export function createBatchItemHandler(): EventHandler {
     if (!dbResult.ok) throw new Error('database unavailable for batch item');
     const db = dbResult.val;
 
-    const batch = batchJobId ? await store.getBatch(db, batchJobId, event.tenant_id) : undefined;
+    const batch = batchJobId ? await store.getBatch(db, batchJobId) : undefined;
     const item = itemId ? await store.getItem(db, itemId) : undefined;
     if (!batch || !item || item.batch_id !== batch.id) {
       logger.warn('batch item {itemId} not found; dropping message', {

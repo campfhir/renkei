@@ -99,6 +99,6 @@ export function currentTenant(): string {
   return tenantStore.getStore() ?? '';
 }
 
-export function withTenant<T>(tenantId: string, run: () => Promise<T>): Promise<T> {
-  return tenantStore.run(tenantId, run);
+export function withTenant<T>(run: () => Promise<T>): Promise<T> {
+  return tenantStore.run(run);
 }

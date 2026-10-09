@@ -39,7 +39,7 @@ interface GrantRow {
 }
 
 function dbWithGrants(rows: GrantRow[]) {
-  const updates: Array<{ tenant_id: string; provider_account_id: string }> = [];
+  const updates: Array<{ provider_account_id: string }> = [];
   mockGetDatabase.mockReturnValue({
     ok: true,
     val: {
@@ -52,7 +52,7 @@ function dbWithGrants(rows: GrantRow[]) {
       }),
       updateTable: () => ({
         set: () => ({
-          where: (_column: string, _op: string, tenantId: string) => ({
+          where: (_column: string, _op: string) => ({
             where: () => ({
               where: (_c: string, _o: string, accountId: string) => ({
                 execute: async () => {
@@ -202,7 +202,7 @@ describe('sweepWebexWebhooks', () => {
     });
 
     expect(created).toHaveLength(1);
-    expect(updates).toEqual([{ tenant_id: 'tenant-1', provider_account_id: 'acct-1' }]);
+    expect(updates).toEqual([{ provider_account_id: 'acct-1' }]);
   });
 
   it('records the check time even when the API call fails, so a 429 backs off instead of retrying every wake', async () => {
@@ -225,7 +225,7 @@ describe('sweepWebexWebhooks', () => {
       resolveAccess: async () => ({ auth, subject: 'subj-1', personEmail: null }),
     });
 
-    expect(updates).toEqual([{ tenant_id: 'tenant-1', provider_account_id: 'acct-1' }]);
+    expect(updates).toEqual([{ provider_account_id: 'acct-1' }]);
     expect(logger.error).toHaveBeenCalled();
   });
 });

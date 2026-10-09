@@ -71,14 +71,13 @@ export interface FlowFailure {
  * fingerprints, and the page asks the person before a single byte is sealed.
  */
 export async function checkInstanceTrust(
-  tenantId: string,
   status: KeyStatusView
 ): Promise<{ ok: true } | { ok: false; failure: FlowFailure }> {
-  const trust = await loadInstanceTrust(tenantId);
+  const trust = await loadInstanceTrust();
   const keys = status.instances.map((instance) => instance.publicKey);
   if (!trust) {
     // First use on this browser: whatever is here is what it will hold to.
-    await trustInstances(tenantId, keys, status.instanceSigningKey);
+    await trustInstances(keys, status.instanceSigningKey);
     return { ok: true };
   }
   const unknown = status.instances.filter(
@@ -101,7 +100,7 @@ export async function checkInstanceTrust(
         signature
       ))
     ) {
-      await trustInstances(tenantId, keys, status.instanceSigningKey);
+      await trustInstances(keys, status.instanceSigningKey);
       return { ok: true };
     }
   }
@@ -126,7 +125,6 @@ export async function checkInstanceTrust(
 
 /** The person confirmed the unknown instances: remember them (and the signing key that came with them). */
 export async function confirmInstanceTrust(
-  tenantId: string,
   status: KeyStatusView,
   unknown: UnknownInstance[]
 ): Promise<void> {
@@ -196,11 +194,10 @@ export interface EnrollOutcome {
 
 /** First sign-in: see the module comment. */
 export async function enrollInBrowser(
-  tenantId: string,
   status: KeyStatusView,
   options: { passphrase?: string; automationDays?: number } = {}
 ): Promise<{ ok: true; outcome: EnrollOutcome } | { ok: false; failure: FlowFailure }> {
-  const trusted = await checkInstanceTrust(tenantId, status);
+  const trusted = await checkInstanceTrust(status);
   if (!trusted.ok) return trusted;
   const userKey = randomBytes(32);
   const automationKey = randomBytes(32);
@@ -222,18 +219,17 @@ export async function enrollInBrowser(
   }
   const answer = await post(`/api/keys/enroll`, body);
   if (!answer.ok) return answer;
-  await saveUserKey(tenantId, userKey);
+  await saveUserKey(userKey);
   return { ok: true, outcome: { shown: formatUserKey(userKey), userKey } };
 }
 
 /** A later sign-in or a re-seal: fresh delegations from the key this device holds. */
 export async function delegateInBrowser(
-  tenantId: string,
   status: KeyStatusView,
   userKey: Uint8Array,
   options: { automation?: boolean; automationDays?: number } = {}
 ): Promise<{ ok: true } | { ok: false; failure: FlowFailure }> {
-  const trusted = await checkInstanceTrust(tenantId, status);
+  const trusted = await checkInstanceTrust(status);
   if (!trusted.ok) return trusted;
   const automationKey =
     options.automation === false ? null : await automationKeyOf(status, userKey);
@@ -262,11 +258,10 @@ export async function delegateInBrowser(
 
 /** A new user key for this person; the old one is read from this device. */
 export async function rotateInBrowser(
-  tenantId: string,
   status: KeyStatusView,
   options: { automationDays?: number } = {}
 ): Promise<{ ok: true; outcome: EnrollOutcome } | { ok: false; failure: FlowFailure }> {
-  const current = await loadUserKey(tenantId);
+  const current = await loadUserKey();
   if (!current) {
     return {
       ok: false,
@@ -283,7 +278,7 @@ export async function rotateInBrowser(
       failure: { code: 'wrong_key', error: 'The key on this device does not fit your account.' },
     };
   }
-  const trusted = await checkInstanceTrust(tenantId, status);
+  const trusted = await checkInstanceTrust(status);
   if (!trusted.ok) return trusted;
   const next = randomBytes(32);
   const answer = await post(`/api/keys/rotate`, {
@@ -294,13 +289,12 @@ export async function rotateInBrowser(
     automationDays: options.automationDays,
   });
   if (!answer.ok) return answer;
-  await saveUserKey(tenantId, next);
+  await saveUserKey(next);
   return { ok: true, outcome: { shown: formatUserKey(next), userKey: next } };
 }
 
 /** A key typed in (or received): it must open the account's wrappings before this device keeps it. */
 export async function adoptKeyInBrowser(
-  tenantId: string,
   status: KeyStatusView,
   candidate: Uint8Array
 ): Promise<{ ok: true } | { ok: false; failure: FlowFailure }> {
@@ -310,8 +304,8 @@ export async function adoptKeyInBrowser(
       failure: { code: 'wrong_key', error: 'That is not the key for this account.' },
     };
   }
-  await saveUserKey(tenantId, candidate, { acknowledged: true });
-  return delegateInBrowser(tenantId, status, candidate);
+  await saveUserKey(candidate, { acknowledged: true });
+  return delegateInBrowser(status, candidate);
 }
 
 export function parseTypedKey(
@@ -340,7 +334,6 @@ export interface DeviceAsk {
 
 /** This device asks the person's other devices for the key. */
 export async function askOtherDevices(
-  tenantId: string
 ): Promise<{ ok: true; ask: DeviceAsk } | { ok: false; failure: FlowFailure }> {
   const pair = await generateKeyPair();
   const answer = await post(`/api/keys/devices`, {
@@ -356,7 +349,6 @@ export async function askOtherDevices(
 
 /** Poll an ask: the key once another device sealed it to us, 'expired', or null while waiting. */
 export async function pollDeviceAsk(
-  tenantId: string,
   ask: DeviceAsk
 ): Promise<Uint8Array | 'expired' | 'gone' | null> {
   try {
@@ -385,7 +377,6 @@ export async function pollDeviceAsk(
  * wrong code is refused by the server, which counts it.
  */
 export async function approveDeviceAsk(
-  tenantId: string,
   requestId: string,
   typedCode: string,
   userKey: Uint8Array
@@ -426,12 +417,11 @@ export async function approveDeviceAsk(
   return answer.ok ? { ok: true } : answer;
 }
 
-export async function denyDeviceAsk(tenantId: string, requestId: string): Promise<void> {
+export async function denyDeviceAsk(requestId: string): Promise<void> {
   await post(`/api/keys/devices/${requestId}`, {}, 'DELETE');
 }
 
 export async function revokeAutomationInBrowser(
-  tenantId: string
 ): Promise<{ ok: true } | { ok: false; failure: FlowFailure }> {
   const answer = await post(`/api/keys/automation`, {}, 'DELETE');
   return answer.ok ? { ok: true } : answer;
@@ -498,7 +488,7 @@ export function parseKeyStatus(json: unknown): KeyStatusView | null {
   };
 }
 
-export async function fetchKeyStatus(tenantId: string): Promise<KeyStatusView | null> {
+export async function fetchKeyStatus(): Promise<KeyStatusView | null> {
   try {
     const response = await fetch(`/api/keys`, { cache: 'no-store' });
     if (!response.ok) return null;

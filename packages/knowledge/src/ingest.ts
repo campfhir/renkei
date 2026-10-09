@@ -96,18 +96,16 @@ function sourceAtValue(sourceAt: string | null | undefined): Date | null {
 }
 
 export async function ingestChunk(
-  tenantId: string,
   embedder: EmbeddingProvider,
   chunk: KnowledgeChunkInput
 ): Promise<Result<void, 'EMBEDDING_FAILED' | 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {
   const embedded = await embedder.embed([chunk.content], 'passage');
   if (!embedded.ok) return embedded;
-  return upsertChunkRow(tenantId, chunk, embedded.val[0] ?? []);
+  return upsertChunkRow(chunk, embedded.val[0] ?? []);
 }
 
 /** The upsert half of ingestChunk, for callers that already hold the vector. */
 export async function upsertChunkRow(
-  tenantId: string,
   chunk: KnowledgeChunkInput,
   embedding: readonly number[]
 ): Promise<Result<void, 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {

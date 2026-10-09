@@ -16,10 +16,10 @@ import {
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; libraryId: string; promptId: string }> }
+  { params }: { params: Promise<{ libraryId: string; promptId: string }> }
 ): Promise<Response> {
   const { libraryId, promptId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
@@ -46,17 +46,17 @@ export async function PATCH(
   if (typeof body.position === 'number' && Number.isFinite(body.position)) {
     patch.position = Math.max(0, Math.floor(body.position));
   }
-  const updated = await updatePrompt(db, tenantId, libraryId, promptId, patch, session.subject);
+  const updated = await updatePrompt(db, libraryId, promptId, patch, session.subject);
   if (!updated) return jsonError(404, 'not-found', 'No such prompt');
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; libraryId: string; promptId: string }> }
+  { params }: { params: Promise<{ libraryId: string; promptId: string }> }
 ): Promise<Response> {
   const { libraryId, promptId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
@@ -68,7 +68,7 @@ export async function DELETE(
   if (!access) return jsonError(404, 'not-found', 'No such library');
   if (access.role === 'viewer')
     return jsonError(403, 'read-only', 'Only editors can delete prompts.');
-  const deleted = await deletePrompt(db, tenantId, libraryId, promptId);
+  const deleted = await deletePrompt(db, libraryId, promptId);
   if (!deleted) return jsonError(404, 'not-found', 'No such prompt');
   return NextResponse.json({ ok: true });
 }

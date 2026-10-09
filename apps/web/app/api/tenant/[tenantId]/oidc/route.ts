@@ -15,8 +15,8 @@ import type { DB } from '@renkei/db';
  * per-tenant — so an operator of one tenant cannot reconfigure another's
  * identity provider.
  */
-async function requireTenantOperator(tenantId: string): Promise<NextResponse | null> {
-  const access = await checkAccess(tenantId, [ROLE_OPERATOR]);
+async function requireTenantOperator(): Promise<NextResponse | null> {
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -24,7 +24,7 @@ async function requireTenantOperator(tenantId: string): Promise<NextResponse | n
 }
 
 /** Whether this tenant already has an identity provider configured. */
-async function hasOidcConfig(db: Kysely<DB>, tenantId: string): Promise<boolean> {
+async function hasOidcConfig(db: Kysely<DB>): Promise<boolean> {
   const existing = await db
     .selectFrom('tenant_oidc')
     .select('client_id')
@@ -55,7 +55,7 @@ function isOidcConfigRequest(data: unknown): data is OidcConfigRequest {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -68,7 +68,7 @@ export async function POST(
     const tenant = await db
       .selectFrom('tenants')
       .select(['id', 'bootstrap_secret_hash', 'bootstrap_secret_expires_at'])
-      .where('id', '=', tenantId)
+      .where('id', '=')
       .executeTakeFirst();
 
 
@@ -85,9 +85,9 @@ export async function POST(
     // a provider is set an operator can exist, and from then on only they
     // may change it -- which is the part that matters, since whoever
     // controls this record controls who becomes an operator.
-    const configured = await hasOidcConfig(db, tenantId);
+    const configured = await hasOidcConfig(db);
     if (configured) {
-      const denied = await requireTenantOperator(tenantId);
+      const denied = await requireTenantOperator();
       if (denied) {
         logger.warn('Rejected unauthorised attempt to change identity provider', {
           component: 'auth/oidc',
@@ -205,7 +205,7 @@ export async function POST(
 
     if (configured) {
       // Authenticated update.
-      const setResult = await setTenantOidc(tenantId, config);
+      const setResult = await setTenantOidc(config);
       if (!setResult.ok) {
         logger.error('Failed to save OIDC configuration: {error}', {
           component: 'auth/oidc',
@@ -224,7 +224,7 @@ export async function POST(
     // Unauthenticated bootstrap. Insert-only, so a configuration created while
     // the discovery fetch above was in flight is not overwritten by this
     // caller; they are told to authenticate instead.
-    const createResult = await createTenantOidcIfAbsent(tenantId, config);
+    const createResult = await createTenantOidcIfAbsent(config);
     if (!createResult.ok) {
       logger.error('Failed to save OIDC configuration: {error}', {
         component: 'auth/oidc',
@@ -250,7 +250,7 @@ export async function POST(
     await db
       .updateTable('tenants')
       .set({ bootstrap_secret_hash: null, bootstrap_secret_expires_at: null })
-      .where('id', '=', tenantId)
+      .where('id', '=')
       .execute();
 
     // Worth a record of its own: this is the one write to this table that
@@ -276,14 +276,14 @@ export async function POST(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
   // Operator-only, and checked before anything is read. This returns the
   // issuer, client id and the claim mapping that decides who becomes an
   // operator — which is the reconnaissance for an attack on POST, so it is
   // gated even though no secret is in the response.
-  const denied = await requireTenantOperator(tenantId);
+  const denied = await requireTenantOperator();
   if (denied) return denied;
 
   const dbResult = getDatabase();
@@ -297,7 +297,7 @@ export async function GET(
     const tenant = await db
       .selectFrom('tenants')
       .select('id')
-      .where('id', '=', tenantId)
+      .where('id', '=')
       .executeTakeFirst();
 
 

@@ -128,7 +128,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // first sync rather than filing everything as human correspondence
     // until an admin happens to author rules. Best-effort: a failure here
     // must not prevent the tenant from existing.
-    const seeded = await seedDefaultClassifierRules(tenantId);
+    const seeded = await seedDefaultClassifierRules();
     if (!seeded.ok) {
       console.warn(`[Domain] Could not seed classifier rules for ${tenantId}`);
     }

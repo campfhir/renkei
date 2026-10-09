@@ -18,26 +18,24 @@ export default async function CodeProjectActionsPage({
   params: Promise<{ slug: string; projectId: string }>;
 }) {
   const { slug, projectId } = await params;
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/code/${projectId}/actions`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/code/${projectId}/actions`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
   const access = await resolveResourceAccess(
     db,
-    tenant.id,
     session.subject,
     'chat_project',
     projectId
   );
   if (!access) notFound();
-  const project = await getProjectRow(db, tenant.id, projectId);
+  const project = await getProjectRow(db, projectId);
   if (!project || project.kind !== 'code' || !project.repo) notFound();
   if (project.repo.provider !== GITHUB) notFound();
   return (
     <ActionsPage
       slug={slug}
-      tenantId={tenant.id}
       projectId={projectId}
       projectName={project.name}
       repoFullName={project.repo.fullName}

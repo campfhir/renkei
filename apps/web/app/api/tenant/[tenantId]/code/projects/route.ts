@@ -41,23 +41,23 @@ const DOTENV_MAX_CHARS = 200_000;
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const sidebar = await loadChatSidebar(db, tenantId, session.subject);
+  const sidebar = await loadChatSidebar(db, session.subject);
   return NextResponse.json({ projects: sidebar.code.projects });
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  if (!(await sandboxWorkspacesEnabled(tenantId))) {
+  if (!(await sandboxWorkspacesEnabled())) {
     return jsonError(503, 'unavailable', 'Code workspaces are not enabled on this deployment.');
   }
   const body = await readJsonBody(request);
@@ -67,7 +67,7 @@ export async function POST(
     typeof body.provider === 'string' && body.provider === GITHUB ? GITHUB : ATLASSIAN_BITBUCKET;
   // The same bar the Code page shows: a connection on that host that can
   // clone, push and open pull requests, or no project.
-  const access = await codeProjectAccess(db, tenantId, session.subject, provider);
+  const access = await codeProjectAccess(db, session.subject, provider);
   if (!access.ok) {
     return jsonError(
       403,
@@ -106,7 +106,7 @@ export async function POST(
   const chosen = body.toolConfig === undefined ? null : parseToolConfig(body.toolConfig);
   const toolConfig = withRequiredConnectors(
     chosen ??
-      (await getDefaultChatTools(tenantId, session.subject, { fresh: true, kind: 'code' })) ??
+      (await getDefaultChatTools(session.subject, { fresh: true, kind: 'code' })) ??
       defaultToolConfig('code'),
     CODE_PROJECT_CONNECTORS
   );
@@ -123,7 +123,7 @@ export async function POST(
   });
   if (!projectId)
     return jsonError(500, 'content-key', 'The content encryption key is not configured.');
-  const project = await getProjectRow(db, tenantId, projectId);
+  const project = await getProjectRow(db, projectId);
   if (!project) return jsonError(500, 'internal', 'The project could not be read back.');
 
   const problems: string[] = [];

@@ -18,7 +18,7 @@ export default async function AdminFileSharePage({
   params: Promise<{ slug: string; shareId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, shareId } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
@@ -31,7 +31,7 @@ export default async function AdminFileSharePage({
     );
   }
 
-  const share = await getShare(dbResult.val, tenantRef.id, shareId);
+  const share = await getShare(dbResult.val, shareId);
   if (!share.ok || !share.val) notFound();
 
   const summary = share.val.summary;

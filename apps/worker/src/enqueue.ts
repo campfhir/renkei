@@ -112,7 +112,6 @@ function withEncryptedContent(
 }
 
 export async function enqueueKnowledgeEvent(
-  tenantId: string,
   type: KnowledgeEventType,
   payload: Record<string, unknown>,
   orderingKey: string | null = null,

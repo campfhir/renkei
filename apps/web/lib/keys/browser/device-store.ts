@@ -63,12 +63,12 @@ function requestToPromise<T>(request: IDBRequest<T>): Promise<T | null> {
   });
 }
 
-async function read(tenantId: string): Promise<StoredKey | null> {
+async function read(): Promise<StoredKey | null> {
   const db = await openDatabase();
   if (!db) return null;
   try {
     const found = await requestToPromise(
-      db.transaction(STORE, 'readonly').objectStore(STORE).get(tenantId)
+      db.transaction(STORE, 'readonly').objectStore(STORE).get()
     );
     db.close();
     if (
@@ -112,8 +112,8 @@ async function write(record: StoredKey): Promise<boolean> {
 }
 
 /** The user key this device holds for the tenant, or null. */
-export async function loadUserKey(tenantId: string): Promise<Uint8Array<ArrayBuffer> | null> {
-  const record = await read(tenantId);
+export async function loadUserKey(): Promise<Uint8Array<ArrayBuffer> | null> {
+  const record = await read();
   if (!record) return null;
   try {
     const opened = await crypto.subtle.decrypt(
@@ -130,7 +130,6 @@ export async function loadUserKey(tenantId: string): Promise<Uint8Array<ArrayBuf
 
 /** Keep the user key on this device, under a fresh non-extractable device key. */
 export async function saveUserKey(
-  tenantId: string,
   userKey: Uint8Array,
   options: { acknowledged?: boolean } = {}
 ): Promise<boolean> {
@@ -150,22 +149,22 @@ export async function saveUserKey(
 }
 
 /** Has the person confirmed they wrote the key down? */
-export async function keyAcknowledged(tenantId: string): Promise<boolean> {
-  const record = await read(tenantId);
+export async function keyAcknowledged(): Promise<boolean> {
+  const record = await read();
   return record?.acknowledged === true;
 }
 
-export async function acknowledgeKey(tenantId: string): Promise<void> {
-  const record = await read(tenantId);
+export async function acknowledgeKey(): Promise<void> {
+  const record = await read();
   if (record) await write({ ...record, acknowledged: true });
 }
 
 /** Forget this device: the key is gone from here; the person types it or approves from another device next time. */
-export async function forgetUserKey(tenantId: string): Promise<void> {
+export async function forgetUserKey(): Promise<void> {
   const db = await openDatabase();
   if (!db) return;
   try {
-    await requestToPromise(db.transaction(STORE, 'readwrite').objectStore(STORE).delete(tenantId));
+    await requestToPromise(db.transaction(STORE, 'readwrite').objectStore(STORE).delete());
   } catch {
     // Nothing to forget.
   }
@@ -194,12 +193,12 @@ function stringList(value: unknown): string[] {
 }
 
 /** What this browser trusts for the tenant; null when it has never sealed here (first use). */
-export async function loadInstanceTrust(tenantId: string): Promise<InstanceTrust | null> {
+export async function loadInstanceTrust(): Promise<InstanceTrust | null> {
   const db = await openDatabase();
   if (!db) return null;
   try {
     const found = await requestToPromise(
-      db.transaction(TRUST_STORE, 'readonly').objectStore(TRUST_STORE).get(tenantId)
+      db.transaction(TRUST_STORE, 'readonly').objectStore(TRUST_STORE).get()
     );
     db.close();
     if (typeof found !== 'object' || found === null) return null;
@@ -216,11 +215,10 @@ export async function loadInstanceTrust(tenantId: string): Promise<InstanceTrust
 
 /** Remember these instance keys (and signing key) as trusted, beside what already is. */
 export async function trustInstances(
-  tenantId: string,
   instanceKeys: string[],
   signingKey: string | null
 ): Promise<boolean> {
-  const current = (await loadInstanceTrust(tenantId)) ?? { instanceKeys: [], signingKeys: [] };
+  const current = (await loadInstanceTrust()) ?? { instanceKeys: [], signingKeys: [] };
   const next: InstanceTrust = {
     instanceKeys: [...new Set([...current.instanceKeys, ...instanceKeys])],
     signingKeys: signingKey

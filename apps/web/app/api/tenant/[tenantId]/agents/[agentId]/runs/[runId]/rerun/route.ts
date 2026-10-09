@@ -36,14 +36,14 @@ import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string; runId: string }> }
+  { params }: { params: Promise<{ agentId: string; runId: string }> }
 ): Promise<NextResponse> {
   const { agentId, runId } = await params;
   if (!isUuid(agentId) || !isUuid(runId)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -53,7 +53,7 @@ export async function POST(
   // Access is structural on both halves: the caller must resolve to the
   // agent (owner, or grantee through an unexpired grant), and the run must
   // be that agent's, in this tenant.
-  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  const access = await resolveAgentAccess(db, session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const run = await db
@@ -103,7 +103,7 @@ export async function POST(
   // (or manual, api, chained) run is the case someone reruns expecting
   // ONE thing to happen, so a second one already going is worth a beat.
   if (run.trigger_kind !== 'event' && !confirmed) {
-    const inProgress = await findInProgressRun(db, tenantId, agentId);
+    const inProgress = await findInProgressRun(db, agentId);
     if (inProgress) {
       return NextResponse.json(
         {

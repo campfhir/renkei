@@ -30,13 +30,13 @@ import { generateSecret, sha256Hex } from '@renkei/crypto';
 /** The two token classes this module mints — see the header. */
 export type RunTokenApplication = 'agent' | 'widget';
 
-function runnerClientId(tenantId: string): string {
+function runnerClientId(): string {
   // client_id is a GLOBAL primary key, so the tenant is part of the name.
   return `agent-runner-${tenantId}`;
 }
 
-export async function ensureAgentRunnerClient(db: Kysely<DB>, tenantId: string): Promise<string> {
-  const clientId = runnerClientId(tenantId);
+export async function ensureAgentRunnerClient(db: Kysely<DB>): Promise<string> {
+  const clientId = runnerClientId();
   await db
     .insertInto('oauth_clients')
     .values({
@@ -80,7 +80,7 @@ export async function mintRunToken(
     application?: RunTokenApplication;
   }
 ): Promise<string> {
-  const clientId = await ensureAgentRunnerClient(db, params.tenantId);
+  const clientId = await ensureAgentRunnerClient(db);
   const token = generateSecret(32);
   await db
     .insertInto('oauth_access_tokens')

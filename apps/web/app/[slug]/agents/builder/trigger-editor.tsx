@@ -146,7 +146,6 @@ export function TriggerEditor({
             {triggerEventById(draft.eventId)?.description ?? 'Runs when this event happens.'}
           </p>
           <TriggerFilterPanel
-            tenantId={tenantId}
             eventId={draft.eventId}
             match={draft.match ?? {}}
             onChange={(match) => onChange({ kind: 'event', eventId: draft.eventId, match })}

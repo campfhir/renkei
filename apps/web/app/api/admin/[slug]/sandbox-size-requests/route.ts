@@ -10,10 +10,10 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const db = getDatabase();
   if (!db.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  return NextResponse.json({ requests: await listSizeRequests(db.val, tenantRef.id) });
+  return NextResponse.json({ requests: await listSizeRequests(db.val) });
 }

@@ -18,7 +18,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string; templateId: string }> }
 ): Promise<NextResponse> {
   const { slug, templateId } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -29,7 +29,7 @@ export async function PUT(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const updated = await updateCodeProjectTemplate(dbResult.val, tenant.id, templateId, parsed);
+  const updated = await updateCodeProjectTemplate(dbResult.val, templateId, parsed);
   if (!updated.ok) {
     const status = updated.error === 'duplicate' ? 409 : 404;
     const error =
@@ -44,14 +44,14 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string; templateId: string }> }
 ): Promise<NextResponse> {
   const { slug, templateId } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const deleted = await deleteCodeProjectTemplate(dbResult.val, tenant.id, templateId);
+  const deleted = await deleteCodeProjectTemplate(dbResult.val, templateId);
   if (!deleted) return NextResponse.json({ error: 'Template not found' }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

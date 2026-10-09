@@ -93,7 +93,7 @@ export async function resolveConnection(
   deps: ServiceDeps,
   target: SubjectTarget
 ): Promise<Result<ResolvedConnection, ServiceError>> {
-  const share = await getShare(deps.db, target.tenantId, target.shareId);
+  const share = await getShare(deps.db, target.shareId);
   if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
   if (target.credentials) {
@@ -106,7 +106,6 @@ export async function resolveConnection(
 
   const ciphertext = await readConnectionCiphertext(
     deps.db,
-    target.tenantId,
     target.shareId,
     target.subject
   );
@@ -114,7 +113,6 @@ export async function resolveConnection(
   if (ciphertext.val === null) return err('not_connected' as const);
   const credentials = await openCredentialsForSubject(
     deps.db,
-    target.tenantId,
     target.subject,
     ciphertext.val
   );
@@ -133,13 +131,12 @@ export async function resolveConnection(
  */
 function hostKeyRecorder(
   deps: ServiceDeps,
-  tenantId: string,
   share: ShareSummary,
   onRecorded?: (fingerprint: string, recorded: boolean) => void
 ): ((fingerprint: string) => Promise<void>) | undefined {
   if (share.protocol !== 'sftp' || share.hostKeyFingerprint !== null) return undefined;
   return async (fingerprint) => {
-    const recorded = await recordHostKeyFingerprint(deps.db, tenantId, share.id, fingerprint);
+    const recorded = await recordHostKeyFingerprint(deps.db, share.id, fingerprint);
     onRecorded?.(fingerprint, recorded.ok && recorded.val);
   };
 }
@@ -152,7 +149,7 @@ async function withShareSession<T>(
 ): Promise<Result<T, BackendError>> {
   return withSessionLimits(connection.share.id, 'interactive', async () => {
     const opened = await openBackend(connection.share, connection.credentials, {
-      onHostKey: hostKeyRecorder(deps, connection.tenantId, connection.share),
+      onHostKey: hostKeyRecorder(deps, connection.share),
     });
     if (!opened.ok) return opened;
     try {
@@ -458,11 +455,10 @@ export interface TestConnectionOutcome {
 
 export async function serviceTestConnection(
   deps: ServiceDeps,
-  tenantId: string,
   shareId: string,
   credentials: ShareCredentials
 ): Promise<Result<TestConnectionOutcome, ServiceError>> {
-  const share = await getShare(deps.db, tenantId, shareId);
+  const share = await getShare(deps.db, shareId);
   if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
   const summary = share.val.summary;
@@ -476,7 +472,7 @@ export async function serviceTestConnection(
   }
   const listed = await withSessionLimits(shareId, 'interactive', async () => {
     const backend = await openBackend(summary, credentials, {
-      onHostKey: hostKeyRecorder(deps, tenantId, summary, (fingerprint, recorded) => {
+      onHostKey: hostKeyRecorder(deps, summary, (fingerprint, recorded) => {
         hostKey = { fingerprint, recorded };
       }),
     });

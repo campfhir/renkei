@@ -32,7 +32,7 @@ export default function NotificationCorner({
         corner === 'bottom-left' ? 'left-4' : 'right-4'
       }`}
     >
-      <NotificationPermissionNudge tenantId={tenantId} />
+      <NotificationPermissionNudge />
       {toastsEnabled ? <ToastStack /> : null}
     </div>
   );

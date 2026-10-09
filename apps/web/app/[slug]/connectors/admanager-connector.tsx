@@ -25,7 +25,7 @@ export default function AdManagerConnector({
         below are what your LLM&apos;s tools may attempt; ADManager Plus still has the final say.
       </p>
 
-      <AdManagerList tenantId={tenantId} instances={instances} />
+      <AdManagerList instances={instances} />
     </ConnectorShell>
   );
 }

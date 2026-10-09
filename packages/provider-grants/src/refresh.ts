@@ -25,7 +25,6 @@ const STALE_LOCK_MS = 5 * 60 * 1000;
 async function acquireRefreshLock(
   db: Kysely<DB>,
   provider: string,
-  tenantId: string,
   accountId: string
 ): Promise<boolean> {
   try {
@@ -42,7 +41,6 @@ async function acquireRefreshLock(
 async function releaseRefreshLock(
   db: Kysely<DB>,
   provider: string,
-  tenantId: string,
   accountId: string
 ): Promise<void> {
   try {
@@ -60,7 +58,6 @@ async function releaseRefreshLock(
 async function waitForRefreshLock(
   db: Kysely<DB>,
   provider: string,
-  tenantId: string,
   accountId: string
 ): Promise<void> {
   let attempts = 0;
@@ -77,7 +74,7 @@ async function waitForRefreshLock(
     if (!lock) return;
 
     if (Date.now() - lock.locked_at.getTime() > STALE_LOCK_MS) {
-      await releaseRefreshLock(db, provider, tenantId, accountId);
+      await releaseRefreshLock(db, provider, accountId);
       return;
     }
 
@@ -89,30 +86,29 @@ async function waitForRefreshLock(
 
 export async function refreshGrantTokens(
   adapter: ProviderAdapter,
-  tenantId: string,
   accountId: string,
   logger: GrantLogger = silentLogger
 ): Promise<Result<RefreshedTokens, RefreshError>> {
   const provider = adapter.provider;
-  logger.debug('[Refresh] Starting token refresh', { provider, tenantId, accountId });
+  logger.debug('[Refresh] Starting token refresh', { provider, accountId });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    logger.error('[Refresh] Database unavailable', { provider, tenantId, accountId });
+    logger.error('[Refresh] Database unavailable', { provider, accountId });
     return err('REFRESH_FAILED' as const);
   }
   const db = dbResult.val;
 
   try {
-    const lockAcquired = await acquireRefreshLock(db, provider, tenantId, accountId);
+    const lockAcquired = await acquireRefreshLock(db, provider, accountId);
     if (!lockAcquired) {
       logger.debug('[Refresh] Lock not acquired, waiting for other process', {
         provider,
         accountId,
       });
-      await waitForRefreshLock(db, provider, tenantId, accountId);
+      await waitForRefreshLock(db, provider, accountId);
       // The other process may have refreshed already — reuse its result.
-      const refetch = await getGrant(provider, tenantId, accountId);
+      const refetch = await getGrant(provider, accountId);
       if (refetch.ok && refetch.val) {
         logger.debug('[Refresh] Using refreshed token from other process', {
           provider,
@@ -130,9 +126,9 @@ export async function refreshGrantTokens(
       });
     }
 
-    const grantResult = await getGrant(provider, tenantId, accountId);
+    const grantResult = await getGrant(provider, accountId);
     if (!grantResult.ok || !grantResult.val) {
-      logger.error('[Refresh] No usable grant found', { provider, tenantId, accountId });
+      logger.error('[Refresh] No usable grant found', { provider, accountId });
       return err('REFRESH_FAILED' as const);
     }
     const grant = grantResult.val;
@@ -144,7 +140,7 @@ export async function refreshGrantTokens(
           provider,
           accountId,
         });
-        await deleteGrant(provider, tenantId, accountId);
+        await deleteGrant(provider, accountId);
         return err('GRANT_REVOKED' as const);
       }
       // The kind and the provider's own words: without them this line
@@ -171,10 +167,10 @@ export async function refreshGrantTokens(
     // Sealed under the owner's key (store.ts). A grant that opened has an
     // owner, so the subject is there to seal for.
     if (!grant.subject) return err('REFRESH_FAILED' as const);
-    const sealedAccess = await sealGrantToken(db, tenantId, grant.subject, accessToken);
-    const sealedRefresh = await sealGrantToken(db, tenantId, grant.subject, refreshToken);
+    const sealedAccess = await sealGrantToken(db, grant.subject, accessToken);
+    const sealedRefresh = await sealGrantToken(db, grant.subject, refreshToken);
     if (!sealedAccess.ok || !sealedRefresh.ok) {
-      logger.error('[Refresh] Could not seal refreshed tokens', { provider, tenantId, accountId });
+      logger.error('[Refresh] Could not seal refreshed tokens', { provider, accountId });
       return err('REFRESH_FAILED' as const);
     }
     const updateResult = await wrapAsync(
@@ -216,6 +212,6 @@ export async function refreshGrantTokens(
     });
     return err('REFRESH_FAILED' as const);
   } finally {
-    await releaseRefreshLock(db, provider, tenantId, accountId);
+    await releaseRefreshLock(db, provider, accountId);
   }
 }

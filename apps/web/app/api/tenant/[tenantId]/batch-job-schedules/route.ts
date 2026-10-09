@@ -32,15 +32,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const schedules = await listSchedules(dbResult.val, tenantId, session.subject);
+  const schedules = await listSchedules(dbResult.val, session.subject);
   return NextResponse.json({
     schedules: schedules.map((schedule) => ({
       id: schedule.id,
@@ -59,9 +59,9 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -105,14 +105,14 @@ export async function POST(
   // The share must exist and this caller must have connected their own
   // credentials to it, and moving/deleting there must be within what they
   // allowed on the Connectors page — same check the one-off start route makes.
-  const shares = await listConnectedShares(dbResult.val, tenantId, session.subject);
+  const shares = await listConnectedShares(dbResult.val, session.subject);
   if (!shares.ok) return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
   const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
   if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
 
   let nextRunAt: Date;
   try {
-    nextRunAt = await nextRunAtFor(dbResult.val, tenantId, scheduleConfig);
+    nextRunAt = await nextRunAtFor(dbResult.val, scheduleConfig);
   } catch {
     return NextResponse.json(
       { error: 'No next occurrence could be found for that schedule (check blackout dates).' },

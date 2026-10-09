@@ -81,7 +81,7 @@ async function tools(
   } as unknown as McpServer;
   await registerEntraDeveloperTools(
     server,
-    { tenantId: 'tenant-1', subject: 'subject-1', entraDeveloperScopes: scopes } as MCPToolContext,
+    { subject: 'subject-1', entraDeveloperScopes: scopes } as MCPToolContext,
     stubAuth
   );
   return { handlers, configs };
@@ -337,7 +337,7 @@ describe('entra_check_access', () => {
     } as unknown as McpServer;
     await registerEntraDeveloperTools(
       server,
-      { tenantId: 'tenant-1', subject: 'subject-1' } as MCPToolContext,
+      { subject: 'subject-1' } as MCPToolContext,
       { kind: 'oauth', resolve: async () => 'Entra Developer is not connected.' }
     );
     const result = await handlers.get('entra_list_applications')!({});

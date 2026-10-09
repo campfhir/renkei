@@ -52,7 +52,7 @@ export default function ArtifactModal({
 
   useEffect(() => {
     let cancelled = false;
-    void chatClient.shares(tenantId).then((result) => {
+    void chatClient.shares().then((result) => {
       if (cancelled) return;
       const list = (result.data?.shares ?? []).map((share) => ({
         id: share.id,
@@ -75,7 +75,7 @@ export default function ArtifactModal({
     if (!shareId) return;
     setBusy(true);
     setOutcome(null);
-    const result = await chatClient.copyAttachment(tenantId, artifact.id, {
+    const result = await chatClient.copyAttachment(artifact.id, {
       kind: 'fileshare-file',
       shareId,
       path,

@@ -52,7 +52,7 @@ export interface OrgSandboxFeatures {
   scriptsAllowNetwork: boolean;
 }
 
-export type OrgFeaturesLookup = (tenantId: string) => Promise<OrgSandboxFeatures>;
+export type OrgFeaturesLookup = () => Promise<OrgSandboxFeatures>;
 
 export const NO_ORG_FEATURES: OrgSandboxFeatures = {
   browser: false,
@@ -73,8 +73,8 @@ export const ALL_ORG_FEATURES: OrgSandboxFeatures = {
 };
 
 /** The organization's sandbox switches from its settings; everything off when they cannot be read. */
-export async function orgSandboxFeatures(tenantId: string): Promise<OrgSandboxFeatures> {
-  const settings = await getOrgSettings(tenantId);
+export async function orgSandboxFeatures(): Promise<OrgSandboxFeatures> {
+  const settings = await getOrgSettings();
   if (!settings.ok) return NO_ORG_FEATURES;
   const org = settings.val;
   return {

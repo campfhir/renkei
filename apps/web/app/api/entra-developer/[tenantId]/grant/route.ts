@@ -16,9 +16,9 @@ import { delegateGrants } from '@renkei/delegate-client';
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
@@ -51,6 +51,6 @@ export async function DELETE(
     targetKind: 'connector',
     targetLabel: ENTRA_DEVELOPER,
   });
-  invalidateToolCatalogCache(tenantId, session.subject);
+  invalidateToolCatalogCache(session.subject);
   return NextResponse.json({ message: 'Entra Developer disconnected' });
 }

@@ -379,7 +379,7 @@ describe('chat_generate_image — building on an earlier picture', () => {
     );
     expect(result.isError).toBe(false);
     // Looked up in this chat, by what the chat model named.
-    expect(loadSource).toHaveBeenCalledWith({ db: null, tenantId: 't', chatId: 'c' }, 'last');
+    expect(loadSource).toHaveBeenCalledWith({ db: null, chatId: 'c' }, 'last');
     expect(generate).toHaveBeenCalledWith(expect.anything(), {
       prompt: 'make it bluer',
       outputFormat: 'png',

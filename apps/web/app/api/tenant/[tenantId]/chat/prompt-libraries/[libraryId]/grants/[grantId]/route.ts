@@ -7,8 +7,8 @@ void chatRequestContext;
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; libraryId: string; grantId: string }> }
+  { params }: { params: Promise<{ libraryId: string; grantId: string }> }
 ): Promise<Response> {
   const { libraryId, grantId } = await params;
-  return revokeGrantRoute(request, tenantId, 'prompt_library', libraryId, grantId);
+  return revokeGrantRoute(request, 'prompt_library', libraryId, grantId);
 }

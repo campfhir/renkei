@@ -87,11 +87,11 @@ export async function confirmWidgetTool(
   // tool" (or, worse, into `not-a-card-tool` masking a stale catalog read
   // that would otherwise have let a second run through).
   if (input.stateKey) {
-    const existing = await getWidgetDecision(db, input.tenantId, input.stateKey);
+    const existing = await getWidgetDecision(db, input.stateKey);
     if (existing) return { ok: false, reason: 'already-decided', decision: existing };
   }
 
-  const catalog = await listAvailableTools(input.tenantId, input.subject, { roles: input.roles });
+  const catalog = await listAvailableTools(input.subject, { roles: input.roles });
   const descriptor = catalog.find((entry) => entry.name === input.name);
   if (!descriptor?.appOnly) return { ok: false, reason: 'not-a-card-tool' };
 
@@ -103,7 +103,7 @@ export async function confirmWidgetTool(
     tools: [input.name],
     application: 'widget',
   });
-  const mcp = new HttpMcpClient(internalMcpEndpoint(input.tenantId), token, {
+  const mcp = new HttpMcpClient(internalMcpEndpoint(), token, {
     clientName: 'renkei-chat-widget',
   });
   try {
@@ -177,7 +177,7 @@ export async function recordWidgetModelContext(
 
   if (
     input.stateKey &&
-    (await waitingOnSiblings(db, input.tenantId, input.chatId, input.stateKey))
+    (await waitingOnSiblings(db, input.chatId, input.stateKey))
   ) {
     const appended = await appendWidgetModelContext(db, {
       chatId: input.chatId,
@@ -239,13 +239,12 @@ export async function recordWidgetModelContext(
  */
 async function waitingOnSiblings(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   stateKey: string
 ): Promise<boolean> {
-  const siblings = await turnWidgetStateKeys(db, tenantId, chatId, stateKey);
+  const siblings = await turnWidgetStateKeys(db, chatId, stateKey);
   if (!siblings || siblings.length <= 1) return false;
-  const decisions = await listWidgetDecisions(db, tenantId, chatId);
+  const decisions = await listWidgetDecisions(db, chatId);
   return siblings.some((key) => key !== stateKey && !decisions.has(key));
 }
 
@@ -259,11 +258,10 @@ async function waitingOnSiblings(
  */
 async function turnWidgetStateKeys(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   stateKey: string
 ): Promise<string[] | null> {
-  const rows = await listMessages(db, tenantId, chatId, await chatCipherById(db, tenantId, chatId));
+  const rows = await listMessages(db, chatId, await chatCipherById(db, chatId));
   let turnId: string | null | undefined;
   for (const row of rows) {
     if (row.kind !== 'tool_results') continue;
@@ -296,7 +294,7 @@ async function turnWidgetStateKeys(
  */
 export async function appendWidgetModelContext(
   db: Kysely<DB>,
-  input: { tenantId: string; chatId: string; text: string }
+  input: { chatId: string; text: string }
 ): Promise<
   { ok: true; message: ChatMessageView } | { ok: false; reason: 'turn-running' | 'failed' }
 > {
@@ -317,7 +315,7 @@ export async function appendWidgetModelContext(
       kind: 'note',
       status: 'complete',
       blocks: [{ type: 'text', text }],
-      cipher: await chatCipherById(trx, input.tenantId, input.chatId),
+      cipher: await chatCipherById(trx, input.chatId),
     });
     if (!inserted) return { ok: false, reason: 'failed' };
     return {
@@ -401,7 +399,6 @@ export async function recordWidgetDecision(
 /** One card's decision, by its own persistence key — `confirmWidgetTool`'s guard. */
 export async function getWidgetDecision(
   db: Kysely<DB>,
-  tenantId: string,
   stateKey: string
 ): Promise<WidgetDecisionState | null> {
   const row = await db
@@ -420,7 +417,6 @@ export async function getWidgetDecision(
  */
 export async function listWidgetDecisions(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string
 ): Promise<Map<string, WidgetDecisionState>> {
   const rows = await db

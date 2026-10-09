@@ -61,11 +61,10 @@ export function parseHttpUrl(value: unknown, allowInsecureHttp: boolean): string
  *   function and one `OnBaseTenantConfig` type serve either.
  */
 export async function resolveOnBaseConfig(
-  tenantId: string,
   encryptionKey: Buffer,
   connector: string = ONBASE_CONNECTOR
 ): Promise<Result<OnBaseTenantConfig, ConfigError>> {
-  const config = await getConnectorConfig(tenantId, connector, encryptionKey);
+  const config = await getConnectorConfig(connector, encryptionKey);
   if (!config.ok) return err('store' as const);
   if (!config.val || !config.val.enabled) return err('not_configured' as const);
 

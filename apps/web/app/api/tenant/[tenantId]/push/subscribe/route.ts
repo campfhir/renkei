@@ -12,9 +12,9 @@ import { getSessionFromRequest } from '@/lib/session';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -37,7 +37,7 @@ export async function POST(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  await saveSubscription(dbResult.val, tenantId, session.subject, {
+  await saveSubscription(dbResult.val, session.subject, {
     endpoint: payload.endpoint,
     keys: { p256dh: keys.p256dh, auth: keys.auth },
   });

@@ -32,7 +32,7 @@ import { logger } from '../logger';
  * person ever signed in? A DB error is a caller problem (thrown, so the
  * event's retry budget applies); "no row" is the ordinary unregistered case.
  */
-export async function hasLinkedIdentity(tenantId: string, email: string): Promise<boolean> {
+export async function hasLinkedIdentity(email: string): Promise<boolean> {
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('database unavailable');
 
@@ -55,7 +55,6 @@ export interface LinkedWebexUserAccess {
  * search this feeds is an enrichment, never a reason to fail the event.
  */
 export async function resolveLinkedWebexUserAccess(
-  tenantId: string,
   email: string
 ): Promise<LinkedWebexUserAccess | null> {
   const dbResult = getDatabase();
@@ -128,7 +127,6 @@ async function resolveWebexUserAccess(ref: GrantRef): Promise<WebexUserGrantAcce
  * turns a delivery back into "whose webhook, acting with whose grant".
  */
 export function resolveWebexUserAccessByAccount(
-  tenantId: string,
   accountId: string
 ): Promise<WebexUserGrantAccess | null> {
   return resolveWebexUserAccess({ provider: WEBEX_USER, accountId });
@@ -139,7 +137,6 @@ export function resolveWebexUserAccessByAccount(
  * their account id.
  */
 export function resolveWebexUserAccessBySubject(
-  tenantId: string,
   subject: string
 ): Promise<WebexUserGrantAccess | null> {
   return resolveWebexUserAccess({ provider: WEBEX_USER, subject });

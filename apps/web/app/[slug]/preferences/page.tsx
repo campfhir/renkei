@@ -35,8 +35,8 @@ export default async function PreferencesPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/preferences`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/preferences`));
 
   const dbResult = getDatabase();
   const [
@@ -54,9 +54,9 @@ export default async function PreferencesPage({
     imageModels,
     keyStatus,
   ] = await Promise.all([
-    getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
-    getThemePrefs(tenant.id, session.subject, { fresh: true }),
-    getChannelAvailability(tenant.id, session.subject),
+    getNotificationPrefs(session.subject, { fresh: true }),
+    getThemePrefs(session.subject, { fresh: true }),
+    getChannelAvailability(session.subject),
     // Just id + name: the overrides picker names an agent, it doesn't need
     // its steps — listAgents()'s full parse would be work spent for nothing
     // this page shows.
@@ -68,19 +68,19 @@ export default async function PreferencesPage({
           .orderBy('name')
           .execute()
       : [],
-    listChatConnectors(tenant.id, session.subject),
-    getDefaultChatTools(tenant.id, session.subject, { fresh: true }),
-    getDefaultChatTools(tenant.id, session.subject, { fresh: true, kind: 'code' }),
+    listChatConnectors(session.subject),
+    getDefaultChatTools(session.subject, { fresh: true }),
+    getDefaultChatTools(session.subject, { fresh: true, kind: 'code' }),
     // Null when the org has no voice service; the section is then left out.
-    loadVoiceAvailability(tenant.id, session.subject),
-    getChatToolPermissionPrefs(tenant.id, session.subject, { fresh: true }),
-    listChatActToolGroups(tenant.id, session.subject, session.roles),
-    getImagePrefs(tenant.id, session.subject, { fresh: true }),
+    loadVoiceAvailability(session.subject),
+    getChatToolPermissionPrefs(session.subject, { fresh: true }),
+    listChatActToolGroups(session.subject, session.roles),
+    getImagePrefs(session.subject, { fresh: true }),
     // Empty when the org has no image generation model; the section is then left out.
-    dbResult.ok ? listImageModels(dbResult.val, tenant.id) : [],
+    dbResult.ok ? listImageModels(dbResult.val) : [],
     // Managed until they say otherwise; a missing row reads as managed too.
     // The delegate answers; unreachable, and the section is left out.
-    keyStatusView(tenant.id, session),
+    keyStatusView(session),
   ]);
 
   const chatToolOptions = chatConnectors.map((option) => ({
@@ -140,12 +140,11 @@ export default async function PreferencesPage({
         allowed to do.
       </p>
       <div className="mb-6">
-        <ThemeForm tenantId={tenant.id} initial={theme} />
+        <ThemeForm initial={theme} />
       </div>
       {voice ? (
         <div className="mb-6">
           <VoiceForm
-            tenantId={tenant.id}
             initial={voice.prefs}
             defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
           />
@@ -153,24 +152,22 @@ export default async function PreferencesPage({
       ) : null}
       {imageModels.length > 0 ? (
         <div className="mb-6">
-          <ImageModelForm tenantId={tenant.id} initial={imagePrefs} models={imageModels} />
+          <ImageModelForm initial={imagePrefs} models={imageModels} />
         </div>
       ) : null}
       {keyStatus ? (
         <div className="mb-6">
-          <EncryptionKeySection tenantId={tenant.id} initial={keyStatus} />
+          <EncryptionKeySection initial={keyStatus} />
         </div>
       ) : null}
       <div className="mb-6">
         <DefaultToolsForm
-          tenantId={tenant.id}
           connectors={chatToolOptions}
           initialDefault={chatDefault?.connectors ?? null}
         />
       </div>
       <div className="mb-6">
         <DefaultToolsForm
-          tenantId={tenant.id}
           connectors={chatToolOptions}
           initialDefault={codeDefault?.connectors ?? null}
           kind="code"
@@ -180,13 +177,11 @@ export default async function PreferencesPage({
       </div>
       <div className="mb-6">
         <ToolPermissionsForm
-          tenantId={tenant.id}
           groups={actToolGroups}
           initial={toolPermissions}
         />
       </div>
       <PreferencesForm
-        tenantId={tenant.id}
         slug={slug}
         connectors={connectors}
         channels={channels}

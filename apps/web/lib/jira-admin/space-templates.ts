@@ -316,7 +316,6 @@ export async function saveSpaceTemplate(
  */
 export async function findSpaceTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   cloudId: string,
   reference: string
 ): Promise<SpaceTemplate | null> {
@@ -335,8 +334,7 @@ export async function findSpaceTemplate(
 
 /** Every template in the organization, by name. */
 export async function listSpaceTemplates(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<SpaceTemplate[]> {
   const rows = await db
     .selectFrom('jira_admin_space_templates')
@@ -352,7 +350,6 @@ export async function listSpaceTemplates(
 
 export async function deleteSpaceTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   id: string
 ): Promise<boolean> {
   if (!isUuid(id)) return false;

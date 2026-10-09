@@ -254,7 +254,6 @@ export async function createTurn(
 
 export async function getTurn(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   turnId: string
 ): Promise<TurnRow | null> {
@@ -452,7 +451,6 @@ export async function interruptExhaustedTurns(
 /** Marks the wish; the runner (any replica) honors it on its next heartbeat. */
 export async function requestTurnCancel(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   turnId: string
 ): Promise<boolean> {
@@ -489,7 +487,6 @@ export async function requestToolPermission(
  */
 export async function decideToolPermission(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   turnId: string,
   toolUseId: string,

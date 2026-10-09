@@ -21,19 +21,18 @@ export default async function NewCodeProjectPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/code/new`));
-  if (!(await sandboxWorkspacesEnabled(tenant.id))) redirect(`/code`);
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/code/new`));
+  if (!(await sandboxWorkspacesEnabled())) redirect(`/code`);
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const access = await codeProjectProviderAccess(dbResult.val, tenant.id, session.subject);
+  const access = await codeProjectProviderAccess(dbResult.val, session.subject);
   const bitbucketConnected = access[ATLASSIAN_BITBUCKET]!.ok;
   const githubConnected = access[GITHUB]!.ok;
   if (!bitbucketConnected && !githubConnected) redirect(`/code`);
   return (
     <NewCodeProject
       slug={slug}
-      tenantId={tenant.id}
       bitbucketConnected={bitbucketConnected}
       githubConnected={githubConnected}
     />

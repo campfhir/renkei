@@ -12,12 +12,12 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
-  const revoked = await delegateClient().revokeAutomation(tenantId, session.subject);
+  const revoked = await delegateClient().revokeAutomation(session.subject);
   if (!revoked.ok) return jsonError(503, 'delegate', 'The key service could not be reached.');
   recordAuditEvent({
     actorSubject: session.subject,

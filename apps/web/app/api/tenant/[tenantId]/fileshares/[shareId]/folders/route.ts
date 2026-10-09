@@ -15,10 +15,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; shareId: string }> }
+  { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
   const { shareId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);

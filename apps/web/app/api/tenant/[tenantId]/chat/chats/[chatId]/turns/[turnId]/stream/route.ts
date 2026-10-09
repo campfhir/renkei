@@ -36,14 +36,13 @@ const PING_MS = 15_000;
 
 async function snapshotOf(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   turnId: string,
   cipher: ContentCipher
 ): Promise<ChatStreamEvent | null> {
-  const turn = await getTurn(db, tenantId, chatId, turnId);
+  const turn = await getTurn(db, chatId, turnId);
   if (!turn) return null;
-  const messages = await listTurnMessages(db, tenantId, turnId, cipher);
+  const messages = await listTurnMessages(db, turnId, cipher);
   const produced =
     messages.length > 0
       ? await db
@@ -74,18 +73,18 @@ async function snapshotOf(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string; turnId: string }> }
+  { params }: { params: Promise<{ chatId: string; turnId: string }> }
 ): Promise<Response> {
   const { chatId, turnId } = await params;
   if (!isUuid(chatId) || !isUuid(turnId)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveChatAccess(db, tenantId, session.subject, chatId);
+  const access = await resolveChatAccess(db, session.subject, chatId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  const turn = await getTurn(db, tenantId, chatId, turnId);
+  const turn = await getTurn(db, chatId, turnId);
   if (!turn) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const lastEventId = request.headers.get('last-event-id');
@@ -97,7 +96,7 @@ export async function GET(
   // reader, and a missed touch there just costs a suppression, never a
   // wrong send.
   const touchPresence = () => {
-    void pingChatPresence(db, tenantId, session.subject, chatId).catch(() => {});
+    void pingChatPresence(db, session.subject, chatId).catch(() => {});
   };
 
   const encoder = new TextEncoder();
@@ -167,7 +166,7 @@ export async function GET(
         // A channel that closed before we subscribed already replayed its
         // ending; a turn settled in the database says the same thing.
         if (channel.closed || isTurnSettled(turn.status)) {
-          const snapshot = await snapshotOf(db, tenantId, chatId, turnId, access.cipher);
+          const snapshot = await snapshotOf(db, chatId, turnId, access.cipher);
           if (snapshot) send(null, snapshot);
           touchPresence();
           send(null, { type: 'turn_end', turnId, status: turn.status, error: turn.error });
@@ -182,7 +181,7 @@ export async function GET(
       let lastSent = '';
       const tick = async () => {
         if (closed) return;
-        const snapshot = await snapshotOf(db, tenantId, chatId, turnId, access.cipher);
+        const snapshot = await snapshotOf(db, chatId, turnId, access.cipher);
         if (!snapshot || snapshot.type !== 'snapshot') {
           close();
           return;

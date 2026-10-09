@@ -65,7 +65,7 @@ const FAKE_DB = {};
 const DEST_SHARE = '5d1f1a0e-6c7b-4e2a-9f3c-1b2d3e4f5a6b';
 
 function context(): MCPToolContext {
-  return { tenantId: 'tenant-1', subject: 'auth0|alice' } as unknown as MCPToolContext;
+  return { subject: 'auth0|alice' } as unknown as MCPToolContext;
 }
 
 function registerAll(): Map<string, Handler> {

@@ -42,18 +42,17 @@ export {
 
 const CACHE_TTL_MS = 60_000;
 const cache = new Map<string, { value: ChatToolPermissionPrefs; expiresAt: number }>();
-const cacheKey = (tenantId: string, subject: string) => `${tenantId} ${subject}`;
+const cacheKey = (subject: string) => `${tenantId} ${subject}`;
 
 /**
  * Never fails loudly: a database problem reads as "nothing decided", which
  * only means the chat asks — the safe side of this preference.
  */
 export async function getChatToolPermissionPrefs(
-  tenantId: string,
   subject: string,
   options: { fresh?: boolean } = {}
 ): Promise<ChatToolPermissionPrefs> {
-  const key = cacheKey(tenantId, subject);
+  const key = cacheKey(subject);
   const cached = cache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
@@ -79,7 +78,6 @@ export async function getChatToolPermissionPrefs(
 
 /** Replace this person's lists wholesale. */
 export async function setChatToolPermissionPrefs(
-  tenantId: string,
   subject: string,
   prefs: ChatToolPermissionPrefs
 ): Promise<Result<void, 'DB_ERROR'>> {
@@ -107,7 +105,7 @@ export async function setChatToolPermissionPrefs(
   );
   if (!written.ok) return written;
 
-  cache.delete(cacheKey(tenantId, subject));
+  cache.delete(cacheKey(subject));
   return ok();
 }
 
@@ -118,15 +116,14 @@ export async function setChatToolPermissionPrefs(
  * tool never reaches the card, so there is no both-lists case to resolve.
  */
 export async function allowChatToolAlways(
-  tenantId: string,
   subject: string,
   toolName: string
 ): Promise<Result<ChatToolPermissionPrefs, 'DB_ERROR' | 'INVALID_NAME'>> {
   if (!TOOL_NAME.test(toolName)) return err('INVALID_NAME' as const);
-  const current = await getChatToolPermissionPrefs(tenantId, subject, { fresh: true });
+  const current = await getChatToolPermissionPrefs(subject, { fresh: true });
   if (current.alwaysAllow.includes(toolName)) return ok(current);
   const next = withRule(current, toolName, 'allow');
-  const written = await setChatToolPermissionPrefs(tenantId, subject, next);
+  const written = await setChatToolPermissionPrefs(subject, next);
   if (!written.ok) return err('DB_ERROR' as const);
   return ok(next);
 }

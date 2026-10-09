@@ -24,35 +24,35 @@ import {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  const access = await resolveAgentAccess(db, session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  return NextResponse.json({ notes: await listAgentNotes(db, tenantId, agentId) });
+  return NextResponse.json({ notes: await listAgentNotes(db, agentId) });
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  const access = await resolveAgentAccess(db, session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const payload = parseNotePayload(await request.json().catch(() => null));
@@ -65,7 +65,7 @@ export async function POST(
     );
   }
 
-  const emailResult = await getIdentityEmail(tenantId, access.ownerSubject);
+  const emailResult = await getIdentityEmail(access.ownerSubject);
   const ownerEmail = emailResult.ok ? emailResult.val : null;
   if (!ownerEmail) {
     return NextResponse.json(
@@ -112,20 +112,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  const access = await resolveAgentAccess(db, session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const ownerEmail = await getIdentityEmail(tenantId, access.ownerSubject);
+  const ownerEmail = await getIdentityEmail(access.ownerSubject);
   if (!ownerEmail.ok || !ownerEmail.val) {
     return NextResponse.json({ error: 'The agent owner has no recorded email' }, { status: 409 });
   }

@@ -25,11 +25,11 @@ export function notifyAgentShared(input: {
   agentName: string;
 }): void {
   void (async () => {
-    const prefs = await getNotificationPrefs(input.tenantId, input.granteeSubject, { fresh: true });
+    const prefs = await getNotificationPrefs(input.granteeSubject, { fresh: true });
     const wanted = prefs.agentShared;
     if (!wanted.app && !wanted.email && !wanted.webex) return;
 
-    const who = await getIdentityDisplay(input.tenantId, input.actorSubject);
+    const who = await getIdentityDisplay(input.actorSubject);
     const sharerName = who?.displayName || who?.email || 'Someone';
     const headline = `${sharerName} shared the agent "${input.agentName}" with you`;
 
@@ -54,7 +54,6 @@ export function notifyAgentShared(input: {
         if (keyResult.ok) {
           void sendPush(
             dbResult.val,
-            input.tenantId,
             input.granteeSubject,
             keyResult.val,
             { title: headline, body: input.agentName, tag: id, refUrl: null, notificationId: id },
@@ -65,7 +64,7 @@ export function notifyAgentShared(input: {
     }
 
     if (wanted.email) {
-      const grantee = await getIdentityDisplay(input.tenantId, input.granteeSubject);
+      const grantee = await getIdentityDisplay(input.granteeSubject);
       if (grantee?.email) {
         const access = await resolveGraphAccess({
           subject: input.granteeSubject,
@@ -98,9 +97,9 @@ export function notifyAgentShared(input: {
     }
 
     if (wanted.webex) {
-      const access = await resolveWebexUserAccess(input.tenantId, input.granteeSubject);
+      const access = await resolveWebexUserAccess(input.granteeSubject);
       if (access) {
-        const sent = await sendWebexNote(input.tenantId, access, `**${headline}**`);
+        const sent = await sendWebexNote(access, `**${headline}**`);
         if (!sent.ok) {
           logger.warn('agent-shared WebEx note not sent for agent {agentId}', {
             component: 'agents/share-notification',

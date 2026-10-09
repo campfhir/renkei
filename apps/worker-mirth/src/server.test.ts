@@ -19,7 +19,7 @@ import type { UpstreamRequest, UpstreamResponse } from './upstream';
 
 const API_KEY = 'test-worker-key';
 const INSTANCE_ID = '11111111-2222-3333-4444-555555555555';
-const TARGET = { tenantId: 'tenant-1', instanceId: INSTANCE_ID, subject: 'auth0|alice' };
+const TARGET = { instanceId: INSTANCE_ID, subject: 'auth0|alice' };
 
 const instance: InstanceRow = {
   summary: {
@@ -333,7 +333,7 @@ describe('probe', () => {
 
   it('reports an unreachable server as a successful request with ok: false', async () => {
     script = [{ failed: 'unreachable', detail: 'could not be reached' }];
-    const response = await post('/v1/probe', { tenantId: 'tenant-1', instanceId: INSTANCE_ID });
+    const response = await post('/v1/probe', { instanceId: INSTANCE_ID });
     expect(response.status).toBe(200);
     expect(((await response.json()) as { ok: boolean }).ok).toBe(false);
   });

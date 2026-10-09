@@ -50,7 +50,7 @@ maybe('sweepExpiredGrants', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });
 

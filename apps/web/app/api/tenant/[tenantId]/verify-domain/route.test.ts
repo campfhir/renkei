@@ -60,7 +60,7 @@ function verifyRequest(): NextRequest {
   });
 }
 
-const context = { params: Promise.resolve({ tenantId: TENANT }) };
+const context = { params: Promise.resolve({ }) };
 
 describe('POST /api/tenant/{tenantId}/verify-domain', () => {
   beforeEach(() => {

@@ -44,20 +44,19 @@ export function notifyChatReplyDesktop(input: {
   void (async () => {
     // fresh: a person who just turned this on (or off) expects the very
     // next reply to reflect it, not whatever the last minute cached.
-    const prefs = await getNotificationPrefs(input.tenantId, input.ownerSubject, { fresh: true });
+    const prefs = await getNotificationPrefs(input.ownerSubject, { fresh: true });
     if (!prefs.chatReplyDesktop) return;
 
     const dbResult = getDatabase();
     if (!dbResult.ok) return;
 
-    const settingsResult = await getOrgSettings(input.tenantId);
+    const settingsResult = await getOrgSettings();
     const presenceWindowSeconds = settingsResult.ok
       ? settingsResult.val.chatReplyPresenceWindowSeconds
       : 0;
     if (presenceWindowSeconds > 0) {
       const watchedLive = await wasRecentlyWatchingChat(
         dbResult.val,
-        input.tenantId,
         input.ownerSubject,
         input.chatId,
         presenceWindowSeconds
@@ -68,7 +67,7 @@ export function notifyChatReplyDesktop(input: {
     const tenant = await dbResult.val
       .selectFrom('tenants')
       .select('slug')
-      .where('id', '=', input.tenantId)
+      .where('id', '=')
       .executeTakeFirst();
     if (!tenant) return;
 
@@ -93,7 +92,6 @@ export function notifyChatReplyDesktop(input: {
     if (keyResult.ok) {
       void sendPush(
         dbResult.val,
-        input.tenantId,
         input.ownerSubject,
         keyResult.val,
         {

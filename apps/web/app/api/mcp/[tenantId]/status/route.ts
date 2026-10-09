@@ -16,12 +16,12 @@ import { getSessionFromRequest } from '@/lib/session';
  */
 export const GET = async (
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> => {
 
   // Before any lookup: a session proves both who is asking and that the tenant
   // exists, since a session row cannot reference a tenant that does not.
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

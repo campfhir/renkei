@@ -94,7 +94,6 @@ export default function AtlassianConnector({
         {jira ? (
           <JiraConnector
             nested
-            tenantId={tenantId}
             connected={jira.connected}
             displayName={jira.displayName}
             ceiling={jira.ceiling}
@@ -115,7 +114,6 @@ export default function AtlassianConnector({
         {jsm && (
           <JsmConnector
             nested
-            tenantId={tenantId}
             connected={jsm.connected}
             displayName={jsm.displayName}
             ceiling={jsm.ceiling}
@@ -126,7 +124,6 @@ export default function AtlassianConnector({
         {jiraAdmin && (
           <JiraAdminConnector
             nested
-            tenantId={tenantId}
             connected={jiraAdmin.connected}
             displayName={jiraAdmin.displayName}
             ceiling={jiraAdmin.ceiling}
@@ -140,7 +137,6 @@ export default function AtlassianConnector({
         {confluence && (
           <ConfluenceConnector
             nested
-            tenantId={tenantId}
             connected={confluence.connected}
             displayName={confluence.displayName}
             ceiling={confluence.ceiling}
@@ -151,7 +147,6 @@ export default function AtlassianConnector({
         {bitbucket && (
           <BitbucketConnector
             nested
-            tenantId={tenantId}
             connected={bitbucket.connected}
             displayName={bitbucket.displayName}
             ceiling={bitbucket.ceiling}

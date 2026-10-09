@@ -106,9 +106,9 @@ export default async function ConnectorsPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/connectors`));
+    redirect(signInUrl(`/connectors`));
   }
 
   const dbResult = getDatabase();
@@ -124,8 +124,8 @@ export default async function ConnectorsPage({
 
   // Fresh, because this page is where selections are saved from: a route
   // handler wrote the row, and this server component holds its own cache.
-  const catalog = await resolveUserCatalog(db, tenant.id, session.subject, {
-    audienceAllows: await resolveAudienceAllows(db, tenant.id, session.subject),
+  const catalog = await resolveUserCatalog(db, session.subject, {
+    audienceAllows: await resolveAudienceAllows(db, session.subject),
     fresh: true,
   });
   const { shown, grants } = catalog;
@@ -144,7 +144,7 @@ export default async function ConnectorsPage({
   // share's connection details, and this person connects it with their own
   // credentials right on the card. Every enabled share is offered.
   const fileshareRows = shown.has('fileshares')
-    ? await listSharesWithConnection(db, tenant.id, session.subject)
+    ? await listSharesWithConnection(db, session.subject)
     : null;
   const connectableShares =
     fileshareRows && fileshareRows.ok
@@ -168,7 +168,7 @@ export default async function ConnectorsPage({
   // registers each server, and this person connects it with their own
   // Mirth account right on the card. Every enabled instance is offered.
   const mirthRows = shown.has('mirth')
-    ? await listInstancesWithConnection(db, tenant.id, session.subject)
+    ? await listInstancesWithConnection(db, session.subject)
     : null;
   const connectableMirthInstances =
     mirthRows && mirthRows.ok
@@ -190,7 +190,7 @@ export default async function ConnectorsPage({
   // admin registers each server, and this person connects it with their
   // own authtoken right on the card. Every enabled instance is offered.
   const admanagerRows = shown.has('admanager')
-    ? await listAdManagerInstancesWithConnection(db, tenant.id, session.subject)
+    ? await listAdManagerInstancesWithConnection(db, session.subject)
     : null;
   const connectableAdManagerInstances =
     admanagerRows && admanagerRows.ok
@@ -211,7 +211,7 @@ export default async function ConnectorsPage({
   // Browser secrets live on the sandbox worker, never in this app's tables:
   // the card exists only where the deployment runs the sandbox browser, and
   // the listing is names, fields and hosts — no values.
-  const browserSecrets = (await sandboxBrowserEnabled(tenant.id))
+  const browserSecrets = (await sandboxBrowserEnabled())
     ? await sbSecretsList({ subject: session.subject })
     : null;
 
@@ -246,7 +246,7 @@ export default async function ConnectorsPage({
   // Proposals wait for their owner on the review page; the card says how
   // many, so an agent's proposal is not only a notification away.
   const pendingJiraAdminChanges = jiraAdminGrant
-    ? await countPendingChangeRequests(db, tenant.id, session.subject)
+    ? await countPendingChangeRequests(db, session.subject)
     : 0;
   const microsoftGrant = grants.get(MICROSOFT);
   const entraDeveloperGrant = grants.get(ENTRA_DEVELOPER);
@@ -314,7 +314,6 @@ export default async function ConnectorsPage({
       node: (
         <>
           <AtlassianConnector
-            tenantId={tenant.id}
             jira={
               jiraShown && enabledConfig.has('atlassian')
                 ? {
@@ -370,7 +369,6 @@ export default async function ConnectorsPage({
             }
           />
           <RemovableProducts
-            tenantId={tenant.id}
             products={removable(catalog, [
               'jira',
               'jira-admin',
@@ -390,7 +388,6 @@ export default async function ConnectorsPage({
       node: (
         <>
           <WebexUserConnector
-            tenantId={tenant.id}
             connected={webexGrant !== undefined}
             displayName={webexGrant?.displayName ?? null}
             allSpaces={
@@ -403,7 +400,7 @@ export default async function ConnectorsPage({
             ceiling={webexCeiling}
             priorScopes={webexGrant?.requestedScopes ?? null}
           />
-          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['webex'])} />
+          <RemovableProducts products={removable(catalog, ['webex'])} />
         </>
       ),
     });
@@ -416,14 +413,13 @@ export default async function ConnectorsPage({
       node: (
         <>
           <MicrosoftConnector
-            tenantId={tenant.id}
             connected={microsoftGrant !== undefined}
             displayName={microsoftGrant?.displayName ?? null}
             ceiling={microsoftCeiling}
             priorScopes={microsoftGrant?.requestedScopes ?? null}
             shownKeys={microsoftKeys}
           />
-          <RemovableProducts tenantId={tenant.id} products={removable(catalog, microsoftKeys)} />
+          <RemovableProducts products={removable(catalog, microsoftKeys)} />
         </>
       ),
     });
@@ -438,14 +434,12 @@ export default async function ConnectorsPage({
       node: (
         <>
           <EntraDeveloperConnector
-            tenantId={tenant.id}
             connected={entraDeveloperGrant !== undefined}
             displayName={entraDeveloperGrant?.displayName ?? null}
             ceiling={entraDeveloperCeiling}
             priorScopes={entraDeveloperGrant?.requestedScopes ?? null}
           />
           <RemovableProducts
-            tenantId={tenant.id}
             products={removable(catalog, ['entra-developer'])}
           />
         </>
@@ -470,13 +464,12 @@ export default async function ConnectorsPage({
                   )
                 : []
             }
-            tenantId={tenant.id}
             connected={zoomGrant !== undefined}
             displayName={zoomGrant?.displayName ?? null}
             ceiling={zoomCeiling}
             priorScopes={zoomGrant?.requestedScopes ?? null}
           />
-          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['zoom'])} />
+          <RemovableProducts products={removable(catalog, ['zoom'])} />
         </>
       ),
     });
@@ -489,13 +482,12 @@ export default async function ConnectorsPage({
       node: (
         <>
           <GitHubConnector
-            tenantId={tenant.id}
             connected={githubGrant !== undefined}
             displayName={githubGrant?.displayName ?? null}
             ceiling={githubCeiling}
             priorScopes={githubGrant?.requestedScopes ?? null}
           />
-          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['github'])} />
+          <RemovableProducts products={removable(catalog, ['github'])} />
         </>
       ),
     });
@@ -510,7 +502,6 @@ export default async function ConnectorsPage({
       node: (
         <>
           <HylandConnector
-            tenantId={tenant.id}
             onbase={
               shown.has('onbase')
                 ? {
@@ -529,7 +520,6 @@ export default async function ConnectorsPage({
             }
           />
           <RemovableProducts
-            tenantId={tenant.id}
             products={removable(catalog, ['onbase', 'onbase-admin'])}
           />
         </>
@@ -543,8 +533,8 @@ export default async function ConnectorsPage({
       needsAttention: connectableShares.some((share) => share.connection === null),
       node: (
         <>
-          <FilesharesConnector tenantId={tenant.id} shares={connectableShares} />
-          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['fileshares'])} />
+          <FilesharesConnector shares={connectableShares} />
+          <RemovableProducts products={removable(catalog, ['fileshares'])} />
         </>
       ),
     });
@@ -556,8 +546,8 @@ export default async function ConnectorsPage({
       needsAttention: connectableMirthInstances.some((instance) => instance.connection === null),
       node: (
         <>
-          <MirthConnector tenantId={tenant.id} instances={connectableMirthInstances} />
-          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['mirth'])} />
+          <MirthConnector instances={connectableMirthInstances} />
+          <RemovableProducts products={removable(catalog, ['mirth'])} />
         </>
       ),
     });
@@ -571,8 +561,8 @@ export default async function ConnectorsPage({
       ),
       node: (
         <>
-          <AdManagerConnector tenantId={tenant.id} instances={connectableAdManagerInstances} />
-          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['admanager'])} />
+          <AdManagerConnector instances={connectableAdManagerInstances} />
+          <RemovableProducts products={removable(catalog, ['admanager'])} />
         </>
       ),
     });
@@ -586,7 +576,6 @@ export default async function ConnectorsPage({
       needsAttention: false,
       node: (
         <SandboxSecrets
-          tenantId={tenant.id}
           secrets={browserSecrets.ok ? browserSecrets.val : []}
         />
       ),
@@ -605,7 +594,7 @@ export default async function ConnectorsPage({
             Your connected accounts, and the endpoint your LLM app talks to.
           </p>
         </div>
-        {anyCard && <AddConnectorButton tenantId={tenant.id} items={catalogItems} />}
+        {anyCard && <AddConnectorButton items={catalogItems} />}
       </div>
 
       {/*
@@ -622,7 +611,7 @@ export default async function ConnectorsPage({
       */}
       <div className="flex flex-col gap-6">
         <div className="order-last lg:order-first">
-          <McpEndpoint tenantId={tenant.id} />
+          <McpEndpoint />
         </div>
 
         {!anyCard && (
@@ -631,7 +620,7 @@ export default async function ConnectorsPage({
               Nothing added yet. Pick the tools you work with; each one connects with your own
               account.
             </p>
-            <AddConnectorButton tenantId={tenant.id} items={catalogItems} emphasis />
+            <AddConnectorButton items={catalogItems} emphasis />
           </div>
         )}
 

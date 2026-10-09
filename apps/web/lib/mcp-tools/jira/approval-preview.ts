@@ -200,7 +200,6 @@ const DECLINE_TOOL = 'renkei.approval.decline';
 export async function jiraIssueApprovalPreview(
   tool: string,
   args: Record<string, unknown>,
-  tenantId: string,
   subject: string
 ): Promise<{ resourceUri: string; structuredContent: Record<string, unknown> } | null> {
   if (!APPROVAL_WIDGET_TOOLS.has(tool)) return null;

@@ -78,23 +78,20 @@ export interface AtlassianApp {
  * token-exchange always derive the same value.
  */
 export async function getAtlassianApp(
-  tenantId: string,
   origin: string
 ): Promise<AtlassianApp | null> {
-  return readApp(tenantId, origin, ATLASSIAN_CONNECTOR, usableAtlassianCeiling);
+  return readApp(origin, ATLASSIAN_CONNECTOR, usableAtlassianCeiling);
 }
 
 /** The tenant's second Atlassian app (JSM + Ops), same contract. */
 export async function getAtlassianJsmApp(
-  tenantId: string,
   origin: string
 ): Promise<AtlassianApp | null> {
-  return readApp(tenantId, origin, ATLASSIAN_JSM_CONNECTOR, usableAtlassianJsmCeiling);
+  return readApp(origin, ATLASSIAN_JSM_CONNECTOR, usableAtlassianJsmCeiling);
 }
 
 /** The tenant's third Atlassian app (Confluence), same contract. */
 export async function getAtlassianConfluenceApp(
-  tenantId: string,
   origin: string
 ): Promise<AtlassianApp | null> {
   return readApp(
@@ -106,22 +103,19 @@ export async function getAtlassianConfluenceApp(
 
 /** The tenant's fourth Atlassian app (Bitbucket Cloud), same contract. */
 export async function getAtlassianBitbucketApp(
-  tenantId: string,
   origin: string
 ): Promise<AtlassianApp | null> {
-  return readApp(tenantId, origin, ATLASSIAN_BITBUCKET_CONNECTOR, usableAtlassianBitbucketCeiling);
+  return readApp(origin, ATLASSIAN_BITBUCKET_CONNECTOR, usableAtlassianBitbucketCeiling);
 }
 
 /** The tenant's fifth Atlassian app (Jira administration), same contract. */
 export async function getAtlassianAdminApp(
-  tenantId: string,
   origin: string
 ): Promise<AtlassianApp | null> {
-  return readApp(tenantId, origin, ATLASSIAN_ADMIN_CONNECTOR, usableAtlassianAdminCeiling);
+  return readApp(origin, ATLASSIAN_ADMIN_CONNECTOR, usableAtlassianAdminCeiling);
 }
 
 async function readApp(
-  tenantId: string,
   origin: string,
   connector: string,
   usableCeiling: (stored: string | null) => string[]
@@ -134,7 +128,7 @@ async function readApp(
     return null;
   }
 
-  const configResult = await readConnectorConfigCached(tenantId, connector, keyResult.val);
+  const configResult = await readConnectorConfigCached(connector, keyResult.val);
   if (!configResult.ok) {
     logger.error('Could not read atlassian connector config', {
       component: 'connectors/atlassian',

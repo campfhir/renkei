@@ -18,7 +18,6 @@ import {
 
 export async function nextRunAtFor(
   db: Kysely<DB>,
-  tenantId: string,
   config: ScheduleConfig
 ): Promise<Date> {
   let calendarDates: BlackoutEntry[] = [];

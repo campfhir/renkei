@@ -61,7 +61,7 @@ const context = (subject = 'auth0|alice'): MCPToolContext =>
     origin: 'https://renkei.example',
   }) as unknown as MCPToolContext;
 
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice' };
+const TARGET = { subject: 'auth0|alice' };
 const STAGED = {
   id: '11111111-1111-4111-8111-111111111111',
   filename: 'status',

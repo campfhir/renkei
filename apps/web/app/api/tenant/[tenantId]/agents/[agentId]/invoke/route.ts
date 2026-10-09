@@ -35,15 +35,15 @@ const BURST_WINDOW_MS = 60_000;
 const BURST_MAX = 30;
 const recentInvokes = new Map<string, number[]>();
 
-function overBurst(tenantId: string): boolean {
+function overBurst(): boolean {
   const now = Date.now();
-  const stamps = (recentInvokes.get(tenantId) ?? []).filter((at) => now - at < BURST_WINDOW_MS);
+  const stamps = (recentInvokes.get() ?? []).filter((at) => now - at < BURST_WINDOW_MS);
   if (stamps.length >= BURST_MAX) {
-    recentInvokes.set(tenantId, stamps);
+    recentInvokes.set(stamps);
     return true;
   }
   stamps.push(now);
-  recentInvokes.set(tenantId, stamps);
+  recentInvokes.set(stamps);
   return false;
 }
 
@@ -58,7 +58,6 @@ interface AgentRow {
 
 async function agentById(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<AgentRow | null> {
   // Callers paste this id into external tools; a malformed one (glued-on
@@ -75,7 +74,6 @@ async function agentById(
 /** The api-kind trigger row whose stored digest matches the presented key. */
 async function apiTriggerForKey(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   key: string
 ): Promise<string | null> {
@@ -99,7 +97,7 @@ async function apiTriggerForKey(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
 
@@ -107,19 +105,19 @@ export async function POST(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const agent = await agentById(db, tenantId, agentId);
+  const agent = await agentById(db, agentId);
   // The two auth paths resolve to (triggerId, triggeredBy) or a response.
   let triggerId: string | null = null;
   let triggeredBy: string | undefined;
 
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (session) {
     // A manual run by the owner or a grantee; anyone else sees a 404, not
     // a 403.
     if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     if (
       agent.owner_subject !== session.subject &&
-      !(await hasActiveGrant(db, tenantId, agentId, session.subject))
+      !(await hasActiveGrant(db, agentId, session.subject))
     ) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
@@ -129,7 +127,7 @@ export async function POST(
     if (!key || !agent) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-    triggerId = await apiTriggerForKey(db, tenantId, agentId, key);
+    triggerId = await apiTriggerForKey(db, agentId, key);
     if (!triggerId) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
@@ -148,7 +146,7 @@ export async function POST(
       { status: 409 }
     );
   }
-  if (overBurst(tenantId)) {
+  if (overBurst()) {
     return NextResponse.json({ error: 'Too many runs started; slow down.' }, { status: 429 });
   }
 
@@ -178,7 +176,7 @@ export async function POST(
   // noticing a run from a minute ago is still going, gets asked instead
   // of silently piling up a second run behind the first.
   if (triggerId === null && !confirmed) {
-    const inProgress = await findInProgressRun(db, tenantId, agentId);
+    const inProgress = await findInProgressRun(db, agentId);
     if (inProgress) {
       return NextResponse.json(
         {

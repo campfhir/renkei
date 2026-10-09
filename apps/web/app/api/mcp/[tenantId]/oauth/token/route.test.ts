@@ -39,7 +39,7 @@ describe('POST /api/mcp/{tenantId}/oauth/token throttle', () => {
   it('refuses the 61st request from one address in a minute before reading anything', async () => {
     for (let i = 0; i < 60; i += 1) {
       const response = await POST(tokenRequest('203.0.113.1'), {
-        params: Promise.resolve({ tenantId: TENANT }),
+        params: Promise.resolve({ }),
       });
       expect(response.status).not.toBe(429);
     }
@@ -47,7 +47,7 @@ describe('POST /api/mcp/{tenantId}/oauth/token throttle', () => {
     mockGetDatabase.mockClear();
 
     const throttled = await POST(tokenRequest('203.0.113.1'), {
-      params: Promise.resolve({ tenantId: TENANT }),
+      params: Promise.resolve({ }),
     });
     expect(throttled.status).toBe(429);
     expect(throttled.headers.get('retry-after')).toMatch(/^\d+$/);
@@ -58,10 +58,10 @@ describe('POST /api/mcp/{tenantId}/oauth/token throttle', () => {
 
   it('keeps a different address on its own budget', async () => {
     for (let i = 0; i < 61; i += 1) {
-      await POST(tokenRequest('203.0.113.1'), { params: Promise.resolve({ tenantId: TENANT }) });
+      await POST(tokenRequest('203.0.113.1'), { params: Promise.resolve({ }) });
     }
     const other = await POST(tokenRequest('203.0.113.2'), {
-      params: Promise.resolve({ tenantId: TENANT }),
+      params: Promise.resolve({ }),
     });
     expect(other.status).not.toBe(429);
   });

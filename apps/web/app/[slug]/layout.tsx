@@ -72,29 +72,29 @@ export default async function TenantLayout({
 }) {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
     // Back to the page they asked for, query and all — the proxy put it on
     // the request. Without it (the proxy's own error path), the home page.
     const requested = safeReturnPath((await headers()).get(PATHNAME_HEADER));
-    redirect(signInUrl(tenant.id, requested ?? `/`));
+    redirect(signInUrl(requested ?? `/`));
   }
   const isOperator = session.roles.includes(ROLE_OPERATOR);
 
   // The nav shows a person, not an OIDC subject: the identity spine has the
   // display name and email recorded at sign-in. The subject is the fallback
   // for a session recorded before the spine existed.
-  const identity = await getIdentityDisplay(tenant.id, session.subject);
+  const identity = await getIdentityDisplay(session.subject);
   const userName = identity?.displayName ?? identity?.email ?? session.subject;
 
-  const prefs = await getNotificationPrefs(tenant.id, session.subject, { fresh: true });
-  const theme = await getThemePrefs(tenant.id, session.subject, { fresh: true });
-  const coachMarks = await getCoachMarkPrefs(tenant.id, session.subject, { fresh: true });
+  const prefs = await getNotificationPrefs(session.subject, { fresh: true });
+  const theme = await getThemePrefs(session.subject, { fresh: true });
+  const coachMarks = await getCoachMarkPrefs(session.subject, { fresh: true });
   // The org's switch for the tours (the escape hatch) — off, the engine
   // mounts inert and the Tutorials door goes away. A settings read that
   // fails reads as on: the switch is for a misbehaving tour, not a
   // misbehaving database.
-  const orgSettings = await getOrgSettings(tenant.id);
+  const orgSettings = await getOrgSettings();
   const coachMarksEnabled = orgSettings.ok ? orgSettings.val.coachMarksEnabled : true;
 
   // The menu carries the person's chats on every page, and the coach-mark
@@ -102,10 +102,10 @@ export default async function TenantLayout({
   const dbResult = getDatabase();
   const [chats, coachMarkProgress] = dbResult.ok
     ? await Promise.all([
-        loadChatSidebar(dbResult.val, tenant.id, session.subject, {
+        loadChatSidebar(dbResult.val, session.subject, {
           since: chatSidebarActiveSince(),
         }),
-        listCoachMarkProgress(dbResult.val, tenant.id, session.subject),
+        listCoachMarkProgress(dbResult.val, session.subject),
       ])
     : [null, []];
 
@@ -123,20 +123,19 @@ export default async function TenantLayout({
   */
   return (
     <CodeLineNumbersProvider value={theme.codeLineNumbers}>
-      <ThemeScript tenantId={tenant.id} />
-      <ThemeSync tenantId={tenant.id} mode={theme.mode} />
-      <NotificationCenter tenantId={tenant.id}>
+      <ThemeScript />
+      <ThemeSync mode={theme.mode} />
+      <NotificationCenter>
         <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
           {/* The person's encryption key, kept connected from this browser
               (docs/delegate-key-design.md); its banners sit above the nav. */}
-          <KeyGuard tenantId={tenant.id} slug={tenant.slug} />
+          <KeyGuard slug={tenant.slug} />
           {/* The nav frames the page: it owns the <main> so the menu column can
               stand beside it on a wide screen. */}
           {/* The coach marks wrap the nav AND the page: a tour spotlights
               both, and walks across pages without unmounting. */}
           <CoachMarkProvider
             slug={tenant.slug}
-            tenantId={tenant.id}
             isOperator={isOperator}
             enabled={coachMarksEnabled}
             autoStart={coachMarks.autoStart}
@@ -144,7 +143,6 @@ export default async function TenantLayout({
           >
             <AppNav
               slug={tenant.slug}
-              tenantId={tenant.id}
               userName={userName}
               userEmail={identity?.email ?? null}
               isOperator={isOperator}
@@ -155,7 +153,6 @@ export default async function TenantLayout({
             </AppNav>
           </CoachMarkProvider>
           <NotificationCorner
-            tenantId={tenant.id}
             corner={prefs?.toastCorner ?? 'bottom-right'}
             toastsEnabled={prefs?.toastsEnabled ?? false}
           />
@@ -163,7 +160,7 @@ export default async function TenantLayout({
               tab is in the background, and only for somebody whose browser has
               granted permission. The opt-in it checks lives in this browser's
               localStorage, not here — see desktop-notifications.tsx. */}
-          <DesktopNotifications tenantId={tenant.id} />
+          <DesktopNotifications />
         </div>
       </NotificationCenter>
     </CodeLineNumbersProvider>

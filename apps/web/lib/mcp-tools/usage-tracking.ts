@@ -145,7 +145,7 @@ async function actorFor(context: UsageContext): Promise<{ subject: string; displ
   try {
     const dbResult = getDatabase();
     if (!dbResult.ok) return fallback;
-    return await describeActor(dbResult.val, context.tenantId, context.subject);
+    return await describeActor(dbResult.val, context.subject);
   } catch {
     return fallback;
   }

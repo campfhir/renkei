@@ -43,7 +43,7 @@ export function AddConnectorButton({
         Add connector
       </button>
       {open && (
-        <AddConnectorModal tenantId={tenantId} items={items} onClose={() => setOpen(false)} />
+        <AddConnectorModal items={items} onClose={() => setOpen(false)} />
       )}
     </>
   );

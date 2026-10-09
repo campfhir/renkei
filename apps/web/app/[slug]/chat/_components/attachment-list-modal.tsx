@@ -67,7 +67,7 @@ export default function AttachmentListModal({
               <li key={attachment.id} className="flex items-center gap-2 py-2">
                 <Icon path={ICONS.paperclip} className="h-4 w-4 shrink-0 text-gray-400" />
                 <DownloadLink
-                  href={chatClient.attachmentUrl(tenantId, attachment.id)}
+                  href={chatClient.attachmentUrl(attachment.id)}
                   filename={attachment.filename}
                   className="min-w-0 flex-1 truncate hover:underline"
                   title={attachment.filename}

@@ -344,9 +344,9 @@ async function describeFailure(response: Response): Promise<Failure> {
  * these records are persisted by the Postgres log adapter and are readable
  * over HTTP.
  */
-function grantScope(auth: AuthedFetch): { tenantId?: string; accountId?: string } {
+function grantScope(auth: AuthedFetch): { accountId?: string } {
   const [, tenantId, accountId] = auth.grantKey.split(':');
-  return { tenantId: tenantId || undefined, accountId: accountId || undefined };
+  return { accountId: accountId || undefined };
 }
 
 /**

@@ -49,7 +49,6 @@ export interface NearDuplicateScope {
  * literal (see `@renkei/knowledge`'s `vectorLiteral`).
  */
 export async function hasNearDuplicateChunk(
-  tenantId: string,
   vector: string,
   scope: NearDuplicateScope
 ): Promise<Result<boolean, 'DB_ERROR'>> {

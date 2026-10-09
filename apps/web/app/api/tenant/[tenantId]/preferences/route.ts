@@ -34,26 +34,26 @@ import { getSessionFromRequest } from '@/lib/session';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const [notifications, theme, voice, image, coachMarks] = await Promise.all([
-    getNotificationPrefs(tenantId, session.subject, { fresh: true }),
-    getThemePrefs(tenantId, session.subject, { fresh: true }),
-    getVoicePrefs(tenantId, session.subject, { fresh: true }),
-    getImagePrefs(tenantId, session.subject, { fresh: true }),
-    getCoachMarkPrefs(tenantId, session.subject, { fresh: true }),
+    getNotificationPrefs(session.subject, { fresh: true }),
+    getThemePrefs(session.subject, { fresh: true }),
+    getVoicePrefs(session.subject, { fresh: true }),
+    getImagePrefs(session.subject, { fresh: true }),
+    getCoachMarkPrefs(session.subject, { fresh: true }),
   ]);
   return NextResponse.json({ notifications, theme, voice, image, coachMarks });
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -76,38 +76,38 @@ export async function PUT(
   // The parser is the validator for the one that IS sent: it keeps what it
   // recognises and fills the rest from the defaults, so a partial or stale
   // document is usable rather than a 400.
-  let notifications = await getNotificationPrefs(tenantId, session.subject, { fresh: true });
+  let notifications = await getNotificationPrefs(session.subject, { fresh: true });
   if ('notifications' in payload) {
     notifications = parseNotificationPrefs(payload.notifications);
-    const written = await setNotificationPrefs(tenantId, session.subject, notifications);
+    const written = await setNotificationPrefs(session.subject, notifications);
     if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
 
-  let theme = await getThemePrefs(tenantId, session.subject, { fresh: true });
+  let theme = await getThemePrefs(session.subject, { fresh: true });
   if ('theme' in payload) {
     theme = parseThemePrefs(payload.theme);
-    const written = await setThemePrefs(tenantId, session.subject, theme);
+    const written = await setThemePrefs(session.subject, theme);
     if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
 
-  let voice = await getVoicePrefs(tenantId, session.subject, { fresh: true });
+  let voice = await getVoicePrefs(session.subject, { fresh: true });
   if ('voice' in payload) {
     voice = parseVoicePrefs(payload.voice);
-    const written = await setVoicePrefs(tenantId, session.subject, voice);
+    const written = await setVoicePrefs(session.subject, voice);
     if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
 
-  let image = await getImagePrefs(tenantId, session.subject, { fresh: true });
+  let image = await getImagePrefs(session.subject, { fresh: true });
   if ('image' in payload) {
     image = parseImagePrefs(payload.image);
-    const written = await setImagePrefs(tenantId, session.subject, image);
+    const written = await setImagePrefs(session.subject, image);
     if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
 
-  let coachMarks = await getCoachMarkPrefs(tenantId, session.subject, { fresh: true });
+  let coachMarks = await getCoachMarkPrefs(session.subject, { fresh: true });
   if ('coachMarks' in payload) {
     coachMarks = parseCoachMarkPrefs(payload.coachMarks);
-    const written = await setCoachMarkPrefs(tenantId, session.subject, coachMarks);
+    const written = await setCoachMarkPrefs(session.subject, coachMarks);
     if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
 

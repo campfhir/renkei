@@ -15,23 +15,23 @@ export default async function EditAgentPage({
 }): Promise<React.ReactNode> {
   const { slug, agentId } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/agents/${agentId}/edit`));
+    redirect(signInUrl(`/agents/${agentId}/edit`));
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   // Access-scoped lookup (owner or unexpired grant): anyone else's agent
   // is a 404, never a hint.
-  const access = await resolveAgentAccess(dbResult.val, tenant.id, session.subject, agentId);
+  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
   if (!access) notFound();
   const agent = access.agent;
 
   // Builder data resolves against the OWNER: the agent runs on the owner's
   // grants, so the tool palette, and the "call another agent" list, must
   // describe the owner's world even when a grantee is doing the editing.
-  const data = await loadBuilderData(dbResult.val, tenant.id, access.ownerSubject, agentId);
+  const data = await loadBuilderData(dbResult.val, access.ownerSubject, agentId);
 
   // No width cap here: the builder manages its own — it self-centers while
   // reading and goes two-column (canvas + editor panel) on selection.
@@ -41,7 +41,7 @@ export default async function EditAgentPage({
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <h1 className="text-xl font-bold">Edit “{agent.name}”</h1>
           {access.viewerIsOwner ? (
-            <AgentEnabledToggle tenantId={tenant.id} agent={agent} />
+            <AgentEnabledToggle agent={agent} />
           ) : (
             <span
               className={`rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -60,7 +60,6 @@ export default async function EditAgentPage({
       </div>
       <AgentBuilder
         slug={slug}
-        tenantId={tenant.id}
         tools={data.tools}
         otherAgents={data.otherAgents}
         calendars={data.calendars}

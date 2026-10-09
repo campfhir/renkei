@@ -6,11 +6,11 @@ import { bitbucketAuthFor, listWorkspaces } from '@/lib/code/bitbucket-browse';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  const listed = await listWorkspaces(await bitbucketAuthFor(request, tenantId, session.subject));
+  const listed = await listWorkspaces(await bitbucketAuthFor(request, session.subject));
   if (!listed.ok) return NextResponse.json({ error: listed.error }, { status: 409 });
   return NextResponse.json({ workspaces: listed.workspaces });
 }

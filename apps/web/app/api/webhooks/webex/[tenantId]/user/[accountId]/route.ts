@@ -27,13 +27,13 @@ const eventsQueue = webhookEventsQueue();
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; accountId: string }> }
+  { params }: { params: Promise<{ accountId: string }> }
 ): Promise<NextResponse> {
   const { accountId } = await params;
 
   // Throttle, then the credential's shape, then a bounded body — all before
   // any database read (lib/webhook-intake.ts).
-  const verdict = checkWebhookLimit('webex', tenantId, request);
+  const verdict = checkWebhookLimit('webex', request);
   if (!verdict.allowed) return tooManyRequests(verdict);
   const signature = request.headers.get('x-spark-signature');
   if (!hasSignatureShape(signature, WEBEX_SIGNATURE_SHAPE)) return malformedSignature();

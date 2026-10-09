@@ -88,8 +88,8 @@ test.describe('code project templates', () => {
         [
           E2E_TENANT_ID,
           E2E_SUBJECT,
-          await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-access-token'),
-          await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-refresh-token'),
+          await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'),
+          await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'),
           new Date(Date.now() + 365 * 86_400_000),
           ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'],
           JSON.stringify({ username: 'e2e-dev' }),

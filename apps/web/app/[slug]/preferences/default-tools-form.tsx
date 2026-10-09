@@ -56,7 +56,7 @@ export default function DefaultToolsForm({
 
   async function save() {
     setStatus('saving');
-    const result = await chatClient.setDefaultTools(tenantId, [...effective].sort(), kind);
+    const result = await chatClient.setDefaultTools([...effective].sort(), kind);
     if (result.data) {
       setSavedDefault(result.data.userDefault?.connectors ?? null);
       setStatus('saved');
@@ -67,7 +67,7 @@ export default function DefaultToolsForm({
 
   async function clear() {
     setStatus('saving');
-    const result = await chatClient.setDefaultTools(tenantId, null, kind);
+    const result = await chatClient.setDefaultTools(null, kind);
     if (!result.error) {
       setSelected(null);
       setSavedDefault(null);

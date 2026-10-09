@@ -20,15 +20,15 @@ import { getDefaultChatTools, setDefaultChatTools } from '@/lib/chat/tool-prefs'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
   const [connectors, userDefault, userCodeDefault] = await Promise.all([
-    listChatConnectors(tenantId, session.subject),
-    getDefaultChatTools(tenantId, session.subject, { fresh: true }),
-    getDefaultChatTools(tenantId, session.subject, { fresh: true, kind: 'code' }),
+    listChatConnectors(session.subject),
+    getDefaultChatTools(session.subject, { fresh: true }),
+    getDefaultChatTools(session.subject, { fresh: true, kind: 'code' }),
   ]);
   return NextResponse.json({
     connectors,
@@ -42,9 +42,9 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
   const body = await readJsonBody(request);
@@ -55,12 +55,12 @@ export async function PUT(
   if (body.userDefault !== null && body.userDefault !== undefined) {
     const config = parseToolConfig(body.userDefault);
     if (!config) return jsonError(400, 'invalid-tool-config', 'Invalid tool configuration');
-    const written = await setDefaultChatTools(tenantId, session.subject, config, kind);
+    const written = await setDefaultChatTools(session.subject, config, kind);
     if (!written.ok) return jsonError(500, 'save-failed', 'Could not save');
     return NextResponse.json({ userDefault: toolConfigJson(config), kind });
   }
 
-  const written = await setDefaultChatTools(tenantId, session.subject, null, kind);
+  const written = await setDefaultChatTools(session.subject, null, kind);
   if (!written.ok) return jsonError(500, 'save-failed', 'Could not save');
   return NextResponse.json({ userDefault: null, kind });
 }

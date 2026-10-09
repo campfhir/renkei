@@ -41,7 +41,6 @@ export type SaveAgentResult =
 
 export async function saveAgent(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   parsed: { input: SaveAgentInput; draft: AgentDraft; refreshDescription: boolean },
   options: {
@@ -74,12 +73,12 @@ export async function saveAgent(
   const defer = options.defer ?? ((task) => after(task));
   const owner = options.ownerSubject ?? subject;
 
-  const settings = await getOrgSettings(tenantId);
+  const settings = await getOrgSettings();
   const normalized = normalizeAgentDraft(parsed.draft, {
     attemptsCap: settings.ok ? settings.val.agentMaxStepAttempts : undefined,
     approvalWaitCapHours: settings.ok ? settings.val.agentApprovalMaxWaitDays * 24 : undefined,
   });
-  const tools = await listAvailableTools(tenantId, owner);
+  const tools = await listAvailableTools(owner);
   const issues = validateAgentDraft(normalized, tools, {
     maxSteps: settings.ok ? settings.val.agentMaxSteps : undefined,
   });
@@ -87,7 +86,7 @@ export async function saveAgent(
 
   if (options.dryRun) {
     if (options.agentId !== undefined) {
-      const existing = await getAgent(db, tenantId, owner, options.agentId);
+      const existing = await getAgent(db, owner, options.agentId);
       if (!existing) return { outcome: 'not-found' };
     }
     return { outcome: 'valid-dry-run', normalized };
@@ -107,7 +106,7 @@ export async function saveAgent(
   };
 
   if (options.agentId === undefined) {
-    const result = await createAgent(db, tenantId, subject, savedInput);
+    const result = await createAgent(db, subject, savedInput);
     if (result === 'NAME_TAKEN') return nameTaken;
     recordAuditEvent({
       actorSubject: subject,
@@ -116,7 +115,7 @@ export async function saveAgent(
       targetLabel: normalized.name,
     });
     defer(() =>
-      generateAgentDescription(db, tenantId, {
+      generateAgentDescription(db, {
         id: result.agentId,
         name: normalized.name,
         steps: normalized.steps,
@@ -135,7 +134,7 @@ export async function saveAgent(
   }
 
   const agentId = options.agentId;
-  const existing = await getAgent(db, tenantId, owner, agentId);
+  const existing = await getAgent(db, owner, agentId);
   if (!existing) return { outcome: 'not-found' };
   // Compared NORMALIZED-to-normalized: the stored doc may predate a
   // normalizer rule (an older steps version, a since-added strip), and a
@@ -177,7 +176,7 @@ export async function saveAgent(
   // real edit or the builder's re-check button, not on every save.
   const needsDescription = parsed.refreshDescription || describedChanged;
 
-  const result = await updateAgent(db, tenantId, owner, agentId, savedInput, {
+  const result = await updateAgent(db, owner, agentId, savedInput, {
     markDescriptionStale: needsDescription,
   });
   if (result === 'NOT_FOUND') return { outcome: 'not-found' };
@@ -219,7 +218,7 @@ export async function saveAgent(
 
   if (needsDescription) {
     defer(() =>
-      generateAgentDescription(db, tenantId, {
+      generateAgentDescription(db, {
         id: agentId,
         name: normalized.name,
         steps: normalized.steps,

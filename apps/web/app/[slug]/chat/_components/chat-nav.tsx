@@ -51,7 +51,7 @@ export function ChatList({
 }) {
   const currentPath = usePathname();
   const [filter, setFilter] = useState('');
-  const { hits, searching } = useContentSearch(tenantId, filter);
+  const { hits, searching } = useContentSearch(filter);
   // Which states the list shows; active only, until the funnel says otherwise.
   const [states, setStates] = useState<{ active: boolean; archived: boolean }>({
     active: true,
@@ -88,7 +88,7 @@ export function ChatList({
   const loadMore = useCallback(async () => {
     if (!moreBefore || loadingMore) return;
     setLoadingMore(true);
-    const result = await chatClient.moreChats(tenantId, moreBefore);
+    const result = await chatClient.moreChats(moreBefore);
     setLoadingMore(false);
     if (result.data) {
       setExtraChats((current) => [...current, ...result.data!.chats]);
@@ -111,7 +111,7 @@ export function ChatList({
     }
     if (fullChats !== null) return;
     let cancelled = false;
-    void chatClient.sidebar(tenantId).then((result) => {
+    void chatClient.sidebar().then((result) => {
       if (!cancelled && result.data) setFullChats(result.data.chats);
     });
     return () => {
@@ -192,7 +192,6 @@ export function ChatList({
               <ChatRow
                 key={chat.id}
                 slug={slug}
-                tenantId={tenantId}
                 chat={chat}
                 projects={data.projects}
                 snippet={hits.get(chat.id) ?? null}
@@ -209,7 +208,6 @@ export function ChatList({
               <ChatRow
                 key={chat.id}
                 slug={slug}
-                tenantId={tenantId}
                 chat={chat}
                 projects={data.projects}
                 snippet={hits.get(chat.id) ?? null}
@@ -341,7 +339,6 @@ function matches(chat: ChatListItem, filter: string): boolean {
  * in, so the empty state can hold off saying "no match" too soon.
  */
 function useContentSearch(
-  tenantId: string,
   filter: string
 ): { hits: Map<string, string>; searching: boolean } {
   const query = normalizeQuery(filter);
@@ -355,7 +352,7 @@ function useContentSearch(
   useEffect(() => {
     if (!active) return;
     const handle = setTimeout(async () => {
-      const result = await chatClient.searchChats(tenantId, query);
+      const result = await chatClient.searchChats(query);
       if (latest.current !== query) return;
       setState({
         query,
@@ -506,7 +503,7 @@ function ChatRow({
                     setMenuOpen(false);
                     if (item === 'archive') {
                       void run(() =>
-                        chatClient.updateChat(tenantId, chat.id, { archived: !chat.archived })
+                        chatClient.updateChat(chat.id, { archived: !chat.archived })
                       );
                       return;
                     }
@@ -537,7 +534,7 @@ function ChatRow({
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              void run(() => chatClient.updateChat(tenantId, chat.id, { title: title.trim() }));
+              void run(() => chatClient.updateChat(chat.id, { title: title.trim() }));
             }}
             className="space-y-3"
           >
@@ -563,7 +560,7 @@ function ChatRow({
             <button
               type="button"
               disabled={busy || chat.projectId === null}
-              onClick={() => void run(() => chatClient.moveChat(tenantId, chat.id, null))}
+              onClick={() => void run(() => chatClient.moveChat(chat.id, null))}
               className="block w-full rounded-md px-3 py-1.5 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-800"
             >
               No project
@@ -573,7 +570,7 @@ function ChatRow({
                 key={project.id}
                 type="button"
                 disabled={busy || chat.projectId === project.id}
-                onClick={() => void run(() => chatClient.moveChat(tenantId, chat.id, project.id))}
+                onClick={() => void run(() => chatClient.moveChat(chat.id, project.id))}
                 className="block w-full rounded-md px-3 py-1.5 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-800"
               >
                 {project.name}
@@ -588,7 +585,6 @@ function ChatRow({
       ) : null}
       {dialog === 'share' ? (
         <ShareModal
-          tenantId={tenantId}
           kind="chat"
           resourceId={chat.id}
           title={`Share “${chat.title ?? 'New chat'}”`}
@@ -608,7 +604,7 @@ function ChatRow({
             onCancel={() => setDialog(null)}
             onConfirm={() =>
               void run(async () => {
-                const result = await chatClient.deleteChat(tenantId, chat.id);
+                const result = await chatClient.deleteChat(chat.id);
                 if (!result.error) {
                   onDeleted(chat.id);
                   if (active) router.push(`/chat`);

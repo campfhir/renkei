@@ -27,10 +27,10 @@ async function connectorFrom(request: NextRequest): Promise<string | null> {
 
 async function change(
   request: NextRequest,
-  params: Promise<{ tenantId: string }>,
+  params: Promise<{ }>,
   apply: (added: string[], connector: string) => string[]
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const connector = await connectorFrom(request);
@@ -41,24 +41,24 @@ async function change(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
 
-  const catalog = await resolveUserCatalog(dbResult.val, tenantId, session.subject, {
-    audienceAllows: await resolveAudienceAllows(dbResult.val, tenantId, session.subject),
+  const catalog = await resolveUserCatalog(dbResult.val, session.subject, {
+    audienceAllows: await resolveAudienceAllows(dbResult.val, session.subject),
     fresh: true,
   });
   if (!catalog.available.some((entry) => entry.capabilityKey === connector)) {
     return NextResponse.json({ error: 'Unknown or unavailable connector' }, { status: 400 });
   }
 
-  const current = await getConnectorPrefs(tenantId, session.subject, { fresh: true });
+  const current = await getConnectorPrefs(session.subject, { fresh: true });
   const added = apply(current.added, connector);
-  const saved = await setConnectorPrefs(tenantId, session.subject, { added });
+  const saved = await setConnectorPrefs(session.subject, { added });
   if (!saved.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   return NextResponse.json({ added });
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
   return change(request, params, (added, connector) =>
     added.includes(connector) ? added : [...added, connector]
@@ -67,7 +67,7 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
   return change(request, params, (added, connector) => added.filter((key) => key !== connector));
 }

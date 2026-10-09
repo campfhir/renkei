@@ -22,14 +22,14 @@ const MAX_TEXT_CHARS = 20_000;
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; attachmentId: string }> }
+  { params }: { params: Promise<{ attachmentId: string }> }
 ): Promise<Response> {
   const { attachmentId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const row = await getAttachment(db, tenantId, attachmentId);
-  const cipher = row ? await attachmentCipherFor(db, tenantId, session.subject, row) : null;
+  const row = await getAttachment(db, attachmentId);
+  const cipher = row ? await attachmentCipherFor(db, session.subject, row) : null;
   if (!row || !cipher) {
     return jsonError(404, 'not-found', 'No such file');
   }
@@ -37,7 +37,7 @@ export async function GET(
   const kind = previewKind(row);
 
   if (kind === 'sheet') {
-    const store = await resolveTenantBlobStore(tenantId);
+    const store = await resolveTenantBlobStore();
     if (!store.ok) return jsonError(503, 'uploads-off', 'The file store is not configured.');
     const object = await store.val.getObject(row.blobKey);
     if (!object.ok) return jsonError(502, 'store', 'The file is unavailable.');
@@ -54,7 +54,7 @@ export async function GET(
   }
 
   if (kind === 'extract') {
-    const text = await getAttachmentText(db, tenantId, row.id, cipher);
+    const text = await getAttachmentText(db, row.id, cipher);
     if (text === null) return jsonError(422, 'no-text', 'No text was extracted from this file.');
     return NextResponse.json(
       {

@@ -123,7 +123,7 @@ describe('DelegateClient', () => {
         ? Object.fromEntries(Object.entries(calls[0]!.init.headers))
         : {};
     expect(headers.authorization).toBe('Bearer k-1');
-    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ tenantId: 'tenant-1' });
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ });
   });
 
   it('reads a key status into dates and string lists, defaulting what is missing', async () => {

@@ -115,7 +115,7 @@ async function baseSeed(client: Client, fixture: Fixture): Promise<void> {
   );
   // Enrolled already (docs/delegate-key-design.md), so the first-sign-in
   // "your encryption key is ready" dialog does not sit over the forms.
-  await enrollForE2E(client, fixture.tenantId, fixture.subject);
+  await enrollForE2E(client, fixture.subject);
 }
 
 async function seedAdminTenant(fixture: Fixture): Promise<void> {
@@ -155,7 +155,6 @@ async function seedUserTenant(fixture: Fixture): Promise<{ instanceId: string }>
         fixture.subject,
         await sealForSubject(
           client,
-          fixture.tenantId,
           fixture.subject,
           JSON.stringify({ authToken: 'e2e-seeded-authtoken' })
         ),

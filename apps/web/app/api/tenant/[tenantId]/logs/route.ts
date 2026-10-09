@@ -15,7 +15,7 @@ function logCipherOptions() {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -26,7 +26,7 @@ export async function POST(
   const requestedAccountId = searchParams.get('accountId');
 
   // Roles come from the server-side session, never from a client-supplied cookie.
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -34,13 +34,6 @@ export async function POST(
 
   try {
     // Verify tenant exists
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('id')
-      .where('id', '=', tenantId)
-      .executeTakeFirst();
-
-
     // Parse user query from request body
     let userQuery: string | null = null;
     try {
@@ -57,7 +50,7 @@ export async function POST(
     // Check for operator role
     if (userRoles.has('renkei-operator')) {
       // Operator can view all logs, filter by tenant only
-      const queryOptions = buildLogQueryOptions(userQuery, tenantId);
+      const queryOptions = buildLogQueryOptions(userQuery);
       const adapter = new PostgresAdapter({ db, ...logCipherOptions() });
       const result = await adapter.query(queryOptions);
 
@@ -105,7 +98,7 @@ export async function POST(
       }
 
       // User can view only their own logs
-      const queryOptions = buildLogQueryOptions(userQuery, tenantId, accountId);
+      const queryOptions = buildLogQueryOptions(userQuery, accountId);
       const adapter = new PostgresAdapter({ db, ...logCipherOptions() });
       const result = await adapter.query(queryOptions);
 

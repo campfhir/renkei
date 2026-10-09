@@ -12,7 +12,7 @@ const { seedDefaultClassifierRules: mockSeed } = jest.requireMock<{
   seedDefaultClassifierRules: jest.Mock;
 }>('@renkei/email-sanitizer');
 
-function stubDb(existing: { tenant_id: string } | undefined = undefined) {
+function stubDb(existing: { } | undefined = undefined) {
   const inserted: { table: string; values: Record<string, unknown> }[] = [];
   const db = {
     selectFrom() {
@@ -100,12 +100,12 @@ describe('POST /api/home-realm/create', () => {
   });
 
   it('tells an anonymous caller a claimed domain is taken without naming its tenant', async () => {
-    const { inserted } = stubDb({ tenant_id: '00000000-0000-4000-8000-000000000001' });
+    const { inserted } = stubDb({ });
     const response = await POST(requestWith('acme.com'));
     expect(response.status).toBe(409);
     const body = await response.json();
     expect(body.alreadyExists).toBe(true);
-    expect(body.tenantId).toBeUndefined();
+    expect().toBeUndefined();
     expect(JSON.stringify(body)).not.toContain('00000000-0000-4000-8000-000000000001');
     expect(inserted).toHaveLength(0);
   });

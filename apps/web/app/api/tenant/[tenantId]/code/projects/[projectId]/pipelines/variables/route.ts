@@ -27,10 +27,10 @@ const TEXT_MAX_CHARS = 200_000;
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await pipelinesProjectContext(request, tenantId, projectId, { write: true });
+  const found = await pipelinesProjectContext(request, projectId, { write: true });
   if (!found.ok) return found.response;
   const { project, subject, scopes } = found.context;
   const needs = missingScope(scopes, PIPELINES_VARIABLE_SCOPE);
@@ -45,7 +45,7 @@ export async function PUT(
   const base = repoBase(project.repo.fullName);
   if (!base) return jsonError(400, 'invalid', 'The repository name is not usable.');
   const parsed = parseVariableText(text);
-  const auth = await bitbucketAuthFor(request, tenantId, subject);
+  const auth = await bitbucketAuthFor(request, subject);
   const current = await listVariables(auth, variablesPath(base, environmentUuid));
   if (!current.ok) return jsonError(502, 'bitbucket', current.error);
   const applied = await applyVariableText(

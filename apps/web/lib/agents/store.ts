@@ -161,7 +161,6 @@ function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | n
 
 async function triggersOf(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<StoredTrigger[]> {
   const rows = await db
@@ -222,7 +221,6 @@ function blockedToolsOf(value: Json | null): string[] {
 
 async function toStored(
   db: Kysely<DB>,
-  tenantId: string,
   row: AgentRow
 ): Promise<StoredAgent | null> {
   if (!isAgentStepsDoc(row.steps)) return null;
@@ -241,7 +239,7 @@ async function toStored(
     canAskQuestions: row.can_ask_questions,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
-    triggers: await triggersOf(db, tenantId, row.id),
+    triggers: await triggersOf(db, row.id),
   };
 }
 
@@ -264,7 +262,6 @@ const AGENT_COLUMNS = [
 
 export async function listAgents(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string
 ): Promise<StoredAgent[]> {
   const rows = await db
@@ -275,7 +272,7 @@ export async function listAgents(
     .execute();
   const agents: StoredAgent[] = [];
   for (const row of rows) {
-    const stored = await toStored(db, tenantId, row);
+    const stored = await toStored(db, row);
     if (stored) agents.push(stored);
   }
   return agents;
@@ -283,7 +280,6 @@ export async function listAgents(
 
 export async function getAgent(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string
 ): Promise<StoredAgent | null> {
@@ -296,7 +292,7 @@ export async function getAgent(
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', agentId)
     .executeTakeFirst();
-  return row ? toStored(db, tenantId, row) : null;
+  return row ? toStored(db, row) : null;
 }
 
 /**
@@ -308,7 +304,6 @@ export async function getAgent(
  */
 export async function getAgentWithOwner(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<{ agent: StoredAgent; ownerSubject: string } | null> {
   if (!isUuid(agentId)) return null;
@@ -318,7 +313,7 @@ export async function getAgentWithOwner(
     .where('id', '=', agentId)
     .executeTakeFirst();
   if (!row) return null;
-  const agent = await toStored(db, tenantId, row);
+  const agent = await toStored(db, row);
   return agent ? { agent, ownerSubject: row.owner_subject } : null;
 }
 
@@ -416,7 +411,6 @@ function rowFieldsOf(
  */
 async function reconcileTriggers(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   payloads: TriggerPayload[]
 ): Promise<MintedApiKey[]> {
@@ -537,7 +531,6 @@ export interface SaveAgentInput {
 
 export async function createAgent(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   input: SaveAgentInput
 ): Promise<{ agentId: string; apiKeys: MintedApiKey[] } | 'NAME_TAKEN'> {
@@ -564,13 +557,12 @@ export async function createAgent(
     }
     throw error;
   }
-  const apiKeys = await reconcileTriggers(db, tenantId, agentId, input.triggers);
+  const apiKeys = await reconcileTriggers(db, agentId, input.triggers);
   return { agentId, apiKeys };
 }
 
 export async function updateAgent(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string,
   input: SaveAgentInput,
@@ -608,13 +600,12 @@ export async function updateAgent(
     }
     throw error;
   }
-  const apiKeys = await reconcileTriggers(db, tenantId, agentId, input.triggers);
+  const apiKeys = await reconcileTriggers(db, agentId, input.triggers);
   return { apiKeys };
 }
 
 export async function deleteAgent(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string
 ): Promise<boolean> {
@@ -630,7 +621,6 @@ export async function deleteAgent(
 /** Persist a generated description; advisory, so failures are the caller's to log. */
 export async function saveDescription(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   outcome:
     | { status: 'ok'; description: string; reviewNotes: { issue: string; fix?: string }[] }

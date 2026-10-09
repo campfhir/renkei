@@ -28,7 +28,7 @@ export async function GET(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -36,7 +36,7 @@ export async function GET(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const initial = await getRunForAdmin(db, tenant.id, agentId, runId);
+  const initial = await getRunForAdmin(db, agentId, runId);
   if (!initial) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const encoder = new TextEncoder();
@@ -74,7 +74,7 @@ export async function GET(
 
       timer = setInterval(() => {
         if (closed) return;
-        void getRunForAdmin(db, tenant.id, agentId, runId).then((run) => {
+        void getRunForAdmin(db, agentId, runId).then((run) => {
           if (run) send(run);
         });
       }, POLL_MS);

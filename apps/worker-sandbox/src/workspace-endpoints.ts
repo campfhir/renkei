@@ -108,7 +108,7 @@ export interface WorkspaceHandlerDeps {
   /** Whether this worker can run commands for a caller at all (features.ts); off answers every verb 503. */
   capable: boolean;
   /** Whether the organization has code workspaces on (its settings), asked per request. */
-  enabledFor: (tenantId: string) => Promise<boolean>;
+  enabledFor: () => Promise<boolean>;
   /**
    * The variables the caller's running services add to a command
    * (services.ts): SERVICE_<NAME>_HOST and friends, and each service's
@@ -176,7 +176,7 @@ function envWire(summary: envStore.EnvSecretSummary) {
 }
 
 function targetOf(body: Body): store.WorkspaceTarget | null {
-  const tenantId = str(body.tenantId);
+  const tenantId = str();
   const subject = str(body.subject);
   if (!tenantId || !subject) return null;
   return { subject };
@@ -197,7 +197,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
    * worker can run commands at all, and the organization has workspaces
    * on. Answers the 503 itself and says which half failed.
    */
-  async function enabled(tenantId: string, response: ServerResponse): Promise<boolean> {
+  async function enabled(response: ServerResponse): Promise<boolean> {
     if (!deps.capable) {
       sendError(
         response,
@@ -207,7 +207,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       );
       return false;
     }
-    if (!(await deps.enabledFor(tenantId))) {
+    if (!(await deps.enabledFor())) {
       sendError(
         response,
         503,
@@ -224,7 +224,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
 
   /** The checkout size limit for this caller: the org's, or their approved larger one. */
   async function limitFor(workspace: store.WorkspaceTarget): Promise<number> {
-    const limit = await getWorkspaceLimitBytes(workspace.tenantId, workspace.subject);
+    const limit = await getWorkspaceLimitBytes(workspace.subject);
     return limit.ok ? limit.val : WORKSPACE_DEFAULT_MAX_BYTES;
   }
 
@@ -362,7 +362,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       );
     }
 
-    const storageKey = newWorkspaceStorageKey(target.tenantId, target.subject);
+    const storageKey = newWorkspaceStorageKey(target.subject);
     const row = await store.insertWorkspace(db, {
       ...target,
       provider: body.provider,
@@ -1272,7 +1272,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   async function handleEnv(op: string, body: Body, response: ServerResponse): Promise<void> {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
-    if (!(await enabled(target.tenantId, response))) return;
+    if (!(await enabled(response))) return;
     const key = envSecretsKey();
     if (!key) {
       return sendError(
@@ -1399,7 +1399,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const subject = url.searchParams.get('subject') ?? '';
     const id = url.searchParams.get('id') ?? '';
     if (!tenantId || !subject || !id) return sendError(response, 400, 'bad_request');
-    if (!(await enabled(tenantId, response))) return;
+    if (!(await enabled(response))) return;
     const target = { subject };
     const path = validateWorkspacePath(url.searchParams.get('path'), { forWrite: true });
     if (!path.ok || !path.path)
@@ -1551,7 +1551,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   async function handleWorkspaces(op: string, body: Body, response: ServerResponse): Promise<void> {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
-    if (!(await enabled(target.tenantId, response))) return;
+    if (!(await enabled(response))) return;
     if (op.startsWith('lsp/')) return handleLsp(op.slice('lsp/'.length), target, body, response);
     switch (op) {
       case 'clone':

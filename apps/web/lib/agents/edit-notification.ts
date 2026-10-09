@@ -39,11 +39,11 @@ export function notifyAgentEdited(input: {
   void (async () => {
     // fresh: the preferences page saves through a different module graph,
     // and "I just turned this off" must hold for the very next edit.
-    const prefs = await getNotificationPrefs(input.tenantId, input.ownerSubject, { fresh: true });
+    const prefs = await getNotificationPrefs(input.ownerSubject, { fresh: true });
     const wanted = effectiveDelivery(prefs, input.agentId, 'agentEditedByOthers');
     if (!wanted.app && !wanted.email && !wanted.webex) return;
 
-    const who = await getIdentityDisplay(input.tenantId, input.actorSubject);
+    const who = await getIdentityDisplay(input.actorSubject);
     const editorName = who?.displayName || who?.email || 'Someone you shared it with';
     const headline = `${editorName} edited your agent "${input.agentName}"`;
 
@@ -69,7 +69,6 @@ export function notifyAgentEdited(input: {
         if (keyResult.ok) {
           void sendPush(
             dbResult.val,
-            input.tenantId,
             input.ownerSubject,
             keyResult.val,
             { title: headline, body: input.agentName, tag: id, refUrl: null, notificationId: id },
@@ -80,7 +79,7 @@ export function notifyAgentEdited(input: {
     }
 
     if (wanted.email) {
-      const owner = await getIdentityDisplay(input.tenantId, input.ownerSubject);
+      const owner = await getIdentityDisplay(input.ownerSubject);
       if (owner?.email) {
         const access = await resolveGraphAccess({
           subject: input.ownerSubject,
@@ -113,9 +112,9 @@ export function notifyAgentEdited(input: {
     }
 
     if (wanted.webex) {
-      const access = await resolveWebexUserAccess(input.tenantId, input.ownerSubject);
+      const access = await resolveWebexUserAccess(input.ownerSubject);
       if (access) {
-        const sent = await sendWebexNote(input.tenantId, access, `**${headline}**`);
+        const sent = await sendWebexNote(access, `**${headline}**`);
         if (!sent.ok) {
           logger.warn('agent-edited WebEx note not sent for agent {agentId}', {
             component: 'agents/edit-notification',

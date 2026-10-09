@@ -23,7 +23,7 @@ import {
   type AfterProcessingValue,
 } from '@/lib/batch-jobs/pipeline-form-value';
 
-export default function NewBatchJobForm({ slug }: { slug: string; tenantId: string }) {
+export default function NewBatchJobForm({ slug }: { slug: string; }) {
   const router = useRouter();
   const [name, setName] = useState('');
   const [shareId, setShareId] = useState('');
@@ -97,7 +97,6 @@ export default function NewBatchJobForm({ slug }: { slug: string; tenantId: stri
 
       <SourceFields
         slug={slug}
-        tenantId={tenantId}
         shareId={shareId}
         path={path}
         strategy={strategy}

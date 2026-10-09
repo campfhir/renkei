@@ -13,18 +13,18 @@ import { listVoicesCached, resolveVoiceProvider } from '@/lib/voice/config';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const resolved = await resolveVoiceProvider(tenantId);
+  const resolved = await resolveVoiceProvider();
   if (!resolved) {
     return NextResponse.json({ configured: false, voices: [], prefs: null, defaults: null });
   }
   const [prefs, voices] = await Promise.all([
-    getVoicePrefs(tenantId, session.subject, { fresh: true }),
-    listVoicesCached(tenantId, resolved),
+    getVoicePrefs(session.subject, { fresh: true }),
+    listVoicesCached(resolved),
   ]);
   return NextResponse.json({
     configured: true,

@@ -33,7 +33,7 @@ export interface WebexBot {
 }
 
 /** The tenant's bot, or null when none is configured, it is disabled, or it cannot be read. */
-export async function getWebexBot(tenantId: string): Promise<WebexBot | null> {
+export async function getWebexBot(): Promise<WebexBot | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
   try {
@@ -68,9 +68,8 @@ export async function getWebexBot(tenantId: string): Promise<WebexBot | null> {
 
 /** A client speaking as the bot, or null when the org has none — the `bot` sendNoteToPerson takes. */
 export async function webexBotClient(
-  tenantId: string,
   lane: 'interactive' | 'background' = 'interactive'
 ): Promise<WebexClient | null> {
-  const bot = await getWebexBot(tenantId);
+  const bot = await getWebexBot();
   return bot ? new WebexClient(bot.token, { lane }) : null;
 }

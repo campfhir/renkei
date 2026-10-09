@@ -23,7 +23,6 @@ const SAFE_INLINE = /^(image\/(png|jpeg|gif|webp)|application\/pdf|text\/plain)$
 
 async function mayDelete(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   row: AttachmentRow
 ): Promise<boolean> {
@@ -42,17 +41,17 @@ async function mayDelete(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; attachmentId: string }> }
+  { params }: { params: Promise<{ attachmentId: string }> }
 ): Promise<Response> {
   const { attachmentId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const row = await getAttachment(db, tenantId, attachmentId);
-  if (!row || !(await mayReadAttachment(db, tenantId, session.subject, row))) {
+  const row = await getAttachment(db, attachmentId);
+  if (!row || !(await mayReadAttachment(db, session.subject, row))) {
     return jsonError(404, 'not-found', 'No such file');
   }
-  const store = await resolveTenantBlobStore(tenantId);
+  const store = await resolveTenantBlobStore();
   if (!store.ok) return jsonError(503, 'uploads-off', 'The file store is not configured.');
   const object = await store.val.getObjectStream(row.blobKey);
   if (!object.ok) {
@@ -79,16 +78,16 @@ export async function GET(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; attachmentId: string }> }
+  { params }: { params: Promise<{ attachmentId: string }> }
 ): Promise<Response> {
   const { attachmentId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const row = await getAttachment(db, tenantId, attachmentId);
-  if (!row || !(await mayDelete(db, tenantId, session.subject, row))) {
+  const row = await getAttachment(db, attachmentId);
+  if (!row || !(await mayDelete(db, session.subject, row))) {
     return jsonError(404, 'not-found', 'No such file');
   }
-  await deleteAttachment(db, tenantId, row);
+  await deleteAttachment(db, row);
   return NextResponse.json({ ok: true });
 }

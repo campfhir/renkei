@@ -19,7 +19,7 @@ export async function POST(
 ): Promise<NextResponse> {
   const { slug, subject: encoded } = await params;
   const subject = decodeURIComponent(encoded);
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (access.subject === subject) {
     return NextResponse.json(

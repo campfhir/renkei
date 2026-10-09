@@ -81,7 +81,6 @@ export function generateUserKeySalt(): Buffer {
 export function deriveUserKek(
   master: Buffer,
   salt: Buffer,
-  tenantId: string,
   subject: string
 ): Buffer {
   const info = Buffer.from(`${KEK_INFO_VERSION}\0${tenantId}\0${subject}`, 'utf8');
@@ -181,7 +180,6 @@ export const OWN_KEY_PASSPHRASE_MAX_CHARS = 256;
 export function deriveOwnKek(
   passphrase: string,
   salt: Buffer,
-  tenantId: string,
   subject: string
 ): Buffer {
   const ikm = scryptSync(
@@ -203,7 +201,6 @@ export function deriveOwnKek(
 export function deriveUnlockKey(
   master: Buffer,
   salt: Buffer,
-  tenantId: string,
   subject: string
 ): Buffer {
   const info = Buffer.from(`${UNLOCK_KEY_INFO_VERSION}\0${tenantId}\0${subject}`, 'utf8');

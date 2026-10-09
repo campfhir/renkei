@@ -36,7 +36,7 @@ function stubDb(): FakeStore {
       },
       executeTakeFirst: async () => {
         store.selects += 1;
-        return store.rows.get(`${String(filters.tenant_id)}:${String(filters.connector)}`);
+        return store.rows.get(`${String()}:${String(filters.connector)}`);
       },
     };
     return chain;
@@ -50,7 +50,7 @@ function stubDb(): FakeStore {
         values: (row: Record<string, unknown>) => ({
           onConflict: () => ({
             execute: async () => {
-              store.rows.set(`${String(row.tenant_id)}:${String(row.connector)}`, {
+              store.rows.set(`${String()}:${String(row.connector)}`, {
                 enabled: row.enabled,
                 settings: JSON.parse(String(row.settings)),
                 encrypted_secrets: row.encrypted_secrets,

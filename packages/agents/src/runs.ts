@@ -61,7 +61,7 @@ export async function createAgentRun(
     });
   }
 
-  const settingsResult = await getOrgSettings(input.tenantId);
+  const settingsResult = await getOrgSettings();
   if (!settingsResult.ok) return err('DB_ERROR' as const);
   const settings = settingsResult.val;
 
@@ -164,7 +164,6 @@ export async function createAgentRun(
  */
 export async function findInProgressRun(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<{ id: string; status: string } | null> {
   const row = await db

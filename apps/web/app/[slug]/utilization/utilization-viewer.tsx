@@ -249,9 +249,9 @@ export default function UtilizationViewer({
   function refresh(periodKey: string) {
     startTransition(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const next = await getUtilizationReport(tenantId, periodKey, timeZone);
+      const next = await getUtilizationReport(periodKey, timeZone);
       if (next.signedOut) {
-        window.location.href = signInUrl(tenantId, `/utilization`);
+        window.location.href = signInUrl(`/utilization`);
         return;
       }
       setReport(next);

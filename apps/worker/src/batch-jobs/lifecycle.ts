@@ -166,7 +166,7 @@ async function publish(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
 }
 
 async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase): Promise<void> {
-  const prefs = await getNotificationPrefs(batch.tenant_id, batch.subject);
+  const prefs = await getNotificationPrefs(batch.subject);
   const key: BatchEvent = phase === 'started' ? 'batchStarted' : batchEventForStatus(batch.status);
   const wanted = prefs[key];
 
@@ -199,7 +199,6 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
       if (keyResult.ok) {
         void sendPush(
           db,
-          batch.tenant_id,
           batch.subject,
           keyResult.val,
           {
@@ -223,7 +222,7 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
 
   // Send email/WebEx if preferred (independent of app preference)
   if (wanted.email || wanted.webex) {
-    const base = await registrationUrl(batch.tenant_id);
+    const base = await registrationUrl();
     const link = base ? `${base}/batch-jobs/${batch.id}` : null;
     const body =
       `${kindLabel} batch “${batch.name}” ${phase === 'started' ? 'started' : describeBatchOutcome(batch)}.` +

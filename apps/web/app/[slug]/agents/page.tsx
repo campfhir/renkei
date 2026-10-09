@@ -23,16 +23,16 @@ export default async function AgentsPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/agents`));
+    redirect(signInUrl(`/agents`));
   }
 
   const dbResult = getDatabase();
   const [agents, shared] = dbResult.ok
     ? await Promise.all([
-        listAgents(dbResult.val, tenant.id, session.subject),
-        listAgentsSharedWith(dbResult.val, tenant.id, session.subject),
+        listAgents(dbResult.val, session.subject),
+        listAgentsSharedWith(dbResult.val, session.subject),
       ])
     : [[], []];
 
@@ -48,7 +48,7 @@ export default async function AgentsPage({
       <div className="mb-1 flex items-center justify-between gap-3">
         <h1 className="min-w-0 truncate text-xl font-bold">Agents</h1>
         <div className="flex shrink-0 items-center gap-2">
-          <ImportAgentButton slug={slug} tenantId={tenant.id} />
+          <ImportAgentButton slug={slug} />
           <CoachTarget name="agents-new" as="span" className="inline-flex shrink-0">
             <Link
               href={`/agents/new`}
@@ -66,7 +66,6 @@ export default async function AgentsPage({
       <CoachTarget name="agents-list">
         <AgentsList
           slug={slug}
-          tenantId={tenant.id}
           agents={agents}
           shared={shared.map((listing) => ({
             agent: listing.agent,

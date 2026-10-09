@@ -45,17 +45,17 @@ export default async function EditBatchJobSchedulePage({
 }): Promise<React.ReactNode> {
   const { slug, scheduleId } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/batch-jobs/schedules/${scheduleId}`));
+    redirect(signInUrl(`/batch-jobs/schedules/${scheduleId}`));
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const schedule = await getSchedule(dbResult.val, scheduleId, tenant.id);
+  const schedule = await getSchedule(dbResult.val, scheduleId);
   if (!schedule || schedule.subject !== session.subject) notFound();
 
-  const calendars = await loadCalendarOptions(dbResult.val, tenant.id);
+  const calendars = await loadCalendarOptions(dbResult.val);
   const fallbackScheduleConfig: ScheduleConfig = {
     recurrences: [{ every: 'day', at: '09:00' }],
     timezone: 'UTC',
@@ -70,7 +70,6 @@ export default async function EditBatchJobSchedulePage({
       </div>
       <EditScheduleForm
         slug={slug}
-        tenantId={tenant.id}
         scheduleId={schedule.id}
         initialName={schedule.name}
         initialSource={sourceValueOf(schedule.config)}

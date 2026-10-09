@@ -445,8 +445,8 @@ export function coerceStringListRecord(
  * a change takes effect within the TTL (or immediately after a setter, which
  * invalidates).
  */
-export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettings, 'DB_ERROR'>> {
-  const cached = orgCache.get(tenantId);
+export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>> {
+  const cached = orgCache.get();
   if (cached && cached.expiresAt > Date.now()) return ok(cached.value);
 
   const dbResult = getDatabase();
@@ -570,13 +570,12 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     ),
   };
 
-  orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
+  orgCache.set({ value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
   return ok(settings);
 }
 
 /** Upsert a subset of org settings; unspecified fields keep their value. */
 export async function setOrgSettings(
-  tenantId: string,
   updates: Partial<OrgSettings>
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -654,7 +653,7 @@ export async function setOrgSettings(
     if (!result.ok) return result;
   }
 
-  orgCache.delete(tenantId);
+  orgCache.delete();
   return ok();
 }
 
@@ -667,10 +666,9 @@ export async function setOrgSettings(
  * database blip never turns into a refusal to write.
  */
 export async function getWorkspaceLimitBytes(
-  tenantId: string,
   subject: string
 ): Promise<Result<number, 'DB_ERROR'>> {
-  const org = await getOrgSettings(tenantId);
+  const org = await getOrgSettings();
   if (!org.ok) return org;
   const dbResult = getDatabase();
   if (!dbResult.ok) return ok(org.val.sandboxWorkspaceMaxBytes);

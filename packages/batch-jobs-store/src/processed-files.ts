@@ -52,7 +52,6 @@ function chunks<T>(values: T[]): T[][] {
 /** The ledger rows recorded at any of these paths, on this share. */
 export async function findProcessedByPath(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   paths: string[]
 ): Promise<Map<string, ProcessedFileRow>> {
@@ -80,7 +79,6 @@ export async function findProcessedByPath(
 /** Which of these content hashes the ledger already holds for this share. */
 export async function findProcessedHashes(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   hashes: string[]
 ): Promise<Set<string>> {
@@ -121,7 +119,6 @@ export function matchesProcessedStat(
 /** Record files as processed — one row per file, upserted on the hash. */
 export async function recordProcessedFiles(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   batchId: string,
   files: ProcessedFileInput[]

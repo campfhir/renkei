@@ -22,11 +22,11 @@ export default async function AdminConnectorsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
-  const settings = await getOrgSettings(tenantRef.id);
+  const settings = await getOrgSettings();
   const disabledConnectors = settings.ok ? settings.val.disabledConnectors : [];
   const audiences = settings.ok ? settings.val.connectorAudiences : {};
 

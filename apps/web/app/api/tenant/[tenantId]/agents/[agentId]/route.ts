@@ -22,26 +22,26 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const access = await resolveAgentAccess(dbResult.val, tenantId, session.subject, agentId);
+  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   return NextResponse.json({ agent: access.agent });
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -51,14 +51,14 @@ export async function PUT(
   const parsed = parseAgentPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const access = await resolveAgentAccess(dbResult.val, tenantId, session.subject, agentId);
+  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // The shared save path (normalize → validate → persist → audit); the
   // summary is written AFTER the response — the builder polls meanwhile.
   // A grantee's save is scoped to the owner: audited as the actor, and the
   // owner is notified per their preference (edit-notification.ts).
-  const result = await saveAgent(dbResult.val, tenantId, session.subject, parsed, {
+  const result = await saveAgent(dbResult.val, session.subject, parsed, {
     agentId,
     defer: after,
     ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),
@@ -74,7 +74,7 @@ export async function PUT(
     );
   }
 
-  const agent = await getAgent(dbResult.val, tenantId, access.ownerSubject, agentId);
+  const agent = await getAgent(dbResult.val, access.ownerSubject, agentId);
   return NextResponse.json({
     agent,
     apiKeys: result.apiKeys,
@@ -84,10 +84,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -95,8 +95,8 @@ export async function DELETE(
 
   // Fetched first: after the cascade there is no row left to name in the
   // audit trail, and "deleted agent <uuid>" tells an operator nothing.
-  const existing = await getAgent(dbResult.val, tenantId, session.subject, agentId);
-  const deleted = await deleteAgent(dbResult.val, tenantId, session.subject, agentId);
+  const existing = await getAgent(dbResult.val, session.subject, agentId);
+  const deleted = await deleteAgent(dbResult.val, session.subject, agentId);
   if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   recordAuditEvent({
     actorSubject: session.subject,

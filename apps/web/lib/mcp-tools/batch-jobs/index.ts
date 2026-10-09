@@ -50,7 +50,7 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function targetOf(context: MCPToolContext): { tenantId: string; subject: string } | string {
+function targetOf(context: MCPToolContext): { subject: string } | string {
   if (!context.subject) return 'No signed-in identity on this request.';
   return { subject: context.subject };
 }
@@ -147,7 +147,7 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       // The share must be one the caller connected, and moving/deleting on
       // it must be within what they allowed the tools on the Connectors
       // page — same gate the plain form goes through.
-      const connected = await listConnectedShares(dbResult.val, target.tenantId, target.subject);
+      const connected = await listConnectedShares(dbResult.val, target.subject);
       if (!connected.ok) return errText('Could not read your file shares.');
       const refusal = afterProcessingRefusal(connected.val, shareId, afterProcessing);
       if (refusal) return errText(refusal);
@@ -183,7 +183,7 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
-      const batch = await getBatch(dbResult.val, str(args.batchId), target.tenantId);
+      const batch = await getBatch(dbResult.val, str(args.batchId));
       if (!batch || batch.subject !== target.subject) return errText('No such batch job.');
       return textResult(batchSummaryLine(batch));
     }
@@ -203,7 +203,7 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
-      const batches = await listBatches(dbResult.val, target.tenantId, target.subject, { limit: 20 });
+      const batches = await listBatches(dbResult.val, target.subject, { limit: 20 });
       if (batches.length === 0) return textResult('No batch jobs yet.');
       return textResult(batches.map(batchSummaryLine).join('\n'));
     }
@@ -228,7 +228,7 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
-      const batch = await getBatch(dbResult.val, str(args.batchId), target.tenantId);
+      const batch = await getBatch(dbResult.val, str(args.batchId));
       if (!batch || batch.subject !== target.subject) return errText('No such batch job.');
 
       const items = await listItems(dbResult.val, batch.id, { status: str(args.status) || undefined, limit: 200 });
@@ -267,7 +267,7 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       const target = targetOf(context);
       if (typeof target === 'string') return errText(target);
 
-      const mistralConfig = await resolveMistralOcrConfig(target.tenantId);
+      const mistralConfig = await resolveMistralOcrConfig();
       if (!mistralConfig.ok) {
         return errText(
           mistralConfig.err === 'unconfigured'

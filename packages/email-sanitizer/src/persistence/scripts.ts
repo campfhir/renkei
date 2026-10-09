@@ -53,7 +53,6 @@ function kindsOf(stored: readonly string[] | null): CleanerScriptKind[] {
 }
 
 export async function listCleanerScripts(
-  tenantId: string
 ): Promise<Result<CleanerScript[], 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -92,10 +91,9 @@ export async function listCleanerScripts(
  * behaviour.
  */
 export async function listActiveCleanerScripts(
-  tenantId: string,
   kind: CleanerScriptKind = 'msg'
 ): Promise<Result<CleanerScript[], 'DB_ERROR'>> {
-  const result = await listCleanerScripts(tenantId);
+  const result = await listCleanerScripts();
   if (!result.ok) return result;
   return ok(result.val.filter((script) => script.enabled && script.appliesTo.includes(kind)));
 }
@@ -112,7 +110,6 @@ export interface CleanerScriptInput {
 }
 
 export async function upsertCleanerScript(
-  tenantId: string,
   input: CleanerScriptInput
 ): Promise<Result<CleanerScript, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -163,7 +160,6 @@ export async function upsertCleanerScript(
 }
 
 export async function deleteCleanerScript(
-  tenantId: string,
   id: string
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -182,7 +178,6 @@ export async function deleteCleanerScript(
 
 /** Best-effort health write; a failure here must never block mail flow. */
 export async function recordCleanerScriptError(
-  tenantId: string,
   id: string,
   error: string | null
 ): Promise<void> {

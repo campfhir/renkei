@@ -94,7 +94,7 @@ export interface ScriptRunnerDeps {
   /** RLIMIT_AS for a run, in bytes. */
   memoryBytes: number;
   /** The per-tenant per-file ceiling for what a run stages back. */
-  maxFileBytes: (tenantId: string) => Promise<number>;
+  maxFileBytes: () => Promise<number>;
 }
 
 export interface ScriptRunInput {
@@ -468,7 +468,7 @@ export class ScriptRunner {
     const entries = (await readdir(outDir, { withFileTypes: true })).sort((a, b) =>
       a.name.localeCompare(b.name)
     );
-    const tenantCap = await this.deps.maxFileBytes(target.tenantId);
+    const tenantCap = await this.deps.maxFileBytes();
     for (const entry of entries) {
       if (outputs.length >= SCRIPT_MAX_OUTPUT_FILES) {
         skipped.push({

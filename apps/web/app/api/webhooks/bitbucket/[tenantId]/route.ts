@@ -47,14 +47,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
   // Throttle, then the credential's presence, then a bounded body — all
   // before any config or database read (lib/webhook-intake.ts). Bitbucket's
   // credential is a shared secret, not an HMAC, so "shape" here is only
   // that one arrived and is not absurdly long.
-  const verdict = checkWebhookLimit('bitbucket', tenantId, request);
+  const verdict = checkWebhookLimit('bitbucket', request);
   if (!verdict.allowed) return tooManyRequests(verdict);
   const providedSecret = presentedBitbucketSecret(request.headers, request.nextUrl.searchParams);
   if (!providedSecret || providedSecret.length > 512) return malformedSignature();
@@ -77,13 +77,6 @@ export async function POST(
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
-
-  const tenant = await db
-    .selectFrom('tenants')
-    .select('id')
-    .where('id', '=', tenantId)
-    .executeTakeFirst();
-
   const configResult = await readConnectorConfigCached(
     ATLASSIAN_BITBUCKET_CONNECTOR,
     keyResult.val
@@ -141,6 +134,6 @@ export async function POST(
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });
   }
 
-  logger.debug('Event accepted', { component: 'bitbucket/webhook', tenantId, type: eventKey });
+  logger.debug('Event accepted', { component: 'bitbucket/webhook', type: eventKey });
   return NextResponse.json({ accepted: true });
 }

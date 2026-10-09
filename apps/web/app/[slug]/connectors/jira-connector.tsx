@@ -122,7 +122,7 @@ export default function JiraConnector({
         />
       )}
 
-      {connected && <WatchManager tenantId={tenantId} provider="jira" />}
+      {connected && <WatchManager provider="jira" />}
     </ConnectorShell>
   );
 }

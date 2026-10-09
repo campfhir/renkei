@@ -12,19 +12,19 @@ import { parseQueue, saveQueuedSends } from '@/lib/chat/queued-sends';
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, tenantId, session.subject, chatId);
+  const chat = await getChatForOwner(db, session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
   const body = await readJsonBody(request);
   const queue = parseQueue(body.queue);
   if (!queue) return jsonError(400, 'invalid', 'That is not a queue the composer builds.');
   try {
-    await saveQueuedSends(db, tenantId, chat.id, queue);
+    await saveQueuedSends(db, chat.id, queue);
   } catch {
     return jsonError(500, 'database', 'The queue could not be saved.');
   }

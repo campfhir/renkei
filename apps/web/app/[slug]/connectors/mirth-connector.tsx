@@ -25,7 +25,7 @@ export default function MirthConnector({
         tools may do on that server; Mirth still has the final say.
       </p>
 
-      <MirthList tenantId={tenantId} instances={instances} />
+      <MirthList instances={instances} />
     </ConnectorShell>
   );
 }

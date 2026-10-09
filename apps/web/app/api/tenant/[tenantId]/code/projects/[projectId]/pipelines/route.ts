@@ -31,15 +31,15 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await pipelinesProjectContext(request, tenantId, projectId);
+  const found = await pipelinesProjectContext(request, projectId);
   if (!found.ok) return found.response;
   const { project, subject, scopes } = found.context;
   const configureNeeds = missingScope(scopes, PIPELINES_CONFIG_SCOPE);
   const variablesNeeds = missingScope(scopes, PIPELINES_VARIABLE_SCOPE);
-  const auth = await bitbucketAuthFor(request, tenantId, subject);
+  const auth = await bitbucketAuthFor(request, subject);
   const read = await readPipelineSetup(auth, project.repo.fullName, project.repo.branch, {
     readSwitch: configureNeeds === null,
   });
@@ -54,17 +54,17 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await pipelinesProjectContext(request, tenantId, projectId, { write: true });
+  const found = await pipelinesProjectContext(request, projectId, { write: true });
   if (!found.ok) return found.response;
   const { project, subject, scopes } = found.context;
   const needs = missingScope(scopes, PIPELINES_CONFIG_SCOPE);
   if (needs) return jsonError(403, 'scope', needs);
   const body = await readJsonBody(request);
   if (typeof body.enabled !== 'boolean') return jsonError(400, 'invalid', 'On or off?');
-  const auth = await bitbucketAuthFor(request, tenantId, subject);
+  const auth = await bitbucketAuthFor(request, subject);
   const set = await setPipelinesEnabled(auth, project.repo.fullName, body.enabled);
   if (!set.ok) return jsonError(502, 'bitbucket', set.error);
   recordAuditEvent({

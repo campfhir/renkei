@@ -12,11 +12,11 @@ import { listPipelineTemplates } from '@/lib/code/pipeline-templates';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const provider = request.nextUrl.searchParams.get('provider') ?? undefined;
-  const templates = await listPipelineTemplates(ready.context.db, tenantId, provider);
+  const templates = await listPipelineTemplates(ready.context.db, provider);
   return NextResponse.json({ templates });
 }

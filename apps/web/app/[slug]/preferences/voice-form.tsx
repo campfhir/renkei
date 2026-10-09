@@ -33,10 +33,10 @@ export default function VoiceForm({
   const [voices, setVoices] = useState<VoiceInfo[] | null>(null);
   const [voicesError, setVoicesError] = useState<string | null>(null);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
-  const sample = useVoicePreview(tenantId, { rate: prefs.rate });
+  const sample = useVoicePreview({ rate: prefs.rate });
 
   useEffect(() => {
-    void voiceClient.status(tenantId).then((result) => {
+    void voiceClient.status().then((result) => {
       if (!result.data) {
         setVoices([]);
         setVoicesError(result.error);
@@ -93,7 +93,7 @@ export default function VoiceForm({
 
   async function save() {
     setStatus('saving');
-    const result = await voiceClient.savePrefs(tenantId, prefs);
+    const result = await voiceClient.savePrefs(prefs);
     if (result.error) {
       setStatus('failed');
       return;

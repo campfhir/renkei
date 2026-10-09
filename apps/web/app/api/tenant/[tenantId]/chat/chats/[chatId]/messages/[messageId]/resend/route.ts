@@ -13,10 +13,10 @@ import { resendFromMessage } from '@/lib/chat/resend';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string; messageId: string }> }
+  { params }: { params: Promise<{ chatId: string; messageId: string }> }
 ): Promise<Response> {
   const { chatId, messageId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);

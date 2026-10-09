@@ -50,7 +50,7 @@ describeLive('@renkei/notifications (live database)', () => {
 
   afterAll(async () => {
     await db.deleteFrom('platform_settings').where('key', '=', 'vapid_keys').execute();
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    await db.deleteFrom('tenants').where('id', '=').execute();
     await db.destroy();
   });
 
@@ -72,22 +72,22 @@ describeLive('@renkei/notifications (live database)', () => {
       endpoint: 'https://push.example.test/abc123',
       keys: { p256dh: 'p256dh-value', auth: 'auth-value' },
     };
-    await saveSubscription(db, tenantId, SUBJECT, subscription);
+    await saveSubscription(db, SUBJECT, subscription);
 
-    const listed = await listSubscriptions(db, tenantId, SUBJECT);
+    const listed = await listSubscriptions(db, SUBJECT);
     expect(listed).toEqual([subscription]);
 
     // Idempotent re-subscribe: same (tenant, endpoint) upserts, not inserts.
-    await saveSubscription(db, tenantId, SUBJECT, {
+    await saveSubscription(db, SUBJECT, {
       ...subscription,
       keys: { p256dh: 'p256dh-value', auth: 'rotated-auth' },
     });
-    const relisted = await listSubscriptions(db, tenantId, SUBJECT);
+    const relisted = await listSubscriptions(db, SUBJECT);
     expect(relisted).toHaveLength(1);
     expect(relisted[0].keys.auth).toBe('rotated-auth');
 
-    await deleteSubscription(db, tenantId, SUBJECT, subscription.endpoint);
-    expect(await listSubscriptions(db, tenantId, SUBJECT)).toEqual([]);
+    await deleteSubscription(db, SUBJECT, subscription.endpoint);
+    expect(await listSubscriptions(db, SUBJECT)).toEqual([]);
   });
 
   it('sends a properly signed, encrypted push to the subscription endpoint', async () => {
@@ -154,7 +154,7 @@ describeLive('@renkei/notifications (live database)', () => {
     const agent = new Agent({ ca: cert });
 
     try {
-      await saveSubscription(db, tenantId, SUBJECT, {
+      await saveSubscription(db, SUBJECT, {
         endpoint,
         // Web Push subscription keys are P-256 points / secrets, base64url —
         // reusing a VAPID key pair's public key gives a real point on the

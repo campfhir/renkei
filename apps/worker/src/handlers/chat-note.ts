@@ -27,7 +27,6 @@ import { delegateClient } from '@renkei/delegate-client';
 /** The note's blocks sealed the way the chat's own rows are: under the chat's key, as its owner. */
 async function sealNote(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   text: string
 ): Promise<string> {
@@ -46,14 +45,13 @@ async function sealNote(
 }
 
 export async function insertChatNote(
-  tenantId: string,
   chatId: string,
   text: string
 ): Promise<void> {
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('database unavailable');
   const db = dbResult.val;
-  const sealed = await sealNote(db, tenantId, chatId, text);
+  const sealed = await sealNote(db, chatId, text);
 
   await db
     .insertInto('chat_messages')

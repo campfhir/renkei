@@ -133,7 +133,7 @@ async function seed(fixture: Fixture, options: { chat: boolean }): Promise<Buffe
        VALUES ($1, $2, $3, 'Sprint slippage', $4, NOW())`,
       [fixture.chatId, fixture.tenantId, fixture.subject, fixture.modelId]
     );
-    const keys = await enrollForE2E(client, fixture.tenantId, fixture.subject);
+    const keys = await enrollForE2E(client, fixture.subject);
     const chatKey = await keyFor(client, {
       kind: 'chat',
       resourceId: fixture.chatId,
@@ -524,7 +524,7 @@ test('an operator removes a departed person’s key from the Access page, never 
        VALUES ($1, $2, $3, 'E2E Leaver')`,
       [fixture.tenantId, leaver, leaver]
     );
-    await enrollForE2E(client, fixture.tenantId, leaver);
+    await enrollForE2E(client, leaver);
   });
   await signIn(page, fixture);
 

@@ -34,7 +34,7 @@ const HEX64 = 'a'.repeat(64);
  * Every route's context, as a superset: a handler that destructures only
  * `tenantId` accepts it, and the two per-account routes read both.
  */
-type RouteParams = { tenantId: string; accountId: string };
+type RouteParams = { accountId: string };
 type Handler = (
   request: NextRequest,
   context: { params: Promise<RouteParams> }
@@ -90,7 +90,7 @@ const ROUTES: Route[] = [
   {
     name: 'microsoft',
     post: microsoftPost,
-    path: `/api/webhooks/microsoft/${ACCOUNT}`,
+    path: `/api/webhooks/microsoft`,
     params: { accountId: ACCOUNT },
     validHeaders: {},
     malformedHeaders: null,

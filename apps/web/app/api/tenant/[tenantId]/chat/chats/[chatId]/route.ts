@@ -21,23 +21,23 @@ const TITLE_MAX_CHARS = 200;
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveChatAccess(db, tenantId, session.subject, chatId);
+  const access = await resolveChatAccess(db, session.subject, chatId);
   if (!access) return jsonError(404, 'not-found', 'No such chat');
-  return NextResponse.json(await loadChatView(db, tenantId, access, session.subject));
+  return NextResponse.json(await loadChatView(db, access, session.subject));
 }
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);
@@ -60,23 +60,23 @@ export async function PATCH(
   if (typeof body.autoMode === 'boolean') patch.autoMode = body.autoMode;
   if (typeof body.archived === 'boolean') patch.archived = body.archived;
 
-  const updated = await updateChat(db, tenantId, session.subject, chatId, patch);
+  const updated = await updateChat(db, session.subject, chatId, patch);
   if (!updated) return jsonError(404, 'not-found', 'No such chat');
   // Archiving a code project's active chat leaves the project with none
   // until the next new chat; unarchiving does not bring it back.
-  if (patch.archived === true) await releaseActiveChat(db, tenantId, chatId);
+  if (patch.archived === true) await releaseActiveChat(db, chatId);
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const deleted = await deleteChat(db, tenantId, session.subject, chatId);
+  const deleted = await deleteChat(db, session.subject, chatId);
   if (!deleted) return jsonError(404, 'not-found', 'No such chat');
   return NextResponse.json({ ok: true });
 }

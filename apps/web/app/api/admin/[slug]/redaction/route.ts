@@ -23,11 +23,11 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const settings = await getOrgSettings(tenantRef.id);
+  const settings = await getOrgSettings();
   if (!settings.ok) {
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
@@ -43,7 +43,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -101,7 +101,7 @@ export async function PUT(
     updates.redactionMrnFormats = formats;
   }
 
-  const saved = await setOrgSettings(tenantRef.id, updates);
+  const saved = await setOrgSettings(updates);
   if (!saved.ok) {
     return NextResponse.json({ error: 'Could not save settings' }, { status: 500 });
   }

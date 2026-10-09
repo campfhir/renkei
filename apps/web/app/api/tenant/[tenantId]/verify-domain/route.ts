@@ -24,7 +24,7 @@ const LIMITS = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
   const verdict = checkInboundLimit(`tenant/verify-domain:${tenantId}`, request, LIMITS);
@@ -47,7 +47,7 @@ export async function POST(
     const tenant = await db
       .selectFrom('tenants')
       .select(['id', 'domain_verification_token', 'domain_verified_at'])
-      .where('id', '=', tenantId)
+      .where('id', '=')
       .executeTakeFirst();
     if (tenant.domain_verified_at) {
       return NextResponse.json({ verified: true, alreadyVerified: true });
@@ -83,10 +83,10 @@ export async function POST(
         await db
           .updateTable('tenants')
           .set({ domain_verified_at: new Date() })
-          .where('id', '=', tenantId)
+          .where('id', '=')
           .where('domain_verified_at', 'is', null)
           .execute();
-        logger.info('Domain ownership verified', { component: 'web/home-realm', tenantId, domain });
+        logger.info('Domain ownership verified', { component: 'web/home-realm', domain });
         return NextResponse.json({ verified: true, domain });
       }
       outcomes.push({ domain, reason: outcome.reason });

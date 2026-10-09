@@ -11,9 +11,9 @@ import { loadMoreOwnedChats } from '@/lib/chat/sidebar';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const raw = request.nextUrl.searchParams.get('before');
@@ -21,6 +21,6 @@ export async function GET(
   if (!before || Number.isNaN(before.getTime())) {
     return jsonError(400, 'bad-request', 'A valid `before` timestamp is required');
   }
-  const page = await loadMoreOwnedChats(db, tenantId, session.subject, before);
+  const page = await loadMoreOwnedChats(db, session.subject, before);
   return NextResponse.json(page);
 }

@@ -101,7 +101,7 @@ export default function ConfluenceConnector({
         />
       )}
 
-      {connected && <WatchManager tenantId={tenantId} provider="confluence" />}
+      {connected && <WatchManager provider="confluence" />}
     </ConnectorShell>
   );
 }

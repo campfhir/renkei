@@ -100,7 +100,7 @@ async function resolveAtlassian(
   return 'No usable Atlassian grant for this upload — reconnect Jira and request a new endpoint.';
 }
 
-function graphContextOf(slot: UploadSlotRow): { tenantId: string; subject: string } {
+function graphContextOf(slot: UploadSlotRow): { subject: string } {
   return { subject: slot.subject };
 }
 
@@ -343,7 +343,7 @@ async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Uplo
   // Posted as the user, so the ledger must know it — or their own webhook
   // re-ingests it as something they typed (see sent-ledger.ts).
   const sent = rec(await response.json().catch(() => ({})));
-  await recordSentWebexMessage(slot.tenant_id, str(sent.id), slot.account_id);
+  await recordSentWebexMessage(str(sent.id), slot.account_id);
   return { ok: true, detail: `Attached "${slot.filename}" to the WebEx message.` };
 }
 
@@ -368,11 +368,11 @@ async function webexNoteToSelfAttachment(
     bytes: new Uint8Array(bytes),
   };
 
-  const bot = await webexBotClient(slot.tenant_id);
+  const bot = await webexBotClient();
   if (bot && access.personEmail) {
     const viaBot = await bot.postMessage({ toPersonEmail: access.personEmail, markdown, file });
     if (viaBot.ok && viaBot.val.roomId) {
-      await recordSentWebexMessage(slot.tenant_id, viaBot.val.id, slot.account_id);
+      await recordSentWebexMessage(viaBot.val.id, slot.account_id);
       return {
         ok: true,
         detail: `Sent "${slot.filename}" as a direct message from the org's WebEx bot.`,
@@ -387,7 +387,7 @@ async function webexNoteToSelfAttachment(
   const user = new WebexClient(access.auth, { lane: 'interactive' });
   const sent = await user.sendNoteToSelf(markdown ?? '', file);
   if (!sent.ok) return { ok: false, detail: sent.err.message ?? 'WebEx refused the note.' };
-  await recordSentWebexMessage(slot.tenant_id, sent.val.id, slot.account_id);
+  await recordSentWebexMessage(sent.val.id, slot.account_id);
   return {
     ok: true,
     detail: `Sent "${slot.filename}" to your "Note to Self" space (room ${sent.val.roomId}).`,

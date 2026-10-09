@@ -75,7 +75,6 @@ export interface MirthServerDeps {
     provided: MirthCredentials | null
   ) => Promise<Result<ResolvedTarget, ResolveError>>;
   resolveInstance?: (
-    tenantId: string,
     instanceId: string
   ) => Promise<Result<InstanceRow, 'no_instance' | 'store'>>;
 }
@@ -143,7 +142,7 @@ function sendError(response: ServerResponse, type: WorkerErrorType, message?: st
 }
 
 function targetOf(body: Record<string, unknown>): SubjectTarget | null {
-  const tenantId = str(body.tenantId);
+  const tenantId = str();
   const instanceId = str(body.instanceId);
   const subject = str(body.subject);
   if (!tenantId || !instanceId || !subject) return null;
@@ -183,7 +182,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       resolveTarget(deps.db, target, provided));
   const resolveOne =
     deps.resolveInstance ??
-    ((tenantId: string, instanceId: string) => resolveInstance(deps.db, tenantId, instanceId));
+    ((instanceId: string) => resolveInstance(deps.db, instanceId));
 
   /**
    * Log in as the credential's owner and return the session cookies Mirth
@@ -294,28 +293,28 @@ export function createMirthServer(deps: MirthServerDeps): Server {
 
       // A held session first; a fresh login only when there is none or the
       // server says the one presented is dead.
-      let cookie = sessionCookie(target.tenantId, target.instanceId, target.subject);
+      let cookie = sessionCookie(target.instanceId, target.subject);
       if (!cookie) {
         const session = await login(instance, credentials);
         if ('error' in session) return sendError(response, session.error, session.message);
-        rememberSession(target.tenantId, target.instanceId, target.subject, session.cookies);
-        cookie = sessionCookie(target.tenantId, target.instanceId, target.subject);
+        rememberSession(target.instanceId, target.subject, session.cookies);
+        cookie = sessionCookie(target.instanceId, target.subject);
       }
 
       let upstream = await forward(instance, body, method, path, cookie);
       if (!('failed' in upstream) && upstream.status === 401 && cookie) {
         // The session lapsed between calls: log in once more and retry
         // once. A second 401 is then Mirth's answer, and is forwarded.
-        forgetSession(target.tenantId, target.instanceId, target.subject);
+        forgetSession(target.instanceId, target.subject);
         const session = await login(instance, credentials);
         if ('error' in session) return sendError(response, session.error, session.message);
-        rememberSession(target.tenantId, target.instanceId, target.subject, session.cookies);
+        rememberSession(target.instanceId, target.subject, session.cookies);
         upstream = await forward(
           instance,
           body,
           method,
           path,
-          sessionCookie(target.tenantId, target.instanceId, target.subject)
+          sessionCookie(target.instanceId, target.subject)
         );
       }
       if ('failed' in upstream) {
@@ -328,9 +327,9 @@ export function createMirthServer(deps: MirthServerDeps): Server {
         return sendError(response, type, `The Mirth server ${upstream.detail}.`);
       }
       if (upstream.status === 401)
-        forgetSession(target.tenantId, target.instanceId, target.subject);
+        forgetSession(target.instanceId, target.subject);
       else
-        rememberSession(target.tenantId, target.instanceId, target.subject, setCookiesOf(upstream));
+        rememberSession(target.instanceId, target.subject, setCookiesOf(upstream));
       envelope(response, upstream);
     },
 
@@ -340,7 +339,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       // trust boundary, and is tried against the STORED instance before the
       // web app seals and saves it. The session it creates is closed
       // again: nothing is remembered for a credential not yet stored.
-      const tenantId = str(body.tenantId);
+      const tenantId = str();
       const instanceId = str(body.instanceId);
       const credentials = parseMirthCredentials(body.credentials);
       if (!tenantId || !instanceId || !credentials) {
@@ -350,7 +349,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
           'tenantId, instanceId and credentials are required'
         );
       }
-      const instance = await resolveOne(tenantId, instanceId);
+      const instance = await resolveOne(instanceId);
       if (!instance.ok) return sendError(response, instance.err.type);
 
       const session = await login(instance.val, credentials);
@@ -387,7 +386,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       // 401 IS the healthy answer — it proves a Mirth REST API is listening
       // and demanding a login. The unsaved form wins over the stored row,
       // so an operator tests what they are ABOUT to save.
-      const tenantId = str(body.tenantId);
+      const tenantId = str();
       if (!tenantId) return sendError(response, 'bad_request', 'tenantId is required');
       let instance: InstanceRow;
       const unsaved = isRecord(body.unsaved) ? body.unsaved : null;
@@ -421,7 +420,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
         const instanceId = str(body.instanceId);
         if (!instanceId)
           return sendError(response, 'bad_request', 'instanceId or unsaved is required');
-        const stored = await resolveOne(tenantId, instanceId);
+        const stored = await resolveOne(instanceId);
         if (!stored.ok) return sendError(response, stored.err.type);
         instance = stored.val;
       }
@@ -452,10 +451,10 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       const target = targetOf(body);
       if (!target)
         return sendError(response, 'bad_request', 'tenantId, instanceId and subject are required');
-      const cookie = sessionCookie(target.tenantId, target.instanceId, target.subject);
-      forgetSession(target.tenantId, target.instanceId, target.subject);
+      const cookie = sessionCookie(target.instanceId, target.subject);
+      forgetSession(target.instanceId, target.subject);
       if (!cookie) return sendJson(response, 200, { loggedOut: false });
-      const instance = await resolveOne(target.tenantId, target.instanceId);
+      const instance = await resolveOne(target.instanceId);
       if (!instance.ok) return sendJson(response, 200, { loggedOut: false });
       const answer = await forward(instance.val, {}, 'POST', '/users/_logout', cookie);
       sendJson(response, 200, {

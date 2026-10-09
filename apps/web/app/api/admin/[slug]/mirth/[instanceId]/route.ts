@@ -22,14 +22,14 @@ export async function GET(
   { params }: { params: Promise<{ slug: string; instanceId: string }> }
 ): Promise<NextResponse> {
   const { slug, instanceId } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const instance = await getInstance(dbResult.val, tenant.id, instanceId);
+  const instance = await getInstance(dbResult.val, instanceId);
   if (!instance.ok) {
     return NextResponse.json({ error: 'Could not read the instance' }, { status: 500 });
   }
@@ -45,7 +45,7 @@ export async function PATCH(
   { params }: { params: Promise<{ slug: string; instanceId: string }> }
 ): Promise<NextResponse> {
   const { slug, instanceId } = await params;
-  const session = await checkAccess(tenant.id, [ROLE_OPERATOR]);
+  const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -66,7 +66,7 @@ export async function PATCH(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const updated = await updateInstance(dbResult.val, tenant.id, instanceId, parsed.input);
+  const updated = await updateInstance(dbResult.val, instanceId, parsed.input);
   if (!updated.ok) {
     if (updated.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'An instance with that name exists' }, { status: 409 });
@@ -102,17 +102,17 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string; instanceId: string }> }
 ): Promise<NextResponse> {
   const { slug, instanceId } = await params;
-  const session = await checkAccess(tenant.id, [ROLE_OPERATOR]);
+  const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   // Read the name before the row goes, so the audit line names the thing.
-  const instance = await getInstance(dbResult.val, tenant.id, instanceId);
+  const instance = await getInstance(dbResult.val, instanceId);
   const name = instance.ok && instance.val ? instance.val.summary.name : instanceId;
 
-  const deleted = await deleteInstance(dbResult.val, tenant.id, instanceId);
+  const deleted = await deleteInstance(dbResult.val, instanceId);
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not delete the instance' }, { status: 500 });
   }

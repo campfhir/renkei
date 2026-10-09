@@ -30,14 +30,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
-  const emailResult = await getIdentityEmail(tenantId, session.subject);
+  const emailResult = await getIdentityEmail(session.subject);
   const userEmail = emailResult.ok ? emailResult.val : null;
   if (!userEmail) {
     return NextResponse.json(
@@ -68,7 +68,7 @@ export async function POST(
     );
   }
 
-  const rowResult = await getOwnRow(tenantId, userEmail, body.refId);
+  const rowResult = await getOwnRow(userEmail, body.refId);
   if (!rowResult.ok) {
     return NextResponse.json({ error: 'Could not read your mail review queue' }, { status: 500 });
   }
@@ -77,7 +77,7 @@ export async function POST(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const overrideResult = await setOverride(tenantId, userEmail, row.refId, {
+  const overrideResult = await setOverride(userEmail, row.refId, {
     action,
     category,
     senderKey,

@@ -43,8 +43,8 @@ function subjectSegment(subject: string): string {
 }
 
 /** A fresh storage key for a new file — the caller persists this on the DB row. */
-export function newStorageKey(tenantId: string, subject: string): string {
-  return join(tenantId, subjectSegment(subject), randomUUID());
+export function newStorageKey(subject: string): string {
+  return join(subjectSegment(subject), randomUUID());
 }
 
 function resolvePath(storageKey: string): string {

@@ -18,9 +18,9 @@ export default async function MailReviewPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/mail-review`));
+    redirect(signInUrl(`/mail-review`));
   }
 
   return (
@@ -38,7 +38,7 @@ export default async function MailReviewPage({
         place, an org-admin can fix it for everyone at once under Connector setup → Email sanitizer,
         rather than correcting messages one at a time here.
       </p>
-      <ReviewList tenantId={tenant.id} />
+      <ReviewList />
     </div>
   );
 }

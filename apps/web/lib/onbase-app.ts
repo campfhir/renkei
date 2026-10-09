@@ -53,7 +53,6 @@ export function onbaseAuthorizeScopes(app: Pick<OnBaseApp, 'idpScopeName'>): str
  * @param connector `ONBASE_CONNECTOR` (default) or `ONBASE_ADMIN_CONNECTOR`.
  */
 export async function getOnBaseApp(
-  tenantId: string,
   origin: string,
   connector: string = ONBASE_CONNECTOR
 ): Promise<OnBaseApp | null> {
@@ -65,7 +64,7 @@ export async function getOnBaseApp(
     return null;
   }
 
-  const configResult = await readConnectorConfigCached(tenantId, connector, keyResult.val);
+  const configResult = await readConnectorConfigCached(connector, keyResult.val);
   if (!configResult.ok) {
     logger.error('Could not read {connector} connector config', {
       component: 'connectors/onbase',

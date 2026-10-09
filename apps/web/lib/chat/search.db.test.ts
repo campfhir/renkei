@@ -124,15 +124,15 @@ maybe('searchChatMessages', () => {
   });
 
   it('finds prompts and replies, newest chat first, one hit per chat with the newest match', async () => {
-    const hits = await searchChatMessages(db, tenantId, ids, '  Zoom   webhook ', ciphers);
+    const hits = await searchChatMessages(db, ids, '  Zoom   webhook ', ciphers);
     expect(hits.map((hit) => hit.chatId)).toEqual([chatA, chatB]);
     expect(hits[0]?.snippet).toBe('Then move the Zoom webhook rotation to the next sprint.');
     expect(hits[1]?.snippet).toBe('Who owns the zoom WEBHOOK?');
   });
 
   it('never opens tool calls, tool results or thinking', async () => {
-    expect(await searchChatMessages(db, tenantId, ids, 'jira_search_issues', ciphers)).toEqual([]);
-    expect(await searchChatMessages(db, tenantId, ids, 'think about', ciphers)).toEqual([]);
+    expect(await searchChatMessages(db, ids, 'jira_search_issues', ciphers)).toEqual([]);
+    expect(await searchChatMessages(db, ids, 'think about', ciphers)).toEqual([]);
   });
 
   it('stays within the chats it was handed', async () => {
@@ -143,12 +143,12 @@ maybe('searchChatMessages', () => {
       ciphers
     );
     expect(hits.map((hit) => hit.chatId)).toEqual([chatOutside, chatB]);
-    expect(await searchChatMessages(db, tenantId, ['not-a-uuid'], 'zoom webhook', ciphers)).toEqual(
+    expect(await searchChatMessages(db, ['not-a-uuid'], 'zoom webhook', ciphers)).toEqual(
       []
     );
   });
 
   it('answers nothing to a query too short to mean anything', async () => {
-    expect(await searchChatMessages(db, tenantId, ids, 'z', ciphers)).toEqual([]);
+    expect(await searchChatMessages(db, ids, 'z', ciphers)).toEqual([]);
   });
 });

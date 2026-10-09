@@ -40,7 +40,7 @@ export default function RunNowButton({
     setBusy(true);
     setError(null);
     setStartedRunId(null);
-    const result = await invokeAgentRun(tenantId, agentId, confirm);
+    const result = await invokeAgentRun(agentId, confirm);
     setBusy(false);
     switch (result.kind) {
       case 'needs-confirm':

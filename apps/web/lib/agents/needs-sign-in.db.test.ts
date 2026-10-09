@@ -89,7 +89,7 @@ maybe('resumeRunsNeedingSignIn', () => {
       },
     };
 
-    expect(await resumeRunsNeedingSignIn(db, producer, tenantId, owner)).toBe(2);
+    expect(await resumeRunsNeedingSignIn(db, producer, owner)).toBe(2);
     expect(sent.map((m) => m.payload).sort()).toEqual(
       [{ runId: parkedA }, { runId: parkedB }].sort()
     );
@@ -118,7 +118,7 @@ maybe('resumeRunsNeedingSignIn', () => {
     expect(byId.get(done)?.status).toBe('succeeded');
 
     // Nothing left to re-queue the second time around.
-    expect(await resumeRunsNeedingSignIn(db, producer, tenantId, owner)).toBe(0);
+    expect(await resumeRunsNeedingSignIn(db, producer, owner)).toBe(0);
     expect(sent).toHaveLength(2);
   });
 });

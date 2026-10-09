@@ -111,14 +111,14 @@ maybe('run detail with sealed attempt content', () => {
       .insertInto('tenants')
       .values({ id: tenantId, slug: `rv-${tenantId.slice(0, 8)}` })
       .execute();
-    await delegate.enroll(tenantId, owner);
+    await delegate.enroll(owner);
   });
 
   afterAll(async () => {
     await db.deleteFrom('agent_runs').execute();
     await db.deleteFrom('agents').execute();
     await db.deleteFrom('user_encryption_keys').execute();
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });
 
@@ -135,7 +135,7 @@ maybe('run detail with sealed attempt content', () => {
     expect(JSON.stringify(stored)).not.toContain('Jane Doe');
 
     const { agentId, runId } = await seedRun(owner, 'succeeded', stored);
-    const run = await getRunForOwner(db, tenantId, owner, agentId, runId);
+    const run = await getRunForOwner(db, owner, agentId, runId);
     expect(run?.attempts[0]?.detail).toEqual(detail);
   });
 
@@ -146,7 +146,7 @@ maybe('run detail with sealed attempt content', () => {
       ...clear,
       sealed: 'uenc1:not-openable',
     });
-    const run = await getRunForAdmin(db, tenantId, agentId, runId);
+    const run = await getRunForAdmin(db, agentId, runId);
     const shown = run?.attempts[0]?.detail;
     expect(shown).toMatchObject({
       declaredOutcome: 'success',
@@ -161,7 +161,7 @@ maybe('run detail with sealed attempt content', () => {
 
   it('passes a pre-sealing plaintext row through as it is', async () => {
     const { agentId, runId } = await seedRun(owner, 'succeeded', detail);
-    const run = await getRunForOwner(db, tenantId, owner, agentId, runId);
+    const run = await getRunForOwner(db, owner, agentId, runId);
     expect(run?.attempts[0]?.detail).toEqual(detail);
   });
 });

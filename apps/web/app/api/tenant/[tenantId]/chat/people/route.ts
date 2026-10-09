@@ -11,11 +11,11 @@ import { chatRequestContext } from '@/lib/chat/route-support';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const people = await listIdentities(tenantId);
+  const people = await listIdentities();
   return NextResponse.json({
     people: people.filter((person) => person.subject !== ready.context.session.subject),
   });

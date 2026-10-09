@@ -30,10 +30,10 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const claims = await getTenantOidcClaims(tenantRef.id);
+  const claims = await getTenantOidcClaims();
   if (!claims.ok) return NextResponse.json({ error: 'Could not read' }, { status: 500 });
   return NextResponse.json({ configured: claims.val !== null, ...(claims.val ?? {}) });
 }
@@ -43,7 +43,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const session = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -74,7 +74,7 @@ export async function PUT(
     }
   }
 
-  const saved = await setTenantOidcClaims(tenantRef.id, claims);
+  const saved = await setTenantOidcClaims(claims);
   if (!saved.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   if (!saved.val) {
     return NextResponse.json({ error: 'Sign-in is not configured yet' }, { status: 409 });

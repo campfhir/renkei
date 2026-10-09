@@ -24,10 +24,9 @@ export const ROLE_USER = 'renkei-user';
  * pages).
  */
 export async function checkAccess(
-  tenantId: string,
   allowedRoles: readonly string[]
 ): Promise<Session | null> {
-  const session = await getSessionFromCookies(tenantId);
+  const session = await getSessionFromCookies();
   if (!session) return null;
   return allowedRoles.some((role) => session.roles.includes(role)) ? session : null;
 }

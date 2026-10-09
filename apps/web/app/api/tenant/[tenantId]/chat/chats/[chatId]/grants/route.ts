@@ -20,23 +20,23 @@ import { shareKey } from '@/lib/chat/chat-keys';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   return NextResponse.json({
-    grants: await listResourceGrants(db, tenantId, session.subject, 'chat', chatId),
+    grants: await listResourceGrants(db, session.subject, 'chat', chatId),
   });
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);
@@ -44,7 +44,7 @@ export async function POST(
   if (!granteeSubject) return jsonError(400, 'invalid', 'Choose a person');
   const expiresAt = parseExpiry(body.expiresAt);
   if (expiresAt === undefined) return jsonError(400, 'invalid', 'Invalid expiry');
-  const outcome = await grantResourceAccess(db, tenantId, session.subject, 'chat', chatId, {
+  const outcome = await grantResourceAccess(db, session.subject, 'chat', chatId, {
     granteeSubject,
     role: 'viewer',
     expiresAt,
@@ -55,10 +55,10 @@ export async function POST(
   await shareKey(
     db,
     'chat',
-    { id: chatId, tenantId, ownerSubject: session.subject },
+    { id: chatId, ownerSubject: session.subject },
     granteeSubject
   );
-  const chat = await getChatRow(db, tenantId, chatId);
+  const chat = await getChatRow(db, chatId);
   notifyChatShared({
     granteeSubject,
     actorSubject: session.subject,

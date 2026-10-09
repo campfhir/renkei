@@ -28,10 +28,10 @@ const MAX_PATHS = 200;
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
+  const ready = await codeProjectContext(request, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
   if (!project.workspaceId)
@@ -74,10 +74,10 @@ export async function POST(
       },
       { write: false }
     ),
-    getIdentityDisplay(tenantId, session.subject),
+    getIdentityDisplay(session.subject),
   ]);
   const username = typeof credential === 'string' ? '' : credential.username;
-  const committed = await sbWorkspaceGitCommit(codeProjectTarget(tenantId, projectId), {
+  const committed = await sbWorkspaceGitCommit(codeProjectTarget(projectId), {
     id: project.workspaceId,
     message,
     ...(paths.length ? { paths } : {}),

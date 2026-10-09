@@ -22,7 +22,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -32,7 +32,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(tenantRef.id, WEBEX_BOT_CONNECTOR, keyResult.val);
+  const configResult = await getConnectorConfig(WEBEX_BOT_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
@@ -58,7 +58,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -78,7 +78,7 @@ export async function PUT(
   // The token survives an enable/disable save: a blank field keeps the
   // stored one, and the identity recorded with it. A token is required
   // only when none is stored yet.
-  const existing = await getConnectorConfig(tenantRef.id, WEBEX_BOT_CONNECTOR, keyResult.val);
+  const existing = await getConnectorConfig(WEBEX_BOT_CONNECTOR, keyResult.val);
   const stored = existing.ok ? existing.val : null;
   let token = stored?.secrets.botToken ?? '';
   let settings: Record<string, unknown> = stored?.settings ?? {};
@@ -108,7 +108,6 @@ export async function PUT(
   }
 
   const writeResult = await setConnectorConfig(
-    tenantRef.id,
     WEBEX_BOT_CONNECTOR,
     { enabled, settings, secrets: { botToken: token } },
     keyResult.val
@@ -117,7 +116,7 @@ export async function PUT(
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 
-  invalidateConnectorConfigCache(tenantRef.id, WEBEX_BOT_CONNECTOR);
+  invalidateConnectorConfigCache(WEBEX_BOT_CONNECTOR);
   return NextResponse.json({
     connector: WEBEX_BOT_CONNECTOR,
     configured: true,

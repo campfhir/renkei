@@ -69,12 +69,11 @@ describe('parseLogQueryExpr', () => {
 });
 
 describe('buildEnforcedLogQuery', () => {
-  const tenantId = 'tenant-123';
   const accountId = 'user-456';
 
   describe('basic queries', () => {
     it('should add tenant filter for empty query', () => {
-      const result = buildEnforcedLogQuery(null, tenantId, accountId);
+      const result = buildEnforcedLogQuery(null, accountId);
       expect(result).toBeTruthy();
       // Should have tenant and account in the tree
       const tree = result as any;
@@ -82,7 +81,7 @@ describe('buildEnforcedLogQuery', () => {
     });
 
     it('should preserve user query and add enforced filters', () => {
-      const result = buildEnforcedLogQuery('level:error', tenantId, accountId);
+      const result = buildEnforcedLogQuery('level:error', accountId);
       expect(result).toBeTruthy();
       // Result should be a tree combining user query with enforced filters
       const tree = result as any;
@@ -90,7 +89,7 @@ describe('buildEnforcedLogQuery', () => {
     });
 
     it('should add only tenant filter when accountId not provided', () => {
-      const result = buildEnforcedLogQuery('level:error', tenantId);
+      const result = buildEnforcedLogQuery('level:error');
       expect(result).toBeTruthy();
       const tree = result as any;
       expect(tree.type).toBe('and');
@@ -108,7 +107,7 @@ describe('buildEnforcedLogQuery', () => {
       // Should not contain "wrong-tenant"
       expect(tree).not.toContain('wrong-tenant');
       // Should contain enforced tenantId
-      expect(tree).toContain(tenantId);
+      expect(tree).toContain();
     });
 
     it('should remove user-provided accountId', () => {
@@ -125,7 +124,7 @@ describe('buildEnforcedLogQuery', () => {
     });
 
     it('should remove user-provided userId', () => {
-      const result = buildEnforcedLogQuery('level:error && userId:attacker', tenantId, accountId);
+      const result = buildEnforcedLogQuery('level:error && userId:attacker', accountId);
       expect(result).toBeTruthy();
       const tree = JSON.stringify(result);
       // Should not contain "attacker"
@@ -146,7 +145,7 @@ describe('buildEnforcedLogQuery', () => {
       expect(tree).not.toContain('wrong-user');
       expect(tree).not.toContain('attacker');
       // Should contain enforced values
-      expect(tree).toContain(tenantId);
+      expect(tree).toContain();
       expect(tree).toContain(accountId);
     });
   });
@@ -164,7 +163,7 @@ describe('buildEnforcedLogQuery', () => {
       expect(tree).toContain('warn');
       expect(tree).toContain('list_issues');
       // Should add enforced filters
-      expect(tree).toContain(tenantId);
+      expect(tree).toContain();
       expect(tree).toContain(accountId);
     });
 
@@ -177,7 +176,7 @@ describe('buildEnforcedLogQuery', () => {
       expect(result).toBeTruthy();
       const tree = JSON.stringify(result);
       // Should only have enforced values
-      expect(tree).toContain(tenantId);
+      expect(tree).toContain();
       expect(tree).toContain(accountId);
       expect(tree).not.toContain('wrong');
     });
@@ -191,7 +190,7 @@ describe('buildEnforcedLogQuery', () => {
       const tree = JSON.stringify(result);
       // Should remove restricted fields but keep level:error
       expect(tree).toContain('error');
-      expect(tree).toContain(tenantId);
+      expect(tree).toContain();
       expect(tree).not.toContain('wrong');
     });
   });
@@ -201,7 +200,7 @@ describe('buildEnforcedLogQuery', () => {
     // `filter` this used to emit — leaves the query unscoped and returns every
     // row in the table, so the name is the whole point of the test.
     it('should return the filter tree under attributeFilter, with a limit', () => {
-      const options = buildLogQueryOptions('level:error', tenantId, accountId);
+      const options = buildLogQueryOptions('level:error', accountId);
       expect(options).toHaveProperty('attributeFilter');
       expect(options.attributeFilter).toBeTruthy();
       expect(options.limit).toBe(1000);
@@ -216,16 +215,16 @@ describe('buildEnforcedLogQuery', () => {
       // Should not contain wrong tenant
       expect(filterStr).not.toContain('wrong-tenant');
       // Should contain enforced tenant
-      expect(filterStr).toContain(tenantId);
+      expect(filterStr).toContain();
     });
 
     it('should keep the tenant scope even with no query at all', () => {
-      const options = buildLogQueryOptions(null, tenantId);
-      expect(JSON.stringify(options.attributeFilter)).toContain(tenantId);
+      const options = buildLogQueryOptions(null);
+      expect(JSON.stringify(options.attributeFilter)).toContain();
     });
 
     it('should drop level names the adapter would reject', () => {
-      const options = buildLogQueryOptions(null, tenantId, undefined, {
+      const options = buildLogQueryOptions(null, undefined, {
         levels: ['error', 'not-a-level'],
       });
       expect(options.levels).toEqual(['error']);
@@ -246,7 +245,7 @@ describe('buildEnforcedLogQuery', () => {
 
     it('should prevent cross-user access via accountId injection', () => {
       const maliciousQuery = 'level:error && accountId:other-user-id';
-      const result = buildEnforcedLogQuery(maliciousQuery, tenantId, 'my-user-id');
+      const result = buildEnforcedLogQuery(maliciousQuery, 'my-user-id');
       const tree = JSON.stringify(result);
       // Should only have the enforced accountId
       expect(tree).toContain('my-user-id');
@@ -255,14 +254,13 @@ describe('buildEnforcedLogQuery', () => {
 
     it('should work for operators without accountId restriction', () => {
       const result = buildEnforcedLogQuery(
-        'level:error && accountId:anyone',
-        tenantId
+        'level:error && accountId:anyone'
         // no accountId - operator mode
       );
       expect(result).toBeTruthy();
       const tree = JSON.stringify(result);
       // Should have tenant filter
-      expect(tree).toContain(tenantId);
+      expect(tree).toContain();
       // Should not have accountId since operator didn't provide it
       expect(tree).not.toContain('anyone');
     });

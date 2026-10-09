@@ -186,7 +186,6 @@ export interface EngineDeps {
   /** Base URL the worker reaches the web app on (RENKEI_WEB_INTERNAL_URL). */
   webBaseUrl: string;
   createMcpClient?: (
-    tenantId: string,
     token: string,
     webBaseUrl: string,
     /** The run the client acts for — stamped on each call for the PHI access trail. */
@@ -557,7 +556,6 @@ async function sealedDetailJson(run: RunRow, detail: Record<string, unknown>): P
   const { clear, plaintext } = splitDetailForSealing(detail);
   if (plaintext === null) return detailJson(clear);
   const sealed = await delegateClient().sealForSubject(
-    run.tenant_id,
     run.owner_subject,
     [plaintext],
     'automation'
@@ -583,7 +581,7 @@ async function openAttemptDetails<T extends { detail: Json | null }>(
   const envelopes = rows.map((row) => sealedDetailOf(row.detail));
   const stored = envelopes.flatMap((envelope) => (envelope === null ? [] : [envelope]));
   if (stored.length === 0) return rows;
-  const opened = await delegateClient().openForSubject(run.tenant_id, run.owner_subject, stored);
+  const opened = await delegateClient().openForSubject(run.owner_subject, stored);
   if (!opened.ok) {
     throw new TransientFailure(`attempt detail could not be opened: ${opened.err.type}`);
   }
@@ -866,11 +864,10 @@ function buildResumeStack(nodes: AgentStepNode[], startId: string | null): Frame
  */
 async function describeActor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string | null | undefined
 ): Promise<{ subject: string; displayName: string }> {
   try {
-    return await describeActorRaw(db, tenantId, subject);
+    return await describeActorRaw(db, subject);
   } catch {
     return { subject: subject ?? '(none)', displayName: subject ?? '(none)' };
   }
@@ -1038,7 +1035,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   const db = deps.db;
   const createClient =
     deps.createMcpClient ??
-    ((tenantId: string, token: string, base: string, runId?: string) =>
+    ((token: string, base: string, runId?: string) =>
       new AgentMcpClient(`${base.replace(/\/+$/, '')}/api/mcp/mcp`, token, {
         ...(runId ? { runId } : {}),
       }));
@@ -1164,7 +1161,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   async function executeRun(run: RunRow): Promise<void> {
     const { id: runId } = run;
 
-    const settingsResult = await getOrgSettings(tenantId);
+    const settingsResult = await getOrgSettings();
     if (!settingsResult.ok) throw new TransientFailure('org settings unavailable');
     const settings = settingsResult.val;
 
@@ -1200,7 +1197,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // why it is late. A key service that cannot be reached is transient.
     // Asked as THIS run: the delegate checks the run is the owner's before
     // it says anything about them (the agents worker's binding).
-    const owner = await delegateClient().forRun(runId).keyStatus(tenantId, run.owner_subject);
+    const owner = await delegateClient().forRun(runId).keyStatus(run.owner_subject);
     if (!owner.ok) throw new TransientFailure('key service unavailable');
     const delegated =
       owner.val.enrolled &&
@@ -1266,7 +1263,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       return;
     }
 
-    const llmResult = await resolveLlm(db, tenantId, run.llm_model_id);
+    const llmResult = await resolveLlm(db, run.llm_model_id);
     if (!llmResult.ok) {
       const kind = llmResult.err.type === 'DB_ERROR' ? null : 'config';
       if (!kind) throw new TransientFailure('model config unavailable');
@@ -1331,7 +1328,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     });
 
     try {
-      const mcp = createClient(tenantId, token, deps.webBaseUrl, run.id);
+      const mcp = createClient(token, deps.webBaseUrl, run.id);
       await mcp.initialize();
       const availableTools = await mcp.listTools();
       const toolsByName = new Map(availableTools.map((tool) => [tool.name, tool]));
@@ -1380,7 +1377,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       context.notifier = await notifierFor(db, {
         subject: run.owner_subject,
         agentId: run.agent_id,
-        agentName: await agentNameOf(run.tenant_id, run.agent_id),
+        agentName: await agentNameOf(run.agent_id),
         runId: run.id,
         mcp,
         toolsByName,
@@ -1669,7 +1666,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     let memoryText = '';
     let knowledgeText = '';
     try {
-      memoryText = renderAgentMemory(await readAgentMemory(db, run.tenant_id, run.agent_id));
+      memoryText = renderAgentMemory(await readAgentMemory(db, run.agent_id));
     } catch (error) {
       logger.warn('agent memory unreadable for run {runId}: {error}', {
         component: 'worker-agents/engine',
@@ -1678,7 +1675,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       });
     }
     try {
-      knowledgeText = await renderAgentKnowledgeNotes(db, run.tenant_id, run.agent_id);
+      knowledgeText = await renderAgentKnowledgeNotes(db, run.agent_id);
     } catch (error) {
       logger.warn('agent knowledge notes unreadable for run {runId}: {error}', {
         component: 'worker-agents/engine',
@@ -2191,7 +2188,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const waitingUntil = new Date(Date.now() + clampedHours * 3_600_000);
       const path = await runPagePath(run);
       const link = approvalLink(path);
-      const agentName = await agentNameOf(run.tenant_id, run.agent_id);
+      const agentName = await agentNameOf(run.agent_id);
       try {
         await db
           .insertInto('actionable_items')
@@ -2245,7 +2242,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         },
         { kind: 'approval', headline: heading, stepId: gatedStep.id, refUrl: path }
       );
-      const ownerPrefs = await getNotificationPrefs(run.tenant_id, run.owner_subject);
+      const ownerPrefs = await getNotificationPrefs(run.owner_subject);
       const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
       await deliverOwnerNotifications({
         email: ownerPrefs.approvalNeeded.email,
@@ -2287,7 +2284,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const waitingUntil = new Date(Date.now() + clampedHours * 3_600_000);
       const path = await runPagePath(run);
       const link = approvalLink(path);
-      const agentName = await agentNameOf(run.tenant_id, run.agent_id);
+      const agentName = await agentNameOf(run.agent_id);
       try {
         await db
           .insertInto('actionable_items')
@@ -2334,7 +2331,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         },
         { kind: 'question', headline: heading, stepId: askingStep.id, refUrl: path }
       );
-      const ownerPrefs = await getNotificationPrefs(run.tenant_id, run.owner_subject);
+      const ownerPrefs = await getNotificationPrefs(run.owner_subject);
       const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
       await deliverOwnerNotifications({
         email: ownerPrefs.questionAsked.email,
@@ -3282,7 +3279,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const tenant = await db
       .selectFrom('tenants')
       .select('slug')
-      .where('id', '=', run.tenant_id)
+      .where('id', '=')
       .executeTakeFirst();
     return tenant ? `/agents/${run.agent_id}/runs/${run.id}` : null;
   }
@@ -4255,7 +4252,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             });
             if (inserted) {
               context.memoryText = renderAgentMemory(
-                await readAgentMemory(db, run.tenant_id, run.agent_id)
+                await readAgentMemory(db, run.agent_id)
               );
             } else {
               resultText = 'Already remembered — no change.';
@@ -4397,8 +4394,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
           component: 'worker-agents/engine',
           runId: run.id,
           agentId: run.agent_id,
-          agentName: await agentNameOf(run.tenant_id, run.agent_id),
-          userName: (await describeActor(db, run.tenant_id, run.owner_subject)).displayName,
+          agentName: await agentNameOf(run.agent_id),
+          userName: (await describeActor(db, run.owner_subject)).displayName,
           subject: run.owner_subject,
           stepName: step.name,
           // Readable in the sentence, exact in the metadata: someone
@@ -4629,7 +4626,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   }
 
   /** The agent's name for a log sentence; its id stays in the metadata. */
-  async function agentNameOf(tenantId: string, agentId: string): Promise<string> {
+  async function agentNameOf(agentId: string): Promise<string> {
     try {
       const row = await db
         .selectFrom('agents')
@@ -4698,8 +4695,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // A run's log line has to answer "whose agent, which one, and where did
     // it stop" without a second query. The ids stay in the metadata; the
     // sentence carries the names.
-    const actor = await describeActor(db, run.tenant_id, run.owner_subject);
-    const agentName = await agentNameOf(run.tenant_id, run.agent_id);
+    const actor = await describeActor(db, run.owner_subject);
+    const agentName = await agentNameOf(run.agent_id);
     const common = {
       component: 'worker-agents/engine',
       runId: run.id,

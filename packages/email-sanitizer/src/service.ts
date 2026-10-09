@@ -73,12 +73,11 @@ export interface SanitizeForTenantOptions {
  * and what fields the guest is handed.
  */
 async function runScriptsOver(
-  tenantId: string,
   kind: CleanerScriptKind,
   content: string,
   fields: Omit<CleanerScriptRunInput, 'text' | 'kind'>
 ): Promise<string> {
-  const scriptsResult = await listActiveCleanerScripts(tenantId, kind);
+  const scriptsResult = await listActiveCleanerScripts(kind);
   if (!scriptsResult.ok || scriptsResult.val.length === 0) return content;
 
   const separator = content.indexOf('\n\n');
@@ -91,7 +90,7 @@ async function runScriptsOver(
     const run = await runCleanerScript(script.compiled, { ...fields, text: body, kind });
     if (run.ok) {
       body = run.val;
-      if (script.lastError) await recordCleanerScriptError(tenantId, script.id, null);
+      if (script.lastError) await recordCleanerScriptError(script.id, null);
     } else {
       await recordCleanerScriptError(
         script.id,
@@ -106,7 +105,7 @@ async function applyCleanerScripts(
   options: SanitizeForTenantOptions,
   content: string
 ): Promise<string> {
-  return runScriptsOver(options.tenantId, 'msg', content, {
+  return runScriptsOver('msg', content, {
     subject: options.raw.subject,
     fromAddress: options.raw.fromAddress,
     fromName: options.raw.fromName,
@@ -133,7 +132,7 @@ export async function applyCleanerScriptsToItem(inputs: {
   content: string;
   fields?: Partial<Omit<CleanerScriptRunInput, 'text' | 'kind'>>;
 }): Promise<string> {
-  return runScriptsOver(inputs.tenantId, inputs.kind, inputs.content, {
+  return runScriptsOver(inputs.kind, inputs.content, {
     ...inputs.fields,
     subject: inputs.fields?.subject ?? '',
     fromAddress: inputs.fields?.fromAddress ?? '',
@@ -175,8 +174,8 @@ export async function sanitizeEmailForTenant(
   options: SanitizeForTenantOptions
 ): Promise<TenantSanitizeResult> {
   const [rulesResult, templatesResult] = await Promise.all([
-    listClassifierRules(options.tenantId),
-    listActiveTemplates(options.tenantId),
+    listClassifierRules(),
+    listActiveTemplates(),
   ]);
   const rules = rulesResult.ok ? rulesResult.val : [];
   const templates = templatesResult.ok ? templatesResult.val : new Map();
@@ -199,7 +198,6 @@ export async function sanitizeEmailForTenant(
   if (result.action === 'index') {
     contentHash = hashContent(result.content);
     const dupResult = await hasRecentDuplicate(
-      options.tenantId,
       contentHash,
       DUPLICATE_LOOKBACK_DAYS,
       { ownerUpn: options.ownerUpn, refId: options.refId }
@@ -213,7 +211,6 @@ export async function sanitizeEmailForTenant(
       const embedded = await options.embedder.embed([result.content]);
       if (embedded.ok && embedded.val[0]) {
         const nearDupResult = await hasNearDuplicateChunk(
-          options.tenantId,
           vectorLiteral(embedded.val[0]),
           { refId: options.refId, refIdPrefix: namespaceOf(options.refId) }
         );

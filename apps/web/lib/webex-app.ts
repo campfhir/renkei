@@ -29,7 +29,6 @@ export interface WebexUserApp {
 
 /** The tenant's WebEx integration, or null when not (fully) configured. */
 export async function getWebexUserApp(
-  tenantId: string,
   origin: string
 ): Promise<WebexUserApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');

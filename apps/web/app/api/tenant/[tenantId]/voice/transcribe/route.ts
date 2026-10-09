@@ -30,9 +30,9 @@ const LIMITS = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const verdict = checkInboundLimit(
@@ -63,7 +63,7 @@ export async function POST(
     return NextResponse.json({ error: 'The recording is too long.' }, { status: 413 });
   }
 
-  const resolved = await resolveVoiceProvider(tenantId);
+  const resolved = await resolveVoiceProvider();
   if (!resolved) {
     return NextResponse.json(
       { error: 'Voice is not configured for this organization.' },

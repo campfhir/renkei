@@ -81,7 +81,6 @@ function rowOf(raw: RawChat): ChatRow {
 
 export async function getChatRow(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string
 ): Promise<ChatRow | null> {
   if (!isUuid(chatId)) return null;
@@ -95,17 +94,15 @@ export async function getChatRow(
 
 export async function getChatForOwner(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   chatId: string
 ): Promise<ChatRow | null> {
-  const row = await getChatRow(db, tenantId, chatId);
+  const row = await getChatRow(db, chatId);
   return row && row.ownerSubject === ownerSubject ? row : null;
 }
 
 export async function listOwnedChats(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   options: {
     includeArchived?: boolean;
@@ -133,7 +130,6 @@ export async function listOwnedChats(
 /** Whether the owner has a chat touched before `before` — the "load more" button's cue to appear. */
 export async function hasOwnedChatBefore(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   before: Date
 ): Promise<boolean> {
@@ -151,7 +147,6 @@ export async function hasOwnedChatBefore(
 /** Chats sitting in these projects, other than the viewer's own. */
 export async function listProjectChats(
   db: Kysely<DB>,
-  tenantId: string,
   projectIds: string[],
   excludeOwner: string | null,
   options: { since?: Date } = {}
@@ -170,7 +165,6 @@ export async function listProjectChats(
 
 export async function listChatsById(
   db: Kysely<DB>,
-  tenantId: string,
   chatIds: string[]
 ): Promise<ChatRow[]> {
   const ids = chatIds.filter(isUuid);
@@ -228,7 +222,6 @@ export interface ChatPatch {
 
 export async function updateChat(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   chatId: string,
   patch: ChatPatch
@@ -258,7 +251,6 @@ export async function updateChat(
 /** Moving is only a project_id change; the chat keeps everything else. */
 export async function moveChatToProject(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   chatId: string,
   projectId: string | null
@@ -275,14 +267,13 @@ export async function moveChatToProject(
   // (Out of one: the old wrapping stays inert — the project's access rules
   // no longer resolve the chat, so nobody reaches it that way.)
   if (moved && projectId) {
-    await wrapKeyUnderProject(db, { id: chatId, tenantId, ownerSubject }, projectId);
+    await wrapKeyUnderProject(db, { id: chatId, ownerSubject }, projectId);
   }
   return moved;
 }
 
 export async function deleteChat(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   chatId: string
 ): Promise<boolean> {
@@ -299,7 +290,7 @@ export async function deleteChat(
       .where('resource_kind', '=', 'chat')
       .where('resource_id', '=', chatId)
       .execute();
-    await deleteKey(db, 'chat', tenantId, chatId);
+    await deleteKey(db, 'chat', chatId);
   }
   return deleted;
 }

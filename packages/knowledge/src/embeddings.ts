@@ -233,7 +233,7 @@ function prefixSetting(value: unknown): string {
  * configuration, or null when the org has not provisioned one (or disabled
  * it) — callers skip indexing and enrichment in that case.
  */
-export async function resolveKnowledge(tenantId: string): Promise<KnowledgeProvider | null> {
+export async function resolveKnowledge(): Promise<KnowledgeProvider | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
 
@@ -263,8 +263,7 @@ export async function resolveKnowledge(tenantId: string): Promise<KnowledgeProvi
 
 /** The embedder alone, for callers that only index. */
 export async function resolveEmbeddingProvider(
-  tenantId: string
 ): Promise<EmbeddingProvider | null> {
-  const resolved = await resolveKnowledge(tenantId);
+  const resolved = await resolveKnowledge();
   return resolved ? resolved.embedder : null;
 }

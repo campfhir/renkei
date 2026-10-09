@@ -103,7 +103,7 @@ describe('loadSourceImage', () => {
     'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACAQMAAABIeJ9nAAAAA1BMVEX/AAAZ4gk3AAAADElEQVQI12NgYGAAAAAEAAEnNCcKAAAAAElFTkSuQmCC',
     'base64'
   ); // a real 2x2 PNG
-  const SCOPE = { db: null as never, tenantId: 't', chatId: 'c' };
+  const SCOPE = { db: null as never, chatId: 'c' };
   const row = (over: Partial<AttachmentRow>): AttachmentRow => ({
     id: 'a1',
     ownerSubject: 'u',

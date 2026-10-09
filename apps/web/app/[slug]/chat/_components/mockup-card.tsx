@@ -72,7 +72,7 @@ export default function MockupCard({
   const fullHeight = frameHeight * scale;
   const shownHeight = Math.min(fullHeight, INLINE_MAX_HEIGHT);
   const cropped = fullHeight > INLINE_MAX_HEIGHT + 1;
-  const url = chatClient.mockupUrl(tenantId, chatId, toolUseId);
+  const url = chatClient.mockupUrl(chatId, toolUseId);
 
   return (
     <figure className="my-2 max-w-2xl overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">

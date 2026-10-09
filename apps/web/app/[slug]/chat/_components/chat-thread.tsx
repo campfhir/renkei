@@ -226,12 +226,12 @@ export default function ChatThread({
   // no storage on the server), written the moment it is changed.
   const [echoCancellation, setEchoCancellationState] = useState(true);
   useEffect(() => {
-    setEchoCancellationState(getEchoCancellation(tenantId));
+    setEchoCancellationState(getEchoCancellation());
   }, [tenantId]);
   const changeEchoCancellation = useCallback(
     (on: boolean) => {
       setEchoCancellationState(on);
-      setEchoCancellation(tenantId, on);
+      setEchoCancellation(on);
     },
     [tenantId]
   );
@@ -240,20 +240,20 @@ export default function ChatThread({
   const [microphone, setMicrophoneState] = useState<string | null>(null);
   const [audioOutput, setAudioOutputState] = useState<string | null>(null);
   useEffect(() => {
-    setMicrophoneState(getMicrophone(tenantId));
-    setAudioOutputState(getAudioOutput(tenantId));
+    setMicrophoneState(getMicrophone());
+    setAudioOutputState(getAudioOutput());
   }, [tenantId]);
   const changeMicrophone = useCallback(
     (deviceId: string | null) => {
       setMicrophoneState(deviceId);
-      setMicrophone(tenantId, deviceId);
+      setMicrophone(deviceId);
     },
     [tenantId]
   );
   const changeAudioOutput = useCallback(
     (deviceId: string | null) => {
       setAudioOutputState(deviceId);
-      setAudioOutput(tenantId, deviceId);
+      setAudioOutput(deviceId);
     },
     [tenantId]
   );
@@ -270,7 +270,7 @@ export default function ChatThread({
   const voiceDefaultLocale = voice?.defaultLocale ?? null;
   useEffect(() => {
     if (!voiceAvailable) return;
-    const created = new SpeechQueue(tenantId, (message) => setError(message));
+    const created = new SpeechQueue((message) => setError(message));
     const unsubscribe = created.subscribe((state) => setSpeech({ state, owner: created.owner }));
     setSpeechQueue(created);
     return () => {
@@ -309,7 +309,7 @@ export default function ChatThread({
   const changeVoicePrefs = useCallback(
     (next: VoicePrefs) => {
       setVoicePrefs(next);
-      void voiceClient.savePrefs(tenantId, next);
+      void voiceClient.savePrefs(next);
     },
     [tenantId]
   );
@@ -413,7 +413,7 @@ export default function ChatThread({
   // One EventSource per running turn.
   useEffect(() => {
     if (!activeTurnId) return;
-    const source = new EventSource(chatClient.streamUrl(tenantId, chat.id, activeTurnId));
+    const source = new EventSource(chatClient.streamUrl(chat.id, activeTurnId));
     source.addEventListener('turn', (event: MessageEvent<string>) => {
       const parsed = parseEvent(event.data);
       if (!parsed) return;
@@ -523,7 +523,7 @@ export default function ChatThread({
    */
   const forceCompact = useCallback(async (): Promise<boolean> => {
     setError(null);
-    const started = await chatClient.compact(tenantId, chat.id);
+    const started = await chatClient.compact(chat.id);
     if (started.error || !started.data) {
       setError(started.error ?? 'Compaction could not be started.');
       return false;
@@ -549,7 +549,7 @@ export default function ChatThread({
       }
       setError(null);
       setSending(true);
-      const started = await chatClient.sendTurn(tenantId, chat.id, {
+      const started = await chatClient.sendTurn(chat.id, {
         text: input.text,
         attachmentIds: input.attachments.map((attachment) => attachment.id),
         llmModelId: modelId,
@@ -594,7 +594,7 @@ export default function ChatThread({
     savedQueue.current = serialised;
     // One write at a time, in order: the last state must be the last write.
     queueWrites.current = queueWrites.current.then(async () => {
-      const saved = await chatClient.saveQueue(tenantId, chat.id, queue);
+      const saved = await chatClient.saveQueue(chat.id, queue);
       if (saved.error) setError('Your queued messages could not be saved.');
     });
   }, [queue, isOwner, tenantId, chat.id]);
@@ -666,7 +666,7 @@ export default function ChatThread({
     async (message: ChatMessageView, input: ComposerSubmit | null): Promise<boolean> => {
       setError(null);
       setSending(true);
-      const resent = await chatClient.resend(tenantId, chat.id, message.id, {
+      const resent = await chatClient.resend(chat.id, message.id, {
         text: input ? input.text : null,
         attachmentIds: input ? input.attachments.map((attachment) => attachment.id) : [],
         llmModelId: modelId,
@@ -701,7 +701,7 @@ export default function ChatThread({
 
   const rename = useCallback(
     async (next: string): Promise<string | null> => {
-      const result = await chatClient.updateChat(tenantId, chat.id, { title: next });
+      const result = await chatClient.updateChat(chat.id, { title: next });
       if (result.error) {
         setError(result.error);
         return null;
@@ -729,7 +729,7 @@ export default function ChatThread({
   const toggleArchive = useCallback(() => {
     void runManage(async () => {
       const next = !chat.archived;
-      const result = await chatClient.updateChat(tenantId, chat.id, { archived: next });
+      const result = await chatClient.updateChat(chat.id, { archived: next });
       if (!result.error) {
         setChat((current) => ({ ...current, archived: next }));
         router.refresh();
@@ -740,7 +740,7 @@ export default function ChatThread({
 
   const deleteChat = useCallback(() => {
     void runManage(async () => {
-      const result = await chatClient.deleteChat(tenantId, chat.id);
+      const result = await chatClient.deleteChat(chat.id);
       if (!result.error) router.push(`/chat`);
       return result;
     });
@@ -777,7 +777,7 @@ export default function ChatThread({
     // Stopping the reply stops the reading of it too.
     speechQueue?.stop();
     if (!activeTurnId) return;
-    await chatClient.cancelTurn(tenantId, chat.id, activeTurnId);
+    await chatClient.cancelTurn(chat.id, activeTurnId);
   }, [chat.id, activeTurnId, tenantId, speechQueue]);
 
   /**
@@ -843,14 +843,14 @@ export default function ChatThread({
   const changeModel = useCallback(
     async (id: string) => {
       setModelId(id);
-      await chatClient.updateChat(tenantId, chat.id, { llmModelId: id });
+      await chatClient.updateChat(chat.id, { llmModelId: id });
     },
     [chat.id, tenantId]
   );
   const changeThinking = useCallback(
     async (on: boolean) => {
       setThinking(on);
-      await chatClient.updateChat(tenantId, chat.id, { thinkingEnabled: on });
+      await chatClient.updateChat(chat.id, { thinkingEnabled: on });
     },
     [chat.id, tenantId]
   );
@@ -859,14 +859,14 @@ export default function ChatThread({
   const changeAutoMode = useCallback(
     async (on: boolean) => {
       setAutoMode(on);
-      await chatClient.updateChat(tenantId, chat.id, { autoMode: on });
+      await chatClient.updateChat(chat.id, { autoMode: on });
     },
     [chat.id, tenantId]
   );
   const changeConnectors = useCallback(
     async (next: string[] | null) => {
       setConnectors(next);
-      await chatClient.updateChat(tenantId, chat.id, {
+      await chatClient.updateChat(chat.id, {
         toolConfig: next ? { connectors: next } : null,
       });
     },
@@ -900,7 +900,7 @@ export default function ChatThread({
       return;
     }
     setError(null);
-    const created = await chatClient.createChat(tenantId, { projectId: chat.projectId });
+    const created = await chatClient.createChat({ projectId: chat.projectId });
     if (created.error || !created.data) {
       setError(created.error ?? 'A new chat could not be started.');
       return;
@@ -1049,7 +1049,6 @@ export default function ChatThread({
   );
   const codePane = codeProjectId ? (
     <CodePane
-      tenantId={tenantId}
       projectId={codeProjectId}
       pane={pane}
       layout={paneMode === 'tabs' ? 'tab' : 'split'}
@@ -1183,11 +1182,10 @@ export default function ChatThread({
               </button>
             )
           ) : null}
-          <ArtifactsMenu tenantId={tenantId} artifacts={state.artifacts} />
+          <ArtifactsMenu artifacts={state.artifacts} />
           {compact ? (
             isOwner ? (
               <ToolsPopover
-                tenantId={tenantId}
                 selected={connectors}
                 onChange={changeConnectors}
                 slug={slug}
@@ -1201,7 +1199,6 @@ export default function ChatThread({
               {codeProjectId ? <CodeChatButtons tools={codeTools} canEdit={isOwner} /> : null}
               {isOwner ? (
                 <ToolsPopover
-                  tenantId={tenantId}
                   selected={connectors}
                   onChange={changeConnectors}
                   slug={slug}
@@ -1217,7 +1214,6 @@ export default function ChatThread({
         {codeTools.modals}
         {subagent ? (
           <SubagentModal
-            tenantId={tenantId}
             chatId={chat.id}
             toolUseId={subagent}
             notStarted={
@@ -1244,7 +1240,6 @@ export default function ChatThread({
             ) : null}
 
             <MessageList
-              tenantId={tenantId}
               chatId={chat.id}
               messages={state.messages}
               pendingToolCalls={state.pendingToolCalls}
@@ -1363,7 +1358,6 @@ export default function ChatThread({
               </div>
             ) : isOwner ? (
               <Composer
-                tenantId={tenantId}
                 chatId={chat.id}
                 disabled={sending || models.length === 0}
                 running={running}
@@ -1411,7 +1405,6 @@ export default function ChatThread({
                 voiceControl={
                   voice && speechQueue ? (
                     <VoiceMenu
-                      tenantId={tenantId}
                       prefs={voicePrefs}
                       defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
                       queueState={speech.state}
@@ -1435,7 +1428,6 @@ export default function ChatThread({
                     ? (level) => (
                         <VoiceMenu
                           embedded={level}
-                          tenantId={tenantId}
                           prefs={voicePrefs}
                           defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
                           queueState={speech.state}
@@ -1463,7 +1455,6 @@ export default function ChatThread({
       </div>
       {voiceMode && voice && speechQueue ? (
         <VoiceMode
-          tenantId={tenantId}
           locale={voicePrefs.locale ?? voice.defaultLocale}
           detectLanguage={voicePrefs.detectLanguage}
           onHeard={setHeardLocale}
@@ -1511,7 +1502,6 @@ export default function ChatThread({
       ) : null}
       {share ? (
         <ShareModal
-          tenantId={tenantId}
           kind="chat"
           resourceId={chat.id}
           title={`Share “${chat.title ?? 'New chat'}”`}
@@ -1565,7 +1555,6 @@ export default function ChatThread({
       ) : null}
       {manageDialog === 'branch' && codeProjectId ? (
         <BranchPickerModal
-          tenantId={tenantId}
           projectId={codeProjectId}
           branch={branch}
           onClose={() => setManageDialog(null)}

@@ -40,10 +40,10 @@ export function encryptionKey(): Buffer | null {
   return key.ok ? key.val : null;
 }
 
-export async function readStorage(tenantId: string): Promise<StorageView | 'ERROR'> {
+export async function readStorage(): Promise<StorageView | 'ERROR'> {
   const key = encryptionKey();
   if (!key) return 'ERROR';
-  const row = await getConnectorConfig(tenantId, BLOB_STORAGE_CONNECTOR, key);
+  const row = await getConnectorConfig(BLOB_STORAGE_CONNECTOR, key);
   if (!row.ok) return 'ERROR';
   const setting = (name: string): string | null => {
     const value = row.val?.settings[name];
@@ -105,12 +105,11 @@ export function parseStorageInput(body: unknown): StorageInput | string {
 
 /** The row as it would be saved from this input — the stored key when none was typed. */
 export async function mergeStorage(
-  tenantId: string,
   input: StorageInput
 ): Promise<{ settings: Record<string, unknown>; secrets: Record<string, string> } | 'ERROR'> {
   const key = encryptionKey();
   if (!key) return 'ERROR';
-  const existing = await getConnectorConfig(tenantId, BLOB_STORAGE_CONNECTOR, key);
+  const existing = await getConnectorConfig(BLOB_STORAGE_CONNECTOR, key);
   const storedKey = existing.ok && existing.val ? existing.val.secrets.key : undefined;
   const accountKey = input.key ?? storedKey;
   return {
@@ -125,12 +124,11 @@ export async function mergeStorage(
 }
 
 export async function saveStorage(
-  tenantId: string,
   input: StorageInput
 ): Promise<StorageView | string> {
   const key = encryptionKey();
   if (!key) return 'Server misconfigured';
-  const merged = await mergeStorage(tenantId, input);
+  const merged = await mergeStorage(input);
   if (merged === 'ERROR') return 'Could not read the stored configuration';
   if (!merged.secrets.key) return 'The account key is required the first time.';
   const written = await setConnectorConfig(
@@ -139,8 +137,8 @@ export async function saveStorage(
     key
   );
   if (!written.ok) return 'Could not store the configuration';
-  invalidateConnectorConfigCache(tenantId, BLOB_STORAGE_CONNECTOR);
-  const view = await readStorage(tenantId);
+  invalidateConnectorConfigCache(BLOB_STORAGE_CONNECTOR);
+  const view = await readStorage();
   return view === 'ERROR' ? 'Saved, but the configuration could not be read back' : view;
 }
 
@@ -150,10 +148,9 @@ export async function saveStorage(
  * step failing comes back as a plain sentence.
  */
 export async function testStorage(
-  tenantId: string,
   input: StorageInput
 ): Promise<{ ok: boolean; detail: string }> {
-  const merged = await mergeStorage(tenantId, input);
+  const merged = await mergeStorage(input);
   if (merged === 'ERROR') return { ok: false, detail: 'Could not read the stored configuration.' };
   if (!merged.secrets.key) return { ok: false, detail: 'Enter the account key to test.' };
   const config = blobStoreConfigOfRow(merged.settings, merged.secrets);

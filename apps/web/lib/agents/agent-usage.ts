@@ -158,7 +158,6 @@ function usageOf(row: TokenBucketRow | undefined): TokenUsage {
 
 export async function getAgentTokenUsage(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string | readonly string[]
 ): Promise<TokenUsage> {
   const ids = idsOf(agentId);
@@ -191,7 +190,6 @@ export interface AgentToolUsageRow {
  */
 export async function getAgentToolUsage(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string | readonly string[],
   days = 30
 ): Promise<AgentToolUsageRow[]> {
@@ -241,7 +239,6 @@ export interface AgentUsageSummary {
  */
 export async function getAgentUsageSummaries(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string | null,
   days: number
 ): Promise<AgentUsageSummary[]> {
@@ -319,7 +316,6 @@ export interface DailyTokenPoint {
  */
 export async function getAgentTokenTrend(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string | readonly string[],
   days: number,
   timeZone: string
@@ -351,7 +347,7 @@ export async function getAgentTokenTrend(
 }
 
 /** Every ledger row in the org — runs, optimizer passes and chat alike. */
-export async function getTenantTokenUsage(db: Kysely<DB>, tenantId: string): Promise<TokenUsage> {
+export async function getTenantTokenUsage(db: Kysely<DB>): Promise<TokenUsage> {
   const result = await sql<TokenBucketRow>`
     SELECT ${TOKEN_BUCKET_COLUMNS}
     FROM llm_calls
@@ -367,8 +363,7 @@ export async function getTenantTokenUsage(db: Kysely<DB>, tenantId: string): Pro
  * reaches the org total.
  */
 export async function getTokenUsageByAgent(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<Record<string, TokenUsage>> {
   const result = await sql<TokenBucketRow & { agent_id: string }>`
     SELECT agent_id, ${TOKEN_BUCKET_COLUMNS}
@@ -404,7 +399,6 @@ interface ModelBucketRow extends TokenBucketRow {
  */
 export async function getTokenUsageByModel(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string | readonly string[] | null
 ): Promise<ModelTokenUsage[]> {
   const ids = agentId === null ? null : idsOf(agentId);
@@ -465,7 +459,6 @@ interface StepBucketRow extends ModelBucketRow {
  */
 export async function getAgentTokenUsageByStep(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<Omit<StepTokenUsage, 'stepName' | 'stepNumber'>[]> {
   const result = await sql<StepBucketRow>`
@@ -547,7 +540,6 @@ function totalsOf(row: RunTotalRow): RunTokenTotals {
  */
 export async function getTokenUsageByRun(
   db: Kysely<DB>,
-  tenantId: string,
   runIds: readonly string[]
 ): Promise<Record<string, RunTokenTotals>> {
   if (runIds.length === 0) return {};
@@ -584,7 +576,6 @@ export interface RunStepTokenUsage extends RunTokenTotals {
  */
 export async function getRunTokenUsage(
   db: Kysely<DB>,
-  tenantId: string,
   runId: string
 ): Promise<RunStepTokenUsage[]> {
   const rows = await db

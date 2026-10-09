@@ -196,13 +196,13 @@ export function createLlmKeywordExtractor(
  * The extractor carries the org's minimum size, so a caller need not
  * know about it: a short item simply comes back with no keywords.
  */
-export async function resolveKeywordExtractor(tenantId: string): Promise<KeywordExtractor | null> {
-  const settings = await getOrgSettings(tenantId);
+export async function resolveKeywordExtractor(): Promise<KeywordExtractor | null> {
+  const settings = await getOrgSettings();
   if (!settings.ok || !settings.val.knowledgeKeywordEnrichment) return null;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
-  const llm = await resolveAgentLlm(dbResult.val, tenantId, null);
+  const llm = await resolveAgentLlm(dbResult.val, null);
   if (!llm.ok) return null;
   return createLlmKeywordExtractor(llm.val.provider, {
     minChars: settings.val.knowledgeKeywordMinChars,

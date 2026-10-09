@@ -31,7 +31,7 @@ export default async function AdminTutorialsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
@@ -47,7 +47,7 @@ export default async function AdminTutorialsPage({
     );
   }
 
-  const people = await listCoachMarkReport(dbResult.val, tenant.id);
+  const people = await listCoachMarkReport(dbResult.val);
 
   const totals = new Map<string, TourTotals>(
     COACH_MARK_TOURS.map((tour) => [

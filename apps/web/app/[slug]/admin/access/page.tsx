@@ -60,7 +60,7 @@ export default async function AccessPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  const session = await checkAccess(tenant.id, [ROLE_OPERATOR]);
+  const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) {
     redirect(`/admin`);
   }

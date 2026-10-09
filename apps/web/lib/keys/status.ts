@@ -30,7 +30,6 @@ import {
 
 async function automationDaysOf(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<number> {
   const row = await db
@@ -51,7 +50,6 @@ async function automationDaysOf(
 
 export async function setAutomationDays(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   days: number
 ): Promise<void> {
@@ -77,7 +75,6 @@ export async function setAutomationDays(
  */
 export async function pendingDevicesOf(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<{ id: string; createdAt: string; userAgent: string | null }[]> {
   const rows = await db
@@ -99,7 +96,6 @@ export async function pendingDevicesOf(
 
 /** The status for the signed-in person, as of their session. */
 export async function keyStatusView(
-  tenantId: string,
   session: Session
 ): Promise<KeyStatusView | null> {
   const dbResult = getDatabase();
@@ -107,10 +103,10 @@ export async function keyStatusView(
   const db = dbResult.val;
   const client = delegateClient();
   const [status, instances, automationDays, pendingDevices] = await Promise.all([
-    client.keyStatus(tenantId, session.subject, session.id),
+    client.keyStatus(session.subject, session.id),
     client.keyInstancesSigned(),
-    automationDaysOf(db, tenantId, session.subject),
-    pendingDevicesOf(db, tenantId, session.subject),
+    automationDaysOf(db, session.subject),
+    pendingDevicesOf(db, session.subject),
   ]);
   if (!status.ok || !instances.ok) {
     return {

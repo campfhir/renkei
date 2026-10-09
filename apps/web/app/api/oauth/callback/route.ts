@@ -163,7 +163,6 @@ async function pendingGet(
 /** The delegate could not exchange the code: logged, and phrased for the browser. */
 function exchangeFailed(
   label: string,
-  tenantId: string,
   error: { type: GrantOpError; message?: string }
 ): NextResponse {
   logger.error('{label} token exchange failed: {reason}', {
@@ -188,7 +187,6 @@ function exchangeFailed(
 /** The delegate could not seal the grant (the handle expired, or the row would not store). */
 function storeFailed(
   label: string,
-  tenantId: string,
   error: { type: GrantOpError; message?: string }
 ): NextResponse {
   logger.error('Failed to store {label} grant: {reason}', {
@@ -200,7 +198,7 @@ function storeFailed(
   return NextResponse.json({ error: `Failed to store ${label} grant` }, { status: 500 });
 }
 
-function logExchanged(label: string, tenantId: string, outcome: ExchangeOutcome): void {
+function logExchanged(label: string, outcome: ExchangeOutcome): void {
   // Only whether tokens came back, never any of their bytes: these records
   // are persisted by the Postgres log adapter and are readable over HTTP by
   // tenant users — and the bytes are in the delegate anyway.
@@ -219,14 +217,14 @@ function logExchanged(label: string, tenantId: string, outcome: ExchangeOutcome)
  * own error — without threading the cookie through each provider branch.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const flow: { tenantId: string | null } = { tenantId: null };
+  const flow: { } = { };
   const response = await handleCallback(request, flow);
-  return flow.tenantId ? clearConnectFlow(response, flow.tenantId) : response;
+  return flow.tenantId ? clearConnectFlow(response) : response;
 }
 
 async function handleCallback(
   request: NextRequest,
-  flow: { tenantId: string | null }
+  flow: { }
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -272,7 +270,7 @@ async function handleCallback(
     // recorded. A callback URL captured from one browser and replayed into
     // another carries neither, so it is refused — and the state is consumed
     // either way, so it cannot be retried with a different browser.
-    if (!isConnectFlowBound(request, pendingSignIn.tenant_id, state)) {
+    if (!isConnectFlowBound(request, state)) {
       await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
       logger.warn('Connect flow state cookie missing or mismatched; rejecting callback', {
         component: 'auth/oauth',
@@ -280,7 +278,7 @@ async function handleCallback(
       });
       return NextResponse.json({ error: 'Invalid state' }, { status: 400 });
     }
-    const session = await getSessionFromRequest(request, pendingSignIn.tenant_id);
+    const session = await getSessionFromRequest(request);
     if (!session || !pendingSignIn.subject || session.subject !== pendingSignIn.subject) {
       await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
       logger.warn('Connect flow completed by a different session than started it; rejecting', {
@@ -431,7 +429,7 @@ async function handleCallback(
     if (!appOriginResult.ok) {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
-    const atlassianApp = await getAtlassianApp(tenant.id, appOriginResult.val);
+    const atlassianApp = await getAtlassianApp(appOriginResult.val);
     if (!atlassianApp) {
       return NextResponse.json(
         { error: 'Atlassian connector not configured for this organization' },
@@ -442,7 +440,6 @@ async function handleCallback(
     logger.debug('Exchanging code for tokens', { component: 'auth/oauth' });
     const connect = await exchangeAtlassianCode(
       'Jira',
-      tenant.id,
       ATLASSIAN,
       code,
       atlassianApp.redirectUri
@@ -504,7 +501,7 @@ async function handleCallback(
       // /myself is a Jira-scoped endpoint; a jira-less token cannot call it.
       // The authorization code's sub claim is the Atlassian account id, and
       // the caller's existing grant the fallback behind that.
-      const accountId = await atlassianAccountIdOffline(db, tenant.id, pendingSignIn.subject, code);
+      const accountId = await atlassianAccountIdOffline(db, pendingSignIn.subject, code);
       if (!accountId) {
         logger.error('Failed to fetch user info and no identity hint in code claims or grants', {
           component: 'auth/oauth',
@@ -551,7 +548,7 @@ async function handleCallback(
       requestedScopes: (pendingSignIn.scopes || atlassianApp.scopes).split(' '),
       metadata: { cloudId, siteUrl },
     });
-    if (!stored.ok) return storeFailed('Jira', tenant.id, stored.err);
+    if (!stored.ok) return storeFailed('Jira', stored.err);
 
     logger.info('Jira grant stored successfully', { component: 'auth/oauth' });
     recordAuditEvent({
@@ -560,7 +557,7 @@ async function handleCallback(
       targetKind: 'connector',
       targetLabel: 'atlassian',
     });
-    invalidateToolCatalogCache(tenant.id, pendingSignIn.subject);
+    invalidateToolCatalogCache(pendingSignIn.subject);
     // Back to the connectors page, which shows the fresh connection status.
     const connectorsUrl = new URL(`/connectors`, appOriginResult.val);
     logger.debug('Redirecting', {
@@ -597,7 +594,6 @@ interface AtlassianConnect {
  */
 async function exchangeAtlassianCode(
   label: string,
-  tenantId: string,
   provider: string,
   code: string,
   redirectUri: string
@@ -606,8 +602,8 @@ async function exchangeAtlassianCode(
     provider,
     form: { grant_type: 'authorization_code', code, redirect_uri: redirectUri },
   });
-  if (!exchanged.ok) return exchangeFailed(label, tenantId, exchanged.err);
-  logExchanged(label, tenantId, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed(label, exchanged.err);
+  logExchanged(label, exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({ provider, pending: handle });
 
@@ -661,7 +657,6 @@ async function atlassianMyself(
  */
 async function atlassianAccountIdOffline(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   code: string
 ): Promise<string | null> {
@@ -680,7 +675,6 @@ async function atlassianAccountIdOffline(
 /** The caller's Jira grant row, whose display name and site a sibling connect borrows. */
 async function callerJiraGrant(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<{ display_name: string; metadata: unknown } | undefined> {
   return db
@@ -694,7 +688,6 @@ async function callerJiraGrant(
 /** The cloud id recorded on any prior grant of the given Atlassian providers in this tenant. */
 async function priorCloudId(
   db: Kysely<DB>,
-  tenantId: string,
   providers: string[]
 ): Promise<string | null> {
   const prior = await db
@@ -730,14 +723,13 @@ async function handleAtlassianJsmCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  const app = await getAtlassianJsmApp(tenant.id, originResult.val);
+  const app = await getAtlassianJsmApp(originResult.val);
   if (!app) {
     return NextResponse.json({ error: 'Atlassian JSM connector not configured' }, { status: 503 });
   }
 
   const connect = await exchangeAtlassianCode(
     'Atlassian JSM',
-    tenant.id,
     ATLASSIAN_JSM,
     code,
     app.redirectUri
@@ -751,7 +743,7 @@ async function handleAtlassianJsmCallback(
   const cloudId =
     resources[0]?.id ??
     cloudIdFromCodeClaims(code) ??
-    (await priorCloudId(db, tenant.id, [ATLASSIAN, ATLASSIAN_JSM]));
+    (await priorCloudId(db, [ATLASSIAN, ATLASSIAN_JSM]));
   if (!cloudId) {
     logger.error('Atlassian JSM callback could not resolve a cloud id', {
       component: 'auth/oauth',
@@ -764,12 +756,12 @@ async function handleAtlassianJsmCallback(
   // resort. Display name borrows from the caller's Jira grant when one
   // exists (same human, same Atlassian account).
   const accountId =
-    (await atlassianAccountIdOffline(db, tenant.id, subject, code)) ??
+    (await atlassianAccountIdOffline(db, subject, code)) ??
     (await atlassianMyself(pending, cloudId))?.accountId;
   if (!accountId) {
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
-  const jiraGrantRow = await callerJiraGrant(db, tenant.id, subject);
+  const jiraGrantRow = await callerJiraGrant(db, subject);
   const displayName = jiraGrantRow?.display_name || accountId;
 
   const stored = await delegateGrants().commit({
@@ -782,7 +774,7 @@ async function handleAtlassianJsmCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { cloudId, siteUrl: '' },
   });
-  if (!stored.ok) return storeFailed('Atlassian JSM', tenant.id, stored.err);
+  if (!stored.ok) return storeFailed('Atlassian JSM', stored.err);
 
   logger.info('Atlassian JSM grant stored', {
     component: 'auth/oauth',
@@ -794,7 +786,7 @@ async function handleAtlassianJsmCallback(
     targetKind: 'connector',
     targetLabel: ATLASSIAN_JSM,
   });
-  invalidateToolCatalogCache(tenant.id, subject);
+  invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
@@ -821,7 +813,7 @@ async function handleAtlassianConfluenceCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  const app = await getAtlassianConfluenceApp(tenant.id, originResult.val);
+  const app = await getAtlassianConfluenceApp(originResult.val);
   if (!app) {
     return NextResponse.json(
       { error: 'Atlassian Confluence connector not configured' },
@@ -831,7 +823,6 @@ async function handleAtlassianConfluenceCallback(
 
   const connect = await exchangeAtlassianCode(
     'Atlassian Confluence',
-    tenant.id,
     ATLASSIAN_CONFLUENCE,
     code,
     app.redirectUri
@@ -846,7 +837,7 @@ async function handleAtlassianConfluenceCallback(
   const cloudId =
     resources[0]?.id ??
     cloudIdFromCodeClaims(code) ??
-    (await priorCloudId(db, tenant.id, [ATLASSIAN, ATLASSIAN_JSM, ATLASSIAN_CONFLUENCE]));
+    (await priorCloudId(db, [ATLASSIAN, ATLASSIAN_JSM, ATLASSIAN_CONFLUENCE]));
   if (!cloudId) {
     logger.error('Atlassian Confluence callback could not resolve a cloud id', {
       component: 'auth/oauth',
@@ -862,12 +853,12 @@ async function handleAtlassianConfluenceCallback(
   // resort. Display name borrows from the caller's Jira grant when one
   // exists (same human, same Atlassian account).
   const accountId =
-    (await atlassianAccountIdOffline(db, tenant.id, subject, code)) ??
+    (await atlassianAccountIdOffline(db, subject, code)) ??
     (await atlassianMyself(pending, cloudId))?.accountId;
   if (!accountId) {
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
-  const jiraGrantRow = await callerJiraGrant(db, tenant.id, subject);
+  const jiraGrantRow = await callerJiraGrant(db, subject);
   const displayName = jiraGrantRow?.display_name || accountId;
 
   const stored = await delegateGrants().commit({
@@ -880,7 +871,7 @@ async function handleAtlassianConfluenceCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { cloudId, siteUrl: '' },
   });
-  if (!stored.ok) return storeFailed('Atlassian Confluence', tenant.id, stored.err);
+  if (!stored.ok) return storeFailed('Atlassian Confluence', stored.err);
 
   logger.info('Atlassian Confluence grant stored', {
     component: 'auth/oauth',
@@ -892,7 +883,7 @@ async function handleAtlassianConfluenceCallback(
     targetKind: 'connector',
     targetLabel: ATLASSIAN_CONFLUENCE,
   });
-  invalidateToolCatalogCache(tenant.id, subject);
+  invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
@@ -922,7 +913,7 @@ async function handleAtlassianAdminCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  const app = await getAtlassianAdminApp(tenant.id, originResult.val);
+  const app = await getAtlassianAdminApp(originResult.val);
   if (!app) {
     return NextResponse.json(
       { error: 'Jira Administration connector not configured' },
@@ -932,7 +923,6 @@ async function handleAtlassianAdminCallback(
 
   const connect = await exchangeAtlassianCode(
     'Atlassian Jira Admin',
-    tenant.id,
     ATLASSIAN_ADMIN,
     code,
     app.redirectUri
@@ -940,7 +930,7 @@ async function handleAtlassianAdminCallback(
   if (connect instanceof NextResponse) return connect;
   const { handle, pending, resources } = connect;
 
-  const jiraGrantRow = await callerJiraGrant(db, tenant.id, subject);
+  const jiraGrantRow = await callerJiraGrant(db, subject);
   const jiraMeta =
     jiraGrantRow && typeof jiraGrantRow.metadata === 'object' && jiraGrantRow.metadata !== null
       ? (jiraGrantRow.metadata as Record<string, unknown>)
@@ -961,7 +951,7 @@ async function handleAtlassianAdminCallback(
   // claims and the borrowed Jira identity stand behind it.
   const myself = await atlassianMyself(pending, cloudId);
   const accountId =
-    myself?.accountId ?? (await atlassianAccountIdOffline(db, tenant.id, subject, code));
+    myself?.accountId ?? (await atlassianAccountIdOffline(db, subject, code));
   if (!accountId) {
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
@@ -977,7 +967,7 @@ async function handleAtlassianAdminCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { cloudId, siteUrl },
   });
-  if (!stored.ok) return storeFailed('Atlassian Jira Admin', tenant.id, stored.err);
+  if (!stored.ok) return storeFailed('Atlassian Jira Admin', stored.err);
 
   logger.info('Atlassian Jira Admin grant stored', {
     component: 'auth/oauth',
@@ -989,7 +979,7 @@ async function handleAtlassianAdminCallback(
     targetKind: 'connector',
     targetLabel: ATLASSIAN_ADMIN,
   });
-  invalidateToolCatalogCache(tenant.id, subject);
+  invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
@@ -1013,7 +1003,7 @@ async function handleAtlassianBitbucketCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  const app = await getAtlassianBitbucketApp(tenant.id, originResult.val);
+  const app = await getAtlassianBitbucketApp(originResult.val);
   if (!app) {
     return NextResponse.json({ error: 'Bitbucket connector not configured' }, { status: 503 });
   }
@@ -1022,8 +1012,8 @@ async function handleAtlassianBitbucketCallback(
     provider: ATLASSIAN_BITBUCKET,
     form: { grant_type: 'authorization_code', code },
   });
-  if (!exchanged.ok) return exchangeFailed('Bitbucket', tenant.id, exchanged.err);
-  logExchanged('Bitbucket', tenant.id, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed('Bitbucket', exchanged.err);
+  logExchanged('Bitbucket', exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({
     provider: ATLASSIAN_BITBUCKET,
@@ -1060,7 +1050,7 @@ async function handleAtlassianBitbucketCallback(
     grantedScopes: exchanged.val.scope ? exchanged.val.scope.split(' ').filter(Boolean) : undefined,
     metadata: { username },
   });
-  if (!stored.ok) return storeFailed('Bitbucket', tenant.id, stored.err);
+  if (!stored.ok) return storeFailed('Bitbucket', stored.err);
 
   logger.info('Bitbucket grant stored', {
     component: 'auth/oauth',
@@ -1072,7 +1062,7 @@ async function handleAtlassianBitbucketCallback(
     targetKind: 'connector',
     targetLabel: ATLASSIAN_BITBUCKET,
   });
-  invalidateToolCatalogCache(tenant.id, subject);
+  invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
@@ -1101,7 +1091,7 @@ async function handleWebexUserCallback(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getWebexUserApp(tenant.id, originResult.val);
+  const app = await getWebexUserApp(originResult.val);
   if (!app) {
     return NextResponse.json(
       { error: 'WebEx user integration not configured for this organization' },
@@ -1113,8 +1103,8 @@ async function handleWebexUserCallback(
     provider: WEBEX_USER,
     form: { grant_type: 'authorization_code', code, redirect_uri: app.redirectUri },
   });
-  if (!exchanged.ok) return exchangeFailed('WebEx', tenant.id, exchanged.err);
-  logExchanged('WebEx', tenant.id, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed('WebEx', exchanged.err);
+  logExchanged('WebEx', exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({ provider: WEBEX_USER, pending: handle });
 
@@ -1163,7 +1153,7 @@ async function handleWebexUserCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { personEmail: emails[0] ?? null },
   });
-  if (!stored.ok) return storeFailed('WebEx', tenant.id, stored.err);
+  if (!stored.ok) return storeFailed('WebEx', stored.err);
 
   logger.info('WebEx user grant stored', { component: 'auth/oauth', subject });
   recordAuditEvent({
@@ -1172,7 +1162,7 @@ async function handleWebexUserCallback(
     targetKind: 'connector',
     targetLabel: WEBEX_USER,
   });
-  invalidateToolCatalogCache(tenant.id, subject);
+  invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
@@ -1206,7 +1196,7 @@ async function handleGitHubCallback(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getGitHubApp(tenant.id, originResult.val);
+  const app = await getGitHubApp(originResult.val);
   if (!app) {
     return NextResponse.json(
       { error: 'GitHub integration not configured for this organization' },
@@ -1218,8 +1208,8 @@ async function handleGitHubCallback(
     provider: GITHUB,
     form: { grant_type: 'authorization_code', code, redirect_uri: app.redirectUri },
   });
-  if (!exchanged.ok) return exchangeFailed('GitHub', tenant.id, exchanged.err);
-  logExchanged('GitHub', tenant.id, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed('GitHub', exchanged.err);
+  logExchanged('GitHub', exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({ provider: GITHUB, pending: handle });
 
@@ -1251,7 +1241,7 @@ async function handleGitHubCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { login },
   });
-  if (!stored.ok) return storeFailed('GitHub', tenant.id, stored.err);
+  if (!stored.ok) return storeFailed('GitHub', stored.err);
 
   logger.info('GitHub grant stored', { component: 'auth/oauth', subject });
   recordAuditEvent({
@@ -1260,7 +1250,7 @@ async function handleGitHubCallback(
     targetKind: 'connector',
     targetLabel: GITHUB,
   });
-  invalidateToolCatalogCache(tenant.id, subject);
+  invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
@@ -1295,7 +1285,7 @@ async function handleMicrosoftCallback(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getMicrosoftApp(tenant.id, originResult.val);
+  const app = await getMicrosoftApp(originResult.val);
   if (!app) {
     return NextResponse.json(
       { error: 'Microsoft integration not configured for this organization' },
@@ -1306,7 +1296,6 @@ async function handleMicrosoftCallback(
   const exchanged = await exchangeMicrosoftCode(
     'Microsoft',
     app,
-    tenant.id,
     MICROSOFT,
     code,
     requestedScopes
@@ -1351,7 +1340,7 @@ async function handleMicrosoftCallback(
     // the refIds and the access verifier are built from.
     metadata: { tid, upn, email: email ?? null, ...carriedIndexing },
   });
-  if (!stored.ok) return storeFailed('Microsoft', tenant.id, stored.err);
+  if (!stored.ok) return storeFailed('Microsoft', stored.err);
 
   // Subscription creation + initial delta backfill belong in the worker: the
   // Graph handshake POSTs to our webhook route while the create call is in
@@ -1379,7 +1368,7 @@ async function handleMicrosoftCallback(
     targetKind: 'connector',
     targetLabel: MICROSOFT,
   });
-  invalidateToolCatalogCache(tenant.id, subject);
+  invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
@@ -1404,7 +1393,6 @@ interface MicrosoftExchange {
 async function exchangeMicrosoftCode(
   label: string,
   app: MicrosoftApp,
-  tenantId: string,
   provider: string,
   code: string,
   requestedScopes: string | null
@@ -1419,8 +1407,8 @@ async function exchangeMicrosoftCode(
     },
     directoryTenantId: app.directoryTenantId,
   });
-  if (!exchanged.ok) return exchangeFailed(label, tenantId, exchanged.err);
-  logExchanged(label, tenantId, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed(label, exchanged.err);
+  logExchanged(label, exchanged.val);
   const handle = exchanged.val.handle;
 
   // Who granted this. The id_token claims answer directly; /me is the
@@ -1482,7 +1470,7 @@ async function handleEntraDeveloperCallback(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getEntraDeveloperApp(tenant.id, originResult.val);
+  const app = await getEntraDeveloperApp(originResult.val);
   if (!app) {
     return NextResponse.json(
       { error: 'Entra Developer integration not configured for this organization' },
@@ -1493,7 +1481,6 @@ async function handleEntraDeveloperCallback(
   const exchanged = await exchangeMicrosoftCode(
     'Entra Developer',
     app,
-    tenant.id,
     ENTRA_DEVELOPER,
     code,
     requestedScopes
@@ -1513,7 +1500,7 @@ async function handleEntraDeveloperCallback(
     // person on the card and in the tools' "connected as" line.
     metadata: { tid, upn, email: email ?? null },
   });
-  if (!stored.ok) return storeFailed('Entra Developer', tenant.id, stored.err);
+  if (!stored.ok) return storeFailed('Entra Developer', stored.err);
 
   logger.info('Entra Developer grant stored', {
     component: 'auth/oauth',
@@ -1525,7 +1512,7 @@ async function handleEntraDeveloperCallback(
     targetKind: 'connector',
     targetLabel: ENTRA_DEVELOPER,
   });
-  invalidateToolCatalogCache(tenant.id, subject);
+  invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
@@ -1557,7 +1544,7 @@ async function handleZoomCallback(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getZoomApp(tenant.id, originResult.val);
+  const app = await getZoomApp(originResult.val);
   if (!app) {
     return NextResponse.json(
       { error: 'Zoom integration not configured for this organization' },
@@ -1569,8 +1556,8 @@ async function handleZoomCallback(
     provider: ZOOM,
     form: { grant_type: 'authorization_code', code, redirect_uri: app.redirectUri },
   });
-  if (!exchanged.ok) return exchangeFailed('Zoom', tenant.id, exchanged.err);
-  logExchanged('Zoom', tenant.id, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed('Zoom', exchanged.err);
+  logExchanged('Zoom', exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({ provider: ZOOM, pending: handle });
   // The token-response echo names what the app was actually minted —
@@ -1652,7 +1639,7 @@ async function handleZoomCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { email, zoomAccountId: typeof me?.account_id === 'string' ? me.account_id : null },
   });
-  if (!stored.ok) return storeFailed('Zoom', tenant.id, stored.err);
+  if (!stored.ok) return storeFailed('Zoom', stored.err);
 
   logger.info('Zoom grant stored', { component: 'auth/oauth', subject });
   recordAuditEvent({
@@ -1661,7 +1648,7 @@ async function handleZoomCallback(
     targetKind: 'connector',
     targetLabel: ZOOM,
   });
-  invalidateToolCatalogCache(tenant.id, subject);
+  invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
 
@@ -1734,7 +1721,7 @@ async function handleOnBaseCallback(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getOnBaseApp(tenant.id, originResult.val, spec.connector);
+  const app = await getOnBaseApp(originResult.val, spec.connector);
   if (!app) {
     return NextResponse.json(
       { error: `${spec.label} integration not configured for this organization` },
@@ -1751,8 +1738,8 @@ async function handleOnBaseCallback(
       code_verifier: codeVerifier,
     },
   });
-  if (!exchanged.ok) return exchangeFailed(spec.label, tenant.id, exchanged.err);
-  logExchanged(spec.label, tenant.id, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed(spec.label, exchanged.err);
+  logExchanged(spec.label, exchanged.val);
   const { handle, idToken, hasRefreshToken } = exchanged.val;
 
   const idClaims = idToken ? decodeJwtPayload(idToken) : null;
@@ -1789,7 +1776,7 @@ async function handleOnBaseCallback(
     requestedScopes: (requestedScopes || `openid offline_access ${app.idpScopeName}`).split(' '),
     metadata: { issuer: app.idpIssuer },
   });
-  if (!stored.ok) return storeFailed(spec.label, tenant.id, stored.err);
+  if (!stored.ok) return storeFailed(spec.label, stored.err);
 
   // No refresh token means the connection dies with this access token —
   // an IdP-side setting (offline_access), worth a log line now instead of
@@ -1813,6 +1800,6 @@ async function handleOnBaseCallback(
     targetKind: 'connector',
     targetLabel: spec.grantProvider,
   });
-  invalidateToolCatalogCache(tenant.id, subject);
+  invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }

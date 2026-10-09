@@ -100,7 +100,7 @@ maybe('chat_subagent_runs model', () => {
       },
       testCipher
     );
-    const run = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_fast', testCipher);
+    const run = await getSubagentRunByCall(db, chatId, 'toolu_fast', testCipher);
     expect(run?.model).toEqual({
       provider: 'anthropic',
       model: 'claude-haiku-4-5',
@@ -109,7 +109,7 @@ maybe('chat_subagent_runs model', () => {
 
     // The config removed: the run still says what answered, by name.
     await sql`DELETE FROM llm_model_configs WHERE id = ${fastModelId}`.execute(db);
-    const later = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_fast', testCipher);
+    const later = await getSubagentRunByCall(db, chatId, 'toolu_fast', testCipher);
     expect(later?.model).toEqual({ provider: 'anthropic', model: 'claude-haiku-4-5', label: null });
   });
 
@@ -126,7 +126,7 @@ maybe('chat_subagent_runs model', () => {
       cipher: testCipher,
     });
     expect(runId).not.toBeNull();
-    const run = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_plain', testCipher);
+    const run = await getSubagentRunByCall(db, chatId, 'toolu_plain', testCipher);
     expect(run?.model).toBeNull();
   });
 });

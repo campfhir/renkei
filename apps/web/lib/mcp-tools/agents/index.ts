@@ -203,7 +203,7 @@ async function agentAccessFor(
 ): Promise<AgentAccess | null> {
   const id = typeof agentId === 'string' ? agentId.trim() : '';
   if (!id || !context.subject) return null;
-  return resolveAgentAccess(db, context.tenantId, context.subject, id);
+  return resolveAgentAccess(db, context.subject, id);
 }
 
 function outlineOf(steps: AgentStepsDoc): string {
@@ -416,8 +416,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const db = dbResult.val;
 
       const [agents, shared] = await Promise.all([
-        listAgents(db, context.tenantId, context.subject),
-        listAgentsSharedWith(db, context.tenantId, context.subject),
+        listAgents(db, context.subject),
+        listAgentsSharedWith(db, context.subject),
       ]);
       if (agents.length === 0 && shared.length === 0) {
         return textResult('You have no agents yet, and none have been shared with you.');
@@ -491,7 +491,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // Get owner info for shared agents so callers know whose agent they're working with
       let ownerEmail: string | null = null;
       if (!access.viewerIsOwner) {
-        const ownerEmailResult = await getIdentityEmail(context.tenantId, access.ownerSubject);
+        const ownerEmailResult = await getIdentityEmail(access.ownerSubject);
         ownerEmail = ownerEmailResult.ok ? ownerEmailResult.val : null;
       }
 
@@ -630,7 +630,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // Same projection the save path validates against, so this cannot
       // offer a tool a step would then be refused for naming.
       const all = (
-        await listAvailableTools(context.tenantId, context.subject, { roles: context.roles })
+        await listAvailableTools(context.subject, { roles: context.roles })
       ).filter(
         // Preview-card buttons: the model never sees them, so an author must
         // not be told to write a step for one.
@@ -787,7 +787,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       const approvals = await listPendingApprovals(
         dbResult.val,
-        context.tenantId,
         context.subject,
         {
           agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
@@ -863,7 +862,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const result = await decideApproval(
         dbResult.val,
         agentJobsQueue().producer,
-        context.tenantId,
         context.subject,
         {
           cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
@@ -941,7 +939,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       const questions = await listPendingQuestions(
         dbResult.val,
-        context.tenantId,
         context.subject,
         {
           agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
@@ -1009,7 +1006,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const result = await answerQuestion(
         dbResult.val,
         agentJobsQueue().producer,
-        context.tenantId,
         context.subject,
         {
           cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
@@ -1100,7 +1096,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           : undefined;
       const runs = await listRunsForOwner(
         dbResult.val,
-        context.tenantId,
         access.ownerSubject,
         agent.id,
         { status, limit }
@@ -1110,7 +1105,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // "waiting" on its own says a run is stuck without saying on WHAT, and
       // the answer is a decision this caller can make right here.
       const waiting = runs.some((run) => run.status === 'waiting')
-        ? await listPendingApprovals(dbResult.val, context.tenantId, context.subject, {
+        ? await listPendingApprovals(dbResult.val, context.subject, {
             agentId: agent.id,
             limit: 50,
           })
@@ -1121,7 +1116,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // (queued, never reached the model) simply has no tokens line.
       const tokensByRun = await getTokenUsageByRun(
         dbResult.val,
-        context.tenantId,
         runs.map((run) => run.id)
       );
       const now = Date.now();
@@ -1186,13 +1180,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!runRow) return errText('No run of yours has that id.');
       const access = await resolveAgentAccess(
         db,
-        context.tenantId,
         context.subject,
         runRow.agent_id
       );
       if (!access) return errText('No run of yours has that id.');
       const agent = access.agent;
-      const run = await getRunForOwner(db, context.tenantId, access.ownerSubject, agent.id, runId);
+      const run = await getRunForOwner(db, access.ownerSubject, agent.id, runId);
       if (!run) return errText('No run of yours has that id.');
 
       // A parked run's timeline ends mid-air without this: the last thing it
@@ -1203,7 +1196,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const approval =
         access.viewerIsOwner && run.status === 'waiting'
           ? (
-              await listPendingApprovals(db, context.tenantId, access.ownerSubject, {
+              await listPendingApprovals(db, access.ownerSubject, {
                 agentId: agent.id,
                 limit: 50,
               })
@@ -1215,7 +1208,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // may have changed since).
       const usageRows = labelStepUsage(
         run.stepsSnapshot,
-        await getRunTokenUsage(db, context.tenantId, runId)
+        await getRunTokenUsage(db, runId)
       );
 
       return textResult(
@@ -1277,9 +1270,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         // to those ids. The caller's reach decides what is listed; the
         // ledger only ever fills in numbers for ids already resolved.
         const [own, shared, byAgent] = await Promise.all([
-          listAgents(db, context.tenantId, context.subject),
-          listAgentsSharedWith(db, context.tenantId, context.subject),
-          getTokenUsageByAgent(db, context.tenantId),
+          listAgents(db, context.subject),
+          listAgentsSharedWith(db, context.subject),
+          getTokenUsageByAgent(db),
         ]);
         if (own.length === 0 && shared.length === 0) {
           return textResult('You have no agents yet, and none have been shared with you.');
@@ -1305,10 +1298,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
       const [tokens, byModel, stepRows, tools] = await Promise.all([
-        getAgentTokenUsage(db, context.tenantId, agent.id),
-        getTokenUsageByModel(db, context.tenantId, agent.id),
-        getAgentTokenUsageByStep(db, context.tenantId, agent.id),
-        getAgentToolUsage(db, context.tenantId, agent.id, TOOL_USAGE_WINDOW_DAYS),
+        getAgentTokenUsage(db, agent.id),
+        getTokenUsageByModel(db, agent.id),
+        getAgentTokenUsageByStep(db, agent.id),
+        getAgentToolUsage(db, agent.id, TOOL_USAGE_WINDOW_DAYS),
       ]);
       return textResult(
         renderAgentUsageText({
@@ -1363,7 +1356,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!runRow) return errText('No run of yours has that id.');
       const access = await resolveAgentAccess(
         db,
-        context.tenantId,
         context.subject,
         runRow.agent_id
       );
@@ -1441,7 +1433,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!runRow) return errText('No run of yours has that id.');
       const access = await resolveAgentAccess(
         db,
-        context.tenantId,
         context.subject,
         runRow.agent_id
       );
@@ -1449,7 +1440,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const agent = access.agent;
 
       if (runRow.trigger_kind !== 'event' && args.confirm !== true) {
-        const inProgress = await findInProgressRun(db, context.tenantId, agent.id);
+        const inProgress = await findInProgressRun(db, agent.id);
         if (inProgress) {
           return errText(
             `"${agent.name}" already has a run ${inProgress.status} (runId: ${inProgress.id}). ` +
@@ -1601,7 +1592,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // agent-run caller is already refused above, so this is always a
       // human or API-key caller deciding for themselves.
       if (args.confirm !== true) {
-        const inProgress = await findInProgressRun(db, context.tenantId, agent.id);
+        const inProgress = await findInProgressRun(db, agent.id);
         if (inProgress) {
           return errText(
             `"${agent.name}" already has a run ${inProgress.status} (runId: ${inProgress.id}). ` +
@@ -1670,7 +1661,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
-      const memory = await readAgentMemory(dbResult.val, context.tenantId, agent.id, {
+      const memory = await readAgentMemory(dbResult.val, agent.id, {
         maxEntries: 100,
       });
       if (memory.unavailable) {
@@ -1771,7 +1762,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const agent = access.agent;
 
       if (all) {
-        const held = await countAgentMemory(db, context.tenantId, agent.id);
+        const held = await countAgentMemory(db, agent.id);
         if (held.entries === 0 && !held.hasSummary) {
           return textResult(`"${agent.name}" remembers nothing already — nothing to forget.`);
         }
@@ -1786,7 +1777,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             ].join('\n')
           );
         }
-        const result = await forgetAgentMemory(db, context.tenantId, agent.id, { kind: 'all' });
+        const result = await forgetAgentMemory(db, agent.id, { kind: 'all' });
         // Memory does not come back, so the wipe leaves a trace somewhere.
         logger.info('agent_memory_forget cleared an agent memory', {
           component: 'mcp/tool',
@@ -1803,7 +1794,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const lines: string[] = [];
       let entriesDeleted = 0;
       if (entryIds.length > 0) {
-        const result = await forgetAgentMemory(db, context.tenantId, agent.id, {
+        const result = await forgetAgentMemory(db, agent.id, {
           kind: 'entries',
           entryIds,
         });
@@ -1817,7 +1808,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         }
       }
       if (clearSummary) {
-        const result = await forgetAgentMemory(db, context.tenantId, agent.id, {
+        const result = await forgetAgentMemory(db, agent.id, {
           kind: 'summary',
         });
         lines.push(
@@ -1864,7 +1855,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
-      const notes = await listAgentNotes(dbResult.val, context.tenantId, agent.id);
+      const notes = await listAgentNotes(dbResult.val, agent.id);
       if (notes.length === 0) return textResult(`"${agent.name}" has no knowledge notes.`);
       const lines = [`${notes.length} note(s) on "${agent.name}":`];
       for (const note of notes) {
@@ -1923,7 +1914,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const agent = access.agent;
       // Notes are keyed under the OWNER's email regardless of who writes
       // them — the owner's runs read the notes, whoever authored them.
-      const ownerEmailResult = await getIdentityEmail(context.tenantId, access.ownerSubject);
+      const ownerEmailResult = await getIdentityEmail(access.ownerSubject);
       const ownerEmail = ownerEmailResult.ok ? ownerEmailResult.val : null;
       if (!ownerEmail) {
         return errText("No email is on record for the agent owner's identity.");
@@ -2006,7 +1997,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const access = await agentAccessFor(dbResult.val, context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
-      const ownerEmailResult = await getIdentityEmail(context.tenantId, access.ownerSubject);
+      const ownerEmailResult = await getIdentityEmail(access.ownerSubject);
       const ownerEmail = ownerEmailResult.ok ? ownerEmailResult.val : null;
       if (!ownerEmail) {
         return errText("No email is on record for the agent owner's identity.");
@@ -2014,7 +2005,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       // Full-replacement semantics underneath (same as the web panel): an
       // omitted half is carried over from the stored note.
-      const current = (await listAgentNotes(dbResult.val, context.tenantId, agent.id)).find(
+      const current = (await listAgentNotes(dbResult.val, agent.id)).find(
         (note) => note.noteId === noteId
       );
       if (!current) return errText(noteErrorText.NOT_FOUND);
@@ -2053,7 +2044,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const access = await agentAccessFor(dbResult.val, context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
-      const ownerEmailResult = await getIdentityEmail(context.tenantId, access.ownerSubject);
+      const ownerEmailResult = await getIdentityEmail(access.ownerSubject);
       const ownerEmail = ownerEmailResult.ok ? ownerEmailResult.val : null;
       if (!ownerEmail) {
         return errText("No email is on record for the agent owner's identity.");
@@ -2365,8 +2356,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     let kinds: Map<string, 'read' | 'act'>;
     try {
       const [settings, catalog] = await Promise.all([
-        getOrgSettings(context.tenantId),
-        listAvailableTools(context.tenantId, context.subject, { roles: context.roles }),
+        getOrgSettings(),
+        listAvailableTools(context.subject, { roles: context.roles }),
       ]);
       if (settings.ok) policy = settings.val.agentActStepsRequireApproval;
       kinds = new Map(catalog.map((tool) => [tool.name, tool.kind]));
@@ -2424,7 +2415,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if ('error' in parsed) return errText(parsed.error);
 
       const dryRun = args.confirm !== true;
-      const result = await saveAgent(dbResult.val, context.tenantId, context.subject, parsed, {
+      const result = await saveAgent(dbResult.val, context.subject, parsed, {
         dryRun,
       });
       if (result.outcome === 'not-found') return errText(NOT_FOUND);
@@ -2568,7 +2559,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       );
       if ('error' in parsed) return errText(parsed.error);
 
-      const result = await saveAgent(dbResult.val, context.tenantId, context.subject, parsed, {
+      const result = await saveAgent(dbResult.val, context.subject, parsed, {
         agentId: agent.id,
         dryRun,
         ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),
@@ -2766,7 +2757,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       ].join(', ');
 
       const dryRun = args.confirm !== true;
-      const result = await saveAgent(dbResult.val, context.tenantId, context.subject, parsed, {
+      const result = await saveAgent(dbResult.val, context.subject, parsed, {
         agentId: agent.id,
         dryRun,
         ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),
@@ -2858,7 +2849,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if ('error' in parsed) return errText(parsed.error);
 
       const dryRun = args.confirm !== true;
-      const result = await saveAgent(dbResult.val, context.tenantId, context.subject, parsed, {
+      const result = await saveAgent(dbResult.val, context.subject, parsed, {
         agentId: agent.id,
         dryRun,
         ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),

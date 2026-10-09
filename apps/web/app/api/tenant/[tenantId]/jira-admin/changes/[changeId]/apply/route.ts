@@ -38,11 +38,11 @@ const NOT_PENDING: Record<string, string> = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; changeId: string }> }
+  { params }: { params: Promise<{ changeId: string }> }
 ): Promise<NextResponse> {
   const { changeId } = await params;
 
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
@@ -54,7 +54,7 @@ export async function POST(
   const db = dbResult.val;
 
   // Owner-scoped: someone else's request is not found, not forbidden.
-  const change = await getChangeRequest(db, tenantId, session.subject, changeId);
+  const change = await getChangeRequest(db, session.subject, changeId);
   if (!change) {
     return NextResponse.json({ error: 'Change request not found' }, { status: 404 });
   }
@@ -63,7 +63,7 @@ export async function POST(
     return NextResponse.json({ error: NOT_PENDING[state] ?? 'Not pending' }, { status: 409 });
   }
 
-  const gate = await applyGate(db, tenantId, session.subject, session.roles, change);
+  const gate = await applyGate(db, session.subject, session.roles, change);
   if (!gate.ok) {
     return NextResponse.json({ error: gate.reason }, { status: 403 });
   }
@@ -89,7 +89,7 @@ export async function POST(
   }
 
   // Claim before running, so two clicks cannot both apply it.
-  if (!(await claimChangeRequest(db, tenantId, session.subject, change.id))) {
+  if (!(await claimChangeRequest(db, session.subject, change.id))) {
     return NextResponse.json(
       { error: 'This change request is no longer pending.' },
       { status: 409 }

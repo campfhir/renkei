@@ -22,7 +22,7 @@ export async function POST(
   { params }: { params: Promise<{ slug: string; grantId: string }> }
 ): Promise<NextResponse> {
   const { slug, grantId } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -83,7 +83,7 @@ export async function POST(
   // The GRANT's own subject lost the connector, not the admin who revoked it.
   // A pre-per-user-ownership grant can carry no subject at all, in which
   // case there is no cached caller to invalidate.
-  if (grant.subject) invalidateToolCatalogCache(tenantRef.id, grant.subject);
+  if (grant.subject) invalidateToolCatalogCache(grant.subject);
 
   return NextResponse.json({
     success: true,

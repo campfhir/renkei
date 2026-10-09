@@ -64,7 +64,7 @@ function redirectWithError(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
   const dbResult = getDatabase();
@@ -74,12 +74,6 @@ export async function GET(
   const db = dbResult.val;
 
   try {
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('id')
-      .where('id', '=', tenantId)
-      .executeTakeFirst();
-
     const searchParams = request.nextUrl.searchParams;
     const responseType = searchParams.get('response_type');
     const clientId = searchParams.get('client_id');
@@ -133,7 +127,7 @@ export async function GET(
     // The code this request leads to becomes a bearer token acting as a
     // specific person, so it has to be bound to a signed-in browser. This
     // is a redirect flow: bounce through login and come back here.
-    const session = await getSessionFromRequest(request, tenantId);
+    const session = await getSessionFromRequest(request);
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
       return NextResponse.json({ error: 'server_error' }, { status: 500 });
@@ -143,7 +137,7 @@ export async function GET(
       // proxy (e.g. localhost:3000), unreachable for the user's browser;
       // getOrigin resolves the public one.
       const loginUrl = new URL('/api/auth/oidc/login', originResult.val);
-      loginUrl.searchParams.set('tenantId', tenantId);
+      loginUrl.searchParams.set('tenantId');
       loginUrl.searchParams.set('redirect', `${request.nextUrl.pathname}${request.nextUrl.search}`);
       return NextResponse.redirect(loginUrl);
     }
@@ -198,7 +192,7 @@ export function submittedFromThisOrigin(request: NextRequest, ourOrigin: string)
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
   const verdict = checkInboundLimit(`oauth/consent:${tenantId}`, request, POST_LIMITS);
@@ -239,7 +233,7 @@ export async function POST(
   const db = dbResult.val;
 
   try {
-    const session = await getSessionFromRequest(request, tenantId);
+    const session = await getSessionFromRequest(request);
     if (!session) {
       return oauthError(401, 'invalid_request', 'Sign in before answering a consent request');
     }
@@ -283,7 +277,7 @@ export async function POST(
       );
     }
 
-    const code = await mintAuthorizationCode(db, tenantId, pending, session);
+    const code = await mintAuthorizationCode(db, pending, session);
     recordAuditEvent({
       actorSubject: session.subject,
       action: 'oauth.consent_granted',
@@ -317,7 +311,6 @@ export async function POST(
  */
 async function mintAuthorizationCode(
   db: Kysely<DB>,
-  tenantId: string,
   pending: {
     client_id: string;
     redirect_uri: string;
@@ -328,7 +321,7 @@ async function mintAuthorizationCode(
   session: Session
 ): Promise<string> {
   const code = `code_${randomUUID()}`;
-  const settingsResult = await getOrgSettings(tenantId);
+  const settingsResult = await getOrgSettings();
   const settings = settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS;
   const expiresAt = new Date(Date.now() + settings.authorizationCodeTtlSeconds * 1000);
 

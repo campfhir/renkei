@@ -98,7 +98,6 @@ export default function PullsSummary({
           </p>
           <PrSubscribe
             compact
-            tenantId={tenantId}
             projectId={projectId}
             prNumber={summary.mostRecent.number}
             prUrl={summary.mostRecent.url}

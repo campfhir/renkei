@@ -412,7 +412,7 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
 
       const choice = pickImageModel(models, options.preferredModelId);
       if (!choice) return errorResult('No image model is available.');
-      const resolved = await resolve(context.db, context.tenantId, choice.id);
+      const resolved = await resolve(context.db, choice.id);
       if (!resolved.ok || resolved.val.modelConfigId !== choice.id) {
         return errorResult(
           `The image model "${choice.label}" cannot be used right now (it is disabled or its configuration is incomplete). Tell the person to ask an administrator.`

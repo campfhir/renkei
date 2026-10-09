@@ -33,7 +33,7 @@ type Handler = (args: Record<string, unknown>) => Promise<{
 const INSTANCE_ID = '11111111-2222-3333-4444-555555555555';
 
 function contextOf(): MCPToolContext {
-  return { tenantId: 'tenant-1', subject: 'auth0|alice' } as unknown as MCPToolContext;
+  return { subject: 'auth0|alice' } as unknown as MCPToolContext;
 }
 
 const ALL: AdManagerPermission[] = [...ADMANAGER_PERMISSION_IDS];
@@ -49,7 +49,7 @@ function authOf(
   return {
     kind: 'user',
     target() {
-      return { tenantId: 'tenant-1', subject: 'auth0|alice' };
+      return { subject: 'auth0|alice' };
     },
     async listConnected() {
       return [
@@ -260,7 +260,7 @@ describe('unlock account: preview + confirm', () => {
     });
     expect(textOf(result)).toMatch(/Unlocked jdoe/);
     expect(admanagerApi).toHaveBeenCalledWith(
-      { tenantId: 'tenant-1', subject: 'auth0|alice', instanceId: INSTANCE_ID },
+      { subject: 'auth0|alice', instanceId: INSTANCE_ID },
       expect.objectContaining({
         method: 'POST',
         path: '/RestAPI/UnlockUser',

@@ -119,7 +119,7 @@ beforeEach(() => {
   }) as unknown as typeof fetch;
 });
 
-const params = Promise.resolve({ tenantId: 'tenant-1' });
+const params = Promise.resolve({ });
 
 function postRequest(url: string, body: unknown): NextRequest {
   return new NextRequest(url, {
@@ -164,7 +164,7 @@ describe('POST /watches — sharepoint', () => {
     // scope_type 'drive', and the account whose grant the worker will poll
     // with — taken from the same grant the delegate fetched with.
     expect(upsertWatch).toHaveBeenCalledWith(
-      { tenantId: 'tenant-1', subject: 'subject-1', accountId: 'acct-1' },
+      { subject: 'subject-1', accountId: 'acct-1' },
       'sharepoint',
       'drive',
       'drive-2',

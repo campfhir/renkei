@@ -1172,7 +1172,7 @@ export async function registerWebexUserTools(
           : {};
       // Recorded BEFORE the tool answers, so the ledger row is in place well
       // ahead of the webhook round-trip that will ask about it.
-      await recordSentWebexMessage(context.tenantId, str(sent.id), context.accountId);
+      await recordSentWebexMessage(str(sent.id), context.accountId);
       logger.info('webex_send_message sent', {
         component: 'mcp/tool',
         roomId: str(sent.roomId),
@@ -1229,7 +1229,7 @@ export async function registerWebexUserTools(
       // which their grant recorded; a bot that cannot deliver (revoked
       // token, an org policy on bots) falls through to the solo space
       // below rather than losing the note.
-      const bot = await webexBotClient(context.tenantId);
+      const bot = await webexBotClient();
       const overflowed = overLongMarkdown(markdown);
       if (bot) {
         const access = await resolveWebexAccess(context);
@@ -1242,7 +1242,7 @@ export async function registerWebexUserTools(
             })
           : null;
         if (viaBot?.ok && viaBot.val.roomId) {
-          await recordSentWebexMessage(context.tenantId, viaBot.val.id, context.accountId);
+          await recordSentWebexMessage(viaBot.val.id, context.accountId);
           logger.info('webex_note_to_self sent', {
             component: 'mcp/tool',
             roomId: viaBot.val.roomId,
@@ -1327,7 +1327,7 @@ export async function registerWebexUserTools(
           ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
             (sentBody as Record<string, unknown>)
           : {};
-      await recordSentWebexMessage(context.tenantId, str(sent.id), context.accountId);
+      await recordSentWebexMessage(str(sent.id), context.accountId);
       logger.info('webex_note_to_self sent', {
         component: 'mcp/tool',
         roomId,
@@ -1553,7 +1553,7 @@ export async function registerWebexUserTools(
           ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
             (body as Record<string, unknown>)
           : {};
-      await recordSentWebexMessage(context.tenantId, str(sent.id), context.accountId);
+      await recordSentWebexMessage(str(sent.id), context.accountId);
       logger.info('webex_send_message_confirm sent', {
         component: 'mcp/tool',
         roomId: str(sent.roomId),

@@ -81,13 +81,13 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
       [fixture.tenantId, fixture.subject]
     );
     // Enrolled like e2e/seed.ts's shared person, so the KeyGuard shows no dialog.
-    await enrollForE2E(client, fixture.tenantId, fixture.subject);
+    await enrollForE2E(client, fixture.subject);
   } finally {
     await client.end();
   }
 }
 
-async function storedValue(tenantId: string): Promise<unknown> {
+async function storedValue(): Promise<unknown> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
@@ -140,7 +140,7 @@ test('admin: the PHI covered-model switch saves and reads back', async ({ page }
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByText('Saved.')).toBeVisible();
   await shot(page, testInfo, 'phi-covered-model-02-saved');
-  expect(await storedValue(fixture.tenantId)).toBe(true);
+  expect(await storedValue()).toBe(true);
 
   // What the gate reads: the org-settings route answers the saved value
   // (the settings page itself may show the old value for up to a minute —

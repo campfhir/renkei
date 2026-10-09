@@ -22,7 +22,7 @@ export async function DELETE(
 ): Promise<NextResponse> {
   const { slug, subject: encoded } = await params;
   const subject = decodeURIComponent(encoded);
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (access.subject === subject) {
     return NextResponse.json(
@@ -33,7 +33,7 @@ export async function DELETE(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
 
-  const shredded = await delegateClient().shredUserKey(tenantRef.id, subject);
+  const shredded = await delegateClient().shredUserKey(subject);
   if (!shredded.ok) {
     return NextResponse.json({ error: 'The key service could not be reached.' }, { status: 503 });
   }

@@ -22,17 +22,17 @@ import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  const access = await resolveAgentAccess(db, session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!access.viewerIsOwner) {
     return NextResponse.json({ error: 'Only the owner can analyze this agent.' }, { status: 403 });
@@ -40,14 +40,14 @@ export async function POST(
 
   // One at a time: a second pass while the first runs would spend a second
   // model call on the same evidence for the same answer.
-  const running = await inFlightOptimization(db, tenantId, agentId);
+  const running = await inFlightOptimization(db, agentId);
   if (running) {
     return NextResponse.json({ optimizationId: running.id, status: 'queued' }, { status: 202 });
   }
 
   // The org's window, frozen onto the row: the report says what it looked
   // at even if the setting changes afterwards.
-  const settings = await getOrgSettings(tenantId);
+  const settings = await getOrgSettings();
   if (!settings.ok) return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
   const optimizationId = await createOptimization(db, {
     ownerSubject: session.subject,
@@ -79,10 +79,10 @@ export async function POST(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -90,6 +90,6 @@ export async function GET(
 
   // Owner-scoped by the read itself: a grantee (or anyone else) gets null,
   // which is the same answer as "no pass yet".
-  const optimization = await latestOptimization(dbResult.val, tenantId, session.subject, agentId);
+  const optimization = await latestOptimization(dbResult.val, session.subject, agentId);
   return NextResponse.json({ optimization });
 }

@@ -53,7 +53,7 @@ export async function sweepLogRetention(): Promise<void> {
    * Returns the number of `logs` rows removed — fewer than BATCH_SIZE
    * means the tenant has nothing left to purge.
    */
-  async function purgeTenantBatch(tenantId: string, until: Date): Promise<number> {
+  async function purgeTenantBatch(until: Date): Promise<number> {
     const result = await sql<{ deleted: string }>`
       WITH batch AS (
         SELECT log_id FROM log_attr
@@ -75,10 +75,10 @@ export async function sweepLogRetention(): Promise<void> {
   }
 
   /** Purge one tenant's rows past `until`, in batches, up to the per-pass cap. */
-  async function purgeTenant(tenantId: string, until: Date): Promise<number> {
+  async function purgeTenant(until: Date): Promise<number> {
     let total = 0;
     for (let i = 0; i < MAX_BATCHES_PER_TENANT; i++) {
-      const deleted = await purgeTenantBatch(tenantId, until);
+      const deleted = await purgeTenantBatch(until);
       total += deleted;
       if (deleted < BATCH_SIZE) break;
     }
@@ -97,14 +97,14 @@ export async function sweepLogRetention(): Promise<void> {
   }
 
   for (const tenant of tenants) {
-    const settings = await getOrgSettings(tenant.id);
+    const settings = await getOrgSettings();
     const days = settings.ok ? settings.val.logRetentionDays : 0;
     // 0 (or unreadable) = this tenant keeps its own logs forever.
     if (days <= 0) continue;
 
     const until = new Date(Date.now() - days * 24 * 60 * 60_000);
     try {
-      const deleted = await purgeTenant(tenant.id, until);
+      const deleted = await purgeTenant(until);
       if (deleted > 0) {
         logger.info('purged {deleted} log row(s) for tenant {tenantId} older than {days} day(s)', {
           component: COMPONENT,

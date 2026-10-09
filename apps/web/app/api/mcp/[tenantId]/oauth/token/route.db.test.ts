@@ -56,7 +56,7 @@ maybe('refresh-token rotation', () => {
         client_secret: clientSecret,
       }).toString(),
     });
-    const response = await POST(request, { params: Promise.resolve({ tenantId }) });
+    const response = await POST(request, { params: Promise.resolve({ }) });
     return { status: response.status, body: await response.json() };
   }
 
@@ -98,7 +98,7 @@ maybe('refresh-token rotation', () => {
     await db.deleteFrom('oauth_refresh_tokens').execute();
     await db.deleteFrom('oauth_clients').execute();
     await db.deleteFrom('tenant_settings').execute();
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });
 

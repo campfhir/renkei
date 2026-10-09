@@ -419,7 +419,7 @@ export async function seed(client: Client): Promise<void> {
   // enrolled here the way their browser would be, with a session delegation
   // to the running delegate, so every page opens their chats without the
   // KeyGuard having to enroll them first.
-  await enrollForE2E(client, E2E_TENANT_ID, E2E_SUBJECT);
+  await enrollForE2E(client, E2E_SUBJECT);
 
   // The coach marks stay out of every other spec's way: this person has
   // tours switched off, so no card lands on a page a screenshot is about

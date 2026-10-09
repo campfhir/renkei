@@ -84,7 +84,6 @@ const ZERO_SURFACE_TOKENS: OrgTokenTotals = {
 };
 
 export async function getUtilizationReport(
-  tenantId: string,
   requestedPeriod?: string,
   requestedTimeZone?: string
 ): Promise<UtilizationReport> {
@@ -108,7 +107,7 @@ export async function getUtilizationReport(
     imageAvailable: false,
   };
 
-  const session = await getSessionFromCookies(tenantId);
+  const session = await getSessionFromCookies();
   if (!session) return { ...empty, error: 'Sign in to see your usage', signedOut: true };
   if (!session.roles.includes(ROLE_OPERATOR) && !session.roles.includes(ROLE_USER)) {
     return { ...empty, error: 'Your account has no role in this tenant' };
@@ -133,16 +132,16 @@ export async function getUtilizationReport(
       image,
       imageModels,
     ] = await Promise.all([
-      getUtilizationTotals(db, tenantId, subject, span, timeZone),
-      getUtilizationSeries(db, tenantId, subject, span, timeZone, seriesGranularity(period.days)),
-      getAgentUtilization(db, tenantId, subject, span, timeZone),
-      getFailureSignatures(db, tenantId, subject, span, timeZone),
-      getSurfaceTokenTotals(db, tenantId, span, timeZone, subject),
-      getMostEfficientAgents(db, tenantId, span, timeZone, 10, 3, subject),
-      getVoiceTotals(db, tenantId, span, timeZone, subject),
-      resolveVoiceProvider(tenantId),
-      getImageTotals(db, tenantId, span, timeZone, subject),
-      listImageModels(db, tenantId),
+      getUtilizationTotals(db, subject, span, timeZone),
+      getUtilizationSeries(db, subject, span, timeZone, seriesGranularity(period.days)),
+      getAgentUtilization(db, subject, span, timeZone),
+      getFailureSignatures(db, subject, span, timeZone),
+      getSurfaceTokenTotals(db, span, timeZone, subject),
+      getMostEfficientAgents(db, span, timeZone, 10, 3, subject),
+      getVoiceTotals(db, span, timeZone, subject),
+      resolveVoiceProvider(),
+      getImageTotals(db, span, timeZone, subject),
+      listImageModels(db),
     ]);
     return {
       periodKey: period.key,

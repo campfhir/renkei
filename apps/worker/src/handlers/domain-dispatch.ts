@@ -64,7 +64,7 @@ function payloadOf(event: ClaimedEvent): DomainPayload | null {
   };
 }
 
-type KnowledgeSubscriber = (tenantId: string, payload: DomainPayload) => Promise<void>;
+type KnowledgeSubscriber = (payload: DomainPayload) => Promise<void>;
 
 /**
  * Which domain events feed the knowledge index. Microsoft and Zoom are
@@ -77,7 +77,7 @@ const KNOWLEDGE_SUBSCRIBERS: Record<string, KnowledgeSubscriber> = {
   // and the window sweep rebuilds that day as one transcript-shaped
   // document (handlers/webex-windows.ts). Idempotent across watchers: two
   // opted-in users in one space mark the same (room, day) row.
-  'webex/message.received': async (tenantId, payload) => {
+  'webex/message.received': async (payload) => {
     const { roomId, messageId, text } = payload.data;
     if (typeof roomId !== 'string' || typeof messageId !== 'string' || typeof text !== 'string') {
       return;
@@ -97,7 +97,7 @@ export function createDomainDispatchHandler(): EventHandler {
     if (!payload) throw new Error('domain event payload missing ownerSubject/provider/data');
 
     const knowledge = KNOWLEDGE_SUBSCRIBERS[`${payload.provider}/${event.type}`];
-    if (knowledge) await knowledge(event.tenant_id, payload);
+    if (knowledge) await knowledge(payload);
 
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable for domain dispatch');

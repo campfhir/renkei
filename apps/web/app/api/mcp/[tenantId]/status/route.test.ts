@@ -64,8 +64,8 @@ function request(): NextRequest {
   return new NextRequest('http://localhost/api/mcp/status');
 }
 
-function params(tenantId = TENANT) {
-  return { params: Promise.resolve({ tenantId }) };
+function params() {
+  return { params: Promise.resolve({ }) };
 }
 
 function session(subject: string) {

@@ -73,7 +73,7 @@ export default async function ConsentPage({
     );
   }
 
-  const session = await getSessionFromCookies(pending.tenant_id);
+  const session = await getSessionFromCookies();
   if (!session || session.id !== pending.session_id) {
     return (
       <Notice

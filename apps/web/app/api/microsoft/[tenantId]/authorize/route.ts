@@ -17,23 +17,16 @@ import { getOrigin } from '@/lib/get-origin';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
-
-  const tenant = await db
-    .selectFrom('tenants')
-    .select('id')
-    .where('id', '=', tenantId)
-    .executeTakeFirst();
-
   // The resulting grant is bound to whoever completes this flow, so the
   // caller must already be signed in.
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json(
       { error: 'Not signed in', error_description: 'Sign in before connecting Microsoft' },
@@ -45,7 +38,7 @@ export async function GET(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getMicrosoftApp(tenantId, originResult.val);
+  const app = await getMicrosoftApp(originResult.val);
   if (!app) {
     return NextResponse.json(
       { error: 'Microsoft integration not configured for this organization' },
@@ -91,7 +84,7 @@ export async function GET(
     .execute();
 
   const authUrl = new URL(
-    `https://login.microsoftonline.com/${encodeURIComponent(app.directoryTenantId)}/oauth2/v2.0/authorize`
+    `https://login.microsoftonline.com/${encodeURIComponent()}/oauth2/v2.0/authorize`
   );
   authUrl.searchParams.append('client_id', app.clientId);
   authUrl.searchParams.append('redirect_uri', app.redirectUri);
@@ -102,5 +95,5 @@ export async function GET(
   authUrl.searchParams.append('prompt', 'select_account');
 
   // Bound to this browser: the callback requires the cookie this sets.
-  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), tenantId, state);
+  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
 }

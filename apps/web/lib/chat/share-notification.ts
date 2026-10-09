@@ -28,11 +28,11 @@ export function notifyChatShared(input: {
   chatTitle: string | null;
 }): void {
   void (async () => {
-    const prefs = await getNotificationPrefs(input.tenantId, input.granteeSubject, { fresh: true });
+    const prefs = await getNotificationPrefs(input.granteeSubject, { fresh: true });
     const wanted = prefs.chatShared;
     if (!wanted.app && !wanted.email && !wanted.webex) return;
 
-    const who = await getIdentityDisplay(input.tenantId, input.actorSubject);
+    const who = await getIdentityDisplay(input.actorSubject);
     const sharerName = who?.displayName || who?.email || 'Someone';
     const title = input.chatTitle || 'a chat';
     const headline = `${sharerName} shared "${title}" with you`;
@@ -43,7 +43,7 @@ export function notifyChatShared(input: {
         const tenant = await dbResult.val
           .selectFrom('tenants')
           .select('slug')
-          .where('id', '=', input.tenantId)
+          .where('id', '=')
           .executeTakeFirst();
         const refUrl = tenant ? `/chat/${input.chatId}` : null;
         const id = randomUUID();
@@ -63,7 +63,6 @@ export function notifyChatShared(input: {
         if (keyResult.ok) {
           void sendPush(
             dbResult.val,
-            input.tenantId,
             input.granteeSubject,
             keyResult.val,
             {
@@ -81,7 +80,7 @@ export function notifyChatShared(input: {
     }
 
     if (wanted.email) {
-      const grantee = await getIdentityDisplay(input.tenantId, input.granteeSubject);
+      const grantee = await getIdentityDisplay(input.granteeSubject);
       if (grantee?.email) {
         const access = await resolveGraphAccess({
           subject: input.granteeSubject,
@@ -114,9 +113,9 @@ export function notifyChatShared(input: {
     }
 
     if (wanted.webex) {
-      const access = await resolveWebexUserAccess(input.tenantId, input.granteeSubject);
+      const access = await resolveWebexUserAccess(input.granteeSubject);
       if (access) {
-        const sent = await sendWebexNote(input.tenantId, access, `**${headline}**`);
+        const sent = await sendWebexNote(access, `**${headline}**`);
         if (!sent.ok) {
           logger.warn('chat-shared WebEx note not sent for chat {chatId}', {
             component: 'chat/share-notification',

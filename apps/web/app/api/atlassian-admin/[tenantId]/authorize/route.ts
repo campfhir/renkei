@@ -17,7 +17,7 @@ import { logger } from '@/lib/logger';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -26,14 +26,8 @@ export async function GET(
   const db = dbResult.val;
 
   try {
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('id')
-      .where('id', '=', tenantId)
-      .executeTakeFirst();
-
     // The resulting grant is bound to whoever completes this flow.
-    const session = await getSessionFromRequest(request, tenantId);
+    const session = await getSessionFromRequest(request);
     if (!session) {
       return NextResponse.json(
         { error: 'Not signed in', error_description: 'Sign in before connecting' },
@@ -45,7 +39,7 @@ export async function GET(
     if (!originResult.ok) {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
-    const app = await getAtlassianAdminApp(tenantId, originResult.val);
+    const app = await getAtlassianAdminApp(originResult.val);
     if (!app) {
       return NextResponse.json(
         { error: 'Jira Administration connector not configured for this organization' },
@@ -103,7 +97,7 @@ export async function GET(
       urlLength: authUrl.toString().length,
     });
     // Bound to this browser: the callback requires the cookie this sets.
-    return bindConnectFlow(NextResponse.redirect(authUrl.toString()), tenantId, state);
+    return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
   } catch (error) {
     logger.error('Atlassian Jira Admin authorize error: {error}', {
       component: 'auth/oauth',

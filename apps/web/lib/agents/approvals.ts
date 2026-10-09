@@ -88,7 +88,6 @@ function proposalOf(suggestedAction: unknown): {
  */
 export async function listPendingApprovals(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   options: { agentId?: string | undefined; limit?: number | undefined } = {}
 ): Promise<PendingApproval[]> {
@@ -192,7 +191,6 @@ export type DecideApprovalResult =
 export async function decideApproval(
   db: Kysely<DB>,
   producer: QueueProducer,
-  tenantId: string,
   subject: string,
   input: {
     cardId: string;
@@ -303,7 +301,6 @@ function questionOf(suggestedAction: unknown): { message: string; form: FormNode
 /** The questions waiting on this person, oldest first. */
 export async function listPendingQuestions(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   options: { agentId?: string | undefined; limit?: number | undefined } = {}
 ): Promise<PendingQuestion[]> {
@@ -366,7 +363,6 @@ export type AnswerQuestionResult =
 export async function answerQuestion(
   db: Kysely<DB>,
   producer: QueueProducer,
-  tenantId: string,
   subject: string,
   input: { cardId: string; answers: unknown }
 ): Promise<AnswerQuestionResult> {

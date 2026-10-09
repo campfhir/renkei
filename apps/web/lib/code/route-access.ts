@@ -27,14 +27,13 @@ export interface CodeProjectContext {
 
 export async function codeProjectContext(
   request: NextRequest,
-  tenantId: string,
   projectId: string,
   options: { write?: boolean } = {}
 ): Promise<{ ok: true; context: CodeProjectContext } | { ok: false; response: NextResponse }> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready;
   const { db, session } = ready.context;
-  if (options.write && !(await sandboxWorkspacesEnabled(tenantId))) {
+  if (options.write && !(await sandboxWorkspacesEnabled())) {
     return {
       ok: false,
       response: jsonError(
@@ -51,7 +50,7 @@ export async function codeProjectContext(
     projectId
   );
   if (!access) return { ok: false, response: jsonError(404, 'not-found', 'No such project') };
-  const project = await getProjectRow(db, tenantId, projectId);
+  const project = await getProjectRow(db, projectId);
   if (!project || project.kind !== 'code' || !project.repo) {
     return { ok: false, response: jsonError(404, 'not-found', 'No such project') };
   }
@@ -62,7 +61,7 @@ export async function codeProjectContext(
         response: jsonError(403, 'read-only', 'Only editors can change this project’s repository.'),
       };
     }
-    const settings = await getOrgSettings(tenantId);
+    const settings = await getOrgSettings();
     if (settings.ok && settings.val.readOnly) {
       return {
         ok: false,

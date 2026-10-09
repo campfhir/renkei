@@ -131,7 +131,7 @@ export function parseReasoningEffort(value: unknown): string | null {
  * Cached briefly through readConnectorConfigCached, same as every other
  * per-call connector lookup.
  */
-export async function resolveWebSearchConfig(tenantId: string): Promise<WebSearchConfig | null> {
+export async function resolveWebSearchConfig(): Promise<WebSearchConfig | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
 

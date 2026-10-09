@@ -15,10 +15,10 @@ export default async function StoragePage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
-  const view = await readStorage(tenantRef.id);
+  const view = await readStorage();
   return (
     <div className="mx-auto max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Storage</h1>

@@ -52,9 +52,9 @@ const SCOPE_TYPE: Record<WatchProvider, 'project' | 'space' | 'drive'> = {
 /** GET — the caller's watches for one provider. */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const provider = request.nextUrl.searchParams.get('provider');
@@ -79,9 +79,9 @@ export async function GET(
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const body = await request.json().catch(() => null);
@@ -122,9 +122,9 @@ export async function POST(
 /** DELETE — stop watching. Disables rather than deletes, keeping the cursor. */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const provider = request.nextUrl.searchParams.get('provider');
@@ -155,7 +155,7 @@ export async function DELETE(
  * would be accepted on faith and stored with no label at all.
  */
 async function watchLibrary(
-  owner: { tenantId: string; subject: string },
+  owner: { subject: string },
   site: string,
   driveId: string
 ): Promise<NextResponse> {
@@ -166,7 +166,7 @@ async function watchLibrary(
     );
   }
 
-  const access = await resolveSharePointAccess(owner.tenantId, owner.subject);
+  const access = await resolveSharePointAccess(owner.subject);
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
   const resolvedSite = await resolveSharePointSite(access, site);

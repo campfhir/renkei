@@ -101,7 +101,6 @@ function promptOf(sample: string, instructions: string, kind: CleanerScriptKind)
 
 export async function suggestCleanerScript(
   db: Kysely<DB>,
-  tenantId: string,
   rawSample: string,
   rawInstructions: string,
   kind: CleanerScriptKind = 'msg'
@@ -112,7 +111,7 @@ export async function suggestCleanerScript(
   }
   const instructions = rawInstructions.trim().slice(0, 2_000);
 
-  const llmResult = await resolveAgentLlm(db, tenantId, null);
+  const llmResult = await resolveAgentLlm(db, null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization.' };
   }

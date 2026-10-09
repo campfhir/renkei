@@ -92,7 +92,7 @@ export default function ToolsPopover({
 
   useEffect(() => {
     if (!open || options !== null) return;
-    void chatClient.connectors(tenantId).then((result) => {
+    void chatClient.connectors().then((result) => {
       if (result.data) {
         setOptions(result.data.connectors);
         setCore(result.data.core);
@@ -236,7 +236,7 @@ export default function ToolsPopover({
                 onClick={() => {
                   setSavingDefault(true);
                   void chatClient
-                    .setDefaultTools(tenantId, [...effective].sort(), kind)
+                    .setDefaultTools([...effective].sort(), kind)
                     .then((result) => {
                       if (result.data) setPersonal(result.data.userDefault?.connectors ?? null);
                       setSavingDefault(false);
@@ -252,7 +252,7 @@ export default function ToolsPopover({
                   disabled={savingDefault}
                   onClick={() => {
                     setSavingDefault(true);
-                    void chatClient.setDefaultTools(tenantId, null, kind).then(() => {
+                    void chatClient.setDefaultTools(null, kind).then(() => {
                       setPersonal(null);
                       setSavingDefault(false);
                     });

@@ -19,11 +19,10 @@ export type SealCredentialsError = SealError;
 /** Seal the credential under the connecting person's own key. */
 export async function sealCredentialsForSubject(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   credentials: ShareCredentials
 ): Promise<Result<string, SealCredentialsError>> {
-  return sealForSubject(db, tenantId, subject, JSON.stringify(credentials));
+  return sealForSubject(db, subject, JSON.stringify(credentials));
 }
 
 /**
@@ -33,11 +32,10 @@ export async function sealCredentialsForSubject(
  */
 export async function openCredentialsForSubject(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   stored: string
 ): Promise<Result<ShareCredentials, CredentialError>> {
-  const opened = await openForSubject(db, tenantId, subject, stored);
+  const opened = await openForSubject(db, subject, stored);
   if (!opened.ok) return err('DECRYPTION_ERROR' as const);
   let parsed: unknown;
   try {

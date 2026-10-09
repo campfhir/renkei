@@ -28,7 +28,6 @@ import {
 } from './field-schema';
 
 export async function loadApprovalFieldSchema(
-  tenantId: string,
   subject: string,
   source: EnrichmentSource
 ): Promise<JiraField[] | null> {

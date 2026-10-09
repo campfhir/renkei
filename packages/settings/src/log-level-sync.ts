@@ -41,7 +41,7 @@ export async function getEffectiveLogLevel(): Promise<LogLevel | null> {
 
   let effective: LogLevel = 'critical';
   for (const tenant of tenants) {
-    const settings = await getOrgSettings(tenant.id);
+    const settings = await getOrgSettings();
     const level = settings.ok ? settings.val.logLevel : DEFAULT_ORG_SETTINGS.logLevel;
     if (LOG_LEVEL_RANK[level] > LOG_LEVEL_RANK[effective]) effective = level;
   }

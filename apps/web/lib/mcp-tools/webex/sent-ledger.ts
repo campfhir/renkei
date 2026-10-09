@@ -34,7 +34,6 @@ import { logger } from '@/lib/logger';
  * loop guard rather than a correctness requirement of the send itself.
  */
 export async function recordSentWebexMessage(
-  tenantId: string,
   messageId: string,
   accountId: string | null
 ): Promise<void> {

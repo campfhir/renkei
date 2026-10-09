@@ -13,20 +13,20 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string; grantId: string }> }
+  { params }: { params: Promise<{ agentId: string; grantId: string }> }
 ): Promise<NextResponse> {
   const { agentId, grantId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const agent = await getAgent(db, tenantId, session.subject, agentId);
+  const agent = await getAgent(db, session.subject, agentId);
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const revoked = await revokeAgentAccessGrant(db, tenantId, session.subject, agentId, grantId);
+  const revoked = await revokeAgentAccessGrant(db, session.subject, agentId, grantId);
   if (!revoked) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   recordAuditEvent({

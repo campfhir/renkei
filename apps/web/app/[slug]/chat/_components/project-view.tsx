@@ -128,7 +128,7 @@ export default function ProjectView({
   const startNewChat = async () => {
     setStartingChat(true);
     setNewChatError(null);
-    const created = await chatClient.createChat(tenantId, { projectId: project.id });
+    const created = await chatClient.createChat({ projectId: project.id });
     setStartingChat(false);
     if (created.error || !created.data) {
       setNewChatError(created.error ?? 'A new chat could not be started.');
@@ -198,7 +198,7 @@ export default function ProjectView({
     setUploading(true);
     setFileError(null);
     for (const file of [...list]) {
-      const result = await chatClient.uploadAttachment(tenantId, { projectId: project.id }, file);
+      const result = await chatClient.uploadAttachment({ projectId: project.id }, file);
       if (result.error) setFileError(`${file.name}: ${result.error}`);
     }
     setUploading(false);
@@ -206,7 +206,7 @@ export default function ProjectView({
   };
 
   const removeFile = async (id: string) => {
-    await chatClient.deleteAttachment(tenantId, id);
+    await chatClient.deleteAttachment(id);
     router.refresh();
   };
 
@@ -260,7 +260,7 @@ export default function ProjectView({
             className="h-4 w-4 shrink-0 text-gray-400"
           />
           <span className="min-w-0 flex-1 truncate">{chat.title ?? 'New chat'}</span>
-          {showPrBadge ? <ChatPrBadge tenantId={tenantId} chatId={chat.id} /> : null}
+          {showPrBadge ? <ChatPrBadge chatId={chat.id} /> : null}
           {tokens > 0 ? (
             <span
               className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400"
@@ -312,7 +312,7 @@ export default function ProjectView({
                 {chatRow(activeChat, true)}
               </ul>
               <div className="mt-2">
-                <IssueCards tenantId={tenantId} projectId={project.id} chatId={activeChat.id} />
+                <IssueCards projectId={project.id} chatId={activeChat.id} />
               </div>
             </>
           ) : (
@@ -419,7 +419,6 @@ export default function ProjectView({
         </div>
         {canEdit ? (
           <ToolsPopover
-            tenantId={tenantId}
             selected={project.toolConfig?.connectors ?? null}
             onChange={async (next) => {
               await sendJsonFull(base, 'PATCH', {
@@ -650,7 +649,6 @@ export default function ProjectView({
                     {files.map((file) => (
                       <AttachmentChip
                         key={file.id}
-                        tenantId={tenantId}
                         attachment={file}
                         onRemove={canEdit ? () => void removeFile(file.id) : undefined}
                       />
@@ -759,7 +757,6 @@ export default function ProjectView({
 
       {share ? (
         <ShareModal
-          tenantId={tenantId}
           kind="chat_project"
           resourceId={project.id}
           title={`Share “${project.name}”`}

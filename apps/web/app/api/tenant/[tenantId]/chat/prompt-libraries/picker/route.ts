@@ -5,10 +5,10 @@ import { listPickerPrompts } from '@/lib/chat/prompts';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  return NextResponse.json({ prompts: await listPickerPrompts(db, tenantId, session.subject) });
+  return NextResponse.json({ prompts: await listPickerPrompts(db, session.subject) });
 }

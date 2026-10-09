@@ -129,7 +129,6 @@ export async function countFiles(db: Kysely<DB>, target: SandboxTarget): Promise
  */
 export async function totalStagedBytesForBatch(
   db: Kysely<DB>,
-  tenantId: string,
   batchId: string
 ): Promise<number> {
   const row = await db
@@ -142,7 +141,6 @@ export async function totalStagedBytesForBatch(
 
 export async function countFilesForBatch(
   db: Kysely<DB>,
-  tenantId: string,
   batchId: string
 ): Promise<number> {
   const row = await db

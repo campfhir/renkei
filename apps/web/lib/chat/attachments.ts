@@ -174,14 +174,13 @@ async function extract(
  */
 async function ocrOne(
   db: Kysely<DB>,
-  tenantId: string,
   row: AttachmentRow,
   redactor: OutboundRedactor | null,
   cipher: ContentCipher
 ): Promise<string> {
-  const config = await resolveMistralOcrConfig(tenantId);
+  const config = await resolveMistralOcrConfig();
   if (!config.ok) return NEEDS_OCR;
-  const store = await resolveTenantBlobStore(tenantId);
+  const store = await resolveTenantBlobStore();
   if (!store.ok) return NEEDS_OCR;
   const object = await store.val.getObject(row.blobKey);
   if (!object.ok) return 'ocr_failed';
@@ -246,7 +245,7 @@ export async function ocrChatAttachments(
       const row = rows[next++];
       results.push({
         id: row.id,
-        extractStatus: await ocrOne(db, input.tenantId, row, input.redactor, input.cipher),
+        extractStatus: await ocrOne(db, row, input.redactor, input.cipher),
       });
     }
   };
@@ -273,10 +272,10 @@ export async function createAttachment(
   }
 ): Promise<Result<AttachmentRow, AttachmentError>> {
   if (input.bytes.byteLength > input.maxBytes) return err('TOO_LARGE' as const);
-  const store = await resolveTenantBlobStore(input.tenantId);
+  const store = await resolveTenantBlobStore();
   if (!store.ok) return err('UNCONFIGURED' as const);
   const id = randomUUID();
-  const key = chatAttachmentKey(input.tenantId, id);
+  const key = chatAttachmentKey(id);
   if (!key.ok) return err('STORE' as const);
 
   const filename = cleanFilename(input.filename);
@@ -324,7 +323,6 @@ export async function createAttachment(
 /** The files tools produced in this chat — what the Artifacts button lists. */
 export async function listArtifacts(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string
 ): Promise<AttachmentRow[]> {
   if (!isUuid(chatId)) return [];
@@ -340,7 +338,6 @@ export async function listArtifacts(
 
 export async function getAttachment(
   db: Kysely<DB>,
-  tenantId: string,
   attachmentId: string
 ): Promise<AttachmentRow | null> {
   if (!isUuid(attachmentId)) return null;
@@ -355,7 +352,6 @@ export async function getAttachment(
 /** The text extracted at upload (redacted as the model saw it), or null when there is none. */
 export async function getAttachmentText(
   db: Kysely<DB>,
-  tenantId: string,
   attachmentId: string,
   cipher: ContentCipher
 ): Promise<string | null> {
@@ -370,7 +366,6 @@ export async function getAttachmentText(
 
 export async function listAttachments(
   db: Kysely<DB>,
-  tenantId: string,
   home: { chatId: string } | { projectId: string }
 ): Promise<AttachmentRow[]> {
   let query = db.selectFrom('chat_attachments').select(COLUMNS);
@@ -385,7 +380,6 @@ export async function listAttachments(
 /** Deletes the row and then the bytes; a missing object is not a failure. */
 export async function deleteAttachment(
   db: Kysely<DB>,
-  tenantId: string,
   row: AttachmentRow
 ): Promise<boolean> {
   const result = await db
@@ -393,7 +387,7 @@ export async function deleteAttachment(
     .where('id', '=', row.id)
     .executeTakeFirst();
   if (Number(result.numDeletedRows) === 0) return false;
-  const store = await resolveTenantBlobStore(tenantId);
+  const store = await resolveTenantBlobStore();
   if (store.ok) await store.val.deleteObject(row.blobKey);
   return true;
 }
@@ -406,7 +400,6 @@ export async function deleteAttachment(
  */
 export async function attachmentPromptBlocks(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   chatId: string,
   attachmentIds: string[],
@@ -423,11 +416,11 @@ export async function attachmentPromptBlocks(
     .where('id', 'in', ids)
     .orderBy('created_at', 'asc')
     .execute();
-  const settings = await getOrgSettings(tenantId);
+  const settings = await getOrgSettings();
   const threshold = settings.ok ? settings.val.massUploadThreshold : 10;
   if (rows.length > threshold) return [massUploadManifest(rows.map(rowOf))];
   const blocks: LlmContentBlock[] = [];
-  const store = await resolveTenantBlobStore(tenantId);
+  const store = await resolveTenantBlobStore();
   for (const raw of rows) {
     const row = rowOf(raw);
     const text = raw.extracted_text ? openText(raw.extracted_text, cipher) : null;

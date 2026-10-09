@@ -34,7 +34,6 @@ export interface PersonProfile {
 
 export async function getPersonProfile(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<PersonProfile | null> {
   const [identity, grantName, agents, lastActiveRow] = await Promise.all([
@@ -51,7 +50,7 @@ export async function getPersonProfile(
       .where('subject', '=', subject)
       .orderBy('provider')
       .executeTakeFirst(),
-    listAgentsForOwner(db, tenantId, subject),
+    listAgentsForOwner(db, subject),
     db
       .selectFrom('sessions')
       .select(sql<Date | null>`max(last_used_at)`.as('last_used_at'))

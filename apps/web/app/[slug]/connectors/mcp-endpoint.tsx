@@ -14,7 +14,7 @@ import { useCoachAnchor } from '@/components/coach-marks/anchor';
  * left a metre of empty grey behind it; side by side, the row is doing two
  * jobs with the width instead of padding one.
  */
-export default function McpEndpoint({ tenantId }: { tenantId: string }) {
+export default function McpEndpoint({  }: { }) {
   const [url, setUrl] = useState('');
   const [copied, setCopied] = useState(false);
   const endpointAnchor = useCoachAnchor('connectors-endpoint');

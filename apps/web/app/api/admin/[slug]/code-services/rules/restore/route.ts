@@ -12,16 +12,16 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (!(await sandboxServicesEnabled(tenant.id))) {
+  if (!(await sandboxServicesEnabled())) {
     return NextResponse.json(
       { error: 'Code project services are not enabled on this deployment', enabled: false },
       { status: 503 }
     );
   }
-  const restored = await sbImageRulesRestore(tenant.id);
+  const restored = await sbImageRulesRestore();
   if (!restored.ok) {
     const failure = clientFailure(restored.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });

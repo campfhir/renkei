@@ -70,9 +70,9 @@ export default async function AboutPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/about`));
+    redirect(signInUrl(`/about`));
   }
 
   return (

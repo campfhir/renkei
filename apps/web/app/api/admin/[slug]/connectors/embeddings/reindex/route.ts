@@ -57,7 +57,7 @@ function iso(value: Date | string | null): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-async function listRuns(tenantId: string): Promise<ReindexRunView[]> {
+async function listRuns(): Promise<ReindexRunView[]> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return [];
   const rows = await dbResult.val
@@ -102,19 +102,19 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  return NextResponse.json({ runs: await listRuns(tenant.id) });
+  return NextResponse.json({ runs: await listRuns() });
 }
 
 /** Say up front what the worker would otherwise discover one link in. */
-async function unmetPrerequisite(tenantId: string, kind: ReindexKind): Promise<string | null> {
-  if (kind === 'embed' && !(await resolveEmbeddingProvider(tenantId))) {
+async function unmetPrerequisite(kind: ReindexKind): Promise<string | null> {
+  if (kind === 'embed' && !(await resolveEmbeddingProvider())) {
     return 'No embedding provider is configured; save one above first.';
   }
   if (kind === 'keywords') {
-    const settings = await getOrgSettings(tenantId);
+    const settings = await getOrgSettings();
     if (!settings.ok || !settings.val.knowledgeKeywordEnrichment) {
       return 'Keyword enrichment is off for this organization (Settings → Knowledge search).';
     }
@@ -127,7 +127,7 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenant.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -167,11 +167,11 @@ export async function POST(
       targetKind: 'knowledge',
       details: { kind, runId },
     });
-    return NextResponse.json({ runs: await listRuns(tenant.id) });
+    return NextResponse.json({ runs: await listRuns() });
   }
 
   if (action === 'resume') {
-    const unmet = await unmetPrerequisite(tenant.id, kind);
+    const unmet = await unmetPrerequisite(kind);
     if (unmet) return NextResponse.json({ error: unmet }, { status: 400 });
 
     const run = await db
@@ -221,10 +221,10 @@ export async function POST(
       targetKind: 'knowledge',
       details: { kind, runId, cursor: run.cursor },
     });
-    return NextResponse.json({ runs: await listRuns(tenant.id) });
+    return NextResponse.json({ runs: await listRuns() });
   }
 
-  const unmet = await unmetPrerequisite(tenant.id, kind);
+  const unmet = await unmetPrerequisite(kind);
   if (unmet) return NextResponse.json({ error: unmet }, { status: 400 });
 
   const active = await db
@@ -265,5 +265,5 @@ export async function POST(
     details: { kind, runId: newRunId },
   });
 
-  return NextResponse.json({ runs: await listRuns(tenant.id) });
+  return NextResponse.json({ runs: await listRuns() });
 }

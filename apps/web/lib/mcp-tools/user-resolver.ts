@@ -38,7 +38,7 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
  */
 const accountIdCache = new Map<string, CacheEntry>();
 
-function cacheKey(tenantId: string, email: string): string {
+function cacheKey(email: string): string {
   return `${tenantId}:${email.toLowerCase()}`;
 }
 
@@ -105,7 +105,7 @@ export async function resolveAccountId(
     return emailOrAccountId;
   }
 
-  const key = cacheKey(context.tenantId, emailOrAccountId);
+  const key = cacheKey(emailOrAccountId);
   const cached = accountIdCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.accountId;

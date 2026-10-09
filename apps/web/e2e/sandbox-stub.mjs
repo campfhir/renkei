@@ -277,8 +277,8 @@ const RULE_SEED = [
   ['mcr.microsoft.com/azure-storage/azurite', 'Azurite, the Azure Storage emulator'],
 ];
 const rulesByTenant = new Map();
-function rulesOf(tenantId) {
-  let rules = rulesByTenant.get(tenantId);
+function rulesOf() {
+  let rules = rulesByTenant.get();
   if (!rules) {
     rules = new Map();
     for (const [pattern, note] of RULE_SEED) {
@@ -286,7 +286,7 @@ function rulesOf(tenantId) {
       const now = new Date().toISOString();
       rules.set(id, { id, pattern, note, registryUsername: null, createdAt: now, updatedAt: now });
     }
-    rulesByTenant.set(tenantId, rules);
+    rulesByTenant.set(rules);
   }
   return rules;
 }
@@ -344,7 +344,7 @@ function normalizeRule(raw) {
 }
 
 function handleRules(op, body, response) {
-  const rules = rulesOf(body.tenantId);
+  const rules = rulesOf();
   switch (op) {
     case 'list':
       return json(response, 200, {
@@ -442,7 +442,7 @@ function handleServices(op, body, response) {
         return error(response, 409, 'exists', `A service named ${name} is already running.`);
       const normalized = normalizeRule(String(body.image ?? ''));
       if (normalized.error) return error(response, 400, 'bad_request', normalized.error);
-      const allowed = [...rulesOf(body.tenantId).values()].some((rule) =>
+      const allowed = [...rulesOf().values()].some((rule) =>
         rule.pattern.endsWith('/*')
           ? normalized.pattern.startsWith(rule.pattern.slice(0, -1))
           : rule.pattern.includes('/')

@@ -40,17 +40,17 @@ function carriesCredential(body: Record<string, unknown>): boolean {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; shareId: string }> }
+  { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
   const { shareId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const share = await getShare(db, tenantId, shareId);
+  const share = await getShare(db, shareId);
   if (!share.ok) return NextResponse.json({ error: 'Could not read the share' }, { status: 500 });
   if (!share.val || !share.val.summary.enabled) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -100,7 +100,7 @@ export async function POST(
 
   // Sealed under the connecting person's own key by the delegate — the one
   // process that holds a key; this one never derives it.
-  const sealed = await delegateClient().sealForSubject(tenantId, session.subject, [
+  const sealed = await delegateClient().sealForSubject(session.subject, [
     JSON.stringify(parsed.credentials),
   ]);
   if (!sealed.ok) {
@@ -116,7 +116,7 @@ export async function POST(
       : NextResponse.json({ error: 'Encryption key unavailable' }, { status: 503 });
   }
 
-  const stored = await upsertConnection(db, tenantId, shareId, session.subject, {
+  const stored = await upsertConnection(db, shareId, session.subject, {
     encryptedCredentials: sealed.val[0],
     username: parsed.credentials.username,
     toolAccess: parsed.toolAccess,
@@ -143,27 +143,27 @@ export async function POST(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; shareId: string }> }
+  { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
   const { shareId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const existing = await getConnection(dbResult.val, tenantId, shareId, session.subject);
+  const existing = await getConnection(dbResult.val, shareId, session.subject);
   if (!existing.ok) {
     return NextResponse.json({ error: 'Could not read the connection' }, { status: 500 });
   }
   if (!existing.val) return NextResponse.json({ error: 'Not connected' }, { status: 404 });
 
-  const deleted = await deleteConnection(dbResult.val, tenantId, shareId, session.subject);
+  const deleted = await deleteConnection(dbResult.val, shareId, session.subject);
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
 
-  const share = await getShare(dbResult.val, tenantId, shareId);
+  const share = await getShare(dbResult.val, shareId);
   recordAuditEvent({
     actorSubject: session.subject,
     action: 'fileshare.disconnected',

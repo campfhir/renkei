@@ -64,7 +64,7 @@ describe('jiraFetch through the grant fetcher', () => {
 
     expect(logger.debug).toHaveBeenCalledWith(
       'Request',
-      expect.objectContaining({ tenantId: 'tenant-1', accountId: 'acct-1' })
+      expect.objectContaining({ accountId: 'acct-1' })
     );
   });
 

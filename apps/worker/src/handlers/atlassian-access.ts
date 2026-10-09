@@ -36,7 +36,6 @@ export interface AtlassianAccess {
  *   ATLASSIAN_CONFLUENCE for Confluence. Each app has its own grant rows.
  */
 export async function resolveAtlassianAccess(
-  tenantId: string,
   accountId: string,
   provider: string
 ): Promise<AtlassianAccess> {

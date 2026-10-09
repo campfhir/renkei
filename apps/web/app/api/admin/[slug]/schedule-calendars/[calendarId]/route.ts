@@ -16,7 +16,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string; calendarId: string }> }
 ): Promise<NextResponse> {
   const { slug, calendarId } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -54,7 +54,7 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string; calendarId: string }> }
 ): Promise<NextResponse> {
   const { slug, calendarId } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

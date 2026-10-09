@@ -26,7 +26,7 @@ maybe('turn recovery claims', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });
 
@@ -132,7 +132,7 @@ maybe('turn recovery claims', () => {
     expect((await claimResumableTurns(db, options)).map((row) => row.id)).not.toContain(turnId);
     const ended = await interruptExhaustedTurns(db, { ...options, error: 'too many' });
     expect(ended).toContain(turnId);
-    const after = await getTurn(db, tenantId, chatId, turnId);
+    const after = await getTurn(db, chatId, turnId);
     expect(after).toMatchObject({ status: 'interrupted', error: 'too many', suspendedAt: null });
     const row = await db
       .selectFrom('chat_messages')

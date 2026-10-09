@@ -17,10 +17,10 @@ import {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; libraryId: string }> }
+  { params }: { params: Promise<{ libraryId: string }> }
 ): Promise<Response> {
   const { libraryId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
@@ -29,9 +29,9 @@ export async function GET(
     'prompt_library',
     libraryId
   );
-  const library = access ? await getLibrary(db, tenantId, libraryId) : null;
+  const library = access ? await getLibrary(db, libraryId) : null;
   if (!access || !library) return jsonError(404, 'not-found', 'No such library');
-  const prompts = await listPrompts(db, tenantId, libraryId);
+  const prompts = await listPrompts(db, libraryId);
   return NextResponse.json({
     library: {
       id: library.id,
@@ -51,10 +51,10 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; libraryId: string }> }
+  { params }: { params: Promise<{ libraryId: string }> }
 ): Promise<Response> {
   const { libraryId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
@@ -75,20 +75,20 @@ export async function PATCH(
   }
   const description = optionalString(body.description, 2_000);
   if (description !== undefined) patch.description = description || null;
-  const updated = await updateLibrary(db, tenantId, libraryId, patch);
+  const updated = await updateLibrary(db, libraryId, patch);
   if (!updated) return jsonError(404, 'not-found', 'No such library');
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; libraryId: string }> }
+  { params }: { params: Promise<{ libraryId: string }> }
 ): Promise<Response> {
   const { libraryId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const deleted = await deleteLibrary(db, tenantId, session.subject, libraryId);
+  const deleted = await deleteLibrary(db, session.subject, libraryId);
   if (!deleted) return jsonError(404, 'not-found', 'No such library');
   return NextResponse.json({ ok: true });
 }

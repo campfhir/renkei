@@ -19,19 +19,19 @@ import { notifyAgentShared } from '@/lib/agents/share-notification';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const grants = await listAgentAccessGrants(dbResult.val, tenantId, session.subject, agentId);
+  const grants = await listAgentAccessGrants(dbResult.val, session.subject, agentId);
   if (grants === null) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const people = (await listIdentities(tenantId)).filter(
+  const people = (await listIdentities()).filter(
     (person) => person.subject !== session.subject
   );
   return NextResponse.json({ grants, people });
@@ -39,10 +39,10 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
   const { agentId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -76,13 +76,13 @@ export async function POST(
 
   // A grant is addressed to a recorded person, not a free-typed string — a
   // typo'd subject would sit granting nothing to nobody, invisibly.
-  const grantee = await getIdentityDisplay(tenantId, granteeSubject);
+  const grantee = await getIdentityDisplay(granteeSubject);
   if (!grantee) return NextResponse.json({ error: 'No such person in this org' }, { status: 400 });
 
-  const agent = await getAgent(db, tenantId, session.subject, agentId);
+  const agent = await getAgent(db, session.subject, agentId);
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const outcome = await grantAgentAccess(db, tenantId, session.subject, agentId, {
+  const outcome = await grantAgentAccess(db, session.subject, agentId, {
     granteeSubject,
     expiresAt,
   });
@@ -107,6 +107,6 @@ export async function POST(
     agentId,
     agentName: agent.name,
   });
-  const grants = await listAgentAccessGrants(db, tenantId, session.subject, agentId);
+  const grants = await listAgentAccessGrants(db, session.subject, agentId);
   return NextResponse.json({ grants: grants ?? [] });
 }

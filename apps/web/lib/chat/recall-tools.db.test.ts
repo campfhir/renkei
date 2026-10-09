@@ -63,8 +63,8 @@ maybe('chat_recall_chats', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
-    await delegate.enroll(tenantId, me);
-    await delegate.enroll(tenantId, colleague);
+    await delegate.enroll(me);
+    await delegate.enroll(colleague);
     await db
       .insertInto('chat_projects')
       .values([
@@ -95,7 +95,7 @@ maybe('chat_recall_chats', () => {
         role: 'user',
         kind: 'prompt',
         status: 'complete',
-        cipher: await chatCipherById(db, tenantId, chatId),
+        cipher: await chatCipherById(db, chatId),
         blocks: [{ type: 'text', text }],
       });
       if (!row) throw new Error('message not sealed — is TOKEN_ENCRYPTION_KEY set?');
@@ -112,7 +112,7 @@ maybe('chat_recall_chats', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });
 

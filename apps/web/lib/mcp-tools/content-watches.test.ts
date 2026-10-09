@@ -50,7 +50,7 @@ maybe('watch repair and cursor inheritance', () => {
 
   afterAll(async () => {
     await db.deleteFrom('content_watches').execute();
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });
 

@@ -15,19 +15,19 @@ import { chatCiphersFor } from '@/lib/chat/chat-keys';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const query = normalizeQuery(request.nextUrl.searchParams.get('q') ?? '');
   if (query.length < CHAT_SEARCH_MIN_CHARS) return NextResponse.json({ query, hits: [] });
-  const sidebar = await loadChatSidebar(db, tenantId, session.subject);
+  const sidebar = await loadChatSidebar(db, session.subject);
   const hits = await searchChatMessages(
     db,
     sidebar.chats.map((chat) => chat.id),
     query,
-    await chatCiphersFor(db, tenantId, session.subject, sidebar.chats)
+    await chatCiphersFor(db, session.subject, sidebar.chats)
   );
   return NextResponse.json({ query, hits });
 }

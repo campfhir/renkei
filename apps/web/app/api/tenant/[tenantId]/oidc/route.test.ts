@@ -113,7 +113,6 @@ function stubDb(
 
 function post(
   body: unknown,
-  tenantId = TENANT,
   options: { bootstrapSecret?: string | null } = {}
 ): NextRequest {
   const { bootstrapSecret = BOOTSTRAP.secret } = options;
@@ -127,8 +126,8 @@ function post(
   });
 }
 
-function params(tenantId = TENANT) {
-  return { params: Promise.resolve({ tenantId }) };
+function params() {
+  return { params: Promise.resolve({ }) };
 }
 
 /**
@@ -136,7 +135,7 @@ function params(tenantId = TENANT) {
  * so asked about any other tenant the mock answers "no session" — which is
  * exactly how a cross-tenant caller presents in production.
  */
-function grantOperatorFor(tenantId: string) {
+function grantOperatorFor() {
   mockGetSession.mockImplementation(async (tid: string) =>
     tid === tenantId
       ? {

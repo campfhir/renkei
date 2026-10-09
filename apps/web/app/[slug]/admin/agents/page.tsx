@@ -97,15 +97,15 @@ export default async function AdminAgentsPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
-  const agents = await listAgentsForAdmin(db, tenant.id);
-  const settingsResult = await getOrgSettings(tenant.id);
+  const agents = await listAgentsForAdmin(db);
+  const settingsResult = await getOrgSettings();
 
   const [totalsResult, perAgentResult, tokenTotals, tokensByAgent, tokensByModel] =
     await Promise.all([
@@ -118,9 +118,9 @@ export default async function AdminAgentsPage({
         FROM agent_run_log
         GROUP BY agent_id
       `.execute(db),
-      getTenantTokenUsage(db, tenant.id),
-      getTokenUsageByAgent(db, tenant.id),
-      getTokenUsageByModel(db, tenant.id, null),
+      getTenantTokenUsage(db),
+      getTokenUsageByAgent(db),
+      getTokenUsageByModel(db, null),
     ]);
   const totals = toBuckets(totalsResult.rows[0]);
   const failureTotals = toFailureBuckets(totalsResult.rows[0]);

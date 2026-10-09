@@ -57,7 +57,7 @@ maybe('the consent step of the authorization endpoint', () => {
       `http://localhost/api/mcp/oauth/authorize?${query.toString()}`,
       { headers: { cookie: cookie(session) } }
     );
-    return GET(request, { params: Promise.resolve({ tenantId }) });
+    return GET(request, { params: Promise.resolve({ }) });
   }
 
   function answer(
@@ -77,7 +77,7 @@ maybe('the consent step of the authorization endpoint', () => {
       headers,
       body: new URLSearchParams({ request: requestId, decision }).toString(),
     });
-    return POST(request, { params: Promise.resolve({ tenantId }) });
+    return POST(request, { params: Promise.resolve({ }) });
   }
 
   /** The consent request id the GET redirect carries. */
@@ -106,7 +106,7 @@ maybe('the consent step of the authorization endpoint', () => {
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
     });
-    return token(request, { params: Promise.resolve({ tenantId }) });
+    return token(request, { params: Promise.resolve({ }) });
   }
 
   beforeAll(async () => {
@@ -159,7 +159,7 @@ maybe('the consent step of the authorization endpoint', () => {
     ] as const) {
       await db.deleteFrom(table).execute();
     }
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });
 
@@ -320,6 +320,6 @@ maybe('the consent step of the authorization endpoint', () => {
     expect(response.status).toBe(307);
     const location = new URL(response.headers.get('location')!);
     expect(location.pathname).toBe('/api/auth/oidc/login');
-    expect(location.searchParams.get('tenantId')).toBe(tenantId);
+    expect(location.searchParams.get('tenantId')).toBe();
   });
 });

@@ -16,22 +16,21 @@ import { deleteAgentNote, parseNotePayload, updateAgentNote } from '@/lib/agents
 
 async function ownedContext(
   request: NextRequest,
-  tenantId: string,
   agentId: string
 ): Promise<
   { db: NonNullable<ReturnType<typeof getDatabase>['val']>; ownerEmail: string } | NextResponse
 > {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  const access = await resolveAgentAccess(db, session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const emailResult = await getIdentityEmail(tenantId, access.ownerSubject);
+  const emailResult = await getIdentityEmail(access.ownerSubject);
   const ownerEmail = emailResult.ok ? emailResult.val : null;
   if (!ownerEmail) {
     return NextResponse.json(
@@ -63,10 +62,10 @@ function errorResponse(outcome: string): NextResponse {
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string; noteId: string }> }
+  { params }: { params: Promise<{ agentId: string; noteId: string }> }
 ): Promise<NextResponse> {
   const { agentId, noteId } = await params;
-  const context = await ownedContext(request, tenantId, agentId);
+  const context = await ownedContext(request, agentId);
   if (context instanceof NextResponse) return context;
 
   const payload = parseNotePayload(await request.json().catch(() => null));
@@ -87,10 +86,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; agentId: string; noteId: string }> }
+  { params }: { params: Promise<{ agentId: string; noteId: string }> }
 ): Promise<NextResponse> {
   const { agentId, noteId } = await params;
-  const context = await ownedContext(request, tenantId, agentId);
+  const context = await ownedContext(request, agentId);
   if (context instanceof NextResponse) return context;
 
   const outcome = await deleteAgentNote(context.db, {

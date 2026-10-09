@@ -73,7 +73,6 @@ export function promptTextOf(content: string, cipher: ContentCipher): string {
  */
 async function originalPromptText(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   prompt: { turn_id: string | null; content: string },
   cipher: ContentCipher
@@ -100,7 +99,7 @@ export async function resendFromMessage(
   input: ResendInput
 ): Promise<Result<Resent, ResendError>> {
   if (!isUuid(input.messageId)) return err('NOT_FOUND' as const);
-  const access = await resolveChatAccess(db, input.tenantId, input.session.subject, input.chatId);
+  const access = await resolveChatAccess(db, input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   if (await getActiveTurn(db, access.chat.id)) return err('ALREADY_RUNNING' as const);
@@ -117,7 +116,7 @@ export async function resendFromMessage(
   const text =
     input.text !== null
       ? input.text
-      : await originalPromptText(db, input.tenantId, access.chat.id, prompt, access.cipher);
+      : await originalPromptText(db, access.chat.id, prompt, access.cipher);
   const ownUploads = await db
     .selectFrom('chat_attachments')
     .select('id')
@@ -172,7 +171,7 @@ export async function resendFromMessage(
     }
   });
   if (removedBlobKeys.length > 0) {
-    const store = await resolveTenantBlobStore(input.tenantId);
+    const store = await resolveTenantBlobStore();
     if (store.ok) {
       for (const key of removedBlobKeys) {
         const deleted = await store.val.deleteObject(key);

@@ -37,7 +37,6 @@ const STALE_SYNC_MS = 6 * 60 * 60 * 1000;
  */
 async function reapOrphanedGraphSubscriptions(
   db: Kysely<DB>,
-  tenantId: string,
   accountId: string,
   auth: AuthedFetch,
   baseUrl: string
@@ -92,7 +91,7 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
   }
   const db = dbResult.val;
 
-  let grants: Array<{ tenant_id: string; provider_account_id: string }>;
+  let grants: Array<{ provider_account_id: string }>;
   try {
     grants = await db
       .selectFrom('provider_grants')
@@ -126,8 +125,8 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
 
   for (const { provider_account_id: accountId } of grants) {
     try {
-      const access = await resolveMicrosoftAccess(tenantId, accountId);
-      const rows = await ensureMicrosoftSubscriptions(tenantId, access, baseUrl);
+      const access = await resolveMicrosoftAccess(accountId);
+      const rows = await ensureMicrosoftSubscriptions(access, baseUrl);
       // ensure returns only rows the user opted into — catching up on a
       // row it withheld would index a category the user turned off.
       const desiredIds = new Set(rows.map((row) => row.id));
@@ -143,7 +142,7 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
       // one Entra app registration is commonly shared by several
       // deployments, and a dev box reaping by table-absence alone would
       // happily delete production's subscriptions.
-      await reapOrphanedGraphSubscriptions(db, tenantId, accountId, access.auth, baseUrl);
+      await reapOrphanedGraphSubscriptions(db, accountId, access.auth, baseUrl);
 
       const staleBefore = Date.now() - STALE_SYNC_MS;
       const stale = await db
@@ -155,7 +154,7 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
         .execute();
       for (const row of stale) {
         if (!desiredIds.has(row.id)) continue;
-        const synced = await runSubscriptionSync(tenantId, access, row);
+        const synced = await runSubscriptionSync(access, row);
         if (synced.changed > 0 || synced.removed > 0) {
           // Loud on purpose: catch-up finding changes means notifications
           // were being missed until now.

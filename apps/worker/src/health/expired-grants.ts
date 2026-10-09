@@ -46,7 +46,7 @@ export async function sweepExpiredGrants(): Promise<void> {
   }
   const db = dbResult.val;
 
-  let stale: { tenant_id: string; provider: string; provider_account_id: string }[];
+  let stale: { provider: string; provider_account_id: string }[];
   try {
     stale = await db
       .selectFrom('provider_grants')

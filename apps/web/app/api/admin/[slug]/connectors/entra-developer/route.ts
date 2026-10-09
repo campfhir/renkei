@@ -25,7 +25,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -36,7 +36,6 @@ export async function GET(
   }
 
   const configResult = await getConnectorConfig(
-    tenantRef.id,
     ENTRA_DEVELOPER_CONNECTOR,
     keyResult.val
   );
@@ -68,7 +67,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -99,7 +98,7 @@ export async function PUT(
   // Secrets survive settings-only saves: setConnectorConfig replaces secrets
   // wholesale, so a blank/omitted secret is merged with the stored one here.
   // A secret is required only when none is stored yet.
-  const existing = await getConnectorConfig(tenantRef.id, ENTRA_DEVELOPER_CONNECTOR, keyResult.val);
+  const existing = await getConnectorConfig(ENTRA_DEVELOPER_CONNECTOR, keyResult.val);
   const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
   const mergedClientSecret =
     typeof clientSecret === 'string' && clientSecret.length > 0
@@ -113,7 +112,6 @@ export async function PUT(
   }
 
   const writeResult = await setConnectorConfig(
-    tenantRef.id,
     ENTRA_DEVELOPER_CONNECTOR,
     {
       enabled,
@@ -126,6 +124,6 @@ export async function PUT(
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 
-  invalidateConnectorConfigCache(tenantRef.id, ENTRA_DEVELOPER_CONNECTOR);
+  invalidateConnectorConfigCache(ENTRA_DEVELOPER_CONNECTOR);
   return NextResponse.json({ connector: ENTRA_DEVELOPER_CONNECTOR, configured: true, enabled });
 }

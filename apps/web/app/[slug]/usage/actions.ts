@@ -113,7 +113,6 @@ const EMPTY: UsageReport = {
  */
 async function topToolsFor(
   db: Kysely<DB>,
-  tenantId: string,
   since: RawBuilder<Date>,
   subject: string | null
 ): Promise<ToolUsageRow[]> {
@@ -147,14 +146,13 @@ async function topToolsFor(
 }
 
 export async function getUsageReport(
-  tenantId: string,
   requestedDays = 7,
   requestedTimeZone?: string,
   requestedScope?: 'self' | 'tenant'
 ): Promise<UsageReport> {
   const days = clampDays(requestedDays);
   const timeZone = safeTimeZone(requestedTimeZone);
-  const session = await getSessionFromCookies(tenantId);
+  const session = await getSessionFromCookies();
   if (!session) {
     return { ...EMPTY, days, error: 'Sign in to see tool usage', signedOut: true };
   }
@@ -272,7 +270,7 @@ export async function getUsageReport(
     // extra query happens only for an operator looking tenant-wide, who is
     // the one person whose two answers differ.
     const myTop = tenantWide
-      ? await topToolsFor(db, tenantId, since, ownSubject)
+      ? await topToolsFor(db, since, ownSubject)
       : tools.slice(0, TOP_TOOLS);
     // Role, never requested scope: an operator viewing their own calls still
     // gets the org comparison, and a non-operator gets it in no view at all.
@@ -280,7 +278,7 @@ export async function getUsageReport(
     const orgTop = canSeeOrgTop(isOperator)
       ? tenantWide
         ? tools.slice(0, TOP_TOOLS)
-        : await topToolsFor(db, tenantId, since, null)
+        : await topToolsFor(db, since, null)
       : [];
     // Ranked by failures, and only tools that actually failed — a card
     // listing the five least-broken tools in a healthy org would be noise
@@ -370,7 +368,6 @@ export interface ToolDetail {
  * pinned to their own calls before any query runs.
  */
 export async function getToolDetail(
-  tenantId: string,
   tool: string,
   requestedDays = 7,
   requestedTimeZone?: string,
@@ -390,7 +387,7 @@ export async function getToolDetail(
     failures: [],
   };
 
-  const session = await getSessionFromCookies(tenantId);
+  const session = await getSessionFromCookies();
   if (!session) return { ...empty, error: 'Sign in to see tool usage' };
   const dbResult = getDatabase();
   if (!dbResult.ok) return { ...empty, error: 'Database unavailable' };
@@ -501,16 +498,16 @@ export async function getToolDetail(
  * org, but "the tools you have" is a per-person question, and an operator's
  * grants are not a proxy for anyone else's.
  */
-export async function getAvailableTools(tenantId: string): Promise<ToolDescriptor[]> {
-  const session = await getSessionFromCookies(tenantId);
+export async function getAvailableTools(): Promise<ToolDescriptor[]> {
+  const session = await getSessionFromCookies();
   if (!session) return [];
-  return listAvailableTools(tenantId, session.subject, { roles: session.roles });
+  return listAvailableTools(session.subject, { roles: session.roles });
 }
 
 /** The identity spine's name for the signed-in caller, for the page header. */
-export async function getViewerLabel(tenantId: string): Promise<string | null> {
-  const session = await getSessionFromCookies(tenantId);
+export async function getViewerLabel(): Promise<string | null> {
+  const session = await getSessionFromCookies();
   if (!session) return null;
-  const identity = await getIdentityDisplay(tenantId, session.subject);
+  const identity = await getIdentityDisplay(session.subject);
   return identity?.displayName || identity?.email || null;
 }

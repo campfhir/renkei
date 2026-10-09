@@ -7,7 +7,7 @@ import { getPublicBaseUrl } from '@renkei/settings';
  * does not resolve (should not happen: the webhook route validates it before
  * an event row is ever written). Shared by cardsFeedUrl and registrationUrl.
  */
-async function tenantUrl(tenantId: string): Promise<string | null> {
+async function tenantUrl(): Promise<string | null> {
   const base = getPublicBaseUrl();
   if (!base) return null;
 
@@ -16,7 +16,7 @@ async function tenantUrl(tenantId: string): Promise<string | null> {
   const tenant = await dbResult.val
     .selectFrom('tenants')
     .select('slug')
-    .where('id', '=', tenantId)
+    .where('id', '=')
     .executeTakeFirst();
   return tenant ? `${base}/${tenant.slug}` : null;
 }
@@ -27,10 +27,10 @@ async function tenantUrl(tenantId: string): Promise<string | null> {
  * deployment or tenant does not resolve — the caller words its confirmation
  * without a link.
  */
-export async function cardsFeedUrl(tenantId: string): Promise<string | null> {
+export async function cardsFeedUrl(): Promise<string | null> {
   // The tenant root IS the feed — `/home` still redirects there, but linking
   // through a redirect for every card confirmation is a wasted hop.
-  return tenantUrl(tenantId);
+  return tenantUrl();
 }
 
 /**
@@ -39,6 +39,6 @@ export async function cardsFeedUrl(tenantId: string): Promise<string | null> {
  * identities row (apps/web/lib/identity.ts) the ambient handler checks for
  * on the next message. Null on the same conditions as cardsFeedUrl.
  */
-export async function registrationUrl(tenantId: string): Promise<string | null> {
-  return tenantUrl(tenantId);
+export async function registrationUrl(): Promise<string | null> {
+  return tenantUrl();
 }

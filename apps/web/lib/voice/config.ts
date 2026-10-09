@@ -29,7 +29,7 @@ export { VOICE_CONNECTOR };
  * The org's voice configuration, or null when voice is not provisioned —
  * not configured, switched off, or missing a required field.
  */
-export async function resolveVoiceConfig(tenantId: string): Promise<VoiceConfig | null> {
+export async function resolveVoiceConfig(): Promise<VoiceConfig | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
@@ -37,22 +37,21 @@ export async function resolveVoiceConfig(tenantId: string): Promise<VoiceConfig 
     });
     return null;
   }
-  const configResult = await readConnectorConfigCached(tenantId, VOICE_CONNECTOR, keyResult.val);
+  const configResult = await readConnectorConfigCached(VOICE_CONNECTOR, keyResult.val);
   if (!configResult.ok) return null;
   const config = configResult.val;
   if (!config || !config.enabled) return null;
   return parseVoiceConfig(config.settings, config.secrets);
 }
 
-export async function voiceConfigured(tenantId: string): Promise<boolean> {
-  return (await resolveVoiceConfig(tenantId)) !== null;
+export async function voiceConfigured(): Promise<boolean> {
+  return (await resolveVoiceConfig()) !== null;
 }
 
 /** The provider for the org, or null when voice is not provisioned. */
 export async function resolveVoiceProvider(
-  tenantId: string
 ): Promise<{ config: VoiceConfig; provider: VoiceProvider } | null> {
-  const config = await resolveVoiceConfig(tenantId);
+  const config = await resolveVoiceConfig();
   if (!config) return null;
   return { config, provider: createVoiceProvider(config) };
 }
@@ -78,17 +77,16 @@ function fingerprintOf(config: VoiceConfig): string {
  * failure hands back the error so the picker can say why it is empty.
  */
 export async function listVoicesCached(
-  tenantId: string,
   resolved: { config: VoiceConfig; provider: VoiceProvider }
 ): Promise<VoiceOutcome<VoiceInfo[]>> {
   const fingerprint = fingerprintOf(resolved.config);
-  const cached = voicesCache.get(tenantId);
+  const cached = voicesCache.get();
   if (cached && cached.fingerprint === fingerprint && cached.expiresAt > Date.now()) {
     return { ok: true, val: cached.voices };
   }
   const result = await resolved.provider.listVoices();
   if (result.ok) {
-    voicesCache.set(tenantId, {
+    voicesCache.set({
       voices: result.val,
       fingerprint,
       expiresAt: Date.now() + VOICES_CACHE_TTL_MS,
@@ -98,7 +96,7 @@ export async function listVoicesCached(
 }
 
 /** Drop the cached voice list — after the admin form saves. */
-export function invalidateVoicesCache(tenantId?: string): void {
-  if (tenantId) voicesCache.delete(tenantId);
+export function invalidateVoicesCache(): void {
+  if (tenantId) voicesCache.delete();
   else voicesCache.clear();
 }

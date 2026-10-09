@@ -99,7 +99,6 @@ export async function createChatInProject(
  */
 export async function releaseActiveChat(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string
 ): Promise<void> {
   await db

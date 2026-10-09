@@ -32,7 +32,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Same calendar overlay the agent schedule sweep applies — see its own comment. */
 async function calendarDatesOf(
   db: Kysely<DB>,
-  tenantId: string,
   calendarId: string
 ): Promise<BlackoutEntry[]> {
   const row = await db
@@ -72,7 +71,7 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
       const observed = row.next_run_at;
       if (!observed) continue;
       const calendarDates = config.calendarId
-        ? await calendarDatesOf(db, row.tenant_id, config.calendarId)
+        ? await calendarDatesOf(db, config.calendarId)
         : [];
       let next: Date;
       try {
@@ -104,7 +103,7 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
           config: isRecord(row.config) ? row.config : {},
           scheduleId: row.id,
         });
-        await enqueueDiscover(producer, row.tenant_id, batch.id);
+        await enqueueDiscover(producer, batch.id);
         await db
           .updateTable('batch_job_schedules')
           .set({ last_error: null, updated_at: sql`NOW()` })

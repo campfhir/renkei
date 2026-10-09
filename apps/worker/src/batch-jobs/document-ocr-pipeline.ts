@@ -277,7 +277,6 @@ async function discover(db: Kysely<DB>, batch: BatchJobRow): Promise<DiscoverOut
   // hash me", which item time does.
   const recorded = await findProcessedByPath(
     db,
-    batch.tenant_id,
     config.shareId,
     entries.map((entry) => entry.path)
   );
@@ -415,7 +414,7 @@ async function runItem(
   const sourcePaths = sources.map((source) => source.path);
   const target: FileshareTarget = { shareId, subject: batch.subject };
 
-  const mistralConfig = await resolveMistralOcrConfig(batch.tenant_id);
+  const mistralConfig = await resolveMistralOcrConfig();
   if (!mistralConfig.ok) {
     return {
       ok: false,
@@ -442,7 +441,7 @@ async function runItem(
   const contentHashes = files.map((file) => file.contentHash);
 
   if (config.skipProcessed) {
-    const known = await findProcessedHashes(db, batch.tenant_id, shareId, contentHashes);
+    const known = await findProcessedHashes(db, shareId, contentHashes);
     if (files.every((file) => known.has(file.contentHash))) {
       return {
         ok: true,
@@ -491,7 +490,6 @@ async function runItem(
     try {
       await recordProcessedFiles(
         db,
-        batch.tenant_id,
         shareId,
         batch.id,
         files.map((file) => ({

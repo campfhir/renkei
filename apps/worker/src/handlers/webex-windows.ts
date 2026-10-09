@@ -71,7 +71,6 @@ function dayBounds(day: string): { start: Date; end: Date } {
  * to re-capture it.
  */
 export async function markWebexWindowDirty(
-  tenantId: string,
   roomId: string,
   day: string,
   subject: string | null
@@ -175,7 +174,6 @@ export async function fetchWindowMessages(
  * room's other days keep their rows until their own window lands.
  */
 export async function deleteLegacyMessageRows(
-  tenantId: string,
   roomId: string,
   day: string
 ): Promise<void> {
@@ -231,12 +229,10 @@ export function createKnowledgeIngestWebexWindowHandler(
     if (!roomId || !/^\d{4}-\d{2}-\d{2}$/.test(day) || !subject) {
       throw new Error('webex window payload is missing roomId/day/subject');
     }
-    const tenantId = event.tenant_id;
-
-    const embedder = await resolveEmbeddingProvider(tenantId);
+    const embedder = await resolveEmbeddingProvider();
     if (!embedder) return; // knowledge layer off for this org
 
-    const access = await resolveAccess(tenantId, subject);
+    const access = await resolveAccess(subject);
     if (!access) {
       logger.info('no usable WebEx grant for {subject}; window {roomId}/{day} not rebuilt', {
         component: COMPONENT,
@@ -272,9 +268,9 @@ export function createKnowledgeIngestWebexWindowHandler(
     if (spoken.length === 0) {
       // Everything that day was deleted, or never had text: the window
       // goes, and so do the legacy rows it would have replaced.
-      const removed = await deleteObjectChunks(tenantId, 'webex', refId);
+      const removed = await deleteObjectChunks('webex', refId);
       if (!removed.ok) throw new Error(`could not delete empty window ${refId}`);
-      await deleteLegacy(tenantId, roomId, day);
+      await deleteLegacy(roomId, day);
       return;
     }
 
@@ -306,7 +302,7 @@ export function createKnowledgeIngestWebexWindowHandler(
         `could not index window ${refId}: ${ingested.err.type}${ingested.err.message ? ` (${ingested.err.message})` : ''}`
       );
     }
-    await deleteLegacy(tenantId, roomId, day);
+    await deleteLegacy(roomId, day);
 
     logger.debug('rebuilt window {roomId}/{day}: {messages} message(s), {chunks} chunk(s)', {
       component: COMPONENT,

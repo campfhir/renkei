@@ -34,7 +34,6 @@ const LABELS: Record<string, string> = {
 };
 
 export async function resolveAtlassianUserAccess(
-  tenantId: string,
   subject: string,
   provider: AtlassianUserProvider
 ): Promise<AtlassianUserAccess | string> {

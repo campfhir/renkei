@@ -41,7 +41,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -51,7 +51,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(tenantRef.id, WEB_SEARCH_CONNECTOR, keyResult.val);
+  const configResult = await getConnectorConfig(WEB_SEARCH_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
@@ -102,7 +102,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -164,7 +164,7 @@ export async function PUT(
   // Secrets survive settings-only saves: setConnectorConfig replaces secrets
   // wholesale, so a blank/omitted secret is merged with the stored one here.
   // A key is required only when none is stored yet.
-  const existing = await getConnectorConfig(tenantRef.id, WEB_SEARCH_CONNECTOR, keyResult.val);
+  const existing = await getConnectorConfig(WEB_SEARCH_CONNECTOR, keyResult.val);
   const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
   const mergedApiKey = typeof apiKey === 'string' && apiKey ? apiKey : storedSecrets.apiKey;
   if (!mergedApiKey) {
@@ -172,7 +172,6 @@ export async function PUT(
   }
 
   const writeResult = await setConnectorConfig(
-    tenantRef.id,
     WEB_SEARCH_CONNECTOR,
     {
       enabled,
@@ -193,7 +192,7 @@ export async function PUT(
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 
-  invalidateConnectorConfigCache(tenantRef.id, WEB_SEARCH_CONNECTOR);
+  invalidateConnectorConfigCache(WEB_SEARCH_CONNECTOR);
   // Web search is org-wide: this one save decides whether `web_search`
   // registers for EVERY caller, and each of them may hold a cached tool
   // catalog built before it existed (up to four hours old). Without this,
@@ -201,6 +200,6 @@ export async function PUT(
   // reading the stale list, and nobody saw the connector they had just
   // been given — the same org-wide drop connector-availability/route.ts
   // makes when a connector is switched off.
-  invalidateToolCatalogCache(tenantRef.id);
+  invalidateToolCatalogCache();
   return NextResponse.json({ connector: WEB_SEARCH_CONNECTOR, configured: true, enabled });
 }

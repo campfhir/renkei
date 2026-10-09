@@ -188,7 +188,7 @@ describe('dispatch and serialization', () => {
   });
 
   it('rejects a body missing the subject before touching the service', async () => {
-    const response = await post('/v1/stat', { tenantId: 't', shareId: 's', path: '/x' });
+    const response = await post('/v1/stat', { shareId: 's', path: '/x' });
     expect(response.status).toBe(400);
     expect(mocked.serviceStatEntry).not.toHaveBeenCalled();
   });

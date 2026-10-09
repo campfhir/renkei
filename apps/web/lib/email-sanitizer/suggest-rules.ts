@@ -75,10 +75,9 @@ function promptOf(
 }
 
 export async function suggestSanitizerRules(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<{ suggestions: RuleSuggestion[] } | { error: string }> {
-  const llmResult = await resolveAgentLlm(db, tenantId, null);
+  const llmResult = await resolveAgentLlm(db, null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization.' };
   }

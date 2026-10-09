@@ -24,7 +24,6 @@ async function postConfirmable(url: string, confirm: boolean): Promise<InvokeAge
 }
 
 export async function invokeAgentRun(
-  tenantId: string,
   agentId: string,
   confirm = false
 ): Promise<InvokeAgentRunResult> {
@@ -32,7 +31,6 @@ export async function invokeAgentRun(
 }
 
 export async function rerunAgentRun(
-  tenantId: string,
   agentId: string,
   runId: string,
   confirm = false
@@ -46,7 +44,6 @@ export async function rerunAgentRun(
  * of the agent already in flight turns the 409 into a confirm step.
  */
 export async function resumeAgentRun(
-  tenantId: string,
   agentId: string,
   runId: string,
   guidance: string,

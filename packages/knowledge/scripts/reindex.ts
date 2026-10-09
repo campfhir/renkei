@@ -100,7 +100,7 @@ async function lexical(key: Buffer, tenant: string | null): Promise<void> {
 
 async function keywords(key: Buffer, tenant: string | null): Promise<void> {
   for (const tenantId of await tenantsWithChunks(tenant)) {
-    const extractor = await resolveKeywordExtractor(tenantId);
+    const extractor = await resolveKeywordExtractor();
     if (!extractor) {
       console.log(`keywords [${tenantId}]: enrichment off, or no default model — skipped`);
       continue;
@@ -108,7 +108,7 @@ async function keywords(key: Buffer, tenant: string | null): Promise<void> {
     const skip = new Set<string>();
     let processed = 0;
     for (;;) {
-      const batch = await extractKeywordsBatch(tenantId, extractor, key, KEYWORD_BATCH, skip);
+      const batch = await extractKeywordsBatch(extractor, key, KEYWORD_BATCH, skip);
       if (!batch.ok) {
         throw new Error(
           `keywords [${tenantId}]: the knowledge store could not be updated: ${batch.err.message ?? ''}`
@@ -128,7 +128,7 @@ async function keywords(key: Buffer, tenant: string | null): Promise<void> {
 
 async function embed(key: Buffer, tenant: string | null): Promise<void> {
   for (const tenantId of await tenantsWithChunks(tenant)) {
-    const embedder = await resolveEmbeddingProvider(tenantId);
+    const embedder = await resolveEmbeddingProvider();
     if (!embedder) {
       console.log(`embed [${tenantId}]: no embedding provider configured — skipped`);
       continue;
@@ -137,7 +137,7 @@ async function embed(key: Buffer, tenant: string | null): Promise<void> {
     let processed = 0;
     let skipped = 0;
     for (;;) {
-      const batch = await reembedBatch(tenantId, embedder, key, cursor, EMBED_BATCH);
+      const batch = await reembedBatch(embedder, key, cursor, EMBED_BATCH);
       if (!batch.ok) {
         throw new Error(
           `embed [${tenantId}]: ${batch.err.type === 'EMBEDDING_FAILED' ? 'embedding failed' : 'the knowledge store could not be updated'}: ${batch.err.message ?? ''}`

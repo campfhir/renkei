@@ -106,7 +106,7 @@ export default function SubagentModal({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const load = async () => {
-      const result = await chatClient.getSubagentRun(tenantId, chatId, toolUseId);
+      const result = await chatClient.getSubagentRun(chatId, toolUseId);
       if (cancelled) return;
       if (result.data) {
         setRun(result.data.run);

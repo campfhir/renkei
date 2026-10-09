@@ -137,7 +137,6 @@ export function CodeRepoStrip({
       </p>
       {code.enabled && workspace?.status === 'ready' ? (
         <SizeRequest
-          tenantId={tenantId}
           projectId={projectId}
           limitBytes={code.sizeLimitBytes}
           request={code.sizeRequest}
@@ -206,24 +205,20 @@ export function CodeRail({
     <>
       <PullsSummary
         href={`/code/${projectId}/pulls`}
-        tenantId={tenantId}
         projectId={projectId}
       />
       <CommitsSummary
         href={`/code/${projectId}/commits`}
-        tenantId={tenantId}
         projectId={projectId}
       />
       {isGitHub ? (
         <ActionsSummary
           href={`/code/${projectId}/actions`}
-          tenantId={tenantId}
           projectId={projectId}
         />
       ) : (
         <PipelinesSummary
           href={`/code/${projectId}/pipelines`}
-          tenantId={tenantId}
           projectId={projectId}
           branch={code.branch}
         />
@@ -231,7 +226,6 @@ export function CodeRail({
       {code.enabled ? (
         <ServicesSummaryCard
           href={`/code/${projectId}/services`}
-          tenantId={tenantId}
           projectId={projectId}
         />
       ) : null}

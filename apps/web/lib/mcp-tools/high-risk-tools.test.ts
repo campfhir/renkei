@@ -133,7 +133,7 @@ function grantFor(prefixes: string[], scopeFor: (tool: string) => string[]): Gra
 }
 
 const INSTANCE_ID = '11111111-2222-3333-4444-555555555555';
-const context = { tenantId: 'tenant-1', subject: 'subject-1' } as unknown as MCPToolContext;
+const context = { subject: 'subject-1' } as unknown as MCPToolContext;
 
 function collecting(): { server: McpServer; names: string[] } {
   const names: string[] = [];
@@ -154,7 +154,7 @@ function mirthToolNames(): string[] {
     context,
     {
       kind: 'user',
-      target: () => ({ tenantId: 'tenant-1', subject: 'subject-1' }),
+      target: () => ({ subject: 'subject-1' }),
       listConnected: async () => [
         {
           instance: {
@@ -187,7 +187,7 @@ function admanagerToolNames(): string[] {
     context,
     {
       kind: 'user',
-      target: () => ({ tenantId: 'tenant-1', subject: 'subject-1' }),
+      target: () => ({ subject: 'subject-1' }),
       listConnected: async () => [
         {
           instance: {

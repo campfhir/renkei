@@ -24,9 +24,9 @@ import { logger } from '@/lib/logger';
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
@@ -85,7 +85,7 @@ export async function DELETE(
       : {};
   const upn = typeof metadata.upn === 'string' ? metadata.upn.toLowerCase() : null;
   if (upn) {
-    const purged = await deleteObjectChunks(tenantId, MICROSOFT, `${upn}/`, { prefixOnly: true });
+    const purged = await deleteObjectChunks(MICROSOFT, `${upn}/`, { prefixOnly: true });
     if (!purged.ok) {
       logger.warn('Could not purge knowledge chunks on disconnect', {
         component: 'connectors/microsoft',
@@ -103,6 +103,6 @@ export async function DELETE(
     targetKind: 'connector',
     targetLabel: MICROSOFT,
   });
-  invalidateToolCatalogCache(tenantId, session.subject);
+  invalidateToolCatalogCache(session.subject);
   return NextResponse.json({ message: 'Microsoft disconnected' });
 }

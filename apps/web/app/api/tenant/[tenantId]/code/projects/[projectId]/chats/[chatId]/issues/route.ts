@@ -38,11 +38,10 @@ interface GitHubIssueCard {
 }
 
 async function lookupJira(
-  tenantId: string,
   subject: string,
   key: string
 ): Promise<JiraCard | null> {
-  const access = await resolveAtlassianUserAccess(tenantId, subject, ATLASSIAN);
+  const access = await resolveAtlassianUserAccess(subject, ATLASSIAN);
   if (typeof access === 'string') return null;
   try {
     const response = await jiraFetch(
@@ -64,7 +63,6 @@ async function lookupJira(
 }
 
 async function lookupGitHubIssue(
-  tenantId: string,
   subject: string,
   origin: string,
   fullName: string,
@@ -91,16 +89,16 @@ async function lookupGitHubIssue(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string; chatId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId: string }> }
 ): Promise<Response> {
   const { projectId, chatId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const { db, session, project } = ready.context;
-  const chatAccess = await resolveChatAccess(db, tenantId, session.subject, chatId);
+  const chatAccess = await resolveChatAccess(db, session.subject, chatId);
   if (!chatAccess) return jsonError(404, 'not-found', 'No such chat');
 
-  const rows = await listMessages(db, tenantId, chatId, chatAccess.cipher);
+  const rows = await listMessages(db, chatId, chatAccess.cipher);
   const pullRequest = latestPrInTranscript(rows.map(toMessageView));
   const refs = detectIssueRefs({
     branch: project.repo!.branch,
@@ -111,7 +109,7 @@ export async function GET(
   const origin = await getOrigin(request);
   const originVal = origin.ok ? origin.val : '';
   const [jira, github] = await Promise.all([
-    refs.jiraKey ? lookupJira(tenantId, session.subject, refs.jiraKey) : null,
+    refs.jiraKey ? lookupJira(session.subject, refs.jiraKey) : null,
     refs.githubIssueNumber && project.repo!.provider === 'github'
       ? lookupGitHubIssue(
           session.subject,

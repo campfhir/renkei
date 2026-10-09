@@ -43,7 +43,6 @@ export default function HylandConnector({
         {onbase ? (
           <OnBaseConnector
             nested
-            tenantId={tenantId}
             connected={onbase.connected}
             displayName={onbase.displayName}
           />
@@ -62,7 +61,6 @@ export default function HylandConnector({
         {onbaseAdmin && (
           <OnBaseAdminConnector
             nested
-            tenantId={tenantId}
             connected={onbaseAdmin.connected}
             displayName={onbaseAdmin.displayName}
           />

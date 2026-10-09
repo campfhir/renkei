@@ -58,7 +58,6 @@ interface InvocationCounts {
  */
 async function invocationCountsOf(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<InvocationCounts> {
   const result = await sql<{
@@ -110,9 +109,9 @@ export default async function AgentOverviewPage({
 }): Promise<React.ReactNode> {
   const { slug, agentId } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/agents/${agentId}`));
+    redirect(signInUrl(`/agents/${agentId}`));
   }
 
   const dbResult = getDatabase();
@@ -120,7 +119,7 @@ export default async function AgentOverviewPage({
   // Owner or grantee — a grantee sees the page exactly as the owner does
   // (that is what the grant is for); only the sharing controls stay the
   // owner's own.
-  const access = await resolveAgentAccess(dbResult.val, tenant.id, session.subject, agentId);
+  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
   if (!access) notFound();
   const agent = access.agent;
 
@@ -135,20 +134,20 @@ export default async function AgentOverviewPage({
     toolUsage,
     optimization,
   ] = await Promise.all([
-    listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, { limit: 5 }),
-    invocationCountsOf(dbResult.val, tenant.id, agentId),
-    getOrgSettings(tenant.id),
+    listRunsForOwner(dbResult.val, access.ownerSubject, agentId, { limit: 5 }),
+    invocationCountsOf(dbResult.val, agentId),
+    getOrgSettings(),
     access.viewerIsOwner
       ? Promise.resolve(null)
-      : getIdentityDisplay(tenant.id, access.ownerSubject),
-    getAgentTokenUsage(dbResult.val, tenant.id, agentId),
-    getTokenUsageByModel(dbResult.val, tenant.id, agentId),
-    getAgentTokenUsageByStep(dbResult.val, tenant.id, agentId),
-    getAgentToolUsage(dbResult.val, tenant.id, agentId, TOOL_USAGE_WINDOW_DAYS),
+      : getIdentityDisplay(access.ownerSubject),
+    getAgentTokenUsage(dbResult.val, agentId),
+    getTokenUsageByModel(dbResult.val, agentId),
+    getAgentTokenUsageByStep(dbResult.val, agentId),
+    getAgentToolUsage(dbResult.val, agentId, TOOL_USAGE_WINDOW_DAYS),
     // The optimizer's latest report — the owner's only; a grantee gets
     // null from the read itself and no panel below.
     access.viewerIsOwner
-      ? latestOptimization(dbResult.val, tenant.id, access.ownerSubject, agentId)
+      ? latestOptimization(dbResult.val, access.ownerSubject, agentId)
       : Promise.resolve(null),
   ]);
   const reviewNotes = parseReviewNotes(agent.reviewNotes);
@@ -184,7 +183,7 @@ export default async function AgentOverviewPage({
         })}
       />
       {access.viewerIsOwner ? (
-        <ShareAgentButton tenantId={tenant.id} agentId={agentId} />
+        <ShareAgentButton agentId={agentId} />
       ) : (
         <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
           Shared by {ownerDisplay?.displayName || ownerDisplay?.email || 'a colleague'}
@@ -222,7 +221,7 @@ export default async function AgentOverviewPage({
           <h1 className="min-w-0 truncate text-xl font-bold">{agent.name}</h1>
           <span className="ml-auto shrink-0">
             {access.viewerIsOwner ? (
-              <AgentEnabledToggle tenantId={tenant.id} agent={agent} />
+              <AgentEnabledToggle agent={agent} />
             ) : (
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -275,7 +274,6 @@ export default async function AgentOverviewPage({
               {eventOnly ? null : (
                 <RunNowButton
                   slug={slug}
-                  tenantId={tenant.id}
                   agentId={agentId}
                   agentName={agent.name}
                 />
@@ -338,7 +336,6 @@ export default async function AgentOverviewPage({
               <CollapsibleSection title="Improve" defaultOpen={optimization !== null}>
                 <ImprovePanel
                   slug={slug}
-                  tenantId={tenant.id}
                   agentId={agentId}
                   initial={optimization}
                 />
@@ -363,16 +360,16 @@ export default async function AgentOverviewPage({
           ) : null}
 
           <CollapsibleSection title="Knowledge">
-            <KnowledgePanel tenantId={tenant.id} agentId={agentId} />
+            <KnowledgePanel agentId={agentId} />
           </CollapsibleSection>
 
           <CollapsibleSection title="Memory">
-            <MemoryPanel tenantId={tenant.id} agentId={agentId} />
+            <MemoryPanel agentId={agentId} />
           </CollapsibleSection>
 
           {access.viewerIsOwner ? (
             <CollapsibleSection title="Shared with">
-              <SharedWithPanel tenantId={tenant.id} agentId={agentId} />
+              <SharedWithPanel agentId={agentId} />
             </CollapsibleSection>
           ) : null}
 

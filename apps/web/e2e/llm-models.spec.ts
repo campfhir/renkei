@@ -108,7 +108,7 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
     // Enrolled the way e2e/seed.ts enrolls the shared person: with a key
     // and a delegation for the spec's session, the KeyGuard has nothing to
     // ask, so no "write it down" dialog sits over the form.
-    await enrollForE2E(client, fixture.tenantId, fixture.subject);
+    await enrollForE2E(client, fixture.subject);
   } finally {
     await client.end();
   }

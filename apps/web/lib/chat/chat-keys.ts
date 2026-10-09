@@ -57,7 +57,7 @@ export interface KeyedResource {
 
 export type KeyedKind = Extract<ResourceKeyKind, 'chat' | 'chat_project'>;
 
-const ref = (kind: KeyedKind, tenantId: string, resourceId: string): ResourceRef => ({
+const ref = (kind: KeyedKind, resourceId: string): ResourceRef => ({
   kind,
   resourceId,
 });
@@ -89,7 +89,6 @@ function failedCipher(reason: KeyOpError): ContentCipher {
 async function activeGrantees(
   db: Kysely<DB>,
   kind: KeyedKind,
-  tenantId: string,
   resourceId: string
 ): Promise<string[]> {
   const rows = await db
@@ -112,7 +111,7 @@ async function ensureKey(
   resource: KeyedResource
 ): Promise<ResourceKey | KeyOpError> {
   const keys = delegateClient();
-  const target = ref(kind, resource.tenantId, resource.id);
+  const target = ref(kind, resource.id);
   const before = await keys.openResourceKey(target, resource.ownerSubject);
   if (before.ok) return before.val;
   if (before.err.type !== 'NO_KEY') return before.err.type;
@@ -125,7 +124,7 @@ async function ensureKey(
     });
     return created.err.type;
   }
-  for (const grantee of await activeGrantees(db, kind, resource.tenantId, resource.id)) {
+  for (const grantee of await activeGrantees(db, kind, resource.id)) {
     const shared = await keys.shareResourceKey(target, resource.ownerSubject, grantee);
     if (!shared.ok) {
       warn('key could not be wrapped for an existing viewer: {reason}', {
@@ -152,9 +151,9 @@ export async function wrapKeyUnderProject(
   const key = await ensureKey(db, 'chat', chat);
   if (typeof key === 'string') return false;
   const wrapped = await delegateClient().wrapResourceKeyUnder(
-    ref('chat', chat.tenantId, chat.id),
+    ref('chat', chat.id),
     chat.ownerSubject,
-    ref('chat_project', chat.tenantId, projectId)
+    ref('chat_project', projectId)
   );
   if (!wrapped.ok) {
     warn('chat key could not be wrapped under its project: {reason}', {
@@ -173,7 +172,7 @@ export async function createKey(
   resource: KeyedResource
 ): Promise<ResourceKey | null> {
   const created = await delegateClient().createResourceKey(
-    ref(kind, resource.tenantId, resource.id),
+    ref(kind, resource.id),
     resource.ownerSubject
   );
   if (created.ok) return created.val;
@@ -202,7 +201,7 @@ export async function cipherFor(
   via: 'owner' | 'grant' | 'project',
   projectId: string | null = null
 ): Promise<ContentCipher> {
-  const target = ref(kind, resource.tenantId, resource.id);
+  const target = ref(kind, resource.id);
   if (via === 'owner') {
     const key = await ensureKey(db, kind, resource);
     return typeof key === 'string' ? failedCipher(key) : resourceCipher(key);
@@ -222,7 +221,7 @@ export async function cipherFor(
           ? await keys.wrapResourceKeyUnder(
               target,
               resource.ownerSubject,
-              ref('chat_project', resource.tenantId, projectId)
+              ref('chat_project', projectId)
             )
           : await keys.shareResourceKey(target, resource.ownerSubject, viewerSubject);
       if (healed.ok) {
@@ -254,7 +253,6 @@ export async function cipherAsOwner(
 /** `cipherAsOwner` for a chat, by id — for callers holding only the chat id. */
 export async function chatCipherById(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string
 ): Promise<ContentCipher> {
   const row = await db
@@ -263,13 +261,12 @@ export async function chatCipherById(
     .where('id', '=', chatId)
     .executeTakeFirst();
   if (!row) return unavailableCipher('no-key');
-  return cipherAsOwner(db, 'chat', { id: chatId, tenantId, ownerSubject: row.owner_subject });
+  return cipherAsOwner(db, 'chat', { id: chatId, ownerSubject: row.owner_subject });
 }
 
 /** `cipherAsOwner` for a project, by id. */
 export async function projectCipherById(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string
 ): Promise<ContentCipher> {
   const row = await db
@@ -292,7 +289,6 @@ export async function projectCipherById(
  */
 export async function chatCiphersFor(
   db: Kysely<DB>,
-  tenantId: string,
   viewerSubject: string,
   chats: { id: string; ownerSubject: string }[]
 ): Promise<Map<string, ContentCipher>> {
@@ -335,7 +331,7 @@ export async function shareKey(
   const key = await ensureKey(db, kind, resource);
   if (typeof key === 'string') return false;
   const shared = await delegateClient().shareResourceKey(
-    ref(kind, resource.tenantId, resource.id),
+    ref(kind, resource.id),
     resource.ownerSubject,
     granteeSubject
   );
@@ -353,19 +349,17 @@ export async function shareKey(
 export async function revokeKey(
   _db: Kysely<DB>,
   kind: KeyedKind,
-  tenantId: string,
   resourceId: string,
   granteeSubject: string
 ): Promise<void> {
-  await delegateClient().revokeResourceKey(ref(kind, tenantId, resourceId), granteeSubject);
+  await delegateClient().revokeResourceKey(ref(kind, resourceId), granteeSubject);
 }
 
 /** The resource is gone: so is its key, with every wrapping. */
 export async function deleteKey(
   _db: Kysely<DB>,
   kind: KeyedKind,
-  tenantId: string,
   resourceId: string
 ): Promise<void> {
-  await delegateClient().deleteResourceKey(ref(kind, tenantId, resourceId));
+  await delegateClient().deleteResourceKey(ref(kind, resourceId));
 }

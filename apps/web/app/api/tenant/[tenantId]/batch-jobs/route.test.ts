@@ -26,7 +26,7 @@ const { startDocumentOcrPipeline } = jest.requireMock<{ startDocumentOcrPipeline
 );
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
-const paramsOf = () => Promise.resolve({ tenantId: 'tenant-1' });
+const paramsOf = () => Promise.resolve({ });
 
 function reqOf(body: unknown): NextRequest {
   return new NextRequest(

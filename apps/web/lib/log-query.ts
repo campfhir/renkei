@@ -52,7 +52,6 @@ function scopeLeaf(key: string, value: string): FilterExpr {
  */
 export function buildEnforcedLogQuery(
   userQuery: string | FilterExpr | null,
-  tenantId: string,
   accountId?: string
 ): FilterExpr {
   const parsed = typeof userQuery === 'string' ? parseLogQueryExpr(userQuery) : userQuery;
@@ -61,7 +60,7 @@ export function buildEnforcedLogQuery(
   // Splice the caller's own AND-ed branches in rather than nesting their whole
   // tree, so the result stays in the parser's normal form.
   const userNodes = scrubbed ? (scrubbed.type === 'and' ? scrubbed.nodes : [scrubbed]) : [];
-  const scope = [scopeLeaf('tenantId', tenantId)];
+  const scope = [scopeLeaf('tenantId')];
   if (accountId) scope.push(scopeLeaf('accountId', accountId));
 
   return { type: 'and', nodes: [...userNodes, ...scope] };
@@ -106,7 +105,6 @@ export interface LogQueryWindow {
  */
 export function buildLogQueryOptions(
   userQuery: string | FilterExpr | null,
-  tenantId: string,
   accountId?: string,
   window: LogQueryWindow = {}
 ): LogQueryOptions & { includeBinaryAttributes: boolean } {
@@ -115,7 +113,7 @@ export function buildLogQueryOptions(
   const levels = [...new Set((window.levels ?? []).filter(isKnownLevel))];
 
   return {
-    attributeFilter: buildEnforcedLogQuery(userQuery, tenantId, accountId),
+    attributeFilter: buildEnforcedLogQuery(userQuery, accountId),
     levels: levels.length ? levels : undefined,
     start: window.start ?? undefined,
     end: window.end ?? undefined,

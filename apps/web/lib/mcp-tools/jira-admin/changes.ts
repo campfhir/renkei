@@ -384,7 +384,6 @@ export async function registerChangeTools(
       if (replaces) {
         const cancelled = await cancelChangeRequest(
           dbResult.val,
-          context.tenantId,
           context.subject,
           replaces
         );
@@ -441,7 +440,7 @@ export async function registerChangeTools(
 
       const id = typeof args.change === 'string' ? args.change.trim() : '';
       if (id) {
-        const change = await getChangeRequest(db, context.tenantId, context.subject, id);
+        const change = await getChangeRequest(db, context.subject, id);
         if (!change) return errText(`No change request ${id} of this user’s.`);
         const { operations, reach } = describeChange(change);
         const state = stateOf(change);
@@ -465,7 +464,7 @@ export async function registerChangeTools(
         return textResult(lines.join('\n'));
       }
 
-      const changes = await listChangeRequests(db, context.tenantId, context.subject, {
+      const changes = await listChangeRequests(db, context.subject, {
         limit: 20,
         pendingOnly: args.pending === true,
       });

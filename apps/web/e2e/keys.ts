@@ -179,7 +179,7 @@ const enrolled = new Map<string, E2EKeys>();
  * first had sealed. The same (tenant, subject) yields the same keys in
  * every process; test keys, never a product secret.
  */
-function keysOf(tenantId: string, subject: string): E2EKeys {
+function keysOf(subject: string): E2EKeys {
   const derive = (purpose: string): Buffer =>
     createHash('sha256').update(`renkei-e2e/${purpose}/${tenantId}/${subject}`).digest();
   return {
@@ -205,14 +205,13 @@ async function liveInstances(client: Client): Promise<{ id: string; publicKey: B
  */
 export async function enrollForE2E(
   client: Client,
-  tenantId: string,
   subject: string,
   options: { automation?: boolean } = {}
 ): Promise<E2EKeys> {
   const cacheKey = `${tenantId}\0${subject}`;
   let keys = enrolled.get(cacheKey);
   if (!keys) {
-    keys = keysOf(tenantId, subject);
+    keys = keysOf(subject);
     // Enrolled by another process already (global-setup, or the other
     // worker) under these same keys: nothing to write, and above all
     // nothing to delete — their wrappings and delegations stand.
@@ -319,7 +318,7 @@ export async function keyFor(
     ownerSubject: string;
   }
 ): Promise<SeededKey> {
-  const keys = await enrollForE2E(client, input.tenantId, input.ownerSubject);
+  const keys = await enrollForE2E(client, input.ownerSubject);
   const existing = await client.query<{ id: string; wrapped_key: string | null }>(
     `SELECT k.id, g.wrapped_key
        FROM resource_keys k
@@ -363,10 +362,9 @@ export async function keyFor(
 /** A person's own value, sealed under their automation key: `uenc1:…`. */
 export async function sealForSubject(
   client: Client,
-  tenantId: string,
   subject: string,
   plaintext: string
 ): Promise<string> {
-  const keys = await enrollForE2E(client, tenantId, subject);
+  const keys = await enrollForE2E(client, subject);
   return `uenc1:${secretbox(plaintext, keys.automationKey)}`;
 }

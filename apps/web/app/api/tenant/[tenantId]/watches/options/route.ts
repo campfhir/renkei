@@ -39,9 +39,9 @@ export interface WatchOption {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const provider = request.nextUrl.searchParams.get('provider');
@@ -126,11 +126,11 @@ export async function GET(
  * mistake one for the other and POST a siteId as a scope key.
  */
 async function sharePointOptions(
-  owner: { tenantId: string; subject: string },
+  owner: { subject: string },
   site: string,
   query: string
 ): Promise<NextResponse> {
-  const access = await resolveSharePointAccess(owner.tenantId, owner.subject);
+  const access = await resolveSharePointAccess(owner.subject);
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
   if (site) {

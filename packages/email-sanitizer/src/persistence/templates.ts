@@ -43,7 +43,6 @@ function toTemplate(row: TemplateRow): ExtractionTemplate {
 
 /** Every active template, keyed by senderKey — what the pipeline matches against. */
 export async function listActiveTemplates(
-  tenantId: string
 ): Promise<Result<Map<string, ExtractionTemplate>, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -77,7 +76,6 @@ export interface TemplateHealth {
  * neither query ever selects message content.
  */
 export async function listTemplateHealth(
-  tenantId: string,
   lookbackDays = 7
 ): Promise<Result<TemplateHealth[], 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -128,7 +126,6 @@ export interface SaveTemplateOptions {
  * auto-replayed against already-indexed mail.
  */
 export async function saveTemplateVersion(
-  tenantId: string,
   senderKey: string,
   segments: TemplateSegment[],
   options: SaveTemplateOptions

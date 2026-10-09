@@ -19,7 +19,7 @@ export async function POST(
 ): Promise<NextResponse> {
   const { slug, agentId } = await params;
   if (!isUuid(agentId)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  const access = await checkAccess(tenant.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -50,7 +50,7 @@ export async function POST(
       event_type: 'agent.disabled_by_admin',
       actor_id: access.subject,
       resource_id: agentId,
-      details: JSON.stringify({ tenantId: tenant.id }),
+      details: JSON.stringify({ }),
     })
     .execute();
   recordAuditEvent({

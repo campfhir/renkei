@@ -14,11 +14,11 @@ import { keyStatusView } from '@/lib/keys/status';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const view = await keyStatusView(tenantId, ready.context.session);
+  const view = await keyStatusView(ready.context.session);
   if (!view) return jsonError(500, 'database', 'Database unavailable');
   return NextResponse.json(view, { headers: { 'cache-control': 'no-store' } });
 }

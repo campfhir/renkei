@@ -14,15 +14,15 @@ export type { RepoChoice } from '@/lib/code/bitbucket-browse';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxWorkspacesEnabled(tenantId)))
+  if (!(await sandboxWorkspacesEnabled()))
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const search = request.nextUrl.searchParams;
   const listed = await listRepositories(
-    await bitbucketAuthFor(request, tenantId, session.subject),
+    await bitbucketAuthFor(request, session.subject),
     {
       workspace: (search.get('workspace') ?? '').trim() || undefined,
       project: (search.get('project') ?? '').trim() || undefined,

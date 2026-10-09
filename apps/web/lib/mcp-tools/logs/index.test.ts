@@ -91,7 +91,7 @@ test('fails closed without a Jira-linked account, never widening to the tenant',
 
 test('scopes the query to the caller’s own tenant and account, never a client-supplied one', async () => {
   mockQuery.mockResolvedValue({ ok: true, val: [] });
-  const handlers = registerAll({ tenantId: 'tenant-1', accountId: 'account-1' });
+  const handlers = registerAll({ accountId: 'account-1' });
 
   await handlers.get('log_search')!({});
 

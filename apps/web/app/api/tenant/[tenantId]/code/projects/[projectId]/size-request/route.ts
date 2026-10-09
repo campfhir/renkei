@@ -15,10 +15,10 @@ import { createSizeRequest, validReason, validRequestedBytes } from '@/lib/code/
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
@@ -27,11 +27,11 @@ export async function POST(
     'chat_project',
     projectId
   );
-  const project = access ? await getProjectRow(db, tenantId, projectId) : null;
+  const project = access ? await getProjectRow(db, projectId) : null;
   if (!project || project.kind !== 'code') return jsonError(404, 'not-found', 'No such project');
 
   const body = await readJsonBody(request);
-  const settings = await getOrgSettings(tenantId);
+  const settings = await getOrgSettings();
   if (!settings.ok) return jsonError(500, 'settings', 'Could not read org settings');
   const bytes = validRequestedBytes(body.requestedBytes, settings.val.sandboxWorkspaceMaxBytes);
   if (typeof bytes === 'string') return jsonError(400, 'bad-request', bytes);

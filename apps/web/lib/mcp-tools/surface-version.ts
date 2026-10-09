@@ -59,7 +59,6 @@ import type { DB } from '@renkei/db';
  */
 export async function toolSurfaceVersion(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<string> {
   try {

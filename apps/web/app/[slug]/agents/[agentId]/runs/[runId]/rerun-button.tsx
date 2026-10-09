@@ -36,7 +36,7 @@ export default function RerunButton({
     if (busy) return;
     setBusy(true);
     setError(null);
-    const result = await rerunAgentRun(tenantId, agentId, runId, confirm);
+    const result = await rerunAgentRun(agentId, runId, confirm);
     setBusy(false);
     switch (result.kind) {
       case 'needs-confirm':

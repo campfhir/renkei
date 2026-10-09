@@ -28,7 +28,7 @@ import { getOrigin } from '@/lib/get-origin';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; notificationId: string }> }
+  { params }: { params: Promise<{ notificationId: string }> }
 ): Promise<Response> {
   const { notificationId } = await params;
 
@@ -44,9 +44,9 @@ export async function GET(
   if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
   const origin = originResult.val;
 
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
-    return NextResponse.redirect(new URL(signInUrl(tenantId, request.nextUrl.pathname), origin));
+    return NextResponse.redirect(new URL(signInUrl(request.nextUrl.pathname), origin));
   }
   if (!isUuid(notificationId)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -61,7 +61,7 @@ export async function GET(
       .where('subject', '=', session.subject)
       .where('id', '=', notificationId)
       .executeTakeFirst(),
-    db.selectFrom('tenants').select('slug').where('id', '=', tenantId).executeTakeFirst(),
+    db.selectFrom('tenants').select('slug').where('id', '=').executeTakeFirst(),
   ]);
   if (!row || !tenant) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -72,7 +72,7 @@ export async function GET(
     .where('read_at', 'is', null)
     .execute();
 
-  const prefs = await getNotificationPrefs(tenantId, session.subject, { fresh: true });
+  const prefs = await getNotificationPrefs(session.subject, { fresh: true });
   const target = notificationTarget(
     tenant.slug,
     {

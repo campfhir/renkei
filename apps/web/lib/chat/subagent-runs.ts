@@ -259,7 +259,6 @@ export async function interruptSubagentRunsOfTurn(db: Kysely<DB>, turnId: string
 /** One run by the call that made it, as the browser sees it; null when there is none. */
 export async function getSubagentRunByCall(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   toolUseId: string,
   cipher: ContentCipher
@@ -305,7 +304,7 @@ export async function getSubagentRunByCall(
 /** The recorder over the real table and the turn's stream (start-turn.ts wires it). */
 export function createSubagentRecorder(
   db: Kysely<DB>,
-  scope: { tenantId: string; chatId: string; turnId: string; cipher: ContentCipher },
+  scope: { chatId: string; turnId: string; cipher: ContentCipher },
   emit: (event: {
     toolUseId: string;
     status: SubagentRunStatus;

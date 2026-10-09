@@ -11,7 +11,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
-export default function ImportAgentButton({ slug }: { slug: string; tenantId: string }) {
+export default function ImportAgentButton({ slug }: { slug: string; }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const importAnchor = useCoachAnchor('agents-import');

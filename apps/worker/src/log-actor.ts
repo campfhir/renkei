@@ -22,11 +22,10 @@ function fallback(id: string | null | undefined): Actor {
 /** The Renkei user behind an OIDC subject. Never throws. */
 export async function actorForSubject(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string | null | undefined
 ): Promise<Actor> {
   try {
-    return await describeActor(db, tenantId, subject);
+    return await describeActor(db, subject);
   } catch {
     return fallback(subject);
   }
@@ -35,11 +34,10 @@ export async function actorForSubject(
 /** The Renkei user behind a provider account id. Never throws. */
 export async function actorForAccount(
   db: Kysely<DB>,
-  tenantId: string,
   accountId: string | null | undefined
 ): Promise<Actor> {
   try {
-    return await describeAccountActor(db, tenantId, accountId);
+    return await describeAccountActor(db, accountId);
   } catch {
     return fallback(accountId);
   }

@@ -94,7 +94,6 @@ function item(
 /** A project's name, kind and (for a code project) checkout branch, by id. */
 async function projectMapFor(
   db: Kysely<DB>,
-  tenantId: string,
   projects: Awaited<ReturnType<typeof listProjectsById>>
 ): Promise<
   Map<
@@ -123,7 +122,6 @@ async function projectMapFor(
 
 async function namesFor(
   db: Kysely<DB>,
-  tenantId: string,
   subjects: string[]
 ): Promise<Map<string, string | null>> {
   const unique = [...new Set(subjects)];
@@ -144,35 +142,34 @@ async function namesFor(
  */
 export async function loadChatSidebar(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   options: { since?: Date } = {}
 ): Promise<ChatSidebarData> {
   const { since } = options;
   const [owned, grants, projectIds] = await Promise.all([
     // Archived chats ride along, flagged; the list hides them by default.
-    listOwnedChats(db, tenantId, subject, { includeArchived: true, ...(since ? { since } : {}) }),
-    listGrantedResources(db, tenantId, subject, 'chat'),
-    listAccessibleProjectIds(db, tenantId, subject),
+    listOwnedChats(db, subject, { includeArchived: true, ...(since ? { since } : {}) }),
+    listGrantedResources(db, subject, 'chat'),
+    listAccessibleProjectIds(db, subject),
   ]);
   const [grantedAll, inProjects, projects, moreOwned] = await Promise.all([
     listChatsById(
       db,
       grants.map((grant) => grant.resourceId)
     ),
-    listProjectChats(db, tenantId, projectIds, subject, since ? { since } : {}),
-    listProjectsById(db, tenantId, projectIds),
-    since ? hasOwnedChatBefore(db, tenantId, subject, since) : Promise.resolve(false),
+    listProjectChats(db, projectIds, subject, since ? { since } : {}),
+    listProjectsById(db, projectIds),
+    since ? hasOwnedChatBefore(db, subject, since) : Promise.resolve(false),
   ]);
   // listChatsById fetches by id, not by date, so the window is applied here.
   const granted = since ? grantedAll.filter((chat) => chat.updatedAt >= since) : grantedAll;
   const grantedIds = new Set(granted.map((chat) => chat.id));
-  const names = await namesFor(db, tenantId, [
+  const names = await namesFor(db, [
     ...granted.map((chat) => chat.ownerSubject),
     ...inProjects.map((chat) => chat.ownerSubject),
     ...projects.map((project) => project.ownerSubject),
   ]);
-  const projectsById = await projectMapFor(db, tenantId, projects);
+  const projectsById = await projectMapFor(db, projects);
   const projectOf = (chat: ChatRow) =>
     chat.projectId ? (projectsById.get(chat.projectId) ?? null) : null;
   // "+ New" creates its chat up front; one nothing was said in yet is not
@@ -215,24 +212,23 @@ export async function loadChatSidebar(
  */
 export async function loadMoreOwnedChats(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   before: Date
 ): Promise<{ chats: ChatListItem[]; nextBefore: string | null }> {
   const [rows, projectIds] = await Promise.all([
-    listOwnedChats(db, tenantId, subject, {
+    listOwnedChats(db, subject, {
       includeArchived: true,
       before,
       limit: CHAT_SIDEBAR_PAGE_SIZE + 1,
     }),
-    listAccessibleProjectIds(db, tenantId, subject),
+    listAccessibleProjectIds(db, subject),
   ]);
   const hasMore = rows.length > CHAT_SIDEBAR_PAGE_SIZE;
   const page = (hasMore ? rows.slice(0, CHAT_SIDEBAR_PAGE_SIZE) : rows).filter(
     (chat) => chat.lastMessageAt !== null
   );
-  const projects = await listProjectsById(db, tenantId, projectIds);
-  const projectsById = await projectMapFor(db, tenantId, projects);
+  const projects = await listProjectsById(db, projectIds);
+  const projectsById = await projectMapFor(db, projects);
   const chats = page.map((chat) =>
     item(chat, 'owner', null, chat.projectId ? (projectsById.get(chat.projectId) ?? null) : null)
   );

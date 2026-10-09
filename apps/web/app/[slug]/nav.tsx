@@ -199,7 +199,7 @@ export default function AppNav({
         { href: `/chat/prompts`, label: 'Prompt libraries', icon: ICONS.promptLibrary },
         { href: `/chat/memory`, label: 'Memory', icon: ICONS.brain },
       ],
-      extra: chats ? <ChatList slug={slug} tenantId={tenantId} data={chats} /> : null,
+      extra: chats ? <ChatList slug={slug} data={chats} /> : null,
     },
   ];
 
@@ -273,7 +273,7 @@ export default function AppNav({
       await fetch('/api/auth/sign-out', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId }),
+        body: JSON.stringify({ }),
       });
     } finally {
       router.push('/');

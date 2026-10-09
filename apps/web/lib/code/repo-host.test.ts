@@ -1,7 +1,7 @@
 import { GITHUB, ATLASSIAN_BITBUCKET } from '@renkei/provider-grants';
 import { hostAdapterFor } from './repo-host';
 
-const context = { tenantId: 't1', subject: 'person@example.com', origin: 'https://example.test' };
+const context = { subject: 'person@example.com', origin: 'https://example.test' };
 
 describe('hostAdapterFor', () => {
   it('dispatches GitHub for the GITHUB provider-grants constant', () => {

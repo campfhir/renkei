@@ -58,17 +58,17 @@ export default function ThemeSync({
 
   useEffect(() => {
     if (mode === null) {
-      setCurrent(getStoredThemeMode(tenantId) ?? 'auto');
+      setCurrent(getStoredThemeMode() ?? 'auto');
       return;
     }
     // The saved preference wins, and the cache follows it so the inline
     // script agrees on the next full load. Only written when it differs:
     // the write also tells the other tabs, and there is nothing to tell.
-    if (getStoredThemeMode(tenantId) !== mode) setStoredThemeMode(tenantId, mode);
+    if (getStoredThemeMode() !== mode) setStoredThemeMode(mode);
     setCurrent(mode);
   }, [tenantId, mode]);
 
-  useEffect(() => subscribeStoredThemeMode(tenantId, setCurrent), [tenantId]);
+  useEffect(() => subscribeStoredThemeMode(setCurrent), [tenantId]);
 
   useEffect(() => {
     applyThemeMode(current);

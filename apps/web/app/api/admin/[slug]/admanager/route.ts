@@ -21,14 +21,14 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const instances = await listInstances(dbResult.val, tenant.id);
+  const instances = await listInstances(dbResult.val);
   if (!instances.ok) {
     return NextResponse.json({ error: 'Could not read instances' }, { status: 500 });
   }
@@ -46,7 +46,7 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const session = await checkAccess(tenant.id, [ROLE_OPERATOR]);
+  const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
@@ -67,7 +67,7 @@ export async function POST(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const created = await createInstance(dbResult.val, tenant.id, parsed.input);
+  const created = await createInstance(dbResult.val, parsed.input);
   if (!created.ok) {
     if (created.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'An instance with that name exists' }, { status: 409 });

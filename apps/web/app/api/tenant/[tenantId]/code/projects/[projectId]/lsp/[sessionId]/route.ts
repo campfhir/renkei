@@ -23,12 +23,12 @@ import { isUuid } from '@/lib/uuid';
 
 export const runtime = 'nodejs';
 
-type Params = { params: Promise<{ tenantId: string; projectId: string; sessionId: string }> };
+type Params = { params: Promise<{ projectId: string; sessionId: string }> };
 
 export async function POST(request: NextRequest, { params }: Params): Promise<Response> {
   const { projectId, sessionId } = await params;
   if (!isUuid(sessionId)) return jsonError(404, 'not-found', 'No such session.');
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const declared = Number(request.headers.get('content-length') ?? '0');
   if (declared > LSP_MESSAGE_MAX_BYTES)
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
   } catch {
     return jsonError(400, 'invalid', 'A message is JSON.');
   }
-  const sent = await sbLspSend(codeProjectTarget(tenantId, projectId), {
+  const sent = await sbLspSend(codeProjectTarget(projectId), {
     session: sessionId,
     message,
   });
@@ -57,14 +57,14 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
 export async function GET(request: NextRequest, { params }: Params): Promise<Response> {
   const { projectId, sessionId } = await params;
   if (!isUuid(sessionId)) return jsonError(404, 'not-found', 'No such session.');
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   // The worker's stream ends when this request does: the browser closing
   // the EventSource aborts the relay, which aborts the upstream.
   const controller = new AbortController();
   request.signal.addEventListener('abort', () => controller.abort());
   const events = await sbLspEvents(
-    codeProjectTarget(tenantId, projectId),
+    codeProjectTarget(projectId),
     { session: sessionId },
     controller.signal
   );
@@ -86,8 +86,8 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
 export async function DELETE(request: NextRequest, { params }: Params): Promise<Response> {
   const { projectId, sessionId } = await params;
   if (!isUuid(sessionId)) return jsonError(404, 'not-found', 'No such session.');
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
-  const closed = await sbLspClose(codeProjectTarget(tenantId, projectId), { session: sessionId });
+  const closed = await sbLspClose(codeProjectTarget(projectId), { session: sessionId });
   return NextResponse.json({ closed: closed.ok && closed.val });
 }

@@ -109,7 +109,7 @@ export default function VoiceMenu({
 
   useEffect(() => {
     if (!open || voices !== null) return;
-    void voiceClient.status(tenantId).then((result) => {
+    void voiceClient.status().then((result) => {
       if (!result.data) {
         setVoices([]);
         setVoicesError(result.error);
@@ -132,7 +132,7 @@ export default function VoiceMenu({
     [voices, prefs.voice]
   );
   // A sample plays through its own queue, after the reply's has been silenced.
-  const sample = useVoicePreview(tenantId, {
+  const sample = useVoicePreview({
     rate: prefs.rate,
     outputDevice: audioOutput,
     onBeforePlay: onStopReading,

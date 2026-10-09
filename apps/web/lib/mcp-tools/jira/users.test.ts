@@ -33,7 +33,7 @@ async function registerTools(payload: unknown): Promise<Map<string, ToolHandler>
     kind: 'oauth',
     fetch: (_scopes: unknown, path: string) => jiraFetchMock(path),
   } as unknown as JiraAuth;
-  await registerUserTools(server, { tenantId: 'tenant-1' } as unknown as MCPToolContext, auth);
+  await registerUserTools(server, { } as unknown as MCPToolContext, auth);
   return tools;
 }
 

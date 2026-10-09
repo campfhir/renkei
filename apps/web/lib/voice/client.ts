@@ -28,7 +28,7 @@ export interface SpeechRequest {
 /** The route's answer for a piece played as it arrives: raw samples, chunk by chunk. */
 export type SpeechStream = ReadableStream<Uint8Array>;
 
-const base = (tenantId: string) => `/api/voice`;
+const base = () => `/api/voice`;
 
 async function errorOf(response: Response, fallback: string): Promise<string> {
   const body: unknown = await response.json().catch(() => null);
@@ -40,16 +40,15 @@ async function errorOf(response: Response, fallback: string): Promise<string> {
 }
 
 export const voiceClient = {
-  status: (tenantId: string) => getJson<VoiceStatus>(base(tenantId)),
+  status: () => getJson<VoiceStatus>(base()),
 
   /** One piece of text as audio, whole (MP3). Aborting the signal drops the request. */
   synthesize: async (
-    tenantId: string,
     request: SpeechRequest,
     signal?: AbortSignal
   ): Promise<{ data: Blob | null; error: string | null }> => {
     try {
-      const response = await fetch(`${base(tenantId)}/speech`, {
+      const response = await fetch(`${base()}/speech`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...request, format: 'mp3' }),
@@ -74,12 +73,11 @@ export const voiceClient = {
    * rest. Aborting the signal drops the request and ends the stream.
    */
   synthesizeStream: async (
-    tenantId: string,
     request: SpeechRequest,
     signal?: AbortSignal
   ): Promise<{ data: SpeechStream | null; error: string | null }> => {
     try {
-      const response = await fetch(`${base(tenantId)}/speech`, {
+      const response = await fetch(`${base()}/speech`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...request, format: 'pcm' }),
@@ -104,7 +102,6 @@ export const voiceClient = {
    * one it was, the named language being the fallback.
    */
   transcribe: async (
-    tenantId: string,
     wav: ArrayBuffer,
     hearing: { locale: string | null; detectLanguage: boolean },
     signal?: AbortSignal
@@ -119,7 +116,7 @@ export const voiceClient = {
     const encoded = params.toString();
     const query = encoded ? `?${encoded}` : '';
     try {
-      const response = await fetch(`${base(tenantId)}/transcribe${query}`, {
+      const response = await fetch(`${base()}/transcribe${query}`, {
         method: 'POST',
         headers: { 'content-type': 'audio/wav' },
         body: wav,
@@ -143,7 +140,7 @@ export const voiceClient = {
   },
 
   /** Save this person's voice preferences (the whole document). */
-  savePrefs: (tenantId: string, prefs: VoicePrefs) =>
+  savePrefs: (prefs: VoicePrefs) =>
     sendJsonFull<{ voice: VoicePrefs }>(`/api/preferences`, 'PUT', {
       voice: prefs,
     }),

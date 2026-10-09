@@ -32,13 +32,13 @@ export async function GET(
   { params }: { params: Promise<{ slug: string; capabilityKey: string }> }
 ): Promise<NextResponse> {
   const { slug, capabilityKey } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   if (!knownKey(capabilityKey)) {
     return NextResponse.json({ error: 'Unknown connector' }, { status: 404 });
   }
-  const settings = await getOrgSettings(tenantRef.id);
+  const settings = await getOrgSettings();
   if (!settings.ok) {
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
@@ -50,7 +50,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string; capabilityKey: string }> }
 ): Promise<NextResponse> {
   const { slug, capabilityKey } = await params;
-  const session = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!knownKey(capabilityKey)) {
     return NextResponse.json({ error: 'Unknown connector' }, { status: 404 });
@@ -79,7 +79,7 @@ export async function PUT(
     return NextResponse.json({ error: 'A group value is too long' }, { status: 400 });
   }
 
-  const settings = await getOrgSettings(tenantRef.id);
+  const settings = await getOrgSettings();
   if (!settings.ok) {
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
@@ -89,13 +89,13 @@ export async function PUT(
   if (claimValues.length === 0) delete connectorAudiences[capabilityKey];
   else connectorAudiences[capabilityKey] = claimValues;
 
-  const saved = await setOrgSettings(tenantRef.id, { connectorAudiences });
+  const saved = await setOrgSettings({ connectorAudiences });
   if (!saved.ok) {
     return NextResponse.json({ error: 'Could not save org settings' }, { status: 500 });
   }
   // Org-wide: every cached catalog in the tenant may now be wrong about
   // which tools register for whom.
-  invalidateToolCatalogCache(tenantRef.id);
+  invalidateToolCatalogCache();
   recordAuditEvent({
     actorSubject: session.subject,
     action: 'connector.audience_updated',

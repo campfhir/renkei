@@ -12,9 +12,9 @@ export default async function NewBatchJobPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/batch-jobs/new`));
+    redirect(signInUrl(`/batch-jobs/new`));
   }
 
   return (
@@ -23,7 +23,7 @@ export default async function NewBatchJobPage({
         <BackLink href={`/batch-jobs`} label="Batch Jobs" />
         <h1 className="text-xl font-bold">New batch job</h1>
       </div>
-      <NewBatchJobForm slug={slug} tenantId={tenant.id} />
+      <NewBatchJobForm slug={slug} />
     </div>
   );
 }

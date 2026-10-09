@@ -18,15 +18,15 @@ import { isHistoryChat } from '@/lib/code/active-chat';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string }> }
+  { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
   const { chatId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, tenantId, session.subject, chatId);
+  const chat = await getChatForOwner(db, session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
-  const project = chat.projectId ? await getProjectRow(db, tenantId, chat.projectId) : null;
+  const project = chat.projectId ? await getProjectRow(db, chat.projectId) : null;
   if (!project || project.kind !== 'code')
     return jsonError(400, 'invalid', 'Only a code project’s chat keeps editor notes.');
   if (isHistoryChat(project, chat.id))

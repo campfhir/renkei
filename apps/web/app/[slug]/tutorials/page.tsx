@@ -27,15 +27,15 @@ export default async function TutorialsPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/tutorials`));
+  const session = await getSessionFromCookies();
+  if (!session) redirect(signInUrl(`/tutorials`));
   const isOperator = session.roles.includes(ROLE_OPERATOR);
 
   const dbResult = getDatabase();
   const [prefs, progress, orgSettings] = await Promise.all([
-    getCoachMarkPrefs(tenant.id, session.subject, { fresh: true }),
-    dbResult.ok ? listCoachMarkProgress(dbResult.val, tenant.id, session.subject) : [],
-    getOrgSettings(tenant.id),
+    getCoachMarkPrefs(session.subject, { fresh: true }),
+    dbResult.ok ? listCoachMarkProgress(dbResult.val, session.subject) : [],
+    getOrgSettings(),
   ]);
   // The org's switch is off: say so, and offer nothing — a Start button
   // that did nothing would be worse than no button.

@@ -78,7 +78,7 @@ async function nearbyMessagesOf(
  * which retries — and a database this handler cannot read is a database the
  * rest of the pipeline cannot use either.
  */
-async function wasSentByRenkei(tenantId: string, messageId: string): Promise<boolean> {
+async function wasSentByRenkei(messageId: string): Promise<boolean> {
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('database unavailable for the WebEx sent-message ledger');
   const row = await dbResult.val
@@ -104,7 +104,7 @@ export function createWebexUserMessageHandler(
     makeClient?: (auth: AuthedFetch) => Pick<WebexClient, 'getMessage' | 'listMessages'>;
     publish?: typeof publishDomainEvent;
     /** Injectable so a test can drive the loop guard without a database. */
-    wasSentByRenkei?: (tenantId: string, messageId: string) => Promise<boolean>;
+    wasSentByRenkei?: (messageId: string) => Promise<boolean>;
   } = {}
 ): EventHandler {
   const resolveAccess = deps.resolveAccess ?? resolveWebexUserAccessByAccount;
@@ -116,7 +116,7 @@ export function createWebexUserMessageHandler(
     const payload = payloadOf(event);
     if (!payload) throw new Error('webex user-message payload missing id/accountId');
 
-    const access = await resolveAccess(event.tenant_id, payload.accountId);
+    const access = await resolveAccess(payload.accountId);
     if (!access) {
       // Grant revoked or unreadable — nothing to act as. The registration
       // itself rots away via 404s on the receipt route.
@@ -137,7 +137,7 @@ export function createWebexUserMessageHandler(
     // Renkei itself posted (as this user) must not re-enter the pipeline
     // that may have posted it. Anything else — including messages the
     // watcher typed themselves — goes through.
-    if (await wasSent(event.tenant_id, message.id)) {
+    if (await wasSent(message.id)) {
       logger.debug('skipping a message Renkei sent: {messageId}', {
         component: 'webex/user-ingest',
         messageId: message.id,

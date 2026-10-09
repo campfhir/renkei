@@ -25,9 +25,9 @@ import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -118,9 +118,9 @@ export async function POST(
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -128,6 +128,6 @@ export async function GET(
 
   const requested = request.nextUrl.searchParams.get('agentId');
   const agentId = requested && isUuid(requested) ? requested : null;
-  const draft = await latestReadyDraft(dbResult.val, tenantId, session.subject, agentId);
+  const draft = await latestReadyDraft(dbResult.val, session.subject, agentId);
   return NextResponse.json({ draft });
 }

@@ -200,8 +200,8 @@ function fakeBrowser(): FakeBrowser {
   return browser;
 }
 
-const ALICE = { tenantId: 'tenant-1', subject: 'auth0|alice' };
-const BOB = { tenantId: 'tenant-1', subject: 'auth0|bob' };
+const ALICE = { subject: 'auth0|alice' };
+const BOB = { subject: 'auth0|bob' };
 const stubProxy = async () => ({ port: 1, close: async () => undefined });
 
 function build(overrides: Partial<ConstructorParameters<typeof BrowserSessions>[0]> = {}) {
@@ -239,7 +239,7 @@ async function expectBrowserError(
 /** A store two "replicas" (two managers) share, as the data volume would be. */
 function memoryStore(): BrowserStateStore & { files: Map<string, SavedBrowserState> } {
   const files = new Map<string, SavedBrowserState>();
-  const key = (target: { tenantId: string; subject: string }) =>
+  const key = (target: { subject: string }) =>
     `${target.tenantId}\n${target.subject}`;
   return {
     files,
@@ -1038,7 +1038,7 @@ describe('lifetime', () => {
     await sessions.snapshot(ALICE, 5000); // alice is now the more recent
     clock.now += 1000;
     await sessions.navigate(
-      { tenantId: 'tenant-1', subject: 'auth0|carol' },
+      { subject: 'auth0|carol' },
       'https://example.com/',
       5000
     );

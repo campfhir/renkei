@@ -10,8 +10,8 @@ import { join } from 'node:path';
 import { createSecretKeyStore, secretKeySealingKey } from './secret-key-store';
 
 const ROOT_KEY = Buffer.alloc(32, 5);
-const ALICE = { tenantId: 'tenant-1', subject: 'auth0|alice' };
-const BOB = { tenantId: 'tenant-1', subject: 'auth0|bob' };
+const ALICE = { subject: 'auth0|alice' };
+const BOB = { subject: 'auth0|bob' };
 const KEY = Buffer.from('0123456789abcdef0123456789abcdef');
 
 let root: string;

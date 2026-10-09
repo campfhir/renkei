@@ -17,8 +17,8 @@ import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromRequest } from '@/lib/session';
 import { clientFailure, fsReadFile, fsWriteFile } from '@/lib/file-shares/service-client';
 
-async function maxTransferBytes(tenantId: string): Promise<number> {
-  const settings = await getOrgSettings(tenantId);
+async function maxTransferBytes(): Promise<number> {
+  const settings = await getOrgSettings();
   return settings.ok ? settings.val.maxAttachmentBytes : 20_971_520;
 }
 
@@ -30,10 +30,10 @@ function dispositionName(path: string): string {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; shareId: string }> }
+  { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
   const { shareId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const path = request.nextUrl.searchParams.get('path') ?? '';
@@ -55,14 +55,14 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; shareId: string }> }
+  { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
   const { shareId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const path = request.nextUrl.searchParams.get('path') ?? '';
-  const limit = await maxTransferBytes(tenantId);
+  const limit = await maxTransferBytes();
   const declared = Number(request.headers.get('content-length') ?? '0');
   if (Number.isFinite(declared) && declared > limit) {
     return NextResponse.json({ error: `File exceeds the ${limit}-byte limit` }, { status: 413 });

@@ -41,7 +41,6 @@ function clip(text: string, max: number): string {
 
 export async function readUserMemory(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   options: { maxEntries?: number } = {}
 ): Promise<UserMemory> {
@@ -111,7 +110,6 @@ export async function appendUserMemory(
   // Memory is the person's alone: under their user key, never the
   // automation key, so nothing unattended reads it.
   const sealed = await delegateClient().sealForSubject(
-    input.tenantId,
     input.ownerSubject,
     [content],
     'session'
@@ -143,7 +141,6 @@ export async function appendUserMemory(
 
 export async function editUserMemory(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   id: string,
   content: string
@@ -168,7 +165,6 @@ export async function editUserMemory(
 
 export async function forgetUserMemory(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   target: { kind: 'all' } | { kind: 'entries'; ids: string[] }
 ): Promise<number> {

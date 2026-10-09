@@ -170,7 +170,7 @@ export function AgentsList({
   const runNow = async (agent: StoredAgent, confirm = false) => {
     setBusy(agent.id);
     setError(null);
-    const result = await invokeAgentRun(tenantId, agent.id, confirm);
+    const result = await invokeAgentRun(agent.id, confirm);
     setBusy(null);
     switch (result.kind) {
       case 'needs-confirm':
@@ -242,10 +242,10 @@ export function AgentsList({
                 Shared by {sharedInfo.sharedBy}
               </span>
             ) : (
-              <AccessCountBadge tenantId={tenantId} agentId={agent.id} />
+              <AccessCountBadge agentId={agent.id} />
             )}
           </span>
-          <AgentEnabledToggle tenantId={tenantId} agent={agent} onError={setError} />
+          <AgentEnabledToggle agent={agent} onError={setError} />
         </div>
 
         <p className="mt-1.5 break-words text-sm text-gray-600 dark:text-gray-400">

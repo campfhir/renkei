@@ -168,7 +168,7 @@ export function createKnowledgeIngestObjectHandler(): EventHandler {
     const provider = required(payload, 'provider');
     const refId = required(payload, 'refId');
 
-    const embedder = await resolveEmbeddingProvider(event.tenant_id);
+    const embedder = await resolveEmbeddingProvider();
     if (!embedder) {
       // The provider was configured when this event was enqueued and is gone
       // now — the org turned knowledge off. Never an error (embeddings.ts
@@ -181,7 +181,6 @@ export function createKnowledgeIngestObjectHandler(): EventHandler {
     }
 
     const ingested = await ingestObjectChunks(
-      event.tenant_id,
       embedder,
       {
         provider,
@@ -215,7 +214,7 @@ export function createKnowledgeIngestEmailHandler(): EventHandler {
     const ownerUpn = required(payload, 'ownerUpn');
     const rawRecord = rawRecordOfPayload(payload.raw);
 
-    const embedder = await resolveEmbeddingProvider(event.tenant_id);
+    const embedder = await resolveEmbeddingProvider();
     if (!embedder) {
       logger.info('knowledge layer off; ingest of {refId} dropped', {
         component: COMPONENT,
@@ -243,13 +242,12 @@ export function createKnowledgeIngestEmailHandler(): EventHandler {
     if (sanitized.action === 'excluded') {
       // Marketing, a duplicate, or the owner's own removal — if something
       // was indexed under an earlier classification, drop it.
-      const deleted = await deleteObjectChunks(event.tenant_id, provider, refId);
+      const deleted = await deleteObjectChunks(provider, refId);
       if (!deleted.ok) throw new Error(`could not delete excluded ${provider}/${refId}`);
       return;
     }
 
     const ingested = await ingestObjectChunks(
-      event.tenant_id,
       embedder,
       {
         provider,
@@ -280,7 +278,7 @@ export function createKnowledgeDeleteObjectHandler(): EventHandler {
     const payload = payloadOf(event);
     const provider = required(payload, 'provider');
     const refId = required(payload, 'refId');
-    const deleted = await deleteObjectChunks(event.tenant_id, provider, refId);
+    const deleted = await deleteObjectChunks(provider, refId);
     if (!deleted.ok) throw new Error(`could not delete ${provider}/${refId}`);
   };
 }
@@ -291,7 +289,7 @@ export function createKnowledgePurgePrefixHandler(): EventHandler {
     const payload = payloadOf(event);
     const provider = required(payload, 'provider');
     const refIdPrefix = required(payload, 'refIdPrefix');
-    const purged = await deleteObjectChunks(event.tenant_id, provider, refIdPrefix, {
+    const purged = await deleteObjectChunks(provider, refIdPrefix, {
       prefixOnly: true,
     });
     if (!purged.ok) throw new Error(`could not purge ${provider}/${refIdPrefix}*`);
@@ -323,18 +321,16 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
     const driveId = required(payload, 'driveId');
     const itemId = required(payload, 'itemId');
     const accountId = required(payload, 'accountId');
-    const tenantId = event.tenant_id;
-
-    const embedder = await resolveEmbeddingProvider(tenantId);
+    const embedder = await resolveEmbeddingProvider();
     if (!embedder) return; // knowledge layer off for this org
 
-    const access = await resolveMicrosoftAccess(tenantId, accountId);
+    const access = await resolveMicrosoftAccess(accountId);
     const downloaded = await graphDownload(access.auth, driveId, itemId);
     if (!downloaded.ok) {
       const status = downloaded.err.cause;
       if (status === 404) {
         // Deleted between the sync round and now. Tidy up rather than retry.
-        await deleteObjectChunks(tenantId, provider, refId);
+        await deleteObjectChunks(provider, refId);
         return;
       }
       if (status === 403 || downloaded.err.type === 'CONTENT_TOO_LARGE') {
@@ -380,7 +376,7 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
     // round skip a version that was never indexed.
     const cTag = str(downloaded.val.item.cTag) || str(payload.cTag);
 
-    const ingested = await ingestObjectChunks(tenantId, embedder, {
+    const ingested = await ingestObjectChunks(embedder, {
       provider,
       refId,
       // The document opens with its own name, the way a Confluence page
@@ -435,7 +431,6 @@ export function createKnowledgeReconcileDriveHandler(): EventHandler {
     const syncEpoch = required(payload, 'syncEpoch');
 
     const removed = await deleteStaleScopeChunks(
-      event.tenant_id,
       provider,
       { key: 'scopeKey', value: driveId },
       { key: 'syncEpoch', value: syncEpoch }
@@ -475,7 +470,7 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
     const accessSubject = str(payload.accessSubject);
     if (!query.trim() || !accessSubject) return; // nothing to search, or nobody to gate for
 
-    const embedder = await resolveEmbeddingProvider(event.tenant_id);
+    const embedder = await resolveEmbeddingProvider();
     if (!embedder) return;
 
     // The ACL gate verifies with the ACTING USER's own WebEx grant — there
@@ -492,7 +487,7 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
         [
           'webex',
           createWebexUserAccessVerifier(async (userEmail) => {
-            const access = await resolveLinkedWebexUserAccess(event.tenant_id, userEmail);
+            const access = await resolveLinkedWebexUserAccess(userEmail);
             return access ? new WebexClient(access.auth) : null;
           }),
         ],

@@ -84,7 +84,7 @@ describe('createSubagentRecorder', () => {
     const recorder = createSubagentRecorder(
       // The fake stands in for exactly the calls the recorder makes.
       db as never,
-      { tenantId: 't', chatId: 'c', turnId: 'turn', cipher: testCipher },
+      { chatId: 'c', turnId: 'turn', cipher: testCipher },
       (event) => events.push(event),
       (message) => logged.push(message)
     );

@@ -95,7 +95,7 @@ export default function RunLive({
             both — a rerun while it is still going would put two runs on
             the same message at once. */}
         {!isRunSettled(run.status) ? (
-          <CancelButton tenantId={tenantId} agentId={agentId} runId={runId} />
+          <CancelButton agentId={agentId} runId={runId} />
         ) : (
           <>
             {/* A failed run gets a third option beside rerun: pick THIS
@@ -104,7 +104,6 @@ export default function RunLive({
                 needs another go, with a word from the owner on how. */}
             {run.status === 'failed' ? (
               <ResumeButton
-                tenantId={tenantId}
                 agentId={agentId}
                 runId={runId}
                 agentName={agentName}
@@ -112,7 +111,6 @@ export default function RunLive({
               />
             ) : null}
             <RerunButton
-              tenantId={tenantId}
               slug={slug}
               agentId={agentId}
               runId={runId}
@@ -127,9 +125,9 @@ export default function RunLive({
             {pauseCard.summary}
           </p>
           {pauseCard.kind === 'question' ? (
-            <QuestionActions tenantId={tenantId} itemId={pauseCard.id} form={questionForm} />
+            <QuestionActions itemId={pauseCard.id} form={questionForm} />
           ) : (
-            <ApprovalActions tenantId={tenantId} itemId={pauseCard.id} />
+            <ApprovalActions itemId={pauseCard.id} />
           )}
         </div>
       ) : null}

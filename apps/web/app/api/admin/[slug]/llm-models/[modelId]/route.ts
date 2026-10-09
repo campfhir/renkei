@@ -20,7 +20,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string; modelId: string }> }
 ): Promise<NextResponse> {
   const { slug, modelId } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -100,7 +100,7 @@ export async function PUT(
     throw error;
   }
 
-  invalidateLlmCache(tenant.id);
+  invalidateLlmCache();
   return NextResponse.json({ id: modelId });
 }
 
@@ -109,7 +109,7 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string; modelId: string }> }
 ): Promise<NextResponse> {
   const { slug, modelId } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -124,6 +124,6 @@ export async function DELETE(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  invalidateLlmCache(tenant.id);
+  invalidateLlmCache();
   return NextResponse.json({ deleted: true });
 }

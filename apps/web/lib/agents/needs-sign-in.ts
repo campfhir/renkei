@@ -27,7 +27,6 @@ export const NEEDS_SIGN_IN = 'needs-sign-in';
 export async function resumeRunsNeedingSignIn(
   db: Kysely<DB>,
   producer: QueueProducer,
-  tenantId: string,
   ownerSubject: string
 ): Promise<number> {
   const rows = await db

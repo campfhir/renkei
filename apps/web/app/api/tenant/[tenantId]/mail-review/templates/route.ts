@@ -51,14 +51,14 @@ function parseMarkedFields(value: unknown): MarkedField[] | null {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
 
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
-  const emailResult = await getIdentityEmail(tenantId, session.subject);
+  const emailResult = await getIdentityEmail(session.subject);
   const userEmail = emailResult.ok ? emailResult.val : null;
   if (!userEmail) {
     return NextResponse.json(
@@ -87,7 +87,7 @@ export async function POST(
       : undefined;
 
   const segments = deriveTemplate(body.sample, markedFields);
-  const result = await saveTemplateVersion(tenantId, body.senderKey.trim(), segments, {
+  const result = await saveTemplateVersion(body.senderKey.trim(), segments, {
     matchThreshold,
     derivedByUpn: userEmail,
   });

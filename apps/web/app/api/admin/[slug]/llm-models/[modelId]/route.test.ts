@@ -223,7 +223,7 @@ describe('PUT .../llm-models/[modelId]', () => {
   });
 
   it('404s for a model outside this tenant', async () => {
-    const db = fakeDb([{ ...baseRow, tenant_id: 'other-tenant' }]);
+    const db = fakeDb([{ ...baseRow }]);
     mockGetDatabase.mockReturnValue(db);
 
     const response = await PUT(

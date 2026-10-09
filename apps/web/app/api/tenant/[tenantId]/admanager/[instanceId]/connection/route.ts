@@ -40,17 +40,17 @@ function carriesCredential(body: Record<string, unknown>): boolean {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; instanceId: string }> }
+  { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
   const { instanceId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const instance = await getInstance(db, tenantId, instanceId);
+  const instance = await getInstance(db, instanceId);
   if (!instance.ok) {
     return NextResponse.json({ error: 'Could not read the instance' }, { status: 500 });
   }
@@ -105,7 +105,7 @@ export async function POST(
 
   // Sealed under the connecting person's own key by the delegate — the one
   // process that holds a key; this one never derives it.
-  const sealed = await delegateClient().sealForSubject(tenantId, session.subject, [
+  const sealed = await delegateClient().sealForSubject(session.subject, [
     JSON.stringify(parsed.credentials),
   ]);
   if (!sealed.ok) {
@@ -119,7 +119,7 @@ export async function POST(
       : NextResponse.json({ error: 'Encryption key unavailable' }, { status: 503 });
   }
 
-  const stored = await upsertConnection(db, tenantId, instanceId, session.subject, {
+  const stored = await upsertConnection(db, instanceId, session.subject, {
     encryptedCredentials: sealed.val[0],
     technicianName: parsed.technicianName,
     permissions: parsed.permissions,
@@ -140,27 +140,27 @@ export async function POST(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; instanceId: string }> }
+  { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
   const { instanceId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const existing = await getConnection(dbResult.val, tenantId, instanceId, session.subject);
+  const existing = await getConnection(dbResult.val, instanceId, session.subject);
   if (!existing.ok) {
     return NextResponse.json({ error: 'Could not read the connection' }, { status: 500 });
   }
   if (!existing.val) return NextResponse.json({ error: 'Not connected' }, { status: 404 });
 
-  const deleted = await deleteConnection(dbResult.val, tenantId, instanceId, session.subject);
+  const deleted = await deleteConnection(dbResult.val, instanceId, session.subject);
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
 
-  const instance = await getInstance(dbResult.val, tenantId, instanceId);
+  const instance = await getInstance(dbResult.val, instanceId);
   recordAuditEvent({
     actorSubject: session.subject,
     action: 'admanager.disconnected',

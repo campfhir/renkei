@@ -123,7 +123,6 @@ export function openProjectInstructions(
 
 export async function getProjectRow(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string
 ): Promise<ProjectRow | null> {
   if (!isUuid(projectId)) return null;
@@ -137,7 +136,6 @@ export async function getProjectRow(
 
 export async function listOwnedProjects(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string
 ): Promise<ProjectRow[]> {
   const rows = await db
@@ -151,7 +149,6 @@ export async function listOwnedProjects(
 
 export async function listProjectsById(
   db: Kysely<DB>,
-  tenantId: string,
   projectIds: string[]
 ): Promise<ProjectRow[]> {
   const ids = projectIds.filter(isUuid);
@@ -237,7 +234,6 @@ export interface ProjectPatch {
  */
 export async function updateProject(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string,
   patch: ProjectPatch,
   cipher?: ContentCipher
@@ -281,7 +277,6 @@ export async function updateProject(
 
 export async function deleteProject(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   projectId: string
 ): Promise<boolean> {
@@ -298,7 +293,7 @@ export async function deleteProject(
       .where('resource_kind', '=', 'chat_project')
       .where('resource_id', '=', projectId)
       .execute();
-    await deleteKey(db, 'chat_project', tenantId, projectId);
+    await deleteKey(db, 'chat_project', projectId);
   }
   return deleted;
 }

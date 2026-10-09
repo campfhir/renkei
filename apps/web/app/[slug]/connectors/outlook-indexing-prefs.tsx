@@ -35,7 +35,7 @@ function noticeFor(on: boolean): string {
     : 'New mail no longer wakes your agents.';
 }
 
-export default function OutlookIndexingPrefs({ tenantId }: { tenantId: string }) {
+export default function OutlookIndexingPrefs({  }: { }) {
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);

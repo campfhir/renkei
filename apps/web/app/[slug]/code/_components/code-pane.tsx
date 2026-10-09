@@ -275,7 +275,6 @@ export default function CodePane({
       </h3>
       <RepoTree
         ref={repoTreeRef}
-        tenantId={tenantId}
         projectId={projectId}
         onOpen={openFile}
         selected={pane.active}

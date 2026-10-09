@@ -50,7 +50,7 @@ export default function EncryptionKeySection({
   const [typedCodes, setTypedCodes] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async () => {
-    const [next, key] = await Promise.all([fetchKeyStatus(tenantId), loadUserKey(tenantId)]);
+    const [next, key] = await Promise.all([fetchKeyStatus(), loadUserKey()]);
     if (next) setStatus(next);
     setDeviceHasKey(key !== null);
   }, [tenantId]);
@@ -60,14 +60,14 @@ export default function EncryptionKeySection({
   }, [refresh]);
 
   async function setWindow(days: number): Promise<void> {
-    const key = await loadUserKey(tenantId);
+    const key = await loadUserKey();
     if (!key) {
       setFailure('This device does not hold your key, so it cannot extend your agents.');
       return;
     }
     setBusy(true);
     setFailure(null);
-    const delegated = await delegateInBrowser(tenantId, status, key, { automationDays: days });
+    const delegated = await delegateInBrowser(status, key, { automationDays: days });
     setBusy(false);
     if (!delegated.ok) {
       setFailure(
@@ -86,7 +86,7 @@ export default function EncryptionKeySection({
   async function pauseAutomation(): Promise<void> {
     setBusy(true);
     setFailure(null);
-    const revoked = await revokeAutomationInBrowser(tenantId);
+    const revoked = await revokeAutomationInBrowser();
     setBusy(false);
     if (!revoked.ok) {
       setFailure(revoked.failure.error);
@@ -99,7 +99,7 @@ export default function EncryptionKeySection({
   async function rotate(): Promise<void> {
     setBusy(true);
     setFailure(null);
-    const rotated = await rotateInBrowser(tenantId, status, {
+    const rotated = await rotateInBrowser(status, {
       automationDays: status.automationDays,
     });
     setBusy(false);
@@ -119,7 +119,7 @@ export default function EncryptionKeySection({
   }
 
   async function forget(): Promise<void> {
-    await forgetUserKey(tenantId);
+    await forgetUserKey();
     setNotice(
       'This device no longer holds your key. Next time, type it or approve from another device.'
     );
@@ -127,8 +127,8 @@ export default function EncryptionKeySection({
   }
 
   async function confirmRevealed(): Promise<void> {
-    const key = await loadUserKey(tenantId);
-    if (key) await saveUserKey(tenantId, key, { acknowledged: true });
+    const key = await loadUserKey();
+    if (key) await saveUserKey(key, { acknowledged: true });
     setRevealed(null);
   }
 
@@ -136,7 +136,7 @@ export default function EncryptionKeySection({
     setBusy(true);
     setFailure(null);
     if (approve) {
-      const key = await loadUserKey(tenantId);
+      const key = await loadUserKey();
       if (!key) setFailure('This device does not hold your key, so it cannot share it.');
       else {
         const approved = await approveDeviceAsk(
@@ -147,7 +147,7 @@ export default function EncryptionKeySection({
         if (!approved.ok) setFailure(approved.failure.error);
       }
     } else {
-      await denyDeviceAsk(tenantId, requestId);
+      await denyDeviceAsk(requestId);
     }
     setBusy(false);
     await refresh();

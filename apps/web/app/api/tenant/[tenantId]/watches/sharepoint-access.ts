@@ -19,7 +19,6 @@ export interface SharePointAccess {
 
 /** The caller's Microsoft grant, or the sentence to show when there is none usable. */
 export async function resolveSharePointAccess(
-  tenantId: string,
   subject: string
 ): Promise<SharePointAccess | string> {
   const ref = { provider: MICROSOFT, subject };

@@ -27,7 +27,7 @@ export default async function MemoryPanel({
   // Sealed under the owner's automation key; opened through the delegate
   // (readAgentMemory). A key that is not available renders the chat's
   // locked-row marker rather than envelopes.
-  const memory = await readAgentMemory(dbResult.val, tenantId, agentId, {
+  const memory = await readAgentMemory(dbResult.val, agentId, {
     maxEntries: MAX_SHOWN_ENTRIES,
   });
   if (memory.unavailable) {
@@ -59,7 +59,7 @@ export default async function MemoryPanel({
   return (
     <div>
       <div className="mb-2 flex justify-end">
-        <ClearMemoryButton tenantId={tenantId} agentId={agentId} />
+        <ClearMemoryButton agentId={agentId} />
       </div>
 
       {summary ? (

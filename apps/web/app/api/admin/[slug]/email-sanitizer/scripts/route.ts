@@ -25,11 +25,11 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const scripts = await listCleanerScripts(tenantRef.id);
+  const scripts = await listCleanerScripts();
   if (!scripts.ok) {
     return NextResponse.json({ error: 'Could not read scripts' }, { status: 500 });
   }
@@ -41,7 +41,7 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -84,7 +84,7 @@ export async function POST(
   if (!valid.ok) return NextResponse.json({ error: valid.error }, { status: 422 });
 
   const appliesTo = parseContentKinds(payload.appliesTo);
-  const saved = await upsertCleanerScript(tenantRef.id, {
+  const saved = await upsertCleanerScript({
     ...(typeof payload.id === 'string' && payload.id ? { id: payload.id } : {}),
     name,
     script,

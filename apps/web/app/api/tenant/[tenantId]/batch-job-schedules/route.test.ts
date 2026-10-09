@@ -31,7 +31,7 @@ const { parseScheduleConfig } = jest.requireMock<{ parseScheduleConfig: jest.Moc
 const { nextRunAtFor } = jest.requireMock<{ nextRunAtFor: jest.Mock }>('@/lib/batch-jobs/schedule-next-run');
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
-const paramsOf = () => Promise.resolve({ tenantId: 'tenant-1' });
+const paramsOf = () => Promise.resolve({ });
 const SCHEDULE_CONFIG = { recurrences: [{ every: 'hour' }], timezone: 'UTC' };
 
 function reqOf(body: unknown): NextRequest {

@@ -193,9 +193,9 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   // No person is signed in for a resumed turn: the chat's rows are opened
   // and written as its owner (chat-keys.ts). A chat already gone leaves
   // the rows unopenable and the turn ends below either way.
-  const chat = await getChatRow(db, turn.tenantId, turn.chatId);
+  const chat = await getChatRow(db, turn.chatId);
   const cipher = chat ? await cipherAsOwner(db, 'chat', chat) : unavailableCipher('no-key');
-  const rows = await listTurnMessages(db, turn.tenantId, turn.id, cipher);
+  const rows = await listTurnMessages(db, turn.id, cipher);
   const seed = resumeSeedOf(rows, turn.startedAt);
   const plan = planResume(rows);
 
@@ -206,7 +206,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   if (plan.kind === 'finish') return end(plan.status, turn.error, seed);
 
   if (!chat) return end('interrupted', 'The chat is gone.', seed);
-  const llmResult = await resolveAgentLlm(db, turn.tenantId, turn.llmModelId);
+  const llmResult = await resolveAgentLlm(db, turn.llmModelId);
   if (!llmResult.ok) {
     return end(
       'failed',
@@ -218,8 +218,8 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   }
   const llm = llmResult.val;
   const roles =
-    turn.runner?.roles ?? (await latestSessionRoles(db, turn.tenantId, chat.ownerSubject));
-  const settingsResult = await getOrgSettings(turn.tenantId);
+    turn.runner?.roles ?? (await latestSessionRoles(db, chat.ownerSubject));
+  const settingsResult = await getOrgSettings();
 
   // Reconcile the rows to a state the loop can start from: a results row
   // for the calls cut off, the note, and a fresh row for the next reply.
@@ -294,7 +294,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
  */
 async function latestSessionRoles(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<string[]> {
   const row = await db

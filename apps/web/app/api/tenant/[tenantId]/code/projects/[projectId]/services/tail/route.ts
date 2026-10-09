@@ -15,12 +15,12 @@ import { codeProjectTarget } from '@/lib/code/scope';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
-  if (!(await sandboxServicesEnabled(tenantId))) {
+  if (!(await sandboxServicesEnabled())) {
     return jsonError(
       503,
       'unavailable',
@@ -29,7 +29,7 @@ export async function GET(
   }
   const since = request.nextUrl.searchParams.get('since');
   const lines = Number(request.nextUrl.searchParams.get('lines') ?? '');
-  const tailed = await sbServicesTail(codeProjectTarget(tenantId, projectId), {
+  const tailed = await sbServicesTail(codeProjectTarget(projectId), {
     ...(since ? { since } : {}),
     ...(Number.isFinite(lines) && lines > 0 ? { lines } : {}),
   });

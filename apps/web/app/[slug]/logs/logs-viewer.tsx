@@ -95,7 +95,7 @@ export default function LogsViewer({
   }) {
     const query = { expr, levels, range, sort, ...next };
     startTransition(async () => {
-      const result = await searchLogs(tenantId, {
+      const result = await searchLogs({
         expr: query.expr,
         levels: query.levels,
         start: query.range.start,
@@ -107,7 +107,7 @@ export default function LogsViewer({
       // rather than leaving a dead-end banner behind a filter change — the
       // server render of this page redirects for exactly the same verdict.
       if (result.signedOut) {
-        window.location.href = signInUrl(tenantId, `/logs`);
+        window.location.href = signInUrl(`/logs`);
         return;
       }
       setResult(result);
@@ -176,7 +176,7 @@ export default function LogsViewer({
           {signedOut && (
             <>
               {' '}
-              <a className="font-medium underline" href={signInUrl(tenantId, `/logs`)}>
+              <a className="font-medium underline" href={signInUrl(`/logs`)}>
                 Sign in again
               </a>
             </>

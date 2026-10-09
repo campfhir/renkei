@@ -193,7 +193,6 @@ export async function registerTemplateTools(
       if (reference) {
         const template = await findSpaceTemplate(
           dbResult.val,
-          context.tenantId,
           access.cloudId,
           reference
         );
@@ -209,7 +208,7 @@ export async function registerTemplateTools(
         );
       }
 
-      const templates = await listSpaceTemplates(dbResult.val, context.tenantId);
+      const templates = await listSpaceTemplates(dbResult.val);
       if (templates.length === 0) {
         return textResult(
           'No space templates yet. Save one from a space that is set up the way you want with ' +
@@ -249,12 +248,11 @@ export async function registerTemplateTools(
       const reference = typeof args.template === 'string' ? args.template.trim() : '';
       const template = await findSpaceTemplate(
         dbResult.val,
-        context.tenantId,
         access.cloudId,
         reference
       );
       if (!template) return errText(`No template is named “${reference}”.`);
-      const deleted = await deleteSpaceTemplate(dbResult.val, context.tenantId, template.id);
+      const deleted = await deleteSpaceTemplate(dbResult.val, template.id);
       return deleted
         ? textResult(`Deleted the template “${template.name}”. Nothing changed in Jira.`)
         : errText(`The template “${template.name}” could not be deleted.`);
@@ -283,7 +281,6 @@ export async function registerTemplateTools(
       const reference = typeof args.template === 'string' ? args.template.trim() : '';
       const template = await findSpaceTemplate(
         dbResult.val,
-        context.tenantId,
         access.cloudId,
         reference
       );

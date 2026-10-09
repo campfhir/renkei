@@ -15,7 +15,7 @@ import { SecretVault } from './secret-vault';
 
 const PASSPHRASE = 'correct horse battery staple';
 const FIELDS = { username: 'alice', password: 'hunter2!' };
-const ALICE = { tenantId: 'tenant-1', subject: 'auth0|alice' };
+const ALICE = { subject: 'auth0|alice' };
 
 describe('SecretVault', () => {
   it('unlocks only with the right passphrase and opens the fields while held', async () => {
@@ -84,7 +84,7 @@ describe('SecretVault', () => {
       expect(await there.unlockedUntil(ALICE, 's1')).toEqual(new Date(6_000));
       // Another owner's replica cannot open it under its own derivation.
       expect(
-        await there.open({ tenantId: 'tenant-1', subject: 'auth0|bob' }, 's1', sealed)
+        await there.open({ subject: 'auth0|bob' }, 's1', sealed)
       ).toBeNull();
       await here.unlock(ALICE, 's1', sealed, PASSPHRASE, clock.now + 5000);
       expect(await there.lock('s1')).toBe(true);

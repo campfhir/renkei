@@ -112,7 +112,6 @@ export interface InstanceWithConnection {
  */
 export async function listInstancesWithConnection(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<InstanceWithConnection[], StoreError>> {
   const rows = await wrapAsync(
@@ -157,10 +156,9 @@ export async function listInstancesWithConnection(
 /** The instances this subject has connected — what the tools list. */
 export async function listConnectedInstances(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<ConnectedInstance[], StoreError>> {
-  const all = await listInstancesWithConnection(db, tenantId, subject);
+  const all = await listInstancesWithConnection(db, subject);
   if (!all.ok) return all;
   return ok(
     all.val.flatMap((entry) =>
@@ -172,7 +170,6 @@ export async function listConnectedInstances(
 /** One connection's exposure row (no credential), or null if not connected. */
 export async function getConnection(
   db: Kysely<DB>,
-  tenantId: string,
   instanceId: string,
   subject: string
 ): Promise<Result<InstanceConnection | null, StoreError>> {
@@ -194,7 +191,6 @@ export async function getConnection(
 /** The sealed credential for one connection — only the worker decrypts it. */
 export async function readConnectionCiphertext(
   db: Kysely<DB>,
-  tenantId: string,
   instanceId: string,
   subject: string
 ): Promise<Result<string | null, StoreError>> {
@@ -223,7 +219,6 @@ export interface ConnectionInput {
 /** Store or replace this subject's connection to an instance. */
 export async function upsertConnection(
   db: Kysely<DB>,
-  tenantId: string,
   instanceId: string,
   subject: string,
   input: ConnectionInput
@@ -257,7 +252,6 @@ export async function upsertConnection(
 /** Change only the permissions, keeping the stored credential. */
 export async function updateConnectionPermissions(
   db: Kysely<DB>,
-  tenantId: string,
   instanceId: string,
   subject: string,
   permissions: readonly AdManagerPermission[]
@@ -279,7 +273,6 @@ export async function updateConnectionPermissions(
 /** Remove this subject's connection (credential included). */
 export async function deleteConnection(
   db: Kysely<DB>,
-  tenantId: string,
   instanceId: string,
   subject: string
 ): Promise<Result<boolean, StoreError>> {
@@ -312,7 +305,6 @@ export interface ToolExposure {
  */
 export async function resolveToolExposure(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<ToolExposure, StoreError>> {
   const rows = await wrapAsync(
@@ -355,8 +347,7 @@ function rowFromRaw(row: RawInstance & { created_at: Date; updated_at: Date }): 
 }
 
 export async function listInstances(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<Result<InstanceRow[], StoreError>> {
   const rows = await wrapAsync(
     () =>
@@ -373,7 +364,6 @@ export async function listInstances(
 
 export async function getInstance(
   db: Kysely<DB>,
-  tenantId: string,
   instanceId: string
 ): Promise<Result<InstanceRow | null, StoreError>> {
   const row = await wrapAsync(
@@ -419,7 +409,6 @@ function settingsFromInput(input: InstanceInput): Record<string, string> {
 
 export async function createInstance(
   db: Kysely<DB>,
-  tenantId: string,
   input: InstanceInput
 ): Promise<Result<string, StoreError | 'DUPLICATE_NAME'>> {
   const inserted = await wrapAsync(
@@ -448,7 +437,6 @@ export async function createInstance(
 
 export async function updateInstance(
   db: Kysely<DB>,
-  tenantId: string,
   instanceId: string,
   input: InstanceInput
 ): Promise<Result<boolean, StoreError | 'DUPLICATE_NAME'>> {
@@ -481,7 +469,6 @@ export async function updateInstance(
 
 export async function deleteInstance(
   db: Kysely<DB>,
-  tenantId: string,
   instanceId: string
 ): Promise<Result<boolean, StoreError>> {
   const deleted = await wrapAsync(

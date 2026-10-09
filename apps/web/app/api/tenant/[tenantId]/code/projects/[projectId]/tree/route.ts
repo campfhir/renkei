@@ -23,10 +23,10 @@ import { codeProjectTarget } from '@/lib/code/scope';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const access = await resolveResourceAccess(
@@ -36,14 +36,14 @@ export async function GET(
     projectId
   );
   if (!access) return jsonError(404, 'not-found', 'No such project');
-  const project = await getProjectRow(db, tenantId, projectId);
+  const project = await getProjectRow(db, projectId);
   if (!project || project.kind !== 'code' || !project.repo)
     return jsonError(404, 'not-found', 'No such project');
   const path = new URL(request.url).searchParams.get('path') ?? '';
 
-  const workspace = (await sandboxWorkspacesEnabled(tenantId)) ? await projectWorkspace(project) : null;
+  const workspace = (await sandboxWorkspacesEnabled()) ? await projectWorkspace(project) : null;
   if (workspace?.status === 'ready' && project.workspaceId) {
-    const listed = await sbWorkspaceLs(codeProjectTarget(tenantId, projectId), {
+    const listed = await sbWorkspaceLs(codeProjectTarget(projectId), {
       id: project.workspaceId,
       path,
     });
@@ -66,13 +66,13 @@ export async function GET(
   const isGitHub = project.repo.provider === GITHUB;
   const listed = isGitHub
     ? await listGitHubSource(
-        await githubAuthFor(request, tenantId, session.subject),
+        await githubAuthFor(request, session.subject),
         project.repo.fullName,
         project.repo.branch,
         path
       )
     : await listBitbucketSource(
-        await bitbucketAuthFor(request, tenantId, session.subject),
+        await bitbucketAuthFor(request, session.subject),
         project.repo.fullName,
         project.repo.branch,
         path

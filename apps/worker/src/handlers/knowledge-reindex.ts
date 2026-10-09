@@ -78,7 +78,7 @@ function storeFailure(message: string | undefined): string {
   return `the knowledge store could not be updated${message ? `: ${message}` : ''}`;
 }
 
-export function reindexOrderingKey(tenantId: string, runId: string): string {
+export function reindexOrderingKey(runId: string): string {
   return `reindex/${tenantId}/${runId}`;
 }
 
@@ -147,19 +147,19 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
 
     let outcome: BatchOutcome;
     if (kind === 'lexical') {
-      const batch = await reindexLexicalBatch(tenantId, key, BATCH_LIMIT.lexical);
+      const batch = await reindexLexicalBatch(key, BATCH_LIMIT.lexical);
       if (!batch.ok) {
         await fail(storeFailure(batch.err.message));
         return;
       }
       outcome = batch.val;
     } else if (kind === 'embed') {
-      const embedder = await resolveEmbeddingProvider(tenantId);
+      const embedder = await resolveEmbeddingProvider();
       if (!embedder) {
         await fail('no embedding provider is configured');
         return;
       }
-      const batch = await reembedBatch(tenantId, embedder, key, cursor, BATCH_LIMIT.embed);
+      const batch = await reembedBatch(embedder, key, cursor, BATCH_LIMIT.embed);
       if (!batch.ok) {
         if (batch.err.type === 'EMBEDDING_FAILED' && batch.err.cause === 429) {
           // Rate limited — nack for the queue's own retry/backoff rather
@@ -177,7 +177,7 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
       }
       outcome = batch.val;
     } else {
-      const extractor = await resolveKeywordExtractor(tenantId);
+      const extractor = await resolveKeywordExtractor();
       if (!extractor) {
         await fail('keyword enrichment is off, or the organization has no default model');
         return;
@@ -257,7 +257,7 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
         ...(outcome.cursor ? { cursor: outcome.cursor } : {}),
         ...(skip.size > 0 ? { skip: [...skip] } : {}),
       },
-      reindexOrderingKey(tenantId, runId),
+      reindexOrderingKey(runId),
       { strict: true }
     );
   };

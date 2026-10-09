@@ -116,7 +116,7 @@ const workspaceStore = jest.requireMock<Record<string, jest.Mock>>('./workspace-
 const envStore = jest.requireMock<Record<string, jest.Mock>>('./env-secrets-store');
 
 const API_KEY = 'test-worker-key';
-const TARGET = { tenantId: 'tenant-1', subject: 'code-project:p1' };
+const TARGET = { subject: 'code-project:p1' };
 const NETWORK = 'renkei-sandbox-services';
 const STORAGE_KEY = 'tenant-1/hash/ws-1';
 
@@ -751,7 +751,7 @@ describe('rules', () => {
 
   it('list, delete and restore go to the store', async () => {
     ruleStore.listImageRules.mockResolvedValue([]);
-    expect((await post(enabledBase, 'services/rules/list', { tenantId: 'tenant-1' })).json).toEqual(
+    expect((await post(enabledBase, 'services/rules/list', { })).json).toEqual(
       { rules: [] }
     );
     ruleStore.deleteImageRule.mockResolvedValue(false);
@@ -763,12 +763,12 @@ describe('rules', () => {
       ).status
     ).toBe(404);
     expect(
-      (await post(enabledBase, 'services/rules/delete', { tenantId: 'tenant-1', id: 'nope' }))
+      (await post(enabledBase, 'services/rules/delete', { id: 'nope' }))
         .status
     ).toBe(400);
     ruleStore.restoreDefaultImageRules.mockResolvedValue(3);
     expect(
-      (await post(enabledBase, 'services/rules/restore', { tenantId: 'tenant-1' })).json.added
+      (await post(enabledBase, 'services/rules/restore', { })).json.added
     ).toBe(3);
   });
 });

@@ -16,8 +16,8 @@ import {
 } from './browser-state';
 
 const KEY = Buffer.alloc(32, 7);
-const ALICE = { tenantId: 'tenant-1', subject: 'auth0|alice' };
-const BOB = { tenantId: 'tenant-1', subject: 'auth0|bob' };
+const ALICE = { subject: 'auth0|alice' };
+const BOB = { subject: 'auth0|bob' };
 
 const state = (url = 'https://example.com/inbox'): SavedBrowserState => ({
   url,

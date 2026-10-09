@@ -31,7 +31,7 @@ export default async function AdminAgentDetailPage({
   params: Promise<{ slug: string; agentId: string }>;
 }): Promise<React.ReactNode> {
   const { slug, agentId } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
@@ -39,13 +39,13 @@ export default async function AdminAgentDetailPage({
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
 
-  const agent = await getAgentForAdmin(db, tenant.id, agentId);
+  const agent = await getAgentForAdmin(db, agentId);
   if (!agent) notFound();
 
   const [tokenUsage, byModel, stepRows, stepsDoc, toolUsage] = await Promise.all([
-    getAgentTokenUsage(db, tenant.id, agentId),
-    getTokenUsageByModel(db, tenant.id, agentId),
-    getAgentTokenUsageByStep(db, tenant.id, agentId),
+    getAgentTokenUsage(db, agentId),
+    getTokenUsageByModel(db, agentId),
+    getAgentTokenUsageByStep(db, agentId),
     // Step NAMES only, to label the per-step rows; the definition itself
     // stays the owner's to read.
     db
@@ -53,7 +53,7 @@ export default async function AdminAgentDetailPage({
       .select('steps')
       .where('id', '=', agentId)
       .executeTakeFirst(),
-    getAgentToolUsage(db, tenant.id, agentId, TOOL_USAGE_WINDOW_DAYS),
+    getAgentToolUsage(db, agentId, TOOL_USAGE_WINDOW_DAYS),
   ]);
   const bySteps = labelStepUsage(stepsDoc?.steps, stepRows);
 

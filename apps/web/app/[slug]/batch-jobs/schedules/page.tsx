@@ -16,14 +16,14 @@ export default async function BatchJobSchedulesPage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/batch-jobs/schedules`));
+    redirect(signInUrl(`/batch-jobs/schedules`));
   }
 
   const dbResult = getDatabase();
   const schedules = dbResult.ok
-    ? await listSchedules(dbResult.val, tenant.id, session.subject)
+    ? await listSchedules(dbResult.val, session.subject)
     : [];
 
   return (

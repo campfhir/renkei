@@ -43,16 +43,16 @@ function problem(status: number, message: string): NextResponse {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; chatId: string; toolUseId: string }> }
+  { params }: { params: Promise<{ chatId: string; toolUseId: string }> }
 ): Promise<Response> {
   const { chatId, toolUseId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return problem(401, 'Sign in to see this mockup.');
   const { db, session } = ready.context;
-  const access = await resolveChatAccess(db, tenantId, session.subject, chatId);
+  const access = await resolveChatAccess(db, session.subject, chatId);
   if (!access) return problem(404, 'No such chat.');
 
-  const messages = await listMessages(db, tenantId, chatId, access.cipher);
+  const messages = await listMessages(db, chatId, access.cipher);
   for (const message of messages) {
     for (const block of toMessageView(message).blocks) {
       if (block.type !== 'tool_use' || block.id !== toolUseId) continue;

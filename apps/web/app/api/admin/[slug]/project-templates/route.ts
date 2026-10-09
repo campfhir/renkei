@@ -19,14 +19,14 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const templates = await listCodeProjectTemplates(dbResult.val, tenant.id);
+  const templates = await listCodeProjectTemplates(dbResult.val);
   return NextResponse.json({ templates });
 }
 
@@ -35,7 +35,7 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -46,7 +46,7 @@ export async function POST(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const created = await createCodeProjectTemplate(dbResult.val, tenant.id, parsed);
+  const created = await createCodeProjectTemplate(dbResult.val, parsed);
   if (!created.ok) {
     return NextResponse.json({ error: 'A template with that name exists' }, { status: 409 });
   }

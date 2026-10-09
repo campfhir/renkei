@@ -56,7 +56,7 @@ export function hashPath(path: string): string {
 /** A tool's caller as the trail names them: the owner's subject and the agent, if any. */
 export function phiActorOf(
   context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'agent'>
-): { tenantId: string; subject: string; agentId: string | null } | null {
+): { subject: string; agentId: string | null } | null {
   if (!context.subject) return null;
   return {
     subject: context.subject,
@@ -138,7 +138,6 @@ export interface PhiAccessEventRow {
 /** The trail for one person, newest first — the operator's view (admin API). */
 export async function listPhiAccessEvents(
   db: Kysely<DB>,
-  tenantId: string,
   options: { subject?: string; limit?: number; before?: Date } = {}
 ): Promise<PhiAccessEventRow[]> {
   let query = db

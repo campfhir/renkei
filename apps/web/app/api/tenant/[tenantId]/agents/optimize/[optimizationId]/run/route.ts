@@ -21,20 +21,20 @@ import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; optimizationId: string }> }
+  { params }: { params: Promise<{ optimizationId: string }> }
 ): Promise<NextResponse> {
   const { optimizationId } = await params;
 
   const token = getBearerToken(request);
   if (!token) return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
-  const record = await resolveAccessToken(token, tenantId, 'agent');
+  const record = await resolveAccessToken(token, 'agent');
   if (!record) return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const optimization = await getOptimization(db, tenantId, record.subject, optimizationId);
+  const optimization = await getOptimization(db, record.subject, optimizationId);
   if (!optimization) return NextResponse.json({ error: 'No such optimization' }, { status: 404 });
 
   if (!(await claimOptimization(db, optimizationId))) {
@@ -42,7 +42,7 @@ export async function POST(
   }
 
   try {
-    const agent = await getAgent(db, tenantId, record.subject, optimization.agentId);
+    const agent = await getAgent(db, record.subject, optimization.agentId);
     if (!agent) {
       await finishOptimization(db, optimizationId, {
         status: 'failed',

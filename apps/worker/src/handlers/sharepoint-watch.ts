@@ -88,7 +88,6 @@ function isContainer(entry: Record<string, unknown>): boolean {
 }
 
 export async function runDriveWatchSync(
-  tenantId: string,
   access: MicrosoftAccess,
   row: DriveWatchRow
 ): Promise<DriveSyncResult> {
@@ -266,7 +265,7 @@ export async function runDriveWatchSync(
     .where('id', '=', row.id)
     .execute();
 
-  const actor = await actorForAccount(db, tenantId, row.account_id);
+  const actor = await actorForAccount(db, row.account_id);
   const fields = {
     component: COMPONENT,
     scope: row.scope_label ?? driveId,

@@ -26,7 +26,7 @@ const access: JiraAdminAccess = {
   // The delegate's fetcher stands in for the grant; the suite's global.fetch answers it.
   auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:tenant-1:acct-1'),
 };
-const scope = { tenantId: 'tenant-1', subject: 'subject-1' };
+const scope = { subject: 'subject-1' };
 
 let site: Record<string, [number, unknown]>;
 

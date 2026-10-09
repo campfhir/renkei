@@ -5,9 +5,9 @@ import { listChatModels } from '@/lib/chat/models';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  return NextResponse.json({ models: await listChatModels(ready.context.db, tenantId) });
+  return NextResponse.json({ models: await listChatModels(ready.context.db) });
 }

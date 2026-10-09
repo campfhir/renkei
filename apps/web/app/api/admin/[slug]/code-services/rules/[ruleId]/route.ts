@@ -16,10 +16,10 @@ import { parseImageRulePayload } from '@/lib/code/image-rules';
 import { isUuid } from '@/lib/uuid';
 
 async function operatorTenant(slug: string): Promise<{ id: string } | NextResponse> {
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (!(await sandboxServicesEnabled(tenant.id))) {
+  if (!(await sandboxServicesEnabled())) {
     return NextResponse.json(
       { error: 'Code project services are not enabled on this deployment', enabled: false },
       { status: 503 }
@@ -39,7 +39,7 @@ export async function PUT(
   const body: unknown = await request.json().catch(() => null);
   const parsed = parseImageRulePayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
-  const set = await sbImageRuleSet(tenant.id, { id: ruleId, ...parsed });
+  const set = await sbImageRuleSet({ id: ruleId, ...parsed });
   if (!set.ok) {
     const failure = clientFailure(set.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });
@@ -55,7 +55,7 @@ export async function DELETE(
   const tenant = await operatorTenant(slug);
   if (tenant instanceof NextResponse) return tenant;
   if (!isUuid(ruleId)) return NextResponse.json({ error: 'Rule not found' }, { status: 404 });
-  const deleted = await sbImageRuleDelete(tenant.id, ruleId);
+  const deleted = await sbImageRuleDelete(ruleId);
   if (!deleted.ok) {
     const failure = clientFailure(deleted.err);
     return NextResponse.json({ error: failure.message }, { status: failure.status });

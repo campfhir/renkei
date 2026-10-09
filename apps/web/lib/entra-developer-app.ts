@@ -24,7 +24,6 @@ export { DEFAULT_ENTRA_DEVELOPER_SCOPES };
 
 /** The tenant's Entra Developer app registration, or null when not (fully) configured. */
 export async function getEntraDeveloperApp(
-  tenantId: string,
   origin: string
 ): Promise<MicrosoftApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');

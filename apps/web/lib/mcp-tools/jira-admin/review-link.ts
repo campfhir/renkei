@@ -17,7 +17,7 @@ export async function reviewPrefix(context: MCPToolContext): Promise<string> {
     ? await dbResult.val
         .selectFrom('tenants')
         .select('slug')
-        .where('id', '=', context.tenantId)
+        .where('id', '=')
         .executeTakeFirst()
     : undefined;
   const base = context.origin || getPublicBaseUrl() || '';

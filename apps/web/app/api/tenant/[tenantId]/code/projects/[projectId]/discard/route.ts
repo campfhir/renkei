@@ -21,10 +21,10 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
+  const ready = await codeProjectContext(request, projectId, { write: true });
   if (!ready.ok) return ready.response;
   const { db, session, project } = ready.context;
   if (!project.workspaceId)
@@ -41,7 +41,7 @@ export async function POST(
     }
   }
 
-  const target = codeProjectTarget(tenantId, projectId);
+  const target = codeProjectTarget(projectId);
   const discarded = await sbWorkspaceGitDiscard(target, { id: project.workspaceId });
   if (!discarded.ok) {
     const failure = clientFailure(discarded.err);

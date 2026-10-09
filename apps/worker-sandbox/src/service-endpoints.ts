@@ -51,7 +51,7 @@ export interface ServiceHandlerDeps {
   /** The manager, when the engine answered at boot; null answers every verb 503. */
   manager: ServiceManager | null;
   /** Whether the organization has services on (its settings, with workspaces), asked per request. */
-  enabledFor: (tenantId: string) => Promise<boolean>;
+  enabledFor: () => Promise<boolean>;
 }
 
 type Body = Record<string, unknown>;
@@ -140,25 +140,25 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
   }
 
   async function handleRules(op: string, body: Body, response: ServerResponse): Promise<void> {
-    const tenantId = str(body.tenantId);
+    const tenantId = str();
     if (!tenantId) return sendError(response, 400, 'bad_request');
     switch (op) {
       case 'list':
         return sendJson(response, 200, {
-          rules: (await rules.listImageRules(db, tenantId)).map(ruleWire),
+          rules: (await rules.listImageRules(db)).map(ruleWire),
         });
       case 'restore': {
-        const added = await rules.restoreDefaultImageRules(db, tenantId);
+        const added = await rules.restoreDefaultImageRules(db);
         return sendJson(response, 200, {
           added,
-          rules: (await rules.listImageRules(db, tenantId)).map(ruleWire),
+          rules: (await rules.listImageRules(db)).map(ruleWire),
         });
       }
       case 'delete': {
         const id = str(body.id);
         if (!UUID_PATTERN.test(id))
           return sendError(response, 400, 'bad_request', 'A rule id is required.');
-        const deleted = await rules.deleteImageRule(db, tenantId, id);
+        const deleted = await rules.deleteImageRule(db, id);
         if (!deleted) return sendError(response, 404, 'not_found', 'No such rule.');
         return sendJson(response, 200, { deleted: true, id });
       }
@@ -222,7 +222,7 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
           if (!updated) return sendError(response, 404, 'not_found', 'No such rule.');
           return sendJson(response, 200, { rule: ruleWire(updated), dropped: normalized.dropped });
         }
-        if ((await rules.countImageRules(db, tenantId)) >= IMAGE_RULE_MAX_PER_TENANT) {
+        if ((await rules.countImageRules(db)) >= IMAGE_RULE_MAX_PER_TENANT) {
           return sendError(
             response,
             429,
@@ -246,9 +246,9 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
   async function handleServices(op: string, body: Body, response: ServerResponse): Promise<void> {
     const manager = deps.manager;
     if (!manager) return unavailable(response, 'deployment');
-    const tenantId = str(body.tenantId);
+    const tenantId = str();
     if (!tenantId) return sendError(response, 400, 'bad_request');
-    if (!(await deps.enabledFor(tenantId))) return unavailable(response, 'organization');
+    if (!(await deps.enabledFor())) return unavailable(response, 'organization');
     if (op.startsWith('rules/')) {
       return guarded(response, () => handleRules(op.slice('rules/'.length), body, response));
     }

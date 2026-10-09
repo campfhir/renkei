@@ -20,14 +20,14 @@ export const runtime = 'nodejs';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; attachmentId: string }> }
+  { params }: { params: Promise<{ attachmentId: string }> }
 ): Promise<Response> {
   const { attachmentId } = await params;
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const row = await getAttachment(db, tenantId, attachmentId);
-  if (!row || !(await mayReadAttachment(db, tenantId, session.subject, row))) {
+  const row = await getAttachment(db, attachmentId);
+  if (!row || !(await mayReadAttachment(db, session.subject, row))) {
     return jsonError(404, 'not-found', 'No such file');
   }
 
@@ -39,7 +39,7 @@ export async function POST(
   const path = typeof body.path === 'string' && body.path.trim() ? body.path.trim() : '/';
   if (!shareId) return jsonError(400, 'invalid', 'Choose a share.');
 
-  const store = await resolveTenantBlobStore(tenantId);
+  const store = await resolveTenantBlobStore();
   if (!store.ok) return jsonError(503, 'uploads-off', 'The file store is not configured.');
   const object = await store.val.getObject(row.blobKey);
   if (!object.ok) return jsonError(502, 'store', 'The file could not be read.');

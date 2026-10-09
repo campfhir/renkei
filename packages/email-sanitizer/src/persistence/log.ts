@@ -89,7 +89,6 @@ export async function recordClassification(
  * right now", not "we processed one of these once".
  */
 export async function hasRecentDuplicate(
-  tenantId: string,
   contentHash: string,
   lookbackDays: number,
   scope: { ownerUpn: string; refId: string }
@@ -202,7 +201,6 @@ export interface OwnClassificationPage {
  * shared limit.
  */
 export async function listForOwner(
-  tenantId: string,
   ownerUpn: string,
   options: ListForOwnerOptions
 ): Promise<Result<OwnClassificationPage, 'DB_ERROR'>> {
@@ -244,7 +242,6 @@ export type CategoryCounts = Record<EmailCategory, number>;
 
 /** How many of the caller's own messages fall in each category — drives the group tabs' counts. */
 export async function countByCategoryForOwner(
-  tenantId: string,
   ownerUpn: string
 ): Promise<Result<CategoryCounts, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -285,7 +282,6 @@ export async function countByCategoryForOwner(
  * row would itself leak information.
  */
 export async function getOwnRow(
-  tenantId: string,
   ownerUpn: string,
   refId: string
 ): Promise<Result<OwnClassificationRow | null, 'DB_ERROR'>> {
@@ -315,7 +311,6 @@ export interface SetOverrideInput {
 
 /** Record the owner's correction. The caller (a worker event handler) applies it on reprocessing. */
 export async function setOverride(
-  tenantId: string,
   ownerUpn: string,
   refId: string,
   override: SetOverrideInput

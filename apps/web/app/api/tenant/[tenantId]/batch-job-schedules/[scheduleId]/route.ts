@@ -29,16 +29,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; scheduleId: string }> }
+  { params }: { params: Promise<{ scheduleId: string }> }
 ): Promise<NextResponse> {
   const { scheduleId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const schedule = await getSchedule(dbResult.val, scheduleId, tenantId);
+  const schedule = await getSchedule(dbResult.val, scheduleId);
   if (!schedule || schedule.subject !== session.subject) {
     return NextResponse.json({ error: 'Schedule not found' }, { status: 404 });
   }
@@ -59,16 +59,16 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; scheduleId: string }> }
+  { params }: { params: Promise<{ scheduleId: string }> }
 ): Promise<NextResponse> {
   const { scheduleId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const existing = await getSchedule(dbResult.val, scheduleId, tenantId);
+  const existing = await getSchedule(dbResult.val, scheduleId);
   if (!existing || existing.subject !== session.subject) {
     return NextResponse.json({ error: 'Schedule not found' }, { status: 404 });
   }
@@ -115,7 +115,7 @@ export async function PUT(
     }
     const afterProcessing = parseAfterProcessing(body.afterProcessing);
     if (!afterProcessing) return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
-    const shares = await listConnectedShares(dbResult.val, tenantId, session.subject);
+    const shares = await listConnectedShares(dbResult.val, session.subject);
     if (!shares.ok) return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
     const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
     if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
@@ -151,7 +151,7 @@ export async function PUT(
       return NextResponse.json({ error: 'The stored schedule is malformed; set scheduleConfig to fix it' }, { status: 400 });
     }
     try {
-      updates.nextRunAt = await nextRunAtFor(dbResult.val, tenantId, effectiveConfig);
+      updates.nextRunAt = await nextRunAtFor(dbResult.val, effectiveConfig);
     } catch {
       return NextResponse.json(
         { error: 'No next occurrence could be found for that schedule (check blackout dates).' },
@@ -161,7 +161,7 @@ export async function PUT(
   }
 
   try {
-    const updated = await updateSchedule(dbResult.val, scheduleId, tenantId, updates);
+    const updated = await updateSchedule(dbResult.val, scheduleId, updates);
     if (!updated) return NextResponse.json({ error: 'Schedule not found' }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -174,20 +174,20 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; scheduleId: string }> }
+  { params }: { params: Promise<{ scheduleId: string }> }
 ): Promise<NextResponse> {
   const { scheduleId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const existing = await getSchedule(dbResult.val, scheduleId, tenantId);
+  const existing = await getSchedule(dbResult.val, scheduleId);
   if (!existing || existing.subject !== session.subject) {
     return NextResponse.json({ error: 'Schedule not found' }, { status: 404 });
   }
 
-  await deleteSchedule(dbResult.val, scheduleId, tenantId);
+  await deleteSchedule(dbResult.val, scheduleId);
   return NextResponse.json({ ok: true });
 }

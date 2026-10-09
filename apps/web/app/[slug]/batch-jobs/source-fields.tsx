@@ -223,7 +223,6 @@ export default function SourceFields({
 
       {pickerOpen === 'source' && selectedShare ? (
         <FolderPicker
-          tenantId={tenantId}
           shareId={selectedShare.id}
           shareName={selectedShare.name}
           initialPath={path}
@@ -434,7 +433,6 @@ export default function SourceFields({
 
       {pickerOpen === 'destination' && destinationShare ? (
         <FolderPicker
-          tenantId={tenantId}
           shareId={destinationShare.id}
           shareName={destinationShare.name}
           initialPath={afterProcessing.path}

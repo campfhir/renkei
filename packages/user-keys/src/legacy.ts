@@ -54,14 +54,13 @@ export type LegacyKekError =
 /** The KEK a pre-enrollment row yields, for the one read that moves everything off it. */
 export function legacyKekOf(
   row: LegacyKeyRow,
-  tenantId: string,
   subject: string,
   passphrase?: string
 ): Result<Buffer, LegacyKekError> {
   const salt = Buffer.from(row.salt, 'base64');
   if (row.mode === 'own') {
     if (passphrase && row.verifier) {
-      const kek = deriveOwnKek(passphrase, salt, tenantId, subject);
+      const kek = deriveOwnKek(passphrase, salt, subject);
       return verifierMatches(kek, row.verifier) ? ok(kek) : err('WRONG_PASSPHRASE' as const);
     }
     const master = userKeyMaster();
@@ -75,13 +74,13 @@ export function legacyKekOf(
     }
     const unsealed = unwrapKey(
       row.sealed_kek,
-      deriveUnlockKey(master.val, salt, tenantId, subject)
+      deriveUnlockKey(master.val, salt, subject)
     );
     return unsealed.ok ? ok(unsealed.val) : err('KEY_LOCKED' as const);
   }
   const master = userKeyMaster();
   if (!master.ok) return err('MIGRATION_UNAVAILABLE' as const);
-  return ok(deriveUserKek(master.val, salt, tenantId, subject));
+  return ok(deriveUserKek(master.val, salt, subject));
 }
 
 /** Is the master present, so managed rows can still be moved? */
@@ -96,7 +95,6 @@ export function legacyMasterAvailable(): boolean {
  */
 export async function legacyManagedKek(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<{ key: Buffer; version: number }, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED'>> {
   const master = userKeyMaster();
@@ -113,7 +111,7 @@ export async function legacyManagedKek(
     .executeTakeFirstOrThrow();
   if (row.mode !== 'managed') return err('NOT_MANAGED' as const);
   return ok({
-    key: deriveUserKek(master.val, Buffer.from(row.salt, 'base64'), tenantId, subject),
+    key: deriveUserKek(master.val, Buffer.from(row.salt, 'base64'), subject),
     version: row.version,
   });
 }
@@ -121,11 +119,10 @@ export async function legacyManagedKek(
 /** The sweep's seal: a `uenc1:` value under the person's managed key. */
 export async function legacySealForSubject(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   plaintext: string
 ): Promise<Result<string, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED'>> {
-  const kek = await legacyManagedKek(db, tenantId, subject);
+  const kek = await legacyManagedKek(db, subject);
   if (!kek.ok) return kek;
   return ok(sealForUser(plaintext, kek.val.key));
 }
@@ -138,12 +135,12 @@ export async function legacySealForSubject(
  */
 export async function legacyEnsureResourceKey(
   db: Kysely<DB>,
-  ref: { tenantId: string; kind: string; resourceId: string },
+  ref: { kind: string; resourceId: string },
   ownerSubject: string
 ): Promise<
   Result<{ id: string; key: Buffer }, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED' | 'DECRYPTION_ERROR'>
 > {
-  const kek = await legacyManagedKek(db, ref.tenantId, ownerSubject);
+  const kek = await legacyManagedKek(db, ownerSubject);
   if (!kek.ok) return kek;
   const existing = await db
     .selectFrom('resource_keys as k')
@@ -185,11 +182,10 @@ export async function legacyEnsureResourceKey(
 export async function legacyShareResourceKey(
   db: Kysely<DB>,
   key: { id: string; key: Buffer },
-  tenantId: string,
   fromSubject: string,
   toSubject: string
 ): Promise<Result<void, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED'>> {
-  const kek = await legacyManagedKek(db, tenantId, toSubject);
+  const kek = await legacyManagedKek(db, toSubject);
   if (!kek.ok) return kek;
   await db
     .insertInto('resource_key_grants')

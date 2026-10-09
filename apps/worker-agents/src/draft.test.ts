@@ -73,7 +73,7 @@ describe('the draft job', () => {
 
     // Thrown so the queue retries — a token left valid for twenty minutes
     // after a failure is a credential nobody is tracking.
-    await expect(handler({ tenant_id: 't', payload: { draftId: 'd' } })).rejects.toThrow(
+    await expect(handler({ payload: { draftId: 'd' } })).rejects.toThrow(
       'HTTP 500'
     );
     expect(revokeRunToken).toHaveBeenCalledTimes(1);
@@ -88,7 +88,7 @@ describe('the draft job', () => {
       },
     });
 
-    expect(await handler({ tenant_id: 't', payload: { draftId: 'gone' } })).toBe('skipped');
+    expect(await handler({ payload: { draftId: 'gone' } })).toBe('skipped');
     expect(mintRunToken).not.toHaveBeenCalled();
   });
 
@@ -98,6 +98,6 @@ describe('the draft job', () => {
       webBaseUrl: 'http://web:3000',
     });
 
-    await expect(handler({ tenant_id: 't', payload: {} })).rejects.toThrow('missing draftId');
+    await expect(handler({ payload: {} })).rejects.toThrow('missing draftId');
   });
 });

@@ -2023,7 +2023,6 @@ async function completeDraftTurn(
  */
 async function reviewDraftConcerns(
   llm: ResolvedLlm,
-  tenantId: string,
   draft: DraftedAgent,
   guardrails: string | null,
   budgetMs: number
@@ -2122,7 +2121,7 @@ async function closeReviewGaps(context: {
   draft: DraftedAgent;
   draftRaw: string;
 }): Promise<DraftedAgent> {
-  const { llm, tenantId, deadline, messages } = context;
+  const { llm, deadline, messages } = context;
   let current = context.draft;
   let currentRaw = context.draftRaw;
   // The critic judges against the EFFECTIVE rules: the configured ones, or
@@ -2197,7 +2196,6 @@ async function closeReviewGaps(context: {
 
 export async function draftAgentFromProse(
   db: Kysely<DB>,
-  tenantId: string,
   text: string,
   tools: ToolDescriptor[],
   options: {
@@ -2238,7 +2236,7 @@ export async function draftAgentFromProse(
   // Guardrails proposals only fill an empty slot — the draft never
   // rewrites rules the owner already wrote (same posture as triggers).
   const offerGuardrails = guardrails === null;
-  const llmResult = await resolveAgentLlm(db, tenantId, null);
+  const llmResult = await resolveAgentLlm(db, null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization yet.' };
   }
@@ -2248,7 +2246,7 @@ export async function draftAgentFromProse(
   // drafting must offer and accept exactly what saving will, or a raised
   // limit lets an agent grow past 20 steps and then no revision of it can
   // ever parse.
-  const settings = await getOrgSettings(tenantId);
+  const settings = await getOrgSettings();
   const maxSteps = Math.max(1, settings.ok ? settings.val.agentMaxSteps : MAX_STEPS);
 
   const validTools = new Set(tools.filter((tool) => !tool.appOnly).map((tool) => tool.name));

@@ -34,7 +34,7 @@ function stubDb(tenantIds: string[], levels: Record<string, string> = {}): void 
             return chain;
           },
           execute: async () => {
-            const tenantId = String(filters.tenant_id);
+            const tenantId = String();
             return [...settingsRows.entries()]
               .filter(([key]) => key.startsWith(`${tenantId}:`))
               .map(([key, value]) => ({ key: key.split(':')[1], value }));

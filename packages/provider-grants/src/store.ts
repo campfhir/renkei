@@ -26,11 +26,10 @@ function readMetadata(metadata: unknown): Record<string, unknown> {
 /** A token as stored: under its owner's key. */
 export async function sealGrantToken(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   token: string
 ): Promise<Result<string, 'SEAL_ERROR'>> {
-  const sealed = await sealForSubject(db, tenantId, subject, token);
+  const sealed = await sealForSubject(db, subject, token);
   if (!sealed.ok) return err('SEAL_ERROR' as const, { message: sealed.err.type });
   return ok(sealed.val);
 }
@@ -43,29 +42,27 @@ export async function sealGrantToken(
  */
 async function openGrantToken(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string | null,
   stored: string
 ): Promise<Result<string, 'DECRYPTION_ERROR'>> {
   if (!subject) {
     return err('DECRYPTION_ERROR' as const, { message: 'grant has no owner, so no key' });
   }
-  const opened = await openForSubject(db, tenantId, subject, stored);
+  const opened = await openForSubject(db, subject, stored);
   if (!opened.ok) return err('DECRYPTION_ERROR' as const, { message: opened.err.type });
   return ok(opened.val);
 }
 
 export async function setGrant(
   provider: string,
-  tenantId: string,
   grant: NewProviderGrant
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
-  const sealedAccess = await sealGrantToken(db, tenantId, grant.subject, grant.accessToken);
-  const sealedRefresh = await sealGrantToken(db, tenantId, grant.subject, grant.refreshToken);
+  const sealedAccess = await sealGrantToken(db, grant.subject, grant.accessToken);
+  const sealedRefresh = await sealGrantToken(db, grant.subject, grant.refreshToken);
   if (!sealedAccess.ok || !sealedRefresh.ok) return err('DB_ERROR' as const);
   const encryptedAccessToken = sealedAccess.val;
   const encryptedRefreshToken = sealedRefresh.val;
@@ -127,7 +124,6 @@ export async function setGrant(
 
 export async function getGrant(
   provider: string,
-  tenantId: string,
   accountId: string
 ): Promise<Result<ProviderGrant | null, 'DB_ERROR' | 'DECRYPTION_ERROR'>> {
   const dbResult = getDatabase();
@@ -192,7 +188,6 @@ export async function getGrant(
 
 export async function deleteGrant(
   provider: string,
-  tenantId: string,
   accountId: string
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();

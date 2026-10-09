@@ -14,13 +14,13 @@ export default async function NewBatchJobSchedulePage({
 }): Promise<React.ReactNode> {
   const { slug } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/batch-jobs/schedules/new`));
+    redirect(signInUrl(`/batch-jobs/schedules/new`));
   }
 
   const dbResult = getDatabase();
-  const calendars = dbResult.ok ? await loadCalendarOptions(dbResult.val, tenant.id) : [];
+  const calendars = dbResult.ok ? await loadCalendarOptions(dbResult.val) : [];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -28,7 +28,7 @@ export default async function NewBatchJobSchedulePage({
         <BackLink href={`/batch-jobs/schedules`} label="Schedules" />
         <h1 className="text-xl font-bold">New schedule</h1>
       </div>
-      <NewScheduleForm slug={slug} tenantId={tenant.id} calendars={calendars} />
+      <NewScheduleForm slug={slug} calendars={calendars} />
     </div>
   );
 }

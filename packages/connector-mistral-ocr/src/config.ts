@@ -25,12 +25,11 @@ function str(value: unknown): string {
 export type ResolveMistralOcrError = 'unconfigured' | 'db_error';
 
 export async function resolveMistralOcrConfig(
-  tenantId: string
 ): Promise<{ ok: true; val: MistralOcrConfig } | { ok: false; err: ResolveMistralOcrError }> {
   const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!key.ok) return { ok: false, err: 'unconfigured' };
 
-  const configResult = await readConnectorConfigCached(tenantId, MISTRAL_OCR_CONNECTOR, key.val);
+  const configResult = await readConnectorConfigCached(MISTRAL_OCR_CONNECTOR, key.val);
   if (!configResult.ok) return { ok: false, err: 'db_error' };
 
   const config = configResult.val;

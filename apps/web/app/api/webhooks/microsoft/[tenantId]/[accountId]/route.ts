@@ -38,7 +38,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; accountId: string }> }
+  { params }: { params: Promise<{ accountId: string }> }
 ): Promise<NextResponse> {
   const { accountId } = await params;
 
@@ -46,7 +46,7 @@ export async function POST(
   // notifications, so there is no signature header to check the shape of
   // here; the per-notification clientState below is the credential, and
   // the body is bounded before it is parsed.
-  const verdict = checkWebhookLimit('microsoft', tenantId, request);
+  const verdict = checkWebhookLimit('microsoft', request);
   if (!verdict.allowed) return tooManyRequests(verdict);
 
   // Subscription-creation handshake: echo the token as text/plain, fast,

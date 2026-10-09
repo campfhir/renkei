@@ -120,7 +120,6 @@ const ZERO_ACTIVITY: OrgActivityTotals = {
 };
 
 export async function getOrgUsageReport(
-  tenantId: string,
   requestedPeriod?: string,
   requestedTimeZone?: string,
   includeAgentsInTopUsers = false,
@@ -157,9 +156,9 @@ export async function getOrgUsageReport(
     selectedImageUser: null,
   };
 
-  const session = await getSessionFromCookies(tenantId);
+  const session = await getSessionFromCookies();
   if (!session) return { ...empty, error: 'Sign in to see organization usage', signedOut: true };
-  if (!(await checkAccess(tenantId, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return { ...empty, error: 'Operator access required', forbidden: true };
   }
 
@@ -184,22 +183,22 @@ export async function getOrgUsageReport(
       image,
       imageUsers,
     ] = await Promise.all([
-      getSurfaceTokenTotals(db, tenantId, period, timeZone, subject),
-      getOrgActivityTotals(db, tenantId, period, timeZone, subject),
-      getOrgDailySeries(db, tenantId, period, timeZone, subject, seriesGranularity(period.days)),
+      getSurfaceTokenTotals(db, period, timeZone, subject),
+      getOrgActivityTotals(db, period, timeZone, subject),
+      getOrgDailySeries(db, period, timeZone, subject, seriesGranularity(period.days)),
       // Every spender, ranked: the top few are shown, and the selected
       // person's own rank is read off the same list.
-      getTopUsers(db, tenantId, period, timeZone, includeAgentsInTopUsers),
-      getTopAgentsByTokens(db, tenantId, period, timeZone, subject),
-      getMostEfficientAgents(db, tenantId, period, timeZone, 10, 3, subject),
-      getTopToolsOrg(db, tenantId, period, timeZone, subject),
-      getTokensByModel(db, tenantId, period, timeZone, subject),
-      listPeople(db, tenantId),
-      subject === null ? Promise.resolve(null) : getPersonProfile(db, tenantId, subject),
-      getVoiceTotals(db, tenantId, period, timeZone, subject),
-      getVoiceUsers(db, tenantId, period, timeZone),
-      getImageTotals(db, tenantId, period, timeZone, subject),
-      getImageUsers(db, tenantId, period, timeZone),
+      getTopUsers(db, period, timeZone, includeAgentsInTopUsers),
+      getTopAgentsByTokens(db, period, timeZone, subject),
+      getMostEfficientAgents(db, period, timeZone, 10, 3, subject),
+      getTopToolsOrg(db, period, timeZone, subject),
+      getTokensByModel(db, period, timeZone, subject),
+      listPeople(db),
+      subject === null ? Promise.resolve(null) : getPersonProfile(db, subject),
+      getVoiceTotals(db, period, timeZone, subject),
+      getVoiceUsers(db, period, timeZone),
+      getImageTotals(db, period, timeZone, subject),
+      getImageUsers(db, period, timeZone),
     ]);
     const now = new Date();
     const ranked = rankUsers(allUsers, subject, TOP_USERS);

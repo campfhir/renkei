@@ -21,17 +21,17 @@ import { missingScope, pipelinesProjectContext } from '@/lib/code/pipelines-acce
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const found = await pipelinesProjectContext(request, tenantId, projectId, { write: true });
+  const found = await pipelinesProjectContext(request, projectId, { write: true });
   if (!found.ok) return found.response;
   const { project, subject, scopes } = found.context;
   const needs = missingScope(scopes, PIPELINES_RUN_SCOPE);
   if (needs) return jsonError(403, 'scope', needs);
   const input = validateRunInput(await readJsonBody(request));
   if (!input.ok) return jsonError(400, 'invalid', input.message);
-  const auth = await bitbucketAuthFor(request, tenantId, subject);
+  const auth = await bitbucketAuthFor(request, subject);
   const started = await triggerPipeline(auth, project.repo.fullName, input.input);
   if (!started.ok) return jsonError(502, 'bitbucket', started.error);
   recordAuditEvent({

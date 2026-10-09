@@ -35,7 +35,6 @@ export interface PipelineTemplate {
 
 export async function listPipelineTemplates(
   db: Kysely<DB>,
-  tenantId: string,
   provider?: string
 ): Promise<PipelineTemplate[]> {
   let query = db
@@ -93,7 +92,6 @@ const UNIQUE_INDEX = 'idx_pipeline_templates_tenant_provider_name';
 
 export async function createPipelineTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   input: PipelineTemplateInput
 ): Promise<{ ok: true; id: string } | { ok: false; error: 'duplicate' }> {
   try {
@@ -118,7 +116,6 @@ export async function createPipelineTemplate(
 
 export async function updatePipelineTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   templateId: string,
   input: PipelineTemplateInput
 ): Promise<{ ok: true } | { ok: false; error: 'not-found' | 'duplicate' }> {
@@ -147,7 +144,6 @@ export async function updatePipelineTemplate(
 
 export async function deletePipelineTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   templateId: string
 ): Promise<boolean> {
   if (!isUuid(templateId)) return false;

@@ -16,23 +16,16 @@ import { getOrigin } from '@/lib/get-origin';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
-
-  const tenant = await db
-    .selectFrom('tenants')
-    .select('id')
-    .where('id', '=', tenantId)
-    .executeTakeFirst();
-
   // The resulting grant is bound to whoever completes this flow, so the
   // caller must already be signed in.
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json(
       { error: 'Not signed in', error_description: 'Sign in before connecting WebEx' },
@@ -44,7 +37,7 @@ export async function GET(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getWebexUserApp(tenantId, originResult.val);
+  const app = await getWebexUserApp(originResult.val);
   if (!app) {
     return NextResponse.json(
       { error: 'WebEx user integration not configured for this organization' },
@@ -97,5 +90,5 @@ export async function GET(
   authUrl.searchParams.append('state', state);
 
   // Bound to this browser: the callback requires the cookie this sets.
-  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), tenantId, state);
+  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
 }

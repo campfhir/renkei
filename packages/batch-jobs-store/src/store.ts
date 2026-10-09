@@ -148,8 +148,7 @@ export async function createBatch(db: Kysely<DB>, input: CreateBatchInput): Prom
 
 export async function getBatch(
   db: Kysely<DB>,
-  batchId: string,
-  tenantId: string
+  batchId: string
 ): Promise<BatchJobRow | undefined> {
   const row = await db
     .selectFrom('batch_jobs')
@@ -168,7 +167,6 @@ export interface ListBatchesOptions {
 
 export async function listBatches(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   options: ListBatchesOptions = {}
 ): Promise<BatchJobRow[]> {

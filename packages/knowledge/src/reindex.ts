@@ -75,7 +75,6 @@ function keywordsOf(value: unknown): string[] | null {
 }
 
 export async function reindexLexicalBatch(
-  tenantId: string | null,
   key: Buffer,
   limit: number
 ): Promise<Result<BatchOutcome, 'DB_ERROR'>> {
@@ -131,7 +130,6 @@ export async function reindexLexicalBatch(
 }
 
 export async function reembedBatch(
-  tenantId: string,
   embedder: EmbeddingProvider,
   key: Buffer,
   cursor: string | null,
@@ -207,7 +205,6 @@ export async function reembedBatch(
 const objectRef = sql<string>`regexp_replace(ref_id, '#[0-9]{4}$', '')`;
 
 export async function extractKeywordsBatch(
-  tenantId: string,
   extractor: KeywordExtractor,
   key: Buffer,
   limit: number,

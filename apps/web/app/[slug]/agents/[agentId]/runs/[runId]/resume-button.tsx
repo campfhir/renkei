@@ -49,7 +49,7 @@ export default function ResumeButton({
     if (busy || done) return;
     setBusy(true);
     setError(null);
-    const result = await resumeAgentRun(tenantId, agentId, runId, guidance, confirm);
+    const result = await resumeAgentRun(agentId, runId, guidance, confirm);
     setBusy(false);
     switch (result.kind) {
       case 'needs-confirm':

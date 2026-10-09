@@ -59,7 +59,7 @@ export default function ImageCard({
   const imgRef = useRef<HTMLImageElement>(null);
   // An image the server rendered (or the browser had cached) can finish
   // before React hydrates, and then onLoad never fires: ask the element.
-  const src = image ? chatClient.attachmentUrl(tenantId, image.id) : null;
+  const src = image ? chatClient.attachmentUrl(image.id) : null;
   useEffect(() => {
     const element = imgRef.current;
     if (!element || !element.complete) return;

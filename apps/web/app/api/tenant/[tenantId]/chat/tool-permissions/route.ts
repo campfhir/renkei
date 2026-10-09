@@ -16,11 +16,11 @@ import {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const prefs = await getChatToolPermissionPrefs(tenantId, ready.context.session.subject, {
+  const prefs = await getChatToolPermissionPrefs(ready.context.session.subject, {
     fresh: true,
   });
   return NextResponse.json(prefs);
@@ -28,9 +28,9 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const body = await readJsonBody(request);
   if (!Array.isArray(body.alwaysAllow) || !Array.isArray(body.alwaysDeny)) {
@@ -44,7 +44,7 @@ export async function PUT(
     alwaysAllow: body.alwaysAllow,
     alwaysDeny: body.alwaysDeny,
   });
-  const written = await setChatToolPermissionPrefs(tenantId, ready.context.session.subject, prefs);
+  const written = await setChatToolPermissionPrefs(ready.context.session.subject, prefs);
   if (!written.ok) return jsonError(500, 'save-failed', 'Could not save');
   return NextResponse.json(prefs);
 }

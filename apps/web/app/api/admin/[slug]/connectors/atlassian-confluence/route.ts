@@ -39,7 +39,7 @@ export async function GET(
   if (!tenantId) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   }
-  const access = await checkAccess(tenantId, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -83,7 +83,7 @@ export async function PUT(
   if (!tenantId) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   }
-  const access = await checkAccess(tenantId, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -140,7 +140,7 @@ export async function PUT(
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 
-  invalidateConnectorConfigCache(tenantId, ATLASSIAN_CONFLUENCE_CONNECTOR);
+  invalidateConnectorConfigCache(ATLASSIAN_CONFLUENCE_CONNECTOR);
   return NextResponse.json({
     connector: ATLASSIAN_CONFLUENCE_CONNECTOR,
     configured: true,

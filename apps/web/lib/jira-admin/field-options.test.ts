@@ -211,7 +211,7 @@ describe('applying against Jira', () => {
     // The delegate's fetcher stands in for the grant; the suite's global.fetch answers it.
     auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:tenant-1:acct-1'),
   };
-  const scope = { tenantId: 'tenant-1', subject: 'subject-1' };
+  const scope = { subject: 'subject-1' };
 
   let live: Record<string, unknown>[];
   let calls: { method: string; path: string; body: unknown }[];

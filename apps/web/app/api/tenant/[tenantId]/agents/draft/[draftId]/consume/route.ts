@@ -14,10 +14,10 @@ import { consumeDraft } from '@/lib/agents/draft-store';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; draftId: string }> }
+  { params }: { params: Promise<{ draftId: string }> }
 ): Promise<NextResponse> {
   const { draftId } = await params;
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -25,6 +25,6 @@ export async function POST(
 
   // Owner-scoped inside consumeDraft, so a draft id belonging to somebody
   // else is a no-op rather than an error that confirms the id exists.
-  await consumeDraft(dbResult.val, tenantId, session.subject, draftId);
+  await consumeDraft(dbResult.val, session.subject, draftId);
   return NextResponse.json({ ok: true });
 }

@@ -196,7 +196,6 @@ function likePattern(q: string): string {
 
 export async function listRunsForOwner(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string,
   options: {
@@ -260,14 +259,13 @@ const FAILED_RESUME_GUIDANCE = sql<string | null>`
  * pass through as they are.
  */
 async function openAttemptDetails<T extends { detail: Json | null }>(
-  tenantId: string,
   ownerSubject: string,
   rows: T[]
 ): Promise<T[]> {
   const envelopes = rows.map((row) => sealedDetailOf(row.detail));
   const stored = envelopes.flatMap((envelope) => (envelope === null ? [] : [envelope]));
   if (stored.length === 0) return rows;
-  const opened = await delegateClient().openForSubject(tenantId, ownerSubject, stored);
+  const opened = await delegateClient().openForSubject(ownerSubject, stored);
   const marker = opened.ok
     ? unavailableMarker('failed')
     : unavailableMarker(unavailableReasonOf(opened.err.type));
@@ -319,7 +317,7 @@ async function runDetail(
   const contentRows =
     audience === 'owner' ? storedRows : storedRows.filter((row) => row.status === 'failed');
   const openedById = new Map(
-    (await openAttemptDetails(runRow.tenant_id, runRow.owner_subject, contentRows)).map(
+    (await openAttemptDetails(runRow.owner_subject, contentRows)).map(
       (row) => [`${row.step_id}:${row.iteration}:${row.attempt}`, row.detail] as const
     )
   );
@@ -367,7 +365,6 @@ async function runDetail(
 
 export async function getRunForOwner(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string,
   runId: string
@@ -393,7 +390,6 @@ export async function getRunForOwner(
 /** Admin oversight: any agent's runs, statuses always, content on failures. */
 export async function listRunsForAdmin(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   options: { status?: RunStatus; q?: string; limit?: number } = {}
 ): Promise<RunSummary[]> {
@@ -428,7 +424,6 @@ export async function listRunsForAdmin(
 
 export async function getRunForAdmin(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   runId: string
 ): Promise<RunDetail | null> {
@@ -466,7 +461,6 @@ export interface AdminAgentDetail extends AdminAgentRow {
 /** One agent, for the admin detail page — the single-row sibling of listAgentsForAdmin. */
 export async function getAgentForAdmin(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<AdminAgentDetail | null> {
   if (!isUuid(agentId)) return null;
@@ -520,7 +514,6 @@ export async function getAgentForAdmin(
  */
 async function listAgentRows(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string | null
 ): Promise<AdminAgentRow[]> {
   let query = db
@@ -556,17 +549,15 @@ async function listAgentRows(
 }
 
 export async function listAgentsForAdmin(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<AdminAgentRow[]> {
-  return listAgentRows(db, tenantId, null);
+  return listAgentRows(db, null);
 }
 
 /** One person's own agents — the per-person view on Organization usage. */
 export async function listAgentsForOwner(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string
 ): Promise<AdminAgentRow[]> {
-  return listAgentRows(db, tenantId, ownerSubject);
+  return listAgentRows(db, ownerSubject);
 }

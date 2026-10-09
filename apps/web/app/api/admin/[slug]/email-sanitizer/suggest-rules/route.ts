@@ -15,14 +15,14 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
 
-  const result = await suggestSanitizerRules(dbResult.val, tenantRef.id);
+  const result = await suggestSanitizerRules(dbResult.val);
   if ('error' in result) return NextResponse.json({ error: result.error }, { status: 422 });
   return NextResponse.json({ suggestions: result.suggestions });
 }

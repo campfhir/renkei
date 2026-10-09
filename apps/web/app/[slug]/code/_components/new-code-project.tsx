@@ -205,7 +205,6 @@ export default function NewCodeProject({
               {repoMode === 'choose' ? (
                 <RepositoryBrowser
                   key={provider}
-                  tenantId={tenantId}
                   provider={provider}
                   enabled={connected}
                   onChoose={(repo) => {
@@ -220,7 +219,6 @@ export default function NewCodeProject({
               ) : (
                 <CreateRepository
                   key={provider}
-                  tenantId={tenantId}
                   provider={provider}
                   enabled={connected}
                   onCreated={(repo) => {
@@ -288,7 +286,6 @@ export default function NewCodeProject({
           </span>
           <div className="flex flex-wrap items-center gap-3">
             <ToolsPopover
-              tenantId={tenantId}
               selected={connectors}
               onChange={setConnectors}
               context="project"

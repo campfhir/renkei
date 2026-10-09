@@ -123,7 +123,6 @@ function ownedBy(column: string, ownerSubject: string | null) {
  */
 export async function getSurfaceTokenTotals(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null
@@ -180,7 +179,6 @@ export async function getSurfaceTokenTotals(
  */
 export async function getOrgActivityTotals(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null
@@ -241,7 +239,6 @@ export async function getOrgActivityTotals(
  */
 export async function getOrgDailySeries(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
@@ -401,7 +398,6 @@ export interface TopUserRow {
  */
 export async function getTopUsers(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   includeAgents: boolean,
@@ -465,7 +461,7 @@ export interface PersonOption {
 }
 
 /** Everyone who has signed in, for the person picker — names only. */
-export async function listPeople(db: Kysely<DB>, tenantId: string): Promise<PersonOption[]> {
+export async function listPeople(db: Kysely<DB>): Promise<PersonOption[]> {
   const rows = await db
     .selectFrom('identities')
     .select(['subject', 'display_name', 'email'])
@@ -491,7 +487,6 @@ export interface TopAgentRow {
  */
 export async function getTopAgentsByTokens(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
@@ -568,7 +563,6 @@ export interface EfficientAgentRow {
  */
 export async function getMostEfficientAgents(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   limit = 10,
@@ -629,7 +623,6 @@ export interface OrgToolRow {
  */
 export async function getTopToolsOrg(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
@@ -680,7 +673,6 @@ export interface ModelTokenRow {
  */
 export async function getTokensByModel(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,

@@ -59,8 +59,8 @@ maybe('recordWidgetModelContext', () => {
         { id: modellessTenantId, slug: modellessTenantId },
       ])
       .execute();
-    await delegate.enroll(tenantId, me);
-    await delegate.enroll(modellessTenantId, me);
+    await delegate.enroll(me);
+    await delegate.enroll(me);
     await db
       .insertInto('llm_model_configs')
       .values({
@@ -199,7 +199,7 @@ maybe('chat widget decisions', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
-    await delegate.enroll(tenantId, me);
+    await delegate.enroll(me);
     await db
       .insertInto('chats')
       .values([
@@ -217,8 +217,8 @@ maybe('chat widget decisions', () => {
   });
 
   it('is absent until recorded', async () => {
-    expect(await getWidgetDecision(db, tenantId, stateKey)).toBeNull();
-    expect(await listWidgetDecisions(db, tenantId, chatId)).toEqual(new Map());
+    expect(await getWidgetDecision(db, stateKey)).toBeNull();
+    expect(await listWidgetDecisions(db, chatId)).toEqual(new Map());
   });
 
   it('records a decision, readable by its own key and by its chat', async () => {
@@ -236,13 +236,13 @@ maybe('chat widget decisions', () => {
     });
     expect(recorded).toEqual({ ok: true });
 
-    expect(await getWidgetDecision(db, tenantId, stateKey)).toEqual({
+    expect(await getWidgetDecision(db, stateKey)).toEqual({
       icon: 'sent',
       headline: 'Created issue OPS-1.',
       detail: 'OPS · Task',
       links: [{ label: 'Open in Jira', href: 'https://example.atlassian.net/browse/OPS-1' }],
     });
-    expect(await listWidgetDecisions(db, tenantId, chatId)).toEqual(
+    expect(await listWidgetDecisions(db, chatId)).toEqual(
       new Map([
         [
           stateKey,
@@ -256,7 +256,7 @@ maybe('chat widget decisions', () => {
       ])
     );
     // A different chat in the same tenant never sees another chat's card.
-    expect(await listWidgetDecisions(db, tenantId, otherChatId)).toEqual(new Map());
+    expect(await listWidgetDecisions(db, otherChatId)).toEqual(new Map());
   });
 
   it('keeps the first decision when a second is reported for the same key', async () => {
@@ -272,7 +272,7 @@ maybe('chat widget decisions', () => {
       state: { icon: 'cancelled', headline: 'Cancelled' },
     });
     expect(recorded).toEqual({ ok: true });
-    expect(await getWidgetDecision(db, tenantId, stateKey)).toMatchObject({
+    expect(await getWidgetDecision(db, stateKey)).toMatchObject({
       icon: 'sent',
       headline: 'Created issue OPS-1.',
     });
@@ -310,7 +310,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
     if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
     await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
-    await delegate.enroll(tenantId, me);
+    await delegate.enroll(me);
     await db
       .insertInto('llm_model_configs')
       .values({
@@ -346,7 +346,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
       role: 'assistant',
       kind: 'assistant',
       status: 'complete',
-      cipher: await chatCipherById(db, tenantId, chatId),
+      cipher: await chatCipherById(db, chatId),
       blocks: [
         { type: 'text', text: 'Two role assignments to review.' },
         { type: 'tool_use', id: toolUseIdA, name: 'entra_assign_app_role_preview', input: {} },
@@ -359,7 +359,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
-      cipher: await chatCipherById(db, tenantId, chatId),
+      cipher: await chatCipherById(db, chatId),
       blocks: [
         {
           type: 'tool_result',

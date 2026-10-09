@@ -38,7 +38,7 @@ function stubDb(): FakeStore {
       execute: async () => {
         store.selects += 1;
         return [...store.tenantRows.entries()]
-          .filter(([key]) => key.startsWith(`${String(filters.tenant_id)}:`))
+          .filter(([key]) => key.startsWith(`${String()}:`))
           .map(([key, value]) => ({ key: key.split(':')[1], value }));
       },
       executeTakeFirst: async () => {
@@ -60,7 +60,7 @@ function stubDb(): FakeStore {
             execute: async () => {
               const value = JSON.parse(String(row.value));
               if (table === 'tenant_settings') {
-                store.tenantRows.set(`${String(row.tenant_id)}:${String(row.key)}`, value);
+                store.tenantRows.set(`${String()}:${String(row.key)}`, value);
               } else {
                 store.platformRows.set(String(row.key), value);
               }

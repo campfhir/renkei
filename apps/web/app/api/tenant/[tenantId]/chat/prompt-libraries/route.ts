@@ -10,12 +10,12 @@ import { createLibrary, listAccessibleLibraries, LIBRARY_NAME_MAX_CHARS } from '
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const libraries = await listAccessibleLibraries(db, tenantId, session.subject);
+  const libraries = await listAccessibleLibraries(db, session.subject);
   return NextResponse.json({
     libraries: libraries.map(({ library, role }) => ({
       id: library.id,
@@ -29,9 +29,9 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);

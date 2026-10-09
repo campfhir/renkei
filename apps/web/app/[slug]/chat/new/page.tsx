@@ -32,10 +32,10 @@ export default async function NewChatPage({
 }) {
   const { slug } = await params;
   const { project: requestedProjectId } = await searchParams;
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
     const query = requestedProjectId ? `?project=${encodeURIComponent(requestedProjectId)}` : '';
-    redirect(signInUrl(tenant.id, `/chat/new${query}`));
+    redirect(signInUrl(`/chat/new${query}`));
   }
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
@@ -47,7 +47,6 @@ export default async function NewChatPage({
   if (requestedProjectId && isUuid(requestedProjectId)) {
     const access = await resolveResourceAccess(
       db,
-      tenant.id,
       session.subject,
       'chat_project',
       requestedProjectId
@@ -66,7 +65,7 @@ export default async function NewChatPage({
   }
   const created = await createChatInProject(db, { ...input, projectId });
   if (created.ok) redirect(`/chat/${created.val}`);
-  const project = await getProjectRow(db, tenant.id, projectId);
+  const project = await getProjectRow(db, projectId);
   redirect(
     project?.activeChatId ? `/chat/${project.activeChatId}` : `/code/${projectId}`
   );

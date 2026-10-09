@@ -820,7 +820,6 @@ export function AgentBuilder({
           }
         >
           <TriggerEditor
-            tenantId={tenantId}
             trigger={selectedTrigger}
             otherAgents={otherAgents}
             calendars={calendars}

@@ -20,23 +20,23 @@ import { saveAgent } from '@/lib/agents/save';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const agents = await listAgents(dbResult.val, tenantId, session.subject);
+  const agents = await listAgents(dbResult.val, session.subject);
   return NextResponse.json({ agents });
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const dbResult = getDatabase();
@@ -49,7 +49,7 @@ export async function POST(
   // The summary is written AFTER the response: authoring must never wait
   // on a model. The builder polls the agent until description_status
   // resolves and shows a writing indicator meanwhile.
-  const result = await saveAgent(dbResult.val, tenantId, session.subject, parsed, {
+  const result = await saveAgent(dbResult.val, session.subject, parsed, {
     defer: after,
   });
   if (result.outcome === 'not-found') {

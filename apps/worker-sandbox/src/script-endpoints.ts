@@ -60,7 +60,7 @@ function sendError(response: ServerResponse, status: number, type: string, messa
 }
 
 function targetOf(body: Body): store.SandboxTarget | null {
-  const tenantId = str(body.tenantId);
+  const tenantId = str();
   const subject = str(body.subject);
   if (!tenantId || !subject) return null;
   return { subject };
@@ -90,7 +90,7 @@ export function createScriptHandlers(deps: ScriptHandlerDeps) {
     const decision = decideScriptsFor(
       deps.capability,
       deps.networkIsolation,
-      await deps.orgFeatures(target.tenantId)
+      await deps.orgFeatures()
     );
     const runner = deps.runner;
     if (!decision.serve || !runner) {

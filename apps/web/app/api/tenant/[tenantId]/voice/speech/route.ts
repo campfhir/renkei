@@ -40,9 +40,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ }> }
 ): Promise<Response> {
-  const session = await getSessionFromRequest(request, tenantId);
+  const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const verdict = checkInboundLimit(`voice/speech:${tenantId}:${session.subject}`, request, LIMITS);
@@ -64,7 +64,7 @@ export async function POST(
     );
   }
 
-  const resolved = await resolveVoiceProvider(tenantId);
+  const resolved = await resolveVoiceProvider();
   if (!resolved) {
     return NextResponse.json(
       { error: 'Voice is not configured for this organization.' },
@@ -78,7 +78,7 @@ export async function POST(
   // is waiting on (lib/voice/speech-queue.ts); MP3 for the rest.
   const format: SpeechFormat = body.format === 'pcm' ? 'pcm' : 'mp3';
   // A catalog that cannot be read leaves the voice as asked.
-  const catalog = await listVoicesCached(tenantId, resolved);
+  const catalog = await listVoicesCached(resolved);
   const voice = catalog.ok
     ? voiceForLocale(catalog.val, asked, resolved.config.defaultVoice, locale)
     : asked;

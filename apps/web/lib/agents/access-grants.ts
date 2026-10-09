@@ -60,11 +60,10 @@ const grantIso = (value: Date | null): string | null => (value ? value.toISOStri
  */
 export async function resolveAgentAccess(
   db: Kysely<DB>,
-  tenantId: string,
   viewerSubject: string,
   agentId: string
 ): Promise<AgentAccess | null> {
-  const owned = await getAgent(db, tenantId, viewerSubject, agentId);
+  const owned = await getAgent(db, viewerSubject, agentId);
   if (owned) {
     return { agent: owned, ownerSubject: viewerSubject, viewerIsOwner: true, grant: null };
   }
@@ -77,7 +76,7 @@ export async function resolveAgentAccess(
     .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`NOW()`)]))
     .executeTakeFirst();
   if (!grant) return null;
-  const found = await getAgentWithOwner(db, tenantId, agentId);
+  const found = await getAgentWithOwner(db, agentId);
   if (!found) return null;
   return {
     agent: found.agent,
@@ -94,7 +93,6 @@ export async function resolveAgentAccess(
  */
 export async function hasActiveGrant(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   viewerSubject: string
 ): Promise<boolean> {
@@ -115,13 +113,12 @@ export async function hasActiveGrant(
  */
 export async function grantAgentAccess(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string,
   input: { granteeSubject: string; expiresAt: Date | null }
 ): Promise<'OK' | 'NOT_FOUND' | 'SELF'> {
   if (input.granteeSubject === ownerSubject) return 'SELF';
-  const owned = await getAgent(db, tenantId, ownerSubject, agentId);
+  const owned = await getAgent(db, ownerSubject, agentId);
   if (!owned) return 'NOT_FOUND';
   await db
     .insertInto('agent_access_grants')
@@ -142,11 +139,10 @@ export async function grantAgentAccess(
 /** The owner's list for the sharing modal, expired rows included. */
 export async function listAgentAccessGrants(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string
 ): Promise<AgentAccessGrantView[] | null> {
-  const owned = await getAgent(db, tenantId, ownerSubject, agentId);
+  const owned = await getAgent(db, ownerSubject, agentId);
   if (!owned) return null;
   const rows = await db
     .selectFrom('agent_access_grants')
@@ -180,7 +176,6 @@ export async function listAgentAccessGrants(
 /** Owner deletes a grant row — revocation. Returns the row for the audit label. */
 export async function revokeAgentAccessGrant(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string,
   grantId: string
@@ -203,7 +198,6 @@ export async function revokeAgentAccessGrant(
  */
 export async function listAgentsSharedWith(
   db: Kysely<DB>,
-  tenantId: string,
   granteeSubject: string
 ): Promise<SharedAgentListing[]> {
   const rows = await db
@@ -225,7 +219,7 @@ export async function listAgentsSharedWith(
     .execute();
   const listings: SharedAgentListing[] = [];
   for (const row of rows) {
-    const found = await getAgentWithOwner(db, tenantId, row.agent_id);
+    const found = await getAgentWithOwner(db, row.agent_id);
     if (!found) continue;
     listings.push({
       agent: found.agent,

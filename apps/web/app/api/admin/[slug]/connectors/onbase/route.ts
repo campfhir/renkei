@@ -25,7 +25,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -35,7 +35,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(tenantRef.id, ONBASE_CONNECTOR, keyResult.val);
+  const configResult = await getConnectorConfig(ONBASE_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
@@ -81,7 +81,7 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   const { slug } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -133,7 +133,7 @@ export async function PUT(
   // Secrets survive settings-only saves: a blank/omitted secret keeps the
   // stored one. Unlike the SaaS connectors no secret is required at all —
   // a Hyland IdP client may be public (PKCE only).
-  const existing = await getConnectorConfig(tenantRef.id, ONBASE_CONNECTOR, keyResult.val);
+  const existing = await getConnectorConfig(ONBASE_CONNECTOR, keyResult.val);
   const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
   const mergedClientSecret =
     typeof clientSecret === 'string' && clientSecret.length > 0
@@ -146,7 +146,6 @@ export async function PUT(
   }
 
   const writeResult = await setConnectorConfig(
-    tenantRef.id,
     ONBASE_CONNECTOR,
     {
       enabled,
@@ -159,7 +158,7 @@ export async function PUT(
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 
-  invalidateConnectorConfigCache(tenantRef.id, ONBASE_CONNECTOR);
+  invalidateConnectorConfigCache(ONBASE_CONNECTOR);
   if (insecureModes.length) {
     recordAuditEvent({
       actorSubject: access.subject,

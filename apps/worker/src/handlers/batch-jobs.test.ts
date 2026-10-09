@@ -55,7 +55,7 @@ const { enqueueItem } = jest.requireMock<{ enqueueItem: jest.Mock }>('../batch-j
 const FAKE_DB = {};
 
 function event(type: string, payload: Record<string, string>): ClaimedEvent {
-  return { id: 'evt-1', tenant_id: 'tenant-1', source: 'batch', type, payload, attempts: 1 };
+  return { id: 'evt-1', source: 'batch', type, payload, attempts: 1 };
 }
 
 function batch(overrides: Partial<Record<string, unknown>> = {}) {

@@ -33,7 +33,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { NextRequest, NextResponse } from 'next/server';
 
 /** Per-tenant so one browser can hold several tenants' flows without collision. */
-export function connectStateCookieName(tenantId: string): string {
+export function connectStateCookieName(): string {
   return `connect_state_${tenantId}`;
 }
 
@@ -43,10 +43,9 @@ export const CONNECT_STATE_TTL_SECONDS = 10 * 60;
 /** Set on the authorize route's redirect to the provider. */
 export function bindConnectFlow<T extends NextResponse>(
   response: T,
-  tenantId: string,
   state: string
 ): T {
-  response.cookies.set(connectStateCookieName(tenantId), state, {
+  response.cookies.set(connectStateCookieName(), state, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
@@ -60,8 +59,8 @@ export function bindConnectFlow<T extends NextResponse>(
  * Whether the browser making this callback request is the one that started
  * the flow: its binding cookie for the tenant exists and equals the state.
  */
-export function isConnectFlowBound(request: NextRequest, tenantId: string, state: string): boolean {
-  const cookie = request.cookies.get(connectStateCookieName(tenantId))?.value;
+export function isConnectFlowBound(request: NextRequest, state: string): boolean {
+  const cookie = request.cookies.get(connectStateCookieName())?.value;
   if (!cookie || !state) return false;
   const left = Buffer.from(cookie, 'utf8');
   const right = Buffer.from(state, 'utf8');
@@ -69,7 +68,7 @@ export function isConnectFlowBound(request: NextRequest, tenantId: string, state
 }
 
 /** Single-use: cleared on the callback's response whatever the outcome. */
-export function clearConnectFlow<T extends NextResponse>(response: T, tenantId: string): T {
-  response.cookies.delete(connectStateCookieName(tenantId));
+export function clearConnectFlow<T extends NextResponse>(response: T): T {
+  response.cookies.delete(connectStateCookieName());
   return response;
 }

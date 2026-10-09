@@ -53,7 +53,7 @@ const workspaceStore = jest.requireMock<Record<string, jest.Mock>>('./workspace-
 const envStore = jest.requireMock<Record<string, jest.Mock>>('./env-secrets-store');
 
 const API_KEY = 'test-worker-key';
-const TARGET = { tenantId: 'tenant-1', subject: 'alice' };
+const TARGET = { subject: 'alice' };
 const STORAGE_KEY = 'tenant-1/hash/ws-1';
 
 let root: string;

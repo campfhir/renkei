@@ -30,16 +30,16 @@ import { codeProjectTarget } from '@/lib/code/scope';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const { project } = ready.context;
-  if (!(await sandboxWorkspacesEnabled(tenantId))) {
+  if (!(await sandboxWorkspacesEnabled())) {
     return NextResponse.json({ available: [], ready: false });
   }
-  const target = codeProjectTarget(tenantId, projectId);
+  const target = codeProjectTarget(projectId);
   const [languages, workspace] = await Promise.all([
     sbLspLanguages(target),
     projectWorkspace(project),
@@ -52,13 +52,13 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
   const { projectId } = await params;
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
   const { project } = ready.context;
-  if (!(await sandboxWorkspacesEnabled(tenantId))) {
+  if (!(await sandboxWorkspacesEnabled())) {
     return jsonError(503, 'unavailable', 'Code workspaces are not enabled on this deployment.');
   }
   if (!project.workspaceId) {
@@ -77,7 +77,7 @@ export async function POST(
   if (typeof clientId !== 'string' || !LSP_CLIENT_ID_PATTERN.test(clientId)) {
     return jsonError(400, 'invalid', 'A client id is required.');
   }
-  const opened = await sbLspOpen(codeProjectTarget(tenantId, projectId), {
+  const opened = await sbLspOpen(codeProjectTarget(projectId), {
     id: project.workspaceId,
     server,
     clientId,

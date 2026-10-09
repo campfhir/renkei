@@ -36,16 +36,16 @@ export default async function JiraAdminChangePage({
 }): Promise<React.ReactNode> {
   const { slug, changeId } = await params;
 
-  const session = await getSessionFromCookies(tenant.id);
+  const session = await getSessionFromCookies();
   if (!session) {
-    redirect(signInUrl(tenant.id, `/jira-admin/changes/${changeId}`));
+    redirect(signInUrl(`/jira-admin/changes/${changeId}`));
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
   // Owner-scoped: someone else's request reads as not found.
-  const change = await getChangeRequest(db, tenant.id, session.subject, changeId);
+  const change = await getChangeRequest(db, session.subject, changeId);
   if (!change) notFound();
 
   const agent = change.agentId
@@ -63,7 +63,7 @@ export default async function JiraAdminChangePage({
   // Apply is off before anyone presses it.
   const gate =
     state === 'pending'
-      ? await applyGate(db, tenant.id, session.subject, session.roles, change)
+      ? await applyGate(db, session.subject, session.roles, change)
       : null;
 
   return (
@@ -178,7 +178,6 @@ export default async function JiraAdminChangePage({
             checks your admin rights on each.{applyNote ? ` ${applyNote}` : ''}
           </p>
           <ChangeActions
-            tenantId={tenant.id}
             changeId={change.id}
             count={operations.length}
             applyBlocked={gate && !gate.ok ? gate.reason : null}

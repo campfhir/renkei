@@ -12,7 +12,7 @@ export async function POST(
   { params }: { params: Promise<{ slug: string; id: string }> }
 ): Promise<NextResponse> {
   const { slug, id } = await params;
-  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!/^[0-9a-f-]{36}$/i.test(id)) {
     return NextResponse.json({ error: 'No such request' }, { status: 404 });
