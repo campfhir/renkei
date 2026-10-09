@@ -174,6 +174,7 @@ export const EXPECTED_MIGRATIONS = [
   '146-tenant-bootstrap-and-domain-verification',
   '147-refresh-token-rotation',
   '150-file-share-host-key',
+  '151-oauth-consent-requests',
 ];
 
 export interface MigrationStatus {

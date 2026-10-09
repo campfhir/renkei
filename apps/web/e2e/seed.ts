@@ -368,6 +368,9 @@ export async function seed(client: Client): Promise<void> {
   // the tenant, so an earlier run's would block the re-creation here.
   await client.query('DELETE FROM oauth_access_tokens WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM oauth_clients WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  // Org settings do not cascade, and migration 151 writes one row (the
+  // registration default) for every tenant that exists when it runs.
+  await client.query('DELETE FROM tenant_settings WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM tenants WHERE id = $1', [E2E_TENANT_ID]);
 
   // Verified at creation: the sign-in page routes a domain only to a tenant

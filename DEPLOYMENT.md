@@ -975,6 +975,20 @@ without the tenant's id.
   grant there also deletes that person's MCP tokens.
 - The legacy `/api/tenant/<id>/sessions` endpoint (it read the unused
   `jira_sessions` table) is gone.
+- Connecting an MCP client (migration 151) stops at a **consent page**
+  (`/oauth/consent`) that names the client, where its access would go and
+  as whom it would act; the code is minted only when the same browser
+  session that was shown the page answers Allow. Every client must use
+  PKCE with `S256` (the server metadata advertises nothing else), and a
+  redirect URI must be `https`, `http` on the loopback interface (any port,
+  for a local app), or a native app's own scheme — plain `http` to any other
+  host is refused at registration and at authorization. **Dynamic client
+  registration** is off for an organization that never set it; every
+  organization that existed before this migration keeps it on (the old
+  default was written as its explicit setting). Turn it on under admin →
+  Settings → MCP clients & tokens while people are connecting clients.
+  Consent answers and self-registrations are audited
+  (`oauth.consent_granted`, `oauth.consent_denied`, `oauth.client_registered`).
 
 ## Security Checklist
 
@@ -988,7 +1002,7 @@ without the tenant's id.
 - [x] Security headers set by the app itself (`apps/web/lib/security-headers.ts`, via `next.config.ts`): `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (camera/geolocation/payment denied, microphone self), `X-Frame-Options: DENY` + `frame-ancestors 'none'` except on the chat's framed widget/mockup routes, `Strict-Transport-Security` when `PUBLIC_BASE_URL` is https, `X-Powered-By` removed. Content-Security-Policy is REPORT-ONLY — it still carries `'unsafe-inline'` for scripts and styles until per-request nonces are wired; review reports before enforcing.
 - [x] CORS configured properly
 - [x] SQL injection prevention (using Kysely ORM)
-- [x] CSRF protection (OAuth state rows are single-use and bound to the starting browser by an httpOnly cookie plus the session subject — sign-in `oidc_state_`, connector flows `connect_state_`)
+- [x] CSRF protection (OAuth state rows are single-use and bound to the starting browser by an httpOnly cookie plus the session subject — sign-in `oidc_state_`, connector flows `connect_state_`; the MCP consent answer is bound to the session that was shown the page and must be posted from this origin)
 - [x] XSS protection (React escaping; `dangerouslySetInnerHTML` only for the theme bootstrap script in `components/theme-script.tsx`, whose content is a constant)
 - [x] PHI access trail append-only (`phi_access_events`, below)
 

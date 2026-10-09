@@ -6,6 +6,8 @@ import { randomUUID } from 'crypto';
 import { generateSecret, hashToken } from '@/lib/mcp-token';
 import { SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS } from '@/lib/oauth-client-auth';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
+import { readRegistration } from '@/lib/oauth-client-registration';
+import { recordAuditEvent } from '@/lib/audit-events';
 
 /**
  * Open by specification (RFC 7591) and each call writes a row, so the
@@ -48,6 +50,37 @@ export async function POST(
     );
   }
 
+  // The body is judged before anything is read from the database: a
+  // registration that would be refused costs no query.
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: 'invalid_request', error_description: 'Invalid JSON in request body' },
+      { status: 400 }
+    );
+  }
+  const registration = readRegistration(body);
+  if ('problem' in registration) {
+    return NextResponse.json(
+      { error: registration.error, error_description: registration.problem },
+      { status: 400 }
+    );
+  }
+  const { client_name, redirect_uris, response_types, grant_types } = registration;
+
+  // Echo back the method the client asked for when it is one we accept,
+  // rather than always answering client_secret_basic. Both are supported at
+  // the token endpoint, and telling a client to use something other than what
+  // it requested is a needless way to break the exchange.
+  const requestedAuthMethod = registration.token_endpoint_auth_method;
+  const tokenEndpointAuthMethod = SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS.some(
+    (method) => method === requestedAuthMethod
+  )
+    ? requestedAuthMethod
+    : 'client_secret_basic';
+
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -66,55 +99,6 @@ export async function POST(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json(
-        { error: 'invalid_request', error_description: 'Invalid JSON in request body' },
-        { status: 400 }
-      );
-    }
-
-    const { client_name, redirect_uris, response_types, grant_types } = body;
-
-    // Echo back the method the client asked for when it is one we accept,
-    // rather than always answering client_secret_basic. Both are supported at
-    // the token endpoint, and telling a client to use something other than what
-    // it requested is a needless way to break the exchange.
-    const requestedAuthMethod: unknown = body.token_endpoint_auth_method;
-    const tokenEndpointAuthMethod = SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS.some(
-      (method) => method === requestedAuthMethod
-    )
-      ? requestedAuthMethod
-      : 'client_secret_basic';
-
-    // Validate required fields
-    if (!redirect_uris || !Array.isArray(redirect_uris) || redirect_uris.length === 0) {
-      return NextResponse.json(
-        {
-          error: 'invalid_request',
-          error_description: 'redirect_uris is required and must be a non-empty array',
-        },
-        { status: 400 }
-      );
-    }
-
-    // Validate redirect URIs are valid URLs
-    for (const uri of redirect_uris) {
-      try {
-        new URL(uri);
-      } catch {
-        return NextResponse.json(
-          {
-            error: 'invalid_request',
-            error_description: `Invalid redirect_uri: ${uri}`,
-          },
-          { status: 400 }
-        );
-      }
-    }
-
     // Generate client credentials
     const clientId = `client_${randomUUID()}`;
     const clientSecret = generateSecret(32);
@@ -128,21 +112,33 @@ export async function POST(
         // Only the digest is stored; the secret itself exists solely in the
         // registration response below and in the client that receives it.
         client_secret_hash: hashToken(clientSecret),
-        client_name: client_name || null,
+        client_name,
         redirect_uris,
-        response_types: response_types || ['code'],
-        grant_types: grant_types || ['authorization_code', 'refresh_token'],
+        response_types,
+        grant_types,
       })
       .execute();
+
+    // Who registered is unknown by design (RFC 7591 is unauthenticated), so
+    // the trail records what: the Access page and the consent page both
+    // show a client's name, and this is where that name came from.
+    recordAuditEvent({
+      tenantId,
+      actorSubject: null,
+      action: 'oauth.client_registered',
+      targetKind: 'oauth_client',
+      targetLabel: clientId,
+      details: { clientId, clientName: client_name, redirectUris: redirect_uris },
+    });
 
     // Return registration response (RFC 7591 section 3.2)
     const response = {
       client_id: clientId,
       client_secret: clientSecret,
-      client_name: client_name || undefined,
+      client_name: client_name ?? undefined,
       redirect_uris,
-      response_types: response_types || ['code'],
-      grant_types: grant_types || ['authorization_code', 'refresh_token'],
+      response_types,
+      grant_types,
       token_endpoint_auth_method: tokenEndpointAuthMethod,
       client_id_issued_at: Math.floor(Date.now() / 1000),
     };
