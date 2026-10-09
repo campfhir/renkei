@@ -117,6 +117,12 @@ const BOOLEAN_KEYS = [
   'knowledgeKeywordEnrichment',
   'coachMarksEnabled',
   'phiConnectorsRequireCoveredModel',
+  'sandboxBrowserEnabled',
+  'sandboxChartsEnabled',
+  'sandboxWorkspacesEnabled',
+  'sandboxServicesEnabled',
+  'sandboxScriptsEnabled',
+  'sandboxScriptsAllowNetwork',
 ] as const;
 
 type EditableKey =
@@ -159,6 +165,12 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
     phiConnectorsRequireCoveredModel: settings.phiConnectorsRequireCoveredModel,
     chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
     sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
+    sandboxBrowserEnabled: settings.sandboxBrowserEnabled,
+    sandboxChartsEnabled: settings.sandboxChartsEnabled,
+    sandboxWorkspacesEnabled: settings.sandboxWorkspacesEnabled,
+    sandboxServicesEnabled: settings.sandboxServicesEnabled,
+    sandboxScriptsEnabled: settings.sandboxScriptsEnabled,
+    sandboxScriptsAllowNetwork: settings.sandboxScriptsAllowNetwork,
   };
 }
 

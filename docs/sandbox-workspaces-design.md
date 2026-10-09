@@ -9,9 +9,9 @@ run the project's own commands, commit, push, open a pull request.
 
 ## What a person sees
 
-A **Code** section in the app menu, beside Chat, where the deployment
-enables workspaces (`SANDBOX_WORKSPACES_ENABLED=true` on the web app and
-the sandbox worker). It holds **code projects** — a chat project with a
+A **Code** section in the app menu, beside Chat, where the organization
+has turned code workspaces on (Settings → Sandbox; the sandbox worker
+checks the same setting per request). It holds **code projects** — a chat project with a
 repository on it, kept apart from ordinary chats:
 
 - **New code project** asks for a name, one of your Bitbucket
@@ -348,9 +348,9 @@ A project's tests usually need something running — a database, a
 cache, a broker — and a checkout on its own has none. So a project may
 start **services**: containers the sandbox worker runs beside the
 checkout, from images the organization allows, reachable from every
-command the project runs. `SANDBOX_SERVICES_ENABLED=true` on the web
-app and the worker (with workspaces on, and the worker given a Docker
-engine — DEPLOYMENT.md) puts four tools in a project's chat:
+command the project runs. The organization's **Code project services**
+switch (Settings → Sandbox; with workspaces on, and the worker given a
+Docker engine — DEPLOYMENT.md) puts four tools in a project's chat:
 
 | Tool                 | Kind | What it does                                                                 |
 | -------------------- | ---- | ---------------------------------------------------------------------------- |

@@ -95,7 +95,7 @@ export async function DELETE(
   const { tenantId, projectId } = await params;
   const found = await projectFor(request, tenantId, projectId, true);
   if (!found.ok) return found.response;
-  if (!sandboxWorkspacesEnabled()) {
+  if (!(await sandboxWorkspacesEnabled(tenantId))) {
     return jsonError(503, 'unavailable', 'Code workspaces are not enabled on this deployment.');
   }
   const body = await readJsonBody(request);

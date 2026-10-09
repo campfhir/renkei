@@ -25,6 +25,12 @@ export interface EditableSettings {
   coachMarksEnabled: boolean;
   phiConnectorsRequireCoveredModel: boolean;
   enableDcr: boolean;
+  sandboxBrowserEnabled: boolean;
+  sandboxChartsEnabled: boolean;
+  sandboxWorkspacesEnabled: boolean;
+  sandboxServicesEnabled: boolean;
+  sandboxScriptsEnabled: boolean;
+  sandboxScriptsAllowNetwork: boolean;
   logLevel: LogLevel;
   maxJqlResults: number;
   maxAttachmentBytes: number;
@@ -453,7 +459,67 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
         </Row>
       </Section>
 
-      <Section title="Code sandbox">
+      <Section title="Sandbox">
+        <Row
+          label="Browser"
+          hint="A headless browser agents and chats can drive through the sandbox_browser_* tools, with every connection through the worker's own egress proxy."
+        >
+          <Toggle
+            on={values.sandboxBrowserEnabled}
+            onChange={(next) => set('sandboxBrowserEnabled', next)}
+            label="Browser"
+          />
+        </Row>
+        <Row
+          label="Charts"
+          hint="Charts drawn from Mermaid text (sandbox_render_chart and the chat's chat_write_chart), rendered on the sandbox worker with no network at all."
+        >
+          <Toggle
+            on={values.sandboxChartsEnabled}
+            onChange={(next) => set('sandboxChartsEnabled', next)}
+            label="Charts"
+          />
+        </Row>
+        <Row
+          label="Code workspaces"
+          hint="Code projects: a repository cloned on the sandbox worker, where a project's chats read, edit, run its commands, commit and push. Turns on the Code section."
+        >
+          <Toggle
+            on={values.sandboxWorkspacesEnabled}
+            onChange={(next) => set('sandboxWorkspacesEnabled', next)}
+            label="Code workspaces"
+          />
+        </Row>
+        <Row
+          label="Code project services"
+          hint="Containers a code project's chat may start beside its checkout (a database, a cache) from the images allowed on the Code services page. Needs code workspaces, and a Docker engine on the worker."
+        >
+          <Toggle
+            on={values.sandboxServicesEnabled}
+            onChange={(next) => set('sandboxServicesEnabled', next)}
+            label="Code project services"
+          />
+        </Row>
+        <Row
+          label="Python scripts over staged files"
+          hint="sandbox_run_python: Python a chat writes, run over copies of the person's own staged files with no network. Served only where the worker can cut a run off from the network, unless the switch below accepts otherwise."
+        >
+          <Toggle
+            on={values.sandboxScriptsEnabled}
+            onChange={(next) => set('sandboxScriptsEnabled', next)}
+            label="Python scripts over staged files"
+          />
+        </Row>
+        <Row
+          label="Allow scripts on the worker's network"
+          hint="Where the worker cannot isolate a run's network, run scripts anyway with the worker's network access. Every result and the tool's description then say so. Leave off unless you have weighed what a script could reach."
+        >
+          <Toggle
+            on={values.sandboxScriptsAllowNetwork}
+            onChange={(next) => set('sandboxScriptsAllowNetwork', next)}
+            label="Allow scripts on the worker's network"
+          />
+        </Row>
         <Row
           label="Checkout size limit (GB)"
           hint="How large one code project's checkout on the sandbox may grow before commands and writes in it are refused. People can ask for more on a project's page; you approve or deny those requests below, and an approval raises that project only."

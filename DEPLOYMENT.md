@@ -339,22 +339,28 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   8092). Without them the `sandbox_*` tools simply don't register — closed,
   never open, same as the other two. Staged files expire on a fixed TTL and
   a per-caller quota regardless of whether anything ever deletes them
-  explicitly. The image also bakes in a headless Chromium for the
-  `sandbox_browser_*` tools (agents opening and interacting with web
-  pages): set `SANDBOX_BROWSER_ENABLED=true` in `.env` — read by BOTH the
-  web app (to register the tools) and this worker (to launch the browser,
-  lazily on first use) — to turn it on; unset, the tools don't exist.
-  Chromium never gets direct network access: every connection goes through
-  the worker's own egress proxy, which refuses private and internal
-  addresses, so the browser cannot reach the other compose services.
-  `SANDBOX_BROWSER_EXECUTABLE` optionally names a different Chromium
-  binary. The same Chromium draws **charts** — Mermaid text from the model
-  (a bar or line chart, a pie, a Gantt plan, a flowchart) rendered to a
-  PNG, an SVG or a PDF behind `sandbox_render_chart` and the chat's
-  `chat_write_chart`: set `SANDBOX_CHARTS_ENABLED=true` in `.env`, again
-  read by BOTH sides, independent of the browser flag (a chart page has
-  no network at all). The worker refuses to start with the flag set and
-  no Mermaid bundle installed; `SANDBOX_MERMAID_BUNDLE` points at one
+  explicitly. **Which of the worker's features an organization gets is
+  that organization's own setting** — admin → Settings → Sandbox: the
+  browser, charts, code workspaces, code project services, Python scripts,
+  and whether scripts may run on the worker's network — read per request
+  by both the web app and the worker (migration 152 moved these out of
+  the `SANDBOX_*_ENABLED` variables; see "Upgrading" below). What the
+  worker _can_ do it finds once at boot and reports on `/health`
+  (`capabilities`), and a feature is served only where both hold; the
+  variables below name where things are, never whether a feature is on.
+  The image bakes in a headless Chromium for the `sandbox_browser_*`
+  tools (agents opening and interacting with web pages), launched lazily
+  on an organization's first page. Chromium never gets direct network
+  access: every connection goes through the worker's own egress proxy,
+  which refuses private and internal addresses, so the browser cannot
+  reach the other compose services. `SANDBOX_BROWSER_EXECUTABLE`
+  optionally names a different Chromium binary. The same Chromium draws
+  **charts** — Mermaid text from the model (a bar or line chart, a pie, a
+  Gantt plan, a flowchart) rendered to a PNG, an SVG or a PDF behind
+  `sandbox_render_chart` and the chat's `chat_write_chart` — in a page
+  with no network at all; without a Mermaid bundle the worker reports
+  charts as a capability it lacks, and `SANDBOX_MERMAID_BUNDLE` points at
+  one
   elsewhere. Memory: a busy browser session runs 300–500MB (at most eight at
   once), so both compose files give this service a 1GB reservation, a
   `SANDBOX_WORKER_MEMORY` limit (default `4g` — raise it in `.env` for a
@@ -373,9 +379,9 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   owner, so every replica can type it and a restart does not lock it;
   without either key it lives in this worker's memory and a restart locks
   every secret until its owner unlocks it again. **Code projects** (`docs/sandbox-workspaces-design.md`):
-  set `SANDBOX_WORKSPACES_ENABLED=true` in `.env` — again read by BOTH the
-  web app (the Code section and the `code_*` tools its chats get) and
-  this worker — to let people make a code project from one of their
+  the organization's **Code workspaces** setting turns on the Code
+  section and the `code_*` tools its chats get, letting people make a
+  code project from one of their
   Bitbucket or GitHub repositories, paste its `.env`, and have the
   project's chats work in it: read, edit, run the project's own
   commands, commit, push.
@@ -450,16 +456,23 @@ DESC` says which server to add next.
   are on its own disk and in its own memory, with only the rows in the
   database. Replicas on one host share those disks and work; replicas
   on separate disks do not — see "More than one sandbox replica" below.
-  Entrypoint: `pnpm --filter @renkei/worker-sandbox start`.
+  Entrypoint: `pnpm --filter @renkei/worker-sandbox start`. The image's
+  entrypoint keeps the process root so every caller's command can be
+  dropped to that caller's own uid, whichever organization turns
+  workspaces or scripts on later; `SANDBOX_RUN_AS_WORKER=true` in `.env`
+  starts it as the unprivileged `worker` account instead, for a deployment
+  where no organization will ever have either (commands then run
+  unisolated by uid, and the worker's log says so).
 
 **Code project services** (`docs/sandbox-workspaces-design.md`,
-"Services"): with workspaces on, `SANDBOX_SERVICES_ENABLED=true` in
-`.env` — read by BOTH the web app (the `code_service_*` tools a project's
-chats get, and the Organization → Code services page) and this worker —
-lets a project's chat start a container beside its checkout (Postgres,
-Redis, a broker) for the project's tests, from the images the
-organization allows. The worker needs a Docker engine for that, and it
-should get one only through a socket proxy: `docker-compose.yml` (dev)
+"Services"): with workspaces on, the organization's **Code project
+services** setting (the `code_service_*` tools a project's chats get, and
+the Organization → Code services page) lets a project's chat start a
+container beside its checkout (Postgres, Redis, a broker) for the
+project's tests, from the images the organization allows. The worker
+needs a Docker engine for that — one that does not answer at boot makes
+services a capability the worker reports it lacks — and it should get
+one only through a socket proxy: `docker-compose.yml` (dev)
 carries a `docker-socket-proxy` service (tecnativa/docker-socket-proxy
 with `CONTAINERS`, `IMAGES`, `NETWORKS` and `POST` allowed and nothing
 else — no exec, no volumes, no daemon configuration) behind the
@@ -494,16 +507,16 @@ this worker under `SANDBOX_ENV_SECRETS_KEY` (else `TOKEN_ENCRYPTION_KEY`),
 the same key as the environment secrets, and never shown again.
 
 **Scripts over staged files** (`docs/sandbox-connector-design.md`,
-"`sandbox_run_python`"): set `SANDBOX_SCRIPTS_ENABLED=true` in `.env` —
-read by BOTH the web app (which then registers `sandbox_run_python` in
-every chat with a scratch space) and this worker — to let a chat run
-Python it wrote over copies of the person's own staged files: match two
+"`sandbox_run_python`"): the organization's **Python scripts over staged
+files** setting registers `sandbox_run_python` in every chat with a
+scratch space, letting a chat run Python it wrote over copies of the
+person's own staged files: match two
 spreadsheets by a key column, filter or total thousands of rows, convert
 formats, with what the script writes staged back under the same quota as
 any other file. Independent of workspaces (no checkout is involved), but
-with the same arrangement for who runs it: with the flag set the
-entrypoint keeps the worker root so each run is dropped to its caller's
-own uid, and started with **no network at all** — in a network namespace
+with the same arrangement for who runs it: the entrypoint keeps the
+worker root so each run is dropped to its caller's own uid, and started
+with **no network at all** — in a network namespace
 made as root (`unshare --net`, which needs `CAP_SYS_ADMIN`) or, failing
 that, a user namespace of the caller's own (`unshare -Un`, which needs
 unprivileged user namespaces). `docker-compose.yaml` deliberately
@@ -511,10 +524,11 @@ withholds the capability from `worker-sandbox` (it drops every capability
 and adds back only the seven setpriv, chown and kill need) and Docker's
 default seccomp profile blocks the user-namespace route, so on a stock
 deployment the worker proves at boot that neither works and then
-**closes the verb**: `sandbox_run_python` answers 503
-`scripts_unavailable`, `/health` reports `scripts: unavailable` and the
-web app stops offering the tool — because the tool tells the model there
-is no network, and running with one anyway would make that a lie. The
+**closes the verb** for every organization that has not accepted
+otherwise: `sandbox_run_python` answers 503 `scripts_unavailable`,
+`/health` reports `scripts: network_only` and the web app stops offering
+the tool — because the tool tells the model there is no network, and
+running with one anyway would make that a lie. The
 supported way to open it is **user-namespace isolation on the host**:
 `"userns-remap": "default"` in `/etc/docker/daemon.json` (then restart the
 daemon; existing volumes need their ownership shifted once, see Docker's
@@ -526,10 +540,11 @@ for the whole stack regardless of scripts. A seccomp profile that allows
 `unshare`/`clone` with `CLONE_NEWUSER|CLONE_NEWNET` is the narrower
 alternative. Do **not** answer with `cap_add: [SYS_ADMIN]` — it is most
 of root, in the one container that runs other people's code. To accept
-scripts running on the container's network instead, set
-`SANDBOX_SCRIPTS_ALLOW_NETWORK=true` in `.env` (read by BOTH the worker
-and the web app): the verb is served, the tool's description tells the
-model the script has the worker's network, and every result says so too.
+scripts running on the container's network instead, an admin turns on
+the organization's **Allow scripts on the worker's network** setting:
+the verb is served for that organization, the tool's description tells
+the model the script has the worker's network, and every result says so
+too.
 The image carries the interpreter at `/opt/sandbox-python` (pandas,
 numpy, openpyxl, XlsxWriter, pinned in `docker/Dockerfile`);
 `SANDBOX_PYTHON` points at another. A run's directory is made under
@@ -540,6 +555,19 @@ large joins at once, since runs share the container's limit with the
 browser and the language servers. Bounds that are not settings: one run
 per person at a time and four per worker, ten minutes at most, 64
 processes, 50 input and 50 output files per run.
+
+**Upgrading to migration 152** (the sandbox switches moved into org
+settings): run the migration with the same `.env` the web app had — the
+`migrate` service in both compose files passes `SANDBOX_BROWSER_ENABLED`,
+`SANDBOX_CHARTS_ENABLED`, `SANDBOX_WORKSPACES_ENABLED`,
+`SANDBOX_SERVICES_ENABLED`, `SANDBOX_SCRIPTS_ENABLED` and
+`SANDBOX_SCRIPTS_ALLOW_NETWORK` through for exactly this — and every
+organization that exists gets each variable that is SET as its own
+setting, so nothing changes for anyone. A variable that is unset writes
+nothing, and the organization stays on the default (off). Afterwards the
+variables are unread: delete them from `.env`, and turn features on or
+off per organization under admin → Settings → Sandbox. A new organization
+starts with every sandbox feature off.
 
 **More than one sandbox replica:** fine on one host, because Compose
 replicas of a service share its named volumes — and the sandbox worker

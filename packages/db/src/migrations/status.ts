@@ -175,6 +175,7 @@ export const EXPECTED_MIGRATIONS = [
   '147-refresh-token-rotation',
   '150-file-share-host-key',
   '151-oauth-consent-requests',
+  '152-sandbox-feature-settings',
 ];
 
 export interface MigrationStatus {

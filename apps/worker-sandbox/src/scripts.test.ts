@@ -40,7 +40,6 @@ import {
   DEFAULT_PYTHON,
   ScriptRunError,
   ScriptRunner,
-  decideScripts,
   resolvePython,
   scriptCommand,
   scriptEnvironment,
@@ -169,41 +168,6 @@ describe('the configured interpreter', () => {
     for (const odd of ['python3; id', '/opt/py thon/bin/python3', 'relative/python3', '$HOME/py']) {
       await expect(resolvePython(odd)).rejects.toThrow(/SANDBOX_PYTHON must be/);
     }
-  });
-});
-
-describe('the boot decision for scripts', () => {
-  it('serves isolated runs whichever way the namespace is made', () => {
-    for (const mode of NETWORK_ISOLATION_MODES) {
-      expect(decideScripts({ enabled: true, networkIsolation: mode, allowNetwork: false })).toEqual(
-        { status: 'isolated', serve: true, unavailable: null }
-      );
-      // The opt-in changes nothing where isolation works.
-      expect(
-        decideScripts({ enabled: true, networkIsolation: mode, allowNetwork: true }).status
-      ).toBe('isolated');
-    }
-  });
-
-  it('closes the verb when no isolation works and nobody opted in', () => {
-    const decision = decideScripts({ enabled: true, networkIsolation: null, allowNetwork: false });
-    expect(decision.status).toBe('unavailable');
-    expect(decision.serve).toBe(false);
-    expect(decision.unavailable).toMatch(/cannot start a script without network access/);
-  });
-
-  it('serves runs on the container’s network only with the explicit opt-in, and says so', () => {
-    expect(decideScripts({ enabled: true, networkIsolation: null, allowNetwork: true })).toEqual({
-      status: 'network_shared',
-      serve: true,
-      unavailable: null,
-    });
-  });
-
-  it('is simply disabled when the flag is off, whatever else is true', () => {
-    expect(
-      decideScripts({ enabled: false, networkIsolation: 'netns', allowNetwork: true })
-    ).toEqual({ status: 'disabled', serve: false, unavailable: null });
   });
 });
 

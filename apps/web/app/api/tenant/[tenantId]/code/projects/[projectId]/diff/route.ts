@@ -45,7 +45,7 @@ export async function GET(
   if (!access) return jsonError(404, 'not-found', 'No such project');
   const project = await getProjectRow(db, tenantId, projectId);
   if (!project || project.kind !== 'code') return jsonError(404, 'not-found', 'No such project');
-  if (!sandboxWorkspacesEnabled() || !project.workspaceId) {
+  if (!(await sandboxWorkspacesEnabled(tenantId)) || !project.workspaceId) {
     return NextResponse.json({
       branch: project.repo?.branch ?? '',
       diff: '',

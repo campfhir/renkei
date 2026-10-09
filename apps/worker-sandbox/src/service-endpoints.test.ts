@@ -104,6 +104,7 @@ import type { AddressInfo } from 'node:net';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { createSandboxServer } from './server';
+import { ALL_ORG_FEATURES } from './features';
 import type { ContainerSpec, ContainerState, DockerEngine } from './docker';
 import { ServiceManager } from './services';
 import { openRegistrySecret, sealRegistrySecret } from './image-rules-store';
@@ -230,8 +231,10 @@ let engine: ReturnType<typeof scriptedEngine>;
 let manager: ServiceManager;
 let enabledServer: Server;
 let disabledServer: Server;
+let orgOffServer: Server;
 let enabledBase: string;
 let disabledBase: string;
+let orgOffBase: string;
 
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -301,13 +304,25 @@ beforeAll(async () => {
     browser: null,
     workspaces: true,
     services: manager,
+    orgFeatures: async () => ALL_ORG_FEATURES,
   });
   disabledServer = createSandboxServer({
     db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     browser: null,
     workspaces: true,
+    orgFeatures: async () => ALL_ORG_FEATURES,
   });
+  // The engine is there; this organization has not turned services on.
+  orgOffServer = createSandboxServer({
+    db: {} as Kysely<DB>,
+    apiKeys: [API_KEY],
+    browser: null,
+    workspaces: true,
+    services: manager,
+    orgFeatures: async () => ({ ...ALL_ORG_FEATURES, services: false }),
+  });
+  orgOffBase = await listen(orgOffServer);
   enabledBase = await listen(enabledServer);
   disabledBase = await listen(disabledServer);
 });
@@ -316,6 +331,7 @@ afterAll(async () => {
   await Promise.all([
     new Promise<void>((resolve) => enabledServer.close(() => resolve())),
     new Promise<void>((resolve) => disabledServer.close(() => resolve())),
+    new Promise<void>((resolve) => orgOffServer.close(() => resolve())),
   ]);
 });
 
@@ -331,7 +347,7 @@ beforeEach(() => {
 });
 
 describe('closed when not enabled', () => {
-  it('every service verb answers 503', async () => {
+  it('every service verb answers 503 where the worker has no engine', async () => {
     for (const op of ['services/list', 'services/start', 'services/rules/list']) {
       const { status, json } = await post(disabledBase, op, {
         ...TARGET,
@@ -340,6 +356,20 @@ describe('closed when not enabled', () => {
       });
       expect(status).toBe(503);
       expect(json.error.type).toBe('services_unavailable');
+      expect(json.error.message).toMatch(/not available on this deployment/);
+    }
+  });
+
+  it('every service verb answers 503 for an organization that has not turned services on', async () => {
+    for (const op of ['services/list', 'services/start', 'services/rules/list']) {
+      const { status, json } = await post(orgOffBase, op, {
+        ...TARGET,
+        name: 'db',
+        image: 'postgres',
+      });
+      expect(status).toBe(503);
+      expect(json.error.type).toBe('services_unavailable');
+      expect(json.error.message).toMatch(/not enabled for this organization/);
     }
   });
 });

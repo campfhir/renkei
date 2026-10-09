@@ -174,9 +174,9 @@ export default function ServicesPage({
             role="status"
             className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
           >
-            Code project services are not enabled on this deployment. Set{' '}
-            <code>SANDBOX_SERVICES_ENABLED=true</code> on the web app and the sandbox worker, and
-            give the worker its Docker engine (see DEPLOYMENT.md), to turn them on.
+            Code project services are not enabled for this organization. An operator turns on code
+            workspaces and code project services under Settings → Sandbox, and gives the sandbox
+            worker its Docker engine (see DEPLOYMENT.md).
           </p>
         ) : null}
         {loadError ? (

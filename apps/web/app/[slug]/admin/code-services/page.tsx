@@ -24,7 +24,7 @@ export default async function AdminCodeServicesPage({
   if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
     redirect(`/${slug}/admin`);
   }
-  const enabled = sandboxServicesEnabled();
+  const enabled = await sandboxServicesEnabled(tenantRef.id);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -44,9 +44,9 @@ export default async function AdminCodeServicesPage({
           role="status"
           className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
         >
-          Code project services are not enabled on this deployment. Set{' '}
-          <code>SANDBOX_SERVICES_ENABLED=true</code> on the web app and the sandbox worker, and give
-          the worker its Docker engine (see DEPLOYMENT.md), to turn them on.
+          Code project services are not enabled for this organization. Turn on code workspaces and
+          code project services under Settings → Sandbox, and give the sandbox worker its Docker
+          engine (see DEPLOYMENT.md).
         </p>
       )}
     </div>

@@ -727,7 +727,7 @@ async function executeTurnBody(
         surface.discoverable.some((entry) => entry.def.name === 'outlook_search_users'),
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
       filesAllowed,
-      chartsAllowed: filesAllowed && sandboxChartsEnabled(),
+      chartsAllowed: filesAllowed && (await sandboxChartsEnabled(input.tenantId)),
       autoMode: auto,
       now: new Date(),
     });

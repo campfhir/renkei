@@ -758,7 +758,10 @@ export async function registerRenkeiTools(
     // No scope gate and no per-caller grant to check: every signed-in
     // caller on a deployment that runs worker-sandbox gets the same
     // scratch space, scoped to their own (tenantId, subject).
-    registerSandboxTools(withCapabilityGate(server, projection, SANDBOX_MCP_CONNECTOR), context);
+    await registerSandboxTools(
+      withCapabilityGate(server, projection, SANDBOX_MCP_CONNECTOR),
+      context
+    );
   }
   if (webSearchAvailable) {
     // No scope gate and no per-caller grant: one org-wide deployment and

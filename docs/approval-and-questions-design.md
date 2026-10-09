@@ -122,8 +122,8 @@ turns up.
 
 ```ts
 type FormNode =
-  | ({ kind: 'field' } & ApprovalField)   // existing type: text/longtext/number/date/choice/multi
-  | { kind: 'paragraph'; text: string }   // context, no control
+  | ({ kind: 'field' } & ApprovalField) // existing type: text/longtext/number/date/choice/multi
+  | { kind: 'paragraph'; text: string } // context, no control
   | { kind: 'group'; label: string; nodes: FormNode[] }; // one level, no nested groups
 ```
 

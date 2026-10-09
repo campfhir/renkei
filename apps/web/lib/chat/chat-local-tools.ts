@@ -75,7 +75,7 @@ export async function chatLocalTools(
     });
     if (imageTool) tools.push(imageTool);
     // A chart needs the worker's Chromium as well as somewhere to keep the file.
-    if (sandboxChartsEnabled()) tools.push(...chartTools());
+    if (await sandboxChartsEnabled(context.tenantId)) tools.push(...chartTools());
   }
   if (context.projectId) {
     if (!context.readOnly) tools.push(...memoryTools());

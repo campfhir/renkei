@@ -28,7 +28,8 @@
  * empty network namespace (workspaces.ts, NetworkIsolation). When the
  * kernel lets this worker make none, scripts are CLOSED rather than
  * quietly run on the container's network — unless the operator opted in
- * with SANDBOX_SCRIPTS_ALLOW_NETWORK=true (decideScripts), and then every
+ * with the organization's "allow scripts on the worker's network" switch
+ * (features.ts, decideScriptsFor), and then every
  * result says the script had the network. The interpreter runs in
  * isolated mode (-I: no PYTHON* variables, no user site, no script
  * directory on the path) with bytecode writing off, so what runs is the
@@ -524,54 +525,6 @@ export class ScriptRunner {
     }
     return { outputs, skipped };
   }
-}
-
-/**
- * What the worker tells the web app about scripts (`/health`):
- *  - `disabled` — SANDBOX_SCRIPTS_ENABLED is off.
- *  - `unavailable` — enabled, but no network isolation works here and the
- *    operator has not opted in: the verb answers 503 and the web app
- *    stops offering the tool.
- *  - `isolated` — every run starts with no network.
- *  - `network_shared` — SANDBOX_SCRIPTS_ALLOW_NETWORK=true: runs have the
- *    container's network, and every result and the tool's description say so.
- */
-export type ScriptsStatus = 'disabled' | 'unavailable' | 'isolated' | 'network_shared';
-
-export interface ScriptsDecision {
-  status: ScriptsStatus;
-  /** Whether the runner is served at all. */
-  serve: boolean;
-  /** What to tell a caller when it is not (the endpoint's message), else null. */
-  unavailable: string | null;
-}
-
-/** The env flag that keeps scripts running on the container's network when no isolation works. */
-export const ALLOW_NETWORK_ENV = 'SANDBOX_SCRIPTS_ALLOW_NETWORK';
-
-/**
- * The boot decision for scripts, as a table: the probe's finding and the
- * operator's opt-in in, whether the verb is served and what it says out.
- * Closed by default — a tool whose description promises "no network" must
- * not quietly run with one; the opt-in keeps the degraded behaviour for an
- * operator who has weighed it, and then nothing promises otherwise.
- */
-export function decideScripts(input: {
-  enabled: boolean;
-  networkIsolation: NetworkIsolation | null;
-  allowNetwork: boolean;
-}): ScriptsDecision {
-  if (!input.enabled) return { status: 'disabled', serve: false, unavailable: null };
-  if (input.networkIsolation !== null) {
-    return { status: 'isolated', serve: true, unavailable: null };
-  }
-  if (input.allowNetwork) return { status: 'network_shared', serve: true, unavailable: null };
-  return {
-    status: 'unavailable',
-    serve: false,
-    unavailable:
-      'Scripts are unavailable on this deployment: the sandbox worker cannot start a script without network access, and the operator has not allowed scripts to run with it.',
-  };
 }
 
 /** The memory ceiling for a run from SANDBOX_SCRIPT_MEMORY, else the default. */

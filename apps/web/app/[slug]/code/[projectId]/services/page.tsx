@@ -45,7 +45,7 @@ export default async function CodeProjectServicesPage({
       projectId={projectId}
       projectName={project.name}
       repoFullName={project.repo.fullName}
-      enabled={sandboxServicesEnabled()}
+      enabled={await sandboxServicesEnabled(tenant.id)}
       canEdit={access.role !== 'viewer'}
     />
   );

@@ -291,11 +291,13 @@ bindings dropped). One browser is launched on the first chart and closed
 after five idle minutes; each render gets a context of its own, closed
 when the bytes are in hand; at most two renders run at once and one past
 thirty seconds is abandoned; a drawing wider or taller than 8000 px is
-refused rather than rasterized. All of it is behind
-`SANDBOX_CHARTS_ENABLED=true` on both the worker (to build the renderer,
-and refuse to start without the bundle) and the web app (to register the
-tools) — independent of the browser flag, since an organization may want
-charts without agents browsing the web, or the reverse.
+refused rather than rasterized. All of it is behind the organization's
+**Charts** switch (Settings → Sandbox; migration 152 moved these switches
+out of the environment), read per request by the worker and by the web
+app (to register the tools), and behind the worker having the Mermaid
+bundle at all, which it reports on `/health` — independent of the
+browser switch, since an organization may want charts without agents
+browsing the web, or the reverse.
 
 Two verbs on the worker, one render behind both: `charts/stage` keeps
 the bytes as a scratch-space file for `sandbox_render_chart` (under the
@@ -345,9 +347,10 @@ TTL and quota. The image (the `sandbox` target in `docker/Dockerfile`, now
 Debian-based for glibc) bakes in the exact Chromium headless shell the
 pinned `playwright-core` was tested with (`playwright-core install
 --with-deps --only-shell chromium`), so nothing is downloaded at container
-start. `SANDBOX_BROWSER_ENABLED=true` on the worker launches it (lazily, on
-the first navigate); the same flag on the web app registers the tools.
-Unset on either side means no browser — closed, never open.
+start. The organization's **Browser** switch (Settings → Sandbox) is what
+the worker checks per request and the web app checks to register the
+tools; the browser launches lazily, on the first navigate. Off means no
+browser — closed, never open.
 
 **How a page reaches the model.** A _snapshot_, not HTML: the worker walks
 the live DOM (`src/browser-page-script.ts`, run inside the page) and
@@ -583,15 +586,15 @@ over a person's data needs nothing a repository's test suite needs:
   user namespace of the caller's own with their uid mapped to itself
   (needs unprivileged user namespaces, and works on a developer's
   checkout without root). Docker's default profile withholds both, and
-  then the worker **fails closed** (`decideScripts`): the verb answers
-  503 `scripts_unavailable` with the reason, `/health` says `scripts:
-unavailable` and the web app withholds the tool — a tool that tells
-  the model "there is NO network" must not quietly run with one. An
-  operator who accepts runs on the container's network says so with
-  `SANDBOX_SCRIPTS_ALLOW_NETWORK=true` (both sides); the description
-  then tells the model the script has the worker's network, and every
-  result carries `networkIsolated` so each one says so too
-  (`DEPLOYMENT.md`).
+  then the worker **fails closed** (`features.ts`, `decideScriptsFor`):
+  the verb answers 503 `scripts_unavailable` with the reason, `/health`
+  says `scripts: network_only` and the web app withholds the tool — a
+  tool that tells the model "there is NO network" must not quietly run
+  with one. An organization that accepts runs on the container's network
+  says so with its **Allow scripts on the worker's network** switch
+  (Settings → Sandbox); the description then tells the model the script
+  has the worker's network, and every result carries `networkIsolated`
+  so each one says so too (`DEPLOYMENT.md`).
 - **How much.** A process ceiling (64, per uid), an address-space
   ceiling (`SANDBOX_SCRIPT_MEMORY`, default 2 GB — a `MemoryError`, not
   a dead container), a file-size ceiling, no core dumps, a wall clock
@@ -645,10 +648,11 @@ first where it costs nothing to take.
 | `sandbox_browser_screenshot`   | Act  | PNG of the open page, staged as a scratch-space file.                                                                                                                                                          |
 | `sandbox_browser_close`        | Act  | Close the caller's session (pages, cookies, history).                                                                                                                                                          |
 
-`sandbox_render_chart` exists only when `SANDBOX_CHARTS_ENABLED=true` on
-both the web app and the worker. The browser tools exist only when `SANDBOX_BROWSER_ENABLED=true` on both
-the web app and the worker. `sandbox_run_python` exists only when
-`SANDBOX_SCRIPTS_ENABLED=true` on both.
+`sandbox_render_chart`, the browser tools and `sandbox_run_python` exist
+only for an organization that has turned charts, the browser and scripts
+on under Settings → Sandbox, and only where the worker reports on
+`/health` that it can do each (`@renkei/sandbox-client`,
+`sandboxFeatures`).
 
 ## Deployment
 
@@ -658,7 +662,7 @@ default `/data`). The web app reaches it at `SANDBOX_WORKER_URL` with the
 shared bearer key `SANDBOX_WORKER_API_KEY` (`apps/web/lib/sandbox/service-client.ts`).
 Both unset means the `sandbox_*` tools simply don't register — closed,
 never open, the same convention every other worker-backed connector
-follows. `SANDBOX_BROWSER_ENABLED=true`, set on both the web app and the
-worker, adds the `sandbox_browser_*` tools; `SANDBOX_BROWSER_EXECUTABLE`
-optionally points the worker at a specific Chromium binary instead of the
-one baked into the image. See `DEPLOYMENT.md` for the full env contract.
+follows. Which features an organization gets is its own setting
+(Settings → Sandbox); `SANDBOX_BROWSER_EXECUTABLE` optionally points the
+worker at a specific Chromium binary instead of the one baked into the
+image. See `DEPLOYMENT.md` for the full env contract.

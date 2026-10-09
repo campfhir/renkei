@@ -1819,8 +1819,20 @@ function handleAnthropic(request, url, response) {
 
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://stub.internal');
+  // The worker's /health names what it can do (apps/worker-sandbox
+  // features.ts); the app resolves each organization's features from this
+  // and the organization's own settings.
   if (request.method === 'GET' && url.pathname === '/health')
-    return json(response, 200, { ok: true });
+    return json(response, 200, {
+      ok: true,
+      capabilities: {
+        browser: true,
+        charts: true,
+        workspaces: true,
+        services: true,
+        scripts: 'isolated',
+      },
+    });
   // The model, stood in for: a seeded model config points its base_url here.
   if (url.pathname.startsWith('/anthropic/')) return handleAnthropic(request, url, response);
   // Bitbucket, stood in for: the app is pointed here with

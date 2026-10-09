@@ -94,6 +94,30 @@ export interface OrgSettings {
    * admin turns it on while people are connecting MCP clients.
    */
   enableDcr: boolean;
+  /**
+   * The sandbox worker's features, per organization (migration 152 moved
+   * these out of the SANDBOX_*_ENABLED environment variables the web app
+   * and the worker both used to read). Each is a policy switch an admin
+   * flips on the Settings page; whether the worker CAN do the thing (a
+   * Chromium, a Docker engine, a Python, network isolation) is what it
+   * reports on /health, and a feature is served only when both hold.
+   * All off until an admin turns them on — closed, never open.
+   */
+  /** The headless browser behind the sandbox_browser_* tools. */
+  sandboxBrowserEnabled: boolean;
+  /** Charts drawn from Mermaid text (sandbox_render_chart, chat_write_chart). */
+  sandboxChartsEnabled: boolean;
+  /** Code projects: a repository cloned on the worker, commands run in it. */
+  sandboxWorkspacesEnabled: boolean;
+  /** Containers started beside a code project's checkout; needs workspaces. */
+  sandboxServicesEnabled: boolean;
+  /** A caller's Python run over their own staged files (sandbox_run_python). */
+  sandboxScriptsEnabled: boolean;
+  /**
+   * Accept scripts running WITH the worker's network where the worker
+   * cannot start one without; the tool then says so in every result.
+   */
+  sandboxScriptsAllowNetwork: boolean;
   maxJqlResults: number;
   maxAttachmentBytes: number;
   /**
@@ -328,6 +352,12 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   disabledConnectors: [],
   connectorAudiences: {},
   enableDcr: false,
+  sandboxBrowserEnabled: false,
+  sandboxChartsEnabled: false,
+  sandboxWorkspacesEnabled: false,
+  sandboxServicesEnabled: false,
+  sandboxScriptsEnabled: false,
+  sandboxScriptsAllowNetwork: false,
   maxJqlResults: 100,
   maxAttachmentBytes: 20_971_520, // 20MB
   massUploadThreshold: 10,
@@ -443,6 +473,24 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
       d.connectorAudiences
     ),
     enableDcr: Boolean(coerce(stored.get('enable_dcr'), d.enableDcr)),
+    sandboxBrowserEnabled: Boolean(
+      coerce(stored.get('sandbox_browser_enabled'), d.sandboxBrowserEnabled)
+    ),
+    sandboxChartsEnabled: Boolean(
+      coerce(stored.get('sandbox_charts_enabled'), d.sandboxChartsEnabled)
+    ),
+    sandboxWorkspacesEnabled: Boolean(
+      coerce(stored.get('sandbox_workspaces_enabled'), d.sandboxWorkspacesEnabled)
+    ),
+    sandboxServicesEnabled: Boolean(
+      coerce(stored.get('sandbox_services_enabled'), d.sandboxServicesEnabled)
+    ),
+    sandboxScriptsEnabled: Boolean(
+      coerce(stored.get('sandbox_scripts_enabled'), d.sandboxScriptsEnabled)
+    ),
+    sandboxScriptsAllowNetwork: Boolean(
+      coerce(stored.get('sandbox_scripts_allow_network'), d.sandboxScriptsAllowNetwork)
+    ),
     maxJqlResults: Number(coerce(stored.get('max_jql_results'), d.maxJqlResults)),
     maxAttachmentBytes: Number(coerce(stored.get('max_attachment_bytes'), d.maxAttachmentBytes)),
     massUploadThreshold: Number(coerce(stored.get('mass_upload_threshold'), d.massUploadThreshold)),
@@ -543,6 +591,12 @@ export async function setOrgSettings(
     ['disabled_connectors', updates.disabledConnectors],
     ['connector_audiences', updates.connectorAudiences],
     ['enable_dcr', updates.enableDcr],
+    ['sandbox_browser_enabled', updates.sandboxBrowserEnabled],
+    ['sandbox_charts_enabled', updates.sandboxChartsEnabled],
+    ['sandbox_workspaces_enabled', updates.sandboxWorkspacesEnabled],
+    ['sandbox_services_enabled', updates.sandboxServicesEnabled],
+    ['sandbox_scripts_enabled', updates.sandboxScriptsEnabled],
+    ['sandbox_scripts_allow_network', updates.sandboxScriptsAllowNetwork],
     ['max_jql_results', updates.maxJqlResults],
     ['max_attachment_bytes', updates.maxAttachmentBytes],
     ['mass_upload_threshold', updates.massUploadThreshold],
