@@ -266,7 +266,10 @@ function makeJsonHandlers(
       }
       const tested = await serviceTestConnection(deps, tenantId, shareId, credentials);
       if (!tested.ok) return sendServiceError(response, tested.err);
-      sendJson(response, 200, { entries: tested.val.entries });
+      sendJson(response, 200, {
+        entries: tested.val.entries,
+        ...(tested.val.hostKey ? { hostKey: tested.val.hostKey } : {}),
+      });
     },
   };
 }

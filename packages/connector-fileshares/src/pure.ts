@@ -27,3 +27,5 @@ export {
   windowsToUnix,
   type PathError,
 } from './paths';
+
+export { normalizeHostKeyFingerprint } from './host-key';

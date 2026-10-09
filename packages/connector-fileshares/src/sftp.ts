@@ -13,13 +13,21 @@
  * regardless of the share's rule-matching flag — the flag describes how
  * ADMIN RULES match, not how the server's filesystem works, and a
  * case-folding containment check would be the wider (wrong) direction.
+ *
+ * Host keys: every connection runs ssh2's `hostVerifier` (host-key.ts).
+ * A share with a pinned fingerprint connects to that key and no other — a
+ * mismatch is refused before authentication, naming both keys. A share
+ * with none pinned accepts the first key it meets and hands the
+ * fingerprint to `onHostKey`, so the service layer can record it
+ * (trust-on-first-use) for the admin to confirm.
  */
 
 import SftpClient from 'ssh2-sftp-client';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import type { BackendError, ShareBackend } from './backend';
+import type { BackendError, OpenBackendOptions, ShareBackend } from './backend';
 import type { ShareCredentials } from './credentials';
+import { hostKeyMismatchMessage, makeHostVerifier, type HostKeyVerdict } from './host-key';
 import { isBoundaryPrefix, joinUnder, normalizePath, parentPath } from './paths';
 import {
   CONNECT_TIMEOUT_MS,
@@ -55,7 +63,8 @@ function mapError(operation: string, cause: unknown): { kind: BackendError; mess
 
 export async function openSftpBackend(
   share: ShareSummary,
-  credentials: ShareCredentials
+  credentials: ShareCredentials,
+  options: OpenBackendOptions = {}
 ): Promise<Result<ShareBackend, BackendError>> {
   if (credentials.protocol !== 'sftp') {
     return err('protocol' as const, { message: 'Stored credential is not an SFTP credential.' });
@@ -66,6 +75,12 @@ export async function openSftpBackend(
     'privateKey' in credentials
       ? { privateKey: credentials.privateKey, passphrase: credentials.passphrase }
       : { password: credentials.password };
+  // The verdict is kept so a refused handshake (which ssh2 reports as a
+  // bare "Host key verification failed") can say which keys disagreed.
+  const hostKey: { verdict: HostKeyVerdict | null } = { verdict: null };
+  const hostVerifier = makeHostVerifier(share.hostKeyFingerprint, (verdict) => {
+    hostKey.verdict = verdict;
+  });
 
   let realRoot: string;
   try {
@@ -77,9 +92,13 @@ export async function openSftpBackend(
         port: share.port ?? 22,
         username: credentials.username,
         readyTimeout: CONNECT_TIMEOUT_MS,
+        hostVerifier,
         ...auth,
       })
     );
+    if (hostKey.verdict && hostKey.verdict.pinned === null && options.onHostKey) {
+      await options.onHostKey(hostKey.verdict.seen);
+    }
     // The resolved root anchors every later containment check. A share
     // whose root does not exist is unusable, which is the right failure.
     const resolvedRoot = await withTimeout(
@@ -95,6 +114,11 @@ export async function openSftpBackend(
     realRoot = normalizedRoot.val;
   } catch (cause) {
     await client.end().catch(() => undefined);
+    if (hostKey.verdict && !hostKey.verdict.accepted) {
+      return err('connection' as const, {
+        message: hostKeyMismatchMessage(share.host, hostKey.verdict),
+      });
+    }
     const info = mapError('connect', cause);
     return err(info.kind, { message: info.message });
   }

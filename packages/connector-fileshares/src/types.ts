@@ -30,6 +30,14 @@ export interface ShareSummary {
   rootPath: string;
   caseInsensitive: boolean;
   enabled: boolean;
+  /**
+   * SFTP only: the server's SSH host key as an OpenSSH `SHA256:<base64>`
+   * fingerprint. Entered by an admin, or recorded on the first successful
+   * connection (trust-on-first-use) for the admin to confirm; every later
+   * connection refuses a server presenting any other key. Null for SMB,
+   * and for an SFTP share nobody has connected to yet.
+   */
+  hostKeyFingerprint: string | null;
 }
 
 /**

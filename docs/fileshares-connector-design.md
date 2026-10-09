@@ -72,6 +72,23 @@ third time through the server's `realpath` so symlinks cannot widen the
 root. Path discipline is hygiene, not authorization: it keeps requests
 inside the share the admin registered, and the server decides the rest.
 
+## Host keys (SFTP)
+
+ssh2 verifies nothing about the server unless told to, so a DNS or route
+hijack between the worker and the file server would hand a person's
+password to an impostor. Every SFTP connection therefore runs a
+`hostVerifier` (`host-key.ts`) against the share's
+`host_key_fingerprint` (migration 150): the server's key as the OpenSSH
+`SHA256:<base64>` fingerprint `ssh-keygen -lf` prints. An admin pins it on
+the share form; with none pinned, the first successful connection records
+the key it met (trust-on-first-use, `recordHostKeyFingerprint`, which
+writes only while the column is still null so a race or a later
+connection cannot replace it) and the share's admin page shows the key to
+confirm. From then on a server presenting any other key is refused before
+authentication, with an error naming both fingerprints, so a legitimate
+rotation (an admin replaces the pin) reads differently from an
+interception. SMB has no host key; the column stays null there.
+
 ## Library choices
 
 - SFTP: `ssh2-sftp-client` (mature, promise-based, exposes `realPath`).

@@ -126,3 +126,43 @@ describe('parseConnectPayload', () => {
     expect(parsed.credentials.protocol).toBe('sftp');
   });
 });
+
+describe('parseSharePayload host key fingerprint', () => {
+  const base = { name: 'Reports', protocol: 'sftp', host: 'files.corp.example', rootPath: '/srv' };
+  const fingerprint = 'SHA256:zgO0mL4RkHlb6yVSZS1Bz0Ys7gs0Ia0ZLyTRpFH9bXw';
+
+  it('stores a normalized SHA256 fingerprint for an SFTP share', () => {
+    const parsed = parseSharePayload({ ...base, hostKeyFingerprint: ` ${fingerprint}= ` });
+    expect('input' in parsed && parsed.input.hostKeyFingerprint).toBe(fingerprint);
+    const bare = parseSharePayload({ ...base, hostKeyFingerprint: fingerprint.slice(7) });
+    expect('input' in bare && bare.input.hostKeyFingerprint).toBe(fingerprint);
+  });
+
+  it('leaves it null (trust on first use) when absent or blank', () => {
+    expect('input' in parseSharePayload(base) && parseSharePayload(base)).toMatchObject({
+      input: { hostKeyFingerprint: null },
+    });
+    expect(parseSharePayload({ ...base, hostKeyFingerprint: '   ' })).toMatchObject({
+      input: { hostKeyFingerprint: null },
+    });
+  });
+
+  it('refuses something that is not a SHA-256 fingerprint', () => {
+    expect(parseSharePayload({ ...base, hostKeyFingerprint: 'MD5:aa:bb' })).toEqual({
+      error: expect.stringMatching(/SHA256 host-key fingerprint/),
+    });
+    expect(parseSharePayload({ ...base, hostKeyFingerprint: 42 })).toEqual({
+      error: 'hostKeyFingerprint must be a string',
+    });
+  });
+
+  it('never stores one for SMB, where there is no host key', () => {
+    const parsed = parseSharePayload({
+      ...base,
+      protocol: 'smb',
+      shareName: 'docs',
+      hostKeyFingerprint: fingerprint,
+    });
+    expect('input' in parsed && parsed.input.hostKeyFingerprint).toBeNull();
+  });
+});

@@ -39,6 +39,7 @@ interface RawShare {
   root_path: string;
   case_insensitive: boolean;
   enabled: boolean;
+  host_key_fingerprint: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -57,6 +58,7 @@ function summaryFromRow(row: RawShare): ShareSummary | null {
     rootPath: row.root_path,
     caseInsensitive: row.case_insensitive,
     enabled: row.enabled,
+    hostKeyFingerprint: row.host_key_fingerprint,
   };
 }
 
@@ -70,6 +72,7 @@ const SHARE_COLUMNS = [
   'file_shares.root_path',
   'file_shares.case_insensitive',
   'file_shares.enabled',
+  'file_shares.host_key_fingerprint',
 ] as const;
 
 function connectionFromRow(row: {
@@ -419,6 +422,12 @@ export interface ShareInput {
   rootPath: string;
   caseInsensitive: boolean;
   enabled: boolean;
+  /**
+   * The pinned SFTP host key (normalized `SHA256:...`); null clears it, so
+   * the next successful connection records the server's key afresh
+   * (trust-on-first-use). Always null for SMB.
+   */
+  hostKeyFingerprint: string | null;
 }
 
 export async function createShare(
@@ -440,6 +449,7 @@ export async function createShare(
           root_path: input.rootPath,
           case_insensitive: input.caseInsensitive,
           enabled: input.enabled,
+          host_key_fingerprint: input.hostKeyFingerprint,
           settings: JSON.stringify({}),
         })
         .returning('id')
@@ -471,6 +481,7 @@ export async function updateShare(
           root_path: input.rootPath,
           case_insensitive: input.caseInsensitive,
           enabled: input.enabled,
+          host_key_fingerprint: input.hostKeyFingerprint,
           updated_at: new Date().toISOString(),
         })
         .where('tenant_id', '=', tenantId)
@@ -481,6 +492,34 @@ export async function updateShare(
   if (!updated.ok) {
     return isDuplicateName(updated.err.cause) ? err('DUPLICATE_NAME' as const) : updated;
   }
+  return ok(updated.val.numUpdatedRows > BigInt(0));
+}
+
+/**
+ * Trust-on-first-use: record the SSH host key a share's server presented
+ * on the first successful connection — only where none is pinned yet, so
+ * a race between two first connections cannot replace what the first one
+ * saw, and an admin's explicit pin is never overwritten. True when this
+ * call did the recording.
+ */
+export async function recordHostKeyFingerprint(
+  db: Kysely<DB>,
+  tenantId: string,
+  shareId: string,
+  fingerprint: string
+): Promise<Result<boolean, StoreError>> {
+  const updated = await wrapAsync(
+    () =>
+      db
+        .updateTable('file_shares')
+        .set({ host_key_fingerprint: fingerprint, updated_at: new Date().toISOString() })
+        .where('tenant_id', '=', tenantId)
+        .where('id', '=', shareId)
+        .where('host_key_fingerprint', 'is', null)
+        .executeTakeFirst(),
+    'DB_ERROR' as const
+  );
+  if (!updated.ok) return updated;
   return ok(updated.val.numUpdatedRows > BigInt(0));
 }
 

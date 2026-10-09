@@ -75,6 +75,7 @@ function summary(overrides?: Partial<ShareSummary>): ShareSummary {
     shareName: null,
     rootPath: '/srv/accounting',
     caseInsensitive: false,
+    hostKeyFingerprint: null,
     enabled: true,
     ...overrides,
   };

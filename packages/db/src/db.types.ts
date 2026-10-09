@@ -832,6 +832,7 @@ export interface FileShares {
   created_at: Generated<Timestamp>;
   enabled: Generated<boolean>;
   host: string;
+  host_key_fingerprint: string | null;
   id: Generated<string>;
   name: string;
   port: number | null;

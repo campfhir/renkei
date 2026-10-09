@@ -70,6 +70,7 @@ function summary(): ShareSummary {
     shareName: null,
     rootPath: '/srv/accounting',
     caseInsensitive: false,
+    hostKeyFingerprint: null,
     enabled: true,
   };
 }
