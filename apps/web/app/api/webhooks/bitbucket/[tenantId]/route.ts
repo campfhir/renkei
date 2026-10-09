@@ -24,7 +24,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { ATLASSIAN_BITBUCKET_CONNECTOR } from '@/lib/atlassian-app';
 import { verifyBitbucketSecret } from '@/lib/bitbucket-webhook';
@@ -46,7 +46,7 @@ export async function POST(
   const providedSecret = request.nextUrl.searchParams.get('secret');
   const eventKey = request.headers.get('x-event-key');
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'bitbucket/webhook',

@@ -10,7 +10,7 @@
  * per org per hour, whichever person opens the picker.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import {
   VOICE_CONNECTOR,
@@ -30,7 +30,7 @@ export { VOICE_CONNECTOR };
  * not configured, switched off, or missing a required field.
  */
 export async function resolveVoiceConfig(tenantId: string): Promise<VoiceConfig | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'voice/config',

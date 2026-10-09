@@ -1,4 +1,4 @@
-import { encrypt, decrypt, parseEncryptionKey } from '@renkei/crypto';
+import { encrypt, decrypt, parseKeyring } from '@renkei/crypto';
 
 /**
  * At-rest encryption for secure()-marked log attributes, worker edition —
@@ -17,10 +17,12 @@ export type LogCipherResult =
   { state: 'off' } | { state: 'invalid'; error: string } | { state: 'on'; cipher: LogCipher };
 
 export function resolveLogCipher(
-  env: string | undefined = process.env.LOG_ENCRYPTION_KEY
+  env: string | undefined = process.env.LOG_ENCRYPTION_KEYS || process.env.LOG_ENCRYPTION_KEY
 ): LogCipherResult {
   if (!env) return { state: 'off' };
-  const keyResult = parseEncryptionKey(env);
+  // A keyring: `<current>,<previous>,...` from LOG_ENCRYPTION_KEYS while a
+  // rotation is under way, the one key from LOG_ENCRYPTION_KEY otherwise.
+  const keyResult = parseKeyring(env);
   if (!keyResult.ok) {
     return {
       state: 'invalid',
@@ -53,7 +55,7 @@ export function resolveLogCipher(
  * call this: there the web app's ingest sink holds the key and encrypts.
  */
 export function requireLogCipher(
-  env: string | undefined = process.env.LOG_ENCRYPTION_KEY
+  env: string | undefined = process.env.LOG_ENCRYPTION_KEYS || process.env.LOG_ENCRYPTION_KEY
 ): LogCipher {
   const resolved = resolveLogCipher(env);
   if (resolved.state === 'on') return resolved.cipher;

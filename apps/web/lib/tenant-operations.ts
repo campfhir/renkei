@@ -1,4 +1,4 @@
-import { encrypt, decrypt, parseEncryptionKey } from '@renkei/crypto';
+import { encrypt, decrypt, loadKeyring } from '@renkei/crypto';
 import { randomUUID } from 'crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -52,7 +52,7 @@ export async function createTenantOidcIfAbsent(
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
-  const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const encryptionKeyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!encryptionKeyResult.ok) return err('INVALID_ENCRYPTION_KEY' as const);
   const encryptionKey = encryptionKeyResult.val;
 
@@ -89,7 +89,7 @@ export async function setTenantOidc(
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
-  const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const encryptionKeyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!encryptionKeyResult.ok) return err('INVALID_ENCRYPTION_KEY' as const);
   const encryptionKey = encryptionKeyResult.val;
 
@@ -202,7 +202,7 @@ export async function getTenantOidc(
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
-  const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const encryptionKeyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!encryptionKeyResult.ok) return err('INVALID_ENCRYPTION_KEY' as const);
   const encryptionKey = encryptionKeyResult.val;
 

@@ -56,7 +56,7 @@ import {
   wantsAct,
   type NotificationPrefs,
 } from '@renkei/user-prefs';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { logger } from './logger';
 import type { McpClient, McpToolInfo } from './mcp-client';
@@ -258,7 +258,7 @@ async function write(
   // Fire-and-forget, deliberately not awaited: a push service's own latency
   // must never add to a step's. The row above is the record; this is only
   // reach, same distinction the file's own header draws.
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (keyResult.ok) {
     // A question or approval card is already rendered inline on the run's
     // own page — the person parked there doesn't need a banner repeating

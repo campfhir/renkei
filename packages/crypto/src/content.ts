@@ -14,7 +14,9 @@
  * The key is CONTENT_ENCRYPTION_KEY, falling back to TOKEN_ENCRYPTION_KEY
  * (already present on every service) so no new deployment config is
  * required. Set the dedicated variable to rotate content independently of
- * credentials.
+ * credentials; either rotates as a keyring (CONTENT_ENCRYPTION_KEYS /
+ * TOKEN_ENCRYPTION_KEYS, secretbox.ts), so rows under the previous key
+ * stay readable until `pnpm --filter @renkei/user-keys rewrap` has moved them.
  *
  * Trade acknowledged at the call sites: SQL string matching against
  * encrypted content is impossible — lookups go by ref_id/metadata/vector,
@@ -23,25 +25,31 @@
 
 import { err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { encrypt, decrypt, parseEncryptionKey } from './secretbox';
+import { encrypt, decrypt, loadKeyring, type Keyring } from './secretbox';
 
 /** Exported for the backfill sweep's SQL predicate; never build envelopes by hand. */
 export const CONTENT_ENVELOPE_PREFIX = 'renc1:';
 const CONTENT_PREFIX = CONTENT_ENVELOPE_PREFIX;
 
-export function contentEncryptionKey(): Result<
-  Buffer,
-  'MISSING_CONTENT_KEY' | 'INVALID_ENCRYPTION_KEY'
-> {
-  const encoded = process.env.CONTENT_ENCRYPTION_KEY || process.env.TOKEN_ENCRYPTION_KEY || '';
-  if (!encoded) {
+export function contentEncryptionKey(
+  env: NodeJS.ProcessEnv = process.env
+): Result<Keyring, 'MISSING_CONTENT_KEY' | 'INVALID_ENCRYPTION_KEY'> {
+  // Each is a keyring: CONTENT_ENCRYPTION_KEYS (current first, previous
+  // behind it) or CONTENT_ENCRYPTION_KEY; else the TOKEN pair the same way.
+  const name =
+    env.CONTENT_ENCRYPTION_KEYS || env.CONTENT_ENCRYPTION_KEY
+      ? 'CONTENT_ENCRYPTION_KEY'
+      : env.TOKEN_ENCRYPTION_KEYS || env.TOKEN_ENCRYPTION_KEY
+        ? 'TOKEN_ENCRYPTION_KEY'
+        : null;
+  if (!name) {
     return err('MISSING_CONTENT_KEY' as const, {
       message:
         'Neither CONTENT_ENCRYPTION_KEY nor TOKEN_ENCRYPTION_KEY is set — ' +
         'content cannot be encrypted at rest.',
     });
   }
-  return parseEncryptionKey(encoded);
+  return loadKeyring(name, env);
 }
 
 export function encryptContent(plaintext: string, key: Buffer): string {

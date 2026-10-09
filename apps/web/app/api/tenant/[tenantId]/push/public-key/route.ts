@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { getVapidKeys } from '@renkei/notifications';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
@@ -23,7 +23,7 @@ export async function GET(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'api/push/public-key',

@@ -23,6 +23,12 @@ ATLASSIAN_REDIRECT_URI=https://yourdomain.com/api/oauth/callback
 # Encryption
 # Generate each with: openssl rand -base64 32
 TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
+# To rotate, set the plural form instead — the NEW key first, the old one
+# behind it — and follow "Rotating TOKEN_ENCRYPTION_KEY" below. The same
+# plural form exists for LOG_ENCRYPTION_KEYS, CONTENT_ENCRYPTION_KEYS and
+# SANDBOX_ENV_SECRETS_KEYS. With one key and no rotation under way the
+# singular is all that is needed.
+# TOKEN_ENCRYPTION_KEYS=<new-key>,<old-key>
 # MIGRATION ONLY (docs/delegate-key-design.md, "Phases 2–5 as built"): the
 # master that pre-enrollment (managed) keys were derived from. People hold
 # their own keys now; the delegate reads this variable in exactly one
@@ -949,13 +955,97 @@ Error: "Redirect URI mismatch"
 
 ### Token Encryption Errors
 
-Error: "TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key"
+Error: "TOKEN_ENCRYPTION_KEY must decode to 32 bytes" (or the same of
+`TOKEN_ENCRYPTION_KEYS`, `LOG_ENCRYPTION_KEY(S)`, `CONTENT_ENCRYPTION_KEY(S)`)
 
-**Solution:** Regenerate the key:
+The variable is set to something that is not a base64 32-byte key — a
+truncated paste, a key with a trailing character, a comma-separated ring
+with one bad entry (the whole ring is refused rather than the bad key
+dropped, since dropping it would leave every row under it unreadable).
+**Fix the value; do not regenerate it.** Every connector secret, model
+API key, OIDC client secret and knowledge chunk the deployment holds is
+sealed under the key that is set, and a fresh key opens none of them. To
+move to a new key on purpose, follow the runbook below.
 
-```bash
-openssl rand -base64 32
-```
+### Rotating TOKEN_ENCRYPTION_KEY
+
+Secrets are sealed in an envelope that names its key (`v2.<kid>.…`, the
+first 8 hex characters of SHA-256 of the key; rows from before rotation
+existed are `v1.…` and name none), and every process reads its key as a
+**ring**: `TOKEN_ENCRYPTION_KEYS=<current>,<previous>,...` — the first
+key seals, every key opens (a `v2` by its kid, a `v1` by trying each in
+turn). `TOKEN_ENCRYPTION_KEY` alone is a ring of one. Rotation is
+therefore four steps, with no downtime and the old key kept until nothing
+names it:
+
+1. **Add the new key in front.** Generate it (`openssl rand -base64 32`)
+   and set, on **every** service that has `TOKEN_ENCRYPTION_KEY` today
+   (`.env` for the compose stack — the web app, every worker and the
+   delegate read it):
+
+   ```bash
+   TOKEN_ENCRYPTION_KEYS=<new-key>,<old-key>
+   ```
+
+   Restart the services. From here new writes are sealed under the new
+   key and existing rows still open under the old one. Nothing is
+   unreadable at any point in this step; a service that has not restarted
+   yet can still open everything (the new rows are the only thing it
+   cannot, until it restarts).
+
+2. **Rewrap what is still under the old key.** From a checkout, with
+   `DATABASE_URL` and the same ring in the environment:
+
+   ```bash
+   TOKEN_ENCRYPTION_KEYS=<new-key>,<old-key> pnpm --filter @renkei/user-keys rewrap --dry-run
+   TOKEN_ENCRYPTION_KEYS=<new-key>,<old-key> pnpm --filter @renkei/user-keys rewrap
+   ```
+
+   It walks `connector_configs.encrypted_secrets`,
+   `llm_model_configs.encrypted_secrets`, `tenant_oidc.client_secret`,
+   `platform_settings.vapid_keys`, `knowledge_chunks.content`,
+   `sandbox_env_secrets.sealed` and
+   `code_service_image_rules.registry_sealed` in batches of 200, opens
+   each `v1` or old-kid value with the ring and seals it again under the
+   current key. It is resumable (a row already under the current key is
+   never read again) and safe to run while the services are up (a row
+   someone saves meanwhile is left as they saved it — under the new key).
+   It exits 1 and names any row **no** key of the ring opens: that is a
+   value sealed under a key that was dropped too early, and the fix is to
+   put that key back behind the current one and run again. Do not go on
+   while it reports any.
+
+   `CONTENT_ENCRYPTION_KEY` and `SANDBOX_ENV_SECRETS_KEY`, when set apart
+   from the token key, rotate the same way (`CONTENT_ENCRYPTION_KEYS`,
+   `SANDBOX_ENV_SECRETS_KEYS`; the same `rewrap` run reads all three).
+   `LOG_ENCRYPTION_KEYS` rotates with step 1 alone: there is nothing to
+   rewrap, the ring keeps old log rows readable and retention ages them
+   out. The sandbox worker's own sealed files on `/data` (unlocked secret
+   keys for their window, browser sessions) are not rewrapped either —
+   each expires in hours, and one that straddles the rotation asks its
+   owner to unlock or sign in again.
+
+3. **Verify.** A clean `rewrap` (0 unreadable) and, if you want to see it,
+   `SELECT count(*) FROM connector_configs WHERE encrypted_secrets NOT LIKE 'v2.<new-kid>.%'`
+   is 0 — the new kid is the first 8 characters of
+   `echo -n "<new-key>" | base64 -d | sha256sum`. Open a connector's
+   settings page and a chat that uses a configured model: both read
+   through the new key now.
+
+4. **Drop the old key.** Set `TOKEN_ENCRYPTION_KEYS=<new-key>` (or back
+   to `TOKEN_ENCRYPTION_KEY=<new-key>`) everywhere and restart. Keep the
+   old key in your secrets manager for a while regardless: a database
+   backup taken before step 2 still needs it, and restoring one means
+   putting it back behind the current key and running `rewrap` again.
+
+A key that has **leaked** is rotated the same way — the steps are in the
+order that keeps the service up — but step 4 is the one that matters and
+should follow the rewrap immediately; until it does, the leaked key still
+opens every row the rewrap has not reached, and (on a service not yet
+restarted onto the ring) seals new ones. Consider the connector secrets
+themselves (OAuth client secrets, API keys) compromised and regenerate
+them at their providers; the rotation protects what is written from here
+on, it does not un-leak what was readable.
 
 ### High Memory Usage
 

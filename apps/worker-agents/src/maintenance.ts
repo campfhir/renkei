@@ -11,7 +11,7 @@ import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { CURRENT_STEPS_VERSION } from '@renkei/agents';
 import { recordAgentRunOutcome } from '@renkei/agents/runs';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { sendPush, deleteStaleChatPresence } from '@renkei/notifications';
 import { logger } from './logger';
 
@@ -193,7 +193,7 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
       RETURNING id, tenant_id, owner_subject, name
     `.execute(db);
 
-    const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+    const encryptionKeyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
 
     for (const agent of stale.rows) {
       const id = randomUUID();

@@ -20,7 +20,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
 import { effectiveDelivery, getNotificationPrefs } from '@renkei/user-prefs';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { resolveGraphAccess, graphPost } from '@/lib/mcp-tools/graph/client';
 import { resolveWebexUserAccess } from '@/lib/webex-user-access';
@@ -67,7 +67,7 @@ export function notifyAgentEdited(input: {
 
         // Fire-and-forget, same as the row above it: see notifications.ts's
         // write() (the worker's twin of this function) for why.
-        const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+        const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
         if (keyResult.ok) {
           void sendPush(
             dbResult.val,

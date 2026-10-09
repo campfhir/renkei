@@ -23,7 +23,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { GITHUB_CONNECTOR } from '@/lib/github-app';
 import { verifyGitHubSignature } from '@/lib/github-webhook';
@@ -46,7 +46,7 @@ export async function POST(
   const signature = request.headers.get('x-hub-signature-256');
   const eventType = request.headers.get('x-github-event');
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'github/webhook',
@@ -82,7 +82,10 @@ export async function POST(
       component: 'github/webhook',
       tenantId,
     });
-    return NextResponse.json({ error: 'GitHub connector not configured for webhooks' }, { status: 503 });
+    return NextResponse.json(
+      { error: 'GitHub connector not configured for webhooks' },
+      { status: 503 }
+    );
   }
 
   if (!verifyGitHubSignature(rawBody, signature, webhookSecret)) {

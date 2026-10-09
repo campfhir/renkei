@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { watchLogLevel } from '@renkei/settings';
 import type { WorkerLogger } from './logger';
@@ -65,7 +65,7 @@ export async function runWorker(options: RunWorkerOptions): Promise<void> {
     fatal(`${envPrefix}_API_KEY is required (comma-separated bearer keys)`);
   }
 
-  const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!key.ok) {
     fatal('TOKEN_ENCRYPTION_KEY must be 32 bytes base64 (openssl rand -base64 32)');
   }
