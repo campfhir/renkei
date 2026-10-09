@@ -21,21 +21,35 @@
 # public deployment, put a TLS-terminating reverse proxy in front instead and
 # publish 3000 on 127.0.0.1 only.
 
+# The database credential comes from .env, never from this file:
+#   POSTGRES_PASSWORD   required — `openssl rand -hex 32` (hex, so it needs
+#                       no URL-escaping inside DATABASE_URL below)
+#   POSTGRES_USER       optional, default renkei
+#   POSTGRES_DB         optional, default renkei
+#   DATABASE_URL_PARAMS optional query string appended to DATABASE_URL. The
+#                       bundled postgres is reached over the private compose
+#                       network only, with no TLS, so leave it empty here;
+#                       a deployment pointing at a managed Postgres instead
+#                       sets `?sslmode=verify-full` (and, if the server's
+#                       certificate chain is private, `&sslrootcert=...`)
+#                       and drops the postgres service.
+# `docker compose config` and `up` refuse to start while POSTGRES_PASSWORD is
+# unset, which is the point: there is no default to forget to change.
 x-database-urls: &database-urls
-  DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+  DATABASE_URL: postgres://${POSTGRES_USER:-renkei}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (openssl rand -hex 32)}@postgres:5432/${POSTGRES_DB:-renkei}${DATABASE_URL_PARAMS:-}
 
 services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: renkei-postgres
     environment:
-      POSTGRES_USER: renkei
-      POSTGRES_PASSWORD: renkei
-      POSTGRES_DB: renkei
+      POSTGRES_USER: ${POSTGRES_USER:-renkei}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (openssl rand -hex 32)}
+      POSTGRES_DB: ${POSTGRES_DB:-renkei}
     volumes:
       - renkei-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U renkei -d renkei']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-renkei} -d ${POSTGRES_DB:-renkei}']
       interval: 5s
       timeout: 5s
       retries: 10

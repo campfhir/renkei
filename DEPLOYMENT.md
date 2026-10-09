@@ -45,7 +45,22 @@ TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
 # DELEGATE_GIT_URL=http://renkei-worker-delegate:8096
 
 # Database
-DATABASE_URL=postgresql://user:password@postgres.example.com:5432/jira_mcp_db
+# docker-compose.yaml builds DATABASE_URL itself from these three — the
+# bundled postgres container is created with the same values, so there is
+# exactly one place to set the password and no default to forget to change
+# (`docker compose up` refuses to start while POSTGRES_PASSWORD is unset).
+# Hex rather than base64 so the password needs no URL-escaping in the URL.
+POSTGRES_PASSWORD=<openssl rand -hex 32>
+# POSTGRES_USER=renkei
+# POSTGRES_DB=renkei
+# Query string appended to the compose-built URL. The bundled postgres is
+# reached over the private compose network only and speaks no TLS, so leave
+# it empty there. Against a managed Postgres (drop the postgres service and
+# set DATABASE_URL below instead) always require a verified TLS session:
+# DATABASE_URL_PARAMS=?sslmode=verify-full
+#
+# Outside compose (systemd, a PaaS), set the URL directly:
+DATABASE_URL=postgresql://user:password@postgres.example.com:5432/jira_mcp_db?sslmode=verify-full
 
 # Server
 PUBLIC_BASE_URL=https://yourdomain.com
