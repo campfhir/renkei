@@ -21,6 +21,7 @@ import type { DB } from '@renkei/db';
 import { unwrapKey } from '@renkei/crypto';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { keyRequestScope } from './request-scope';
 import { keyVault } from './vault';
 
 export type KeyScope = 'session' | 'automation';
@@ -62,6 +63,8 @@ export interface HeldRow {
   wrapped_private_key: string | null;
   wrapped_automation_key: string | null;
   enrolled_at: Date | null;
+  /** For a held row: a verifier of the automation key (enrollment.ts, checkOwnAutomation). */
+  verifier: string | null;
 }
 
 export async function readKeyRow(
@@ -78,6 +81,7 @@ export async function readKeyRow(
       'wrapped_private_key',
       'wrapped_automation_key',
       'enrolled_at',
+      'verifier',
     ])
     .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
@@ -87,6 +91,7 @@ export async function readKeyRow(
 
 interface DelegationRow {
   scope: string;
+  session_id: string | null;
   sealed_key: string;
 }
 
@@ -98,13 +103,29 @@ async function liveDelegationsFor(
 ): Promise<DelegationRow[]> {
   return db
     .selectFrom('key_delegations')
-    .select(['scope', 'sealed_key'])
+    .select(['scope', 'session_id', 'sealed_key'])
     .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('instance_id', '=', instanceId)
     .where('expires_at', '>', new Date())
     .orderBy('created_at', 'desc')
     .execute();
+}
+
+/**
+ * Which of a person's live delegations this request may open
+ * (request-scope.ts): a caller other than the web app sees no session
+ * row; a request bound to a session sees that session's row and no other
+ * session's. Outside a request scope, every row.
+ */
+function usableDelegations(rows: DelegationRow[]): DelegationRow[] {
+  const scope = keyRequestScope();
+  if (!scope) return rows;
+  return rows.filter((row) => {
+    if (row.scope !== 'session') return true;
+    if (!scope.allowSession) return false;
+    return scope.sessionId === null || row.session_id === scope.sessionId;
+  });
 }
 
 /** The ring a held row and an opened user key make. */
@@ -171,7 +192,9 @@ export async function getKeyRing(
   const row = await readKeyRow(db, tenantId, subject);
   if (!row) return err('NO_USER_KEY' as const);
   if (row.mode !== 'held') return err('NOT_ENROLLED' as const);
-  const delegations = await liveDelegationsFor(db, tenantId, subject, vault.instanceId);
+  const delegations = usableDelegations(
+    await liveDelegationsFor(db, tenantId, subject, vault.instanceId)
+  );
   let sawAutomation: Buffer | null = null;
   for (const delegation of delegations) {
     const opened = vault.open(delegation.sealed_key);

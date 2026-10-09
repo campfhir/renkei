@@ -13,6 +13,8 @@
  * chip naming none of them.
  */
 
+import { untrustedBlock } from './untrusted';
+
 export interface VariableDescriptor {
   /** The name a var chip carries, e.g. 'user.email' or 'trigger.subject'. */
   name: string;
@@ -116,4 +118,31 @@ export function knownVariables(input: KnownVariablesInput): Record<string, strin
     if (isAlwaysKnown(name) || inputs.has(name) || referenced.has(name)) known[name] = value;
   }
   return known;
+}
+
+/**
+ * The vars whose values came from OUTSIDE the author's hand — the trigger's
+ * payload (a mail, a message, an API caller's state). A step result is the
+ * model's own saved summary; a builtin is the platform's. Only the trigger's
+ * values carry a stranger's words into the prompt as they were written.
+ */
+export function isUntrustedVariable(name: string): boolean {
+  return name.startsWith('trigger.');
+}
+
+/**
+ * The variables with every untrusted value fenced (untrusted.ts), ready to
+ * render — inline in a sentence or listed under "Known information", the
+ * fence travels with the value, so both readings of the prompt carry it
+ * exactly once per value. Applied by every prompt builder; the engine's
+ * own renders of guidance go through it too.
+ */
+export function delimitUntrustedVariables(
+  variables: Record<string, string>
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(variables)) {
+    out[name] = isUntrustedVariable(name) ? untrustedBlock(name, value) : value;
+  }
+  return out;
 }

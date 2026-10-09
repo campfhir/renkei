@@ -24,7 +24,14 @@ describe('isBlockedIP', () => {
   });
 
   it('blocks IPv6 loopback, link-local, unique-local, and mapped-private', () => {
-    for (const ip of ['::1', '::', 'fe80::1', 'fc00::1', 'fd12:3456::1', '::ffff:169.254.169.254']) {
+    for (const ip of [
+      '::1',
+      '::',
+      'fe80::1',
+      'fc00::1',
+      'fd12:3456::1',
+      '::ffff:169.254.169.254',
+    ]) {
       expect(isBlockedIP(ip)).toBe(true);
     }
   });
@@ -60,5 +67,66 @@ describe('assertSafeHttpsUrl', () => {
 
   it('rejects a malformed URL', () => {
     expect(() => assertSafeHttpsUrl('not a url')).toThrow(BlockedUrlError);
+  });
+});
+
+describe('assertPublicHttpsUrl / resolvePublicAddress', () => {
+  const lookup = jest.fn<Promise<Array<{ address: string; family: number }>>, [string, unknown]>();
+
+  beforeEach(() => {
+    lookup.mockReset();
+    jest.resetModules();
+    jest.doMock('node:dns/promises', () => ({ lookup }));
+  });
+
+  afterEach(() => {
+    jest.dontMock('node:dns/promises');
+  });
+
+  async function guard() {
+    return import('./egress-guard');
+  }
+
+  it('accepts a name whose every answer is public and returns the first', async () => {
+    lookup.mockResolvedValue([
+      { address: '93.184.216.34', family: 4 },
+      { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 },
+    ]);
+    const { assertPublicHttpsUrl, resolvePublicAddress } = await guard();
+    expect((await assertPublicHttpsUrl('https://example.com/x')).hostname).toBe('example.com');
+    expect(await resolvePublicAddress('example.com')).toBe('93.184.216.34');
+  });
+
+  it('refuses a name with any private answer', async () => {
+    lookup.mockResolvedValue([
+      { address: '93.184.216.34', family: 4 },
+      { address: '10.0.0.5', family: 4 },
+    ]);
+    const { assertPublicHttpsUrl } = await guard();
+    await expect(assertPublicHttpsUrl('https://rebind.example/')).rejects.toThrow(
+      /private or reserved/
+    );
+  });
+
+  it('refuses a name that does not resolve instead of passing it through', async () => {
+    lookup.mockRejectedValue(Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' }));
+    const { assertPublicHttpsUrl, BlockedUrlError: Blocked } = await guard();
+    await expect(assertPublicHttpsUrl('https://nowhere.example/')).rejects.toThrow(Blocked);
+    await expect(assertPublicHttpsUrl('https://nowhere.example/')).rejects.toThrow(
+      /could not resolve/
+    );
+  });
+
+  it('refuses a name with no answers at all', async () => {
+    lookup.mockResolvedValue([]);
+    const { resolvePublicAddress } = await guard();
+    await expect(resolvePublicAddress('empty.example')).rejects.toThrow(/could not resolve/);
+  });
+
+  it('settles an IP literal without a lookup', async () => {
+    const { resolvePublicAddress } = await guard();
+    expect(await resolvePublicAddress('93.184.216.34')).toBe('93.184.216.34');
+    expect(await resolvePublicAddress('[2606:4700:4700::1111]')).toBe('2606:4700:4700::1111');
+    expect(lookup).not.toHaveBeenCalled();
   });
 });

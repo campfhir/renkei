@@ -4,6 +4,7 @@ import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
 import { safeFetch, assertSafeHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
+import { BOOTSTRAP_SECRET_HEADER, verifyBootstrapSecret } from '@/lib/tenant-bootstrap';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 
@@ -68,7 +69,7 @@ export async function POST(
     // Verify tenant exists
     const tenant = await db
       .selectFrom('tenants')
-      .select('id')
+      .select(['id', 'bootstrap_secret_hash', 'bootstrap_secret_expires_at'])
       .where('id', '=', tenantId)
       .executeTakeFirst();
 
@@ -76,15 +77,19 @@ export async function POST(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    // First configuration is open; every change after it is operator-only.
+    // First configuration needs the one-time bootstrap secret; every change
+    // after it is operator-only.
     //
-    // The exception exists because operator identity is itself derived from
-    // OIDC: until a tenant has an identity provider, nobody can hold an
-    // operator session for it, so gating creation would leave every new tenant
-    // permanently unconfigurable. Once a provider is set an operator can exist,
-    // and from then on only they may change it -- which is the part that
-    // matters, since whoever controls this record controls who becomes an
-    // operator.
+    // The first write cannot require a session because operator identity is
+    // itself derived from OIDC: until a tenant has an identity provider,
+    // nobody can hold an operator session for it. It used to be open to
+    // anyone holding the tenant id — which travels in the creator's URL and
+    // in the create response — so whoever posted an IdP first owned the
+    // tenant. The secret minted at creation (lib/tenant-bootstrap.ts) and
+    // shown once to the creator is what stands in for a session here. Once
+    // a provider is set an operator can exist, and from then on only they
+    // may change it -- which is the part that matters, since whoever
+    // controls this record controls who becomes an operator.
     const configured = await hasOidcConfig(db, tenantId);
     if (configured) {
       const denied = await requireTenantOperator(tenantId);
@@ -95,6 +100,26 @@ export async function POST(
           status: denied.status,
         });
         return denied;
+      }
+    } else {
+      const verdict = verifyBootstrapSecret(request.headers.get(BOOTSTRAP_SECRET_HEADER), tenant);
+      if (verdict !== 'ok') {
+        logger.warn('Rejected identity-provider bootstrap without a valid secret ({verdict})', {
+          component: 'auth/oidc',
+          tenantId,
+          verdict,
+        });
+        return NextResponse.json(
+          {
+            error:
+              verdict === 'none-issued'
+                ? 'This organization has no onboarding secret; an operator must configure its identity provider directly.'
+                : verdict === 'expired'
+                  ? 'The onboarding secret has expired. Create the organization again.'
+                  : 'The onboarding secret is missing or wrong. Use the one shown when the organization was created.',
+          },
+          { status: 401 }
+        );
       }
     }
 
@@ -234,8 +259,16 @@ export async function POST(
       );
     }
 
+    // Spent: the secret was for exactly this write.
+    await db
+      .updateTable('tenants')
+      .set({ bootstrap_secret_hash: null, bootstrap_secret_expires_at: null })
+      .where('id', '=', tenantId)
+      .execute();
+
     // Worth a record of its own: this is the one write to this table that
-    // nobody had to authenticate for, and it decides who can become an operator.
+    // no session authenticated — only the creator's one-time secret — and it
+    // decides who can become an operator.
     logger.warn('Identity provider claimed for previously unconfigured tenant', {
       component: 'auth/oidc',
       tenantId,

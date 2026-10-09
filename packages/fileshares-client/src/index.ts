@@ -377,14 +377,24 @@ export interface TestConnectionPayload {
   credentials: ShareCredentials;
 }
 
+export interface TestConnectionResult {
+  entries: number;
+  /** SFTP: the host key the handshake verified, and whether this connection was the one that recorded it (trust-on-first-use). */
+  hostKey?: { fingerprint: string; recorded: boolean };
+}
+
 export async function fsTestConnection(
   payload: TestConnectionPayload
-): Promise<ClientResult<{ entries: number }>> {
+): Promise<ClientResult<TestConnectionResult>> {
   const result = await callJson('test-connection', payload);
   if (!result.ok) return result;
   const value = result.val;
   if (!isRecord(value) || typeof value.entries !== 'number') return malformed();
-  return { ok: true, val: { entries: value.entries } };
+  const hostKey =
+    isRecord(value.hostKey) && typeof value.hostKey.fingerprint === 'string'
+      ? { fingerprint: value.hostKey.fingerprint, recorded: value.hostKey.recorded === true }
+      : undefined;
+  return { ok: true, val: { entries: value.entries, ...(hostKey ? { hostKey } : {}) } };
 }
 
 /**

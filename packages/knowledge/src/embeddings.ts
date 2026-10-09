@@ -12,7 +12,7 @@
  * changes with it.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { LaneLimiter, RateLimitTimeoutError, type RequestLane } from '@renkei/rate-limit';
 import { ok, err } from '@campfhir/safe-functions/helpers';
@@ -234,7 +234,7 @@ function prefixSetting(value: unknown): string {
  * it) — callers skip indexing and enrichment in that case.
  */
 export async function resolveKnowledge(tenantId: string): Promise<KnowledgeProvider | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
 
   const configResult = await readConnectorConfigCached(

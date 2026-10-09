@@ -21,24 +21,95 @@
 # public deployment, put a TLS-terminating reverse proxy in front instead and
 # publish 3000 on 127.0.0.1 only.
 
+# The database credential comes from .env, never from this file:
+#   POSTGRES_PASSWORD   required — `openssl rand -hex 32` (hex, so it needs
+#                       no URL-escaping inside DATABASE_URL below)
+#   POSTGRES_USER       optional, default renkei
+#   POSTGRES_DB         optional, default renkei
+#   DATABASE_URL_PARAMS optional query string appended to DATABASE_URL. The
+#                       bundled postgres is reached over the private compose
+#                       network only, with no TLS, so leave it empty here;
+#                       a deployment pointing at a managed Postgres instead
+#                       sets `?sslmode=verify-full` (and, if the server's
+#                       certificate chain is private, `&sslrootcert=...`)
+#                       and drops the postgres service.
+# `docker compose config` and `up` refuse to start while POSTGRES_PASSWORD is
+# unset, which is the point: there is no default to forget to change.
 x-database-urls: &database-urls
-  DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+  DATABASE_URL: postgres://${POSTGRES_USER:-renkei}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (openssl rand -hex 32)}@postgres:5432/${POSTGRES_DB:-renkei}${DATABASE_URL_PARAMS:-}
+
+# The delegate (docs/delegate-key-design.md) is where every other process
+# gets a chat's key, a person's provider token and the connector workers;
+# each caller reaches it at this address with ITS OWN bearer key, so a key
+# that leaks from one container names which one, and is rotated alone:
+#   DELEGATE_KEY_WEB, DELEGATE_KEY_WORKER, DELEGATE_KEY_AGENTS,
+#   DELEGATE_KEY_SANDBOX   — each `openssl rand -base64 32`, all in .env
+# The delegate takes all four as DELEGATE_WORKER_API_KEYS, which maps each
+# caller name to its key and is what the delegate authorizes by; never hand
+# it the same keys as a plain list, since a key named by the legacy single
+# variable counts as the web caller. No shared DELEGATE_WORKER_API_KEY
+# in .env is needed or read.
+x-delegate-url: &delegate-url
+  DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+
+# What every stateless service runs under. No capability at all (the Node
+# processes bind ports above 1024 as an unprivileged user and need none),
+# no way to gain one (no setuid binary in the image can escalate), and a
+# root filesystem that cannot be written: the images hold code, not state,
+# and a process that cannot rewrite its own dependencies is the better
+# arrangement. Each service adds the tmpfs mounts for the few paths Node,
+# pnpm and Next do write (a temp dir, the runtime user's home for pnpm's
+# state file, Next's .next/cache). Postgres and the sandbox worker are the
+# two stateful exceptions and carry their own settings below.
+x-locked-down: &locked-down
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+x-worker-tmpfs: &worker-tmpfs
+  - /tmp
+  - /home/worker
+x-delegate-web: &delegate-web
+  <<: *delegate-url
+  DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WEB:?set DELEGATE_KEY_WEB in .env (openssl rand -base64 32)}
+x-delegate-worker: &delegate-worker
+  <<: *delegate-url
+  DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WORKER:?set DELEGATE_KEY_WORKER in .env (openssl rand -base64 32)}
+x-delegate-agents: &delegate-agents
+  <<: *delegate-url
+  DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_AGENTS:?set DELEGATE_KEY_AGENTS in .env (openssl rand -base64 32)}
+x-delegate-sandbox: &delegate-sandbox
+  <<: *delegate-url
+  DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_SANDBOX:?set DELEGATE_KEY_SANDBOX in .env (openssl rand -base64 32)}
 
 services:
+  # Third-party images are pinned to a digest as well as a tag — the tag
+  # says what it is, the digest says exactly which build, so a tag that is
+  # re-pointed upstream changes nothing here until someone chooses it.
+  # Dependabot proposes the new digest when the tag moves (docker-compose
+  # ecosystem in .github/dependabot.yml). The scan of this image is the
+  # operator's: CI scans only the images it builds.
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
     container_name: renkei-postgres
     environment:
-      POSTGRES_USER: renkei
-      POSTGRES_PASSWORD: renkei
-      POSTGRES_DB: renkei
+      POSTGRES_USER: ${POSTGRES_USER:-renkei}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (openssl rand -hex 32)}
+      POSTGRES_DB: ${POSTGRES_DB:-renkei}
     volumes:
       - renkei-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U renkei -d renkei']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-renkei} -d ${POSTGRES_DB:-renkei}']
       interval: 5s
       timeout: 5s
       retries: 10
+    # The image's entrypoint starts as root and drops to postgres itself;
+    # no-new-privileges does not stop that drop, only an escalation.
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - renkei-internal
     restart: unless-stopped
 
   migrate:
@@ -47,6 +118,11 @@ services:
     env_file:
       - .env
     environment: *database-urls
+    <<: *locked-down
+    tmpfs:
+      - /tmp
+    networks:
+      - renkei-internal
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,7 +149,15 @@ services:
     # To go further and dedicate a whole instance, set
     #   WORKER_EVENT_SOURCES: webex,zoom
     # here (and run a second worker service without it for the rest).
-    environment: *database-urls
+    #
+    # Reaches the delegate for chat keys, provider tokens and the connector
+    # workers (a person's own credential attached there, never here).
+    environment:
+      <<: [*database-urls, *delegate-worker]
+    <<: *locked-down
+    tmpfs: *worker-tmpfs
+    networks:
+      - renkei-internal
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,7 +176,12 @@ services:
     command: ['pnpm', '--filter', '@renkei/worker', 'start:embeddings']
     env_file:
       - .env
-    environment: *database-urls
+    environment:
+      <<: [*database-urls, *delegate-worker]
+    <<: *locked-down
+    tmpfs: *worker-tmpfs
+    networks:
+      - renkei-internal
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,8 +197,12 @@ services:
     env_file:
       - .env
     environment:
-      <<: *database-urls
+      <<: [*database-urls, *delegate-agents]
       RENKEI_WEB_INTERNAL_URL: http://renkei-app:3000
+    <<: *locked-down
+    tmpfs: *worker-tmpfs
+    networks:
+      - renkei-internal
     depends_on:
       postgres:
         condition: service_healthy
@@ -126,18 +219,26 @@ services:
   # document — is slow, external, per-item I/O that must never sit in
   # front of the interactive worker's webhook replies. No container_name
   # on purpose: scale with `--scale worker-batch-jobs=N`, same reasoning as
-  # worker-agents. Reaches the fileshare and sandbox workers directly (to
-  # read source documents and stage OCR results) over the same internal
-  # URLs the web app uses, with the same bearer keys from .env.
+  # worker-agents. Reads source documents from a file share through the
+  # delegate (the person's own share credential is attached there) and
+  # stages OCR results on the sandbox worker directly, over the same
+  # internal URL the web app uses, with the same bearer key from .env.
   worker-batch-jobs:
     image: scotteremiaroden/renkei-worker:latest
     command: ['pnpm', '--filter', '@renkei/worker', 'start:batch-jobs']
     env_file:
       - .env
     environment:
-      <<: *database-urls
-      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
+      <<: [*database-urls, *delegate-worker]
       SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
+    <<: *locked-down
+    tmpfs: *worker-tmpfs
+    # On the sandbox network too, as a CALLER of the sandbox worker (OCR
+    # results are staged there). It listens on nothing, so the sandbox
+    # gains no route into it by sharing the network.
+    networks:
+      - renkei-internal
+      - renkei-sandbox
     depends_on:
       postgres:
         condition: service_healthy
@@ -146,11 +247,11 @@ services:
   # The file-share I/O worker: the only process that opens SMB/SFTP
   # sessions or decrypts share credentials. Its own image (not the shared
   # worker one), so the SMB/SSH protocol stack ships apart from the queue
-  # workers and this service rolls out independently. The web app reaches
-  # it over HTTP on the compose network (FILESHARES_WORKER_URL below) with
-  # the shared FILESHARES_WORKER_API_KEY from .env — generate one with
-  # `openssl rand -base64 32`. No published ports on purpose: nothing
-  # outside the compose network may speak to it.
+  # workers and this service rolls out independently. The delegate reaches
+  # it over HTTP on the compose network (FILESHARES_WORKER_URL on
+  # worker-delegate below) with the shared FILESHARES_WORKER_API_KEY from
+  # .env — generate one with `openssl rand -base64 32`. No published ports
+  # on purpose: nothing outside the compose network may speak to it.
   worker-fileshares:
     image: scotteremiaroden/renkei-fileshares:latest
     container_name: renkei-worker-fileshares
@@ -158,6 +259,10 @@ services:
     env_file:
       - .env
     environment: *database-urls
+    <<: *locked-down
+    tmpfs: *worker-tmpfs
+    networks:
+      - renkei-internal
     depends_on:
       postgres:
         condition: service_healthy
@@ -165,9 +270,9 @@ services:
 
   # The OnBase egress worker: the only process that dials a customer's
   # on-prem OnBase API Server or Hyland IdP. Its own image so it rolls out
-  # independently of the queue workers. The web app reaches it over HTTP on
-  # the compose network (ONBASE_WORKER_URL below) with the shared
-  # ONBASE_WORKER_API_KEY from .env — generate one with
+  # independently of the queue workers. The delegate reaches it over HTTP
+  # on the compose network (ONBASE_WORKER_URL on worker-delegate below)
+  # with the shared ONBASE_WORKER_API_KEY from .env — generate one with
   # `openssl rand -base64 32`. No published ports on purpose: nothing
   # outside the compose network may speak to it.
   worker-onbase:
@@ -177,6 +282,10 @@ services:
     env_file:
       - .env
     environment: *database-urls
+    <<: *locked-down
+    tmpfs: *worker-tmpfs
+    networks:
+      - renkei-internal
     depends_on:
       postgres:
         condition: service_healthy
@@ -185,9 +294,9 @@ services:
   # The Mirth Connect egress worker: the only process that dials an
   # organization's Mirth Connect servers (dev, test, prod…) or decrypts a
   # person's stored Mirth credential. Its own image so it rolls out
-  # independently of the queue workers. The web app reaches it over HTTP on
-  # the compose network (MIRTH_WORKER_URL below) with the shared
-  # MIRTH_WORKER_API_KEY from .env — generate one with
+  # independently of the queue workers. The delegate reaches it over HTTP
+  # on the compose network (MIRTH_WORKER_URL on worker-delegate below)
+  # with the shared MIRTH_WORKER_API_KEY from .env — generate one with
   # `openssl rand -base64 32`. No published ports on purpose: nothing
   # outside the compose network may speak to it.
   worker-mirth:
@@ -197,6 +306,98 @@ services:
     env_file:
       - .env
     environment: *database-urls
+    <<: *locked-down
+    tmpfs: *worker-tmpfs
+    networks:
+      - renkei-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The ADManager Plus egress worker: the only process that dials an
+  # organization's ManageEngine ADManager Plus servers or decrypts a
+  # person's stored authtoken. Its own image so it rolls out independently
+  # of the queue workers. The delegate reaches it over HTTP on the compose
+  # network (ADMANAGER_WORKER_URL on worker-delegate below) with the shared
+  # ADMANAGER_WORKER_API_KEY from .env — generate one with
+  # `openssl rand -base64 32`. No published ports on purpose: nothing
+  # outside the compose network may speak to it.
+  worker-admanager:
+    image: scotteremiaroden/renkei-admanager:latest
+    container_name: renkei-worker-admanager
+    command: ['pnpm', '--filter', '@renkei/worker-admanager', 'start']
+    env_file:
+      - .env
+    environment: *database-urls
+    <<: *locked-down
+    tmpfs: *worker-tmpfs
+    networks:
+      - renkei-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The delegate — the one process that holds a key
+  # (docs/delegate-key-design.md). It derives nothing: a signed-in browser
+  # seals its person's key to this instance's public key, and the delegate
+  # opens that to unwrap a chat's or project's data key and a person's
+  # sealed values, on behalf of the app and the other workers, which reach
+  # it at DELEGATE_WORKER_URL with their own bearer keys (the x-delegate-*
+  # blocks at the top) and hold no key themselves. It also holds every
+  # provider token, forwards Mirth, ADManager Plus, file-share and OnBase
+  # operations to their workers with the person's credential attached, and
+  # relays a code workspace's git for the sandbox worker (/git/<ticket>/…).
+  # TOKEN_ENCRYPTION_KEY (the connector configs a refresh needs) comes from
+  # .env. USER_KEY_ENCRYPTION_KEY is migration-only: set it in .env while
+  # people from before held keys have not enrolled, drop it after. Without
+  # this service no chat opens and no connector acts: fail closed. No
+  # published ports on purpose: nothing outside the compose network may
+  # speak to it.
+  worker-delegate:
+    image: scotteremiaroden/renkei-delegate:latest
+    container_name: renkei-worker-delegate
+    command: ['pnpm', '--filter', '@renkei/worker-delegate', 'start']
+    env_file:
+      - .env
+    environment:
+      <<: *database-urls
+      # One key per caller (see the top of this file). The map is what the
+      # delegate reads; the plain list is the same four keys for a delegate
+      # image from before the map existed, so either reads them.
+      DELEGATE_WORKER_API_KEYS: web=${DELEGATE_KEY_WEB:?set DELEGATE_KEY_WEB in .env (openssl rand -base64 32)},worker=${DELEGATE_KEY_WORKER:?set DELEGATE_KEY_WORKER in .env (openssl rand -base64 32)},agents=${DELEGATE_KEY_AGENTS:?set DELEGATE_KEY_AGENTS in .env (openssl rand -base64 32)},sandbox=${DELEGATE_KEY_SANDBOX:?set DELEGATE_KEY_SANDBOX in .env (openssl rand -base64 32)}
+      USER_KEY_ENCRYPTION_KEY: ${USER_KEY_ENCRYPTION_KEY:-}
+      # The connector workers the delegate forwards to, with the person's
+      # credential attached (forward/<connector>/<op>); the bearer keys
+      # (*_WORKER_API_KEY) come from .env.
+      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
+      ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
+      MIRTH_WORKER_URL: http://renkei-worker-mirth:8093
+      ADMANAGER_WORKER_URL: http://renkei-worker-admanager:8095
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://127.0.0.1:8096/health', (r) => { if (r.statusCode !== 200) throw new Error(r.statusCode) })",
+        ]
+      interval: 30s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    <<: *locked-down
+    tmpfs: *worker-tmpfs
+    # This process holds unwrapped keys and provider tokens in memory; a
+    # crash must not write them to a core file on the host.
+    ulimits:
+      core: 0
+    # On both networks: the sandbox worker's git reaches the /git/<ticket>
+    # proxy here, and nothing else of the sandbox's.
+    networks:
+      - renkei-internal
+      - renkei-sandbox
     depends_on:
       postgres:
         condition: service_healthy
@@ -230,11 +431,12 @@ services:
   # container then runs its supervisor as root so every caller's commands
   # can be dropped to that caller's own uid (docker/sandbox-entrypoint.sh).
   # Those commands DO have this container's network — a project's own
-  # install and tests need the internet — so on a deployment with
-  # workspaces enabled give this service its own network with a route out
-  # and no route to postgres or the other workers; the bearer keys and
-  # database password those hold are never in a command's environment, but
-  # the network should not be either. SANDBOX_ENV_SECRETS_KEY in .env
+  # install and tests need the internet — which is why this service is on
+  # `renkei-sandbox` ALONE (below): a route out, and of the stack only the
+  # web app and the delegate's git proxy, which join that network to be
+  # reached; postgres and the other workers are not on it. The bearer keys
+  # and database password those hold are never in a command's environment,
+  # and the network is not either. SANDBOX_ENV_SECRETS_KEY in .env
   # (`openssl rand -base64 32`) seals the environment variables people hand
   # their commands; it falls back to TOKEN_ENCRYPTION_KEY.
   #
@@ -244,13 +446,21 @@ services:
   # throwaway directory under /runs (no volume), as that person's own uid
   # — the container runs its supervisor as root for the same reason as
   # workspaces, with or without them — and, unlike a workspace command,
-  # with NO network when the kernel lets this container unshare one.
-  # Docker's default profile does not (unshare needs CAP_SYS_ADMIN): the
-  # worker then runs scripts on this container's network and says so at
-  # boot and in every result. To close that, add
-  #   cap_add: [SYS_ADMIN]
-  # to this service, weighing the capability against everything else the
-  # container holds (DEPLOYMENT.md, "Scripts over staged files").
+  # with NO network: a script's own network namespace (unshare --net).
+  # That namespace needs CAP_SYS_ADMIN, which this service deliberately
+  # does not have (cap_drop below) — SYS_ADMIN is most of root, and would
+  # sit in the same container as every caller's checkout — and Docker's
+  # default seccomp profile blocks the user-namespace fallback, so on a
+  # stock deployment the worker proves at boot that it cannot isolate a
+  # script and CLOSES the verb (503 scripts_unavailable; the web app stops
+  # offering the tool) rather than run it on the container's network. The
+  # supported way to open it WITHOUT SYS_ADMIN is user-namespace isolation
+  # on the host (`"userns-remap": "default"` in /etc/docker/daemon.json,
+  # see DEPLOYMENT.md, "Scripts over staged files"), under which this
+  # container's root is an unprivileged host uid and the kernel lets it
+  # create its own namespaces. SANDBOX_SCRIPTS_ALLOW_NETWORK=true in .env
+  # (read by both) instead accepts scripts on the container's network, with
+  # the tool's description and every result saying so.
   # SANDBOX_SCRIPT_MEMORY (default 2g) caps a run's address space; several
   # people running large joins at once share SANDBOX_WORKER_MEMORY below
   # with the browser, so raise both together.
@@ -273,7 +483,7 @@ services:
     env_file:
       - .env
     environment:
-      <<: *database-urls
+      <<: [*database-urls, *delegate-sandbox]
       # A fixed Node heap, well inside the container limit, so the worker's
       # own process can never be what pushes the container over it — the
       # browser gets the rest.
@@ -313,6 +523,30 @@ services:
     mem_limit: ${SANDBOX_WORKER_MEMORY:-4g}
     shm_size: 1g
     oom_score_adj: -500
+    # Root inside, but with exactly the capabilities the entrypoint and
+    # workspaces.ts use and nothing else: SETUID/SETGID/SETPCAP for setpriv
+    # to drop each caller's command to its own uid and clear its bounding
+    # set, CHOWN/FOWNER/DAC_OVERRIDE to make a caller's 0700 checkout and
+    # home theirs and to read the files they leave there, KILL to signal
+    # the process groups those commands run in. No SYS_ADMIN (above), no
+    # NET_*, no MKNOD, no SYS_PTRACE. no-new-privileges holds here too:
+    # setpriv's drop is a loss of privilege, which the flag permits, and it
+    # is what the flag denies — a setuid binary in a checkout regaining
+    # root — that matters most in this container.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - KILL
+      - SETGID
+      - SETUID
+      - SETPCAP
+    networks:
+      - renkei-sandbox
     depends_on:
       postgres:
         condition: service_healthy
@@ -329,16 +563,10 @@ services:
     env_file:
       - .env
     environment:
-      <<: *database-urls
-      # Where the web app reaches the file-share worker; the bearer key
-      # (FILESHARES_WORKER_API_KEY) comes from the shared .env.
-      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
-      # Where the web app reaches the OnBase egress worker; the bearer key
-      # (ONBASE_WORKER_API_KEY) comes from the shared .env.
-      ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
-      # Where the web app reaches the Mirth Connect egress worker; the bearer
-      # key (MIRTH_WORKER_API_KEY) comes from the shared .env.
-      MIRTH_WORKER_URL: http://renkei-worker-mirth:8093
+      # The connector workers (file shares, OnBase, Mirth, ADManager Plus)
+      # are reached through the delegate, which attaches the person's
+      # credential; the app holds neither their addresses nor their keys.
+      <<: [*database-urls, *delegate-web]
       # Where the web app reaches the sandbox worker; the bearer key
       # (SANDBOX_WORKER_API_KEY) comes from the shared .env. Omit both to
       # run without an agent scratch space — the sandbox_* tools simply
@@ -370,6 +598,19 @@ services:
       # internal network, with the proxy in front.
     ports:
       - '80:3000'
+    <<: *locked-down
+    tmpfs:
+      - /tmp
+      - /home/nextjs
+      # Next's runtime cache (image optimizer output, fetch cache); the
+      # only place under /app the app writes.
+      - /app/apps/web/.next/cache
+    # On both networks: the sandbox worker is reached from here
+    # (SANDBOX_WORKER_URL), and a workspace's commands may call this app's
+    # own MCP endpoint.
+    networks:
+      - renkei-internal
+      - renkei-sandbox
     depends_on:
       postgres:
         condition: service_healthy
@@ -379,6 +620,20 @@ services:
     # after the restart) and the open event streams close, so Next can
     # drain and exit inside this. Docker's default 10s cut it close.
     stop_grace_period: 30s
+
+# Two networks, so that the one container that runs other people's code
+# (worker-sandbox) has a route to exactly two things of the stack: the web
+# app and the delegate, both of which join `renkei-sandbox` to be reached.
+# Postgres and every other worker live on `renkei-internal` only, which the
+# sandbox is not on. Both have a route out of the host (a workspace's
+# install and tests, and the connectors' provider APIs, need the internet);
+# neither publishes anything. A service another operator adds goes on
+# `renkei-internal` unless the sandbox must reach it.
+networks:
+  renkei-internal:
+    name: renkei-internal
+  renkei-sandbox:
+    name: renkei-sandbox
 
 volumes:
   renkei-postgres:

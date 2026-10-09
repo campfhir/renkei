@@ -12,6 +12,12 @@
 
 export { createKeyVault, keyVault, setKeyVault, type KeyVault } from './vault';
 export {
+  withKeyRequestScope,
+  keyRequestScope,
+  verifySession,
+  type KeyRequestScope,
+} from './request-scope';
+export {
   getKeyRing,
   readKeyRow,
   delegationStatus,

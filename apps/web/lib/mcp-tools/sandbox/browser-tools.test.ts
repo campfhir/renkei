@@ -13,6 +13,8 @@ jest.mock('@/lib/sandbox/service-client', () => ({
   sandboxWorkspacesEnabled: jest.fn(() => false),
   sandboxChartsEnabled: jest.fn(() => false),
   sandboxScriptsEnabled: jest.fn(() => false),
+  sandboxScriptsServed: jest.fn(() => false),
+  sandboxScriptsAllowNetwork: jest.fn(() => false),
   clientFailure: jest.fn((error: { kind: string; type?: string; message?: string }) => ({
     status: 400,
     message: error.message ?? `failed: ${error.type ?? error.kind}`,

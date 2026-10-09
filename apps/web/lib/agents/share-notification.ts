@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
 import { getNotificationPrefs } from '@renkei/user-prefs';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { resolveGraphAccess, graphPost } from '@/lib/mcp-tools/graph/client';
 import { resolveWebexUserAccess } from '@/lib/webex-user-access';
@@ -52,7 +52,7 @@ export function notifyAgentShared(input: {
           .execute();
 
         // Fire-and-forget, same as edit-notification.ts's row.
-        const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+        const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
         if (keyResult.ok) {
           void sendPush(
             dbResult.val,

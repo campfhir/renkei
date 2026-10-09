@@ -14,7 +14,7 @@
 
 import { sql, type Kysely, type SqlBool } from 'kysely';
 import type { DB } from '@renkei/db';
-import { decrypt, parseEncryptionKey } from '@renkei/crypto';
+import { decrypt, loadKeyring } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmProvider } from './contract';
@@ -22,6 +22,7 @@ import { IMAGE_SURFACES, type ImageModelConfig, type ImageSurface } from './imag
 import { AnthropicProvider } from './anthropic';
 import { OpenAiProvider } from './openai';
 import { OpenAiResponsesProvider } from './openai-responses';
+import { dataHandlingOf, type LlmDataHandling } from './data-handling';
 
 export interface ResolvedLlm {
   provider: LlmProvider;
@@ -31,6 +32,8 @@ export interface ResolvedLlm {
   model: string;
   maxOutputTokens: number;
   temperature?: number;
+  /** The operator's statement of where this model's data goes (settings jsonb); absent = unknown. */
+  dataHandling?: LlmDataHandling;
 }
 
 export type ResolveLlmError = 'NO_MODEL' | 'UNSUPPORTED_PROVIDER' | 'CONFIG_ERROR' | 'DB_ERROR';
@@ -149,7 +152,7 @@ function buildProvider(row: ModelRow, apiKey: string): Result<LlmProvider, Resol
 
 /** The row's API key, decrypted with the deployment key at the moment of use. */
 function apiKeyOf(row: ModelRow): Result<string, ResolveLlmError> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return err('CONFIG_ERROR' as const, { message: 'Encryption key missing' });
 
   if (!row.encrypted_secrets) {
@@ -218,6 +221,7 @@ export async function resolveAgentLlm(
     providerName: row.provider,
     model: row.model,
     ...settingsOf(row),
+    dataHandling: dataHandlingOf(row.settings),
   };
   cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
   return ok(resolved);

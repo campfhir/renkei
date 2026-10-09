@@ -1,5 +1,6 @@
 import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
+import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
 import { watchLogLevel } from '@renkei/settings';
 import type { LogCipher } from '@/lib/log-encryption';
 
@@ -18,6 +19,15 @@ export async function register() {
     // lib/logger.ts) — this boot line just makes the plain-English
     // announcement, first, before anything that could fail.
     logger.info('booting {application} {version}', { component: 'web/instrumentation' });
+
+    // The delegate key is this process's identity to the key service; the
+    // compose file's development default is a key everyone has, so a
+    // production boot with it stops here (docs/delegate-key-design.md).
+    const delegateKeyRefusal = developmentDelegateKeyRefusal();
+    if (delegateKeyRefusal) {
+      console.error(`FATAL [web/instrumentation]: ${delegateKeyRefusal}`);
+      process.exit(1);
+    }
 
     // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
     // before the database is reachable; once it is, the org `logLevel` dial

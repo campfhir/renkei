@@ -1,4 +1,14 @@
-import { encrypt, decrypt, parseEncryptionKey } from './secretbox';
+import {
+  encrypt,
+  decrypt,
+  parseEncryptionKey,
+  parseKeyring,
+  loadKeyring,
+  keyringKeys,
+  keyId,
+  isKeyring,
+  envelopeKeyId,
+} from './secretbox';
 import { randomBytes } from 'crypto';
 
 describe('secretbox encryption', () => {
@@ -150,5 +160,109 @@ describe('secretbox encryption', () => {
       expect(decrypted1.val).toBe(token);
       expect(decrypted2.val).toBe(token);
     }
+  });
+});
+
+describe('keyrings (rotation)', () => {
+  const fresh = () => randomBytes(32).toString('base64');
+
+  it('a bare key still writes v1; a ring of one writes v2 naming its key', () => {
+    const encoded = fresh();
+    const bare = parseEncryptionKey(encoded);
+    const ring = parseKeyring(encoded);
+    expect(bare.ok && ring.ok).toBe(true);
+    if (!bare.ok || !ring.ok) return;
+    expect(isKeyring(bare.val)).toBe(false);
+    expect(isKeyring(ring.val)).toBe(true);
+    expect(encrypt('x', bare.val)).toMatch(/^v1\./);
+    const sealed = encrypt('x', ring.val);
+    expect(sealed).toMatch(/^v2\.[0-9a-f]{8}\./);
+    expect(envelopeKeyId(sealed)).toBe(keyId(ring.val));
+    expect(envelopeKeyId(encrypt('x', bare.val))).toBeNull();
+    // Same bytes, so each opens what the other wrote.
+    expect(decrypt(sealed, bare.val)).toEqual({ ok: true, val: 'x' });
+    expect(decrypt(encrypt('x', bare.val), ring.val)).toEqual({ ok: true, val: 'x' });
+  });
+
+  it('round-trips v2 and keeps the previous key behind the current one', () => {
+    const oldKey = fresh();
+    const newKey = fresh();
+    const before = parseKeyring(oldKey);
+    const after = parseKeyring(`${newKey},${oldKey}`);
+    expect(before.ok && after.ok).toBe(true);
+    if (!before.ok || !after.ok) return;
+    expect(keyringKeys(after.val)).toHaveLength(2);
+    expect(keyId(after.val)).not.toBe(keyId(before.val));
+
+    const underOld = encrypt('token', before.val);
+    const rewrapped = encrypt('token', after.val);
+    expect(envelopeKeyId(underOld)).toBe(keyId(before.val));
+    expect(envelopeKeyId(rewrapped)).toBe(keyId(after.val));
+    // The new ring opens both: v2 by kid.
+    expect(decrypt(underOld, after.val)).toEqual({ ok: true, val: 'token' });
+    expect(decrypt(rewrapped, after.val)).toEqual({ ok: true, val: 'token' });
+    // The old ring alone cannot open what the new key sealed.
+    const stale = decrypt(rewrapped, before.val);
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) expect(stale.err.message).toContain('no key with id');
+  });
+
+  it('opens a v1 value under a previous key of the ring (current tried first)', () => {
+    const oldKey = fresh();
+    const newKey = fresh();
+    const bareOld = parseEncryptionKey(oldKey);
+    const ring = parseKeyring(`${newKey},${oldKey}`);
+    expect(bareOld.ok && ring.ok).toBe(true);
+    if (!bareOld.ok || !ring.ok) return;
+    const legacy = encrypt('legacy', bareOld.val);
+    expect(legacy).toMatch(/^v1\./);
+    expect(decrypt(legacy, ring.val)).toEqual({ ok: true, val: 'legacy' });
+    // A v1 under a key that is in no ring stays closed.
+    const other = parseKeyring(fresh());
+    if (!other.ok) return;
+    expect(decrypt(legacy, other.val).ok).toBe(false);
+  });
+
+  it('refuses a v2 envelope whose kid matches no key, and a malformed v2', () => {
+    const ring = parseKeyring(fresh());
+    expect(ring.ok).toBe(true);
+    if (!ring.ok) return;
+    const sealed = encrypt('x', ring.val);
+    const swapped = sealed.replace(/^v2\.[0-9a-f]{8}\./, 'v2.deadbeef.');
+    const mismatch = decrypt(swapped, ring.val);
+    expect(mismatch.ok).toBe(false);
+    if (!mismatch.ok) {
+      expect(mismatch.err.type).toBe('DECRYPTION_ERROR');
+      expect(mismatch.err.message).toContain('deadbeef');
+    }
+    expect(decrypt('v2.a.b.c', ring.val).ok).toBe(false);
+    expect(decrypt('v2.a.b.c.d.e', ring.val).ok).toBe(false);
+  });
+
+  it('parses a ring from the environment: <NAME>S first, <NAME> alone otherwise', () => {
+    const a = fresh();
+    const b = fresh();
+    const plural = loadKeyring('TOKEN_ENCRYPTION_KEY', {
+      TOKEN_ENCRYPTION_KEYS: ` ${a}, ${b} `,
+      TOKEN_ENCRYPTION_KEY: fresh(),
+    });
+    expect(plural.ok).toBe(true);
+    if (plural.ok) {
+      expect(keyringKeys(plural.val).map((k) => k.toString('base64'))).toEqual([a, b]);
+    }
+    const singular = loadKeyring('LOG_ENCRYPTION_KEY', { LOG_ENCRYPTION_KEY: a });
+    expect(singular.ok).toBe(true);
+    if (singular.ok) {
+      expect(keyringKeys(singular.val)).toHaveLength(1);
+      expect(isKeyring(singular.val)).toBe(true);
+    }
+    const missing = loadKeyring('TOKEN_ENCRYPTION_KEY', {});
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.err.type).toBe('INVALID_ENCRYPTION_KEY');
+    // One bad entry fails the whole ring rather than dropping it.
+    const partial = loadKeyring('TOKEN_ENCRYPTION_KEY', {
+      TOKEN_ENCRYPTION_KEYS: `${a},not-a-key`,
+    });
+    expect(partial.ok).toBe(false);
   });
 });

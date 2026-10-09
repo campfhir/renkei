@@ -23,11 +23,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { GITHUB_CONNECTOR } from '@/lib/github-app';
 import { verifyGitHubSignature } from '@/lib/github-webhook';
 import { logger } from '@/lib/logger';
+import {
+  GITHUB_SIGNATURE_SHAPE,
+  checkWebhookLimit,
+  hasSignatureShape,
+  malformedSignature,
+  payloadTooLarge,
+  readWebhookBody,
+  tooManyRequests,
+} from '@/lib/webhook-intake';
 
 const eventsQueue = webhookEventsQueue();
 
@@ -41,12 +50,20 @@ export async function POST(
 ): Promise<NextResponse> {
   const { tenantId } = await params;
 
-  // The signature covers the raw bytes; parse only after it verifies.
-  const rawBody = await request.text();
+  // Throttle, then the credential's shape, then a bounded body — all before
+  // any config or database read (lib/webhook-intake.ts).
+  const verdict = checkWebhookLimit('github', tenantId, request);
+  if (!verdict.allowed) return tooManyRequests(verdict);
   const signature = request.headers.get('x-hub-signature-256');
+  if (!hasSignatureShape(signature, GITHUB_SIGNATURE_SHAPE)) return malformedSignature();
   const eventType = request.headers.get('x-github-event');
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  // The signature covers the raw bytes; parse only after it verifies.
+  const bodyResult = await readWebhookBody(request);
+  if (!bodyResult.ok) return payloadTooLarge();
+  const rawBody = bodyResult.val;
+
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'github/webhook',
@@ -82,7 +99,10 @@ export async function POST(
       component: 'github/webhook',
       tenantId,
     });
-    return NextResponse.json({ error: 'GitHub connector not configured for webhooks' }, { status: 503 });
+    return NextResponse.json(
+      { error: 'GitHub connector not configured for webhooks' },
+      { status: 503 }
+    );
   }
 
   if (!verifyGitHubSignature(rawBody, signature, webhookSecret)) {

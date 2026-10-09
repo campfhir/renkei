@@ -213,3 +213,25 @@ export async function openSealedBox(recipient: RawKeyPair, sealed: string): Prom
     return null;
   }
 }
+
+/**
+ * An Ed25519 signature checked against a raw public key — the delegate's
+ * signed instance list (`../signing.ts` makes them). False for a bad
+ * signature, a malformed key, or a browser without Ed25519 in WebCrypto:
+ * every failure reads as "not verified", and the page asks the person.
+ */
+export async function verifyEd25519(
+  publicKey: Uint8Array,
+  message: Uint8Array,
+  signature: Uint8Array
+): Promise<boolean> {
+  if (publicKey.length !== 32 || signature.length !== 64) return false;
+  try {
+    const key = await subtle().importKey('raw', toBytes(publicKey), { name: 'Ed25519' }, false, [
+      'verify',
+    ]);
+    return await subtle().verify({ name: 'Ed25519' }, key, toBytes(signature), toBytes(message));
+  } catch {
+    return false;
+  }
+}

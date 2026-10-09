@@ -12,8 +12,11 @@
 
 import { sql, type Kysely } from 'kysely';
 import type { DB, Json } from '@renkei/db';
-import { findNodeById, isAgentStepsDoc } from '@renkei/agents';
+import { findNodeById, isAgentStepsDoc, mergeOpenedDetail, sealedDetailOf } from '@renkei/agents';
+import { delegateClient } from '@renkei/delegate-client';
 import { isUuid } from '@/lib/uuid';
+import { unavailableMarker } from '@/lib/chat/content-crypto';
+import { unavailableReasonOf } from '@/lib/chat/chat-keys';
 
 export interface RunSummary {
   id: string;
@@ -244,16 +247,53 @@ const FAILED_RESUME_GUIDANCE = sql<string | null>`
   case when status = 'failed' then resume_guidance end
 `.as('resume_guidance');
 
+/**
+ * Attempt rows with their sealed content opened AS THE RUN'S OWNER
+ * (step-detail.ts in @renkei/agents): the content half of a finished
+ * attempt is one `uenc1:` envelope under the owner's automation key, and
+ * the delegate opens it for whoever may read the row — the owner through
+ * their session, an admin on a failed run through the owner's automation
+ * delegation, which is exactly the key the run itself wrote under. When
+ * that delegation is not live (the owner has not signed in for a month,
+ * or has paused their agents) the row renders the marker the chat uses
+ * for a locked row, in place of the summary, rather than failing the
+ * page. Rows without an envelope — pauses, rows from before sealing —
+ * pass through as they are.
+ */
+async function openAttemptDetails<T extends { detail: Json | null }>(
+  tenantId: string,
+  ownerSubject: string,
+  rows: T[]
+): Promise<T[]> {
+  const envelopes = rows.map((row) => sealedDetailOf(row.detail));
+  const stored = envelopes.flatMap((envelope) => (envelope === null ? [] : [envelope]));
+  if (stored.length === 0) return rows;
+  const opened = await delegateClient().openForSubject(tenantId, ownerSubject, stored);
+  const marker = opened.ok
+    ? unavailableMarker('failed')
+    : unavailableMarker(unavailableReasonOf(opened.err.type));
+  let next = 0;
+  return rows.map((row, index) => {
+    if (envelopes[index] === null) return row;
+    const plaintext = opened.ok ? (opened.val[next] ?? null) : null;
+    next += 1;
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    return { ...row, detail: mergeOpenedDetail(row.detail, plaintext, marker) as Json };
+  });
+}
+
 async function runDetail(
   db: Kysely<DB>,
   runRow: RunRow & {
+    tenant_id: string;
+    owner_subject: string;
     steps_snapshot: Json;
     initial_state: Json | null;
     resume_guidance: string | null;
   },
   audience: 'owner' | 'admin'
 ): Promise<RunDetail> {
-  const attemptRows = await db
+  const storedRows = await db
     .selectFrom('agent_run_steps')
     .select([
       'step_id',
@@ -276,6 +316,19 @@ async function runDetail(
     .orderBy('iteration')
     .orderBy('attempt')
     .execute();
+  // Only what this audience may see is opened: an admin's view of a
+  // working run never asks the delegate for its content.
+  const contentRows =
+    audience === 'owner' ? storedRows : storedRows.filter((row) => row.status === 'failed');
+  const openedById = new Map(
+    (await openAttemptDetails(runRow.tenant_id, runRow.owner_subject, contentRows)).map(
+      (row) => [`${row.step_id}:${row.iteration}:${row.attempt}`, row.detail] as const
+    )
+  );
+  const attemptRows = storedRows.map((row) => ({
+    ...row,
+    detail: openedById.get(`${row.step_id}:${row.iteration}:${row.attempt}`) ?? row.detail,
+  }));
 
   // The run-level equivalent of the per-attempt rule below: an admin sees
   // what a run started with only when it failed. A working agent's inbound
@@ -324,7 +377,14 @@ export async function getRunForOwner(
   if (!isUuid(agentId) || !isUuid(runId)) return null;
   const row = await db
     .selectFrom('agent_runs')
-    .select([...RUN_COLUMNS, 'steps_snapshot', 'initial_state', 'resume_guidance'])
+    .select([
+      ...RUN_COLUMNS,
+      'tenant_id',
+      'owner_subject',
+      'steps_snapshot',
+      'initial_state',
+      'resume_guidance',
+    ])
     .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId)
@@ -380,7 +440,14 @@ export async function getRunForAdmin(
   if (!isUuid(agentId) || !isUuid(runId)) return null;
   const row = await db
     .selectFrom('agent_runs')
-    .select([...RUN_COLUMNS, 'steps_snapshot', FAILED_INITIAL_STATE, FAILED_RESUME_GUIDANCE])
+    .select([
+      ...RUN_COLUMNS,
+      'tenant_id',
+      'owner_subject',
+      'steps_snapshot',
+      FAILED_INITIAL_STATE,
+      FAILED_RESUME_GUIDANCE,
+    ])
     .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('id', '=', runId)

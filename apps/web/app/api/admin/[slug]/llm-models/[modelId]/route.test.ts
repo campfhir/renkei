@@ -11,7 +11,10 @@ jest.mock('@/lib/access', () => ({
 }));
 jest.mock('@/lib/tenant-slug', () => ({ tenantForSlug: jest.fn() }));
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('@renkei/agent-llm', () => ({ invalidateLlmCache: jest.fn() }));
+jest.mock('@renkei/agent-llm', () => ({
+  ...jest.requireActual('@renkei/agent-llm'),
+  invalidateLlmCache: jest.fn(),
+}));
 
 import { NextRequest } from 'next/server';
 import { randomBytes } from 'node:crypto';
@@ -186,7 +189,7 @@ describe('PUT .../llm-models/[modelId]', () => {
     if (decrypted.ok) expect(JSON.parse(decrypted.val)).toEqual({ apiKey: 'rotated-secret' });
   });
 
-  it('borrows a sibling row\'s key via apiKeyFromId', async () => {
+  it("borrows a sibling row's key via apiKeyFromId", async () => {
     const sibling: ModelConfigRow = {
       ...baseRow,
       id: 'row-2',
@@ -197,7 +200,12 @@ describe('PUT .../llm-models/[modelId]', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await PUT(
-      reqOf({ label: 'Prod Claude', provider: 'anthropic', model: 'claude-sonnet-5', apiKeyFromId: 'row-2' }),
+      reqOf({
+        label: 'Prod Claude',
+        provider: 'anthropic',
+        model: 'claude-sonnet-5',
+        apiKeyFromId: 'row-2',
+      }),
       { params: paramsOf() }
     );
 

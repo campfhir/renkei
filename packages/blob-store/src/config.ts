@@ -63,9 +63,9 @@ export function blobStoreConfig(
   if (decoded.length === 0) {
     return err('BLOB_UNCONFIGURED' as const, { message: 'AZURE_BLOB_KEY is not valid base64.' });
   }
-  const endpoint = (
-    (env.AZURE_BLOB_ENDPOINT ?? '').trim() || `https://${account}.blob.core.windows.net`
-  ).replace(/\/+$/, '');
+  let endpoint =
+    (env.AZURE_BLOB_ENDPOINT ?? '').trim() || `https://${account}.blob.core.windows.net`;
+  while (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1);
   try {
     new URL(endpoint);
   } catch {

@@ -15,8 +15,11 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import {
   getOrgSettings,
   setOrgSettings,
+  isActApprovalPolicy,
   isLogLevel,
+  ACT_APPROVAL_POLICIES,
   LOG_LEVELS,
+  type ActApprovalPolicy,
   type OrgSettings,
   type LogLevel,
 } from '@renkei/settings';
@@ -32,6 +35,9 @@ const NUMERIC_BOUNDS = {
   accessTokenTtlMinutes: [5, 1_440],
   authorizationCodeTtlSeconds: [30, 600],
   refreshTokenTtlDays: [1, 365],
+  // Floor 15 minutes (below that nobody finishes a form); the ceiling is
+  // the session's absolute 30-day lifetime, past which the dial is inert.
+  sessionIdleTimeoutMinutes: [15, 43_200],
   agentMaxChainDepth: [1, 10],
   agentRunTimeoutMinutes: [1, 120],
   // Above the 10 default is allowed on purpose; 100 is the typo guard.
@@ -86,6 +92,7 @@ const NUMERIC_KEYS = [
   'accessTokenTtlMinutes',
   'authorizationCodeTtlSeconds',
   'refreshTokenTtlDays',
+  'sessionIdleTimeoutMinutes',
   'agentMaxChainDepth',
   'agentRunTimeoutMinutes',
   'agentMaxStepAttempts',
@@ -109,15 +116,22 @@ const BOOLEAN_KEYS = [
   'enableDcr',
   'knowledgeKeywordEnrichment',
   'coachMarksEnabled',
+  'phiConnectorsRequireCoveredModel',
 ] as const;
 
-type EditableKey = keyof typeof NUMERIC_BOUNDS | (typeof BOOLEAN_KEYS)[number] | 'logLevel';
+type EditableKey =
+  | keyof typeof NUMERIC_BOUNDS
+  | (typeof BOOLEAN_KEYS)[number]
+  | 'logLevel'
+  | 'agentActStepsRequireApproval';
+type EditableValue = boolean | number | LogLevel | ActApprovalPolicy;
 
-function editable(settings: OrgSettings): Record<EditableKey, boolean | number | LogLevel> {
+function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
   return {
     readOnly: settings.readOnly,
     enableDcr: settings.enableDcr,
     logLevel: settings.logLevel,
+    agentActStepsRequireApproval: settings.agentActStepsRequireApproval,
     maxJqlResults: settings.maxJqlResults,
     maxAttachmentBytes: settings.maxAttachmentBytes,
     massUploadThreshold: settings.massUploadThreshold,
@@ -125,6 +139,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number |
     accessTokenTtlMinutes: settings.accessTokenTtlMinutes,
     authorizationCodeTtlSeconds: settings.authorizationCodeTtlSeconds,
     refreshTokenTtlDays: settings.refreshTokenTtlDays,
+    sessionIdleTimeoutMinutes: settings.sessionIdleTimeoutMinutes,
     agentMaxChainDepth: settings.agentMaxChainDepth,
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
     agentMaxStepAttempts: settings.agentMaxStepAttempts,
@@ -141,6 +156,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number |
     knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
     coachMarksEnabled: settings.coachMarksEnabled,
+    phiConnectorsRequireCoveredModel: settings.phiConnectorsRequireCoveredModel,
     chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
     sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
   };
@@ -189,10 +205,7 @@ export async function PUT(
   const before = editable(current.val);
 
   const updates: Partial<OrgSettings> = {};
-  const changed: Record<
-    string,
-    { from: boolean | number | LogLevel; to: boolean | number | LogLevel }
-  > = {};
+  const changed: Record<string, { from: EditableValue; to: EditableValue }> = {};
 
   for (const key of BOOLEAN_KEYS) {
     if (!(key in submitted)) continue;
@@ -230,6 +243,25 @@ export async function PUT(
     if (value !== before.logLevel) {
       updates.logLevel = value;
       changed.logLevel = { from: before.logLevel, to: value };
+    }
+  }
+
+  if ('agentActStepsRequireApproval' in submitted) {
+    const value = submitted.agentActStepsRequireApproval;
+    if (!isActApprovalPolicy(value)) {
+      return NextResponse.json(
+        {
+          error: `agentActStepsRequireApproval must be one of: ${ACT_APPROVAL_POLICIES.join(', ')}`,
+        },
+        { status: 400 }
+      );
+    }
+    if (value !== before.agentActStepsRequireApproval) {
+      updates.agentActStepsRequireApproval = value;
+      changed.agentActStepsRequireApproval = {
+        from: before.agentActStepsRequireApproval,
+        to: value,
+      };
     }
   }
 

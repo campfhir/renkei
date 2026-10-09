@@ -13,6 +13,8 @@ jest.mock('@/lib/sandbox/service-client', () => ({
   sandboxWorkspacesEnabled: jest.fn(() => false),
   sandboxChartsEnabled: jest.fn(() => false),
   sandboxScriptsEnabled: jest.fn(() => true),
+  sandboxScriptsServed: jest.fn(() => true),
+  sandboxScriptsAllowNetwork: jest.fn(() => false),
   clientFailure: jest.fn((error: { kind: string; type?: string; message?: string }) => ({
     status: 400,
     message: error.message ?? `failed: ${error.type ?? error.kind}`,
@@ -104,8 +106,17 @@ describe('sandbox_run_python', () => {
     expect(collect(context()).get('sandbox_run_python')?.config.annotations?.readOnlyHint).toBe(
       false
     );
-    client.sandboxScriptsEnabled.mockReturnValueOnce(false);
+    client.sandboxScriptsServed.mockReturnValueOnce(false);
     expect(collect(context()).has('sandbox_run_python')).toBe(false);
+  });
+
+  it('promises no network only where the deployment keeps that promise', () => {
+    client.sandboxScriptsAllowNetwork.mockReturnValueOnce(true);
+    const shared = collect(context()).get('sandbox_run_python')!.config.description;
+    expect(shared).not.toContain('NO network');
+    expect(shared).toContain('HAS the sandbox worker’s network access');
+    const isolated = collect(context()).get('sandbox_run_python')!.config.description;
+    expect(isolated).toContain('NO network');
   });
 
   it('tells the model where its files are and that there is no network', () => {
@@ -191,7 +202,7 @@ describe('sandbox_run_python', () => {
     client.sbRunScript.mockResolvedValueOnce(ran({ networkIsolated: false, uidIsolated: false }));
     result = await collect(context()).get('sandbox_run_python')!.handler({ code: 'x' });
     expect(result.isError).toBeUndefined();
-    expect(result.content[0]!.text).toContain('could not isolate the network');
+    expect(result.content[0]!.text).toContain('ran WITH the sandbox worker’s network access');
     expect(result.content[0]!.text).toContain('ran as its user');
   });
 

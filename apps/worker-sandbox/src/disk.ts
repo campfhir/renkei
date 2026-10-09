@@ -6,13 +6,27 @@
  * and a UUID fileId, never from anything a caller supplies as free text
  * (that hygiene lives in @renkei/connector-sandbox's `validateFilename`,
  * which guards the DISPLAY name, not the on-disk path).
+ *
+ * Modes are explicit — directories 0700, files 0600 — rather than left to
+ * the umask: with scripts or workspaces on, this process runs commands as
+ * other uids on the same filesystem, and nothing staged here may be
+ * readable by any of them whatever umask the process was started with.
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFile, mkdir, open, readFile as readFileBytes, rm, stat } from 'node:fs/promises';
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  open,
+  readFile as readFileBytes,
+  rm,
+  stat,
+} from 'node:fs/promises';
 import { join } from 'node:path';
+import { configuredDirectory } from './configured-path';
 
-let dataRoot = process.env.SANDBOX_DATA_DIR || '/data';
+let dataRoot = configuredDirectory('SANDBOX_DATA_DIR', '/data');
 
 /** Test-only override; production always reads SANDBOX_DATA_DIR once at boot. */
 export function setDataRootForTests(dir: string): void {
@@ -37,8 +51,16 @@ function resolvePath(storageKey: string): string {
   return join(dataRoot, storageKey);
 }
 
+/** Directories under the data root: this process's alone. */
+const DIR_MODE = 0o700;
+/** Staged files: this process's alone. */
+const FILE_MODE = 0o600;
+
 export async function ensureDataRoot(): Promise<void> {
-  await mkdir(dataRoot, { recursive: true });
+  await mkdir(dataRoot, { recursive: true, mode: DIR_MODE });
+  // mkdir's mode goes through the umask and is ignored for a directory
+  // that already exists; chmod sets it regardless.
+  await chmod(dataRoot, DIR_MODE);
 }
 
 /**
@@ -53,8 +75,8 @@ export async function writeStream(
   maxBytes: number
 ): Promise<{ ok: true; sizeBytes: number } | { ok: false; error: 'too_large' }> {
   const path = resolvePath(storageKey);
-  await mkdir(join(path, '..'), { recursive: true });
-  const handle = await open(path, 'w');
+  await mkdir(join(path, '..'), { recursive: true, mode: DIR_MODE });
+  const handle = await open(path, 'w', FILE_MODE);
   let total = 0;
   try {
     for await (const chunk of source) {
@@ -75,11 +97,13 @@ export async function writeStream(
 export async function readFile(storageKey: string): Promise<Buffer | undefined> {
   const path = resolvePath(storageKey);
   try {
-    await stat(path);
-  } catch {
-    return undefined;
+    return await readFileBytes(path);
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return undefined;
+    throw error;
   }
-  return readFileBytes(path);
 }
 
 /**
@@ -92,6 +116,7 @@ export async function readFile(storageKey: string): Promise<Buffer | undefined> 
 export async function copyFileTo(storageKey: string, destination: string): Promise<boolean> {
   try {
     await copyFile(resolvePath(storageKey), destination);
+    await chmod(destination, FILE_MODE);
     return true;
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;

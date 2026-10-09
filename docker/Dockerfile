@@ -11,14 +11,27 @@ ARG PNPM_VERSION=10.33.0
 # can stamp each row with the exact code that produced it (version 0.1.0+sha).
 ARG GIT_COMMIT=unknown
 
+# Base images are pinned by digest as well as tag: the tag says what the
+# image is, the digest says exactly which build of it, so an upstream
+# re-tag changes nothing here until someone chooses it. Dependabot (docker
+# ecosystem, .github/dependabot.yml) proposes the new digest when the tag
+# moves. Every stage also upgrades the distribution's packages at build
+# time (`apk upgrade`, `apt-get upgrade`), so a fix the distribution has
+# shipped since the base image was built is in the image — the CI image
+# scan fails on a fixable HIGH/CRITICAL, and the base image lags its
+# distribution by days.
+#   docker.io/library/node:24-alpine         (every Node-only stage)
+#   docker.io/library/node:24-bookworm-slim  (the sandbox: Chromium and the
+#                                             toolchains need glibc)
+
 # Build stage
-FROM node:24-alpine AS builder
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS builder
 ARG PNPM_VERSION
 
 WORKDIR /app
 
 # Install pnpm
-RUN npm install -g pnpm@${PNPM_VERSION}
+RUN apk upgrade --no-cache && npm install -g pnpm@${PNPM_VERSION}
 
 # Manifests first, so the dependency install caches independently of source edits.
 # Globbed rather than listed one by one: the explicit list went stale every time
@@ -56,13 +69,13 @@ RUN node packages/db/scripts/build-migrations.js
 RUN pnpm --filter renkei build
 
 # Web runtime stage
-FROM node:24-alpine AS runtime
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS runtime
 ARG PNPM_VERSION
 
 WORKDIR /app
 
 # Install dumb-init for proper signal handling and pnpm
-RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Copy manifests and install only the web app's production dependencies.
 # Optionals are NOT stripped here, unlike the worker and migrate stages: Next
@@ -161,12 +174,12 @@ CMD ["pnpm", "--filter", "renkei", "start"]
 # file-share worker is NOT here: it ships as its own image (the
 # `fileshares` stage below), so this image never carries the SMB/SSH
 # protocol stack and the fileshare container never carries the agents' deps.
-FROM node:24-alpine AS worker
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS worker
 ARG PNPM_VERSION
 
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — a trailing `chown -R /app` rewrites every
 # file's metadata, and overlayfs copies each one into a new layer. See the
@@ -205,12 +218,12 @@ CMD ["pnpm", "--filter", "@renkei/worker", "start"]
 # credentials, so its container carries exactly the protocol stack (the
 # patched @tryjsky/v9u-smb2 among it) and nothing of the queue workers' LLM
 # and connector dependencies — and it rolls out independently of them.
-FROM node:24-alpine AS fileshares
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS fileshares
 ARG PNPM_VERSION
 
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — see the runtime stage for why a trailing
 # chown -R would double the image.
@@ -250,12 +263,12 @@ CMD ["pnpm", "--filter", "@renkei/worker-fileshares", "start"]
 # is the only process that dials a customer's on-prem OnBase API Server or
 # Hyland IdP (the web app's SSRF guard refuses private hosts by design),
 # and it rolls out independently of the queue workers.
-FROM node:24-alpine AS onbase
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS onbase
 ARG PNPM_VERSION
 
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — see the runtime stage for why a trailing
 # chown -R would double the image.
@@ -296,12 +309,12 @@ CMD ["pnpm", "--filter", "@renkei/worker-onbase", "start"]
 # (typically on a private network the web app's SSRF guard refuses by
 # design) or decrypts a person's stored Mirth credential, and it rolls out
 # independently of the queue workers.
-FROM node:24-alpine AS mirth
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS mirth
 ARG PNPM_VERSION
 
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — see the runtime stage for why a trailing
 # chown -R would double the image.
@@ -343,12 +356,12 @@ CMD ["pnpm", "--filter", "@renkei/worker-mirth", "start"]
 # chat's or project's data key, or opens a person's sealed values. Its own
 # image so that key is set on exactly one service and it rolls out
 # independently of the queue workers.
-FROM node:24-alpine AS delegate
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS delegate
 ARG PNPM_VERSION
 
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S worker -u 1001
@@ -383,12 +396,12 @@ CMD ["pnpm", "--filter", "@renkei/worker-delegate", "start"]
 # ADManager Plus servers (typically on a private network the web app's SSRF
 # guard refuses by design) or decrypts a person's stored authtoken, and it
 # rolls out independently of the queue workers.
-FROM node:24-alpine AS admanager
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS admanager
 ARG PNPM_VERSION
 
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — see the runtime stage for why a trailing
 # chown -R would double the image.
@@ -448,12 +461,13 @@ CMD ["pnpm", "--filter", "@renkei/worker-admanager", "start"]
 # the entrypoint drops itself when workspaces are off); the build checks
 # it is there, because a missing one would show up only as a failed spawn
 # on every command a caller runs.
-FROM node:24-bookworm-slim AS sandbox
+FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS sandbox
 ARG PNPM_VERSION
 
 WORKDIR /app
 
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends \
       dumb-init ca-certificates util-linux \
       git ripgrep openssh-client \
@@ -514,7 +528,15 @@ ARG SQL_LANGUAGE_SERVER_VERSION=1.7.1
 ARG BASH_LANGUAGE_SERVER_VERSION=5.8.1
 ARG GO_VERSION=1.27.1
 ARG GOPLS_VERSION=v0.23.0
-ARG RUST_TOOLCHAIN=stable
+# Exact versions, never `stable`/`latest`, and every download below is
+# checked against the checksum its vendor publishes before anything is
+# extracted or run — go.dev's .sha256 beside each tarball, rustup's
+# .sha256 beside each archived rustup-init, Adoptium's checksum endpoint,
+# Eclipse's .sha256 beside each jdtls tarball. A tarball that does not
+# match fails the build with sha256sum's own message.
+ARG RUSTUP_VERSION=1.29.1
+ARG RUST_TOOLCHAIN=1.99.0
+ARG TEMURIN_RELEASE=jdk-21.0.12.1+1
 ARG JDTLS_VERSION=1.50.0
 
 # TypeScript/JavaScript, Python, SQL and shell: Node-based, beside the
@@ -548,7 +570,11 @@ RUN apt-get update && \
 # Go and gopls: the toolchain under /usr/local/go (on every caller's PATH),
 # gopls built with it into /usr/local/bin; the build caches go with the layer.
 RUN ARCH="$(dpkg --print-architecture)" && \
-    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /usr/local -xz && \
+    GO_TGZ="go${GO_VERSION}.linux-${ARCH}.tar.gz" && \
+    curl -fsSL -o "/tmp/${GO_TGZ}" "https://dl.google.com/go/${GO_TGZ}" && \
+    curl -fsSL -o /tmp/go.sha256 "https://dl.google.com/go/${GO_TGZ}.sha256" && \
+    echo "$(cat /tmp/go.sha256)  /tmp/${GO_TGZ}" | sha256sum -c - && \
+    tar -C /usr/local -xzf "/tmp/${GO_TGZ}" && rm -f "/tmp/${GO_TGZ}" /tmp/go.sha256 && \
     GOPATH=/tmp/gopath GOCACHE=/tmp/gocache GOBIN=/usr/local/bin \
       /usr/local/go/bin/go install golang.org/x/tools/gopls@${GOPLS_VERSION} && \
     rm -rf /tmp/gopath /tmp/gocache && \
@@ -557,26 +583,40 @@ RUN ARCH="$(dpkg --print-architecture)" && \
 # Rust and rust-analyzer: rustup's toolchain under /usr/local/rustup, shared
 # read-only (workspaces.ts sets RUSTUP_HOME to it and CARGO_HOME under each
 # caller's HOME), its proxies in /usr/local/cargo/bin on every caller's PATH.
-RUN curl -fsSL https://sh.rustup.rs -o /tmp/rustup-init.sh && \
+RUN ARCH="$(dpkg --print-architecture)" && \
+    case "$ARCH" in amd64) RUST_TRIPLE=x86_64-unknown-linux-gnu ;; arm64) RUST_TRIPLE=aarch64-unknown-linux-gnu ;; *) echo "no rustup build for $ARCH" >&2; exit 1 ;; esac && \
+    RUSTUP_BASE="https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TRIPLE}" && \
+    mkdir -p /tmp/rustup && cd /tmp/rustup && \
+    curl -fsSL -o rustup-init "${RUSTUP_BASE}/rustup-init" && \
+    curl -fsSL -o rustup-init.sha256 "${RUSTUP_BASE}/rustup-init.sha256" && \
+    sha256sum -c rustup-init.sha256 && chmod +x rustup-init && \
     RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
-      sh /tmp/rustup-init.sh -y --no-modify-path --profile minimal \
+      ./rustup-init -y --no-modify-path --profile minimal \
         --default-toolchain "${RUST_TOOLCHAIN}" --component rust-analyzer --component rust-src && \
-    rm /tmp/rustup-init.sh && \
+    cd / && rm -rf /tmp/rustup && \
     chmod -R a+rX /usr/local/rustup /usr/local/cargo && \
     RUSTUP_HOME=/usr/local/rustup /usr/local/cargo/bin/rust-analyzer --version
 
 # Java: Eclipse JDT Language Server on a Temurin JDK 21 (jdtls needs 21;
-# Debian bookworm ships 17). The launcher, `jdtls`, is a Python script
-# that copies its configuration under the caller's cache when the
-# install is read-only, as it is here.
+# Debian bookworm ships 17), the exact release TEMURIN_RELEASE names,
+# checked against Adoptium's published checksum; jdtls is the milestone's
+# tarball checked against the .sha256 published beside it. The launcher,
+# `jdtls`, is a Python script that copies its configuration under the
+# caller's cache when the install is read-only, as it is here.
 RUN ARCH="$(dpkg --print-architecture)" && \
     case "$ARCH" in amd64) JDK_ARCH=x64 ;; arm64) JDK_ARCH=aarch64 ;; *) JDK_ARCH="$ARCH" ;; esac && \
     mkdir -p /usr/local/java /usr/local/jdtls && \
-    curl -fsSL "https://api.adoptium.net/v3/binary/latest/21/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse" \
-      | tar -C /usr/local/java --strip-components=1 -xz && \
-    JDTLS_FILE="$(curl -fsSL "https://download.eclipse.org/jdtls/milestones/${JDTLS_VERSION}/latest.txt" | tr -d '[:space:]')" && \
-    curl -fsSL "https://download.eclipse.org/jdtls/milestones/${JDTLS_VERSION}/${JDTLS_FILE}" \
-      | tar -C /usr/local/jdtls -xz && \
+    TEMURIN_API="https://api.adoptium.net/v3" && \
+    TEMURIN_REL="$(printf '%s' "${TEMURIN_RELEASE}" | sed 's/+/%2B/')" && \
+    TEMURIN_PATH="${TEMURIN_REL}/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse" && \
+    curl -fsSL -o /tmp/temurin.tgz "${TEMURIN_API}/binary/version/${TEMURIN_PATH}" && \
+    curl -fsSL "${TEMURIN_API}/checksum/version/${TEMURIN_PATH}" | awk '{print $1 "  /tmp/temurin.tgz"}' | sha256sum -c - && \
+    tar -C /usr/local/java --strip-components=1 -xzf /tmp/temurin.tgz && rm -f /tmp/temurin.tgz && \
+    JDTLS_BASE="https://download.eclipse.org/jdtls/milestones/${JDTLS_VERSION}" && \
+    JDTLS_FILE="$(curl -fsSL "${JDTLS_BASE}/latest.txt" | tr -d '[:space:]')" && \
+    curl -fsSL -o /tmp/jdtls.tgz "${JDTLS_BASE}/${JDTLS_FILE}" && \
+    echo "$(curl -fsSL "${JDTLS_BASE}/${JDTLS_FILE}.sha256" | tr -d '[:space:]')  /tmp/jdtls.tgz" | sha256sum -c - && \
+    tar -C /usr/local/jdtls -xzf /tmp/jdtls.tgz && rm -f /tmp/jdtls.tgz && \
     ln -s /usr/local/java/bin/java /usr/local/bin/java && \
     ln -s /usr/local/jdtls/bin/jdtls /usr/local/bin/jdtls && \
     chmod -R a+rX /usr/local/java /usr/local/jdtls && \
@@ -645,13 +685,13 @@ ENTRYPOINT ["dumb-init", "--", "sandbox-entrypoint"]
 CMD ["pnpm", "--filter", "@renkei/worker-sandbox", "start"]
 
 # Migration stage - runs migrations only
-FROM node:24-alpine AS migrate
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS migrate
 ARG PNPM_VERSION
 
 WORKDIR /app
 
 # Install pnpm
-RUN npm install -g pnpm@${PNPM_VERSION}
+RUN apk upgrade --no-cache && npm install -g pnpm@${PNPM_VERSION}
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches

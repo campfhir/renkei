@@ -11,14 +11,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@renkei/db';
 import { attemptFromHeaders, withAttempt } from '@/lib/mcp-tools/attempt-context';
+import { runIdFromHeaders, withRun } from '@/lib/mcp-tools/run-context';
 import { getOrgSettings } from '@renkei/settings';
 import { getOrigin } from '@/lib/get-origin';
-import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/mcp-token';
+import {
+  getBearerToken,
+  isWidgetConfirmToken,
+  resolveAccessToken,
+  unauthorizedResponse,
+} from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
 import { cacheUserDisplayName } from '@/lib/mcp-tools';
 import { resolveConnectorAvailability, registerRenkeiTools } from '@/lib/mcp-tools/registry';
 import { withUsageTracking } from '@/lib/mcp-tools/usage-tracking';
-import { withToolAllowList } from '@/lib/mcp-tools/capability-gate';
+import {
+  withAppOnlyCallGuard,
+  withAppOnlyGate,
+  withToolAllowList,
+} from '@/lib/mcp-tools/capability-gate';
 import { registerWidgetResources } from '@/lib/mcp-tools/widgets';
 import { withRedaction } from '@/lib/mcp-tools/redaction-gate';
 import {
@@ -29,7 +39,7 @@ import {
 } from '@renkei/redaction';
 import { ATLASSIAN, ATLASSIAN_JSM, readAtlassianMetadata } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { getIdentityEmail } from '@/lib/identity';
 import { buildProjection } from '@/lib/mcp-tools/projection';
 import { resolveAudience } from '@/lib/connectors/audience';
@@ -46,7 +56,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
  * per call would still redact, but the tokens would stop being comparable,
  * which is most of what makes them useful.
  */
-const redactionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+const redactionKeyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
 const redactionKey = deriveRedactionKey(redactionKeyResult.ok ? redactionKeyResult.val : null);
 
 /**
@@ -176,15 +186,18 @@ const handler = async (
       return unauthorizedResponse(tenantId, origin, 'Authorization required');
     }
 
-    // Two token classes reach this endpoint: MCP-client tokens ('jira',
-    // issued via the OAuth AS) and agent-runner tokens ('agent', minted by
-    // the agents worker for one run under the owner's subject). Each class
+    // Three token classes reach this endpoint: MCP-client tokens ('jira',
+    // issued via the OAuth AS), agent-runner tokens ('agent', minted by
+    // the agents worker for one run under the owner's subject — and by the
+    // web app for a chat turn) and widget-confirm tokens ('widget', minted
+    // by the chat's card confirm path for one *_confirm call). Each class
     // is looked up explicitly — resolveAccessToken never matches across
-    // applications — so accepting the second is a deliberate widening here,
+    // applications — so accepting the others is a deliberate widening here,
     // not a loosening of the token store.
     const tokenRecord =
       (await resolveAccessToken(bearer, tenantId)) ??
-      (await resolveAccessToken(bearer, tenantId, 'agent'));
+      (await resolveAccessToken(bearer, tenantId, 'agent')) ??
+      (await resolveAccessToken(bearer, tenantId, 'widget'));
     if (!tokenRecord) {
       logger.warn('Request with unknown or expired bearer token', {
         component: 'mcp/transport',
@@ -198,6 +211,10 @@ const handler = async (
     // about the call is the OWNER's (subject, email, grants, gates) — this
     // only lets tools stamp agent provenance on what they write.
     const agentId = tokenRecord.application === 'agent' ? tokenRecord.agentId : null;
+    // App-only tools (a preview card's *_confirm buttons) register for this
+    // class alone — see withAppOnlyGate. Every other caller gets a surface
+    // without them, whatever its allow-list names.
+    const widgetCaller = isWidgetConfirmToken(tokenRecord);
 
     // Captured before any of the reads below that feed tool registration
     // (Jira grant, connector availability, org settings, JSM grant, email):
@@ -229,7 +246,10 @@ const handler = async (
     const allowListKey = toolNames
       ? createHash('sha256').update(toolNames.join('\n')).digest('hex').slice(0, 16)
       : 'all';
-    const cacheKey = `${tenantId}:${subject}:${agentId ?? 'none'}:${roles.join(',')}:${allowListKey}:${surfaceVersion}`;
+    // The token class rides in the key too: a widget token and a run token
+    // naming the same one tool must not share a handler, since only the
+    // first may have that tool registered at all.
+    const cacheKey = `${tenantId}:${subject}:${tokenRecord.application}:${agentId ?? 'none'}:${roles.join(',')}:${allowListKey}:${surfaceVersion}`;
 
     // This caller's own Jira grant. A grant with a NULL subject predates per-user
     // ownership and is deliberately not matched: we cannot prove it belongs to
@@ -410,11 +430,18 @@ const handler = async (
           try {
             logger.verbose('Server created', { component: 'mcp/transport', tenantId, accountId });
 
-            // Outermost wrapper, so it observes exactly the tools that
-            // actually register: the gates inside it drop the ones this user
-            // may not have, and a tool that was never registered cannot be
-            // called and so should never appear in usage.
-            const tracked = withUsageTracking(rawServer, { tenantId, subject, agentId });
+            // Outermost of all: an app-only tool that somehow registers for a
+            // caller other than a widget-confirm token answers a refusal
+            // instead of running — the fail-closed twin of the registration
+            // gate below (withAppOnlyGate), which is what normally keeps such
+            // a tool out of this caller's list altogether.
+            const guarded = withAppOnlyCallGuard(rawServer, widgetCaller);
+
+            // Outermost of the observing wrappers, so it observes exactly the
+            // tools that actually register: the gates inside it drop the ones
+            // this user may not have, and a tool that was never registered
+            // cannot be called and so should never appear in usage.
+            const tracked = withUsageTracking(guarded, { tenantId, subject, agentId });
 
             // Outside usage tracking, so the timing it records includes the
             // filtering — that cost is real and belongs in the latency the
@@ -474,7 +501,14 @@ const handler = async (
             // schemas and a call to anything else is refused before any
             // gate below runs. Person tokens (null) keep the full surface.
             const allowListed = toolNames ? withToolAllowList(server, new Set(toolNames)) : server;
-            await registerRenkeiTools(allowListed, context, availability, projection);
+            // A preview card's *_confirm tools exist for the card's own
+            // button and nothing else: they register only for a token the
+            // chat's confirm path minted (application 'widget'). An external
+            // MCP client, an agent run or a chat turn never lists them, so
+            // the card a preview puts in front of a person cannot be skipped
+            // by calling its confirm half directly.
+            const modelFacing = withAppOnlyGate(allowListed, widgetCaller);
+            await registerRenkeiTools(modelFacing, context, availability, projection);
 
             // A caller with other connectors but no Jira still gets the
             // pointer to connect it — as a normal tool, so it shows up in
@@ -599,7 +633,11 @@ const handler = async (
     // The attempt rides in AsyncLocalStorage rather than on the context the
     // handler closed over: handlers are cached and shared, and this value
     // changes on every retry. See lib/mcp-tools/attempt-context.ts.
-    return await withAttempt(attemptFromHeaders(request.headers), () => cachedHandler(request));
+    // The run id rides the same way (run-context.ts), read by the PHI
+    // access trail when an agent's call reaches a clinical record.
+    return await withRun(runIdFromHeaders(request.headers), () =>
+      withAttempt(attemptFromHeaders(request.headers), () => cachedHandler(request))
+    );
   } catch (error) {
     logger.error('{error}', {
       component: 'mcp/transport',

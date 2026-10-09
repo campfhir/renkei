@@ -16,6 +16,7 @@ jest.mock('@renkei/user-prefs', () => {
 jest.mock('@renkei/notifications', () => ({ sendPush: jest.fn(async () => undefined) }));
 jest.mock('@renkei/crypto', () => ({
   parseEncryptionKey: jest.fn(() => ({ ok: true, val: Buffer.alloc(32) })),
+  loadKeyring: jest.fn(() => ({ ok: true, val: Buffer.alloc(32) })),
 }));
 jest.mock('../handlers/owner-channels', () => ({ deliverToOwnerChannels: jest.fn() }));
 jest.mock('../handlers/feed-url', () => ({

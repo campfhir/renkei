@@ -36,7 +36,19 @@ export {
 
 export { parseShareCredentials, type CredentialError, type ShareCredentials } from './credentials';
 
-export { openBackend, type BackendError, type ShareBackend } from './backend';
+export {
+  openBackend,
+  type BackendError,
+  type OpenBackendOptions,
+  type ShareBackend,
+} from './backend';
+export {
+  hostKeyFingerprint,
+  hostKeyMismatchMessage,
+  makeHostVerifier,
+  normalizeHostKeyFingerprint,
+  type HostKeyVerdict,
+} from './host-key';
 
 export {
   CONNECT_TIMEOUT_MS,
@@ -57,6 +69,7 @@ export {
   serviceStatEntry,
   serviceTestConnection,
   serviceWriteFile,
+  type TestConnectionOutcome,
   type EntryDetails,
   type FileContent,
   type FolderListing,
@@ -79,6 +92,7 @@ export {
   listShares,
   listSharesWithConnection,
   readConnectionCiphertext,
+  recordHostKeyFingerprint,
   resolveToolExposure,
   updateConnectionExposure,
   updateShare,

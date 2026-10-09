@@ -5,7 +5,7 @@
  * row is.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import {
   getConnectorConfig,
   setConnectorConfig,
@@ -36,7 +36,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function encryptionKey(): Buffer | null {
-  const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
   return key.ok ? key.val : null;
 }
 

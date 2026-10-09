@@ -38,7 +38,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { batchEventForStatus, getNotificationPrefs, type BatchEvent } from '@renkei/user-prefs';
 import { batchKindLabel, describeBatchOutcome, type BatchJobRow } from '@renkei/batch-jobs-store';
@@ -198,7 +198,7 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
         .execute();
 
       // Fire-and-forget push notification — respects app preference
-      const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+      const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
       if (keyResult.ok) {
         void sendPush(
           db,

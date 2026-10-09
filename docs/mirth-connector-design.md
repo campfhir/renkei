@@ -183,7 +183,13 @@ OnBase and fileshare arrangement — behind a bearer key
   verification off for that instance (`tls_verify = false`). Global
   `fetch` cannot express either per request without pulling in undici as
   a dependency. Plaintext `http://` is refused unless
-  `allow_insecure_http` is recorded, the OnBase discipline;
+  `allow_insecure_http` is recorded, the OnBase discipline. Either
+  switch — verification off, or plaintext allowed — is accepted only for a
+  non-production instance whose host resolves to a private network, is
+  refused outright for a production label, is written to the audit trail on
+  every save (`mirth.instance.insecure_transport_enabled`) and shows as a
+  persistent banner on the instance's admin page
+  (`apps/web/lib/insecure-transport.ts`);
 - envelopes the upstream status and body back verbatim (a 403 is Mirth's
   authorization verdict on the account, not the worker's), and buffers
   bodies up to a cap so a runaway response fails loudly.
@@ -228,3 +234,13 @@ then deletes the sealed credential.
 - Audit: admin instance CRUD writes `mirth.instance.created/updated/deleted`;
   connects and disconnects write `mirth.connected/disconnected` (exposure
   choice and the server version seen at connect time, never a credential).
+- PHI access trail (migration 141, `apps/web/lib/phi-access.ts`): every
+  message read, search, attachment read, DICOM read and export writes one
+  `phi_access_events` row — subject, agent and run, instance, tool,
+  channel id, message id; never message content or the text searched —
+  and, best effort, posts the same fact to Mirth's own
+  `_auditAccessedPHIMessage` / `_auditQueriedPHIMessage` /
+  `_auditExportMessages` routes so the server's event log agrees. A
+  refused audit never fails the read. Operators read the trail at
+  `GET /api/admin/{slug}/phi-access?subject=…` (DEPLOYMENT.md, "PHI
+  access trail").

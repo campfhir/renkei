@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import {
   getConnectorConfig,
   setConnectorConfig,
@@ -52,7 +52,7 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
@@ -140,7 +140,7 @@ export async function PUT(
       : DEFAULT_AZURE_VOICE;
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }

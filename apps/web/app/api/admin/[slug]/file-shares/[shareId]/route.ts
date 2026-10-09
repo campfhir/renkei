@@ -67,6 +67,8 @@ export async function PATCH(
     action: 'fileshare.updated',
     targetKind: 'fileshare',
     targetLabel: parsed.input.name,
+    // The pinned host key is part of what an admin can change, so the trail says what it became.
+    details: { hostKeyFingerprint: parsed.input.hostKeyFingerprint },
   });
   return NextResponse.json({ ok: true });
 }

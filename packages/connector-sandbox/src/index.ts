@@ -114,9 +114,21 @@ export {
   assertPublicHttpsUrl,
   assertSafeHttpsUrl,
   assertSafeHostname,
+  resolvePublicAddress,
   isBlockedIP,
   BlockedUrlError,
 } from './egress-guard';
+
+export {
+  GUARDED_FETCH_MAX_REDIRECTS,
+  guardedFetch,
+  httpsTransport,
+  type GuardedFetchDeps,
+  type GuardedFetchInit,
+  type GuardedTransport,
+  type GuardedTransportRequest,
+  type GuardedTransportResponse,
+} from './guarded-fetch';
 
 export {
   WORKSPACE_MAX_PER_SUBJECT,

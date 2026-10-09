@@ -14,6 +14,7 @@ import InstanceConfigFields, { draftPayload, emptyDraft } from '../instance-conf
 import type { InstanceDraft } from '../instance-config-fields';
 import { probeText } from '../instance-list';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
+import { INSECURE_MODE_LABELS, insecureTransportModes } from '@/lib/insecure-transport-modes';
 
 interface InstanceResponse {
   instance: {
@@ -40,6 +41,8 @@ export default function InstanceConfigForm({
   const [draft, setDraft] = useState<InstanceDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  /** The transport protections the STORED instance has switched off — the banner's source, not the draft's. */
+  const [insecure, setInsecure] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     const { data, error } = await getJson<InstanceResponse>(
@@ -60,6 +63,7 @@ export default function InstanceConfigForm({
       resetPasswordTemplateName: data.instance.resetPasswordTemplateName ?? '',
       enabled: data.instance.enabled,
     });
+    setInsecure(insecureTransportModes(data.instance).map((mode) => INSECURE_MODE_LABELS[mode]));
   }, [slug, instanceId]);
 
   useEffect(() => {
@@ -128,6 +132,18 @@ export default function InstanceConfigForm({
 
   return (
     <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
+      {insecure.length ? (
+        <p
+          role="alert"
+          data-testid="insecure-transport-banner"
+          className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+        >
+          <strong>Transport security is off for this instance</strong> ({insecure.join(', ')}):
+          credentials and data travel where an intercepting party on the path could read them.
+          Allowed only because this is a non-production instance on a private network; turn the
+          protection back on as soon as the server supports it.
+        </p>
+      ) : null}
       <InstanceConfigFields draft={draft} onChange={setDraft} />
       <label className="mt-3 flex items-center gap-2 text-sm font-medium">
         <input

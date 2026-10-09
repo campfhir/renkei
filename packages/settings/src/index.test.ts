@@ -87,6 +87,15 @@ describe('org settings', () => {
     if (result.ok) expect(result.val).toEqual(DEFAULT_ORG_SETTINGS);
   });
 
+  it('bounds log and chat retention by default; 0 (forever) is an opt-in', () => {
+    // Both defaulted to 0 before: a fresh org kept every log row (request
+    // and response bodies included) and every chat indefinitely unless an
+    // admin found the dial. Unbounded retention is now something an org
+    // chooses, not something it inherits.
+    expect(DEFAULT_ORG_SETTINGS.logRetentionDays).toBe(90);
+    expect(DEFAULT_ORG_SETTINGS.chatRetentionDays).toBe(365);
+  });
+
   it('overrides only what was stored, per key', async () => {
     stubDb();
     await setOrgSettings('tenant-1', { readOnly: true, maxAttachmentBytes: 1024 });
@@ -114,6 +123,22 @@ describe('org settings', () => {
 
     const result = await getOrgSettings('tenant-1');
     if (result.ok) expect(result.val.logLevel).toBe(DEFAULT_ORG_SETTINGS.logLevel);
+  });
+
+  it('defaults act-step approval to externally triggered runs, and refuses an unknown policy', async () => {
+    const store = stubDb();
+    const policyOf = async () => {
+      const result = await getOrgSettings('tenant-1');
+      return result.ok ? result.val.agentActStepsRequireApproval : null;
+    };
+    expect(await policyOf()).toBe('externally_triggered');
+
+    store.tenantRows.set('tenant-1:agent_act_steps_require_approval', 'sometimes');
+    invalidateSettingsCache();
+    expect(await policyOf()).toBe('externally_triggered');
+
+    await setOrgSettings('tenant-1', { agentActStepsRequireApproval: 'off' });
+    expect(await policyOf()).toBe('off');
   });
 
   it('round-trips a valid log level', async () => {

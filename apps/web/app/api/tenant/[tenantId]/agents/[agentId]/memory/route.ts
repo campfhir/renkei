@@ -7,8 +7,11 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
+import { readAgentMemory } from '@renkei/agents/memory';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
+import { unavailableMarker } from '@/lib/chat/content-crypto';
+import { unavailableReasonOf } from '@/lib/chat/chat-keys';
 
 const MAX_LISTED_ENTRIES = 100;
 
@@ -28,23 +31,24 @@ export async function GET(
   const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const rows = await db
-    .selectFrom('agent_memories')
-    .select(['id', 'kind', 'content', 'created_at', 'updated_at'])
-    .where('tenant_id', '=', tenantId)
-    .where('agent_id', '=', agentId)
-    .orderBy('created_at', 'desc')
-    .orderBy('id', 'desc')
-    .limit(MAX_LISTED_ENTRIES + 1)
-    .execute();
-
-  const summaryRow = rows.find((row) => row.kind === 'summary');
+  // Rows are sealed under the owner's automation key; readAgentMemory
+  // opens them through the delegate. When that key is not available the
+  // answer says so (the chat's marker for a locked row) rather than
+  // showing envelopes or nothing.
+  const memory = await readAgentMemory(db, tenantId, agentId, { maxEntries: MAX_LISTED_ENTRIES });
   return NextResponse.json({
-    summary: summaryRow ? { content: summaryRow.content, updatedAt: summaryRow.updated_at } : null,
-    entries: rows
-      .filter((row) => row.kind === 'entry')
-      .slice(0, MAX_LISTED_ENTRIES)
-      .map((row) => ({ id: row.id, content: row.content, createdAt: row.created_at })),
+    summary:
+      memory.summary !== null
+        ? { content: memory.summary, updatedAt: memory.summaryUpdatedAt }
+        : null,
+    entries: memory.entries.map((entry) => ({
+      id: entry.id,
+      content: entry.content,
+      createdAt: entry.createdAt,
+    })),
+    ...(memory.unavailable
+      ? { unavailable: unavailableMarker(unavailableReasonOf(memory.unavailable)) }
+      : {}),
   });
 }
 

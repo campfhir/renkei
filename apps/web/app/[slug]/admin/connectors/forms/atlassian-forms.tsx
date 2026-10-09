@@ -179,10 +179,11 @@ function AtlassianAppForm({
   /** Replaces the default ceiling hint under the scope picker. */
   scopeHint?: ReactNode;
   /**
-   * Bitbucket only: a shared secret checked against a `?secret=` query
-   * parameter on a repo webhook someone registers by hand pointing at
-   * app/api/webhooks/bitbucket/[tenantId]/route.ts — Bitbucket Cloud has
-   * no HMAC-signed delivery the way a GitHub App does.
+   * Bitbucket only: a shared secret checked against the
+   * `X-Renkei-Webhook-Secret` header (or, for older registrations, a
+   * `?secret=` query parameter) of a repo webhook someone registers by hand
+   * pointing at app/api/webhooks/bitbucket/[tenantId]/route.ts — Bitbucket
+   * Cloud has no HMAC-signed delivery the way a GitHub App does.
    */
   showWebhookSecret?: boolean;
 }) {
@@ -339,12 +340,15 @@ function AtlassianAppForm({
               </p>
             ) : (
               <p className={hintClass}>
-                Set this to the same value as a repo webhook&apos;s own secret query parameter
-                (Repository settings → Webhooks → add one pointing at{' '}
-                <code className="font-mono">
-                  /api/webhooks/bitbucket/&lt;tenant id&gt;?secret=&lt;this value&gt;
-                </code>
-                ) to turn on pull request pipeline subscriptions for Bitbucket repositories.
+                Set this to the same value a repo webhook sends (Repository settings → Webhooks →
+                add one pointing at{' '}
+                <code className="font-mono">/api/webhooks/bitbucket/&lt;tenant id&gt;</code> with a
+                request header{' '}
+                <code className="font-mono">X-Renkei-Webhook-Secret: &lt;this value&gt;</code>) to
+                turn on pull request pipeline subscriptions for Bitbucket repositories. Putting the
+                value in the URL as <code className="font-mono">?secret=</code> still works for
+                webhooks registered that way, but a URL is copied and logged in more places than a
+                header, so prefer the header.
               </p>
             )}
           </div>

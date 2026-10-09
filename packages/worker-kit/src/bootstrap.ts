@@ -1,10 +1,11 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { watchLogLevel } from '@renkei/settings';
 import type { WorkerLogger } from './logger';
+import { parseNamedApiKeys, type NamedApiKey } from './http';
 
 /**
  * Every egress worker's `main()`: read the bearer keys and encryption key
@@ -25,7 +26,13 @@ import type { WorkerLogger } from './logger';
 export interface WorkerServerDeps {
   db: Kysely<DB>;
   encryptionKey: Buffer;
+  /** Every accepted bearer key, flat — for a worker that does not tell its callers apart. */
   apiKeys: string[];
+  /**
+   * The same keys with the caller each was issued to: `${envPrefix}_API_KEYS`
+   * as `name=key,…`, and `${envPrefix}_API_KEY` under `defaultCallerName`.
+   */
+  namedApiKeys: NamedApiKey[];
 }
 
 export interface RunWorkerOptions {
@@ -34,6 +41,11 @@ export interface RunWorkerOptions {
   /** e.g. 'ADMANAGER_WORKER' — this worker's env var prefix: `${envPrefix}_API_KEY`, `${envPrefix}_PORT`. */
   envPrefix: string;
   defaultPort: number;
+  /**
+   * The caller name the plain `${envPrefix}_API_KEY` keys carry, for a worker
+   * that authorizes per caller (the delegate names it `web`). Default `default`.
+   */
+  defaultCallerName?: string;
   /** The exact object `createWorkerLogger` returned — bound to THIS worker's
    *  own `application`/`version` attributes, so `logger.info('… {application}
    *  {version} …', …)` below doesn't need to repeat them per call. */
@@ -57,15 +69,15 @@ export async function runWorker(options: RunWorkerOptions): Promise<void> {
   // change takes effect without restarting this process.
   watchLogLevel(logger);
 
-  const apiKeys = (process.env[`${envPrefix}_API_KEY`] ?? '')
-    .split(',')
-    .map((key) => key.trim())
-    .filter(Boolean);
+  const namedApiKeys = parseNamedApiKeys(process.env, envPrefix, options.defaultCallerName);
+  const apiKeys = namedApiKeys.map((entry) => entry.key);
   if (apiKeys.length === 0) {
-    fatal(`${envPrefix}_API_KEY is required (comma-separated bearer keys)`);
+    fatal(
+      `${envPrefix}_API_KEY (comma-separated bearer keys) or ${envPrefix}_API_KEYS (name=key,…) is required`
+    );
   }
 
-  const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!key.ok) {
     fatal('TOKEN_ENCRYPTION_KEY must be 32 bytes base64 (openssl rand -base64 32)');
   }
@@ -79,7 +91,12 @@ export async function runWorker(options: RunWorkerOptions): Promise<void> {
     fatal(`${envPrefix}_PORT is not a usable port: ${portEnv}`);
   }
 
-  const server = options.createServer({ db: dbResult.val, encryptionKey: key.val, apiKeys });
+  const server = options.createServer({
+    db: dbResult.val,
+    encryptionKey: key.val,
+    apiKeys,
+    namedApiKeys,
+  });
   server.listen(port, '0.0.0.0', () => {
     logger.info('started {application} {version} on port {port}', {
       component: `${name}/server`,

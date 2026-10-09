@@ -51,6 +51,12 @@ export interface OperationRuntime {
   ): Promise<{ ok: true; response: WireApiResponse } | { ok: false; message: string }>;
   exposureRefusal(instanceId: string, permission: MirthPermission): Promise<string | null>;
   instanceName(instanceId: string): Promise<string>;
+  /**
+   * Called after a successful call with the operation's `tool` name and
+   * the validated arguments — index.ts records the PHI access trail for
+   * the message operations and ignores the rest. Must not throw.
+   */
+  recordAccess?(tool: string, args: Record<string, unknown>): Promise<void>;
   maxChars: number;
 }
 
@@ -384,6 +390,7 @@ export function registerOperationTools(
       if (!built.ok) return errText(built.error);
       const answered = await runtime.call(instanceId, operation.title.toLowerCase(), built.request);
       if (!answered.ok) return errText(answered.message);
+      await runtime.recordAccess?.(operation.tool, args);
       return text(phrase(answered.response, runtime.maxChars));
     };
 

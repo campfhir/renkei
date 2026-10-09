@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import type { NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDatabase } from '@renkei/db';
+import { DEFAULT_ORG_SETTINGS, getOrgSettings } from '@renkei/settings';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { logger } from '@/lib/logger';
@@ -28,6 +29,21 @@ const COOKIE_PREFIX = 'renkei_session_';
  * like the app "forgot" the sign-in.
  */
 export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+
+/**
+ * The org's idle timeout, in milliseconds: how long a session may go
+ * without a request before it is ended, well inside the absolute lifetime
+ * above. From org settings (`sessionIdleTimeoutMinutes`, default 12 hours),
+ * cached there; falls back to the default when the settings read fails so
+ * a settings outage never lengthens anyone's session.
+ */
+async function idleTimeoutMs(tenantId: string): Promise<number> {
+  const settings = await getOrgSettings(tenantId);
+  const minutes = settings.ok
+    ? settings.val.sessionIdleTimeoutMinutes
+    : DEFAULT_ORG_SETTINGS.sessionIdleTimeoutMinutes;
+  return minutes * 60 * 1000;
+}
 
 /** Sessions are per-tenant so one browser can hold several without collision. */
 export function sessionCookieName(tenantId: string): string {
@@ -91,8 +107,9 @@ export async function createSession(
 
 /**
  * Resolve a session id to its owner. Returns null when the session is unknown,
- * expired, or belongs to a different tenant — callers must fail closed on null.
- * An expired row is deleted rather than left to accumulate.
+ * expired, idle past the org's timeout, or belongs to a different tenant —
+ * callers must fail closed on null. An expired or idle row is deleted rather
+ * than left to accumulate.
  */
 export async function getSessionById(sessionId: string, tenantId: string): Promise<Session | null> {
   const dbResult = getDatabase();
@@ -101,24 +118,37 @@ export async function getSessionById(sessionId: string, tenantId: string): Promi
 
   const row = await db
     .selectFrom('sessions')
-    .select(['id', 'tenant_id', 'subject', 'roles', 'expires_at'])
+    .select(['id', 'tenant_id', 'subject', 'roles', 'expires_at', 'last_used_at'])
     .where('id', '=', sessionId)
     .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
 
   if (!row) return null;
 
-  if (new Date(row.expires_at) < new Date()) {
+  const now = new Date();
+  if (new Date(row.expires_at) < now) {
     await db.deleteFrom('sessions').where('id', '=', sessionId).execute();
     logger.debug('Expired session discarded', { component: 'auth/session', tenantId, sessionId });
     return null;
   }
 
-  await db
-    .updateTable('sessions')
-    .set({ last_used_at: new Date() })
-    .where('id', '=', sessionId)
-    .execute();
+  // Idle timeout: `last_used_at` moves on every resolution (below), so a
+  // session this far behind has had no request at all for that long. Ended
+  // the same way as an expired one — the row goes, the next request has no
+  // session, and sign-in is the only way back.
+  const idleFor = now.getTime() - new Date(row.last_used_at).getTime();
+  if (idleFor > (await idleTimeoutMs(tenantId))) {
+    await db.deleteFrom('sessions').where('id', '=', sessionId).execute();
+    logger.info('Idle session ended', {
+      component: 'auth/session',
+      tenantId,
+      sessionId,
+      idleMinutes: Math.round(idleFor / 60_000),
+    });
+    return null;
+  }
+
+  await db.updateTable('sessions').set({ last_used_at: now }).where('id', '=', sessionId).execute();
 
   return {
     id: row.id,

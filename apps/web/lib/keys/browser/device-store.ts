@@ -15,7 +15,9 @@
 
 const DB_NAME = 'renkei-keys';
 const STORE = 'keys';
-const VERSION = 1;
+/** The delegate instance keys this browser has sealed to, and the signing keys it accepts lists from. */
+const TRUST_STORE = 'trust';
+const VERSION = 2;
 
 interface StoredKey {
   tenantId: string;
@@ -41,6 +43,9 @@ function openDatabase(): Promise<IDBDatabase | null> {
       request.onupgradeneeded = () => {
         if (!request.result.objectStoreNames.contains(STORE)) {
           request.result.createObjectStore(STORE, { keyPath: 'tenantId' });
+        }
+        if (!request.result.objectStoreNames.contains(TRUST_STORE)) {
+          request.result.createObjectStore(TRUST_STORE, { keyPath: 'tenantId' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -167,4 +172,76 @@ export async function forgetUserKey(tenantId: string): Promise<void> {
     // Nothing to forget.
   }
   db.close();
+}
+
+/**
+ * Which delegate this browser seals to (docs/delegate-key-design.md, "Which
+ * delegate am I sealing to?"): the instance public keys it has sealed a
+ * key to before, and the deployment signing keys whose word it takes for a
+ * new one. Kept beside the device key: the same browser profile, the same
+ * "forget this device" clears neither by accident (trust outlives the key,
+ * since it is about the service, not the person).
+ */
+export interface InstanceTrust {
+  /** Raw X25519 instance public keys, base64. */
+  instanceKeys: string[];
+  /** Raw Ed25519 signing keys, base64. */
+  signingKeys: string[];
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+/** What this browser trusts for the tenant; null when it has never sealed here (first use). */
+export async function loadInstanceTrust(tenantId: string): Promise<InstanceTrust | null> {
+  const db = await openDatabase();
+  if (!db) return null;
+  try {
+    const found = await requestToPromise(
+      db.transaction(TRUST_STORE, 'readonly').objectStore(TRUST_STORE).get(tenantId)
+    );
+    db.close();
+    if (typeof found !== 'object' || found === null) return null;
+    const record: Record<string, unknown> = Object.fromEntries(Object.entries(found));
+    return {
+      instanceKeys: stringList(record.instanceKeys),
+      signingKeys: stringList(record.signingKeys),
+    };
+  } catch {
+    db.close();
+    return null;
+  }
+}
+
+/** Remember these instance keys (and signing key) as trusted, beside what already is. */
+export async function trustInstances(
+  tenantId: string,
+  instanceKeys: string[],
+  signingKey: string | null
+): Promise<boolean> {
+  const current = (await loadInstanceTrust(tenantId)) ?? { instanceKeys: [], signingKeys: [] };
+  const next: InstanceTrust = {
+    instanceKeys: [...new Set([...current.instanceKeys, ...instanceKeys])],
+    signingKeys: signingKey
+      ? [...new Set([...current.signingKeys, signingKey])]
+      : current.signingKeys,
+  };
+  const db = await openDatabase();
+  if (!db) return false;
+  try {
+    const done = await requestToPromise(
+      db
+        .transaction(TRUST_STORE, 'readwrite')
+        .objectStore(TRUST_STORE)
+        .put({ tenantId, ...next })
+    );
+    db.close();
+    return done !== null;
+  } catch {
+    db.close();
+    return false;
+  }
 }

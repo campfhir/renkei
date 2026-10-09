@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
+import { bindConnectFlow } from '@/lib/connect-flow-binding';
 import { getEntraDeveloperApp, ENTRA_DEVELOPER_CONNECTOR } from '@/lib/entra-developer-app';
 import { ENTRA_DEVELOPER_REQUIRED_SCOPES } from '@/lib/entra-developer-scopes';
 import { getOrigin } from '@/lib/get-origin';
@@ -104,5 +105,6 @@ export async function GET(
   authUrl.searchParams.append('state', state);
   authUrl.searchParams.append('prompt', 'select_account');
 
-  return NextResponse.redirect(authUrl.toString());
+  // Bound to this browser: the callback requires the cookie this sets.
+  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), tenantId, state);
 }

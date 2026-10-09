@@ -42,6 +42,7 @@ function shareInput(name: string): ShareInput {
     shareName: null,
     rootPath: '/srv/data',
     caseInsensitive: false,
+    hostKeyFingerprint: null,
     enabled: true,
   };
 }

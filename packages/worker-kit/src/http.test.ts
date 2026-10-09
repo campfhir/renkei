@@ -11,7 +11,16 @@
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { EventEmitter } from 'node:events';
-import { authorized, isRecord, readBody, sendJson, str, createJsonRpcServer } from './http';
+import {
+  authorized,
+  isRecord,
+  matchApiKey,
+  parseNamedApiKeys,
+  readBody,
+  sendJson,
+  str,
+  createJsonRpcServer,
+} from './http';
 
 describe('isRecord', () => {
   it('accepts a plain object, rejects everything else', () => {
@@ -64,6 +73,46 @@ describe('authorized', () => {
   });
 });
 
+describe('matchApiKey', () => {
+  const keys = [{ name: 'web', key: 'web-key' }, { name: 'agents', key: 'agents-key' }, 'plain'];
+
+  it('names the caller whose key was presented; a plain string is the default caller', () => {
+    expect(matchApiKey(fakeRequest({ authorization: 'Bearer agents-key' }) as never, keys)).toEqual(
+      {
+        name: 'agents',
+        key: 'agents-key',
+      }
+    );
+    expect(matchApiKey(fakeRequest({ authorization: 'Bearer plain' }) as never, keys)).toEqual({
+      name: 'default',
+      key: 'plain',
+    });
+    expect(matchApiKey(fakeRequest({ authorization: 'Bearer nope' }) as never, keys)).toBeNull();
+    expect(matchApiKey(fakeRequest({ authorization: 'Bearer web-key' }) as never, [])).toBeNull();
+  });
+});
+
+describe('parseNamedApiKeys', () => {
+  it('reads name=key pairs and files the plain keys under the default caller', () => {
+    expect(
+      parseNamedApiKeys(
+        {
+          X_API_KEYS: 'web=w1, agents=a1,bad entry,=nokey,worker=',
+          X_API_KEY: 'shared-1,shared-2',
+        },
+        'X',
+        'web'
+      )
+    ).toEqual([
+      { name: 'web', key: 'w1' },
+      { name: 'agents', key: 'a1' },
+      { name: 'web', key: 'shared-1' },
+      { name: 'web', key: 'shared-2' },
+    ]);
+    expect(parseNamedApiKeys({}, 'X')).toEqual([]);
+  });
+});
+
 describe('readBody', () => {
   it('collects chunks into one buffer', async () => {
     const request = fakeRequest();
@@ -90,6 +139,7 @@ describe('readBody', () => {
 });
 
 const API_KEY = 'test-key';
+const NARROW_KEY = 'narrow-key';
 
 function statusForError(type: string): number {
   switch (type) {
@@ -101,6 +151,8 @@ function statusForError(type: string): number {
       return 404;
     case 'method_not_allowed':
       return 405;
+    case 'forbidden':
+      return 403;
     case 'too_large':
       return 413;
     default:
@@ -116,14 +168,16 @@ describe('createJsonRpcServer', () => {
   beforeAll(async () => {
     unhandled = [];
     server = createJsonRpcServer({
-      apiKeys: [API_KEY],
+      apiKeys: [API_KEY, { name: 'narrow', key: NARROW_KEY }],
       maxBodyBytes: 32,
       handlers: {
-        echo: async (body, response) => sendJson(response, 200, { got: body }),
+        echo: async (body, response, context) =>
+          sendJson(response, 200, { got: body, caller: context.caller }),
         throws: async () => {
           throw new Error('handler blew up');
         },
       },
+      allowOp: (caller, op) => caller === 'default' || op === 'echo',
       sendError: (response, type, message) =>
         sendJson(response, statusForError(type), { error: { type, message } }),
       onUnhandledError: (error) => unhandled.push(error),
@@ -141,7 +195,10 @@ describe('createJsonRpcServer', () => {
   function post(path: string, body: unknown, key: string | null = API_KEY): Promise<Response> {
     return fetch(`${base}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      headers: {
+        'content-type': 'application/json',
+        ...(key ? { authorization: `Bearer ${key}` } : {}),
+      },
       body: typeof body === 'string' ? body : JSON.stringify(body),
     });
   }
@@ -181,10 +238,19 @@ describe('createJsonRpcServer', () => {
     expect((await post('/v1/echo', '[]')).status).toBe(400);
   });
 
-  it('dispatches a valid call to its handler', async () => {
+  it('dispatches a valid call to its handler, naming the caller', async () => {
     const response = await post('/v1/echo', { hello: 'world' });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ got: { hello: 'world' } });
+    expect(await response.json()).toEqual({ got: { hello: 'world' }, caller: 'default' });
+  });
+
+  it("refuses an op the matched key's caller may not run, before reading the body", async () => {
+    const allowed = await post('/v1/echo', { hi: 1 }, NARROW_KEY);
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toEqual({ got: { hi: 1 }, caller: 'narrow' });
+    const refused = await post('/v1/throws', { padding: 'x'.repeat(64) }, NARROW_KEY);
+    expect(refused.status).toBe(403);
+    expect(unhandled).toHaveLength(0);
   });
 
   it('answers 500 and reports a handler that throws, without hanging the response', async () => {

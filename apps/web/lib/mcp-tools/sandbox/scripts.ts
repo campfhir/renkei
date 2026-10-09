@@ -15,7 +15,12 @@
  * model only ever sees what it prints and what it names.
  *
  * Registered only where the deployment runs scripts
- * (SANDBOX_SCRIPTS_ENABLED on the worker and here) — closed, never open.
+ * (SANDBOX_SCRIPTS_ENABLED on the worker and here) and the worker has not
+ * said it cannot — closed, never open. The description promises the model
+ * no network only where that is so: where the operator chose
+ * SANDBOX_SCRIPTS_ALLOW_NETWORK (the worker could not isolate a run and
+ * was told to run anyway), the description says the script has the
+ * worker's network, and every such result says it too.
  */
 
 import { z } from 'zod';
@@ -34,7 +39,16 @@ import {
 } from '@renkei/connector-sandbox';
 import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
-import { sbRunScript, clientFailure, type WireScriptResult } from '@/lib/sandbox/service-client';
+import {
+  sbRunScript,
+  clientFailure,
+  sandboxScriptsAllowNetwork,
+  type WireScriptResult,
+} from '@/lib/sandbox/service-client';
+
+/** What a result says when the run was not cut off from the network. */
+export const NETWORK_SHARED_NOTE =
+  'NETWORK: this script ran WITH the sandbox worker’s network access, not offline — it could reach any host the worker can';
 
 /** What the model reads back: the exit, the streams clipped to budget, and what came out. */
 export function renderScriptRun(
@@ -50,8 +64,7 @@ export function renderScriptRun(
         : `exit ${result.exitCode}`;
   const notes: string[] = [];
   if (result.truncated) notes.push('output exceeded the worker’s buffer and was cut');
-  if (!result.networkIsolated)
-    notes.push('this worker could not isolate the network, so the script had the container’s');
+  if (!result.networkIsolated) notes.push(NETWORK_SHARED_NOTE);
   if (!result.uidIsolated) notes.push('this worker is unprivileged, so the script ran as its user');
   const stdout = clipOutput(result.stdout.replace(/\s+$/, ''), Math.floor(maxChars * 0.7));
   const stderr = clipOutput(result.stderr.replace(/\s+$/, ''), maxChars - stdout.text.length);
@@ -100,7 +113,14 @@ export function registerSandboxScriptTools(server: McpServer, context: MCPToolCo
         'you want to see; stdout and stderr come back (up to maxChars, the middle of long output ' +
         'omitted), so print a summary and a sample rather than every row. ' +
         'pandas, numpy, openpyxl (read and write .xlsx) and XlsxWriter are installed; the ' +
-        'standard library beyond that. There is NO network (no pip, no HTTP), no access to ' +
+        'standard library beyond that. ' +
+        (sandboxScriptsAllowNetwork()
+          ? 'On this deployment the script HAS the sandbox worker’s network access (the operator ' +
+            'chose to run scripts without network isolation): it can reach any host the worker ' +
+            'can, so treat anything it fetches or sends as leaving the sandbox, and say so when ' +
+            'it matters. '
+          : 'There is NO network (no pip, no HTTP), ') +
+        'no access to ' +
         'anything but the run’s own directory, a memory ceiling, and the run is killed at ' +
         `timeoutSeconds (default ${SCRIPT_DEFAULT_TIMEOUT_MS / 1000}, max ${SCRIPT_MAX_TIMEOUT_MS / 1000}) — ` +
         'say so for a long job. Pass files to choose which staged files to copy in (by id, ' +

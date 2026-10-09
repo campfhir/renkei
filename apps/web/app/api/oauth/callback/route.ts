@@ -54,6 +54,8 @@ import {
 import { getGitHubApp } from '@/lib/github-app';
 import { getOnBaseApp } from '@/lib/onbase-app';
 import { getOrigin } from '@/lib/get-origin';
+import { getSessionFromRequest } from '@/lib/session';
+import { clearConnectFlow, isConnectFlowBound } from '@/lib/connect-flow-binding';
 import { logger } from '@/lib/logger';
 import { cacheUserDisplayName } from '@/lib/mcp-tools/common';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
@@ -150,7 +152,11 @@ async function pendingGet(
   try {
     return await pending(url, { headers: { Accept: 'application/json', ...headers } });
   } catch (error) {
-    return new Response(error instanceof Error ? error.message : String(error), { status: 502 });
+    logger.warn('Identity lookup through the delegate failed: {detail}', {
+      component: 'oauth-callback',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return new Response('identity lookup failed', { status: 502 });
   }
 }
 
@@ -209,7 +215,22 @@ function logExchanged(label: string, tenantId: string, outcome: ExchangeOutcome)
   });
 }
 
+/**
+ * The browser binding (lib/connect-flow-binding.ts) is checked inside; this
+ * wrapper exists so the binding cookie is cleared on EVERY response once the
+ * state has named its tenant — success, refusal, or a provider handler's
+ * own error — without threading the cookie through each provider branch.
+ */
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const flow: { tenantId: string | null } = { tenantId: null };
+  const response = await handleCallback(request, flow);
+  return flow.tenantId ? clearConnectFlow(response, flow.tenantId) : response;
+}
+
+async function handleCallback(
+  request: NextRequest,
+  flow: { tenantId: string | null }
+): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -245,6 +266,37 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (!pendingSignIn) {
       return NextResponse.json({ error: 'Invalid or expired state' }, { status: 400 });
+    }
+    flow.tenantId = pendingSignIn.tenant_id;
+
+    // CSRF / grant-planting defense (lib/connect-flow-binding.ts): the state
+    // must match the cookie the authorize route set in THIS browser, and the
+    // browser must hold a session for the SAME subject the pending row
+    // recorded. A callback URL captured from one browser and replayed into
+    // another carries neither, so it is refused — and the state is consumed
+    // either way, so it cannot be retried with a different browser.
+    if (!isConnectFlowBound(request, pendingSignIn.tenant_id, state)) {
+      await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+      logger.warn('Connect flow state cookie missing or mismatched; rejecting callback', {
+        component: 'auth/oauth',
+        tenantId: pendingSignIn.tenant_id,
+        provider: pendingSignIn.provider ?? 'atlassian',
+      });
+      return NextResponse.json({ error: 'Invalid state' }, { status: 400 });
+    }
+    const session = await getSessionFromRequest(request, pendingSignIn.tenant_id);
+    if (!session || !pendingSignIn.subject || session.subject !== pendingSignIn.subject) {
+      await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+      logger.warn('Connect flow completed by a different session than started it; rejecting', {
+        component: 'auth/oauth',
+        tenantId: pendingSignIn.tenant_id,
+        provider: pendingSignIn.provider ?? 'atlassian',
+        signedIn: Boolean(session),
+      });
+      return NextResponse.json(
+        { error: 'Sign in as the person who started this connection, then try again' },
+        { status: 403 }
+      );
     }
 
     // The authorize step records who initiated the connect. A pending row without

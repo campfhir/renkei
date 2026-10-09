@@ -34,6 +34,15 @@ export interface McpToolInfo {
   uiResourceUri?: string;
   /** The card's own kind, from `_meta.ui.kind`. Present only alongside `uiResourceUri`. */
   uiKind?: WidgetKind;
+  /**
+   * Whether the tool reads or changes something, from its `annotations.
+   * readOnlyHint` as `tools/list` returned it — 'read' only for an explicit
+   * true; an absent or false hint is 'act', the same conservative reading
+   * the gateway's capability gate makes. Present on every tool a live
+   * endpoint lists; the engine's approval policy keys off it. An in-memory
+   * test double may leave it out, which reads as "not known".
+   */
+  kind?: 'read' | 'act';
 }
 
 export interface McpToolResult {
@@ -94,12 +103,19 @@ export function parseSseBody(body: string): unknown {
 export interface HttpMcpClientOptions {
   /** How this caller introduces itself in `initialize`. */
   clientName?: string;
+  /**
+   * The agent run every call belongs to, stamped as `x-renkei-run` so the
+   * server's PHI access trail can say which run read a record. Only the
+   * agent runner sets it.
+   */
+  runId?: string;
 }
 
 export class HttpMcpClient implements McpClient {
   private nextId = 1;
   private sessionId: string | null = null;
   private readonly clientName: string;
+  private readonly runId: string | null;
 
   /**
    * The step attempt every subsequent call belongs to, stamped on each
@@ -115,6 +131,7 @@ export class HttpMcpClient implements McpClient {
     options: HttpMcpClientOptions = {}
   ) {
     this.clientName = options.clientName ?? 'renkei-agent-runner';
+    this.runId = options.runId ?? null;
   }
 
   /** Called by the engine before each attempt of a step. */
@@ -132,6 +149,7 @@ export class HttpMcpClient implements McpClient {
         authorization: `Bearer ${this.bearerToken}`,
         'mcp-protocol-version': PROTOCOL_VERSION,
         ...(this.sessionId ? { 'mcp-session-id': this.sessionId } : {}),
+        ...(this.runId ? { 'x-renkei-run': this.runId } : {}),
         ...(this.attempt
           ? {
               'x-renkei-attempt': String(this.attempt.attempt),
@@ -206,6 +224,7 @@ export class HttpMcpClient implements McpClient {
         name?: unknown;
         description?: unknown;
         inputSchema?: unknown;
+        annotations?: unknown;
         _meta?: unknown;
       } = entry;
       if (typeof tool.name !== 'string') return [];
@@ -218,6 +237,7 @@ export class HttpMcpClient implements McpClient {
           inputSchema: plainObject(tool.inputSchema) ?? { type: 'object' },
           ...(uiResourceUri ? { uiResourceUri } : {}),
           ...(uiKind ? { uiKind } : {}),
+          kind: plainObject(tool.annotations)?.readOnlyHint === true ? 'read' : 'act',
         },
       ];
     });

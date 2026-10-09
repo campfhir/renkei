@@ -33,7 +33,8 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import {
-  assertPublicHttpsUrl,
+  assertSafeHttpsUrl,
+  guardedFetch,
   BlockedUrlError,
   DEFAULT_MAX_FILE_BYTES,
   DEFAULT_BATCH_MAX_FILE_BYTES,
@@ -73,7 +74,7 @@ import { createServiceHandlers } from './service-endpoints';
 import { createScriptHandlers } from './script-endpoints';
 import { expiryFromNow, quotaHeadroom } from './staging';
 import type { ServiceManager } from './services';
-import type { ScriptRunner } from './scripts';
+import type { ScriptRunner, ScriptsStatus } from './scripts';
 import type { LspSessions } from './lsp-sessions';
 import { logger } from './logger';
 
@@ -142,6 +143,19 @@ export interface SandboxServerDeps {
    * which answers the script verb 503.
    */
   scripts?: ScriptRunner | null;
+  /**
+   * What `/health` says about scripts — the boot decision (scripts.ts,
+   * decideScripts) the web app reads to offer or withhold sandbox_run_python.
+   * `disabled` when not given; `unavailable` also carries the 503's message.
+   */
+  scriptsStatus?: ScriptsStatus;
+  scriptsUnavailable?: string | null;
+  /**
+   * How `/v1/fetch` reaches a URL: the guarded fetch by default — every
+   * redirect re-checked, every hop dialled at the address it verified
+   * (@renkei/connector-sandbox guarded-fetch.ts). Tests stand in one.
+   */
+  fetchUrl?: (url: string, init: { signal: AbortSignal }) => Promise<Response>;
 }
 
 const MAX_JSON_BYTES = 1_048_576;
@@ -171,9 +185,10 @@ function str(value: unknown): string {
 
 function authorized(request: IncomingMessage, keys: string[]): boolean {
   if (keys.length === 0) return false;
-  const match = request.headers.authorization?.match(/^Bearer\s+(.+)$/i);
-  if (!match) return false;
-  const presented = match[1].trim();
+  const header = request.headers.authorization?.trim() ?? '';
+  if (header.length < 8 || header.slice(0, 7).toLowerCase() !== 'bearer ') return false;
+  const presented = header.slice(7).trim();
+  if (!presented) return false;
   return keys.some((key) => {
     const bufA = Buffer.from(presented);
     const bufB = Buffer.from(key);
@@ -294,7 +309,11 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
   let draining = false;
   const vault = deps.vault ?? new SecretVault();
   const services = createServiceHandlers({ db: deps.db, manager: deps.services ?? null });
-  const scripts = createScriptHandlers({ db: deps.db, runner: deps.scripts ?? null });
+  const scripts = createScriptHandlers({
+    db: deps.db,
+    runner: deps.scripts ?? null,
+    unavailable: deps.scriptsUnavailable ?? null,
+  });
   const workspaces = createWorkspaceHandlers({
     db: deps.db,
     enabled: deps.workspaces === true,
@@ -302,6 +321,8 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     ...(deps.services ? { serviceEnv: (target) => deps.services!.environmentFor(target) } : {}),
     lsp: deps.lsp,
   });
+
+  const fetchUrl = deps.fetchUrl ?? ((url, init) => guardedFetch(url, { signal: init.signal }));
 
   async function handleFetch(
     body: Record<string, unknown>,
@@ -313,9 +334,13 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     if (!named.ok) return sendError(response, 400, 'bad_filename');
     const batchId = batchIdOf(body.batchId);
 
+    // The structural refusals (scheme, localhost, a private literal) are
+    // answered before the quota is touched; the resolution and the pinned
+    // connect — for this URL and for every redirect — happen inside
+    // fetchUrl, which throws the same BlockedUrlError.
     let url: URL;
     try {
-      url = await assertPublicHttpsUrl(str(body.url));
+      url = assertSafeHttpsUrl(str(body.url));
     } catch (error) {
       if (error instanceof BlockedUrlError) {
         return sendError(response, 400, 'blocked_url', error.message);
@@ -341,8 +366,11 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
 
     let upstream: Response;
     try {
-      upstream = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      upstream = await fetchUrl(url.href, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     } catch (error) {
+      if (error instanceof BlockedUrlError) {
+        return sendError(response, 400, 'blocked_url', error.message);
+      }
       return sendError(
         response,
         502,
@@ -896,7 +924,10 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       );
     }
     if (request.method === 'GET' && url.pathname === '/health') {
-      return sendJson(response, 200, { ok: true });
+      return sendJson(response, 200, {
+        ok: true,
+        scripts: deps.scriptsStatus ?? (deps.scripts ? 'isolated' : 'disabled'),
+      });
     }
     if (!authorized(request, deps.apiKeys)) {
       return sendError(response, 401, 'unauthorized');

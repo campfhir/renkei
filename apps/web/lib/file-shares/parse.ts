@@ -5,7 +5,12 @@
  * same reason: the UI's live preview is a convenience, never the check.
  */
 
-import { isToolAccess, normalizePath, windowsToUnix } from '@renkei/connector-fileshares';
+import {
+  isToolAccess,
+  normalizeHostKeyFingerprint,
+  normalizePath,
+  windowsToUnix,
+} from '@renkei/connector-fileshares';
 import type { ShareCredentials, ShareInput, ToolAccess } from '@renkei/connector-fileshares';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -59,6 +64,28 @@ export function parseSharePayload(body: unknown): { input: ShareInput } | { erro
 
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
+  // SFTP only: the server's host key as ssh-keygen prints it. Empty means
+  // "record on first connection"; anything that is not a SHA-256
+  // fingerprint is refused rather than stored as a pin nothing can match.
+  let hostKeyFingerprint: string | null = null;
+  if (
+    protocol === 'sftp' &&
+    body.hostKeyFingerprint !== undefined &&
+    body.hostKeyFingerprint !== null
+  ) {
+    if (typeof body.hostKeyFingerprint !== 'string') {
+      return { error: 'hostKeyFingerprint must be a string' };
+    }
+    const normalized = normalizeHostKeyFingerprint(body.hostKeyFingerprint);
+    if (normalized === undefined) {
+      return {
+        error:
+          'hostKeyFingerprint must be the server’s SHA256 host-key fingerprint (as `ssh-keygen -lf` prints it), or empty to record it on first connection',
+      };
+    }
+    hostKeyFingerprint = normalized;
+  }
+
   return {
     input: {
       name,
@@ -69,6 +96,7 @@ export function parseSharePayload(body: unknown): { input: ShareInput } | { erro
       rootPath: rootPath.val,
       caseInsensitive,
       enabled,
+      hostKeyFingerprint,
     },
   };
 }

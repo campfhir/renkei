@@ -20,7 +20,7 @@
  * worker and to the user's browser, never fetched from this process.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { logger } from '@/lib/logger';
 
@@ -57,7 +57,7 @@ export async function getOnBaseApp(
   origin: string,
   connector: string = ONBASE_CONNECTOR
 ): Promise<OnBaseApp | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/onbase',

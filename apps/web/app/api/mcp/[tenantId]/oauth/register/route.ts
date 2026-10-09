@@ -5,6 +5,17 @@ import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { generateSecret, hashToken } from '@/lib/mcp-token';
 import { SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS } from '@/lib/oauth-client-auth';
+import { checkInboundLimit } from '@/lib/inbound-rate-limit';
+
+/**
+ * Open by specification (RFC 7591) and each call writes a row, so the
+ * throttle is what keeps it from being a client-row factory: a person sets
+ * up one MCP client at a time, and a handful per ten minutes covers retries.
+ */
+const LIMITS = {
+  perClient: { limit: 10, windowMs: 10 * 60_000 },
+  global: { limit: 100, windowMs: 10 * 60_000 },
+};
 
 /**
  * Tenant-scoped Dynamic Client Registration endpoint (RFC 7591)
@@ -15,6 +26,14 @@ export async function POST(
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
   const { tenantId } = await params;
+
+  const verdict = checkInboundLimit(`oauth/register:${tenantId}`, request, LIMITS);
+  if (!verdict.allowed) {
+    return NextResponse.json(
+      { error: 'slow_down', error_description: 'Too many registration requests' },
+      { status: 429, headers: { 'Retry-After': String(verdict.retryAfterSeconds) } }
+    );
+  }
 
   const settingsResult = await getOrgSettings(tenantId);
   const settings = settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS;

@@ -832,6 +832,7 @@ export interface FileShares {
   created_at: Generated<Timestamp>;
   enabled: Generated<boolean>;
   host: string;
+  host_key_fingerprint: string | null;
   id: Generated<string>;
   name: string;
   port: number | null;
@@ -1096,7 +1097,11 @@ export interface OauthRefreshTokens {
   client_id: string;
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
+  /** Every token descended from one authorization shares this (migration 147); reuse revokes the family. */
+  family_id: Generated<string>;
   roles: Generated<string[]>;
+  /** Set when this token was exchanged for its successor; presenting it again is reuse. */
+  rotated_at: Timestamp | null;
   scope: string | null;
   subject: string;
   tenant_id: string;
@@ -1210,6 +1215,23 @@ export interface Prompts {
   title: string;
   updated_at: Generated<Timestamp>;
   updated_by_subject: string;
+}
+
+export interface PhiAccessEvents {
+  action: string;
+  agent_id: string | null;
+  channel_id: string | null;
+  connector: string;
+  created_at: Generated<Timestamp>;
+  document_id: string | null;
+  id: Generated<string>;
+  instance_id: string | null;
+  message_id: string | null;
+  path_hash: string | null;
+  run_id: string | null;
+  subject: string;
+  tenant_id: string;
+  tool_name: string;
 }
 
 export interface ProviderGrants {
@@ -1340,14 +1362,20 @@ export interface DelegateInstances {
 }
 
 export interface DeviceKeyRequests {
+  approved_by_session_id: string | null;
+  asking_session_id: string | null;
+  attempts: Generated<number>;
   code: string;
+  consumed_at: Timestamp | null;
   created_at: Generated<Timestamp>;
+  denied_at: Timestamp | null;
   expires_at: Timestamp;
   id: Generated<string>;
   public_key: string;
   sealed_key: string | null;
   subject: string;
   tenant_id: string;
+  user_agent: string | null;
 }
 
 export interface KeyDelegations {
@@ -1360,6 +1388,26 @@ export interface KeyDelegations {
   session_id: string | null;
   subject: string;
   tenant_id: string;
+}
+
+export interface DelegateAccessEvents {
+  caller: string;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  op: string;
+  outcome: string;
+  status: number;
+  subject_hash: string | null;
+  target: string | null;
+  tenant_id: string | null;
+}
+
+export interface DelegateSigningKeys {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  public_key: string;
+  sealed_private_key: string;
+  singleton: Generated<boolean>;
 }
 
 export interface DelegateGitTickets {
@@ -1439,7 +1487,14 @@ export interface TenantOidc {
 }
 
 export interface Tenants {
+  /** SHA-256 digest of the one-time onboarding secret (migration 146); null once used or never minted. */
+  bootstrap_secret_hash: string | null;
+  bootstrap_secret_expires_at: Timestamp | null;
   created_at: Generated<Timestamp>;
+  /** The value published as `renkei-verify=<token>` in the domain's TXT record (migration 146). */
+  domain_verification_token: string | null;
+  /** When the TXT record was seen; the sign-in page routes the domain here only once set. */
+  domain_verified_at: Timestamp | null;
   id: string;
   slug: string;
 }
@@ -1592,8 +1647,10 @@ export interface DB {
   chat_user_memories: ChatUserMemories;
   chat_widget_decisions: ChatWidgetDecisions;
   chats: Chats;
+  delegate_access_events: DelegateAccessEvents;
   delegate_git_tickets: DelegateGitTickets;
   delegate_instances: DelegateInstances;
+  delegate_signing_keys: DelegateSigningKeys;
   device_key_requests: DeviceKeyRequests;
   key_delegations: KeyDelegations;
   coach_mark_progress: CoachMarkProgress;
@@ -1640,6 +1697,7 @@ export interface DB {
   pr_subscriptions: PrSubscriptions;
   prompt_libraries: PromptLibraries;
   prompts: Prompts;
+  phi_access_events: PhiAccessEvents;
   provider_grants: ProviderGrants;
   provider_refresh_locks: ProviderRefreshLocks;
   push_subscriptions: PushSubscriptions;

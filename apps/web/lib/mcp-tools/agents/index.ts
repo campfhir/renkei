@@ -86,8 +86,10 @@ import {
   MAX_STEP_ATTEMPTS,
   MAX_QUESTION_ANSWER_CHARS,
   TRIGGER_EVENT_CATALOG,
+  flattenActionSteps,
   flattenFormFields,
   friendlyToolName,
+  isAlwaysApprovalTool,
   isCurrentStepsDoc,
   lintAgentDraft,
   savesByPathCoverage,
@@ -152,6 +154,7 @@ import {
 } from '@/lib/agents/approvals';
 import { requestRunCancellation } from '@/lib/agents/run-cancellation';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
+import { DEFAULT_ORG_SETTINGS, getOrgSettings, type ActApprovalPolicy } from '@renkei/settings';
 import { agentJobsQueue } from '@renkei/queue';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
@@ -351,6 +354,14 @@ const NATIVE_CAPABILITIES = [
     'prompt states what was asked and what came back (question.message, question.answer, and ' +
     'one variable per answered field) — nothing to plan ahead of time. agent_questions_list ' +
     'shows the ones waiting on you, and agent_question_answer answers one.',
+  '- THE ORG GATES ACT STEPS TOO — a step whose skill CHANGES something (an Act skill: sends, ' +
+    'creates, edits, deletes) pauses for the same card even without `needsApproval`, when the ' +
+    "org's policy applies to the run: by default on every run an event or webhook started (the " +
+    'content it acts on came from outside), optionally on every run, or never. Sending mail, ' +
+    'merging a pull request, deleting or sharing a document, and directory writes (password ' +
+    'resets, Entra application changes) ALWAYS pause in an agent run, whatever the policy. ' +
+    'Expect the pause when you plan such a step; set `needsApproval: true` yourself when the ' +
+    'step should pause on every run regardless of the setting.',
   '- END THE RUN AND SAY SO — a {kind:"terminal"} step ends the whole run as a success, a ' +
     'deliberate failure, or a graceful skip, and emails or WebEx-messages the owner the ' +
     'message it carries.',
@@ -1673,6 +1684,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const memory = await readAgentMemory(dbResult.val, context.tenantId, agent.id, {
         maxEntries: 100,
       });
+      if (memory.unavailable) {
+        return errText(
+          `"${agent.name}"'s memory is sealed under its owner's encryption key, which is not ` +
+            'connected right now — the owner signing in again makes it readable.'
+        );
+      }
       if (!memory.summary && memory.entries.length === 0) {
         return textResult(`"${agent.name}" remembers nothing yet.`);
       }
@@ -2123,10 +2140,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     '"not approved"); empty or absent just skips the call and continues below the step.',
     'approval.outcome ("approved"|"denied"|"timedOut") and approval.comment (the person\'s',
     'typed note, if any) bind as variables so a branch inside onNotApproved can tell denied',
-    'and timed-out apart, or a later step can read why}. At most one tool per step. At runtime',
+    'and timed-out apart, or a later step can read why}. The ORG gates act steps too: a step',
+    'whose skill changes something pauses for the same card without needsApproval when the',
+    "org's policy applies to the run (by default: runs an event or webhook started), and a",
+    'fixed high-risk set (send mail, merge a PR, delete or share a document, directory writes)',
+    'always pauses — plan for the pause rather than around it. At most one tool per step. At runtime',
     '(not something you author on the node) every action step attempt may also call a free',
     '`remember` tool to record ONE fact future runs of the agent need and could not',
-    'rediscover — a deliberate, standalone call, never a side effect of declaring the step\'s',
+    "rediscover — a deliberate, standalone call, never a side effect of declaring the step's",
     'outcome. When a step should do this, say so explicitly in its instruction (e.g. "remember',
     'which ticket this was so a later run does not reopen it"); most steps have nothing worth',
     'remembering, and their instruction should say nothing about it.',
@@ -2325,15 +2346,66 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
    * The builder's lint, for an author with no builder: prose leaning on a
    * value the node does not chip. Never a refusal — the definition is
    * saved as given — but the surest sign a step will run without the
-   * ticket or message it talks about.
+   * ticket or message it talks about. Followed by which steps the org's
+   * act-approval policy will pause (policyLines), for the same reason: an
+   * author who did not set needsApproval should still know the run will
+   * stop and wait there.
    */
-  function hintLines(draft: { steps: AgentStepsDoc; triggers: TriggerDraft[] }): string[] {
+  async function hintLines(draft: {
+    steps: AgentStepsDoc;
+    triggers: TriggerDraft[];
+  }): Promise<string[]> {
     const hints = lintAgentDraft(draft);
-    if (hints.length === 0) return [];
+    const lint =
+      hints.length === 0
+        ? []
+        : [
+            '',
+            'Worth a look (a node is only given the variables its segments name):',
+            ...hints.map((hint) => `- ${hint.path}: ${hint.message}`),
+          ];
+    return [...lint, ...(await policyLines(draft.steps))];
+  }
+
+  /**
+   * The steps the org's act-approval policy (or the fixed high-risk list)
+   * will pause for a person, beyond the author's own gates — so the reply
+   * to a save says where the run will stop and wait. Best effort: the
+   * catalog's read-or-act kind and the org setting are read here, and a
+   * failure to read either says nothing rather than refusing the save.
+   */
+  async function policyLines(steps: AgentStepsDoc): Promise<string[]> {
+    if (!context.subject) return [];
+    let policy: ActApprovalPolicy = DEFAULT_ORG_SETTINGS.agentActStepsRequireApproval;
+    let kinds: Map<string, 'read' | 'act'>;
+    try {
+      const [settings, catalog] = await Promise.all([
+        getOrgSettings(context.tenantId),
+        listAvailableTools(context.tenantId, context.subject, { roles: context.roles }),
+      ]);
+      if (settings.ok) policy = settings.val.agentActStepsRequireApproval;
+      kinds = new Map(catalog.map((tool) => [tool.name, tool.kind]));
+    } catch {
+      return [];
+    }
+    const always: string[] = [];
+    const byPolicy: string[] = [];
+    for (const step of flattenActionSteps(steps.steps)) {
+      if (!step.tool || step.needsApproval) continue;
+      const label = `"${step.name}" (${step.tool})`;
+      if (isAlwaysApprovalTool(step.tool)) always.push(label);
+      else if (policy !== 'off' && kinds.get(step.tool) === 'act') byPolicy.push(label);
+    }
+    if (always.length === 0 && byPolicy.length === 0) return [];
+    const when =
+      policy === 'all'
+        ? 'on every run'
+        : 'on runs started by an event or webhook (not when run by hand or on a schedule)';
     return [
       '',
-      'Worth a look (a node is only given the variables its segments name):',
-      ...hints.map((hint) => `- ${hint.path}: ${hint.message}`),
+      'Approval the org requires (beyond any needsApproval you set — the run parks behind a card there):',
+      ...always.map((label) => `- ${label}: always pauses for approval, whatever the org policy.`),
+      ...byPolicy.map((label) => `- ${label}: pauses for approval ${when}.`),
     ];
   }
 
@@ -2380,7 +2452,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             ...(result.normalized.guardrails
               ? ['', 'Guardrails:', result.normalized.guardrails]
               : []),
-            ...hintLines(result.normalized),
+            ...(await hintLines(result.normalized)),
             '',
             'Nothing was saved. Call again with confirm:true to create it.',
           ].join('\n')
@@ -2396,7 +2468,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         [
           `Created "${result.normalized.name}" — DISABLED until you review and turn it on in the builder.`,
           `agentId: ${result.agentId}`,
-          ...hintLines(result.normalized),
+          ...(await hintLines(result.normalized)),
           ...(result.apiKeys.length > 0
             ? [
                 'API trigger keys (shown exactly once):',
@@ -2524,7 +2596,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           [
             `Valid. ${operations.val.length} operation(s) would leave "${result.normalized.name}" as:`,
             outlineOf(result.normalized.steps),
-            ...hintLines(result.normalized),
+            ...(await hintLines(result.normalized)),
             '',
             'Nothing was saved. Call again with confirm:true to apply it.',
           ].join('\n')
@@ -2540,7 +2612,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         [
           `Updated "${result.normalized.name}":`,
           outlineOf(result.normalized.steps),
-          ...hintLines(result.normalized),
+          ...(await hintLines(result.normalized)),
         ].join('\n')
       );
     }
@@ -2819,7 +2891,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             ...(result.normalized.guardrails
               ? ['', 'Guardrails:', result.normalized.guardrails]
               : []),
-            ...hintLines(result.normalized),
+            ...(await hintLines(result.normalized)),
             '',
             `It stays ${enabled ? 'ENABLED' : 'disabled'}. Nothing was saved. Call again with confirm:true to apply.`,
           ].join('\n')
@@ -2834,7 +2906,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       return textResult(
         [
           `Updated "${result.normalized.name}" (${enabled ? 'still enabled' : 'disabled'}).`,
-          ...hintLines(result.normalized),
+          ...(await hintLines(result.normalized)),
           ...(result.apiKeys.length > 0
             ? [
                 'API trigger keys (shown exactly once):',

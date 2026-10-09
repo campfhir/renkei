@@ -13,7 +13,8 @@
 
 import { resolveOutcomes } from '@renkei/tool-outcomes';
 import { renderInstruction } from './render';
-import { attemptVariables, knownVariables } from './variables';
+import { attemptVariables, delimitUntrustedVariables, knownVariables } from './variables';
+import { UNTRUSTED_RULE } from './untrusted';
 import {
   varSegments,
   type ActionStep,
@@ -45,6 +46,11 @@ export interface PromptToolDef {
 export const INLINE_VALUE_MAX = 200;
 
 const INLINE = { inlineMax: INLINE_VALUE_MAX };
+
+// The fence around trigger values and tool results, and the one rule that
+// gives it meaning — re-exported so the engine (which places tool results
+// into the conversation itself) fences them with the same words.
+export { UNTRUSTED_RULE, UNTRUSTED_TAG, untrustedBlock } from './untrusted';
 
 /**
  * The "Known information" block: the vars this call references (see
@@ -384,6 +390,7 @@ export const SYSTEM_PROMPT = [
   'An empty result is NOT a skip: a search or lookup that runs cleanly but finds nothing has produced an answer — declare success and save that nothing was found (or, when the step lists a failure code for it, declare failure with that code so the configured handling decides). Skip only when this step’s own action does not apply here — never as a way to end the whole automation; an instruction saying the automation itself is out of scope has its own step for that.',
   'Declare failure honestly: a tool error you could not work around, or a result that clearly does not match the step’s intent, is a failure, not a success.',
   'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled. When there is a fact future runs must know to avoid repeating or contradicting this one, call remember explicitly to record it — it is a separate, free call, never a side effect of declaring this step’s outcome; routine outcomes are not worth remembering.',
+  UNTRUSTED_RULE,
 ].join(' ');
 
 /**
@@ -517,6 +524,7 @@ export const BRANCH_SYSTEM_PROMPT = [
   'Judge only from the information given — you have no tools and must not invent facts.',
   'When the information given does not settle the condition, choose the answer the condition’s wording treats as the default ("no" for "did anything happen?" style conditions).',
   'Call choose_path exactly once.',
+  UNTRUSTED_RULE,
 ].join(' ');
 
 /** The N-way sibling of BRANCH_SYSTEM_PROMPT. */
@@ -525,6 +533,7 @@ export const ROUTER_SYSTEM_PROMPT = [
   'Judge only from the information given — you have no tools and must not invent facts.',
   'Pick the single path that best matches. When the information given does not clearly match any path, pick the LAST one — it is the fallback.',
   'Call choose_path exactly once.',
+  UNTRUSTED_RULE,
 ].join(' ');
 
 export const LOOP_DECISION_TOOL = 'loop_decision';
@@ -557,6 +566,7 @@ export const LOOP_SYSTEM_PROMPT = [
   'The loop’s body has just run; judge only from the information given — you have no tools and must not invent facts.',
   'When the information given does not settle it, choose "continue" — the loop has a hard round limit either way.',
   'Call loop_decision exactly once.',
+  UNTRUSTED_RULE,
 ].join(' ');
 
 export interface LoopPromptInput {
@@ -576,9 +586,10 @@ export function buildLoopConditionMessages(input: LoopPromptInput): {
   messages: PromptMessage[];
   unbound: string[];
 } {
-  const rendered = renderInstruction(input.loop.condition, input.variables, undefined, INLINE);
+  const variables = delimitUntrustedVariables(input.variables);
+  const rendered = renderInstruction(input.loop.condition, variables, undefined, INLINE);
   const known = knownInformationBlock(
-    input.variables,
+    variables,
     {
       referenced: varSegments(input.loop.condition),
       inlined: rendered.inlined,
@@ -624,9 +635,11 @@ export function buildBranchMessages(input: BranchPromptInput): {
   messages: PromptMessage[];
   unbound: string[];
 } {
-  const rendered = renderInstruction(input.branch.condition, input.variables, undefined, INLINE);
+  // Trigger values are fenced before they render anywhere (untrusted.ts).
+  const variables = delimitUntrustedVariables(input.variables);
+  const rendered = renderInstruction(input.branch.condition, variables, undefined, INLINE);
   const known = knownInformationBlock(
-    input.variables,
+    variables,
     {
       referenced: varSegments(input.branch.condition),
       inlined: rendered.inlined,
@@ -753,10 +766,12 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
   // describing an agent to a person, not running one — and binding real
   // numbers over the top would print "try 1 of 3" as if that were the
   // instruction's literal text.
-  const variablesWithAttempt = {
+  // Trigger values are fenced before they render anywhere (untrusted.ts) —
+  // inline in the sentence or listed below, the fence travels with them.
+  const variablesWithAttempt = delimitUntrustedVariables({
     ...attemptVariables(input.attempt, input.step.maxAttempts),
     ...input.variables,
-  };
+  });
   const rendered = renderInstruction(
     input.step.instruction,
     variablesWithAttempt,
@@ -777,7 +792,7 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
       renderInstruction(handling.guidance ?? [], variablesWithAttempt, undefined, INLINE)
     );
   const known = knownInformationBlock(
-    input.variables,
+    variablesWithAttempt,
     {
       referenced: [input.step.instruction, ...guidanceLists].flatMap(varSegments),
       inlined: [rendered, ...guideRenders].flatMap((render) => render.inlined),
@@ -860,9 +875,10 @@ export const CORRECTIVE_TOOL_CAP = 10;
  */
 export function outcomeGuideFor(
   step: ActionStep,
-  vars: Record<string, string>
+  rawVars: Record<string, string>
 ): string | undefined {
   if (step.tool === null || step.failureHandling.length === 0) return undefined;
+  const vars = delimitUntrustedVariables(rawVars);
   const labelOf = new Map(
     resolveOutcomes(step.tool, 'read').failures.map((failure) => [failure.code, failure.label])
   );

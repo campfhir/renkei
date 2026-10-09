@@ -32,6 +32,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -106,6 +107,10 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
        VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.tenantId, fixture.subject]
     );
+    // Enrolled the way e2e/seed.ts enrolls the shared person: with a key
+    // and a delegation for the spec's session, the KeyGuard has nothing to
+    // ask, so no "write it down" dialog sits over the form.
+    await enrollForE2E(client, fixture.tenantId, fixture.subject);
   } finally {
     await client.end();
   }
@@ -211,6 +216,9 @@ test('admin: the model roster, listing, testing, and saving', async ({ page }, t
   await expect(page.getByText('Prod Claude')).toBeVisible();
   await expect(page.getByText('key stored')).toBeVisible();
   await expect(page.getByText('Default', { exact: true })).toBeVisible();
+  // Nothing was said about data handling, so the roster warns: a row an
+  // operator has not confirmed a BAA for must not look like one they have.
+  await expect(page.getByText('Not BAA-covered')).toBeVisible();
   await shot(page, testInfo, 'llm-models-06-saved');
 
   // Mobile: a resized Chromium viewport, not a device descriptor — the
@@ -399,4 +407,48 @@ test('admin: the Images API surface makes an image generation model — never th
   await page.setViewportSize(MOBILE_VIEWPORT);
   await expect(page.getByLabel('API surface')).toBeVisible();
   await shot(page, testInfo, 'llm-models-image-model-form-mobile');
+});
+
+test('admin: data handling — residency, retention and the BAA flag round-trip and clear the warning', async ({
+  page,
+}, testInfo) => {
+  const fixture = fixtureFor(`${testInfo.project.name}-data-handling`);
+  await seedTenant(fixture);
+  await signIn(page, fixture);
+
+  await page.goto(`/${fixture.slug}/admin/llm-models`);
+  await page.getByRole('button', { name: '+ Add a model' }).click();
+  await page.getByLabel('Display name').fill('Covered Claude');
+  await page.getByLabel('Model id').fill('claude-sonnet-5');
+  await page.getByLabel('API key').fill('sk-ant-e2e-fake-key');
+  // A BAA without a retention term is still a warning: the operator has
+  // to say what the provider keeps, not only that a contract exists.
+  await page.getByRole('checkbox', { name: /Business Associate Agreement/ }).check();
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Covered Claude')).toBeVisible();
+  await expect(page.getByText('Retention unknown')).toBeVisible();
+  await shot(page, testInfo, 'llm-models-data-handling-01-retention-unknown');
+
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByRole('checkbox', { name: /Business Associate Agreement/ })).toBeChecked();
+  await page.getByLabel('Data residency').fill('Azure East US, DataZone');
+  await page.getByLabel('Data retention').selectOption('none');
+  await page.getByLabel('Notes').fill('BAA signed 2026-01; zero retention confirmed.');
+  await shot(page, testInfo, 'llm-models-data-handling-02-filled');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Covered Claude')).toBeVisible();
+  await expect(page.getByText('Retention unknown')).toHaveCount(0);
+  await expect(page.getByText('Not BAA-covered')).toHaveCount(0);
+  await shot(page, testInfo, 'llm-models-data-handling-03-covered');
+
+  // Through the real save route and the settings jsonb, back into the form.
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByLabel('Data residency')).toHaveValue('Azure East US, DataZone');
+  await expect(page.getByLabel('Data retention')).toHaveValue('none');
+  await expect(page.getByLabel('Notes')).toHaveValue(
+    'BAA signed 2026-01; zero retention confirmed.'
+  );
+
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await shot(page, testInfo, 'llm-models-data-handling-04-mobile-edit');
 });

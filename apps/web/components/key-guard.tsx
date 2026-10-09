@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { KeyStatusView } from '@/lib/keys/shared';
+import { askedAtText, describeUserAgent, type KeyStatusView } from '@/lib/keys/shared';
 import {
   acknowledgeKey,
   keyAcknowledged,
@@ -37,6 +37,7 @@ import {
   adoptKeyInBrowser,
   approveDeviceAsk,
   askOtherDevices,
+  confirmInstanceTrust,
   delegateInBrowser,
   denyDeviceAsk,
   enrollInBrowser,
@@ -44,6 +45,8 @@ import {
   parseTypedKey,
   pollDeviceAsk,
   type DeviceAsk,
+  type FlowFailure,
+  type UnknownInstance,
 } from '@/lib/keys/browser/flows';
 import { formatUserKey } from '@renkei/crypto/browser';
 import Modal from './modal';
@@ -56,7 +59,9 @@ type Banner =
   | { kind: 'write-down'; shown: string }
   | { kind: 'needs-key' }
   | { kind: 'passphrase' }
-  | { kind: 'approve'; requests: { id: string; code: string }[] }
+  | { kind: 'approve'; requests: KeyStatusView['pendingDevices'] }
+  /** A delegate instance this browser has not sealed to before: confirm its fingerprint first. */
+  | { kind: 'trust'; unknown: UnknownInstance[] }
   | { kind: 'unavailable' };
 
 export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: string }) {
@@ -72,6 +77,8 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
   const [typed, setTyped] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [ask, setAsk] = useState<DeviceAsk | null>(null);
+  /** What the person typed off each asking device's screen, by request id. */
+  const [typedCodes, setTypedCodes] = useState<Record<string, string>>({});
   const statusRef = useRef<KeyStatusView | null>(null);
   const checking = useRef(false);
 
@@ -88,6 +95,13 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
     }
     router.refresh();
   }, [router]);
+
+  /** An `untrusted_instances` failure becomes the trust dialog; anything else is left to the caller. */
+  const untrusted = useCallback((failure: FlowFailure): boolean => {
+    if (failure.code !== 'untrusted_instances' || !failure.unknown) return false;
+    setBanner({ kind: 'trust', unknown: failure.unknown });
+    return true;
+  }, []);
 
   const check = useCallback(async () => {
     if (checking.current) return;
@@ -109,6 +123,7 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
           automationDays: status.automationDays,
         });
         if (!enrolled.ok) {
+          if (untrusted(enrolled.failure)) return;
           setFailure(enrolled.failure.error);
           setBanner({ kind: 'unavailable' });
           return;
@@ -123,6 +138,7 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
             automationDays: status.automationDays,
           });
           if (delegated.ok) settle();
+          else if (untrusted(delegated.failure)) return;
           else if (delegated.failure.code === 'wrong_key') {
             // The key on this device is not this account's any more (a rotation elsewhere).
             setBanner({ kind: 'needs-key' });
@@ -155,7 +171,7 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
     } finally {
       checking.current = false;
     }
-  }, [settle, tenantId]);
+  }, [settle, tenantId, untrusted]);
 
   useEffect(() => {
     void check();
@@ -215,6 +231,7 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
     const adopted = await adoptKeyInBrowser(tenantId, status, parsed.bytes);
     setBusy(false);
     if (!adopted.ok) {
+      if (untrusted(adopted.failure)) return;
       setFailure(adopted.failure.error);
       return;
     }
@@ -258,8 +275,21 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
     if (approve) {
       const deviceKey = await loadUserKey(tenantId);
       if (deviceKey) {
-        const approved = await approveDeviceAsk(tenantId, requestId, deviceKey);
-        if (!approved.ok) setFailure(approved.failure.error);
+        const approved = await approveDeviceAsk(
+          tenantId,
+          requestId,
+          typedCodes[requestId] ?? '',
+          deviceKey
+        );
+        if (!approved.ok) {
+          setFailure(approved.failure.error);
+          setBusy(false);
+          // A closed request (too many wrong codes) leaves the list on the next check.
+          if (approved.failure.code === 'wrong_code' && !/closed/.test(approved.failure.error))
+            return;
+          await check();
+          return;
+        }
       }
     } else {
       await denyDeviceAsk(tenantId, requestId);
@@ -271,6 +301,18 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
   async function confirmWrittenDown(): Promise<void> {
     await acknowledgeKey(tenantId);
     setBanner({ kind: 'none' });
+  }
+
+  /** The person compared the fingerprints and says this is their key service. */
+  async function trustAndContinue(unknown: UnknownInstance[]): Promise<void> {
+    const status = statusRef.current;
+    if (!status) return;
+    setBusy(true);
+    await confirmInstanceTrust(tenantId, status, unknown);
+    setBusy(false);
+    setBanner({ kind: 'none' });
+    setDismissed(null);
+    await check();
   }
 
   const bannerClass =
@@ -449,29 +491,49 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
       {banner.kind === 'approve' && open ? (
         <Modal title="Another device is asking for your encryption key" onClose={dismiss}>
           <div className="space-y-3 text-sm" data-testid="key-modal-approve">
-            <p>Approve only if the code matches what that device shows.</p>
-            <ul className="space-y-2">
+            <p>
+              Type the code that device is showing. If no device of yours is showing a code, deny
+              the request: somebody else may be signed in as you.
+            </p>
+            <ul className="space-y-3">
               {banner.requests.map((request) => (
-                <li key={request.id} className="flex flex-wrap items-center gap-3">
-                  <code className="rounded bg-gray-100 px-2 py-1 font-mono text-lg tracking-widest dark:bg-gray-800">
-                    {request.code}
-                  </code>
-                  <button
-                    type="button"
-                    className={buttonClass}
-                    disabled={busy}
-                    onClick={() => void decideAsk(request.id, true)}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    type="button"
-                    className={quietButtonClass}
-                    disabled={busy}
-                    onClick={() => void decideAsk(request.id, false)}
-                  >
-                    Deny
-                  </button>
+                <li key={request.id} className="space-y-2" data-testid="key-approve-request">
+                  <p className="text-gray-600 dark:text-gray-400">
+                    Asked {askedAtText(request.createdAt)} from{' '}
+                    {describeUserAgent(request.userAgent)}.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      className="w-40 rounded-md border border-gray-300 px-2 py-1 font-mono text-base tracking-widest uppercase dark:border-gray-700 dark:bg-gray-900"
+                      value={typedCodes[request.id] ?? ''}
+                      onChange={(event) =>
+                        setTypedCodes((current) => ({
+                          ...current,
+                          [request.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="ABCDE-FGHIJ"
+                      aria-label="The code the other device shows"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className={buttonClass}
+                      disabled={busy || (typedCodes[request.id] ?? '').trim().length === 0}
+                      onClick={() => void decideAsk(request.id, true)}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      className={quietButtonClass}
+                      disabled={busy}
+                      onClick={() => void decideAsk(request.id, false)}
+                    >
+                      Deny
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -487,6 +549,54 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
         <div className={bannerClass} role="status" data-testid="key-banner-approve">
           <span>
             <span className="font-medium">Another device is asking for your encryption key.</span>
+          </span>
+          <button type="button" className={buttonClass} onClick={() => setDismissed(null)}>
+            Review
+          </button>
+        </div>
+      ) : null}
+
+      {banner.kind === 'trust' && open ? (
+        <Modal title="Is this your key service?" onClose={dismiss}>
+          <div className="space-y-3 text-sm" data-testid="key-modal-trust">
+            <p>
+              This browser is about to hand your encryption key to a key service it has not seen
+              before. Nothing is sent until you confirm. Check the fingerprint
+              {banner.unknown.length > 1 ? 's' : ''} below against what your administrator published
+              (the key service prints it when it starts); if nobody can vouch for it, choose Not
+              now.
+            </p>
+            <ul className="space-y-1">
+              {banner.unknown.map((instance) => (
+                <li key={instance.id} data-testid="key-trust-fingerprint">
+                  <code className="rounded bg-gray-100 px-2 py-1 font-mono text-base tracking-widest dark:bg-gray-800">
+                    {instance.fingerprint}
+                  </code>
+                </li>
+              ))}
+            </ul>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                className={buttonClass}
+                disabled={busy}
+                data-testid="key-trust-confirm"
+                onClick={() => void trustAndContinue(banner.unknown)}
+              >
+                It matches, continue
+              </button>
+              <button type="button" className={quietButtonClass} onClick={dismiss}>
+                Not now
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+      {banner.kind === 'trust' && !open ? (
+        <div className={bannerClass} role="status" data-testid="key-banner-trust">
+          <span>
+            <span className="font-medium">Your key is not connected.</span> This browser has not
+            confirmed the key service it would hand your key to.
           </span>
           <button type="button" className={buttonClass} onClick={() => setDismissed(null)}>
             Review

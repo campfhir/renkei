@@ -25,8 +25,11 @@
  * ceiling; a wall clock that kills the whole process group; and — the
  * gap a workspace command has to leave open and a script over a
  * person's data does not — NO NETWORK: the interpreter starts in its own
- * empty network namespace when the kernel lets this worker make one,
- * and the result says plainly when it did not. The interpreter runs in
+ * empty network namespace (workspaces.ts, NetworkIsolation). When the
+ * kernel lets this worker make none, scripts are CLOSED rather than
+ * quietly run on the container's network — unless the operator opted in
+ * with SANDBOX_SCRIPTS_ALLOW_NETWORK=true (decideScripts), and then every
+ * result says the script had the network. The interpreter runs in
  * isolated mode (-I: no PYTHON* variables, no user site, no script
  * directory on the path) with bytecode writing off, so what runs is the
  * script and the image's own libraries, nothing it finds beside itself.
@@ -67,7 +70,13 @@ import {
 import * as disk from './disk';
 import * as store from './store';
 import { stageBytes } from './staging';
-import { identityFor, runProcess, type ExecIdentity, type RunResult } from './workspaces';
+import {
+  identityFor,
+  runProcess,
+  type ExecIdentity,
+  type NetworkIsolation,
+  type RunResult,
+} from './workspaces';
 import { logger } from './logger';
 
 /** Where the image keeps the interpreter with the data libraries (docker/Dockerfile, target sandbox). */
@@ -79,8 +88,8 @@ export interface ScriptRunnerDeps {
   runsRoot: string;
   /** The interpreter's path (resolvePython). */
   python: string;
-  /** Whether a run starts with no network (verifyNetworkIsolation said yes at boot). */
-  isolateNetwork: boolean;
+  /** How a run is started with no network (verifyNetworkIsolation's finding at boot); null runs it on the container's network. */
+  networkIsolation: NetworkIsolation | null;
   /** RLIMIT_AS for a run, in bytes. */
   memoryBytes: number;
   /** The per-tenant per-file ceiling for what a run stages back. */
@@ -113,7 +122,7 @@ export interface ScriptRunOutcome extends RunResult {
   inputs: ScriptInputSummary[];
   outputs: SandboxFileSummary[];
   skippedOutputs: SkippedOutput[];
-  /** Whether the run had no network; false on a worker that cannot unshare. */
+  /** Whether the run had no network; false only where the operator opted in to runs on the container's network. */
   networkIsolated: boolean;
   /** Whether the run was dropped to the caller's own uid; false on an unprivileged worker. */
   uidIsolated: boolean;
@@ -137,9 +146,19 @@ export class ScriptRunError extends Error {
  * finds (a developer's machine). Null when none is executable.
  */
 export async function resolvePython(configured: string | undefined): Promise<string | null> {
-  const candidates = [configured?.trim(), DEFAULT_PYTHON, 'python3'].filter(
-    (candidate): candidate is string => Boolean(candidate)
-  );
+  const candidates = [DEFAULT_PYTHON, 'python3'];
+  const explicit = configured?.trim();
+  if (explicit) {
+    // An interpreter path is spawned as the command of every run, so it is
+    // held to a plain shape: a bare command name (`python3`), or an absolute
+    // path (`/opt/sandbox-python/bin/python3`) of letters, digits and
+    // `_ . + -` — nothing a shell or `ps` would misread.
+    if (/^(?:[A-Za-z0-9_.+-]+|\/[A-Za-z0-9_.+/-]*)$/.test(explicit)) candidates.unshift(explicit);
+    else
+      throw new Error(
+        `SANDBOX_PYTHON must be a command name or an absolute path made of letters, digits, '_', '.', '+', '-' and '/': ${JSON.stringify(explicit)}`
+      );
+  }
   for (const candidate of candidates) {
     if (!candidate.includes('/')) return candidate;
     try {
@@ -400,7 +419,12 @@ export class ScriptRunner {
     await chmod(inDir, 0o500);
     await chownIf(runDir, identity);
 
-    const isolateNetwork = this.deps.isolateNetwork && identity !== null;
+    // `netns` is made as root before the drop, so it needs an identity;
+    // `userns` is the caller's own and works either way.
+    const networkIsolation =
+      this.deps.networkIsolation === 'netns' && identity === null
+        ? null
+        : this.deps.networkIsolation;
     const result = await runProcess(
       {
         cwd: runDir,
@@ -409,7 +433,7 @@ export class ScriptRunner {
         env: scriptEnvironment(home),
         timeoutMs: input.timeoutMs,
         signal: input.signal,
-        isolateNetwork,
+        networkIsolation,
       },
       'bash',
       ['-c', scriptCommand(this.deps.python, this.deps.memoryBytes)]
@@ -422,7 +446,7 @@ export class ScriptRunner {
       inputs,
       outputs: staged.outputs,
       skippedOutputs: staged.skipped,
-      networkIsolated: isolateNetwork,
+      networkIsolated: networkIsolation !== null,
       uidIsolated: identity !== null,
     };
   }
@@ -500,6 +524,54 @@ export class ScriptRunner {
     }
     return { outputs, skipped };
   }
+}
+
+/**
+ * What the worker tells the web app about scripts (`/health`):
+ *  - `disabled` — SANDBOX_SCRIPTS_ENABLED is off.
+ *  - `unavailable` — enabled, but no network isolation works here and the
+ *    operator has not opted in: the verb answers 503 and the web app
+ *    stops offering the tool.
+ *  - `isolated` — every run starts with no network.
+ *  - `network_shared` — SANDBOX_SCRIPTS_ALLOW_NETWORK=true: runs have the
+ *    container's network, and every result and the tool's description say so.
+ */
+export type ScriptsStatus = 'disabled' | 'unavailable' | 'isolated' | 'network_shared';
+
+export interface ScriptsDecision {
+  status: ScriptsStatus;
+  /** Whether the runner is served at all. */
+  serve: boolean;
+  /** What to tell a caller when it is not (the endpoint's message), else null. */
+  unavailable: string | null;
+}
+
+/** The env flag that keeps scripts running on the container's network when no isolation works. */
+export const ALLOW_NETWORK_ENV = 'SANDBOX_SCRIPTS_ALLOW_NETWORK';
+
+/**
+ * The boot decision for scripts, as a table: the probe's finding and the
+ * operator's opt-in in, whether the verb is served and what it says out.
+ * Closed by default — a tool whose description promises "no network" must
+ * not quietly run with one; the opt-in keeps the degraded behaviour for an
+ * operator who has weighed it, and then nothing promises otherwise.
+ */
+export function decideScripts(input: {
+  enabled: boolean;
+  networkIsolation: NetworkIsolation | null;
+  allowNetwork: boolean;
+}): ScriptsDecision {
+  if (!input.enabled) return { status: 'disabled', serve: false, unavailable: null };
+  if (input.networkIsolation !== null) {
+    return { status: 'isolated', serve: true, unavailable: null };
+  }
+  if (input.allowNetwork) return { status: 'network_shared', serve: true, unavailable: null };
+  return {
+    status: 'unavailable',
+    serve: false,
+    unavailable:
+      'Scripts are unavailable on this deployment: the sandbox worker cannot start a script without network access, and the operator has not allowed scripts to run with it.',
+  };
 }
 
 /** The memory ceiling for a run from SANDBOX_SCRIPT_MEMORY, else the default. */

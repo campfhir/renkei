@@ -22,7 +22,12 @@ jest.mock('@/lib/file-shares/service-client', () => ({
 jest.mock('../upload-slots', () => ({
   createUploadSlot: jest.fn(),
 }));
+jest.mock('@/lib/phi-access', () => ({
+  ...jest.requireActual<typeof import('@/lib/phi-access')>('@/lib/phi-access'),
+  recordPhiAccess: jest.fn().mockResolvedValue(true),
+}));
 
+import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { ShareConnection, ShareSummary } from '@renkei/connector-fileshares';
 import { registerFileshareTools, type FileshareToolExposure } from './index';
@@ -41,6 +46,7 @@ const client = jest.requireMock<{
   fsPreviewRemove: jest.Mock;
 }>('@/lib/file-shares/service-client');
 const { createUploadSlot } = jest.requireMock<{ createUploadSlot: jest.Mock }>('../upload-slots');
+const { recordPhiAccess } = jest.requireMock<{ recordPhiAccess: jest.Mock }>('@/lib/phi-access');
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: { text: string }[];
@@ -70,6 +76,7 @@ function summary(): ShareSummary {
     shareName: null,
     rootPath: '/srv/accounting',
     caseInsensitive: false,
+    hostKeyFingerprint: null,
     enabled: true,
   };
 }
@@ -460,4 +467,50 @@ test('delete confirm executes through the worker', async () => {
   expect(result.isError).toBeUndefined();
   expect(textOf(result)).toContain('Deleted /old.txt');
   expect(client.fsRemoveEntry).toHaveBeenCalledWith(TARGET, '/old.txt');
+});
+
+describe('PHI access trail', () => {
+  const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
+
+  test('read_file records one event carrying the path HASH, never the path', async () => {
+    client.fsReadFile.mockResolvedValue({ ok: true, val: new TextEncoder().encode('hello') });
+    const path = '/patients/Doe, Jane - MRN 123.pdf';
+    await register().get('fileshare_read_file')!({ shareId: SHARE_ID, path });
+    expect(recordPhiAccess).toHaveBeenCalledTimes(1);
+    const [event] = recordPhiAccess.mock.calls[0] as [Record<string, unknown>];
+    expect(event).toEqual({
+      tenantId: 'tenant-1',
+      subject: 'auth0|alice',
+      agentId: null,
+      connector: 'fileshare',
+      instanceId: SHARE_ID,
+      action: 'read',
+      toolName: 'fileshare_read_file',
+      pathHash: sha256(path),
+    });
+    expect(JSON.stringify(event)).not.toContain('Doe');
+    expect(JSON.stringify(event)).not.toContain('patients');
+  });
+
+  test('stat and download_file record too; a refused read records nothing', async () => {
+    client.fsStatEntry.mockResolvedValue({
+      ok: true,
+      val: { share: SHARE, path: '/r.pdf', kind: 'file', size: 9, modifiedAt: null },
+    });
+    await register().get('fileshare_stat')!({ shareId: SHARE_ID, path: '/r.pdf' });
+    await register().get('fileshare_download_file')!({ shareId: SHARE_ID, path: '/r.pdf' });
+    expect(
+      recordPhiAccess.mock.calls.map((call) => call[0] as { action: string; toolName: string })
+    ).toEqual(
+      [
+        { action: 'read', toolName: 'fileshare_stat' },
+        { action: 'download', toolName: 'fileshare_download_file' },
+      ].map((expected) => expect.objectContaining(expected))
+    );
+
+    recordPhiAccess.mockClear();
+    client.fsReadFile.mockResolvedValue(opError('access_denied', undefined, 403));
+    await register().get('fileshare_read_file')!({ shareId: SHARE_ID, path: '/closed.txt' });
+    expect(recordPhiAccess).not.toHaveBeenCalled();
+  });
 });

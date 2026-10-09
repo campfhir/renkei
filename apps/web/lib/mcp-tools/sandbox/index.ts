@@ -89,7 +89,7 @@ import {
   sandboxConfig,
   sandboxBrowserEnabled,
   sandboxChartsEnabled,
-  sandboxScriptsEnabled,
+  sandboxScriptsServed,
 } from '@/lib/sandbox/service-client';
 
 /** The connector key the sandbox capabilities register under. */
@@ -119,8 +119,10 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
   if (sandboxBrowserEnabled()) registerSandboxBrowserTools(server, context);
   // Likewise the chart renderer (SANDBOX_CHARTS_ENABLED on both sides) — see ./charts.ts.
   if (sandboxChartsEnabled()) registerSandboxChartTools(server, context);
-  // And scripts over staged files (SANDBOX_SCRIPTS_ENABLED on both sides) — see ./scripts.ts.
-  if (sandboxScriptsEnabled()) registerSandboxScriptTools(server, context);
+  // And scripts over staged files (SANDBOX_SCRIPTS_ENABLED on both sides,
+  // and the worker not having said on /health that it cannot start a run
+  // without a network) — see ./scripts.ts.
+  if (sandboxScriptsServed()) registerSandboxScriptTools(server, context);
 
   server.registerTool(
     'sandbox_download_url',

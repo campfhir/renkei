@@ -17,7 +17,7 @@
  * cost the note itself.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { WebexClient, WEBEX_BOT_CONNECTOR } from '@renkei/connector-webex';
 import { logger } from '@/lib/logger';
@@ -34,7 +34,7 @@ export interface WebexBot {
 
 /** The tenant's bot, or null when none is configured, it is disabled, or it cannot be read. */
 export async function getWebexBot(tenantId: string): Promise<WebexBot | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
   try {
     const configResult = await readConnectorConfigCached(

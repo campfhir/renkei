@@ -11,9 +11,19 @@ import type { CoachAnchor } from '@/lib/coach-marks/anchors';
 const LOG_LEVELS = ['critical', 'error', 'warn', 'info', 'debug'] as const;
 type LogLevel = (typeof LOG_LEVELS)[number];
 
+// Mirrors @renkei/settings' ACT_APPROVAL_POLICIES, kept local for the same
+// reason; the labels are this page's words for each value.
+const ACT_APPROVAL_POLICIES = [
+  { value: 'externally_triggered', label: 'Runs started by an event or webhook' },
+  { value: 'all', label: 'Every run' },
+  { value: 'off', label: 'Only steps the author gated' },
+] as const;
+type ActApprovalPolicy = (typeof ACT_APPROVAL_POLICIES)[number]['value'];
+
 export interface EditableSettings {
   readOnly: boolean;
   coachMarksEnabled: boolean;
+  phiConnectorsRequireCoveredModel: boolean;
   enableDcr: boolean;
   logLevel: LogLevel;
   maxJqlResults: number;
@@ -23,12 +33,14 @@ export interface EditableSettings {
   accessTokenTtlMinutes: number;
   authorizationCodeTtlSeconds: number;
   refreshTokenTtlDays: number;
+  sessionIdleTimeoutMinutes: number;
   agentMaxChainDepth: number;
   agentRunTimeoutMinutes: number;
   agentMaxStepAttempts: number;
   agentMaxSteps: number;
   agentMaxRunsPerDay: number;
   agentApprovalMaxWaitDays: number;
+  agentActStepsRequireApproval: ActApprovalPolicy;
   contentPollMinutes: number;
   webexWebhookHealthMinutes: number;
   logRetentionDays: number;
@@ -182,6 +194,26 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
     );
   }
 
+  function actApprovalSelect() {
+    return (
+      <select
+        aria-label="agentActStepsRequireApproval"
+        value={values.agentActStepsRequireApproval}
+        onChange={(event) =>
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the select only offers ActApprovalPolicy values
+          set('agentActStepsRequireApproval', event.target.value as ActApprovalPolicy)
+        }
+        className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+      >
+        {ACT_APPROVAL_POLICIES.map((policy) => (
+          <option key={policy.value} value={policy.value}>
+            {policy.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
   async function save() {
     setState('saving');
     setError(null);
@@ -227,6 +259,16 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
             label="Guided tours"
           />
         </Row>
+        <Row
+          label="Require a BAA-covered model for PHI connectors"
+          hint="When on, a chat turn or agent run that can reach Mirth, OnBase or file-share tools must run on a model whose Data handling (Agent models) records a BAA; otherwise it is refused with the reason. Does not change what the model does with the data — it keeps PHI off models you have no agreement for."
+        >
+          <Toggle
+            on={values.phiConnectorsRequireCoveredModel}
+            onChange={(next) => set('phiConnectorsRequireCoveredModel', next)}
+            label="Require a BAA-covered model for PHI connectors"
+          />
+        </Row>
       </Section>
 
       <Section title="Agents">
@@ -256,6 +298,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How many agents may trigger each other in a chain before the platform refuses."
         >
           {numberInput('agentMaxChainDepth', '1–10')}
+        </Row>
+        <Row
+          label="Steps that change something need approval on"
+          hint="Which agent runs pause a step whose tool changes an external system (sends, creates, edits) for a person's approval even when the author set none. The default covers runs an event or webhook started — the content they act on came from outside. Sending mail, merging a pull request, deleting or sharing a document and directory writes always pause, whatever this says."
+        >
+          {actApprovalSelect()}
         </Row>
         <Row
           label="Max approval wait (days)"
@@ -313,13 +361,13 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
         </Row>
         <Row
           label="Chat retention (days)"
-          hint="How long a chat — its messages and uploaded files — is kept after its last activity before it is deleted, files first. 0 keeps chats until their owner deletes them."
+          hint="How long a chat — its messages and uploaded files — is kept after its last activity before it is deleted, files first. Default a year; 0 keeps chats until their owner deletes them, which is an explicit opt-in."
         >
           {numberInput('chatRetentionDays', '0–3,650')}
         </Row>
         <Row
           label="Log retention (days)"
-          hint="How long this organization's own logs are kept before being purged. 0 keeps them forever."
+          hint="How long this organization's own logs are kept before being purged. Default 90 days; 0 keeps them forever, which is an explicit opt-in."
         >
           {numberInput('logRetentionDays', '0–3,650')}
         </Row>
@@ -372,6 +420,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How long the one-time code in the OAuth redirect stays valid."
         >
           {numberInput('authorizationCodeTtlSeconds', '30–600')}
+        </Row>
+        <Row
+          label="Browser session idle timeout (minutes)"
+          hint="How long a signed-in browser may sit unused before it is signed out. Default 12 hours; sessions end after 30 days regardless."
+        >
+          {numberInput('sessionIdleTimeoutMinutes', '15–43,200')}
         </Row>
       </Section>
 

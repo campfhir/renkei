@@ -24,6 +24,7 @@ interface ShareResponse {
     rootPath: string;
     caseInsensitive: boolean;
     enabled: boolean;
+    hostKeyFingerprint: string | null;
   };
 }
 
@@ -32,6 +33,8 @@ export default function ShareConfigForm({ slug, shareId }: { slug: string; share
   const [draft, setDraft] = useState<ShareDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  /** What the server has on file — shown so an admin can confirm a key recorded on first use. */
+  const [recordedHostKey, setRecordedHostKey] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const { data, error } = await getJson<ShareResponse>(
@@ -51,7 +54,9 @@ export default function ShareConfigForm({ slug, shareId }: { slug: string; share
       rootPath: data.share.rootPath,
       caseInsensitive: data.share.caseInsensitive,
       enabled: data.share.enabled,
+      hostKeyFingerprint: data.share.hostKeyFingerprint ?? '',
     });
+    setRecordedHostKey(data.share.hostKeyFingerprint);
   }, [slug, shareId]);
 
   useEffect(() => {
@@ -99,6 +104,30 @@ export default function ShareConfigForm({ slug, shareId }: { slug: string; share
 
   return (
     <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
+      {draft.protocol === 'sftp' ? (
+        <p
+          data-testid="host-key-status"
+          className={`mb-3 rounded-md border px-3 py-2 text-sm ${
+            recordedHostKey
+              ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-300'
+              : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
+          }`}
+        >
+          {recordedHostKey ? (
+            <>
+              SSH host key on file: <code className="font-mono">{recordedHostKey}</code>. Every
+              connection is refused unless the server presents this key. Confirm it matches{' '}
+              <code>ssh-keygen -lf</code> on the server, or replace it below after a key rotation.
+            </>
+          ) : (
+            <>
+              No SSH host key on file yet: the key the server presents on the first successful
+              connection will be recorded here. Pin it below now to refuse any other key from the
+              start.
+            </>
+          )}
+        </p>
+      ) : null}
       <ShareConfigFields draft={draft} onChange={setDraft} />
       <label className="mt-3 flex items-center gap-2 text-sm font-medium">
         <input

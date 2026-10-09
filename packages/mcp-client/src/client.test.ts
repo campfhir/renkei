@@ -59,7 +59,12 @@ describe('HttpMcpClient', () => {
           id: 1,
           result: {
             tools: [
-              { name: 'whoami', description: 'Who am I', inputSchema: { type: 'object' } },
+              {
+                name: 'whoami',
+                description: 'Who am I',
+                inputSchema: { type: 'object' },
+                annotations: { readOnlyHint: true },
+              },
               { name: 'odd', inputSchema: 'nope' },
               { notAName: true },
             ],
@@ -68,9 +73,11 @@ describe('HttpMcpClient', () => {
         { status: 200, headers: { 'content-type': 'text/event-stream' } }
       )
     );
+    // A read declares itself; a tool with no hint at all reads as an act,
+    // the same conservative call the gateway's capability gate makes.
     expect(await client.listTools()).toEqual([
-      { name: 'whoami', description: 'Who am I', inputSchema: { type: 'object' } },
-      { name: 'odd', description: '', inputSchema: { type: 'object' } },
+      { name: 'whoami', description: 'Who am I', inputSchema: { type: 'object' }, kind: 'read' },
+      { name: 'odd', description: '', inputSchema: { type: 'object' }, kind: 'act' },
     ]);
   });
 
@@ -108,6 +115,7 @@ describe('HttpMcpClient', () => {
         inputSchema: { type: 'object' },
         uiResourceUri: 'ui://widget/issue-preview.abc.html',
         uiKind: 'approval',
+        kind: 'act',
       },
       {
         name: 'jira_search_issues_preview',
@@ -115,8 +123,9 @@ describe('HttpMcpClient', () => {
         inputSchema: { type: 'object' },
         uiResourceUri: 'ui://widget/results-list.abc.html',
         uiKind: 'display',
+        kind: 'act',
       },
-      { name: 'whoami', description: 'Who am I', inputSchema: { type: 'object' } },
+      { name: 'whoami', description: 'Who am I', inputSchema: { type: 'object' }, kind: 'act' },
     ]);
   });
 

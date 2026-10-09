@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
-import { decrypt, encrypt, parseEncryptionKey } from '@renkei/crypto';
+import { decrypt, encrypt, loadKeyring } from '@renkei/crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
@@ -31,7 +31,7 @@ export async function PUT(
   const parsed = parseModelPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
 
   const dbResult = getDatabase();

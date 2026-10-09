@@ -16,7 +16,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { recordAuditEvent } from '@/lib/audit-events';
+import { checkInsecureTransport, insecureTransportModes } from '@/lib/insecure-transport';
+import { loadKeyring } from '@renkei/crypto';
 import {
   getConnectorConfig,
   setConnectorConfig,
@@ -38,12 +40,16 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(tenantRef.id, ONBASE_ADMIN_CONNECTOR, keyResult.val);
+  const configResult = await getConnectorConfig(
+    tenantRef.id,
+    ONBASE_ADMIN_CONNECTOR,
+    keyResult.val
+  );
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
@@ -62,6 +68,7 @@ export async function GET(
     clientId: setting('clientId'),
     idpScopeName: setting('idpScopeName'),
     allowInsecureHttp: config?.settings.allowInsecureHttp === true,
+    production: config?.settings.production === true,
     hasClientSecret: Boolean(config?.secrets.clientSecret),
   });
 }
@@ -102,6 +109,8 @@ export async function PUT(
     return NextResponse.json({ error: 'JSON body required' }, { status: 400 });
   }
   const allowInsecureHttp = body.allowInsecureHttp === true;
+  // A production system never runs over plaintext; the flag is the admin's own word for it.
+  const production = body.production === true;
   const { apiBaseUrl, idpIssuer, clientId, idpScopeName, clientSecret } = body;
   if (!validBaseUrl(apiBaseUrl, allowInsecureHttp)) {
     return NextResponse.json(
@@ -123,7 +132,18 @@ export async function PUT(
   }
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  // Plaintext HTTP is a recorded decision for a lab server on a private
+  // network and nothing else: never for production, never for a public
+  // host (lib/insecure-transport.ts).
+  const insecureModes = insecureTransportModes({ allowInsecureHttp });
+  const transport = await checkInsecureTransport({
+    modes: insecureModes,
+    production,
+    urls: [apiBaseUrl, idpIssuer],
+  });
+  if (!transport.ok) return NextResponse.json({ error: transport.error }, { status: 400 });
+
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
@@ -148,7 +168,7 @@ export async function PUT(
     ONBASE_ADMIN_CONNECTOR,
     {
       enabled,
-      settings: { apiBaseUrl, idpIssuer, clientId, idpScopeName, allowInsecureHttp },
+      settings: { apiBaseUrl, idpIssuer, clientId, idpScopeName, allowInsecureHttp, production },
       secrets,
     },
     keyResult.val
@@ -158,6 +178,20 @@ export async function PUT(
   }
 
   invalidateConnectorConfigCache(tenantRef.id, ONBASE_ADMIN_CONNECTOR);
+  if (insecureModes.length) {
+    recordAuditEvent({
+      tenantId: tenantRef.id,
+      actorSubject: access.subject,
+      action: 'onbase.insecure_transport_enabled',
+      targetKind: 'connector',
+      targetLabel: ONBASE_ADMIN_CONNECTOR,
+      details: {
+        connector: ONBASE_ADMIN_CONNECTOR,
+        modes: insecureModes,
+        urls: [apiBaseUrl, idpIssuer],
+      },
+    });
+  }
   return NextResponse.json({
     connector: ONBASE_ADMIN_CONNECTOR,
     configured: true,

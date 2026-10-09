@@ -23,26 +23,118 @@
 import {
   base64ToBytes,
   bytesToBase64,
+  DEVICE_CODE_CHARS,
+  deviceCodeOf,
   formatUserKey,
   generateKeyPair,
+  instanceListMessage,
+  normalizeDeviceCode,
   openSealedBox,
   parseUserKey,
   randomBytes,
   sealToPublicKey,
   unwrapBytes,
+  utf8ToBytes,
+  verifyEd25519,
   wrapBytes,
 } from '@renkei/crypto/browser';
 import type { KeyStatusView } from '../shared';
-import { loadUserKey, saveUserKey } from './device-store';
+import { loadInstanceTrust, loadUserKey, saveUserKey, trustInstances } from './device-store';
 
 export interface SealedDelegation {
   instanceId: string;
   sealedKey: string;
 }
 
+/** A delegate instance this browser has not sealed to before, as the person is shown it. */
+export interface UnknownInstance {
+  id: string;
+  publicKey: string;
+  /** The key's fingerprint: ten base32 characters of its SHA-256, as the delegate logs it at boot. */
+  fingerprint: string;
+}
+
 export interface FlowFailure {
   code: string;
   error: string;
+  /** For `untrusted_instances`: what the person is asked to confirm. */
+  unknown?: UnknownInstance[];
+}
+
+/**
+ * Which delegate am I sealing to? (docs/delegate-key-design.md.) The web app
+ * hands this browser a list of instance public keys, and a compromised web
+ * app would hand it one of its own. So the browser remembers the instance
+ * keys it has sealed to (trust on first use) and takes a NEW key without
+ * asking only when the list is signed by a deployment signing key it already
+ * trusts. Anything else is handed back as `untrusted_instances` with the
+ * fingerprints, and the page asks the person before a single byte is sealed.
+ */
+export async function checkInstanceTrust(
+  tenantId: string,
+  status: KeyStatusView
+): Promise<{ ok: true } | { ok: false; failure: FlowFailure }> {
+  const trust = await loadInstanceTrust(tenantId);
+  const keys = status.instances.map((instance) => instance.publicKey);
+  if (!trust) {
+    // First use on this browser: whatever is here is what it will hold to.
+    await trustInstances(tenantId, keys, status.instanceSigningKey);
+    return { ok: true };
+  }
+  const unknown = status.instances.filter(
+    (instance) => !trust.instanceKeys.includes(instance.publicKey)
+  );
+  if (unknown.length === 0) return { ok: true };
+  if (
+    status.instanceSigningKey &&
+    status.instancesSignature &&
+    trust.signingKeys.includes(status.instanceSigningKey)
+  ) {
+    const signingKey = base64ToBytes(status.instanceSigningKey);
+    const signature = base64ToBytes(status.instancesSignature);
+    if (
+      signingKey &&
+      signature &&
+      (await verifyEd25519(
+        signingKey,
+        utf8ToBytes(instanceListMessage(status.instances)),
+        signature
+      ))
+    ) {
+      await trustInstances(tenantId, keys, status.instanceSigningKey);
+      return { ok: true };
+    }
+  }
+  const named: UnknownInstance[] = [];
+  for (const instance of unknown) {
+    const publicKey = base64ToBytes(instance.publicKey);
+    named.push({
+      id: instance.id,
+      publicKey: instance.publicKey,
+      fingerprint: publicKey && publicKey.length === 32 ? await deviceCodeOf(publicKey) : '?',
+    });
+  }
+  return {
+    ok: false,
+    failure: {
+      code: 'untrusted_instances',
+      error: 'This browser has not sealed your key to this key service before; confirm it first.',
+      unknown: named,
+    },
+  };
+}
+
+/** The person confirmed the unknown instances: remember them (and the signing key that came with them). */
+export async function confirmInstanceTrust(
+  tenantId: string,
+  status: KeyStatusView,
+  unknown: UnknownInstance[]
+): Promise<void> {
+  await trustInstances(
+    tenantId,
+    unknown.map((instance) => instance.publicKey),
+    status.instanceSigningKey
+  );
 }
 
 async function post(
@@ -109,6 +201,8 @@ export async function enrollInBrowser(
   status: KeyStatusView,
   options: { passphrase?: string; automationDays?: number } = {}
 ): Promise<{ ok: true; outcome: EnrollOutcome } | { ok: false; failure: FlowFailure }> {
+  const trusted = await checkInstanceTrust(tenantId, status);
+  if (!trusted.ok) return trusted;
   const userKey = randomBytes(32);
   const automationKey = randomBytes(32);
   const pair = await generateKeyPair();
@@ -140,6 +234,8 @@ export async function delegateInBrowser(
   userKey: Uint8Array,
   options: { automation?: boolean; automationDays?: number } = {}
 ): Promise<{ ok: true } | { ok: false; failure: FlowFailure }> {
+  const trusted = await checkInstanceTrust(tenantId, status);
+  if (!trusted.ok) return trusted;
   const automationKey =
     options.automation === false ? null : await automationKeyOf(status, userKey);
   if (options.automation !== false && !automationKey) {
@@ -148,8 +244,17 @@ export async function delegateInBrowser(
       failure: { code: 'wrong_key', error: 'This key does not fit your account.' },
     };
   }
+  const session = await sealToInstances(status.instances, userKey);
+  if (session.length === 0) {
+    // Nothing to seal to: the delegate refuses an empty list rather than
+    // drop this session's rows, so say why here instead of asking.
+    return {
+      ok: false,
+      failure: { code: 'no_instances', error: 'No key service is running to hold your key.' },
+    };
+  }
   const answer = await post(`/api/tenant/${tenantId}/keys/delegate`, {
-    session: await sealToInstances(status.instances, userKey),
+    session,
     automation: automationKey ? await sealToInstances(status.instances, automationKey) : [],
     automationDays: options.automationDays,
   });
@@ -179,6 +284,8 @@ export async function rotateInBrowser(
       failure: { code: 'wrong_key', error: 'The key on this device does not fit your account.' },
     };
   }
+  const trusted = await checkInstanceTrust(tenantId, status);
+  if (!trusted.ok) return trusted;
   const next = randomBytes(32);
   const answer = await post(`/api/tenant/${tenantId}/keys/rotate`, {
     wrappedPrivateKey: await wrapBytes(privateKey, next),
@@ -272,21 +379,49 @@ export async function pollDeviceAsk(
   }
 }
 
-/** An enrolled device answers an ask: the key sealed to the asking device's public key. */
+/**
+ * An enrolled device answers an ask: the person types the code the asking
+ * device shows, this device reads the ask's public key against it and
+ * posts the user key sealed to that public key, with the code again. A
+ * wrong code is refused by the server, which counts it.
+ */
 export async function approveDeviceAsk(
   tenantId: string,
   requestId: string,
+  typedCode: string,
   userKey: Uint8Array
 ): Promise<{ ok: true } | { ok: false; failure: FlowFailure }> {
-  const detail = await fetch(`/api/tenant/${tenantId}/keys/devices/${requestId}`).catch(() => null);
+  const code = normalizeDeviceCode(typedCode);
+  if (!code) {
+    return {
+      ok: false,
+      failure: {
+        code: 'bad_code',
+        error: `A code is ${DEVICE_CODE_CHARS} letters and digits, as the other device shows it.`,
+      },
+    };
+  }
+  const detail = await fetch(
+    `/api/tenant/${tenantId}/keys/devices/${requestId}?code=${encodeURIComponent(code)}`
+  ).catch(() => null);
   const json: unknown = detail ? await detail.json().catch(() => ({})) : {};
   const record: Record<string, unknown> =
     typeof json === 'object' && json !== null ? Object.fromEntries(Object.entries(json)) : {};
+  if (!detail || !detail.ok) {
+    return {
+      ok: false,
+      failure: {
+        code: typeof record.code === 'string' ? record.code : 'gone',
+        error: typeof record.error === 'string' ? record.error : 'That request is gone.',
+      },
+    };
+  }
   const publicKey = typeof record.publicKey === 'string' ? base64ToBytes(record.publicKey) : null;
   if (!publicKey || publicKey.length !== 32) {
     return { ok: false, failure: { code: 'gone', error: 'That request is gone.' } };
   }
   const answer = await post(`/api/tenant/${tenantId}/keys/devices/${requestId}`, {
+    code,
     sealedKey: await sealToPublicKey(publicKey, userKey),
   });
   return answer.ok ? { ok: true } : answer;
@@ -328,16 +463,16 @@ export function parseKeyStatus(json: unknown): KeyStatusView | null {
       }
     }
   }
-  const pendingDevices: { id: string; code: string; createdAt: string }[] = [];
+  const pendingDevices: { id: string; createdAt: string; userAgent: string | null }[] = [];
   if (Array.isArray(record.pendingDevices)) {
     for (const item of record.pendingDevices) {
       if (typeof item !== 'object' || item === null) continue;
       const entry: Record<string, unknown> = Object.fromEntries(Object.entries(item));
-      if (typeof entry.id === 'string' && typeof entry.code === 'string') {
+      if (typeof entry.id === 'string') {
         pendingDevices.push({
           id: entry.id,
-          code: entry.code,
           createdAt: typeof entry.createdAt === 'string' ? entry.createdAt : '',
+          userAgent: typeof entry.userAgent === 'string' ? entry.userAgent : null,
         });
       }
     }
@@ -352,6 +487,8 @@ export function parseKeyStatus(json: unknown): KeyStatusView | null {
     version: typeof record.version === 'number' ? record.version : 0,
     enrolledAt: stringOrNull(record.enrolledAt),
     instances,
+    instanceSigningKey: stringOrNull(record.instanceSigningKey),
+    instancesSignature: stringOrNull(record.instancesSignature),
     sessionDelegated: record.sessionDelegated === true,
     instancesMissingSession: strings(record.instancesMissingSession),
     automationInstances: strings(record.automationInstances),

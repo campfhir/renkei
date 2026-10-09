@@ -7,13 +7,13 @@
  * is reach, never the record.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { WebexClient, WEBEX_BOT_CONNECTOR } from '@renkei/connector-webex';
 import { logger } from '../logger';
 
 export async function webexBotClient(tenantId: string): Promise<WebexClient | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
   try {
     const configResult = await readConnectorConfigCached(

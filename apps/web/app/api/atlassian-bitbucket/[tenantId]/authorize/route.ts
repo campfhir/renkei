@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
+import { bindConnectFlow } from '@/lib/connect-flow-binding';
 import { getAtlassianBitbucketApp } from '@/lib/atlassian-app';
 import { BITBUCKET_REQUIRED_SCOPES } from '@/lib/atlassian-scopes';
 import { getOrigin } from '@/lib/get-origin';
@@ -106,7 +107,8 @@ export async function GET(
       tenantId,
       clientId: app.clientId,
     });
-    return NextResponse.redirect(authUrl.toString());
+    // Bound to this browser: the callback requires the cookie this sets.
+    return bindConnectFlow(NextResponse.redirect(authUrl.toString()), tenantId, state);
   } catch (error) {
     logger.error('Bitbucket authorize error: {error}', {
       component: 'auth/oauth',

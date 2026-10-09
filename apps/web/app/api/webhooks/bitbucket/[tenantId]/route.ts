@@ -8,10 +8,12 @@
  * Unlike a GitHub App, Bitbucket Cloud has no single account-level
  * webhook and does not sign deliveries by default — a webhook is
  * registered per repository, by hand, in that repository's own
- * settings (Repository settings → Webhooks), pointed at this URL with
- * a `?secret=` query parameter matching the value set on the Bitbucket
- * connector (admin/connectors/forms/atlassian-forms.tsx's
- * showWebhookSecret field). This is a real, documented gap next to
+ * settings (Repository settings → Webhooks), pointed at this URL and
+ * carrying the value set on the Bitbucket connector
+ * (admin/connectors/forms/atlassian-forms.tsx's showWebhookSecret field)
+ * — preferably as an `X-Renkei-Webhook-Secret` header, or for webhooks
+ * registered before the header existed, as a `?secret=` query parameter
+ * (lib/bitbucket-webhook.ts). This is a real, documented gap next to
  * GitHub's zero-registration App webhook — call it out to whoever sets
  * a repository up for pipeline subscriptions.
  *
@@ -24,11 +26,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { ATLASSIAN_BITBUCKET_CONNECTOR } from '@/lib/atlassian-app';
-import { verifyBitbucketSecret } from '@/lib/bitbucket-webhook';
+import { presentedBitbucketSecret, verifyBitbucketSecret } from '@/lib/bitbucket-webhook';
 import { logger } from '@/lib/logger';
+import {
+  checkWebhookLimit,
+  malformedSignature,
+  payloadTooLarge,
+  readWebhookBody,
+  tooManyRequests,
+} from '@/lib/webhook-intake';
 
 const eventsQueue = webhookEventsQueue();
 
@@ -42,11 +51,21 @@ export async function POST(
 ): Promise<NextResponse> {
   const { tenantId } = await params;
 
-  const rawBody = await request.text();
-  const providedSecret = request.nextUrl.searchParams.get('secret');
+  // Throttle, then the credential's presence, then a bounded body — all
+  // before any config or database read (lib/webhook-intake.ts). Bitbucket's
+  // credential is a shared secret, not an HMAC, so "shape" here is only
+  // that one arrived and is not absurdly long.
+  const verdict = checkWebhookLimit('bitbucket', tenantId, request);
+  if (!verdict.allowed) return tooManyRequests(verdict);
+  const providedSecret = presentedBitbucketSecret(request.headers, request.nextUrl.searchParams);
+  if (!providedSecret || providedSecret.length > 512) return malformedSignature();
   const eventKey = request.headers.get('x-event-key');
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const bodyResult = await readWebhookBody(request);
+  if (!bodyResult.ok) return payloadTooLarge();
+  const rawBody = bodyResult.val;
+
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'bitbucket/webhook',

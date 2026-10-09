@@ -8,7 +8,15 @@
  * idle sessions are swept and the browser released, the session cap
  * evicts the least recently used, and a popup opened by a click becomes
  * the page the next snapshot reads.
+ *
+ * DNS is scripted too: the egress guard refuses a name that does not
+ * resolve, and the hosts here (careers.example.com and friends) are not
+ * real, so every lookup answers one public address.
  */
+
+jest.mock('node:dns/promises', () => ({
+  lookup: jest.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+}));
 
 import { EventEmitter } from 'node:events';
 import type { Browser } from 'playwright-core';

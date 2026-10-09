@@ -1,0 +1,62 @@
+# Dependency updates, opened as pull requests that run the full CI (lint,
+# typecheck, tests, the audit gate, CodeQL, dependency review). Weekly, on
+# one morning, so the review is a single sitting rather than a trickle.
+#
+# npm: minor and patch bumps arrive grouped into one PR; a major bump gets
+# its own PR because it is its own change (next especially — AGENTS.md).
+# pnpm-workspace.yaml's minimumReleaseAge keeps a release that is less than
+# a day old out of the lockfile regardless of what is proposed here.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    open-pull-requests-limit: 10
+    groups:
+      production-minor-patch:
+        dependency-type: production
+        update-types: [minor, patch]
+      development-minor-patch:
+        dependency-type: development
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+
+  # The workflow's actions are pinned to commit SHAs with a version comment
+  # (R20); Dependabot moves both together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
+
+  # Base images in docker/Dockerfile are pinned to digests; Dependabot
+  # proposes the new digest when the tag moves.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    commit-message:
+      prefix: docker
+
+  # The images both compose files pull (postgres, azurite, the socket
+  # proxy), likewise pinned to digests.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    commit-message:
+      prefix: docker

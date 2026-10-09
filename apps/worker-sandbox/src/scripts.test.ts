@@ -29,11 +29,18 @@ import { Readable } from 'node:stream';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import * as disk from './disk';
-import { canIsolateByUid, verifyNetworkIsolation } from './workspaces';
+import {
+  NETWORK_ISOLATION_MODES,
+  canIsolateByUid,
+  probeNetworkIsolation,
+  verifyNetworkIsolation,
+  type NetworkIsolation,
+} from './workspaces';
 import {
   DEFAULT_PYTHON,
   ScriptRunError,
   ScriptRunner,
+  decideScripts,
   resolvePython,
   scriptCommand,
   scriptEnvironment,
@@ -55,6 +62,7 @@ let root: string;
 let runsRoot: string;
 let previousUmask: number;
 let python: string | null;
+let networkIsolation: NetworkIsolation | null;
 let networkIsolated: boolean;
 let runner: ScriptRunner;
 const staged = new Map<
@@ -82,19 +90,43 @@ beforeAll(async () => {
   await disk.ensureDataRoot();
   runsRoot = join(root, 'runs');
   python = await resolvePython(undefined);
-  networkIsolated = canIsolateByUid() && (await verifyNetworkIsolation()) === null;
+  networkIsolation = (await verifyNetworkIsolation()).mode;
+  networkIsolated = networkIsolation !== null;
   await stage(REPORT_ID, 'report.csv', 'mrn,name,phone\n1001,Ada,415-0100\n1002,Grace,\n');
   await stage(LOOKUP_ID, 'report.csv', 'mrn,text_ok\n1001,Y\n1002,N\n');
   runner = new ScriptRunner({
     db: {} as Kysely<DB>,
     runsRoot,
     python: python ?? 'python3',
-    isolateNetwork: networkIsolated,
+    networkIsolation,
     memoryBytes: 512 * 1_048_576,
     maxFileBytes: async () => 1_048_576,
   });
   await runner.prepare();
 });
+
+/** A runner like the suite's, in one isolation mode. */
+function runnerIn(mode: NetworkIsolation | null): ScriptRunner {
+  return new ScriptRunner({
+    db: {} as Kysely<DB>,
+    runsRoot,
+    python: python ?? 'python3',
+    networkIsolation: mode,
+    memoryBytes: 512 * 1_048_576,
+    maxFileBytes: async () => 1_048_576,
+  });
+}
+
+/** Python that reports whether a socket can leave and what uid it runs as. */
+const NETWORK_PROBE = [
+  'import os, socket',
+  'print("uid", os.getuid())',
+  's = socket.socket(); s.settimeout(2)',
+  'try:',
+  '    s.connect(("1.1.1.1", 443)); print("net reachable")',
+  'except OSError as e:',
+  '    print("net blocked:", type(e).__name__)',
+].join('\n');
 
 afterAll(async () => {
   process.umask(previousUmask);
@@ -121,6 +153,58 @@ beforeEach(() => {
     createdAt: new Date(),
     expiresAt: input.expiresAt,
   }));
+});
+
+describe('the configured interpreter', () => {
+  it('accepts a command name or a plain absolute path', async () => {
+    expect(await resolvePython('python3')).toBe('python3');
+    expect(await resolvePython('  python3.12  ')).toBe('python3.12');
+    // A path is only returned when it is executable; a plain one that is
+    // not falls through to the defaults rather than being refused.
+    const fallback = await resolvePython('/opt/no-such-python/bin/python3');
+    expect(fallback === null || !fallback.startsWith('/opt/no-such')).toBe(true);
+  });
+
+  it('refuses a path a shell or ps would misread', async () => {
+    for (const odd of ['python3; id', '/opt/py thon/bin/python3', 'relative/python3', '$HOME/py']) {
+      await expect(resolvePython(odd)).rejects.toThrow(/SANDBOX_PYTHON must be/);
+    }
+  });
+});
+
+describe('the boot decision for scripts', () => {
+  it('serves isolated runs whichever way the namespace is made', () => {
+    for (const mode of NETWORK_ISOLATION_MODES) {
+      expect(decideScripts({ enabled: true, networkIsolation: mode, allowNetwork: false })).toEqual(
+        { status: 'isolated', serve: true, unavailable: null }
+      );
+      // The opt-in changes nothing where isolation works.
+      expect(
+        decideScripts({ enabled: true, networkIsolation: mode, allowNetwork: true }).status
+      ).toBe('isolated');
+    }
+  });
+
+  it('closes the verb when no isolation works and nobody opted in', () => {
+    const decision = decideScripts({ enabled: true, networkIsolation: null, allowNetwork: false });
+    expect(decision.status).toBe('unavailable');
+    expect(decision.serve).toBe(false);
+    expect(decision.unavailable).toMatch(/cannot start a script without network access/);
+  });
+
+  it('serves runs on the container’s network only with the explicit opt-in, and says so', () => {
+    expect(decideScripts({ enabled: true, networkIsolation: null, allowNetwork: true })).toEqual({
+      status: 'network_shared',
+      serve: true,
+      unavailable: null,
+    });
+  });
+
+  it('is simply disabled when the flag is off, whatever else is true', () => {
+    expect(
+      decideScripts({ enabled: false, networkIsolation: 'netns', allowNetwork: true })
+    ).toEqual({ status: 'disabled', serve: false, unavailable: null });
+  });
 });
 
 describe('the command a script runs behind', () => {
@@ -289,13 +373,7 @@ describe('a run', () => {
       if (!canIsolateByUid()) return;
       const outcome = await runner.run(TARGET, {
         code: [
-          'import os, socket',
-          'print("uid", os.getuid())',
-          's = socket.socket(); s.settimeout(2)',
-          'try:',
-          '    s.connect(("1.1.1.1", 443)); print("net reachable")',
-          'except OSError as e:',
-          '    print("net blocked:", type(e).__name__)',
+          NETWORK_PROBE,
           'try:',
           `    os.listdir(${JSON.stringify(disk.getDataRoot())}); print("data readable")`,
           'except PermissionError:',
@@ -307,7 +385,46 @@ describe('a run', () => {
       expect(outcome.exitCode).toBe(0);
       expect(outcome.stdout).not.toContain('uid 0');
       expect(outcome.stdout).toContain('data blocked');
+      expect(outcome.networkIsolated).toBe(networkIsolated);
       if (networkIsolated) expect(outcome.stdout).toContain('net blocked');
+    }
+  );
+
+  itWithPython(
+    'blocks the network in every isolation mode this machine supports, and the script still sees its own uid',
+    async () => {
+      const identity = canIsolateByUid() ? { uid: 65_534, gid: 65_534 } : null;
+      for (const mode of NETWORK_ISOLATION_MODES) {
+        if (mode === 'netns' && !identity) continue; // needs root; never chosen without it
+        const works = (await probeNetworkIsolation(mode, identity)) === null;
+        const outcome = await runnerIn(mode).run(TARGET, {
+          code: NETWORK_PROBE,
+          fileIds: [],
+          timeoutMs: 30_000,
+        });
+        if (!works) {
+          // The kernel or seccomp said no: the run fails plainly rather than running with a network.
+          expect(outcome.exitCode).not.toBe(0);
+          continue;
+        }
+        expect(outcome.exitCode).toBe(0);
+        expect(outcome.networkIsolated).toBe(true);
+        expect(outcome.stdout).toContain('net blocked');
+        if (canIsolateByUid()) expect(outcome.stdout).not.toContain('uid 0');
+      }
+    }
+  );
+
+  itWithPython(
+    'reports a run on the container’s network as such (the operator opt-in path)',
+    async () => {
+      const outcome = await runnerIn(null).run(TARGET, {
+        code: 'print("ran")',
+        fileIds: [],
+        timeoutMs: 30_000,
+      });
+      expect(outcome.exitCode).toBe(0);
+      expect(outcome.networkIsolated).toBe(false);
     }
   );
 });

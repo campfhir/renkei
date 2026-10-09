@@ -17,10 +17,12 @@ import {
   isAgentStepsDoc,
   type AgentStepNode,
   type AgentStepsDoc,
+  mergeOpenedDetail,
+  sealedDetailOf,
 } from '@renkei/agents';
 import { setNotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '@renkei/user-prefs';
 import { setOrgSettings } from '@renkei/settings';
-import { createAgentRunHandler } from './engine';
+import { createAgentRunHandler, requestLogFieldOf } from './engine';
 import { MessageReleased } from '@renkei/worker-loop';
 import { resumeAgentRun } from '@renkei/agents/runs';
 import type { QueueMessageInput, QueueProducer } from '@renkei/queue';
@@ -36,30 +38,58 @@ import { recordedLogs, renderLog, resetRecordedLogs } from './test-support/logge
  */
 let ownerDelegated = true;
 let keyServiceUp = true;
+/**
+ * A stand-in for the delegate's `user-sealed` ops: a reversible, visibly
+ * marked transform, so a test can both check a row is NOT plaintext and
+ * read what it says. The real envelope is the delegate's business.
+ */
+const FAKE_SEAL = 'uenc1:test:';
+const fakeSeal = (value: string): string =>
+  FAKE_SEAL + Buffer.from(value, 'utf8').toString('base64');
+const fakeOpen = (stored: string): string | null =>
+  stored.startsWith(FAKE_SEAL)
+    ? Buffer.from(stored.slice(FAKE_SEAL.length), 'base64').toString('utf8')
+    : null;
 jest.mock('@renkei/delegate-client', () => ({
   delegateClient: () => ({
-    keyStatus: async () =>
-      keyServiceUp
-        ? {
-            ok: true,
-            val: {
-              enrolled: true,
-              legacy: false,
-              legacyNeedsPassphrase: false,
-              publicKey: 'stub',
-              wrappedPrivateKey: 'stub',
-              wrappedAutomationKey: 'stub',
-              version: 1,
-              enrolledAt: new Date(),
-              sessionInstances: [],
-              thisSessionInstances: [],
-              automationInstances: ownerDelegated ? ['instance-1'] : [],
-              automationUntil: ownerDelegated ? new Date(Date.now() + 86_400_000) : null,
-            },
-          }
-        : { ok: false, err: { type: 'internal', message: 'down' } },
+    sealForSubject: stubSealForSubject,
+    openForSubject: stubOpenForSubject,
+    keyStatus: stubKeyStatus,
+    forRun: () => ({
+      keyStatus: stubKeyStatus,
+      sealForSubject: stubSealForSubject,
+      openForSubject: stubOpenForSubject,
+    }),
   }),
 }));
+const stubKeyStatus = async () =>
+  keyServiceUp
+    ? {
+        ok: true,
+        val: {
+          enrolled: true,
+          legacy: false,
+          legacyNeedsPassphrase: false,
+          publicKey: 'stub',
+          wrappedPrivateKey: 'stub',
+          wrappedAutomationKey: 'stub',
+          version: 1,
+          enrolledAt: new Date(),
+          sessionInstances: [],
+          thisSessionInstances: [],
+          automationInstances: ownerDelegated ? ['instance-1'] : [],
+          automationUntil: ownerDelegated ? new Date(Date.now() + 86_400_000) : null,
+        },
+      }
+    : { ok: false, err: { type: 'internal', message: 'down' } };
+const stubSealForSubject = async (_tenantId: string, _subject: string, values: string[]) =>
+  ownerDelegated
+    ? { ok: true, val: values.map(fakeSeal) }
+    : { ok: false, err: { type: 'NEEDS_DELEGATION' } };
+const stubOpenForSubject = async (_tenantId: string, _subject: string, stored: string[]) =>
+  ownerDelegated
+    ? { ok: true, val: stored.map(fakeOpen) }
+    : { ok: false, err: { type: 'NEEDS_DELEGATION' } };
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
@@ -83,6 +113,22 @@ function stubLlm(script: Scripted): ResolvedLlm {
     model: 'stub-model',
     maxOutputTokens: 512,
   };
+}
+
+/**
+ * A stored attempt detail with its content half opened through the fake
+ * seal — what the engine's own readers and the web app's run page do with
+ * the real delegate. Rows without an envelope come back as they are.
+ */
+function unsealed(detail: unknown): Record<string, unknown> {
+  const envelope = sealedDetailOf(detail);
+  const merged =
+    envelope === null ? detail : mergeOpenedDetail(detail, fakeOpen(envelope), '[locked]');
+  return isRecord(merged) ? merged : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function stubMcp(tools: string[], callTool: (name: string) => McpToolResult): McpClient {
@@ -174,7 +220,10 @@ maybe('agent run engine', () => {
     await closeDatabase();
   });
 
-  async function seedRun(steps: AgentStepsDoc): Promise<{ runId: string; agentId: string }> {
+  async function seedRun(
+    steps: AgentStepsDoc,
+    options: { triggerKind?: 'manual' | 'event' | 'schedule' | 'api' } = {}
+  ): Promise<{ runId: string; agentId: string }> {
     const agentId = randomUUID();
     await db
       .insertInto('agents')
@@ -195,7 +244,7 @@ maybe('agent run engine', () => {
         tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: subject,
-        trigger_kind: 'manual',
+        trigger_kind: options.triggerKind ?? 'manual',
         steps_snapshot: JSON.stringify(steps),
         lineage: JSON.stringify([]),
         initial_state: JSON.stringify({ subject: 'PROJ-42 is broken' }),
@@ -386,12 +435,13 @@ maybe('agent run engine', () => {
     expect(attempts[0].input_tokens).toBe(20);
     expect(attempts[0].cache_read_input_tokens).toBeNull();
     expect(attempts[0].cache_write_input_tokens).toBeNull();
-    const detail: { saveValue?: unknown; resolvedInstruction?: unknown } =
-      typeof attempts[0].detail === 'object' &&
-      attempts[0].detail !== null &&
-      !Array.isArray(attempts[0].detail)
-        ? attempts[0].detail
-        : {};
+    // The row itself carries no content — the prompt, the saved value and
+    // the tool-call previews sit in one envelope under the owner's key.
+    expect(JSON.stringify(attempts[0].detail)).not.toContain('PROJ-42');
+    expect(sealedDetailOf(attempts[0].detail)).toMatch(/^uenc1:/);
+    const detail: { saveValue?: unknown; resolvedInstruction?: unknown } = unsealed(
+      attempts[0].detail
+    );
     expect(detail.saveValue).toBe('PROJ-42');
     // Chips rendered: the var chip became the trigger value, the tool chip
     // its canonical name.
@@ -535,10 +585,12 @@ maybe('agent run engine', () => {
       .select(['kind', 'content'])
       .where('agent_id', '=', agentId)
       .execute();
-    // One entry for two identical remember calls, and no run breadcrumb.
-    expect(memory).toEqual([
-      { kind: 'entry', content: 'Replied to message 123 about the outage.' },
-    ]);
+    // One entry for two identical remember calls, and no run breadcrumb —
+    // sealed at rest under the owner's key, so the row is an envelope and
+    // the fact is readable only through it.
+    expect(memory.map((row) => row.kind)).toEqual(['entry']);
+    expect(memory[0].content).toMatch(/^uenc1:/);
+    expect(fakeOpen(memory[0].content)).toBe('Replied to message 123 about the outage.');
     // Before the first step's remember call resolves, the fact isn't there yet...
     expect(seen[0].system).not.toContain('Replied to message 123');
     // ...but it is by that same attempt's next turn (finish_step)...
@@ -1393,7 +1445,7 @@ maybe('agent run engine', () => {
     // Still recorded as a skip for the timeline, just not run-terminal.
     expect(JSON.stringify(attempts[0].detail)).toContain('skipped');
     expect(attempts[1].status).toBe('succeeded');
-    expect(JSON.stringify(attempts[1].detail)).toContain('ticket updated');
+    expect(JSON.stringify(unsealed(attempts[1].detail))).toContain('ticket updated');
 
     expect(finalized[0]).toMatchObject({ status: 'succeeded' });
   });
@@ -1738,10 +1790,7 @@ maybe('agent run engine', () => {
       .where('run_id', '=', runId)
       .where('step_id', '=', saver.id)
       .executeTakeFirstOrThrow();
-    const detail: { saveValue?: unknown } =
-      typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
-        ? row.detail
-        : {};
+    const detail: { saveValue?: unknown } = unsealed(row.detail);
     expect(detail.saveValue).toBe('n'.repeat(12_000) + '… [truncated]');
   });
 
@@ -1780,13 +1829,19 @@ maybe('agent run engine', () => {
       })
     )({ payload: { runId } });
 
+    // Every result reaches the model fenced as data (untrusted.ts); what is
+    // inside the fence is the bare text these assertions are about.
+    const fence = '<untrusted source="tool:jira_get_issue">\n';
+    expect(seenByModel.every((text) => text.startsWith(fence))).toBe(true);
+    expect(seenByModel.every((text) => text.endsWith('\n</untrusted>'))).toBe(true);
+    const unfenced = seenByModel.map((text) => text.slice(fence.length, -'\n</untrusted>'.length));
     // The long-but-bounded result arrived intact: last row present, no marker.
-    const sawLong = seenByModel.find((text) => text.startsWith('component-0:'));
+    const sawLong = unfenced.find((text) => text.startsWith('component-0:'));
     expect(sawLong).toBe(long);
     expect(sawLong).toContain('component-399: Tapestry - Area 399');
     expect(sawLong).not.toContain('[truncated');
     // The over-cap result was cut at the cap, and the marker says by how much.
-    const sawHuge = seenByModel.find((text) => text.startsWith('xxxx'));
+    const sawHuge = unfenced.find((text) => text.startsWith('xxxx'));
     expect(sawHuge).toBeDefined();
     expect(sawHuge).toContain('x'.repeat(60_000));
     expect(sawHuge).not.toContain('x'.repeat(60_001));
@@ -1800,9 +1855,7 @@ maybe('agent run engine', () => {
       .where('run_id', '=', runId)
       .executeTakeFirstOrThrow();
     const detail: { toolCalls?: Array<{ resultPreview?: string; resultChars?: number }> } =
-      typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
-        ? row.detail
-        : {};
+      unsealed(row.detail);
     expect(detail.toolCalls?.[0]?.resultChars).toBe(long.length);
     expect(detail.toolCalls?.[0]?.resultPreview?.length).toBeLessThan(long.length);
     expect(detail.toolCalls?.[1]?.resultChars).toBe(huge.length);
@@ -1891,6 +1944,75 @@ maybe('agent run engine', () => {
     expect(attempt.status).toBe('failed');
     expect(attempt.outcome).toBe('tool_error');
     expect(attempt.outcome_code).toBe('not-found');
+  });
+
+  it('refuses a run that reaches a PHI connector on a model without a recorded BAA, when the org requires one', async () => {
+    await setOrgSettings(tenantId, { phiConnectorsRequireCoveredModel: true });
+    try {
+      const phiStep = singleStep({
+        tool: 'mirth_get_message',
+        instruction: [
+          { t: 'text', v: 'Read the message with ' },
+          { t: 'tool', name: 'mirth_get_message' },
+        ],
+        failureHandling: [],
+      });
+      const uncovered = await seedRun(phiStep);
+      const llm = stubLlm(() => finish('success'));
+      const mcp = stubMcp(['mirth_get_message'], () => okToolResult);
+      await handlerWith(llm, mcp)({ payload: { runId: uncovered.runId } });
+      const refused = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'error_kind', 'error'])
+        .where('id', '=', uncovered.runId)
+        .executeTakeFirstOrThrow();
+      expect(refused.status).toBe('failed');
+      expect(refused.error_kind).toBe('config');
+      expect(refused.error).toContain('BAA-covered model');
+      expect(refused.error).toContain('Mirth');
+      expect(refused.error).toContain('"stub-model"');
+      // A config refusal spends nothing: no attempt row, no model call.
+      const attempts = await db
+        .selectFrom('agent_run_steps')
+        .select('id')
+        .where('run_id', '=', uncovered.runId)
+        .execute();
+      expect(attempts).toHaveLength(0);
+
+      // The same step on a covered model runs.
+      const covered = await seedRun(phiStep);
+      const coveredLlm: ResolvedLlm = {
+        ...stubLlm(() => finish('success')),
+        dataHandling: {
+          dataResidency: null,
+          providerRetention: 'none',
+          baaCovered: true,
+          notes: null,
+        },
+      };
+      await handlerWith(coveredLlm, mcp)({ payload: { runId: covered.runId } });
+      const ran = await db
+        .selectFrom('agent_runs')
+        .select(['status'])
+        .where('id', '=', covered.runId)
+        .executeTakeFirstOrThrow();
+      expect(ran.status).toBe('succeeded');
+
+      // A run with no PHI tool in reach is untouched by the setting.
+      const plain = await seedRun(singleStep());
+      await handlerWith(
+        llm,
+        stubMcp(['jira_get_issue'], () => okToolResult)
+      )({ payload: { runId: plain.runId } });
+      const untouched = await db
+        .selectFrom('agent_runs')
+        .select(['status'])
+        .where('id', '=', plain.runId)
+        .executeTakeFirstOrThrow();
+      expect(untouched.status).toBe('succeeded');
+    } finally {
+      await setOrgSettings(tenantId, { phiConnectorsRequireCoveredModel: false });
+    }
   });
 
   it('fails a run as config when the step tool is not in the owner projection', async () => {
@@ -2366,12 +2488,7 @@ maybe('agent run engine', () => {
       .select('detail')
       .where('run_id', '=', runId)
       .executeTakeFirstOrThrow();
-    const detail: { saveValue?: unknown; llmSummary?: unknown } =
-      typeof attempt.detail === 'object' &&
-      attempt.detail !== null &&
-      !Array.isArray(attempt.detail)
-        ? attempt.detail
-        : {};
+    const detail: { saveValue?: unknown; llmSummary?: unknown } = unsealed(attempt.detail);
     expect(detail.saveValue).toBe('PROJ-42 is the ticket');
     expect(detail.llmSummary).toBe('Found it.');
   });
@@ -3428,7 +3545,7 @@ maybe('agent run engine', () => {
         .executeTakeFirstOrThrow();
       expect(gateRow.status).toBe('succeeded');
       expect(gateRow.outcome).toBe('tool_ok');
-      expect(JSON.stringify(gateRow.detail)).toContain('Approved');
+      expect(JSON.stringify(unsealed(gateRow.detail))).toContain('Approved');
     });
 
     it('on approval with an edited card, fires the call with every edit merged in except the call identity', async () => {
@@ -3568,8 +3685,8 @@ maybe('agent run engine', () => {
         .where('run_id', '=', runId)
         .where('step_id', '=', gateId)
         .executeTakeFirstOrThrow();
-      expect(JSON.stringify(gateRow.detail)).toContain('Edited from the card.');
-      expect(JSON.stringify(gateRow.detail)).not.toContain('Original text.');
+      expect(JSON.stringify(unsealed(gateRow.detail))).toContain('Edited from the card.');
+      expect(JSON.stringify(unsealed(gateRow.detail))).not.toContain('Original text.');
     });
 
     it('on denial, skips the tool call and advances when there is no recovery path', async () => {
@@ -3825,6 +3942,198 @@ maybe('agent run engine', () => {
       expect(JSON.stringify(deadCard.result)).toContain('run-ended');
     });
   });
+  /**
+   * The org's act-approval policy (agentActStepsRequireApproval): an Act
+   * step of an externally triggered run pauses for a person even when its
+   * author set no needsApproval, and the fixed high-risk list pauses under
+   * every policy. Same card, same row, same resume as the author's gate.
+   */
+  describe('act-approval policy', () => {
+    afterEach(async () => {
+      await setOrgSettings(tenantId, { agentActStepsRequireApproval: 'externally_triggered' });
+    });
+
+    /** One ungated step calling `tool`. */
+    const plainDoc = (tool: string): AgentStepsDoc => ({
+      version: CURRENT_STEPS_VERSION,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'Act on the mail',
+          instruction: [
+            { t: 'text', v: 'Handle ' },
+            { t: 'var', name: 'trigger.subject' },
+            { t: 'text', v: ' with ' },
+            { t: 'tool', name: tool },
+          ],
+          tool,
+          maxAttempts: 2,
+          failureHandling: [],
+        },
+      ],
+    });
+
+    /** An MCP double whose tools/list carries each tool's read-or-act kind, as the gateway's does. */
+    function kindedMcp(tools: Record<string, 'read' | 'act'>): {
+      mcp: McpClient;
+      calls: string[];
+    } {
+      const calls: string[] = [];
+      const mcp: McpClient = {
+        initialize: async () => undefined,
+        listTools: async () =>
+          Object.entries(tools).map(([name, kind]) => ({
+            name,
+            description: name,
+            inputSchema: { type: 'object' },
+            kind,
+          })),
+        callTool: async (name) => {
+          calls.push(name);
+          return okToolResult;
+        },
+      };
+      return { mcp, calls };
+    }
+
+    const callsThenFinishes = (tool: string) =>
+      stubLlm((_request, call) =>
+        call === 0
+          ? useTool(tool, { issueKey: 'PROJ-42', body: 'As the mail asked.' })
+          : finish('success')
+      );
+
+    const stateOf = async (runId: string) =>
+      db
+        .selectFrom('agent_runs')
+        .select(['status'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+
+    it('under the default, an act step of an event-triggered run pauses for approval; a manual run acts', async () => {
+      const external = await seedRun(plainDoc('jira_add_comment'), { triggerKind: 'event' });
+      const externalMcp = kindedMcp({ jira_add_comment: 'act' });
+      await handlerWith(
+        callsThenFinishes('jira_add_comment'),
+        externalMcp.mcp
+      )({
+        payload: { runId: external.runId },
+      });
+      expect((await stateOf(external.runId)).status).toBe('waiting');
+      expect(externalMcp.calls).toEqual([]);
+      const card = await db
+        .selectFrom('actionable_items')
+        .select(['kind', 'status', 'suggested_action'])
+        .where('run_id', '=', external.runId)
+        .executeTakeFirstOrThrow();
+      expect(card.kind).toBe('approval');
+      expect(card.status).toBe('suggested');
+      expect(JSON.stringify(card.suggested_action)).toContain('jira_add_comment');
+
+      // Approved, the recorded call fires exactly as the author's gate would.
+      await db
+        .updateTable('actionable_items')
+        .set({ status: 'approved', result: JSON.stringify({}), decided_at: sql`NOW()` })
+        .where('run_id', '=', external.runId)
+        .execute();
+      await handlerWith(
+        callsThenFinishes('jira_add_comment'),
+        externalMcp.mcp
+      )({
+        payload: { runId: external.runId },
+      });
+      expect((await stateOf(external.runId)).status).toBe('succeeded');
+      expect(externalMcp.calls).toEqual(['jira_add_comment']);
+
+      // A run a person started by hand acts as written.
+      const manual = await seedRun(plainDoc('jira_add_comment'));
+      const manualMcp = kindedMcp({ jira_add_comment: 'act' });
+      await handlerWith(
+        callsThenFinishes('jira_add_comment'),
+        manualMcp.mcp
+      )({
+        payload: { runId: manual.runId },
+      });
+      expect((await stateOf(manual.runId)).status).toBe('succeeded');
+      expect(manualMcp.calls).toEqual(['jira_add_comment']);
+    });
+
+    it('a read step of an event-triggered run never pauses', async () => {
+      const { runId } = await seedRun(plainDoc('jira_get_issue'), { triggerKind: 'event' });
+      const { mcp, calls } = kindedMcp({ jira_get_issue: 'read' });
+      await handlerWith(callsThenFinishes('jira_get_issue'), mcp)({ payload: { runId } });
+      expect((await stateOf(runId)).status).toBe('succeeded');
+      expect(calls).toEqual(['jira_get_issue']);
+    });
+
+    it("a high-risk tool pauses even on a manual run with the policy 'off'", async () => {
+      await setOrgSettings(tenantId, { agentActStepsRequireApproval: 'off' });
+      // jira_delete_issue rather than outlook_send_mail: the notifier mails
+      // the owner about the pause through that very tool, which would make
+      // "no call fired" ambiguous here.
+      const { runId } = await seedRun(plainDoc('jira_delete_issue'));
+      const { mcp, calls } = kindedMcp({ jira_delete_issue: 'act' });
+      await handlerWith(callsThenFinishes('jira_delete_issue'), mcp)({ payload: { runId } });
+      expect((await stateOf(runId)).status).toBe('waiting');
+      expect(calls).toEqual([]);
+
+      // While an ordinary act call on the same policy runs unattended.
+      const plain = await seedRun(plainDoc('jira_add_comment'), { triggerKind: 'event' });
+      const plainMcp = kindedMcp({ jira_add_comment: 'act' });
+      await handlerWith(
+        callsThenFinishes('jira_add_comment'),
+        plainMcp.mcp
+      )({
+        payload: { runId: plain.runId },
+      });
+      expect((await stateOf(plain.runId)).status).toBe('succeeded');
+      expect(plainMcp.calls).toEqual(['jira_add_comment']);
+    });
+
+    it("a chained run inherits its root's provenance", async () => {
+      const root = await seedRun(plainDoc('jira_get_issue'), { triggerKind: 'event' });
+      const child = await seedRun(plainDoc('jira_add_comment'));
+      await db
+        .updateTable('agent_runs')
+        .set({ trigger_kind: 'agent', parent_run_id: root.runId })
+        .where('id', '=', child.runId)
+        .execute();
+      const { mcp, calls } = kindedMcp({ jira_add_comment: 'act' });
+      await handlerWith(
+        callsThenFinishes('jira_add_comment'),
+        mcp
+      )({
+        payload: { runId: child.runId },
+      });
+      expect((await stateOf(child.runId)).status).toBe('waiting');
+      expect(calls).toEqual([]);
+    });
+
+    it('hands the model tool results fenced as data', async () => {
+      const { runId } = await seedRun(plainDoc('jira_get_issue'));
+      const seen: LlmRequest[] = [];
+      const llm = stubLlm((request, call) => {
+        seen.push(request);
+        return call === 0 ? useTool('jira_get_issue', { issueKey: 'PROJ-42' }) : finish('success');
+      });
+      await handlerWith(llm, kindedMcp({ jira_get_issue: 'read' }).mcp)({ payload: { runId } });
+      // The request's messages array is the engine's own, so it grows past
+      // the call that saw it; the tool_result message is the one to read.
+      const result = seen[1].messages
+        .flatMap((message) => message.content)
+        .find((block) => block.type === 'tool_result');
+      expect(result?.type).toBe('tool_result');
+      expect(result?.type === 'tool_result' && result.content).toBe(
+        '<untrusted source="tool:jira_get_issue">\nPROJ-42: The printer is on fire\n</untrusted>'
+      );
+      // The trigger's text is fenced in the step's own prompt too.
+      const prompt = seen[0].messages[0].content[0];
+      expect(prompt.type === 'text' && prompt.text).toContain(
+        '<untrusted source="trigger.subject">\nPROJ-42 is broken\n</untrusted>'
+      );
+    });
+  });
+
   describe('ask_person (canAskQuestions)', () => {
     // Same reasoning as the needsApproval block above: most of this suite
     // tests the delivery mechanism, which needs opt-in to fire at all.
@@ -4598,5 +4907,39 @@ maybe('resolve_time — the free, deterministic clock', () => {
     expect(complaint).toBeDefined();
     // And it says the retry is free, so the model re-asks rather than guesses.
     expect(complaint).toContain('it is free');
+  });
+});
+
+describe('requestLogFieldOf', () => {
+  const cause = {
+    summary: 'POST …/responses model=gpt-6 input=2 items (41 chars) tools=1',
+    url: 'https://api.openai.com/v1/responses',
+    headers: { authorization: 'Bearer sk-secret', 'content-type': 'application/json' },
+    request: { model: 'gpt-6', input: [{ role: 'user', content: 'patient Jane Doe, MRN 123' }] },
+  };
+
+  it('logs the content-free summary and the URL by default — never the body', () => {
+    const fields = requestLogFieldOf(cause, {});
+    expect(fields).toEqual({ url: cause.url, requestSummary: cause.summary });
+    expect(JSON.stringify(fields)).not.toContain('Jane Doe');
+    expect(JSON.stringify(fields)).not.toContain('sk-secret');
+    expect(requestLogFieldOf({ not: 'a cause' }, {})).toEqual({});
+  });
+
+  it('adds the verbatim body only under AGENT_LLM_DEBUG_WIRE=true, and only wrapped for encryption at rest', () => {
+    const fields = requestLogFieldOf(cause, { AGENT_LLM_DEBUG_WIRE: 'true' });
+    expect(fields.url).toBe(cause.url);
+    expect(fields.requestSummary).toBe(cause.summary);
+    // secure() hands back a wrapper, not the string: the plaintext is not
+    // what reaches the log sink in the clear.
+    expect(typeof fields.request).not.toBe('string');
+    expect(fields.request).toBeDefined();
+    const headers: Record<string, unknown> = isRecord(fields.headers) ? fields.headers : {};
+    expect(headers['content-type']).toBe('application/json');
+    expect(typeof headers.authorization).not.toBe('string');
+    expect(requestLogFieldOf(cause, { AGENT_LLM_DEBUG_WIRE: 'yes' })).toEqual({
+      url: cause.url,
+      requestSummary: cause.summary,
+    });
   });
 });

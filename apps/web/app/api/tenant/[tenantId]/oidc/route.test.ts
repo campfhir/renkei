@@ -10,6 +10,26 @@
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+// safeFetch goes through the sandbox package's guarded fetch, which dials
+// node:https at a resolved address; here the structural guard stays real,
+// every name resolves publicly, and the request itself is the global.fetch
+// stub the tests script and assert on.
+jest.mock('@renkei/connector-sandbox', () => {
+  const actual = jest.requireActual<typeof import('@renkei/connector-sandbox')>(
+    '@renkei/connector-sandbox'
+  );
+  return {
+    ...actual,
+    resolvePublicAddress: async (hostname: string) => {
+      actual.assertSafeHostname(hostname);
+      return '93.184.216.34';
+    },
+    guardedFetch: (url: string, init?: RequestInit) => {
+      actual.assertSafeHttpsUrl(url);
+      return global.fetch(url, init);
+    },
+  };
+});
 // Access is role-based: checkAccess reads the tenant session, whose real
 // implementation reads cookies() — which has no request scope in a test.
 jest.mock('@/lib/session', () => ({ getSessionFromCookies: jest.fn(async () => null) }));
@@ -20,6 +40,7 @@ jest.mock('@/lib/tenant-operations', () => ({
 
 import { NextRequest } from 'next/server';
 import { GET, POST } from './route';
+import { mintBootstrapSecret } from '@/lib/tenant-bootstrap';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getSessionFromCookies: mockGetSession } = jest.requireMock<{
@@ -37,14 +58,32 @@ const OTHER_TENANT = '00000000-0000-4000-8000-0000000000ff';
  * Stubs the two reads this route makes: the tenant row, then the existing OIDC
  * row. `existingOidc` undefined means the tenant is unconfigured.
  */
-function stubDb(options: { tenantExists?: boolean; existingOidc?: boolean } = {}) {
-  const { tenantExists = true, existingOidc = false } = options;
+/** A live onboarding secret, as api/home-realm/create would have minted it. */
+const BOOTSTRAP = mintBootstrapSecret();
+
+function stubDb(
+  options: {
+    tenantExists?: boolean;
+    existingOidc?: boolean;
+    /** The tenants row's bootstrap columns; defaults to BOOTSTRAP, live. */
+    bootstrap?: { bootstrap_secret_hash: string | null; bootstrap_secret_expires_at: Date | null };
+  } = {}
+) {
+  const {
+    tenantExists = true,
+    existingOidc = false,
+    bootstrap = {
+      bootstrap_secret_hash: BOOTSTRAP.hash,
+      bootstrap_secret_expires_at: BOOTSTRAP.expiresAt,
+    },
+  } = options;
+  const updates: Array<{ table: string; values: Record<string, unknown> }> = [];
   const db = {
     selectFrom(table: string) {
       const row =
         table === 'tenants'
           ? tenantExists
-            ? { id: TENANT }
+            ? { id: TENANT, ...bootstrap }
             : undefined
           : existingOidc
             ? { client_id: 'existing-client' }
@@ -56,14 +95,34 @@ function stubDb(options: { tenantExists?: boolean; existingOidc?: boolean } = {}
       };
       return chain;
     },
+    updateTable(table: string) {
+      const chain = {
+        set(values: Record<string, unknown>) {
+          updates.push({ table, values });
+          return chain;
+        },
+        where: () => chain,
+        execute: async () => undefined,
+      };
+      return chain;
+    },
   };
   mockGetDatabase.mockReturnValue({ ok: true, val: db });
+  return { updates };
 }
 
-function post(body: unknown, tenantId = TENANT): NextRequest {
+function post(
+  body: unknown,
+  tenantId = TENANT,
+  options: { bootstrapSecret?: string | null } = {}
+): NextRequest {
+  const { bootstrapSecret = BOOTSTRAP.secret } = options;
   return new NextRequest(`http://localhost/api/tenant/${tenantId}/oidc`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(bootstrapSecret ? { 'x-renkei-bootstrap-secret': bootstrapSecret } : {}),
+    },
     body: JSON.stringify(body),
   });
 }
@@ -120,8 +179,8 @@ describe('tenant OIDC configuration', () => {
   });
 
   describe('POST on an unconfigured tenant', () => {
-    it('allows an unauthenticated caller to bootstrap', async () => {
-      stubDb({ existingOidc: false });
+    it('allows an unauthenticated caller holding the onboarding secret to bootstrap', async () => {
+      const { updates } = stubDb({ existingOidc: false });
       mockGetSession.mockResolvedValue(null);
 
       const response = await POST(post(VALID_BODY), params());
@@ -130,6 +189,69 @@ describe('tenant OIDC configuration', () => {
       expect(mockCreateTenantOidc).toHaveBeenCalledTimes(1);
       // Never the upserting writer on this path.
       expect(mockSetTenantOidc).not.toHaveBeenCalled();
+      // The secret was for exactly this write: spent.
+      expect(updates).toEqual([
+        {
+          table: 'tenants',
+          values: { bootstrap_secret_hash: null, bootstrap_secret_expires_at: null },
+        },
+      ]);
+    });
+
+    it('refuses a caller with no onboarding secret before fetching discovery', async () => {
+      // The squat: anyone who learned the tenant id posting their own IdP
+      // first. Without the secret only the creator saw, the id buys nothing.
+      stubDb({ existingOidc: false });
+
+      const response = await POST(post(VALID_BODY, TENANT, { bootstrapSecret: null }), params());
+
+      expect(response.status).toBe(401);
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(mockCreateTenantOidc).not.toHaveBeenCalled();
+    });
+
+    it('refuses a wrong onboarding secret', async () => {
+      stubDb({ existingOidc: false });
+
+      const response = await POST(
+        post(VALID_BODY, TENANT, { bootstrapSecret: 'a-guess' }),
+        params()
+      );
+
+      expect(response.status).toBe(401);
+      expect(mockCreateTenantOidc).not.toHaveBeenCalled();
+    });
+
+    it('refuses an expired onboarding secret even when it matches', async () => {
+      const stale = mintBootstrapSecret(new Date(Date.now() - 48 * 60 * 60 * 1000));
+      stubDb({
+        existingOidc: false,
+        bootstrap: {
+          bootstrap_secret_hash: stale.hash,
+          bootstrap_secret_expires_at: stale.expiresAt,
+        },
+      });
+
+      const response = await POST(
+        post(VALID_BODY, TENANT, { bootstrapSecret: stale.secret }),
+        params()
+      );
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: expect.stringContaining('expired') });
+      expect(mockCreateTenantOidc).not.toHaveBeenCalled();
+    });
+
+    it('refuses to bootstrap a tenant that never had a secret (pre-migration or spent)', async () => {
+      stubDb({
+        existingOidc: false,
+        bootstrap: { bootstrap_secret_hash: null, bootstrap_secret_expires_at: null },
+      });
+
+      const response = await POST(post(VALID_BODY), params());
+
+      expect(response.status).toBe(401);
+      expect(mockCreateTenantOidc).not.toHaveBeenCalled();
     });
 
     it('does not overwrite a configuration that appeared mid-request', async () => {

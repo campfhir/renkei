@@ -32,7 +32,7 @@ import type { ShareCredentials } from './credentials';
 import { openCredentialsForSubject } from './user-credentials';
 import { openBackend, type BackendError, type ShareBackend } from './backend';
 import { withSessionLimits } from './limits';
-import { getShare, readConnectionCiphertext } from './store';
+import { getShare, readConnectionCiphertext, recordHostKeyFingerprint } from './store';
 
 export type ServiceError =
   | BackendError
@@ -58,6 +58,7 @@ export interface ShareRef {
 }
 
 export interface ResolvedConnection {
+  tenantId: string;
   share: ShareSummary;
   credentials: ShareCredentials;
 }
@@ -97,7 +98,13 @@ export async function resolveConnection(
   const share = await getShare(deps.db, target.tenantId, target.shareId);
   if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
-  if (target.credentials) return ok({ share: share.val.summary, credentials: target.credentials });
+  if (target.credentials) {
+    return ok({
+      tenantId: target.tenantId,
+      share: share.val.summary,
+      credentials: target.credentials,
+    });
+  }
   if (target.credentials === null) return err('not_connected' as const);
 
   const ciphertext = await readConnectionCiphertext(
@@ -115,16 +122,41 @@ export async function resolveConnection(
     ciphertext.val
   );
   if (!credentials.ok) return err('bad_credentials' as const);
-  return ok({ share: share.val.summary, credentials: credentials.val });
+  return ok({ tenantId: target.tenantId, share: share.val.summary, credentials: credentials.val });
+}
+
+/**
+ * The trust-on-first-use hook for an SFTP share with no pinned host key:
+ * the key the first successful handshake verified is recorded on the share
+ * (only while none is pinned — store.recordHostKeyFingerprint), so every
+ * later connection, by anyone, is held to it and the admin sees it on the
+ * share's page to confirm. A store failure here is logged by the store's
+ * caller contract, not fatal to the operation: the connection itself
+ * already succeeded against the key the admin will be shown.
+ */
+function hostKeyRecorder(
+  deps: ServiceDeps,
+  tenantId: string,
+  share: ShareSummary,
+  onRecorded?: (fingerprint: string, recorded: boolean) => void
+): ((fingerprint: string) => Promise<void>) | undefined {
+  if (share.protocol !== 'sftp' || share.hostKeyFingerprint !== null) return undefined;
+  return async (fingerprint) => {
+    const recorded = await recordHostKeyFingerprint(deps.db, tenantId, share.id, fingerprint);
+    onRecorded?.(fingerprint, recorded.ok && recorded.val);
+  };
 }
 
 /** One bounded backend session: open, run, always close. */
 async function withShareSession<T>(
+  deps: ServiceDeps,
   connection: ResolvedConnection,
   work: (backend: ShareBackend) => Promise<Result<T, BackendError>>
 ): Promise<Result<T, BackendError>> {
   return withSessionLimits(connection.share.id, 'interactive', async () => {
-    const opened = await openBackend(connection.share, connection.credentials);
+    const opened = await openBackend(connection.share, connection.credentials, {
+      onHostKey: hostKeyRecorder(deps, connection.tenantId, connection.share),
+    });
     if (!opened.ok) return opened;
     try {
       return await work(opened.val);
@@ -154,7 +186,7 @@ export async function serviceListFolder(
   const path = normalizePath(rawPath);
   if (!path.ok) return badPath(path.err.type);
 
-  const listed = await withShareSession(connection.val, (backend) => backend.list(path.val));
+  const listed = await withShareSession(deps, connection.val, (backend) => backend.list(path.val));
   if (!listed.ok) return listed;
   return ok({
     share: shareRef(connection.val.share),
@@ -185,7 +217,7 @@ export async function serviceStatEntry(
   const path = normalizePath(rawPath);
   if (!path.ok) return badPath(path.err.type);
 
-  const stats = await withShareSession(connection.val, (backend) => backend.stat(path.val));
+  const stats = await withShareSession(deps, connection.val, (backend) => backend.stat(path.val));
   if (!stats.ok) return stats;
   return ok({
     share: shareRef(connection.val.share),
@@ -217,7 +249,7 @@ export async function serviceReadFile(
   if (!path.ok) return badPath(path.err.type);
   if (path.val === '/') return err('bad_path' as const, { message: 'That is not a file.' });
 
-  const content = await withShareSession(connection.val, (backend) =>
+  const content = await withShareSession(deps, connection.val, (backend) =>
     backend.read(path.val, maxBytes)
   );
   if (!content.ok) return content;
@@ -242,7 +274,7 @@ export async function serviceWriteFile(
     });
   }
 
-  const written = await withShareSession(connection.val, (backend) =>
+  const written = await withShareSession(deps, connection.val, (backend) =>
     backend.write(path.val, bytes)
   );
   if (!written.ok) return written;
@@ -262,7 +294,7 @@ export async function serviceMakeFolder(
     return err('bad_path' as const, { message: 'The share root already exists.' });
   }
 
-  const made = await withShareSession(connection.val, (backend) => backend.mkdir(path.val));
+  const made = await withShareSession(deps, connection.val, (backend) => backend.mkdir(path.val));
   if (!made.ok) return made;
   return ok({ share: shareRef(connection.val.share), path: path.val });
 }
@@ -285,7 +317,7 @@ export async function serviceRemoveEntry(
     return err('bad_path' as const, { message: 'The share root cannot be deleted.' });
   }
 
-  const removed = await withShareSession(connection.val, async (backend) => {
+  const removed = await withShareSession(deps, connection.val, async (backend) => {
     const stats = await backend.stat(path.val);
     if (!stats.ok) return stats;
     return backend.remove(path.val, stats.val.kind);
@@ -320,7 +352,7 @@ export async function servicePreviewRemove(
     return err('bad_path' as const, { message: 'The share root cannot be deleted.' });
   }
 
-  const looked = await withShareSession(connection.val, async (backend) => {
+  const looked = await withShareSession(deps, connection.val, async (backend) => {
     const stats = await backend.stat(path.val);
     if (!stats.ok) return stats;
     if (stats.val.kind === 'dir') {
@@ -349,6 +381,7 @@ export interface RelocationOutcome {
 }
 
 async function relocate(
+  deps: ServiceDeps,
   connection: ResolvedConnection,
   source: string,
   destination: string
@@ -356,7 +389,7 @@ async function relocate(
   if (destination === source) {
     return ok({ share: shareRef(connection.share), path: destination, unchanged: true });
   }
-  const renamed = await withShareSession(connection, (backend) =>
+  const renamed = await withShareSession(deps, connection, (backend) =>
     backend.rename(source, destination)
   );
   if (!renamed.ok) return renamed;
@@ -382,7 +415,7 @@ export async function serviceMoveEntry(
 
   const name = source.val.slice(source.val.lastIndexOf('/') + 1);
   const destination = childPath(toFolder.val, name);
-  return relocate(connection.val, source.val, destination);
+  return relocate(deps, connection.val, source.val, destination);
 }
 
 /** Rename an entry in place; the new name must be a plain single name. */
@@ -407,7 +440,7 @@ export async function serviceRenameEntry(
   }
 
   const destination = childPath(parentPath(source.val), newName);
-  return relocate(connection.val, source.val, destination);
+  return relocate(deps, connection.val, source.val, destination);
 }
 
 /**
@@ -416,12 +449,22 @@ export async function serviceRenameEntry(
  * authenticated worker seam and is re-validated at that boundary; success
  * means the account opened a session and listed the share root.
  */
+export interface TestConnectionOutcome {
+  entries: number;
+  /**
+   * SFTP: the host key the handshake verified — pinned already, or recorded
+   * by this very connection (`recorded`, trust-on-first-use) for the admin
+   * to confirm on the share's page. Absent for SMB.
+   */
+  hostKey?: { fingerprint: string; recorded: boolean };
+}
+
 export async function serviceTestConnection(
   deps: ServiceDeps,
   tenantId: string,
   shareId: string,
   credentials: ShareCredentials
-): Promise<Result<{ entries: number }, ServiceError>> {
+): Promise<Result<TestConnectionOutcome, ServiceError>> {
   const share = await getShare(deps.db, tenantId, shareId);
   if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
@@ -430,8 +473,16 @@ export async function serviceTestConnection(
     return err('bad_credentials' as const);
   }
 
+  let hostKey: TestConnectionOutcome['hostKey'];
+  if (summary.protocol === 'sftp' && summary.hostKeyFingerprint !== null) {
+    hostKey = { fingerprint: summary.hostKeyFingerprint, recorded: false };
+  }
   const listed = await withSessionLimits(shareId, 'interactive', async () => {
-    const backend = await openBackend(summary, credentials);
+    const backend = await openBackend(summary, credentials, {
+      onHostKey: hostKeyRecorder(deps, tenantId, summary, (fingerprint, recorded) => {
+        hostKey = { fingerprint, recorded };
+      }),
+    });
     if (!backend.ok) return backend;
     try {
       return await backend.val.list('/');
@@ -440,5 +491,5 @@ export async function serviceTestConnection(
     }
   });
   if (!listed.ok) return listed;
-  return ok({ entries: listed.val.length });
+  return ok({ entries: listed.val.length, ...(hostKey ? { hostKey } : {}) });
 }

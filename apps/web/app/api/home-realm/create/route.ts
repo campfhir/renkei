@@ -6,6 +6,9 @@ import { seedDefaultClassifierRules } from '@renkei/email-sanitizer';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { logger } from '@/lib/logger';
 import { isFreeEmailDomain, FREE_EMAIL_DOMAIN_ERROR } from '@/lib/free-email-domains';
+import { generateSecret } from '@renkei/crypto';
+import { mintBootstrapSecret } from '@/lib/tenant-bootstrap';
+import { verificationRecord } from '@/lib/domain-verification';
 
 /**
  * Self-service onboarding: an email domain nothing yet claims becomes a
@@ -70,9 +73,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .executeTakeFirst();
 
     if (existing) {
+      // Never the tenant's id: this caller is anonymous, and the id is what
+      // the first identity-provider configuration and the verify-domain
+      // route are addressed by. Whoever owns the domain signs in from the
+      // home page; everyone else learns only that it is taken.
       return NextResponse.json(
-        { tenantId: existing.tenant_id, alreadyExists: true },
-        { status: 200 }
+        {
+          error:
+            'This domain already belongs to an organization. Sign in from the home page, or ask its administrator.',
+          alreadyExists: true,
+        },
+        { status: 409 }
       );
     }
 
@@ -83,12 +94,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let slug = domain.toLowerCase().replace(/\./g, '-');
     if (isReservedSlug(slug)) slug = `${slug}-org`;
 
+    // Two things only the creator gets (lib/tenant-bootstrap.ts,
+    // lib/domain-verification.ts): the one-time secret the first
+    // identity-provider configuration must present, and the token to publish
+    // as a TXT record before the sign-in page routes this domain here.
+    const bootstrap = mintBootstrapSecret();
+    const verificationToken = generateSecret(16);
+
     await db
       .insertInto('tenants')
       .values({
         id: tenantId,
         slug,
         created_at: new Date().toISOString(),
+        bootstrap_secret_hash: bootstrap.hash,
+        bootstrap_secret_expires_at: bootstrap.expiresAt,
+        domain_verification_token: verificationToken,
+        domain_verified_at: null,
       })
       .execute();
 
@@ -112,9 +134,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       console.warn(`[Domain] Could not seed classifier rules for ${tenantId}`);
     }
 
-    console.log(`[Domain] Created tenant for ${domain}: ${tenantId}`);
+    console.log(`[Domain] Created tenant for ${JSON.stringify(domain)}: ${tenantId}`);
 
-    return NextResponse.json({ tenantId, alreadyExists: false }, { status: 201 });
+    return NextResponse.json(
+      {
+        tenantId,
+        alreadyExists: false,
+        // Shown once; only its digest exists from here on.
+        bootstrapSecret: bootstrap.secret,
+        bootstrapSecretExpiresAt: bootstrap.expiresAt.toISOString(),
+        domainVerification: {
+          domain: normalizedDomain,
+          recordType: 'TXT',
+          record: verificationRecord(verificationToken),
+        },
+      },
+      { status: 201 }
+    );
   } catch (error) {
     console.error('Tenant creation error:', error);
     return NextResponse.json({ error: 'Failed to create tenant' }, { status: 500 });

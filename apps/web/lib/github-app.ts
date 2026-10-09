@@ -8,7 +8,7 @@
  * both non-secret, so they live in `settings` alongside the client id.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { logger } from '@/lib/logger';
 import { usableGitHubCeiling, DEFAULT_GITHUB_SCOPES } from '@/lib/github-scopes';
@@ -36,7 +36,7 @@ export interface GitHubApp {
  * token-exchange always derive the same value.
  */
 export async function getGitHubApp(tenantId: string, origin: string): Promise<GitHubApp | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/github',

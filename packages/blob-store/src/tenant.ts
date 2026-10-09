@@ -16,7 +16,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { parseEncryptionKey } from '@renkei/crypto';
+import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { blobStoreConfig, type BlobStoreConfig } from './config';
 import { createAzureBlobStore } from './azure';
@@ -69,7 +69,7 @@ export function blobStoreConfigOfRow(
 export async function resolveTenantBlobConfig(
   tenantId: string
 ): Promise<Result<BlobStoreConfig, 'BLOB_UNCONFIGURED'>> {
-  const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (key.ok) {
     const row = await readConnectorConfigCached(tenantId, BLOB_STORAGE_CONNECTOR, key.val);
     if (row.ok && row.val && row.val.enabled) {

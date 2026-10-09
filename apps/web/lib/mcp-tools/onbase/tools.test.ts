@@ -31,6 +31,11 @@ jest.mock('@renkei/db', () => ({
   }),
 }));
 
+jest.mock('@/lib/phi-access', () => ({
+  ...jest.requireActual<typeof import('@/lib/phi-access')>('@/lib/phi-access'),
+  recordPhiAccess: jest.fn().mockResolvedValue(true),
+}));
+
 import type { McpServer } from '@modelcontextprotocol/server';
 import { registerOnbaseTools } from './index';
 import type { OnBaseApiRequest, OnBaseAuth } from './onbase-auth';
@@ -281,5 +286,66 @@ describe('onbase_archive_document', () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('never reached OnBase staging');
+  });
+});
+
+describe('PHI access trail', () => {
+  const { recordPhiAccess } = jest.requireMock<{ recordPhiAccess: jest.Mock }>('@/lib/phi-access');
+  beforeEach(() => recordPhiAccess.mockClear());
+
+  it('a document read records one event with the document id and nothing of the document', async () => {
+    const scripted = scriptedAuth((request) => {
+      if (request.path === '/documents/9001') {
+        return {
+          status: 200,
+          body: { id: '9001', name: 'Doe, Jane — Discharge summary', typeId: '7' },
+        };
+      }
+      if (request.path === '/documents/9001/keywords') return { status: 200, body: { items: [] } };
+      return undefined;
+    });
+    const result = await tools(scripted.auth).get('onbase_get_document')!({ documentId: '9001' });
+    expect(result.isError).toBeUndefined();
+    expect(recordPhiAccess).toHaveBeenCalledTimes(1);
+    const [event] = recordPhiAccess.mock.calls[0] as [Record<string, unknown>];
+    expect(event).toEqual({
+      tenantId: 'tenant-1',
+      subject: 'subject-1',
+      agentId: null,
+      connector: 'onbase',
+      action: 'read',
+      toolName: 'onbase_get_document',
+      documentId: '9001',
+    });
+    expect(JSON.stringify(event)).not.toContain('Doe');
+  });
+
+  it('a search records the scope it ran over, never the keyword values; a refused call records nothing', async () => {
+    const scripted = scriptedAuth((request) => {
+      if (request.method === 'POST' && request.path === '/documents/queries') {
+        return { status: 201, body: { id: 'q-1' } };
+      }
+      if (request.method === 'GET' && request.path === '/documents/queries/q-1/results') {
+        return { status: 200, body: { items: [] } };
+      }
+      return undefined;
+    });
+    await tools(scripted.auth).get('onbase_search_documents')!({
+      documentType: 'invoices',
+      keywords: [{ type: 'vendor', value: 'Doe, Jane' }],
+    });
+    expect(recordPhiAccess).toHaveBeenCalledTimes(1);
+    const [event] = recordPhiAccess.mock.calls[0] as [Record<string, unknown>];
+    expect(event).toMatchObject({
+      action: 'search',
+      toolName: 'onbase_search_documents',
+      documentId: 'DocumentType:7',
+    });
+    expect(JSON.stringify(event)).not.toContain('Doe');
+
+    recordPhiAccess.mockClear();
+    const refused = await tools(scripted.auth).get('onbase_get_document')!({ documentId: 'nope' });
+    expect(refused.isError).toBe(true);
+    expect(recordPhiAccess).not.toHaveBeenCalled();
   });
 });
