@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { securityHeaderRules } from './lib/security-headers';
 
 /**
  * OAuth discovery documents have to live at the origin root.
@@ -15,6 +16,9 @@ import type { NextConfig } from 'next';
  * differ over which they try, and serving both costs nothing.
  */
 const nextConfig: NextConfig = {
+  // No `X-Powered-By: Next.js`: it names the framework to every client for
+  // nothing in return.
+  poweredByHeader: false,
   // Dev only: Next 16 blocks dev resources (chunks, HMR) requested from an
   // origin other than "localhost", and it counts 127.0.0.1 as other — which
   // silently breaks hydration for anything browsing via the IP, Playwright
@@ -67,6 +71,15 @@ const nextConfig: NextConfig = {
     'pptxgenjs',
     'docx',
   ],
+  // Response security headers (lib/security-headers.ts): nosniff, referrer
+  // and permissions policies, frame denial except on the routes the chat
+  // frames, a report-only CSP, and HSTS when PUBLIC_BASE_URL is https.
+  async headers() {
+    return securityHeaderRules({
+      nodeEnv: process.env.NODE_ENV,
+      publicBaseUrl: process.env.PUBLIC_BASE_URL,
+    });
+  },
   async rewrites() {
     return [
       // RFC 8414 path-insert form for the per-tenant authorization server,

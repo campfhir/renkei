@@ -832,11 +832,11 @@ find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
 - [x] PostgreSQL firewall rules (only app can connect)
 - [x] Failed login attempts logged
 - [x] Rate limiting configured (nginx or app-level)
-- [x] Security headers configured (X-Frame-Options, etc.)
+- [x] Security headers set by the app itself (`apps/web/lib/security-headers.ts`, via `next.config.ts`): `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (camera/geolocation/payment denied, microphone self), `X-Frame-Options: DENY` + `frame-ancestors 'none'` except on the chat's framed widget/mockup routes, `Strict-Transport-Security` when `PUBLIC_BASE_URL` is https, `X-Powered-By` removed. Content-Security-Policy is REPORT-ONLY — it still carries `'unsafe-inline'` for scripts and styles until per-request nonces are wired; review reports before enforcing.
 - [x] CORS configured properly
 - [x] SQL injection prevention (using Kysely ORM)
 - [x] CSRF protection (OAuth state rows are single-use and bound to the starting browser by an httpOnly cookie plus the session subject — sign-in `oidc_state_`, connector flows `connect_state_`)
-- [x] XSS protection (React escaping, no dangerouslySetInnerHTML)
+- [x] XSS protection (React escaping; `dangerouslySetInnerHTML` only for the theme bootstrap script in `components/theme-script.tsx`, whose content is a constant)
 
 ## Troubleshooting
 
