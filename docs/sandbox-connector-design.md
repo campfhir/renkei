@@ -68,15 +68,23 @@ lower one:
 
 The one operation that reaches outside the process. It fetches an
 `https://` URL **on the worker**, so the model never generates or sees the
-bytes, through the same SSRF guard `apps/web/lib/safe-fetch.ts` already
-applies to tenant-configured OIDC discovery URLs: scheme allow-list, the
-`localhost` family, and every private/reserved IPv4/IPv6 range including
-the cloud-metadata address, checked both on the literal host and after DNS
-resolution (`packages/connector-sandbox/src/egress-guard.ts`). It's a
-deliberate duplication rather than a shared import — a worker process can't
-depend on the Next.js app's `lib/` — kept in sync by hand; see that file's
-own comment for the residual DNS-rebinding caveat the original already
-documents.
+bytes, through the SSRF guard in
+`packages/connector-sandbox/src/egress-guard.ts` — scheme allow-list, the
+`localhost` family, every private/reserved IPv4/IPv6 range including the
+cloud-metadata address, checked on the literal host and on every DNS
+answer (a name that does not resolve is refused, not left for the request
+to try) — and through `guardedFetch` (`guarded-fetch.ts`), which is the
+part a plain `fetch` after the check could never be: redirects are
+followed by hand, at most five hops, every `Location` run through the
+same guard (so an `http://` downgrade or a hop into a private range is
+refused), and each hop is **dialled at the very address its resolution
+verified**, with the TLS server name and the `Host` header kept as the
+original hostname — the same pinning the browser's egress proxy does for
+Chromium — so there is no second lookup for a DNS-rebinding answer to land
+on. `apps/web/lib/safe-fetch.ts` (tenant-configured OIDC discovery and
+token endpoints) keeps its own copy of the structural checks and shares
+the resolution and the request, so the two guards cannot drift on what
+matters.
 
 ## `sandbox_fetch_page` — reading a URL without the browser
 

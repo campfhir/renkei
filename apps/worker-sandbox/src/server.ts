@@ -33,7 +33,8 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import {
-  assertPublicHttpsUrl,
+  assertSafeHttpsUrl,
+  guardedFetch,
   BlockedUrlError,
   DEFAULT_MAX_FILE_BYTES,
   DEFAULT_BATCH_MAX_FILE_BYTES,
@@ -142,6 +143,12 @@ export interface SandboxServerDeps {
    * which answers the script verb 503.
    */
   scripts?: ScriptRunner | null;
+  /**
+   * How `/v1/fetch` reaches a URL: the guarded fetch by default — every
+   * redirect re-checked, every hop dialled at the address it verified
+   * (@renkei/connector-sandbox guarded-fetch.ts). Tests stand in one.
+   */
+  fetchUrl?: (url: string, init: { signal: AbortSignal }) => Promise<Response>;
 }
 
 const MAX_JSON_BYTES = 1_048_576;
@@ -303,6 +310,8 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     lsp: deps.lsp,
   });
 
+  const fetchUrl = deps.fetchUrl ?? ((url, init) => guardedFetch(url, { signal: init.signal }));
+
   async function handleFetch(
     body: Record<string, unknown>,
     response: ServerResponse
@@ -313,9 +322,13 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     if (!named.ok) return sendError(response, 400, 'bad_filename');
     const batchId = batchIdOf(body.batchId);
 
+    // The structural refusals (scheme, localhost, a private literal) are
+    // answered before the quota is touched; the resolution and the pinned
+    // connect — for this URL and for every redirect — happen inside
+    // fetchUrl, which throws the same BlockedUrlError.
     let url: URL;
     try {
-      url = await assertPublicHttpsUrl(str(body.url));
+      url = assertSafeHttpsUrl(str(body.url));
     } catch (error) {
       if (error instanceof BlockedUrlError) {
         return sendError(response, 400, 'blocked_url', error.message);
@@ -341,8 +354,11 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
 
     let upstream: Response;
     try {
-      upstream = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      upstream = await fetchUrl(url.href, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     } catch (error) {
+      if (error instanceof BlockedUrlError) {
+        return sendError(response, 400, 'blocked_url', error.message);
+      }
       return sendError(
         response,
         502,

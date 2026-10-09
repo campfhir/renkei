@@ -10,6 +10,26 @@
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+// safeFetch goes through the sandbox package's guarded fetch, which dials
+// node:https at a resolved address; here the structural guard stays real,
+// every name resolves publicly, and the request itself is the global.fetch
+// stub the tests script and assert on.
+jest.mock('@renkei/connector-sandbox', () => {
+  const actual = jest.requireActual<typeof import('@renkei/connector-sandbox')>(
+    '@renkei/connector-sandbox'
+  );
+  return {
+    ...actual,
+    resolvePublicAddress: async (hostname: string) => {
+      actual.assertSafeHostname(hostname);
+      return '93.184.216.34';
+    },
+    guardedFetch: (url: string, init?: RequestInit) => {
+      actual.assertSafeHttpsUrl(url);
+      return global.fetch(url, init);
+    },
+  };
+});
 // Access is role-based: checkAccess reads the tenant session, whose real
 // implementation reads cookies() — which has no request scope in a test.
 jest.mock('@/lib/session', () => ({ getSessionFromCookies: jest.fn(async () => null) }));

@@ -2,17 +2,29 @@ import { lookup } from 'node:dns/promises';
 import net from 'node:net';
 
 /**
- * SSRF guard for `sandbox_download_url` and the sandbox browser — every
- * sandbox operation that reaches a caller-supplied URL. This is the same
- * logic as apps/web/lib/safe-fetch.ts (used there for tenant-configured
- * OIDC discovery URLs) — duplicated rather than imported because a worker
- * process cannot depend on the Next.js app's `lib/`, and this package is
- * exactly the shared home connector-fileshares/connector-onbase use for
- * logic both the web app and a worker need. Keep the two in sync by hand;
- * see the comment there for the same caveats (DNS rebinding is not fully
- * closed by a resolve-then-connect check — the browser's egress proxy in
- * apps/worker-sandbox/src/browser-proxy.ts closes it by connecting to the
- * very address it verified).
+ * SSRF guard for `sandbox_download_url`, `sandbox_fetch_page`, the sandbox
+ * browser and (through apps/web/lib/safe-fetch.ts) the web app's OIDC
+ * discovery and token fetches — every operation that reaches a URL a
+ * caller or a tenant's configuration supplied.
+ *
+ * Three layers, each building on the last:
+ *   - `assertSafeHttpsUrl` / `assertSafeHostname` — synchronous, DNS-free:
+ *     https only, no localhost family, no IP literal in a private or
+ *     reserved range.
+ *   - `assertPublicHttpsUrl` / `resolvePublicAddress` — the above, then a
+ *     DNS resolution whose EVERY answer must be public. A name that does
+ *     not resolve is refused too: an unresolvable host is not a host to
+ *     reach, and letting the real request "surface" the failure would
+ *     leave a second lookup for a rebinding answer to land on.
+ *   - `guardedFetch` (guarded-fetch.ts) — the request itself, dialled at
+ *     the very address the resolution verified (the TLS server name and
+ *     the Host header stay the original hostname), with redirects followed
+ *     by hand so every hop goes through the same guard. That closes the
+ *     two gaps a resolve-then-fetch check leaves: DNS rebinding between
+ *     the lookup and the connect, and a public URL that answers with a
+ *     Location into a private range. The browser's egress proxy
+ *     (apps/worker-sandbox/src/browser-proxy.ts) pins the same way for
+ *     every connection Chromium makes.
  */
 export class BlockedUrlError extends Error {
   constructor(message: string) {
@@ -96,24 +108,38 @@ export function assertSafeHttpsUrl(raw: string): URL {
 
 /**
  * The structural checks plus a DNS resolution: every resolved address must be
- * public. A DNS failure is left for the real request to surface — it must not
- * be treated as "safe" and it must not mask a genuine outage as an SSRF block.
+ * public. A DNS failure is a refusal, not a pass-through — "could not
+ * resolve" names the cause so a genuine outage reads as one.
  */
 export async function assertPublicHttpsUrl(raw: string): Promise<URL> {
   const url = assertSafeHttpsUrl(raw);
-  const host = url.hostname.replace(/^\[/, '').replace(/\]$/, '');
-  if (net.isIP(host)) return url; // already validated as a literal above
+  await resolvePublicAddress(url.hostname);
+  return url;
+}
 
+/**
+ * Resolve a hostname to the one public address a request will dial, or
+ * throw BlockedUrlError: structural hostname rules first (which also settle
+ * IP literals without touching DNS), then a lookup whose every answer must
+ * be public. Refusing on ANY private answer, rather than picking a public
+ * one, is deliberate — a name that resolves both ways is a rebinding setup,
+ * not a host to reach. A name with no answer is refused the same way.
+ */
+export async function resolvePublicAddress(hostname: string): Promise<string> {
+  assertSafeHostname(hostname);
+  const bare = hostname.replace(/^\[/, '').replace(/\]$/, '');
+  if (net.isIP(bare)) return bare;
   let addresses: Array<{ address: string }>;
   try {
-    addresses = await lookup(host, { all: true });
+    addresses = await lookup(bare, { all: true });
   } catch {
-    return url;
+    throw new BlockedUrlError(`could not resolve ${bare}`);
   }
+  if (addresses.length === 0) throw new BlockedUrlError(`could not resolve ${bare}`);
   for (const { address } of addresses) {
     if (isBlockedIP(address)) {
       throw new BlockedUrlError('host resolves to a private or reserved address');
     }
   }
-  return url;
+  return addresses[0].address;
 }

@@ -178,17 +178,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       throw tokenUrlError;
     }
 
-    const tokenResponse = await fetch(tokenEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: oidc.clientId,
-        client_secret: oidc.clientSecret,
-        code,
-        redirect_uri: `${origin}/api/auth/oidc/callback`,
-      }).toString(),
-    });
+    // safeFetch, not fetch: a redirect from the token endpoint is re-checked
+    // and the socket is dialled at the address the guard verified, so the
+    // secret cannot be sent on to an internal host either way.
+    let tokenResponse: Response;
+    try {
+      tokenResponse = await safeFetch(tokenEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: oidc.clientId,
+          client_secret: oidc.clientSecret,
+          code,
+          redirect_uri: `${origin}/api/auth/oidc/callback`,
+        }).toString(),
+      });
+    } catch (tokenFetchError) {
+      if (tokenFetchError instanceof BlockedUrlError) {
+        logger.error('Token endpoint is not an allowed URL: {detail}', {
+          component: 'auth/oidc',
+          tenantId,
+          detail: tokenFetchError.message,
+        });
+        return NextResponse.json({ error: 'Invalid token endpoint' }, { status: 400 });
+      }
+      throw tokenFetchError;
+    }
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();

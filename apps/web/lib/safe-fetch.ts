@@ -1,5 +1,10 @@
-import { lookup } from 'node:dns/promises';
 import net from 'node:net';
+import {
+  guardedFetch,
+  resolvePublicAddress,
+  type GuardedFetchDeps,
+  type GuardedFetchInit,
+} from '@renkei/connector-sandbox';
 
 /**
  * SSRF guard for URLs that come from tenant configuration or from a discovery
@@ -9,18 +14,24 @@ import net from 'node:net';
  * (cloud metadata), `localhost`, or other internal hosts, and read back the
  * status/parsed fields.
  *
- * Two layers:
+ * Three layers:
  *   - `assertSafeHttpsUrl` — synchronous, DNS-free: scheme allow-list (https
  *     only) plus rejection of IP literals in private/reserved ranges and the
  *     `localhost` family. Cheap and deterministic; unit-tested.
  *   - `assertPublicHttpsUrl` — the above, then a DNS resolution whose every
  *     A/AAAA answer must be a public address, catching a hostname that points
- *     at an internal IP.
+ *     at an internal IP. A name that does not resolve is refused too.
+ *   - `safeFetch` — the request, through @renkei/connector-sandbox's
+ *     `guardedFetch`: redirects followed by hand with every Location re-run
+ *     through the guard (an http:// downgrade or a private target is
+ *     refused, at most five hops), and each hop dialled at the very address
+ *     its resolution verified, closing the DNS-rebinding window a
+ *     resolve-then-fetch check leaves open.
  *
- * Residual caveat: a name that passes resolution and then rebinds to a private
- * IP before the socket connects (DNS rebinding) is not fully closed here — that
- * needs connect-time pinning. This blocks the direct and hostname-indirection
- * cases, which are the exposure that matters for the OIDC flows.
+ * The structural checks are kept here, verbatim, rather than imported: they
+ * are the file's own tested contract and the sandbox package's copy is the
+ * same code. The resolution and the request are shared, so the two guards
+ * cannot drift on what matters most.
  */
 export class BlockedUrlError extends Error {
   constructor(message: string) {
@@ -94,33 +105,38 @@ export function assertSafeHttpsUrl(raw: string): URL {
 
 /**
  * The structural checks plus a DNS resolution: every resolved address must be
- * public. A DNS failure is left for the real request to surface — it must not
- * be treated as "safe" and it must not mask a genuine outage as an SSRF block.
+ * public. A DNS failure is a refusal (BlockedUrlError "could not resolve"),
+ * never a pass-through to the real request.
  */
 export async function assertPublicHttpsUrl(raw: string): Promise<URL> {
   const url = assertSafeHttpsUrl(raw);
-  const host = url.hostname.replace(/^\[/, '').replace(/\]$/, '');
-  if (net.isIP(host)) return url; // already validated as a literal above
-
-  let addresses: Array<{ address: string }>;
   try {
-    addresses = await lookup(host, { all: true });
-  } catch {
-    return url;
-  }
-  for (const { address } of addresses) {
-    if (isBlockedIP(address)) {
-      throw new BlockedUrlError('host resolves to a private or reserved address');
-    }
+    await resolvePublicAddress(url.hostname);
+  } catch (error) {
+    // The sandbox package's BlockedUrlError is a different class; callers
+    // here check against this file's.
+    throw new BlockedUrlError(error instanceof Error ? error.message : 'host is not allowed');
   }
   return url;
 }
 
 /**
- * fetch() gated by assertPublicHttpsUrl. Use for every request whose URL is
- * derived from tenant config or a discovery document.
+ * fetch() gated by the guard on the first URL and on every redirect, each
+ * hop connected at its verified address (guardedFetch). Use for every
+ * request whose URL is derived from tenant config or a discovery document.
+ * Throws this file's BlockedUrlError for a refused URL or redirect.
  */
-export async function safeFetch(raw: string, init?: RequestInit): Promise<Response> {
-  await assertPublicHttpsUrl(raw);
-  return fetch(raw, init);
+export async function safeFetch(
+  raw: string,
+  init?: GuardedFetchInit,
+  deps?: GuardedFetchDeps
+): Promise<Response> {
+  try {
+    return await guardedFetch(raw, init, deps);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'BlockedUrlError') {
+      throw new BlockedUrlError(error.message);
+    }
+    throw error;
+  }
 }

@@ -27,11 +27,17 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
-import { lookup } from 'node:dns/promises';
 import net, { type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
-import { assertSafeHostname, BlockedUrlError, isBlockedIP } from '@renkei/connector-sandbox';
+import { BlockedUrlError, resolvePublicAddress } from '@renkei/connector-sandbox';
 import { logger } from './logger';
+
+/**
+ * The resolver the proxy dials through — the shared guard's own, so the
+ * browser, `sandbox_download_url` and the web app's guarded fetch all
+ * refuse (and pin) exactly alike. Re-exported for the tests that drive it.
+ */
+export { resolvePublicAddress };
 
 export interface EgressProxy {
   /** The loopback port Chromium is pointed at. */
@@ -54,32 +60,6 @@ const IDLE_TIMEOUT_MS = 120_000;
 function portAllowed(port: number): boolean {
   if (!Number.isInteger(port) || port <= 0 || port > 65535) return false;
   return port === 80 || port === 443 || port >= 1024;
-}
-
-/**
- * The default resolver: structural hostname rules first (which also
- * settles IP literals without touching DNS), then a lookup whose every
- * answer must be public. Refusing on ANY private answer, rather than
- * picking a public one, matches assertPublicHttpsUrl — a name that
- * resolves both ways is a rebinding setup, not a host to reach.
- */
-export async function resolvePublicAddress(hostname: string): Promise<string> {
-  assertSafeHostname(hostname);
-  const bare = hostname.replace(/^\[/, '').replace(/\]$/, '');
-  if (net.isIP(bare)) return bare;
-  let addresses: Array<{ address: string }>;
-  try {
-    addresses = await lookup(bare, { all: true });
-  } catch {
-    throw new BlockedUrlError(`could not resolve ${bare}`);
-  }
-  if (addresses.length === 0) throw new BlockedUrlError(`could not resolve ${bare}`);
-  for (const { address } of addresses) {
-    if (isBlockedIP(address)) {
-      throw new BlockedUrlError('host resolves to a private or reserved address');
-    }
-  }
-  return addresses[0].address;
 }
 
 /** `host:port` from a CONNECT target, with a bracketed IPv6 host kept intact. */
