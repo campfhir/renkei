@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
+jest.mock('@renkei/settings', () => ({ getOrgSettings: jest.fn() }));
 /**
  * The sandbox worker client's own contract: every op is a bearer-authed
  * POST to SANDBOX_WORKER_URL, a missing config answers 'unconfigured'
@@ -19,17 +20,48 @@ import {
   sbChartRender,
   sbChartStage,
   sandboxChartsEnabled,
+  sandboxBrowserEnabled,
   clientFailure,
   sbWorkspaceGet,
   sbWorkspaceExec,
   sbRunScript,
-  sandboxScriptsEnabled,
-  sandboxScriptsAllowNetwork,
   sandboxScriptsServed,
-  sbScriptsStatus,
-  resetScriptsStatusForTests,
+  sandboxFeatures,
+  sbCapabilities,
+  resetSandboxCapabilitiesForTests,
   setRetryDelayForTests,
 } from './index';
+
+const { getOrgSettings } = jest.requireMock<{ getOrgSettings: jest.Mock }>('@renkei/settings');
+
+/** An organization with every sandbox switch as given (default: all on). */
+function orgWith(overrides: Record<string, boolean> = {}): void {
+  getOrgSettings.mockResolvedValue({
+    ok: true,
+    val: {
+      sandboxBrowserEnabled: true,
+      sandboxChartsEnabled: true,
+      sandboxWorkspacesEnabled: true,
+      sandboxServicesEnabled: true,
+      sandboxScriptsEnabled: true,
+      sandboxScriptsAllowNetwork: false,
+      ...overrides,
+    },
+  });
+}
+
+/** The worker's /health, answering the given capabilities. */
+function workerCan(capabilities: Record<string, unknown> | null): jest.SpiedFunction<typeof fetch> {
+  return jest
+    .spyOn(globalThis, 'fetch')
+    .mockImplementation(async (input) =>
+      String(input).endsWith('/health')
+        ? capabilities
+          ? new Response(JSON.stringify({ ok: true, capabilities }))
+          : new Response('not json', { status: 500 })
+        : new Response('{}', { status: 404 })
+    );
+}
 
 /** A ready workspace as the worker answers it, for the retry test. */
 function readyWorkspaceWire() {
@@ -303,65 +335,67 @@ describe('sbRunScript', () => {
     fetchSpy?.mockRestore();
   });
 
-  it('is offered only where the worker is configured and the flag is set', () => {
-    expect(sandboxScriptsEnabled()).toBe(false);
-    process.env.SANDBOX_SCRIPTS_ENABLED = 'true';
-    expect(sandboxScriptsEnabled()).toBe(true);
-    delete process.env.SANDBOX_WORKER_API_KEY;
-    expect(sandboxScriptsEnabled()).toBe(false);
-  });
-
-  it('reads the operator’s network opt-in from its own flag', () => {
-    expect(sandboxScriptsAllowNetwork()).toBe(false);
-    process.env.SANDBOX_SCRIPTS_ALLOW_NETWORK = 'true';
-    expect(sandboxScriptsAllowNetwork()).toBe(true);
-  });
-
-  it('reads what the worker does with scripts from /health, and nothing from an unreadable answer', async () => {
+  it('reads what the worker can do from /health, and nothing from an unreadable answer', async () => {
     fetchSpy = jest
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, scripts: 'unavailable' })))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            capabilities: {
+              browser: true,
+              charts: false,
+              workspaces: true,
+              services: false,
+              scripts: 'network_only',
+            },
+          })
+        )
+      )
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })))
       .mockRejectedValueOnce(new Error('ECONNREFUSED'));
-    expect(await sbScriptsStatus()).toBe('unavailable');
+    expect(await sbCapabilities()).toEqual({
+      browser: true,
+      charts: false,
+      workspaces: true,
+      services: false,
+      scripts: 'network_only',
+    });
     expect(fetchSpy.mock.calls[0]![0]).toBe('http://sandbox.internal:8092/health');
-    expect(await sbScriptsStatus()).toBeNull();
-    expect(await sbScriptsStatus()).toBeNull();
+    expect(await sbCapabilities()).toBeNull();
+    expect(await sbCapabilities()).toBeNull();
   });
 
-  it('withholds the tool once the worker has said scripts are unavailable, and offers it until then', async () => {
-    resetScriptsStatusForTests();
-    process.env.SANDBOX_SCRIPTS_ENABLED = 'true';
-    fetchSpy = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(JSON.stringify({ ok: true, scripts: 'unavailable' })));
-    // The first call has no answer yet: the flag decides, and the probe is kicked off once.
-    expect(sandboxScriptsServed()).toBe(true);
-    expect(sandboxScriptsServed()).toBe(true);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+  it('offers scripts only where the org has them on AND the worker can isolate a run, or the org accepted its network', async () => {
+    resetSandboxCapabilitiesForTests();
+    orgWith({ sandboxScriptsEnabled: true, sandboxScriptsAllowNetwork: false });
+    fetchSpy = workerCan({ scripts: 'network_only' });
+    expect(await sandboxScriptsServed('tenant-1')).toBe(false);
+    // The worker's answer is remembered: one probe for many calls.
+    expect(await sandboxScriptsServed('tenant-1')).toBe(false);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(sandboxScriptsServed()).toBe(false);
-    // Without the flag nothing is asked at all.
-    delete process.env.SANDBOX_SCRIPTS_ENABLED;
-    expect(sandboxScriptsServed()).toBe(false);
-    resetScriptsStatusForTests();
+
+    orgWith({ sandboxScriptsEnabled: true, sandboxScriptsAllowNetwork: true });
+    const features = await sandboxFeatures('tenant-1');
+    expect(features.scripts).toBe(true);
+    expect(features.scriptsNetworkShared).toBe(true);
+
+    orgWith({ sandboxScriptsEnabled: false, sandboxScriptsAllowNetwork: true });
+    expect(await sandboxScriptsServed('tenant-1')).toBe(false);
+    resetSandboxCapabilitiesForTests();
   });
 
-  it('keeps offering the tool where the worker isolates or shares the network, or cannot be asked', async () => {
-    process.env.SANDBOX_SCRIPTS_ENABLED = 'true';
-    for (const answer of [
-      new Response(JSON.stringify({ ok: true, scripts: 'isolated' })),
-      new Response(JSON.stringify({ ok: true, scripts: 'network_shared' })),
-      new Response('not json', { status: 500 }),
-    ]) {
-      resetScriptsStatusForTests();
+  it('keeps offering scripts where the worker isolates them, or cannot be asked', async () => {
+    orgWith({ sandboxScriptsEnabled: true });
+    for (const capabilities of [{ scripts: 'isolated' }, null]) {
+      resetSandboxCapabilitiesForTests();
       fetchSpy?.mockRestore();
-      fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(answer);
-      sandboxScriptsServed();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(sandboxScriptsServed()).toBe(true);
+      fetchSpy = workerCan(capabilities);
+      const features = await sandboxFeatures('tenant-1');
+      expect(features.scripts).toBe(true);
+      expect(features.scriptsNetworkShared).toBe(false);
     }
-    resetScriptsStatusForTests();
+    resetSandboxCapabilitiesForTests();
   });
 
   it('POSTs to /v1/scripts/run with the target merged in and reads the outcome back', async () => {
@@ -904,16 +938,34 @@ describe('secrets', () => {
 });
 
 describe('sandboxBrowserEnabled', () => {
-  it('needs both the worker config and the flag', async () => {
-    const { sandboxBrowserEnabled } = await import('./index');
-    expect(sandboxBrowserEnabled()).toBe(false);
-    process.env.SANDBOX_BROWSER_ENABLED = 'true';
-    expect(sandboxBrowserEnabled()).toBe(true);
-    process.env.SANDBOX_BROWSER_ENABLED = 'no';
-    expect(sandboxBrowserEnabled()).toBe(false);
-    process.env.SANDBOX_BROWSER_ENABLED = '1';
+  afterEach(() => resetSandboxCapabilitiesForTests());
+
+  it('needs the worker configured, the org switch on, and a worker that has a browser', async () => {
+    orgWith({ sandboxBrowserEnabled: true });
+    const spy = workerCan({ browser: true });
+    expect(await sandboxBrowserEnabled('tenant-1')).toBe(true);
+    orgWith({ sandboxBrowserEnabled: false });
+    expect(await sandboxBrowserEnabled('tenant-1')).toBe(false);
+    spy.mockRestore();
+    resetSandboxCapabilitiesForTests();
+    orgWith({ sandboxBrowserEnabled: true });
+    const without = workerCan({ browser: false });
+    expect(await sandboxBrowserEnabled('tenant-1')).toBe(false);
+    without.mockRestore();
     delete process.env.SANDBOX_WORKER_URL;
-    expect(sandboxBrowserEnabled()).toBe(false);
+    expect(await sandboxBrowserEnabled('tenant-1')).toBe(false);
+  });
+
+  it('opens nothing when the org settings cannot be read', async () => {
+    getOrgSettings.mockResolvedValue({ ok: false, err: 'DB_ERROR' });
+    expect(await sandboxFeatures('tenant-1')).toEqual({
+      browser: false,
+      charts: false,
+      workspaces: false,
+      services: false,
+      scripts: false,
+      scriptsNetworkShared: false,
+    });
   });
 });
 
@@ -1096,13 +1148,22 @@ describe('language server calls', () => {
 });
 
 describe('sandboxChartsEnabled', () => {
-  it('needs the worker configured AND the flag set', () => {
-    delete process.env.SANDBOX_CHARTS_ENABLED;
-    expect(sandboxChartsEnabled()).toBe(false);
-    process.env.SANDBOX_CHARTS_ENABLED = 'true';
-    expect(sandboxChartsEnabled()).toBe(true);
+  afterEach(() => resetSandboxCapabilitiesForTests());
+
+  it('needs the worker configured AND the org switch on; services need workspaces too', async () => {
+    orgWith({
+      sandboxChartsEnabled: true,
+      sandboxWorkspacesEnabled: false,
+      sandboxServicesEnabled: true,
+    });
+    const spy = workerCan(null);
+    expect(await sandboxChartsEnabled('tenant-1')).toBe(true);
+    const features = await sandboxFeatures('tenant-1');
+    expect(features.workspaces).toBe(false);
+    expect(features.services).toBe(false);
+    spy.mockRestore();
     delete process.env.SANDBOX_WORKER_URL;
-    expect(sandboxChartsEnabled()).toBe(false);
+    expect(await sandboxChartsEnabled('tenant-1')).toBe(false);
   });
 });
 

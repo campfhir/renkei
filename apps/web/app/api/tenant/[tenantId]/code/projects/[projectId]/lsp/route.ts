@@ -36,7 +36,7 @@ export async function GET(
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
   const { project } = ready.context;
-  if (!sandboxWorkspacesEnabled()) {
+  if (!(await sandboxWorkspacesEnabled(tenantId))) {
     return NextResponse.json({ available: [], ready: false });
   }
   const target = codeProjectTarget(tenantId, projectId);
@@ -58,7 +58,7 @@ export async function POST(
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
   const { project } = ready.context;
-  if (!sandboxWorkspacesEnabled()) {
+  if (!(await sandboxWorkspacesEnabled(tenantId))) {
     return jsonError(503, 'unavailable', 'Code workspaces are not enabled on this deployment.');
   }
   if (!project.workspaceId) {

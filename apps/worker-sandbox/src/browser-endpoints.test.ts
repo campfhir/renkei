@@ -48,6 +48,7 @@ import { openSecretFields } from '@renkei/connector-sandbox';
 import { BrowserOpError } from './browser';
 import { SecretVault } from './secret-vault';
 import { createSandboxServer, type BrowserVerbs } from './server';
+import { ALL_ORG_FEATURES } from './features';
 
 const disk = jest.requireMock<{ writeStream: jest.Mock }>('./disk');
 const store = jest.requireMock<{
@@ -110,6 +111,7 @@ async function listen(deps: {
     maxFileBytes: async () => 1_048_576,
     browser: deps.browser as unknown as BrowserVerbs | null,
     vault,
+    orgFeatures: async () => ALL_ORG_FEATURES,
   });
   await new Promise<void>((resolve) => created.listen(0, '127.0.0.1', resolve));
   const address = created.address() as AddressInfo;

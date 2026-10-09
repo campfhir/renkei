@@ -59,7 +59,7 @@ export async function POST(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  if (!sandboxWorkspacesEnabled()) {
+  if (!(await sandboxWorkspacesEnabled(tenantId))) {
     return jsonError(503, 'unavailable', 'Code workspaces are not enabled on this deployment.');
   }
   const body = await readJsonBody(request);

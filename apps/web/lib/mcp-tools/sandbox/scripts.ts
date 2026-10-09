@@ -14,13 +14,12 @@
  * the wrong value on the wrong row. The script does the matching; the
  * model only ever sees what it prints and what it names.
  *
- * Registered only where the deployment runs scripts
- * (SANDBOX_SCRIPTS_ENABLED on the worker and here) and the worker has not
- * said it cannot — closed, never open. The description promises the model
- * no network only where that is so: where the operator chose
- * SANDBOX_SCRIPTS_ALLOW_NETWORK (the worker could not isolate a run and
- * was told to run anyway), the description says the script has the
- * worker's network, and every such result says it too.
+ * Registered only where the organization has scripts on and the worker
+ * can serve them (@renkei/sandbox-client sandboxFeatures) — closed, never
+ * open. The description promises the model no network only where that is
+ * so: where the organization accepted runs on the worker's network (the
+ * worker could not isolate a run), the description says the script has
+ * the worker's network, and every such result says it too.
  */
 
 import { z } from 'zod';
@@ -39,12 +38,7 @@ import {
 } from '@renkei/connector-sandbox';
 import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
-import {
-  sbRunScript,
-  clientFailure,
-  sandboxScriptsAllowNetwork,
-  type WireScriptResult,
-} from '@/lib/sandbox/service-client';
+import { sbRunScript, clientFailure, type WireScriptResult } from '@/lib/sandbox/service-client';
 
 /** What a result says when the run was not cut off from the network. */
 export const NETWORK_SHARED_NOTE =
@@ -93,7 +87,12 @@ export function renderScriptRun(
   };
 }
 
-export function registerSandboxScriptTools(server: McpServer, context: MCPToolContext): void {
+export function registerSandboxScriptTools(
+  server: McpServer,
+  context: MCPToolContext,
+  /** Whether a run here has the worker's network (the org accepted that where no isolation works). */
+  options: { networkShared: boolean }
+): void {
   server.registerTool(
     'sandbox_run_python',
     {
@@ -114,8 +113,8 @@ export function registerSandboxScriptTools(server: McpServer, context: MCPToolCo
         'omitted), so print a summary and a sample rather than every row. ' +
         'pandas, numpy, openpyxl (read and write .xlsx) and XlsxWriter are installed; the ' +
         'standard library beyond that. ' +
-        (sandboxScriptsAllowNetwork()
-          ? 'On this deployment the script HAS the sandbox worker’s network access (the operator ' +
+        (options.networkShared
+          ? 'On this deployment the script HAS the sandbox worker’s network access (the organization ' +
             'chose to run scripts without network isolation): it can reach any host the worker ' +
             'can, so treat anything it fetches or sends as leaving the sandbox, and say so when ' +
             'it matters. '

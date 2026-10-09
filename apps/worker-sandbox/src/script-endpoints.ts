@@ -9,7 +9,7 @@
  * Closed when not enabled (503 `scripts_unavailable`), like every other
  * optional family — and closed the same way, with the reason, when the
  * worker cannot isolate a run's network and the operator has not opted in
- * (scripts.ts, decideScripts). A caller that goes away before the answer — the chat
+ * (features.ts, decideScriptsFor). A caller that goes away before the answer — the chat
  * turn behind the call was stopped — takes the script with it: its
  * process tree is killed rather than left to run to its timeout unseen.
  */
@@ -25,13 +25,19 @@ import {
 } from '@renkei/connector-sandbox';
 import type * as store from './store';
 import { ScriptRunError, type ScriptRunner } from './scripts';
+import { decideScriptsFor, type OrgFeaturesLookup, type SandboxCapabilities } from './features';
+import type { NetworkIsolation } from './workspaces';
 
 export interface ScriptHandlerDeps {
   db: Kysely<DB>;
-  /** The runner, or null when SANDBOX_SCRIPTS_ENABLED is off or the boot decision closed it. */
+  /** The runner, or null when this worker has no interpreter. */
   runner: ScriptRunner | null;
-  /** Why the runner is null when it is for a reason beyond the flag (decideScripts), for the 503's message. */
-  unavailable?: string | null;
+  /** What this worker can do about scripts (features.ts), found at boot. */
+  capability: SandboxCapabilities['scripts'];
+  /** How a run is started with no network; null means it would have this container's. */
+  networkIsolation: NetworkIsolation | null;
+  /** The organization's switches, asked per request. */
+  orgFeatures: OrgFeaturesLookup;
 }
 
 type Body = Record<string, unknown>;
@@ -77,17 +83,24 @@ const REFUSAL_STATUS = { not_found: 404, too_large: 413, busy: 429 } as const;
 
 export function createScriptHandlers(deps: ScriptHandlerDeps) {
   async function run(body: Body, response: ServerResponse): Promise<void> {
+    const target = targetOf(body);
+    if (!target) return sendError(response, 400, 'bad_request');
+    // Decided per request (features.ts): the boot-time capability and the
+    // organization's own two switches, closed unless both say yes.
+    const decision = decideScriptsFor(
+      deps.capability,
+      deps.networkIsolation,
+      await deps.orgFeatures(target.tenantId)
+    );
     const runner = deps.runner;
-    if (!runner) {
+    if (!decision.serve || !runner) {
       return sendError(
         response,
         503,
         'scripts_unavailable',
-        deps.unavailable ?? 'Scripts are not enabled on this deployment.'
+        decision.serve ? 'Scripts are unavailable on this deployment.' : decision.message
       );
     }
-    const target = targetOf(body);
-    if (!target) return sendError(response, 400, 'bad_request');
     const code = validateScriptCode(body.code);
     if (!code.ok) return sendError(response, 400, 'bad_request', code.message);
     const files = validateInputFileIds(body.files);

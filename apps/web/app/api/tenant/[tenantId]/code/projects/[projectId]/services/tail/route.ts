@@ -20,7 +20,7 @@ export async function GET(
   const { tenantId, projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
-  if (!sandboxServicesEnabled()) {
+  if (!(await sandboxServicesEnabled(tenantId))) {
     return jsonError(
       503,
       'unavailable',

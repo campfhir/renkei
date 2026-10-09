@@ -87,9 +87,7 @@ import {
   sbDeleteFile,
   clientFailure,
   sandboxConfig,
-  sandboxBrowserEnabled,
-  sandboxChartsEnabled,
-  sandboxScriptsServed,
+  sandboxFeatures,
 } from '@/lib/sandbox/service-client';
 
 /** The connector key the sandbox capabilities register under. */
@@ -113,16 +111,22 @@ function filenameOfUrl(url: string): string {
 
 const TEXT_TYPES = /^(text\/|application\/(json|xml|x-yaml|yaml|javascript|ld\+json))/i;
 
-export function registerSandboxTools(server: McpServer, context: MCPToolContext): void {
-  // The browser verbs register only where the worker actually runs one
-  // (SANDBOX_BROWSER_ENABLED on both sides) — see ./browser.ts.
-  if (sandboxBrowserEnabled()) registerSandboxBrowserTools(server, context);
-  // Likewise the chart renderer (SANDBOX_CHARTS_ENABLED on both sides) — see ./charts.ts.
-  if (sandboxChartsEnabled()) registerSandboxChartTools(server, context);
-  // And scripts over staged files (SANDBOX_SCRIPTS_ENABLED on both sides,
-  // and the worker not having said on /health that it cannot start a run
-  // without a network) — see ./scripts.ts.
-  if (sandboxScriptsServed()) registerSandboxScriptTools(server, context);
+export async function registerSandboxTools(
+  server: McpServer,
+  context: MCPToolContext
+): Promise<void> {
+  // Which of the worker's features this organization gets: its own
+  // settings (admin → Settings → Sandbox) and what the worker reports it
+  // can do, resolved once per catalog (@renkei/sandbox-client).
+  const features = await sandboxFeatures(context.tenantId);
+  // The browser verbs register only where the worker runs one — see ./browser.ts.
+  if (features.browser) registerSandboxBrowserTools(server, context);
+  // Likewise the chart renderer — see ./charts.ts.
+  if (features.charts) registerSandboxChartTools(server, context);
+  // And scripts over staged files, told the truth about their network — see ./scripts.ts.
+  if (features.scripts) {
+    registerSandboxScriptTools(server, context, { networkShared: features.scriptsNetworkShared });
+  }
 
   server.registerTool(
     'sandbox_download_url',

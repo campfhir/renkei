@@ -368,6 +368,8 @@ export async function seed(client: Client): Promise<void> {
   // the tenant, so an earlier run's would block the re-creation here.
   await client.query('DELETE FROM oauth_access_tokens WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM oauth_clients WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  // Org settings do not cascade from the tenant; the rows below put some there.
+  await client.query('DELETE FROM tenant_settings WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM tenants WHERE id = $1', [E2E_TENANT_ID]);
 
   // Verified at creation: the sign-in page routes a domain only to a tenant
@@ -377,6 +379,21 @@ export async function seed(client: Client): Promise<void> {
     E2E_TENANT_ID,
     E2E_SLUG,
   ]);
+  // The sandbox features the Code pages, charts and browser specs drive,
+  // as the organization's own settings (migration 152 moved them out of
+  // SANDBOX_*_ENABLED): workspaces and services for the code specs, the
+  // browser and charts for the chat ones; scripts stay off.
+  for (const key of [
+    'sandbox_browser_enabled',
+    'sandbox_charts_enabled',
+    'sandbox_workspaces_enabled',
+    'sandbox_services_enabled',
+  ]) {
+    await client.query(
+      `INSERT INTO tenant_settings (tenant_id, key, value) VALUES ($1, $2, 'true'::jsonb)`,
+      [E2E_TENANT_ID, key]
+    );
+  }
 
   await client.query(
     `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)

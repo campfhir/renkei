@@ -161,7 +161,7 @@ export async function codeProjectContext(
   if (project.kind !== 'code' || !project.repo) return null;
   const target = codeProjectTarget(project.tenantId, project.id);
   const envNamesNone: string[] = [];
-  const servicesEnabled = sandboxServicesEnabled();
+  const servicesEnabled = await sandboxServicesEnabled(project.tenantId);
   const base = {
     repoFullName: project.repo.fullName,
     branch: project.repo.branch,
@@ -174,8 +174,8 @@ export async function codeProjectContext(
     prompt: { ...base, ...extra, ready: false, notReady },
     prelude: null,
   });
-  if (!sandboxWorkspacesEnabled()) {
-    return unavailable('code workspaces are not enabled on this deployment');
+  if (!(await sandboxWorkspacesEnabled(project.tenantId))) {
+    return unavailable('code workspaces are not enabled for this organization');
   }
 
   // The checkout as it is: present and usable, still cloning, failed, or

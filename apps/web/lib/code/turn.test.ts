@@ -6,8 +6,8 @@
  */
 
 jest.mock('@renkei/sandbox-client', () => ({
-  sandboxWorkspacesEnabled: jest.fn(() => true),
-  sandboxServicesEnabled: jest.fn(() => false),
+  sandboxWorkspacesEnabled: jest.fn(async () => true),
+  sandboxServicesEnabled: jest.fn(async () => false),
   sbEnvList: jest.fn(async () => ({ ok: true, val: [{ name: 'NPM_TOKEN' }] })),
   sbWorkspaceGet: jest.fn(),
   clientFailure: jest.fn(() => ({ status: 400, message: 'failed' })),

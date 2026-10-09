@@ -38,6 +38,7 @@ import type { AddressInfo } from 'node:net';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { createSandboxServer } from './server';
+import { ALL_ORG_FEATURES } from './features';
 import { createWorkspaceHandlers } from './workspace-endpoints';
 import {
   ORPHAN_GRACE_MS,
@@ -110,6 +111,7 @@ beforeAll(async () => {
     db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     workspaces: true,
+    orgFeatures: async () => ALL_ORG_FEATURES,
   });
   disabledServer = createSandboxServer({ db: {} as Kysely<DB>, apiKeys: [API_KEY] });
   enabledBase = await listen(enabledServer);
@@ -232,7 +234,11 @@ describe('the sweep across instances', () => {
       expired('ws-elsewhere-orphan', 'tenant-1/hash/ws-elsewhere-orphan', ORPHAN_GRACE_MS + 60_000),
     ]);
     workspaceStore.deleteWorkspaceById.mockResolvedValue(undefined);
-    await createWorkspaceHandlers({ db: {} as Kysely<DB>, enabled: true }).sweep(10);
+    await createWorkspaceHandlers({
+      db: {} as Kysely<DB>,
+      capable: true,
+      enabledFor: async () => true,
+    }).sweep(10);
     const deleted = workspaceStore.deleteWorkspaceById.mock.calls.map((call) => call[1]);
     expect(deleted.sort()).toEqual(['ws-elsewhere-orphan', 'ws-expired-here']);
     await expect(readFile(join(workspaceDir(here), 'src'))).rejects.toThrow();
@@ -758,6 +764,7 @@ describe('language servers over the wire', () => {
       apiKeys: [API_KEY],
       workspaces: true,
       lsp: sessions,
+      orgFeatures: async () => ALL_ORG_FEATURES,
     });
     lspBase = await listen(lspServer);
   });

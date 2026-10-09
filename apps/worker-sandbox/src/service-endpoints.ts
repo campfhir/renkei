@@ -48,8 +48,10 @@ import type { ServiceTarget } from './service-store';
 
 export interface ServiceHandlerDeps {
   db: Kysely<DB>;
-  /** The manager, when SANDBOX_SERVICES_ENABLED and the engine answered at boot; null answers every verb 503. */
+  /** The manager, when the engine answered at boot; null answers every verb 503. */
   manager: ServiceManager | null;
+  /** Whether the organization has services on (its settings, with workspaces), asked per request. */
+  enabledFor: (tenantId: string) => Promise<boolean>;
 }
 
 type Body = Record<string, unknown>;
@@ -112,12 +114,14 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 export function createServiceHandlers(deps: ServiceHandlerDeps) {
   const { db } = deps;
 
-  function unavailable(response: ServerResponse): void {
+  function unavailable(response: ServerResponse, why: 'deployment' | 'organization'): void {
     sendError(
       response,
       503,
       'services_unavailable',
-      'Code project services are not enabled on this deployment.'
+      why === 'deployment'
+        ? 'Code project services are not available on this deployment.'
+        : 'Code project services are not enabled for this organization (admin → Settings → Sandbox).'
     );
   }
 
@@ -243,13 +247,15 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
 
   async function handleServices(op: string, body: Body, response: ServerResponse): Promise<void> {
     const manager = deps.manager;
-    if (!manager) return unavailable(response);
+    if (!manager) return unavailable(response, 'deployment');
+    const tenantId = str(body.tenantId);
+    if (!tenantId) return sendError(response, 400, 'bad_request');
+    if (!(await deps.enabledFor(tenantId))) return unavailable(response, 'organization');
     if (op.startsWith('rules/')) {
       return guarded(response, () => handleRules(op.slice('rules/'.length), body, response));
     }
-    const tenantId = str(body.tenantId);
     const subject = str(body.subject);
-    if (!tenantId || !subject) return sendError(response, 400, 'bad_request');
+    if (!subject) return sendError(response, 400, 'bad_request');
     const target: ServiceTarget = { tenantId, subject };
     return guarded(response, async () => {
       switch (op) {

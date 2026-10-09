@@ -18,7 +18,7 @@ import {
 import type { WireImageRule, WireService } from '@renkei/sandbox-client';
 
 export interface ServicesView {
-  /** The deployment offers services at all (SANDBOX_SERVICES_ENABLED on both sides). */
+  /** The organization gets services at all (its own setting, and a worker with an engine). */
   enabled: boolean;
   services: WireService[];
   /** The organization's allow-list, as patterns; empty means nothing can be started. */

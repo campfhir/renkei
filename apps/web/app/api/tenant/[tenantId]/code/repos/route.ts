@@ -19,7 +19,7 @@ export async function GET(
   const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!sandboxWorkspacesEnabled())
+  if (!(await sandboxWorkspacesEnabled(tenantId)))
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const search = request.nextUrl.searchParams;
   const listed = await listRepositories(
