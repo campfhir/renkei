@@ -104,6 +104,9 @@ export async function orgTransferLimit(tenantId: string): Promise<number> {
 type WorkerErrorType =
   | 'bad_request'
   | 'unauthorized'
+  // Named by @renkei/worker-kit when a key's caller may not run an op; this
+  // worker does not tell callers apart, so it never answers it itself.
+  | 'forbidden'
   | 'not_configured'
   | 'store'
   | 'discovery_failed'
@@ -123,6 +126,8 @@ function statusForError(type: WorkerErrorType): number {
       return 400;
     case 'unauthorized':
       return 401;
+    case 'forbidden':
+      return 403;
     case 'too_large':
       return 413;
     case 'not_configured':
@@ -308,7 +313,10 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
           // PATCH bodies are JSON Patch documents; OnBase requires that
           // media type explicitly, not plain application/json.
           ...(body.body !== undefined
-            ? { 'content-type': method === 'PATCH' ? 'application/json-patch+json' : 'application/json' }
+            ? {
+                'content-type':
+                  method === 'PATCH' ? 'application/json-patch+json' : 'application/json',
+              }
             : {}),
         },
         ...(body.body !== undefined ? { body: JSON.stringify(body.body) } : {}),
@@ -617,7 +625,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       // an OnBase API server is listening and demanding auth. The probe
       // path differs by connector: the Administration API's document-types
       // list lives under /api, the Document API's does not.
-      const pingPath = connector === ONBASE_ADMIN_CONNECTOR ? '/api/document-types' : '/document-types';
+      const pingPath =
+        connector === ONBASE_ADMIN_CONNECTOR ? '/api/document-types' : '/document-types';
       const ping = await timedFetch(
         `${apiBaseUrl}${pingPath}`,
         { headers: { accept: 'application/json' } },

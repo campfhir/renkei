@@ -93,6 +93,9 @@ const REQUESTED_WITH = 'OpenAPI';
 type WorkerErrorType =
   | 'bad_request'
   | 'unauthorized'
+  // Named by @renkei/worker-kit when a key's caller may not run an op; this
+  // worker does not tell callers apart, so it never answers it itself.
+  | 'forbidden'
   | 'no_instance'
   | 'not_connected'
   | 'bad_credentials'
@@ -111,6 +114,8 @@ export function statusForError(type: WorkerErrorType): number {
       return 400;
     case 'unauthorized':
       return 401;
+    case 'forbidden':
+      return 403;
     case 'not_connected':
     case 'login_failed':
       return 403;
