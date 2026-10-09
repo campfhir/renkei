@@ -401,7 +401,7 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
       <Section title="MCP clients & tokens">
         <Row
           label="Dynamic client registration"
-          hint="Lets MCP clients (Claude, editors) register themselves on this org's OAuth server without an admin pre-creating each one."
+          hint="Lets MCP clients (Claude, editors) register themselves on this org's OAuth server without an admin pre-creating each one. Off by default: turn it on while people are connecting clients. Every connection still stops at a consent page naming the client."
         >
           <Toggle
             on={values.enableDcr}

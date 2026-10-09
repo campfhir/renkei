@@ -39,6 +39,12 @@ export type AuditAction =
   | 'agent.access_revoked'
   | 'agent.copied'
   | 'settings.updated'
+  /** A person allowed an MCP client to act as them (details: clientId, redirectTarget). */
+  | 'oauth.consent_granted'
+  /** A person refused an MCP client on the consent page (details: clientId, redirectTarget). */
+  | 'oauth.consent_denied'
+  /** A client registered itself through dynamic client registration (details: clientId, redirectUris). */
+  | 'oauth.client_registered'
   | 'knowledge.reindex.started'
   | 'knowledge.reindex.paused'
   | 'knowledge.reindex.resumed'

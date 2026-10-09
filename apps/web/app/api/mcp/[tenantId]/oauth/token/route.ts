@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { getDatabase } from '@renkei/db';
-import { randomUUID, createHash } from 'crypto';
+import { randomUUID } from 'crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { storeAccessToken, generateSecret, hashToken, digestsMatch } from '@/lib/mcp-token';
@@ -12,6 +12,7 @@ import {
   type ClientCredentials,
 } from '@/lib/oauth-client-auth';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
+import { isWellFormedVerifier, verifierMatchesChallenge } from '@/lib/oauth-pkce';
 
 /**
  * Unauthenticated until the client secret verifies, so throttled per
@@ -232,24 +233,36 @@ async function handleAuthorizationCodeGrant(
       );
     }
 
-    // Validate PKCE if code_challenge was present
-    if (authCode.code_challenge && authCode.code_challenge_method) {
-      if (!code_verifier) {
-        return NextResponse.json(
-          { error: 'invalid_request', error_description: 'code_verifier is required for PKCE' },
-          { status: 400 }
-        );
-      }
-
-      const challenge =
-        authCode.code_challenge_method === 'S256' ? computeS256(code_verifier) : code_verifier;
-
-      if (challenge !== authCode.code_challenge) {
-        return NextResponse.json(
-          { error: 'invalid_grant', error_description: 'PKCE verification failed' },
-          { status: 400 }
-        );
-      }
+    // PKCE is not optional: the authorize endpoint refuses a request
+    // without an S256 challenge, so a code row without one was not minted
+    // by this server's current flow and is not exchanged.
+    if (authCode.code_challenge_method !== 'S256' || !authCode.code_challenge) {
+      await db.deleteFrom('oauth_authorization_codes').where('code', '=', code).execute();
+      return NextResponse.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Authorization code was issued without PKCE; authorize again',
+        },
+        { status: 400 }
+      );
+    }
+    if (!isWellFormedVerifier(code_verifier)) {
+      return NextResponse.json(
+        {
+          error: 'invalid_request',
+          error_description:
+            'code_verifier is required: 43 to 128 unreserved characters (PKCE, RFC 7636)',
+        },
+        { status: 400 }
+      );
+    }
+    if (!verifierMatchesChallenge(code_verifier, authCode.code_challenge)) {
+      // A wrong verifier burns the code: whoever holds it is guessing.
+      await db.deleteFrom('oauth_authorization_codes').where('code', '=', code).execute();
+      return NextResponse.json(
+        { error: 'invalid_grant', error_description: 'PKCE verification failed' },
+        { status: 400 }
+      );
     }
 
     // Generate tokens
@@ -545,13 +558,4 @@ async function currentRolesFor(
     .limit(1)
     .executeTakeFirst();
   return live ? live.roles : fallback;
-}
-
-function computeS256(codeVerifier: string): string {
-  return createHash('sha256')
-    .update(codeVerifier)
-    .digest('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
 }

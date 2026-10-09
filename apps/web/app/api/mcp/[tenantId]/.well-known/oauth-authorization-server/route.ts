@@ -3,6 +3,7 @@ import { logger } from '@/lib/logger';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getOrigin } from '@/lib/get-origin';
 import { getDatabase } from '@renkei/db';
+import { CODE_CHALLENGE_METHODS } from '@/lib/oauth-pkce';
 
 export async function GET(
   request: NextRequest,
@@ -57,7 +58,9 @@ export async function GET(
       token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
       revocation_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
       introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
-      code_challenge_methods_supported: ['S256', 'plain'],
+      // PKCE is required of every client, and only the S256 transform is
+      // accepted (lib/oauth-pkce.ts); `plain` sends the verifier itself.
+      code_challenge_methods_supported: [...CODE_CHALLENGE_METHODS],
       scopes_supported: ['openid', 'profile', 'email'],
       claims_supported: ['sub', 'name', 'email', 'email_verified'],
       subject_types_supported: ['public'],

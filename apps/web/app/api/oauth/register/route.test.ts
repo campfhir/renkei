@@ -1,4 +1,9 @@
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+jest.mock('@renkei/settings', () => ({
+  getOrgSettings: jest.fn(),
+  DEFAULT_ORG_SETTINGS: { enableDcr: false },
+}));
+jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 
 import { NextRequest } from 'next/server';
 import { POST } from './route';
@@ -8,6 +13,9 @@ import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 // stand in for a Kysely instance, which cannot be satisfied structurally,
 // and the codebase bans type assertions.
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const { getOrgSettings: mockGetOrgSettings } = jest.requireMock<{ getOrgSettings: jest.Mock }>(
+  '@renkei/settings'
+);
 
 const REAL_TENANT = '00000000-0000-4000-8000-000000000001';
 
@@ -72,7 +80,38 @@ function requestWith(options: { referer?: string; redirectUris?: string[] } = {}
 describe('POST /api/oauth/register (system-level)', () => {
   beforeEach(() => {
     mockGetDatabase.mockReset();
+    mockGetOrgSettings.mockReset().mockResolvedValue({ ok: true, val: { enableDcr: true } });
     resetInboundLimits();
+  });
+
+  it("honours the named tenant's own registration setting, not the platform default", async () => {
+    // The platform default is off; this org switched registration on, and
+    // the route used to consult the default anyway.
+    const { inserted } = stubDb({ id: REAL_TENANT });
+    mockGetOrgSettings.mockResolvedValue({ ok: true, val: { enableDcr: false } });
+    const response = await POST(
+      requestWith({ referer: `http://localhost/api/mcp/${REAL_TENANT}/http` })
+    );
+    expect(response.status).toBe(403);
+    expect(mockGetOrgSettings).toHaveBeenCalledWith(REAL_TENANT);
+    expect(inserted).toHaveLength(0);
+  });
+
+  it('refuses a redirect URI the policy refuses before touching the database', async () => {
+    const { inserted } = stubDb({ id: REAL_TENANT });
+    mockGetDatabase.mockClear();
+    const response = await POST(
+      requestWith({
+        referer: `http://localhost/api/mcp/${REAL_TENANT}/http`,
+        redirectUris: ['http://attacker.example/callback'],
+      })
+    );
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toBe('invalid_redirect_uri');
+    expect(body.error_description).toMatch(/must use https/);
+    expect(mockGetDatabase).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(0);
   });
 
   it('refuses the eleventh registration from one address in ten minutes before the database', async () => {

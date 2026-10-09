@@ -1081,6 +1081,23 @@ export interface OauthAuthorizationCodes {
   tenant_id: string;
 }
 
+/** A validated authorization request awaiting the person's answer on the consent page (migration 151). */
+export interface OauthConsentRequests {
+  client_id: string;
+  code_challenge: string;
+  code_challenge_method: string;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  id: string;
+  redirect_uri: string;
+  scope: string | null;
+  /** The browser session that started the request; only a POST from it may answer. */
+  session_id: string;
+  state: string;
+  subject: string;
+  tenant_id: string;
+}
+
 export interface OauthClients {
   client_id: string;
   client_name: string | null;
@@ -1686,6 +1703,7 @@ export interface DB {
   oauth_access_tokens: OauthAccessTokens;
   oauth_authorization_codes: OauthAuthorizationCodes;
   oauth_clients: OauthClients;
+  oauth_consent_requests: OauthConsentRequests;
   oauth_refresh_tokens: OauthRefreshTokens;
   oidc_role_mappings: OidcRoleMappings;
   operator_sessions: OperatorSessions;

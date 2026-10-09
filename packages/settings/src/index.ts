@@ -86,7 +86,13 @@ export interface OrgSettings {
    * the same tool-surface version as disabledConnectors.
    */
   connectorAudiences: Record<string, string[]>;
-  /** RFC 7591 dynamic client registration on this org's OAuth server. */
+  /**
+   * RFC 7591 dynamic client registration on this org's OAuth server. Off
+   * for an organization that never set it (migration 151 wrote the old
+   * default, on, for every organization that existed before): an open
+   * registration endpoint hands anyone a client_id to put in a link, so an
+   * admin turns it on while people are connecting MCP clients.
+   */
   enableDcr: boolean;
   /**
    * The sandbox worker's features, per organization (migration 152 moved
@@ -345,7 +351,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   readOnly: false,
   disabledConnectors: [],
   connectorAudiences: {},
-  enableDcr: true,
+  enableDcr: false,
   sandboxBrowserEnabled: false,
   sandboxChartsEnabled: false,
   sandboxWorkspacesEnabled: false,
