@@ -11,6 +11,19 @@ import {
   verifyClientSecret,
   type ClientCredentials,
 } from '@/lib/oauth-client-auth';
+import { checkInboundLimit } from '@/lib/inbound-rate-limit';
+
+/**
+ * Unauthenticated until the client secret verifies, so throttled per
+ * forwarded client address and per tenant before anything is read. A
+ * well-behaved MCP client refreshes once an hour; sixty a minute from one
+ * address is a loop or a guesser, and the per-tenant ceiling bounds what a
+ * spoofed address can widen that to.
+ */
+const LIMITS = {
+  perClient: { limit: 60, windowMs: 60_000 },
+  global: { limit: 1_200, windowMs: 60_000 },
+};
 
 /**
  * Tenant-scoped OAuth 2.0 Token endpoint (RFC 6749)
@@ -21,6 +34,14 @@ export async function POST(
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
   const { tenantId } = await params;
+
+  const verdict = checkInboundLimit(`oauth/token:${tenantId}`, request, LIMITS);
+  if (!verdict.allowed) {
+    return NextResponse.json(
+      { error: 'slow_down', error_description: 'Too many token requests' },
+      { status: 429, headers: { 'Retry-After': String(verdict.retryAfterSeconds) } }
+    );
+  }
 
   const settingsResult = await getOrgSettings(tenantId);
   if (!settingsResult.ok) {

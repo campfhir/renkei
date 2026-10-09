@@ -31,6 +31,13 @@ import { readConnectorConfigCached } from '@renkei/connector-config';
 import { ATLASSIAN_BITBUCKET_CONNECTOR } from '@/lib/atlassian-app';
 import { presentedBitbucketSecret, verifyBitbucketSecret } from '@/lib/bitbucket-webhook';
 import { logger } from '@/lib/logger';
+import {
+  checkWebhookLimit,
+  malformedSignature,
+  payloadTooLarge,
+  readWebhookBody,
+  tooManyRequests,
+} from '@/lib/webhook-intake';
 
 const eventsQueue = webhookEventsQueue();
 
@@ -44,9 +51,19 @@ export async function POST(
 ): Promise<NextResponse> {
   const { tenantId } = await params;
 
-  const rawBody = await request.text();
+  // Throttle, then the credential's presence, then a bounded body — all
+  // before any config or database read (lib/webhook-intake.ts). Bitbucket's
+  // credential is a shared secret, not an HMAC, so "shape" here is only
+  // that one arrived and is not absurdly long.
+  const verdict = checkWebhookLimit('bitbucket', tenantId, request);
+  if (!verdict.allowed) return tooManyRequests(verdict);
   const providedSecret = presentedBitbucketSecret(request.headers, request.nextUrl.searchParams);
+  if (!providedSecret || providedSecret.length > 512) return malformedSignature();
   const eventKey = request.headers.get('x-event-key');
+
+  const bodyResult = await readWebhookBody(request);
+  if (!bodyResult.ok) return payloadTooLarge();
+  const rawBody = bodyResult.val;
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {

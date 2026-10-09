@@ -831,7 +831,7 @@ find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
 - [x] Regular database backups
 - [x] PostgreSQL firewall rules (only app can connect)
 - [x] Failed login attempts logged
-- [x] Rate limiting configured (nginx or app-level)
+- [x] Rate limiting: app-level, in-process fixed windows (`apps/web/lib/inbound-rate-limit.ts`; per forwarded client address AND a per-endpoint ceiling, so a spoofed address cannot widen the budget; N replicas multiply the ceiling). Tenant creation 5/h per client, 20/h total; OIDC sign-in start 30/min per client, 600/min per tenant; OAuth token endpoint 60/min per client, 1,200/min per tenant; dynamic client registration 10 per 10 min per client, 100 per 10 min per tenant (and per the system-level endpoint); inbound webhooks 600/min per client, 6,000/min per provider+tenant; voice 120/min per person. Webhook routes also refuse a missing or malformed signature header before any config or database read, and cap bodies at 1 MiB (413). Add nginx `limit_req` in front for a ceiling that holds across replicas.
 - [x] Security headers set by the app itself (`apps/web/lib/security-headers.ts`, via `next.config.ts`): `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (camera/geolocation/payment denied, microphone self), `X-Frame-Options: DENY` + `frame-ancestors 'none'` except on the chat's framed widget/mockup routes, `Strict-Transport-Security` when `PUBLIC_BASE_URL` is https, `X-Powered-By` removed. Content-Security-Policy is REPORT-ONLY — it still carries `'unsafe-inline'` for scripts and styles until per-request nonces are wired; review reports before enforcing.
 - [x] CORS configured properly
 - [x] SQL injection prevention (using Kysely ORM)

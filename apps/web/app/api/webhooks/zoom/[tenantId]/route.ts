@@ -29,6 +29,16 @@ import {
   ZOOM_CONNECTOR,
 } from '@renkei/connector-zoom';
 import { logger } from '@/lib/logger';
+import {
+  ZOOM_SIGNATURE_SHAPE,
+  ZOOM_TIMESTAMP_SHAPE,
+  checkWebhookLimit,
+  hasSignatureShape,
+  malformedSignature,
+  payloadTooLarge,
+  readWebhookBody,
+  tooManyRequests,
+} from '@/lib/webhook-intake';
 
 const eventsQueue = webhookEventsQueue();
 
@@ -38,10 +48,23 @@ export async function POST(
 ): Promise<NextResponse> {
   const { tenantId } = await params;
 
-  // The signature covers the raw bytes; parse only after it verifies.
-  const rawBody = await request.text();
+  // Throttle, then the credential's shape, then a bounded body — all before
+  // any config or database read (lib/webhook-intake.ts).
+  const verdict = checkWebhookLimit('zoom', tenantId, request);
+  if (!verdict.allowed) return tooManyRequests(verdict);
   const signature = request.headers.get('x-zm-signature');
   const timestamp = request.headers.get('x-zm-request-timestamp');
+  if (
+    !hasSignatureShape(signature, ZOOM_SIGNATURE_SHAPE) ||
+    !hasSignatureShape(timestamp, ZOOM_TIMESTAMP_SHAPE)
+  ) {
+    return malformedSignature();
+  }
+
+  // The signature covers the raw bytes; parse only after it verifies.
+  const bodyResult = await readWebhookBody(request);
+  if (!bodyResult.ok) return payloadTooLarge();
+  const rawBody = bodyResult.val;
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {

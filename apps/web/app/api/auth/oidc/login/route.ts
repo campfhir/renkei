@@ -8,13 +8,21 @@ import { safeReturnPath } from '@/lib/return-path';
 import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 import { safeFetch } from '@/lib/safe-fetch';
 import { randomUUID } from 'crypto';
+import { checkInboundLimit } from '@/lib/inbound-rate-limit';
+
+/**
+ * Every call writes a pending_oidc_signin row and fetches the IdP's
+ * discovery document, with no session to gate on — it is the thing that
+ * creates sessions. A person signs in a few times a day; a browser stuck
+ * in a redirect loop is the legitimate worst case, and thirty a minute
+ * leaves room for it while refusing a flood of row inserts.
+ */
+const LIMITS = {
+  perClient: { limit: 30, windowMs: 60_000 },
+  global: { limit: 600, windowMs: 60_000 },
+};
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
   const { searchParams } = new URL(request.url);
   const tenantId = searchParams.get('tenantId');
   // Empty means "no preference": the callback then derives the tenant's home
@@ -26,6 +34,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!tenantId) {
     return NextResponse.json({ error: 'Missing tenantId' }, { status: 400 });
   }
+
+  const verdict = checkInboundLimit(`oidc/login:${tenantId}`, request, LIMITS);
+  if (!verdict.allowed) {
+    return NextResponse.json(
+      { error: 'Too many sign-in attempts. Try again shortly.' },
+      { status: 429, headers: { 'Retry-After': String(verdict.retryAfterSeconds) } }
+    );
+  }
+
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  }
+  const db = dbResult.val;
 
   try {
     // Verify tenant exists

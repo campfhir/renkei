@@ -22,6 +22,12 @@ import { getDatabase } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import { logger } from '@/lib/logger';
 import { throttleLog } from '@/lib/log-throttle';
+import {
+  checkWebhookLimit,
+  payloadTooLarge,
+  readWebhookBody,
+  tooManyRequests,
+} from '@/lib/webhook-intake';
 
 const MICROSOFT_SOURCE = 'microsoft';
 const eventsQueue = webhookEventsQueue();
@@ -36,6 +42,13 @@ export async function POST(
 ): Promise<NextResponse> {
   const { tenantId, accountId } = await params;
 
+  // Throttled first (lib/webhook-intake.ts). Graph does not sign
+  // notifications, so there is no signature header to check the shape of
+  // here; the per-notification clientState below is the credential, and
+  // the body is bounded before it is parsed.
+  const verdict = checkWebhookLimit('microsoft', tenantId, request);
+  if (!verdict.allowed) return tooManyRequests(verdict);
+
   // Subscription-creation handshake: echo the token as text/plain, fast,
   // before any database work — Graph abandons the subscription after 10s.
   const validationToken = new URL(request.url).searchParams.get('validationToken');
@@ -46,9 +59,11 @@ export async function POST(
     });
   }
 
+  const bodyResult = await readWebhookBody(request);
+  if (!bodyResult.ok) return payloadTooLarge();
   let body: unknown;
   try {
-    body = JSON.parse(await request.text());
+    body = JSON.parse(bodyResult.val);
   } catch {
     return NextResponse.json({ error: 'Malformed JSON body' }, { status: 400 });
   }
