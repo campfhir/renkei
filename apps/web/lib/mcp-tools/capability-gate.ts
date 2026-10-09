@@ -120,3 +120,86 @@ export function withToolAllowList(server: McpServer, allowed: ReadonlySet<string
     },
   });
 }
+
+/**
+ * Whether a tool is app-only: declared for a preview card's buttons
+ * (`_meta.ui.visibility` without 'model' — widgets.ts's APP_ONLY_META), so
+ * no model and no MCP client is meant to call it directly. Same reading
+ * the tool catalog uses for its `appOnly` flag.
+ */
+export function isAppOnlyTool(config: RegisterToolArgs[1]): boolean {
+  const meta: { ui?: { visibility?: unknown } } | undefined =
+    typeof config._meta === 'object' && config._meta !== null ? config._meta : undefined;
+  const visibility = meta?.ui?.visibility;
+  return Array.isArray(visibility) && !visibility.includes('model');
+}
+
+/**
+ * Registration-time gate for app-only tools, layered beside the allow-list:
+ * a `*_confirm` tool registers ONLY for a token the chat's widget-card
+ * confirm path minted (application 'widget' — mcp-token.ts). For every
+ * other caller — an external MCP client, an agent run, a chat turn — it is
+ * never registered, so `tools/list` never names it and `tools/call` finds
+ * nothing to call. Until this existed the visibility was metadata only:
+ * Renkei's own chat honored it, but an external client holding an OAuth
+ * token could list and call the confirm half of a preview pair directly,
+ * skipping the card the preview exists to put in front of a person.
+ */
+export function withAppOnlyGate(server: McpServer, callerIsWidget: boolean): McpServer {
+  if (callerIsWidget) return server;
+  return new Proxy(server, {
+    get(target, property, receiver) {
+      if (property === 'registerTool') {
+        return (...args: RegisterToolArgs) => {
+          const [, config] = args;
+          if (isAppOnlyTool(config)) return undefined;
+          return target.registerTool(...args);
+        };
+      }
+      const value: unknown = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+/** The refusal an app-only tool answers a caller that should never have reached it. */
+export const APP_ONLY_REFUSAL =
+  'This tool is invoked only by its preview card. Call the matching *_preview tool and let ' +
+  'the person decide from the card.';
+
+/**
+ * Call-time twin of withAppOnlyGate, applied OUTERMOST on the raw server so
+ * it holds whatever the registration layers inside it do: should an
+ * app-only tool reach registration for a non-widget caller anyway (a gate
+ * applied in the wrong order, a module registering on the raw server), its
+ * handler is replaced with a refusal. Defense in depth — the registration
+ * gate is what keeps the tool out of `tools/list`; this is what makes a
+ * call fail closed if that ever slips.
+ */
+export function withAppOnlyCallGuard(server: McpServer, callerIsWidget: boolean): McpServer {
+  if (callerIsWidget) return server;
+  return new Proxy(server, {
+    get(target, property, receiver) {
+      if (property === 'registerTool') {
+        return (...args: RegisterToolArgs) => {
+          const [name, config, handler] = args;
+          if (!isAppOnlyTool(config) || typeof handler !== 'function') {
+            return target.registerTool(...args);
+          }
+          const refusing = async () => ({
+            content: [{ type: 'text' as const, text: APP_ONLY_REFUSAL }],
+            isError: true,
+          });
+          // The SDK types a handler as a union of result shapes, so a
+          // replacement cannot be inferred across it; the refusal returns
+          // one member of that union (text content + isError), which is
+          // what the assertion states. Same idiom as withUsageTracking.
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+          return target.registerTool(name, config, refusing as typeof handler);
+        };
+      }
+      const value: unknown = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
