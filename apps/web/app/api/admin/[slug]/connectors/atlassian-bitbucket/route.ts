@@ -114,11 +114,7 @@ export async function PUT(
   // Secrets survive settings-only saves: setConnectorConfig replaces secrets
   // wholesale, so a blank/omitted secret is merged with the stored one here.
   // A secret is required only when none is stored yet.
-  const existing = await getConnectorConfig(
-    tenantId,
-    ATLASSIAN_BITBUCKET_CONNECTOR,
-    keyResult.val
-  );
+  const existing = await getConnectorConfig(tenantId, ATLASSIAN_BITBUCKET_CONNECTOR, keyResult.val);
   const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
   const mergedClientSecret =
     typeof clientSecret === 'string' && clientSecret.length > 0
@@ -133,8 +129,9 @@ export async function PUT(
   // Optional: verifies inbound webhook deliveries
   // (app/api/webhooks/bitbucket/[tenantId]/route.ts) — a repo webhook is
   // registered by hand in Bitbucket's own repository settings with this
-  // same value as a `?secret=` query parameter on the webhook URL, since
-  // Bitbucket Cloud does not sign deliveries the way GitHub Apps do.
+  // same value as an `X-Renkei-Webhook-Secret` header (or, for older
+  // registrations, a `?secret=` query parameter), since Bitbucket Cloud
+  // does not sign deliveries the way GitHub Apps do.
   const mergedWebhookSecret =
     typeof webhookSecret === 'string' && webhookSecret.length > 0
       ? webhookSecret

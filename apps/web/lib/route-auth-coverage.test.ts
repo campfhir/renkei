@@ -76,7 +76,8 @@ const NON_SESSION_AUTH: Record<string, string> = {
   'api/webhooks/github/[tenantId]/route.ts':
     'x-hub-signature-256 HMAC over raw bytes, the GitHub App Webhook secret (verifyGitHubSignature)',
   'api/webhooks/bitbucket/[tenantId]/route.ts':
-    'shared ?secret= query parameter matched against the Bitbucket connector config (verifyBitbucketSecret)',
+    'shared secret (X-Renkei-Webhook-Secret header, or legacy ?secret=) matched against the ' +
+    'Bitbucket connector config (verifyBitbucketSecret)',
 };
 
 /**

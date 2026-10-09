@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 import { logger } from '@/lib/logger';
 import { PATHNAME_HEADER } from '@/lib/return-path';
 import { hasMalformedUuidSegment } from '@/lib/uuid';
+import { loggableQuery } from '@/lib/request-log-redaction';
 
 /**
  * Health checks, Next internals, and log shipping never log: the health probe
@@ -31,7 +32,10 @@ export async function proxy(request: NextRequest) {
         component: 'web/proxy',
         method: request.method,
         pathname,
-        query: request.nextUrl.search || undefined,
+        // Never a webhook's query (it is the credential), and never the
+        // value of a credential-shaped parameter anywhere else
+        // (lib/request-log-redaction.ts).
+        query: loggableQuery(pathname, request.nextUrl.search),
         userAgent: request.headers.get('user-agent') ?? undefined,
         referer: request.headers.get('referer') ?? undefined,
         // Client address as claimed by the reverse proxy's headers — for

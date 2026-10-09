@@ -8,10 +8,12 @@
  * Unlike a GitHub App, Bitbucket Cloud has no single account-level
  * webhook and does not sign deliveries by default — a webhook is
  * registered per repository, by hand, in that repository's own
- * settings (Repository settings → Webhooks), pointed at this URL with
- * a `?secret=` query parameter matching the value set on the Bitbucket
- * connector (admin/connectors/forms/atlassian-forms.tsx's
- * showWebhookSecret field). This is a real, documented gap next to
+ * settings (Repository settings → Webhooks), pointed at this URL and
+ * carrying the value set on the Bitbucket connector
+ * (admin/connectors/forms/atlassian-forms.tsx's showWebhookSecret field)
+ * — preferably as an `X-Renkei-Webhook-Secret` header, or for webhooks
+ * registered before the header existed, as a `?secret=` query parameter
+ * (lib/bitbucket-webhook.ts). This is a real, documented gap next to
  * GitHub's zero-registration App webhook — call it out to whoever sets
  * a repository up for pipeline subscriptions.
  *
@@ -27,7 +29,7 @@ import { webhookEventsQueue } from '@renkei/queue';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { ATLASSIAN_BITBUCKET_CONNECTOR } from '@/lib/atlassian-app';
-import { verifyBitbucketSecret } from '@/lib/bitbucket-webhook';
+import { presentedBitbucketSecret, verifyBitbucketSecret } from '@/lib/bitbucket-webhook';
 import { logger } from '@/lib/logger';
 
 const eventsQueue = webhookEventsQueue();
@@ -43,7 +45,7 @@ export async function POST(
   const { tenantId } = await params;
 
   const rawBody = await request.text();
-  const providedSecret = request.nextUrl.searchParams.get('secret');
+  const providedSecret = presentedBitbucketSecret(request.headers, request.nextUrl.searchParams);
   const eventKey = request.headers.get('x-event-key');
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
