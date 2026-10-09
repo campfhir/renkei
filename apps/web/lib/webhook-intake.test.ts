@@ -52,7 +52,7 @@ describe('readWebhookBody', () => {
       method: 'POST',
       headers: { 'content-length': '10' },
       body: stream,
-      // @ts-expect-error -- undici needs duplex for a streaming body; not in the lib typings.
+      // undici needs duplex for a streaming body.
       duplex: 'half',
     });
     const result = await readWebhookBody(request, 4 * 1024);
