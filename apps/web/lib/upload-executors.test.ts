@@ -9,6 +9,7 @@
 jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
 jest.mock('@renkei/crypto', () => ({
   parseEncryptionKey: jest.fn(() => ({ ok: true, val: 'key' })),
+  loadKeyring: jest.fn(() => ({ ok: true, val: 'key' })),
 }));
 jest.mock('@renkei/provider-grants', () => ({
   ATLASSIAN: 'atlassian',

@@ -43,6 +43,7 @@ jest.mock('@renkei/connector-config', () => ({
 }));
 jest.mock('@renkei/crypto', () => ({
   parseEncryptionKey: jest.fn(() => ({ ok: true, val: Buffer.alloc(32) })),
+  loadKeyring: jest.fn(() => ({ ok: true, val: Buffer.alloc(32) })),
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
