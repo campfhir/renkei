@@ -92,7 +92,12 @@ async function seed(fixture: Fixture): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM sandbox_size_requests WHERE subject = $1', [fixture.subject]);
+    // Requests are keyed by the project's own target subject, and this
+    // project's id is the same every run.
+    await client.query(
+      'DELETE FROM sandbox_size_requests WHERE subject = $1 OR requested_by = $2',
+      [target.subject, fixture.subject]
+    );
     await client.query(`DELETE FROM settings WHERE key = 'sandbox_workspace_max_bytes'`);
     await client.query('DELETE FROM chat_projects WHERE owner_subject = $1', [fixture.subject]);
     await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
