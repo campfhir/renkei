@@ -8,19 +8,6 @@
 # finding again and the push fails, so fix the dependency and delete the
 # line, or renew the date with a reason. Keep the two lists in step.
 
-# next 16.2.12 → 16.3.8 (upgrade first; three are RCEs)
-CVE-2026-75604 exp:2026-11-30
-GHSA-2xp9-vwfh-vxw4 exp:2026-11-30
-GHSA-vcvr-r3jv-pc5j exp:2026-11-30
-CVE-2026-94483 exp:2026-11-30
-# sharp 0.34.5, postcss 8.4.31, nanoid, source-map-js — next's own pins
-GHSA-f88m-g3jw-g9cj exp:2026-11-30
-GHSA-rgj7-g3m4-5g8c exp:2026-11-30
-GHSA-wq5f-xc86-pv6w exp:2026-11-30
-CVE-2026-45623 exp:2026-11-30
-CVE-2026-73646 exp:2026-11-30
-CVE-2026-67213 exp:2026-11-30
-CVE-2026-93749 exp:2026-11-30
 # brace-expansion under exceljs → archiver and safe-functions → minimatch
 CVE-2026-14257 exp:2026-11-30
 CVE-2026-69152 exp:2026-11-30

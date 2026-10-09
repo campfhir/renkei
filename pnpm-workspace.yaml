@@ -34,23 +34,6 @@ minimumReleaseAgeExclude:
 # in step.
 auditConfig:
   ignoreGhsas:
-    # next 16.2.12 → 16.3.8 fixes all four (three are unauthenticated RCEs,
-    # two of them only on Windows hosts / next/og, which these images do not
-    # use — but upgrade FIRST). Review by 2026-11-30.
-    - GHSA-p293-qw3h-jr36
-    - GHSA-2xp9-vwfh-vxw4
-    - GHSA-vcvr-r3jv-pc5j
-    - GHSA-cjq9-62q9-8jv4
-    # next's own pins: sharp 0.34.5 (→ 0.35.5, libvips/libheif/librsvg),
-    # postcss 8.4.31 (→ 8.5.18, build-time only), nanoid and source-map-js
-    # under postcss. All lift with the next upgrade. Review by 2026-11-30.
-    - GHSA-f88m-g3jw-g9cj
-    - GHSA-rgj7-g3m4-5g8c
-    - GHSA-wq5f-xc86-pv6w
-    - GHSA-6g55-p6wh-862q
-    - GHSA-r28c-9q8g-f849
-    - GHSA-2v37-7h3g-55p8
-    - GHSA-68fv-2mgg-jv7q
     # brace-expansion (DoS on crafted glob input) under exceljs → archiver
     # and @campfhir/safe-functions → minimatch; neither feeds user-supplied
     # globs. Lift with an exceljs / safe-functions bump or a pnpm override.
@@ -70,3 +53,10 @@ auditConfig:
     - GHSA-r5fr-rjxr-66jc
 patchedDependencies:
   '@tryjsky/v9u-smb2': patches/@tryjsky__v9u-smb2.patch
+# next 16.3.8 still pins postcss 8.4.31, whose own pins of nanoid and
+# source-map-js carry fixable HIGH advisories; both patched versions sit
+# inside postcss's own ranges (^3.3.6, ^1.0.2), so the override changes
+# nothing postcss depends on. Drop these once next moves its postcss pin.
+overrides:
+  'nanoid@<3.3.18': '3.3.20'
+  'source-map-js@<1.2.2': '1.2.2'
