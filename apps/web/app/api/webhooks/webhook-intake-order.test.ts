@@ -30,16 +30,21 @@ const TENANT = '00000000-0000-4000-8000-000000000001';
 const ACCOUNT = 'acct-1';
 const HEX64 = 'a'.repeat(64);
 
+/**
+ * Every route's context, as a superset: a handler that destructures only
+ * `tenantId` accepts it, and the two per-account routes read both.
+ */
+type RouteParams = { tenantId: string; accountId: string };
 type Handler = (
   request: NextRequest,
-  context: { params: Promise<Record<string, string>> }
+  context: { params: Promise<RouteParams> }
 ) => Promise<Response>;
 
 interface Route {
   name: string;
   post: Handler;
   path: string;
-  params: Record<string, string>;
+  params: RouteParams;
   /** Headers that pass the shape check (so the body cap case gets that far). */
   validHeaders: Record<string, string>;
   /** A credential header present but of the wrong shape; null when the provider has none. */
@@ -51,7 +56,7 @@ const ROUTES: Route[] = [
     name: 'github',
     post: githubPost,
     path: `/api/webhooks/github/${TENANT}`,
-    params: { tenantId: TENANT },
+    params: { tenantId: TENANT, accountId: ACCOUNT },
     validHeaders: { 'x-hub-signature-256': `sha256=${HEX64}`, 'x-github-event': 'workflow_run' },
     malformedHeaders: { 'x-hub-signature-256': 'sha256=not-hex' },
   },
@@ -59,7 +64,7 @@ const ROUTES: Route[] = [
     name: 'bitbucket',
     post: bitbucketPost,
     path: `/api/webhooks/bitbucket/${TENANT}`,
-    params: { tenantId: TENANT },
+    params: { tenantId: TENANT, accountId: ACCOUNT },
     validHeaders: {
       'x-renkei-webhook-secret': 'shared',
       'x-event-key': 'repo:commit_status_updated',
@@ -70,7 +75,7 @@ const ROUTES: Route[] = [
     name: 'zoom',
     post: zoomPost,
     path: `/api/webhooks/zoom/${TENANT}`,
-    params: { tenantId: TENANT },
+    params: { tenantId: TENANT, accountId: ACCOUNT },
     validHeaders: { 'x-zm-signature': `v0=${HEX64}`, 'x-zm-request-timestamp': '1700000000' },
     malformedHeaders: { 'x-zm-signature': `v0=${HEX64}`, 'x-zm-request-timestamp': 'yesterday' },
   },
