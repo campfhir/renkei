@@ -47,7 +47,6 @@ export interface ActionableItems {
   step_id: string | null;
   suggested_action: Json | null;
   summary: string;
-  tenant_id: string;
   title: string;
   updated_at: Generated<Timestamp>;
 }
@@ -59,7 +58,6 @@ export interface AdmanagerInstanceConnections {
   permissions: Generated<string[]>;
   subject: string;
   technician_name: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -73,7 +71,6 @@ export interface AdmanagerInstances {
   id: Generated<string>;
   name: string;
   settings: Generated<Json>;
-  tenant_id: string;
   tls_verify: Generated<boolean>;
   updated_at: Generated<Timestamp>;
 }
@@ -85,7 +82,6 @@ export interface AgentAccessGrants {
   grantee_subject: string;
   id: Generated<string>;
   owner_subject: string;
-  tenant_id: string;
 }
 
 export interface AgentDrafts {
@@ -101,7 +97,6 @@ export interface AgentDrafts {
   request: Json;
   result: Json | null;
   status: Generated<string>;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -116,7 +111,6 @@ export interface AgentJobs {
   run_after: Generated<Timestamp>;
   source: string;
   status: Generated<string>;
-  tenant_id: string;
   type: string;
   updated_at: Generated<Timestamp>;
 }
@@ -130,7 +124,6 @@ export interface AgentJobsDeadLetters {
   ordering_key: string | null;
   payload: Json;
   source: string;
-  tenant_id: string;
   type: string;
 }
 
@@ -141,7 +134,6 @@ export interface AgentMemories {
   id: string;
   kind: Generated<string>;
   run_id: string | null;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -162,7 +154,6 @@ export interface AgentNotifications {
   run_id: string | null;
   step_id: string | null;
   subject: string;
-  tenant_id: string;
   tool: string | null;
 }
 
@@ -181,7 +172,6 @@ export interface AgentOptimizations {
   request: Json;
   result: Json | null;
   status: Generated<string>;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -192,7 +182,6 @@ export interface AgentRunCounters {
   input_tokens: Generated<number>;
   output_tokens: Generated<number>;
   runs: Generated<number>;
-  tenant_id: string;
 }
 
 export interface AgentRunLog {
@@ -211,7 +200,6 @@ export interface AgentRunLog {
   step_id: string | null;
   step_name: string | null;
   steps_version: number | null;
-  tenant_id: string;
   tool_calls: Generated<number>;
   trigger_kind: string;
 }
@@ -240,7 +228,6 @@ export interface AgentRuns {
   started_at: Timestamp | null;
   status: Generated<string>;
   steps_snapshot: Json;
-  tenant_id: string;
   trigger_id: string | null;
   trigger_kind: string;
   triggered_by_subject: string | null;
@@ -267,7 +254,6 @@ export interface AgentRunSteps {
   status: string;
   step_id: string;
   step_index: number;
-  tenant_id: string;
   tool_call_count: Generated<number>;
   updated_at: Generated<Timestamp>;
 }
@@ -287,7 +273,6 @@ export interface Agents {
   review_notes: Json | null;
   steps: Json;
   steps_version: Generated<number>;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -295,7 +280,6 @@ export interface AgentTriggerFirings {
   created_at: Generated<Timestamp>;
   dedupe_key: string;
   run_id: string | null;
-  tenant_id: string;
   trigger_id: string;
 }
 
@@ -311,7 +295,6 @@ export interface AgentTriggers {
   last_error: string | null;
   last_fired_at: Timestamp | null;
   next_run_at: Timestamp | null;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -323,7 +306,6 @@ export interface AuditEvents {
   id: string;
   target_kind: string | null;
   target_label: string | null;
-  tenant_id: string;
 }
 
 export interface BatchJobItems {
@@ -348,7 +330,6 @@ export interface BatchJobMessages {
   run_after: Generated<Timestamp>;
   source: string;
   status: Generated<string>;
-  tenant_id: string;
   type: string;
   updated_at: Generated<Timestamp>;
 }
@@ -362,7 +343,6 @@ export interface BatchJobMessagesDeadLetters {
   ordering_key: string | null;
   payload: Json;
   source: string;
-  tenant_id: string;
   type: string;
 }
 
@@ -381,7 +361,6 @@ export interface BatchJobs {
   status: Generated<string>;
   subject: string;
   succeeded: Generated<number>;
-  tenant_id: string;
   total: number | null;
   updated_at: Generated<Timestamp>;
 }
@@ -398,7 +377,6 @@ export interface BatchJobSchedules {
   next_run_at: Timestamp | null;
   schedule_config: Generated<Json>;
   subject: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -412,7 +390,6 @@ export interface BatchProcessedFiles {
   processed_at: Generated<Timestamp>;
   share_id: string;
   size: number;
-  tenant_id: string;
 }
 
 export interface ChatAttachments {
@@ -429,7 +406,6 @@ export interface ChatAttachments {
   owner_subject: string;
   project_id: string | null;
   size_bytes: Int8;
-  tenant_id: string;
 }
 
 export interface ChatMessages {
@@ -447,7 +423,6 @@ export interface ChatMessages {
   status: Generated<string>;
   stop_reason: string | null;
   summary_id: string | null;
-  tenant_id: string;
   timing: Json | null;
   turn_id: string | null;
   updated_at: Generated<Timestamp>;
@@ -465,20 +440,17 @@ export interface SandboxSizeRequests {
   requested_bytes: Int8;
   status: Generated<string>;
   subject: string;
-  tenant_id: string;
 }
 
 export interface ChatQueuedSends {
   chat_id: string;
   queue: Json;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
 export interface ChatPresence {
   chat_id: string;
   subject: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -490,7 +462,6 @@ export interface ChatProjectMemories {
   id: Generated<string>;
   kind: Generated<string>;
   project_id: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -507,7 +478,6 @@ export interface ChatProjects {
   repo_branch: string | null;
   repo_full_name: string | null;
   repo_provider: string | null;
-  tenant_id: string;
   tool_config: Json | null;
   updated_at: Generated<Timestamp>;
   workspace_id: string | null;
@@ -522,7 +492,6 @@ export interface Chats {
   llm_model_id: string | null;
   owner_subject: string;
   project_id: string | null;
-  tenant_id: string;
   thinking_enabled: Generated<boolean>;
   title: string | null;
   tool_config: Json | null;
@@ -548,7 +517,6 @@ export interface ChatSubagentRuns {
   status: Generated<string>;
   steps: Generated<number>;
   task: string;
-  tenant_id: string;
   tool_calls: Generated<number>;
   tool_use_id: string;
   transcript: string | null;
@@ -563,7 +531,6 @@ export interface ChatSummaries {
   created_by: string;
   folded_count: number;
   id: Generated<string>;
-  tenant_id: string;
   through_seq: number;
 }
 
@@ -585,7 +552,6 @@ export interface ChatTurns {
   started_at: Generated<Timestamp>;
   status: Generated<string>;
   suspended_at: Timestamp | null;
-  tenant_id: string;
   thinking_budget: number | null;
   tool_permission: Json | null;
   updated_at: Generated<Timestamp>;
@@ -598,7 +564,6 @@ export interface ChatUserMemories {
   id: Generated<string>;
   kind: Generated<string>;
   owner_subject: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -609,7 +574,6 @@ export interface ChatWidgetDecisions {
   decision: string;
   state: Json;
   state_key: string;
-  tenant_id: string;
 }
 
 export interface CoachMarkProgress {
@@ -624,7 +588,6 @@ export interface CoachMarkProgress {
   step_reached: Generated<number>;
   steps_total: Generated<number>;
   subject: string;
-  tenant_id: string;
   tour_id: string;
   tour_version: Generated<number>;
   updated_at: Generated<Timestamp>;
@@ -640,7 +603,6 @@ export interface CodeLanguageGaps {
   open_count: Generated<number>;
   reason: string;
   sample_path: string | null;
-  tenant_id: string;
 }
 
 export interface CodeProjectTemplates {
@@ -649,7 +611,6 @@ export interface CodeProjectTemplates {
   id: Generated<string>;
   instructions: string;
   name: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -660,7 +621,6 @@ export interface CodeServiceImageRules {
   pattern: string;
   registry_sealed: string | null;
   registry_username: string | null;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -670,7 +630,6 @@ export interface ConnectorConfigs {
   enabled: Generated<boolean>;
   encrypted_secrets: string;
   settings: Generated<Json>;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -689,7 +648,6 @@ export interface ContentWatches {
   scope_type: string;
   subject: string;
   sync_status: Generated<string>;
-  tenant_id: string;
   total_items: Generated<number>;
   updated_at: Generated<Timestamp>;
 }
@@ -714,7 +672,6 @@ export interface EmailClassificationLog {
   sender_key: string | null;
   template_id: string | null;
   template_version: number | null;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -727,7 +684,6 @@ export interface EmailClassifierRules {
   match_value: string;
   priority: Generated<number>;
   sender_key: string | null;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -740,7 +696,6 @@ export interface EmailCleanerScripts {
   last_error: string | null;
   name: string;
   script: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -753,7 +708,6 @@ export interface EmailExtractionTemplates {
   spec: Json;
   status: string;
   superseded_at: Timestamp | null;
-  tenant_id: string;
   version: number;
 }
 
@@ -768,7 +722,6 @@ export interface EmbeddingJobs {
   run_after: Generated<Timestamp>;
   source: string;
   status: Generated<string>;
-  tenant_id: string;
   type: string;
   updated_at: Generated<Timestamp>;
 }
@@ -782,7 +735,6 @@ export interface EmbeddingJobsDeadLetters {
   ordering_key: string | null;
   payload: Json;
   source: string;
-  tenant_id: string;
   type: string;
 }
 
@@ -797,7 +749,6 @@ export interface Events {
   run_after: Generated<Timestamp>;
   source: string;
   status: Generated<string>;
-  tenant_id: string;
   type: string;
   updated_at: Generated<Timestamp>;
 }
@@ -811,7 +762,6 @@ export interface EventsDeadLetters {
   ordering_key: string | null;
   payload: Json;
   source: string;
-  tenant_id: string;
   type: string;
 }
 
@@ -821,7 +771,6 @@ export interface FileShareConnections {
   encrypted_credentials: string;
   share_id: string;
   subject: string;
-  tenant_id: string;
   tool_access: string;
   updated_at: Generated<Timestamp>;
   username: string;
@@ -840,7 +789,6 @@ export interface FileShares {
   root_path: Generated<string>;
   settings: Generated<Json>;
   share_name: string | null;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -856,7 +804,6 @@ export interface ImageUsage {
   provider: string | null;
   subject: string;
   surface: string;
-  tenant_id: string;
   width: number | null;
 }
 
@@ -866,7 +813,6 @@ export interface Identities {
   email: string;
   idp_groups: Generated<string[]>;
   subject: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -886,7 +832,6 @@ export interface JiraAdminChangeRequests {
   site_url: string | null;
   status: Generated<string>;
   subject: string;
-  tenant_id: string;
   title: string;
   updated_at: Generated<Timestamp>;
 }
@@ -902,7 +847,6 @@ export interface JiraAdminSpaceTemplates {
   name_key: string;
   site_url: string | null;
   source_space_key: string | null;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
   updated_by: string;
 }
@@ -913,7 +857,6 @@ export interface JiraSessions {
   id: string;
   ip_address: string | null;
   last_used_at: Timestamp;
-  tenant_id: string;
   user_agent: string | null;
 }
 
@@ -928,7 +871,6 @@ export interface KnowledgeChunks {
   ref_id: string;
   search_text: string | null;
   source_at: Timestamp | null;
-  tenant_id: string;
 }
 
 export interface KnowledgeReindexRuns {
@@ -944,7 +886,6 @@ export interface KnowledgeReindexRuns {
   skipped: Generated<number>;
   started_at: Timestamp | null;
   status: Generated<string>;
-  tenant_id: string;
 }
 
 export interface LlmCalls {
@@ -963,7 +904,6 @@ export interface LlmCalls {
   run_id: string | null;
   step_id: string | null;
   subject: string;
-  tenant_id: string;
 }
 
 export interface LlmModelConfigs {
@@ -977,7 +917,6 @@ export interface LlmModelConfigs {
   model: string;
   provider: string;
   settings: Generated<Json>;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -1022,7 +961,6 @@ export interface MailBulkJobs {
   status: Generated<string>;
   subject: string;
   succeeded: Generated<number>;
-  tenant_id: string;
   total: number | null;
   updated_at: Generated<Timestamp>;
 }
@@ -1033,7 +971,6 @@ export interface MirthInstanceConnections {
   instance_id: string;
   permissions: Generated<string[]>;
   subject: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
   username: string;
 }
@@ -1048,7 +985,6 @@ export interface MirthInstances {
   id: Generated<string>;
   name: string;
   settings: Generated<Json>;
-  tenant_id: string;
   tls_verify: Generated<boolean>;
   updated_at: Generated<Timestamp>;
 }
@@ -1062,7 +998,6 @@ export interface OauthAccessTokens {
   roles: Generated<string[]>;
   scope: string | null;
   subject: string;
-  tenant_id: string;
   token_hash: string;
   tool_names: string[] | null;
 }
@@ -1078,7 +1013,6 @@ export interface OauthAuthorizationCodes {
   roles: Generated<string[]>;
   scope: string | null;
   subject: string;
-  tenant_id: string;
 }
 
 /** A validated authorization request awaiting the person's answer on the consent page (migration 151). */
@@ -1095,7 +1029,6 @@ export interface OauthConsentRequests {
   session_id: string;
   state: string;
   subject: string;
-  tenant_id: string;
 }
 
 export interface OauthClients {
@@ -1106,7 +1039,6 @@ export interface OauthClients {
   grant_types: Generated<string[]>;
   redirect_uris: string[];
   response_types: Generated<string[]>;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -1121,7 +1053,6 @@ export interface OauthRefreshTokens {
   rotated_at: Timestamp | null;
   scope: string | null;
   subject: string;
-  tenant_id: string;
   token_hash: string;
   token_id: string;
 }
@@ -1131,7 +1062,6 @@ export interface OidcRoleMappings {
   id: string;
   idp_role: string;
   renkei_role: string;
-  tenant_id: string;
 }
 
 export interface OperatorSessions {
@@ -1141,7 +1071,6 @@ export interface OperatorSessions {
   operator_name: string;
   session_id: string;
   subject: string;
-  tenant_id: string;
 }
 
 export interface PipelineTemplates {
@@ -1151,7 +1080,6 @@ export interface PipelineTemplates {
   id: Generated<string>;
   name: string;
   provider: Generated<string>;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -1177,7 +1105,6 @@ export interface PrSubscriptions {
   repo_full_name: string;
   status: Generated<string>;
   subscriber_subject: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
   watch_pipelines: Generated<boolean>;
 }
@@ -1192,7 +1119,6 @@ export interface PendingOidcSignin {
   scopes: string | null;
   state: string;
   subject: string | null;
-  tenant_id: string;
 }
 
 export interface PlatformAuditLog {
@@ -1217,7 +1143,6 @@ export interface PromptLibraries {
   name: string;
   owner_subject: string;
   published_to_org: Generated<boolean>;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -1228,7 +1153,6 @@ export interface Prompts {
   id: Generated<string>;
   library_id: string;
   position: Generated<number>;
-  tenant_id: string;
   title: string;
   updated_at: Generated<Timestamp>;
   updated_by_subject: string;
@@ -1247,7 +1171,6 @@ export interface PhiAccessEvents {
   path_hash: string | null;
   run_id: string | null;
   subject: string;
-  tenant_id: string;
   tool_name: string;
 }
 
@@ -1264,7 +1187,6 @@ export interface ProviderGrants {
   provider_account_id: string;
   requested_scopes: Generated<string[]>;
   subject: string | null;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -1272,7 +1194,6 @@ export interface ProviderRefreshLocks {
   account_id: string;
   locked_at: Generated<Timestamp>;
   provider: string;
-  tenant_id: string;
 }
 
 export interface PushSubscriptions {
@@ -1282,7 +1203,6 @@ export interface PushSubscriptions {
   id: string;
   p256dh: string;
   subject: string;
-  tenant_id: string;
 }
 
 export interface ResourceAccessGrants {
@@ -1294,7 +1214,6 @@ export interface ResourceAccessGrants {
   resource_id: string;
   resource_kind: string;
   role: Generated<string>;
-  tenant_id: string;
 }
 
 export interface ResourceKeyGrants {
@@ -1304,7 +1223,6 @@ export interface ResourceKeyGrants {
   holder_kind: Generated<string>;
   kek_version: number;
   resource_key_id: string;
-  tenant_id: string;
   wrapped_key: string;
 }
 
@@ -1313,7 +1231,6 @@ export interface ResourceKeys {
   id: Generated<string>;
   resource_id: string;
   resource_kind: string;
-  tenant_id: string;
 }
 
 export interface SandboxEnvSecrets {
@@ -1323,7 +1240,6 @@ export interface SandboxEnvSecrets {
   name: string;
   sealed: string;
   subject: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -1338,7 +1254,6 @@ export interface SandboxFiles {
   source: string;
   storage_key: string;
   subject: string;
-  tenant_id: string;
 }
 
 export interface SandboxSecrets {
@@ -1351,7 +1266,6 @@ export interface SandboxSecrets {
   name: string;
   sealed: string;
   subject: string;
-  tenant_id: string;
 }
 
 export interface SandboxServices {
@@ -1368,7 +1282,6 @@ export interface SandboxServices {
   ports: Generated<Json>;
   status: Generated<string>;
   subject: string;
-  tenant_id: string;
 }
 
 export interface DelegateInstances {
@@ -1391,7 +1304,6 @@ export interface DeviceKeyRequests {
   public_key: string;
   sealed_key: string | null;
   subject: string;
-  tenant_id: string;
   user_agent: string | null;
 }
 
@@ -1404,7 +1316,6 @@ export interface KeyDelegations {
   sealed_key: string;
   session_id: string | null;
   subject: string;
-  tenant_id: string;
 }
 
 export interface DelegateAccessEvents {
@@ -1416,7 +1327,6 @@ export interface DelegateAccessEvents {
   status: number;
   subject_hash: string | null;
   target: string | null;
-  tenant_id: string | null;
 }
 
 export interface DelegateSigningKeys {
@@ -1435,7 +1345,6 @@ export interface DelegateGitTickets {
   provider: string;
   secret_hash: string;
   subject: string;
-  tenant_id: string;
   write: Generated<boolean>;
 }
 
@@ -1452,7 +1361,6 @@ export interface SandboxWorkspaces {
   status: Generated<string>;
   storage_key: string;
   subject: string;
-  tenant_id: string;
 }
 
 export interface ScheduleCalendars {
@@ -1460,7 +1368,6 @@ export interface ScheduleCalendars {
   dates: Generated<Json>;
   id: string;
   name: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -1471,26 +1378,17 @@ export interface Sessions {
   last_used_at: Generated<Timestamp>;
   roles: Generated<string[]>;
   subject: string;
-  tenant_id: string;
 }
 
-export interface TenantDomains {
-  created_at: Generated<Timestamp>;
-  domain: string;
-  id: string;
-  tenant_id: string;
-}
-
-export interface TenantJiraSites {
+export interface JiraSites {
   claimed_at: Generated<Timestamp>;
   cloud_id: string;
   enabled: Generated<boolean>;
   jira_url: string;
   site_id: string;
-  tenant_id: string;
 }
 
-export interface TenantOidc {
+export interface OidcConfig {
   client_id: string;
   client_secret: string;
   created_at: Generated<Timestamp>;
@@ -1499,26 +1397,11 @@ export interface TenantOidc {
   issuer: string;
   operator_idp_value: string | null;
   role_claim: string | null;
-  tenant_id: string;
   user_idp_value: string | null;
 }
 
-export interface Tenants {
-  /** SHA-256 digest of the one-time onboarding secret (migration 146); null once used or never minted. */
-  bootstrap_secret_hash: string | null;
-  bootstrap_secret_expires_at: Timestamp | null;
-  created_at: Generated<Timestamp>;
-  /** The value published as `renkei-verify=<token>` in the domain's TXT record (migration 146). */
-  domain_verification_token: string | null;
-  /** When the TXT record was seen; the sign-in page routes the domain here only once set. */
-  domain_verified_at: Timestamp | null;
-  id: string;
-  slug: string;
-}
-
-export interface TenantSettings {
+export interface Settings {
   key: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
   value: Json;
 }
@@ -1533,7 +1416,6 @@ export interface ToolCalls {
   started_at: Timestamp;
   status: string;
   subject: string | null;
-  tenant_id: string;
   tool: string;
 }
 
@@ -1551,7 +1433,6 @@ export interface UploadSlots {
   result: string | null;
   status: Generated<string>;
   subject: string;
-  tenant_id: string;
   token_hash: string;
 }
 
@@ -1564,7 +1445,6 @@ export interface UserEncryptionKeys {
   salt: string;
   sealed_kek: string | null;
   subject: string;
-  tenant_id: string;
   unlocked_until: Timestamp | null;
   verifier: string | null;
   version: Generated<number>;
@@ -1575,7 +1455,6 @@ export interface UserEncryptionKeys {
 export interface UserPreferences {
   key: string;
   subject: string;
-  tenant_id: string;
   updated_at: Generated<Timestamp>;
   value: Json;
 }
@@ -1589,7 +1468,6 @@ export interface VoiceUsage {
   locale: string | null;
   provider: string | null;
   subject: string;
-  tenant_id: string;
   voice: string | null;
 }
 
@@ -1598,14 +1476,12 @@ export interface WebexDirtyWindows {
   marked_at: Generated<Timestamp>;
   room_id: string;
   subject: string | null;
-  tenant_id: string;
 }
 
 export interface WebexSentMessages {
   account_id: string | null;
   created_at: Generated<Timestamp>;
   message_id: string;
-  tenant_id: string;
 }
 
 export interface WebhookSubscriptions {
@@ -1622,7 +1498,6 @@ export interface WebhookSubscriptions {
   subject: string | null;
   subscription_id: string | null;
   sync_status: Generated<string>;
-  tenant_id: string;
   total_items: Generated<number>;
   updated_at: Generated<Timestamp>;
 }
@@ -1730,11 +1605,9 @@ export interface DB {
   sandbox_workspaces: SandboxWorkspaces;
   schedule_calendars: ScheduleCalendars;
   sessions: Sessions;
-  tenant_domains: TenantDomains;
-  tenant_jira_sites: TenantJiraSites;
-  tenant_oidc: TenantOidc;
-  tenant_settings: TenantSettings;
-  tenants: Tenants;
+  jira_sites: JiraSites;
+  oidc_config: OidcConfig;
+  settings: Settings;
   tool_calls: ToolCalls;
   image_usage: ImageUsage;
   upload_slots: UploadSlots;
