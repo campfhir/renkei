@@ -80,6 +80,7 @@ export default async function SettingsPage({
     agentMaxSteps: settings.agentMaxSteps,
     agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
     agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
+    agentActStepsRequireApproval: settings.agentActStepsRequireApproval,
     contentPollMinutes: settings.contentPollMinutes,
     webexWebhookHealthMinutes: settings.webexWebhookHealthMinutes,
     logRetentionDays: settings.logRetentionDays,

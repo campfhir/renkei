@@ -36,6 +36,29 @@ export function isLogLevel(value: unknown): value is LogLevel {
   return typeof value === 'string' && LOG_LEVELS.some((level) => level === value);
 }
 
+/**
+ * When an agent step that CHANGES something (an Act tool — readOnlyHint
+ * false) pauses for a person's approval even though its author set no
+ * `needsApproval` on it. Ordered least to most permissive as the admin
+ * select renders them.
+ *
+ * - 'externally_triggered' (the default): runs an event or webhook started
+ *   — the content that reached the model came from outside (a mail, a chat
+ *   message, an API caller), so nothing it says may write without a human
+ *   in the loop. Runs a person started by hand, or a schedule, act as the
+ *   author wrote them.
+ * - 'all': every run.
+ * - 'off': only steps whose author set `needsApproval`. A fixed high-risk
+ *   set (send mail, merge a PR, delete or share a document, directory
+ *   writes — @renkei/agents' act-approval.ts) still pauses regardless.
+ */
+export const ACT_APPROVAL_POLICIES = ['externally_triggered', 'all', 'off'] as const;
+export type ActApprovalPolicy = (typeof ACT_APPROVAL_POLICIES)[number];
+
+export function isActApprovalPolicy(value: unknown): value is ActApprovalPolicy {
+  return typeof value === 'string' && ACT_APPROVAL_POLICIES.some((policy) => policy === value);
+}
+
 /** Org-scoped policy (Decision #13: org-admins set defaults and limits). */
 export interface OrgSettings {
   /** Org-wide read-only mode: no mutating capability is exposed. */
@@ -174,6 +197,14 @@ export interface OrgSettings {
    */
   agentApprovalMaxWaitDays: number;
   /**
+   * Which agent runs pause an Act step (one whose tool changes a system)
+   * for approval when its author did not ask for one — see
+   * ActApprovalPolicy. Enforced live by the engine at the moment a step
+   * reaches for the tool, so a change bites in-flight agents without a
+   * re-save; a fixed high-risk tool set pauses whatever this says.
+   */
+  agentActStepsRequireApproval: ActApprovalPolicy;
+  /**
    * How stale watched content (Jira projects, Confluence spaces, document
    * libraries) may get before the worker polls it again. Atlassian offers
    * plain OAuth apps no push, so this dial IS that content's freshness —
@@ -291,6 +322,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentMaxSteps: 20,
   agentMaxRunsPerDay: 200,
   agentApprovalMaxWaitDays: 14,
+  agentActStepsRequireApproval: 'externally_triggered',
   contentPollMinutes: 15,
   // Above the worker's 15-minute sweep floor: the previous fixed 15-minute
   // cadence was tripping WebEx's rate limit on orgs with many opted-in
@@ -321,6 +353,10 @@ function coerce(current: unknown, fallback: boolean | number): boolean | number 
 
 function coerceLogLevel(current: unknown, fallback: LogLevel): LogLevel {
   return isLogLevel(current) ? current : fallback;
+}
+
+function coerceActApprovalPolicy(current: unknown, fallback: ActApprovalPolicy): ActApprovalPolicy {
+  return isActApprovalPolicy(current) ? current : fallback;
 }
 
 /** The first non-scalar setting, so it needs its own guard rather than coerce. */
@@ -427,6 +463,10 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     agentApprovalMaxWaitDays: Number(
       coerce(stored.get('agent_approval_max_wait_days'), d.agentApprovalMaxWaitDays)
     ),
+    agentActStepsRequireApproval: coerceActApprovalPolicy(
+      stored.get('agent_act_steps_require_approval'),
+      d.agentActStepsRequireApproval
+    ),
     contentPollMinutes: Number(coerce(stored.get('content_poll_minutes'), d.contentPollMinutes)),
     webexWebhookHealthMinutes: Number(
       coerce(stored.get('webex_webhook_health_minutes'), d.webexWebhookHealthMinutes)
@@ -489,6 +529,7 @@ export async function setOrgSettings(
     ['agent_max_steps', updates.agentMaxSteps],
     ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
     ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
+    ['agent_act_steps_require_approval', updates.agentActStepsRequireApproval],
     ['content_poll_minutes', updates.contentPollMinutes],
     ['webex_webhook_health_minutes', updates.webexWebhookHealthMinutes],
     ['log_retention_days', updates.logRetentionDays],

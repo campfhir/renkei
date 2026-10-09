@@ -112,6 +112,16 @@ export {
 } from './question-answers';
 export { chipMention, lintAgentDraft, type LintHint, type Mention } from './lint';
 export {
+  ALWAYS_APPROVAL_TOOLS,
+  actApprovalReason,
+  isAlwaysApprovalTool,
+  isExternallyTriggered,
+  type ActApprovalInput,
+  type ActApprovalReason,
+  type ToolKindHint,
+} from './act-approval';
+export { UNTRUSTED_RULE, UNTRUSTED_TAG, untrustedBlock } from './untrusted';
+export {
   normalizeAgentDraft,
   savesByPathCoverage,
   validateAgentDraft,
@@ -150,7 +160,13 @@ export {
   type ActiveHoursWindow,
   type Weekday,
 } from './recurrence';
-export { BUILTIN_VARIABLES, attemptVariables, type VariableDescriptor } from './variables';
+export {
+  BUILTIN_VARIABLES,
+  attemptVariables,
+  delimitUntrustedVariables,
+  isUntrustedVariable,
+  type VariableDescriptor,
+} from './variables';
 export {
   TRIGGER_EVENT_CATALOG,
   describeTriggerMatch,

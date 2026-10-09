@@ -54,6 +54,9 @@ import {
   type TerminalStep,
   type UntilLoopStep,
   referencedTools,
+  actApprovalReason,
+  delimitUntrustedVariables,
+  isExternallyTriggered,
 } from '@renkei/agents';
 import {
   resolveAgentLlm,
@@ -65,7 +68,7 @@ import {
   type LlmUsage,
   type ResolvedLlm,
 } from '@renkei/agent-llm';
-import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
+import { getOrgSettings, getPublicBaseUrl, type ActApprovalPolicy } from '@renkei/settings';
 import { toolKindOf } from '@renkei/tool-outcomes';
 import {
   NOTIFIER_TOOLS,
@@ -117,6 +120,7 @@ import {
   SAVE_ITEMS_MAX,
   SAVE_VALUE_CHARS,
   TOOL_RESULT_CHARS,
+  untrustedBlock,
   type PromptMessage,
 } from './prompt';
 import { logger, secure } from './logger';
@@ -146,6 +150,8 @@ const TOKEN_SLACK_SECONDS = 15 * 60;
  * runs many times), together with per-loop maxIterations and the deadline.
  */
 const MAX_RUN_ATTEMPT_ROWS = 250;
+/** Parents walked to find a chained run's root trigger — past any org's chain depth. */
+const MAX_CHAIN_WALK = 10;
 // Module scope on purpose: the factory returns its handler BEFORE its tail
 // statements run, so hoisted functions inside it may only reference consts
 // declared out here (a factory-scope const after the return stays in its
@@ -213,6 +219,10 @@ interface RunRow {
   resume_guidance: string | null;
   /** Why the run stopped or waits; 'needs-sign-in' marks a run parked for its owner's key. */
   error_kind: string | null;
+  /** What started the run: 'event' | 'schedule' | 'agent' | 'api' | 'manual' (runs.ts). */
+  trigger_kind: string;
+  /** The run that chained this one when trigger_kind is 'agent'; null otherwise. */
+  parent_run_id: string | null;
 }
 
 /** actionable_items decision → the gate's outcome vocabulary. */
@@ -377,6 +387,14 @@ interface RunContextText {
    * reason the notifier does (the bag already reaches every builder).
    */
   liveInputs: ReadonlySet<string>;
+  /**
+   * The org's act-approval policy and whether THIS run counts as
+   * externally triggered under it (@renkei/agents' act-approval.ts),
+   * resolved once at run start. Read wherever a step reaches for a tool —
+   * the gate decision — so it rides in the bag for the same reason the
+   * notifier does. The silent default fails closed until the caller fills it.
+   */
+  actApproval: { policy: ActApprovalPolicy; externallyTriggered: boolean };
 }
 
 /**
@@ -1021,6 +1039,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
         'resume_step_id',
         'resume_guidance',
         'error_kind',
+        'trigger_kind',
+        'parent_run_id',
       ])
       .where('id', '=', runId)
       .executeTakeFirst();
@@ -1248,6 +1268,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // row read above — deliberately unbounded (see RunContextText).
       const context = await loadRunContext(run);
       context.guardrailsText = agentRow.guardrails ?? '';
+      // Which act calls this run may make unattended: the org's policy,
+      // read live like the guardrails so a change bites in-flight runs,
+      // against where this run came from (resolved to the root of an
+      // agent-to-agent chain).
+      context.actApproval = {
+        policy: settings.agentActStepsRequireApproval,
+        externallyTriggered: await runIsExternallyTriggered(run),
+      };
       // One preference read per run, beside the org settings — not one per
       // tool call, which a forty-item loop would turn into forty.
       context.notifier = await notifierFor(db, {
@@ -1572,7 +1600,70 @@ export function createAgentRunHandler(deps: EngineDeps) {
       guardrailsText: '',
       notifier: SILENT_NOTIFIER,
       liveInputs: new Set(),
+      actApproval: { policy: 'all', externallyTriggered: true },
     };
+  }
+
+  /**
+   * Whether a run started from outside the org's own hand (act-approval.ts's
+   * isExternallyTriggered): an event or an API key. A run another run
+   * chained ('agent') inherits its ROOT's provenance — a mail that fired
+   * agent A, which chained agent B, is still that mail acting — so the
+   * chain is walked up through parent_run_id. A parent that is gone (pruned
+   * by retention) or a chain deeper than any the org allows reads as
+   * external: the fail-closed direction.
+   */
+  async function runIsExternallyTriggered(run: RunRow): Promise<boolean> {
+    let kind = run.trigger_kind;
+    let parentId = run.parent_run_id;
+    for (let hops = 0; kind === 'agent' && parentId && hops < MAX_CHAIN_WALK; hops += 1) {
+      const parent = await db
+        .selectFrom('agent_runs')
+        .select(['trigger_kind', 'parent_run_id'])
+        .where('id', '=', parentId)
+        .executeTakeFirst();
+      if (!parent) return true;
+      kind = parent.trigger_kind;
+      parentId = parent.parent_run_id;
+    }
+    return isExternallyTriggered(kind);
+  }
+
+  /**
+   * The tools a step may reach for that the org's policy (or the fixed
+   * high-risk list) gates behind a person — the step's own tool and its
+   * retry guidance's chips, minus the agent's blocked set, which never
+   * enter the offer at all. Empty when nothing the step can call needs a
+   * decision, which is every read-only step and, under the default
+   * policy, every act step of a run a person or a schedule started.
+   */
+  function policyGatedTools(
+    step: ActionStep,
+    toolsByName: Map<string, McpToolInfo>,
+    blockedTools: ReadonlySet<string>,
+    actApproval: RunContextText['actApproval']
+  ): Set<string> {
+    const candidates = [
+      ...(step.tool ? [step.tool] : []),
+      ...step.failureHandling.flatMap((handling) => toolSegments(handling.guidance ?? [])),
+    ];
+    const gated = new Set<string>();
+    for (const name of candidates) {
+      if (blockedTools.has(name)) continue;
+      const info = toolsByName.get(name);
+      if (!info) continue;
+      const reason = actApprovalReason({
+        tool: name,
+        kind: info.kind ?? null,
+        // The author's own gate is executeStep's/runAttempt's existing
+        // check; this set names only what the policy adds.
+        authorGated: false,
+        policy: actApproval.policy,
+        externallyTriggered: actApproval.externallyTriggered,
+      });
+      if (reason) gated.add(name);
+    }
+    return gated;
   }
 
   /** Builtins + trigger.* from initial_state; list-valued inputs also land in `lists`. */
@@ -2676,7 +2767,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // budget/insert path below so a resolved gate never spends a fresh
       // attempt, and a crash after resolving replays from `detail` instead
       // of re-touching the card or (worse) re-firing an approved tool call.
-      if (step.needsApproval) {
+      //
+      // The org's act-approval policy gates a step the same way the
+      // author's flag does — same row, same card, same resume — so a step
+      // it applies to is checked here too (policyGatedTools: the step's
+      // tool or a guidance chip the policy or the high-risk list names).
+      const policyGated = policyGatedTools(step, toolsByName, blockedTools, context.actApproval);
+      if (step.needsApproval || policyGated.size > 0) {
         const gated = await resolveGate(step, iteration, approvalWaitCapHours);
         if (gated) return gated;
       }
@@ -2857,6 +2954,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           Boolean(step.saveAs && loopSourceVars.has(step.saveAs)),
           canAskQuestions,
           deadline,
+          policyGated,
           resumeNote
         );
       } catch (error) {
@@ -3768,6 +3866,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
     savesItemsForLoop: boolean,
     canAskQuestions: boolean,
     deadline: number,
+    /**
+     * The tools this attempt may offer that pause for a person under the
+     * org's act-approval policy or the fixed high-risk list — gated exactly
+     * like the author's own `needsApproval` (policyGatedTools).
+     */
+    policyGated: ReadonlySet<string>,
     /** Present on the step an owner resumed the run at — see resumeNoteFor. */
     resumeNote?: string
   ): Promise<AttemptOutcome> {
@@ -3778,7 +3882,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // Tools see the same numbers the instruction does, so one that can widen
     // its own search on a retry has the fact to act on.
     mcp.setAttempt?.(attempt, step.maxAttempts);
-    const guidanceText = guidance ? renderInstruction(guidance, attemptVars).text : undefined;
+    // Trigger values render fenced here as they do in the instruction
+    // (untrusted.ts) — guidance is prose the model reads the same way.
+    const guidanceText = guidance
+      ? renderInstruction(guidance, delimitUntrustedVariables(attemptVars)).text
+      : undefined;
     const previousFailure =
       attempt > 1 ? await lastFailureText(run.id, step.id, iteration) : undefined;
     // A resumed attempt gets the corrective allowance: the owner's note
@@ -4111,13 +4219,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
           continue;
         }
 
-        if (use.name === primaryTool && step.needsApproval) {
+        if ((use.name === primaryTool && step.needsApproval) || policyGated.has(use.name)) {
           // The gate: this attempt ends the moment the model reaches for
           // the step's own tool — the call never runs. executeStep parks
           // it behind a card showing exactly this proposal (tool + args)
           // and raises a fresh attempt (or fires this recorded call
           // directly on approval) once a person decides. Free of the
-          // budget: proposing costs nothing, only calling does.
+          // budget: proposing costs nothing, only calling does. The org's
+          // act-approval policy (and the fixed high-risk list) gates a
+          // call the same way, author flag or not — see policyGatedTools.
           const args =
             typeof use.input === 'object' && use.input !== null && !Array.isArray(use.input)
               ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
@@ -4244,7 +4354,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
         results.push({
           type: 'tool_result',
           toolUseId: use.id,
-          content: clipForModel(resultText),
+          // Fenced as data (untrusted.ts): a result can carry a stranger's
+          // words — a mail body, a comment — and the system prompt's rule
+          // tells the model what the fence means. The record above keeps
+          // the bare text; the fence is for the model alone.
+          content: untrustedBlock(`tool:${use.name}`, clipForModel(resultText)),
           ...(result.isError ? { isError: true } : {}),
         });
         for (const block of attachmentBlocksOfMeta(result.meta)) {

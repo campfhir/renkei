@@ -11,6 +11,15 @@ import type { CoachAnchor } from '@/lib/coach-marks/anchors';
 const LOG_LEVELS = ['critical', 'error', 'warn', 'info', 'debug'] as const;
 type LogLevel = (typeof LOG_LEVELS)[number];
 
+// Mirrors @renkei/settings' ACT_APPROVAL_POLICIES, kept local for the same
+// reason; the labels are this page's words for each value.
+const ACT_APPROVAL_POLICIES = [
+  { value: 'externally_triggered', label: 'Runs started by an event or webhook' },
+  { value: 'all', label: 'Every run' },
+  { value: 'off', label: 'Only steps the author gated' },
+] as const;
+type ActApprovalPolicy = (typeof ACT_APPROVAL_POLICIES)[number]['value'];
+
 export interface EditableSettings {
   readOnly: boolean;
   coachMarksEnabled: boolean;
@@ -29,6 +38,7 @@ export interface EditableSettings {
   agentMaxSteps: number;
   agentMaxRunsPerDay: number;
   agentApprovalMaxWaitDays: number;
+  agentActStepsRequireApproval: ActApprovalPolicy;
   contentPollMinutes: number;
   webexWebhookHealthMinutes: number;
   logRetentionDays: number;
@@ -182,6 +192,26 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
     );
   }
 
+  function actApprovalSelect() {
+    return (
+      <select
+        aria-label="agentActStepsRequireApproval"
+        value={values.agentActStepsRequireApproval}
+        onChange={(event) =>
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the select only offers ActApprovalPolicy values
+          set('agentActStepsRequireApproval', event.target.value as ActApprovalPolicy)
+        }
+        className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+      >
+        {ACT_APPROVAL_POLICIES.map((policy) => (
+          <option key={policy.value} value={policy.value}>
+            {policy.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
   async function save() {
     setState('saving');
     setError(null);
@@ -256,6 +286,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How many agents may trigger each other in a chain before the platform refuses."
         >
           {numberInput('agentMaxChainDepth', '1–10')}
+        </Row>
+        <Row
+          label="Steps that change something need approval on"
+          hint="Which agent runs pause a step whose tool changes an external system (sends, creates, edits) for a person's approval even when the author set none. The default covers runs an event or webhook started — the content they act on came from outside. Sending mail, merging a pull request, deleting or sharing a document and directory writes always pause, whatever this says."
+        >
+          {actApprovalSelect()}
         </Row>
         <Row
           label="Max approval wait (days)"

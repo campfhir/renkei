@@ -3,7 +3,8 @@
  * builtins, and the live loop inputs — never everything bound so far.
  */
 
-import { isAlwaysKnown, knownVariables } from './variables';
+import { delimitUntrustedVariables, isAlwaysKnown, knownVariables } from './variables';
+import { untrustedBlock } from './untrusted';
 
 const variables = {
   today: '2026-09-09',
@@ -62,5 +63,23 @@ describe('isAlwaysKnown', () => {
     expect(isAlwaysKnown('question.answer')).toBe(true);
     expect(isAlwaysKnown('trigger.text')).toBe(false);
     expect(isAlwaysKnown('final summary')).toBe(false);
+  });
+});
+
+describe('delimitUntrustedVariables', () => {
+  it('fences every trigger.* value and leaves builtins and step results as they are', () => {
+    expect(
+      delimitUntrustedVariables({
+        today: '2026-09-09',
+        'trigger.text': 'hello',
+        ticket: 'CAS-1',
+        'approval.outcome': 'approved',
+      })
+    ).toEqual({
+      today: '2026-09-09',
+      'trigger.text': untrustedBlock('trigger.text', 'hello'),
+      ticket: 'CAS-1',
+      'approval.outcome': 'approved',
+    });
   });
 });

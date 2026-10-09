@@ -116,6 +116,22 @@ describe('org settings', () => {
     if (result.ok) expect(result.val.logLevel).toBe(DEFAULT_ORG_SETTINGS.logLevel);
   });
 
+  it('defaults act-step approval to externally triggered runs, and refuses an unknown policy', async () => {
+    const store = stubDb();
+    const policyOf = async () => {
+      const result = await getOrgSettings('tenant-1');
+      return result.ok ? result.val.agentActStepsRequireApproval : null;
+    };
+    expect(await policyOf()).toBe('externally_triggered');
+
+    store.tenantRows.set('tenant-1:agent_act_steps_require_approval', 'sometimes');
+    invalidateSettingsCache();
+    expect(await policyOf()).toBe('externally_triggered');
+
+    await setOrgSettings('tenant-1', { agentActStepsRequireApproval: 'off' });
+    expect(await policyOf()).toBe('off');
+  });
+
   it('round-trips a valid log level', async () => {
     stubDb();
     await setOrgSettings('tenant-1', { logLevel: 'debug' });
