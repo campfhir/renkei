@@ -17,5 +17,50 @@ catalog:
   pdfjs-dist: 6.2.108
 minimumReleaseAgeExclude:
   - '@campfhir/safe-functions@0.1.3'
+# The CI gate is `pnpm audit --prod --audit-level=high` (the `security` job
+# in .github/workflows/ci.yml): a NEW high or critical advisory against a
+# production dependency fails the build. The advisories below were already
+# open when the gate went in and are not fixable without a dependency bump
+# that is its own change; each is listed with what fixes it and a review
+# date. An entry past its date is overdue, not permanent: fix the
+# dependency and delete the line, or renew the date with a reason. The same
+# baseline, by CVE id, is in .trivyignore for the image scan. Keep the two
+# in step.
+auditConfig:
+  ignoreGhsas:
+    # next 16.2.12 → 16.3.8 fixes all four (three are unauthenticated RCEs,
+    # two of them only on Windows hosts / next/og, which these images do not
+    # use — but upgrade FIRST). Review by 2026-11-30.
+    - GHSA-p293-qw3h-jr36
+    - GHSA-2xp9-vwfh-vxw4
+    - GHSA-vcvr-r3jv-pc5j
+    - GHSA-cjq9-62q9-8jv4
+    # next's own pins: sharp 0.34.5 (→ 0.35.5, libvips/libheif/librsvg),
+    # postcss 8.4.31 (→ 8.5.18, build-time only), nanoid and source-map-js
+    # under postcss. All lift with the next upgrade. Review by 2026-11-30.
+    - GHSA-f88m-g3jw-g9cj
+    - GHSA-rgj7-g3m4-5g8c
+    - GHSA-wq5f-xc86-pv6w
+    - GHSA-6g55-p6wh-862q
+    - GHSA-r28c-9q8g-f849
+    - GHSA-2v37-7h3g-55p8
+    - GHSA-68fv-2mgg-jv7q
+    # brace-expansion (DoS on crafted glob input) under exceljs → archiver
+    # and @campfhir/safe-functions → minimatch; neither feeds user-supplied
+    # globs. Lift with an exceljs / safe-functions bump or a pnpm override.
+    # Review by 2026-11-30.
+    - GHSA-mh99-v99m-4gvg
+    - GHSA-rgw5-rvv9-x895
+    - GHSA-qhr7-859c-m2p7
+    - GHSA-6j4f-fj2g-mc7p
+    # image-size 1.2.1 under pptxgenjs (DoS on crafted JXL/HEIF/ICNS; the
+    # renderer only sizes images the model generated). Lift with a pptxgenjs
+    # bump or a pnpm override to 2.0.3. Review by 2026-11-30.
+    - GHSA-5p2g-fcmc-qvqq
+    - GHSA-w3rx-r6r6-pgpr
+    # lodash-es 4.17.23 under mermaid → chevrotain (`_.template` code
+    # injection; mermaid never calls it). Lift with a mermaid bump. Review
+    # by 2026-11-30.
+    - GHSA-r5fr-rjxr-66jc
 patchedDependencies:
   '@tryjsky/v9u-smb2': patches/@tryjsky__v9u-smb2.patch

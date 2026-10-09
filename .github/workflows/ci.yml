@@ -5,15 +5,20 @@ on:
     branches: [main]
   pull_request:
 
+# Nothing here writes to the repository. A job that needs more (CodeQL
+# uploads its findings) asks for exactly that on the job.
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -43,12 +48,81 @@ jobs:
       - name: Test
         run: pnpm test
 
+  # The dependency audit: a high or critical advisory against a PRODUCTION
+  # dependency fails the build. The advisories that were already open when
+  # this gate went in are listed, each with a review date, under
+  # auditConfig.ignoreGhsas in pnpm-workspace.yaml — so what fails here is
+  # a NEW one, or an old one someone has let go past its date without
+  # fixing or renewing it. `pnpm audit` reads the lockfile; no install.
+  security:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high
+
+  # Static analysis of the TypeScript (CodeQL's default query suite plus
+  # security-extended). The workspace packages ship source and the apps
+  # are transpiled at build time, so no build step is needed for the
+  # extraction. Results land under Security → Code scanning.
+  codeql:
+    name: codeql
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:javascript-typescript
+
+  # What a pull request ADDS to the dependency graph: a new dependency with
+  # a known high/critical advisory, or a license the repository does not
+  # ship, fails the check before the lockfile change is merged.
+  dependency-review:
+    name: dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
+          deny-licenses: AGPL-3.0, AGPL-3.0-only, AGPL-3.0-or-later, SSPL-1.0
+
   # Publishes every image docker-compose.yaml pulls, but only once the checks
   # above have passed on a push to main — never for a pull request. Each
-  # image is tagged twice: `latest` and the version in apps/web/package.json,
-  # the same version scripts/docker-build.sh stamps (every app in the
-  # workspace shares it). One matrix entry per target, so eight Dockerfile
+  # image is tagged three times: `latest`, the version in apps/web/package.json
+  # (the same version scripts/docker-build.sh stamps — every app in the
+  # workspace shares it), and the commit SHA, so a deployment can pin the
+  # exact build it tested. One matrix entry per target, so nine Dockerfile
   # stages build in parallel and no single runner has to hold all of them.
+  #
+  # Each image is built twice: first loaded into the runner's Docker and
+  # scanned by Trivy — a fixable HIGH or CRITICAL in the OS packages or in
+  # node_modules fails the job and nothing is pushed (.trivyignore carries
+  # the dated baseline, see pnpm-workspace.yaml's audit list) — then, from
+  # the same layer cache, pushed with a SLSA provenance attestation and an
+  # SBOM attached to the manifest. Two builds because attestations cannot be
+  # loaded into a local Docker, only pushed.
   #
   # Secrets (repository → Settings → Secrets and variables → Actions):
   #   DOCKERHUB_USERNAME  the Docker Hub account to log in as
@@ -58,7 +132,7 @@ jobs:
   #                       to DOCKERHUB_USERNAME (an org namespace differs).
   docker:
     name: docker (${{ matrix.image }})
-    needs: checks
+    needs: [checks, security]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Serialize pushes of the same image so a fast build from an older
@@ -91,7 +165,7 @@ jobs:
           - target: sandbox
             image: renkei-sandbox
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Resolve image name and version
         id: meta
@@ -106,10 +180,11 @@ jobs:
           repo="${NAMESPACE}/${{ matrix.image }}"
           {
             echo "version=${version}"
-            echo "tags=${repo}:${version},${repo}:latest"
+            echo "tags=${repo}:${version},${repo}:latest,${repo}:${GITHUB_SHA}"
+            echo "scan_tag=${repo}:scan-${GITHUB_SHA}"
             echo "commit=$(git rev-parse --short HEAD)"
           } >> "$GITHUB_OUTPUT"
-          echo "Publishing ${repo}:${version} and ${repo}:latest"
+          echo "Publishing ${repo}:${version}, ${repo}:latest and ${repo}:${GITHUB_SHA}"
 
       # The docker-container driver is what lets the Dockerfile's
       # `# syntax=docker/dockerfile:1-labs` frontend and the GitHub Actions
@@ -121,7 +196,33 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build for scanning
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          load: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.scan_tag }}
+          build-args: |
+            GIT_COMMIT=${{ steps.meta.outputs.commit }}
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,scope=${{ matrix.target }},mode=max
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.scan_tag }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+          trivyignores: .trivyignore
+
+      - name: Push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -129,6 +230,8 @@ jobs:
           target: ${{ matrix.target }}
           platforms: linux/amd64
           push: true
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             GIT_COMMIT=${{ steps.meta.outputs.commit }}
@@ -137,4 +240,3 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
           cache-from: type=gha,scope=${{ matrix.target }}
-          cache-to: type=gha,scope=${{ matrix.target }},mode=max
