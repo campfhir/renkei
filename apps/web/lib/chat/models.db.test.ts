@@ -113,7 +113,7 @@ maybe('image generation models', () => {
   it('keeps image models out of the chat picker, and chat models out of the image list', async () => {
     // Both lists are the organization's, so other suites' models in a shared
     // database sit beside these; only this suite's own are judged.
-    const mine = new Set([chatId, imageId, fluxId, offImageId, anthropicId]);
+    const mine = new Set<string>([chatId, imageId, fluxId, offImageId, anthropicId]);
     const chat = (await listChatModels(db)).filter((model) => mine.has(model.id));
     expect(chat.map((model) => model.label).sort()).toEqual(['Chatty', 'Claude']);
     const images = (await listImageModels(db)).filter((model) => mine.has(model.id));
