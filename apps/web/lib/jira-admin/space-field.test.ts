@@ -33,9 +33,9 @@ const access: JiraAdminAccess = {
   siteUrl: 'https://acme.atlassian.net',
   accountId: 'acct-1',
   // The delegate's fetcher stands in for the grant; the suite's global.fetch answers it.
-  auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:tenant-1:acct-1'),
+  auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:acct-1'),
 };
-const scope = { tenantId: 'tenant-1', subject: 'subject-1' };
+const scope = { subject: 'subject-1' };
 
 /** A new Vendor select list for OPS, on its create screen and on one HR shows too. */
 function newVendor(): SpaceFieldPayload {

@@ -45,7 +45,6 @@ const FORCE_HALT_ERROR = 'Force-halted by an admin — the run was stuck and not
 export async function forceHaltRun(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     agentId: string;
     runId: string;
     /** Who clicked it — recorded the same way a graceful cancel would be. */
@@ -56,7 +55,6 @@ export async function forceHaltRun(
     .selectFrom('agent_runs')
     .select(['id', 'status', 'owner_subject'])
     .where('id', '=', input.runId)
-    .where('tenant_id', '=', input.tenantId)
     .where('agent_id', '=', input.agentId)
     .executeTakeFirst();
   if (!run) return { outcome: 'not-found' };
@@ -116,7 +114,6 @@ export async function forceHaltRun(
   // Best-effort, same posture as the janitor: the status flip above is what
   // matters, the usage/history ledger is secondary.
   await recordAgentRunOutcome(db, {
-    tenantId: input.tenantId,
     agentId: input.agentId,
     runId: input.runId,
     ownerSubject: run.owner_subject,

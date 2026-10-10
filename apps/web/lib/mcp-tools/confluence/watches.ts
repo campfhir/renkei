@@ -81,7 +81,7 @@ export async function registerWatchTools(
       }
 
       const result = await upsertWatch(
-        { tenantId: context.tenantId, subject: context.subject, accountId: access.accountId },
+        { subject: context.subject, accountId: access.accountId },
         'confluence',
         'space',
         space.id,
@@ -120,7 +120,7 @@ export async function registerWatchTools(
       const space = await resolveSpace(context, access, input);
       const scopeKey = space?.id ?? input;
       const result = await disableWatch(
-        { tenantId: context.tenantId, subject: context.subject, accountId: access.accountId },
+        { subject: context.subject, accountId: access.accountId },
         'confluence',
         'space',
         scopeKey
@@ -148,7 +148,7 @@ export async function registerWatchTools(
     async () => {
       if (!context.subject) return errText('No signed-in subject on this MCP session.');
       const result = await listWatches(
-        { tenantId: context.tenantId, subject: context.subject, accountId: context.accountId },
+        { subject: context.subject, accountId: context.accountId },
         'confluence'
       );
       if (!result.ok) return errText(result.error);

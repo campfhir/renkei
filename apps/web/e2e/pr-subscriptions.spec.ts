@@ -17,7 +17,7 @@
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
@@ -90,15 +90,12 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'code', 'github', $5, 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName, ids.repoFullName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'github', $4, 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.projectName, ids.repoFullName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.chatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
     );
     await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
       ids.chatId,
@@ -110,19 +107,8 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     // for, so the outcome line is asserted against the real GET route
     // rather than a mocked one.
     await client.query(
-      `INSERT INTO pr_subscriptions
-         (id, tenant_id, project_id, chat_id, subscriber_subject, provider,
-          repo_full_name, pr_number, watch_pipelines, auto_fix, auto_merge, status)
-       VALUES ($1, $2, $3, $4, $5, 'github', $6, $7, true, false, true, 'active')`,
-      [
-        ids.subscriptionId,
-        E2E_TENANT_ID,
-        ids.projectId,
-        ids.chatId,
-        E2E_SUBJECT,
-        ids.repoFullName,
-        SEEDED_PR.number,
-      ]
+      `INSERT INTO pr_subscriptions\n         (id, project_id, chat_id, subscriber_subject, provider,\n          repo_full_name, pr_number, watch_pipelines, auto_fix, auto_merge, status)\n       VALUES ($1, $2, $3, $4, 'github', $5, $6, true, false, true, 'active')`,
+      [ids.subscriptionId, ids.projectId, ids.chatId, E2E_SUBJECT, ids.repoFullName, SEEDED_PR.number]
     );
     await client.query(
       `INSERT INTO pr_pipeline_events
@@ -204,7 +190,7 @@ test.describe('PR pipeline subscriptions', () => {
 
     // ── The project page's own condensed row, on the Pulls card's
     // most-recent PR (#90) — no trip to the full Pulls page needed. ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     const main = page.getByRole('main');
     const pullsCard = main.locator('section', {
       has: page.getByRole('heading', { level: 2, name: 'Pull requests' }),
@@ -225,7 +211,7 @@ test.describe('PR pipeline subscriptions', () => {
 
     // ── The full Pulls page reports the same subscription back — one
     // opt-in, read from either place. ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}/pulls`);
+    await page.goto(`/code/${ids.projectId}/pulls`);
     await expect(page.getByRole('heading', { level: 1, name: 'Pull requests' })).toBeVisible();
     const row90 = subscribeBlock(page, OPEN_PR.number);
     await row90.getByText('Subscribe', { exact: true }).click();
@@ -253,7 +239,7 @@ test.describe('PR pipeline subscriptions', () => {
     if (!mobile) return;
 
     // ── Mobile: the project page's condensed row still works at phone width ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await page.setViewportSize(MOBILE_VIEWPORT);
     const mobilePullsCard = page.getByRole('main').locator('section', {
       has: page.getByRole('heading', { level: 2, name: 'Pull requests' }),
@@ -262,7 +248,7 @@ test.describe('PR pipeline subscriptions', () => {
     await shot(page, testInfo, 'pr-subscribe-compact-mobile.png');
 
     // ── Mobile: the full Pulls page's disclosure and outcome line too ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}/pulls`);
+    await page.goto(`/code/${ids.projectId}/pulls`);
     await page.setViewportSize(MOBILE_VIEWPORT);
     await expect(page.getByRole('heading', { level: 1, name: 'Pull requests' })).toBeVisible();
     const mobileRow91 = subscribeBlock(page, SEEDED_PR.number);

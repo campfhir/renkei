@@ -23,7 +23,7 @@ export { noteFromInput, noteText, parseNote, type ChatNote } from './note-text';
  */
 export async function appendChatNote(
   db: Kysely<DB>,
-  input: { tenantId: string; chatId: string; note: ChatNote }
+  input: { chatId: string; note: ChatNote }
 ): Promise<
   { ok: true; message: ChatMessageView } | { ok: false; reason: 'turn-running' | 'failed' }
 > {
@@ -37,14 +37,13 @@ export async function appendChatNote(
       .executeTakeFirst();
     if (await getActiveTurn(trx, input.chatId)) return { ok: false, reason: 'turn-running' };
     const inserted = await insertMessage(trx, {
-      tenantId: input.tenantId,
       chatId: input.chatId,
       turnId: null,
       role: 'user',
       kind: 'note',
       status: 'complete',
       blocks: [{ type: 'text', text }],
-      cipher: await chatCipherById(trx, input.tenantId, input.chatId),
+      cipher: await chatCipherById(trx, input.chatId),
     });
     if (!inserted) return { ok: false, reason: 'failed' };
     return {

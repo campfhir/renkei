@@ -37,7 +37,6 @@ const STALE_SYNC_MS = 6 * 60 * 60 * 1000;
  */
 async function reapOrphanedGraphSubscriptions(
   db: Kysely<DB>,
-  tenantId: string,
   accountId: string,
   auth: AuthedFetch,
   baseUrl: string
@@ -46,7 +45,6 @@ async function reapOrphanedGraphSubscriptions(
   if (!listed.ok) {
     logger.warn('could not list Graph subscriptions to reconcile: {message}', {
       component: COMPONENT,
-      tenantId,
       message: typeof listed.err.message === 'string' ? listed.err.message.slice(0, 200) : '',
     });
     return;
@@ -57,7 +55,6 @@ async function reapOrphanedGraphSubscriptions(
       await db
         .selectFrom('webhook_subscriptions')
         .select('subscription_id')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', MICROSOFT)
         .where('account_id', '=', accountId)
         .execute()
@@ -66,14 +63,13 @@ async function reapOrphanedGraphSubscriptions(
 
   for (const subscription of listed.val) {
     if (known.has(subscription.id)) continue;
-    // Ours only: same origin AND this tenant/account's path segment.
+    // Ours only: same origin AND this account's path segment.
     const url = subscription.notificationUrl ?? '';
-    if (!url.startsWith(baseUrl) || !url.includes(`/${tenantId}/${accountId}`)) continue;
+    if (!url.startsWith(baseUrl) || !url.includes(`/${accountId}`)) continue;
 
     const deleted = await deleteGraphSubscription(auth, subscription.id);
     logger.warn('deleted orphaned Graph subscription {subscriptionId} (no row here)', {
       component: COMPONENT,
-      tenantId,
       subscriptionId: subscription.id,
       resource: subscription.resource,
       succeeded: deleted.ok,
@@ -95,11 +91,11 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
   }
   const db = dbResult.val;
 
-  let grants: Array<{ tenant_id: string; provider_account_id: string }>;
+  let grants: Array<{ provider_account_id: string }>;
   try {
     grants = await db
       .selectFrom('provider_grants')
-      .select(['tenant_id', 'provider_account_id'])
+      .select(['provider_account_id'])
       .where('provider', '=', MICROSOFT)
       .execute();
   } catch (error) {
@@ -112,26 +108,25 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
 
   // Rows whose grant vanished (deleted outside the disconnect route) serve
   // nobody and would never renew — drop them.
-  const grantKeys = new Set(grants.map((g) => `${g.tenant_id}:${g.provider_account_id}`));
+  const grantKeys = new Set(grants.map((g) => g.provider_account_id));
   const allRows = await db
     .selectFrom('webhook_subscriptions')
-    .select(['id', 'tenant_id', 'account_id'])
+    .select(['id', 'account_id'])
     .where('provider', '=', MICROSOFT)
     .execute();
   for (const row of allRows) {
-    if (!grantKeys.has(`${row.tenant_id}:${row.account_id}`)) {
+    if (!grantKeys.has(row.account_id)) {
       await db.deleteFrom('webhook_subscriptions').where('id', '=', row.id).execute();
       logger.warn('dropped orphaned subscription row (grant gone)', {
         component: COMPONENT,
-        tenantId: row.tenant_id,
       });
     }
   }
 
-  for (const { tenant_id: tenantId, provider_account_id: accountId } of grants) {
+  for (const { provider_account_id: accountId } of grants) {
     try {
-      const access = await resolveMicrosoftAccess(tenantId, accountId);
-      const rows = await ensureMicrosoftSubscriptions(tenantId, access, baseUrl);
+      const access = await resolveMicrosoftAccess(accountId);
+      const rows = await ensureMicrosoftSubscriptions(access, baseUrl);
       // ensure returns only rows the user opted into — catching up on a
       // row it withheld would index a category the user turned off.
       const desiredIds = new Set(rows.map((row) => row.id));
@@ -147,26 +142,24 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
       // one Entra app registration is commonly shared by several
       // deployments, and a dev box reaping by table-absence alone would
       // happily delete production's subscriptions.
-      await reapOrphanedGraphSubscriptions(db, tenantId, accountId, access.auth, baseUrl);
+      await reapOrphanedGraphSubscriptions(db, accountId, access.auth, baseUrl);
 
       const staleBefore = Date.now() - STALE_SYNC_MS;
       const stale = await db
         .selectFrom('webhook_subscriptions')
         .select(['id', 'resource', 'subscription_id', 'client_state', 'expires_at', 'delta_link'])
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', MICROSOFT)
         .where('account_id', '=', accountId)
         .where('updated_at', '<', new Date(staleBefore))
         .execute();
       for (const row of stale) {
         if (!desiredIds.has(row.id)) continue;
-        const synced = await runSubscriptionSync(tenantId, access, row);
+        const synced = await runSubscriptionSync(access, row);
         if (synced.changed > 0 || synced.removed > 0) {
           // Loud on purpose: catch-up finding changes means notifications
           // were being missed until now.
           logger.warn('stale catch-up on {resource}: {changed} changed, {removed} removed', {
             component: COMPONENT,
-            tenantId,
             resource: row.resource,
             changed: synced.changed,
             removed: synced.removed,
@@ -176,7 +169,6 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
     } catch (error) {
       logger.warn('sweep skipped grant {accountId}: {error}', {
         component: COMPONENT,
-        tenantId,
         accountId,
         error: error instanceof Error ? error.message : String(error),
       });

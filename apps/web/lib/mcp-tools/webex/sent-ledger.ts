@@ -34,7 +34,6 @@ import { logger } from '@/lib/logger';
  * loop guard rather than a correctness requirement of the send itself.
  */
 export async function recordSentWebexMessage(
-  tenantId: string,
   messageId: string,
   accountId: string | null
 ): Promise<void> {
@@ -43,7 +42,6 @@ export async function recordSentWebexMessage(
     // because it means the loop guard cannot cover this message.
     logger.warn('WebEx send returned no message id; it cannot be excluded from ingest', {
       component: 'mcp/webex-sent-ledger',
-      tenantId,
     });
     return;
   }
@@ -51,7 +49,6 @@ export async function recordSentWebexMessage(
   if (!dbResult.ok) {
     logger.warn('could not record sent WebEx message {messageId}: database unavailable', {
       component: 'mcp/webex-sent-ledger',
-      tenantId,
       messageId,
     });
     return;
@@ -59,14 +56,13 @@ export async function recordSentWebexMessage(
   try {
     await dbResult.val
       .insertInto('webex_sent_messages')
-      .values({ tenant_id: tenantId, message_id: messageId, account_id: accountId })
+      .values({ message_id: messageId, account_id: accountId })
       // A retried send of the same id is the same fact.
-      .onConflict((conflict) => conflict.columns(['tenant_id', 'message_id']).doNothing())
+      .onConflict((conflict) => conflict.columns(['message_id']).doNothing())
       .execute();
   } catch (error) {
     logger.warn('could not record sent WebEx message {messageId}: {error}', {
       component: 'mcp/webex-sent-ledger',
-      tenantId,
       messageId,
       error: error instanceof Error ? error.message : String(error),
     });

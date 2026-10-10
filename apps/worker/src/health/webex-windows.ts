@@ -44,13 +44,12 @@ export interface WindowSweepDeps {
 }
 
 /** Any opted-in watcher of the tenant, for marks that did not record one. */
-async function anyWatcherSubject(tenantId: string): Promise<string | null> {
+async function anyWatcherSubject(): Promise<string | null> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
   const row = await dbResult.val
     .selectFrom('provider_grants')
     .select('subject')
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', 'webex')
     .where(sql<boolean>`metadata->>'allSpaces' = 'true'`)
     .orderBy('updated_at', 'desc')
@@ -67,26 +66,24 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
 
   const rows = await db
     .selectFrom('webex_dirty_windows')
-    .select(['tenant_id', 'room_id', 'day', 'subject', 'marked_at'])
+    .select(['room_id', 'day', 'subject', 'marked_at'])
     .where('marked_at', '<=', new Date(now.getTime() - QUIET_MS))
     .orderBy('marked_at')
     .limit(MAX_WINDOWS_PER_PASS)
     .execute();
 
   for (const row of rows) {
-    const subject = row.subject ?? (await anyWatcherSubject(row.tenant_id));
+    const subject = row.subject ?? (await anyWatcherSubject());
     if (!subject) {
       // Nobody in this org can read the room any more. Drop the mark:
       // keeping it would re-select it every pass forever.
       await db
         .deleteFrom('webex_dirty_windows')
-        .where('tenant_id', '=', row.tenant_id)
         .where('room_id', '=', row.room_id)
         .where('day', '=', row.day)
         .execute();
       logger.info('no opted-in watcher; window {roomId}/{day} dropped', {
         component: COMPONENT,
-        tenantId: row.tenant_id,
         roomId: row.room_id,
         day: row.day,
       });
@@ -95,17 +92,15 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
 
     try {
       await enqueue(
-        row.tenant_id,
         'ingest.webex-window',
         { provider: 'webex', roomId: row.room_id, day: row.day, subject },
         // Rebuilds of one room stay serial; different rooms embed in parallel.
-        `webex/${row.tenant_id}/${row.room_id}`,
+        `webex/${row.room_id}`,
         { strict: true }
       );
     } catch (error) {
       logger.error('could not enqueue window {roomId}/{day}: {error}', {
         component: COMPONENT,
-        tenantId: row.tenant_id,
         roomId: row.room_id,
         day: row.day,
         error: error instanceof Error ? error.message : String(error),
@@ -116,7 +111,6 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
     // the row with a newer marked_at, and that rebuild is still owed.
     await db
       .deleteFrom('webex_dirty_windows')
-      .where('tenant_id', '=', row.tenant_id)
       .where('room_id', '=', row.room_id)
       .where('day', '=', row.day)
       .where('marked_at', '=', row.marked_at)
@@ -134,7 +128,7 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
 
   const grants = await db
     .selectFrom('provider_grants')
-    .select(['tenant_id', 'provider_account_id', 'subject'])
+    .select(['provider_account_id', 'subject'])
     .where('provider', '=', 'webex')
     .where(sql<boolean>`metadata->>'allSpaces' = 'true'`)
     .where(sql<boolean>`metadata->>'windowsBackfilledAt' IS NULL`)
@@ -142,7 +136,7 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
     .execute();
 
   for (const grant of grants) {
-    const access = await resolveAccess(grant.tenant_id, grant.provider_account_id);
+    const access = await resolveAccess(grant.provider_account_id);
     if (!access) continue; // token trouble; the webhook sweep will say so
     const client = makeClient(access.auth);
 
@@ -150,7 +144,6 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
     if (!rooms.ok) {
       logger.warn('backfill: could not list rooms: {error}', {
         component: COMPONENT,
-        tenantId: grant.tenant_id,
         error: rooms.err.message ?? 'unknown',
       });
       continue; // not marked done; retried next pass
@@ -167,13 +160,12 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
         await db
           .insertInto('webex_dirty_windows')
           .values({
-            tenant_id: grant.tenant_id,
             room_id: room.id,
             day,
             subject: access.subject,
             marked_at: sql`NOW()`,
           })
-          .onConflict((oc) => oc.columns(['tenant_id', 'room_id', 'day']).doNothing())
+          .onConflict((oc) => oc.columns(['room_id', 'day']).doNothing())
           .execute();
         marked += 1;
       }
@@ -186,13 +178,11 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
           windowsBackfilledAt: new Date().toISOString(),
         })}::jsonb`,
       })
-      .where('tenant_id', '=', grant.tenant_id)
       .where('provider', '=', 'webex')
       .where('provider_account_id', '=', grant.provider_account_id)
       .execute();
     logger.info('backfill: marked {marked} window(s) across {rooms} room(s) for {subject}', {
       component: COMPONENT,
-      tenantId: grant.tenant_id,
       marked,
       rooms: rooms.val.length,
       subject: grant.subject ?? grant.provider_account_id,

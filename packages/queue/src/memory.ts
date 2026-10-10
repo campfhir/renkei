@@ -31,7 +31,6 @@ export type MemoryMessageStatus = 'pending' | 'processing' | 'processed' | 'skip
 
 export interface MemoryMessage {
   id: string;
-  tenant_id: string;
   source: string;
   type: string;
   payload: ClaimedMessage['payload'];
@@ -86,7 +85,6 @@ export class InMemoryQueue implements Queue {
         this.rows.some(
           (row) =>
             row.status === 'pending' &&
-            row.tenant_id === message.tenantId &&
             row.source === message.source &&
             row.type === message.type &&
             row.orderingKey === key
@@ -96,7 +94,6 @@ export class InMemoryQueue implements Queue {
       }
       this.rows.push({
         id: randomUUID(),
-        tenant_id: message.tenantId,
         source: message.source,
         type: message.type,
         // The same round-trip a jsonb column performs.
@@ -155,7 +152,6 @@ export class InMemoryQueue implements Queue {
       row.attempts += 1;
       return {
         id: row.id,
-        tenant_id: row.tenant_id,
         source: row.source,
         type: row.type,
         payload: row.payload,
@@ -192,7 +188,6 @@ export class InMemoryQueue implements Queue {
         this.rows.splice(index, 1);
         this.deadRows.push({
           id: row.id,
-          tenant_id: row.tenant_id,
           source: row.source,
           type: row.type,
           payload: row.payload,
@@ -218,7 +213,6 @@ export class InMemoryQueue implements Queue {
    */
   readonly purger = {
     discardPending: async (
-      tenantId: string,
       type: string,
       match: readonly { path: readonly string[]; value: string }[]
     ) => {
@@ -240,7 +234,7 @@ export class InMemoryQueue implements Queue {
       let removed = 0;
       for (let i = this.rows.length - 1; i >= 0; i -= 1) {
         const row = this.rows[i];
-        if (!row || row.tenant_id !== tenantId || row.type !== type) continue;
+        if (!row || row.type !== type) continue;
         if (row.status !== 'pending') continue;
         if (!match.every((entry) => matches(row.payload, entry.path) === entry.value)) continue;
         this.rows.splice(i, 1);
@@ -266,7 +260,6 @@ export class InMemoryQueue implements Queue {
         const dead = this.deadRows.splice(index, 1)[0]!;
         this.rows.push({
           id: dead.id,
-          tenant_id: dead.tenant_id,
           source: dead.source,
           type: dead.type,
           payload: dead.payload,

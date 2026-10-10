@@ -14,15 +14,7 @@ jest.mock('../common', () => ({
   withPresentationHint: (body: string) => body,
 }));
 jest.mock('@renkei/db', () => ({
-  // The one query the tools make themselves: the tenant's slug, for links.
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: () => ({
-        select: () => ({ where: () => ({ executeTakeFirst: async () => ({ slug: 'acme' }) }) }),
-      }),
-    },
-  }),
+  getDatabase: () => ({ ok: true, val: {} }),
 }));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({}));
@@ -74,12 +66,11 @@ const stubAuth: JiraAdminAuth = {
     siteUrl: 'https://acme.atlassian.net',
     accountId: 'acct-1',
     // The delegate's fetcher stands in for the grant; the suite's global.fetch answers it.
-    auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:tenant-1:acct-1'),
+    auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:acct-1'),
   }),
 };
 
 const context = {
-  tenantId: 'tenant-1',
   subject: 'subject-1',
   origin: 'https://renkei.example',
   jiraAdminScopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
@@ -196,7 +187,6 @@ describe('jira_admin_propose_option_changes', () => {
 
     const input = jest.mocked(createChangeRequest).mock.calls[0]?.[1];
     expect(input).toMatchObject({
-      tenantId: 'tenant-1',
       subject: 'subject-1',
       cloudId: 'cloud-1',
       kind: 'field_options',
@@ -212,7 +202,7 @@ describe('jira_admin_propose_option_changes', () => {
       },
     });
 
-    const link = `https://renkei.example/acme/jira-admin/changes/${CHANGE_ID}`;
+    const link = `https://renkei.example/jira-admin/changes/${CHANGE_ID}`;
     expect(text(result)).toContain('Proposed — nothing has changed in Jira yet.');
     expect(text(result)).toContain('• Add option “Vendor”');
     expect(text(result)).toContain('• Disable “Legacy”');
@@ -329,7 +319,6 @@ describe('jira_admin_propose_option_changes', () => {
       replaces: 'b7c2a1d0-1111-4222-8333-944455556666',
     });
     expect(jest.mocked(cancelChangeRequest).mock.calls[0]?.slice(1)).toEqual([
-      'tenant-1',
       'subject-1',
       'b7c2a1d0-1111-4222-8333-944455556666',
     ]);
@@ -351,7 +340,7 @@ describe('jira_admin_list_changes', () => {
     ]);
     const result = text(await call('jira_admin_list_changes'));
     expect(result).toContain('• Source (Ops context): add option “Vendor” — waiting for review');
-    expect(result).toContain(`https://renkei.example/acme/jira-admin/changes/${CHANGE_ID}`);
+    expect(result).toContain(`https://renkei.example/jira-admin/changes/${CHANGE_ID}`);
     expect(result).toContain(
       '• Source (Ops context): disable “Legacy” — applied 2026-09-23 14:02 UTC — 1 of 1 done'
     );

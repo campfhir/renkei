@@ -75,13 +75,11 @@ export function parseQueue(value: unknown): QueuedSend[] | null {
 
 export async function loadQueuedSends(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string
 ): Promise<QueuedSend[]> {
   const row = await db
     .selectFrom('chat_queued_sends')
     .select('queue')
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .executeTakeFirst();
   return parseQueue(row?.queue) ?? [];
@@ -89,14 +87,12 @@ export async function loadQueuedSends(
 
 export async function saveQueuedSends(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   queue: QueuedSend[]
 ): Promise<void> {
   if (queue.length === 0) {
     await db
       .deleteFrom('chat_queued_sends')
-      .where('tenant_id', '=', tenantId)
       .where('chat_id', '=', chatId)
       .execute();
     return;
@@ -104,9 +100,9 @@ export async function saveQueuedSends(
   const json = JSON.stringify(queue);
   await db
     .insertInto('chat_queued_sends')
-    .values({ tenant_id: tenantId, chat_id: chatId, queue: json })
+    .values({ chat_id: chatId, queue: json })
     .onConflict((oc) =>
-      oc.columns(['tenant_id', 'chat_id']).doUpdateSet({ queue: json, updated_at: new Date() })
+      oc.columns(['chat_id']).doUpdateSet({ queue: json, updated_at: new Date() })
     )
     .execute();
 }

@@ -16,7 +16,6 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { EmailCategory, MessageOverrideAction, SanitizeResult } from '../types';
 
 export interface ClassificationLogEntry {
-  tenantId: string;
   provider: string;
   refId: string;
   ownerUpn: string;
@@ -54,7 +53,6 @@ export async function recordClassification(
         .insertInto('email_classification_log')
         .values({
           id: randomUUID(),
-          tenant_id: entry.tenantId,
           provider: entry.provider,
           ref_id: entry.refId,
           owner_upn: ownerUpn,
@@ -64,7 +62,7 @@ export async function recordClassification(
         })
         .onConflict((oc) =>
           oc
-            .columns(['tenant_id', 'provider', 'ref_id'])
+            .columns(['provider', 'ref_id'])
             .doUpdateSet({ ...shared, updated_at: sql<Date>`NOW()` })
         )
         .execute(),
@@ -91,7 +89,6 @@ export async function recordClassification(
  * right now", not "we processed one of these once".
  */
 export async function hasRecentDuplicate(
-  tenantId: string,
   contentHash: string,
   lookbackDays: number,
   scope: { ownerUpn: string; refId: string }
@@ -104,7 +101,6 @@ export async function hasRecentDuplicate(
       dbResult.val
         .selectFrom('email_classification_log')
         .select('id')
-        .where('tenant_id', '=', tenantId)
         .where('content_hash', '=', contentHash)
         .where('owner_upn', '=', scope.ownerUpn.toLowerCase())
         .where('ref_id', '<>', scope.refId)
@@ -112,8 +108,7 @@ export async function hasRecentDuplicate(
         .where(
           sql<boolean>`EXISTS (
             SELECT 1 FROM knowledge_chunks kc
-            WHERE kc.tenant_id = email_classification_log.tenant_id
-              AND kc.provider = email_classification_log.provider
+            WHERE kc.provider = email_classification_log.provider
               AND (kc.ref_id = email_classification_log.ref_id
                    OR kc.ref_id LIKE email_classification_log.ref_id || '#%')
           )`
@@ -205,7 +200,6 @@ export interface OwnClassificationPage {
  * shared limit.
  */
 export async function listForOwner(
-  tenantId: string,
   ownerUpn: string,
   options: ListForOwnerOptions
 ): Promise<Result<OwnClassificationPage, 'DB_ERROR'>> {
@@ -220,7 +214,6 @@ export async function listForOwner(
     const rows = await db
       .selectFrom('email_classification_log')
       .select(OWN_ROW_COLUMNS)
-      .where('tenant_id', '=', tenantId)
       .where('owner_upn', '=', owner)
       .where('category', '=', options.category)
       // Needs-review rows first — a spot check should surface the rare thing
@@ -234,7 +227,6 @@ export async function listForOwner(
     const countRow = await db
       .selectFrom('email_classification_log')
       .select(({ fn }) => fn.countAll<number>().as('count'))
-      .where('tenant_id', '=', tenantId)
       .where('owner_upn', '=', owner)
       .where('category', '=', options.category)
       .executeTakeFirst();
@@ -249,7 +241,6 @@ export type CategoryCounts = Record<EmailCategory, number>;
 
 /** How many of the caller's own messages fall in each category — drives the group tabs' counts. */
 export async function countByCategoryForOwner(
-  tenantId: string,
   ownerUpn: string
 ): Promise<Result<CategoryCounts, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -261,7 +252,6 @@ export async function countByCategoryForOwner(
         .selectFrom('email_classification_log')
         .select('category')
         .select(({ fn }) => fn.countAll<number>().as('count'))
-        .where('tenant_id', '=', tenantId)
         .where('owner_upn', '=', ownerUpn.toLowerCase())
         .groupBy('category')
         .execute(),
@@ -291,7 +281,6 @@ export async function countByCategoryForOwner(
  * row would itself leak information.
  */
 export async function getOwnRow(
-  tenantId: string,
   ownerUpn: string,
   refId: string
 ): Promise<Result<OwnClassificationRow | null, 'DB_ERROR'>> {
@@ -303,7 +292,6 @@ export async function getOwnRow(
       dbResult.val
         .selectFrom('email_classification_log')
         .select(OWN_ROW_COLUMNS)
-        .where('tenant_id', '=', tenantId)
         .where('owner_upn', '=', ownerUpn.toLowerCase())
         .where('ref_id', '=', refId)
         .executeTakeFirst(),
@@ -322,7 +310,6 @@ export interface SetOverrideInput {
 
 /** Record the owner's correction. The caller (a worker event handler) applies it on reprocessing. */
 export async function setOverride(
-  tenantId: string,
   ownerUpn: string,
   refId: string,
   override: SetOverrideInput
@@ -341,7 +328,6 @@ export async function setOverride(
           overridden_at: sql`NOW()`,
           updated_at: sql`NOW()`,
         })
-        .where('tenant_id', '=', tenantId)
         .where('owner_upn', '=', ownerUpn.toLowerCase())
         .where('ref_id', '=', refId)
         .execute(),

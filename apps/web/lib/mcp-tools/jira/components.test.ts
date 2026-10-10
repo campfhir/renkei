@@ -72,7 +72,7 @@ async function createComponent(): Promise<ToolHandler> {
   } as unknown as McpServer;
   await registerComponentTools(
     server,
-    { tenantId: 'tenant-1', accountId: 'acct-1' } as unknown as MCPToolContext,
+    { accountId: 'acct-1' } as unknown as MCPToolContext,
     stubAuth()
   );
   return registered.get('jira_create_component')!;

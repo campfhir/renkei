@@ -32,7 +32,7 @@ function headersOf(call: unknown[]): Record<string, string> {
   return (init?.headers ?? {}) as Record<string, string>;
 }
 
-const GRANT_KEY = 'atlassian:tenant-1:acct-1';
+const GRANT_KEY = 'atlassian:acct-1';
 
 /** A grant fetcher whose answers the test scripts; `send` records every call. */
 function fakeAuth(answer: () => Promise<Response>) {
@@ -64,7 +64,7 @@ describe('jiraFetch through the grant fetcher', () => {
 
     expect(logger.debug).toHaveBeenCalledWith(
       'Request',
-      expect.objectContaining({ tenantId: 'tenant-1', accountId: 'acct-1' })
+      expect.objectContaining({ accountId: 'acct-1' })
     );
   });
 

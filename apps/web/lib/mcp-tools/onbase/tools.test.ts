@@ -48,7 +48,6 @@ type Handler = (args: Record<string, unknown>) => Promise<{
 
 const context = (): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     subject: 'subject-1',
     origin: 'https://renkei.example',
   }) as unknown as MCPToolContext;
@@ -309,7 +308,6 @@ describe('PHI access trail', () => {
     expect(recordPhiAccess).toHaveBeenCalledTimes(1);
     const [event] = recordPhiAccess.mock.calls[0] as [Record<string, unknown>];
     expect(event).toEqual({
-      tenantId: 'tenant-1',
       subject: 'subject-1',
       agentId: null,
       connector: 'onbase',

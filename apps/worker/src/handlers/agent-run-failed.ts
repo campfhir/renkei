@@ -82,8 +82,6 @@ export function createAgentRunFailedHandler(): EventHandler {
       });
       return;
     }
-    const tenantId = event.tenant_id;
-
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
     const db = dbResult.val;
@@ -91,7 +89,7 @@ export function createAgentRunFailedHandler(): EventHandler {
     // Cheapest check first: nothing on either channel means no grant
     // lookups, no Graph/WebEx calls — just done. Resolved through the
     // agent's own override when it set one, same as every other run event.
-    const prefs = await getNotificationPrefs(tenantId, payload.ownerSubject);
+    const prefs = await getNotificationPrefs(payload.ownerSubject);
     const wanted = effectiveDelivery(prefs, payload.agentId, 'runFailed');
     if (!wanted.email && !wanted.webex) return;
 
@@ -102,7 +100,7 @@ export function createAgentRunFailedHandler(): EventHandler {
         .select(['error'])
         .where('id', '=', payload.runId)
         .executeTakeFirst(),
-      registrationUrl(tenantId),
+      registrationUrl(),
     ]);
 
     const agentName = agent?.name ?? 'Your agent';
@@ -113,7 +111,6 @@ export function createAgentRunFailedHandler(): EventHandler {
     const bodyText = `Your agent “${agentName}” stopped on a failure: ${reason}${link ? `\n\nSee the run: ${link}` : ''}`;
 
     await deliverToOwnerChannels(db, {
-      tenantId,
       ownerSubject: payload.ownerSubject,
       email: wanted.email,
       webex: wanted.webex,

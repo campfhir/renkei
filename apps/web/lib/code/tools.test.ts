@@ -63,11 +63,10 @@ const testCipher = resourceCipher({
 const client = jest.requireMock<Record<string, jest.Mock>>('@renkei/sandbox-client');
 const git = jest.requireMock<Record<string, jest.Mock>>('@/lib/sandbox/workspace-git');
 
-const TARGET = { tenantId: 'tenant-1', subject: 'code-project:p1' };
+const TARGET = { subject: 'code-project:p1' };
 const WS_ID = '11111111-1111-4111-8111-111111111111';
 const context: LocalToolContext = {
   db: {} as LocalToolContext['db'],
-  tenantId: 'tenant-1',
   subject: 'auth0|alice',
   chatId: 'chat-1',
   cipher: testCipher,
@@ -488,7 +487,6 @@ describe('git', () => {
     const result = await tools().get('code_git_push')!.execute({}, context);
     expect(git.resolveWorkspaceGitAccess).toHaveBeenCalledWith(
       {
-        tenantId: 'tenant-1',
         subject: 'auth0|alice',
         origin: 'https://r.example',
         provider: 'atlassian-bitbucket',

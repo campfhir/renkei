@@ -17,9 +17,9 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('resumeRunsNeedingSignIn', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const owner = `owner-${tenantId.slice(0, 8)}`;
-  const other = `other-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const owner = `owner-${suiteId.slice(0, 8)}`;
+  const other = `other-${suiteId.slice(0, 8)}`;
   const agentId = randomUUID();
   const steps = { version: CURRENT_STEPS_VERSION, steps: [] };
 
@@ -33,7 +33,6 @@ maybe('resumeRunsNeedingSignIn', () => {
       .insertInto('agent_runs')
       .values({
         id,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: ownerSubject,
         trigger_kind: 'manual',
@@ -53,14 +52,9 @@ maybe('resumeRunsNeedingSignIn', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `signin-${tenantId.slice(0, 8)}` })
-      .execute();
-    await db
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: owner,
         name: 'Parked agent',
         steps: JSON.stringify(steps),
@@ -70,9 +64,8 @@ maybe('resumeRunsNeedingSignIn', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE owner_subject IN (${owner}, ${other})`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject IN (${owner}, ${other})`.execute(db);
     await closeDatabase();
   });
 
@@ -91,7 +84,7 @@ maybe('resumeRunsNeedingSignIn', () => {
       },
     };
 
-    expect(await resumeRunsNeedingSignIn(db, producer, tenantId, owner)).toBe(2);
+    expect(await resumeRunsNeedingSignIn(db, producer, owner)).toBe(2);
     expect(sent.map((m) => m.payload).sort()).toEqual(
       [{ runId: parkedA }, { runId: parkedB }].sort()
     );
@@ -101,7 +94,6 @@ maybe('resumeRunsNeedingSignIn', () => {
     const rows = await db
       .selectFrom('agent_runs')
       .select(['id', 'status', 'error_kind', 'error'])
-      .where('tenant_id', '=', tenantId)
       .execute();
     const byId = new Map(rows.map((row) => [row.id, row]));
     expect(byId.get(parkedA)).toEqual({
@@ -121,7 +113,7 @@ maybe('resumeRunsNeedingSignIn', () => {
     expect(byId.get(done)?.status).toBe('succeeded');
 
     // Nothing left to re-queue the second time around.
-    expect(await resumeRunsNeedingSignIn(db, producer, tenantId, owner)).toBe(0);
+    expect(await resumeRunsNeedingSignIn(db, producer, owner)).toBe(0);
     expect(sent).toHaveLength(2);
   });
 });

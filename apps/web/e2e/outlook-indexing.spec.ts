@@ -4,7 +4,7 @@
  * only wires new mail to the "An email arrives" agent trigger (and says
  * so), NO Tasks or Calendar toggle, and no indexing progress or re-index
  * control, since nothing in Outlook indexes. Driven against the real
- * /api/microsoft/[tenantId]/indexing route — a PUT writes the grant's
+ * /api/microsoft/indexing route — a PUT writes the grant's
  * metadata and enqueues the bootstrap event; neither touches Microsoft for
  * a grant whose token is a placeholder, since the worker is not running
  * here — and the saved shape is read back from Postgres.
@@ -46,14 +46,12 @@ function uuidFrom(seed: string): string {
 }
 
 function fixtureFor(projectName: string): {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
   accountId: string;
 } {
   return {
-    tenantId: uuidFrom(`outlook-indexing-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`outlook-indexing-e2e-session:${projectName}`),
     slug: `e2e-outlook-indexing-${projectName}`,
     subject: `e2e-outlook-indexing-${projectName}@example.com`,
@@ -75,70 +73,40 @@ async function withDb<T>(run: (client: Client) => Promise<T>): Promise<T> {
 
 async function seedTenant(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    await client.query('DELETE FROM events WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM webhook_subscriptions WHERE tenant_id = $1', [
-      fixture.tenantId,
-    ]);
-    await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-      fixture.tenantId,
-      fixture.slug,
-    ]);
+    await client.query('DELETE FROM events');
+    await client.query('DELETE FROM webhook_subscriptions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM connector_configs');
+    await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name)
-       VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Tester']
     );
     // No coach marks tour stealing focus mid-screenshot.
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+      [fixture.subject]
     );
     // Microsoft 365 is set up for the org and connected for this person.
     await client.query(
-      `INSERT INTO connector_configs (tenant_id, connector, enabled, encrypted_secrets, settings)
-       VALUES ($1, 'microsoft', true, 'not-a-real-secret', $2::jsonb)`,
-      [fixture.tenantId, JSON.stringify({ clientId: 'e2e-m365', directoryTenantId: 'e2e-dir' })]
+      `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)\n       VALUES ('microsoft', true, 'not-a-real-secret', $1::jsonb)`,
+      [JSON.stringify({ clientId: 'e2e-m365', directoryTenantId: 'e2e-dir' })]
     );
     // A grant from BEFORE calendar left the index: it still carries a
     // `calendar: true` flag, which the page must neither show nor keep.
     await client.query(
-      `INSERT INTO provider_grants
-         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,
-          metadata)
-       VALUES ($1, 'microsoft', $2, $3, 'e2e-m365', 'E2E M365 User',
-               'not-a-real-token', 'not-a-real-token', $4, $5, $6)`,
-      [
-        fixture.tenantId,
-        fixture.accountId,
-        fixture.subject,
-        new Date(Date.now() + 365 * 24 * 3_600_000),
-        ['Mail.Read', 'Tasks.Read', 'offline_access'],
-        { tid: 'e2e-dir', upn: 'e2e@example.com', indexing: { calendar: true, tasks: true } },
-      ]
+      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('microsoft', $1, $2, 'e2e-m365', 'E2E M365 User',\n               'not-a-real-token', 'not-a-real-token', $3, $4, $5)`,
+      [fixture.accountId, fixture.subject, new Date(Date.now() + 365 * 24 * 3_600_000), ['Mail.Read', 'Tasks.Read', 'offline_access'], { tid: 'e2e-dir', upn: 'e2e@example.com', indexing: { calendar: true, tasks: true } }]
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'connectors', '{"added": ["microsoft"]}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{"added": ["microsoft"]}'::jsonb)`,
+      [fixture.subject]
     );
     // Subscription rows as the worker would have left them: the inbox
     // trigger feed, having completed a round, and a To Do list from before
@@ -150,12 +118,8 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       ['me/todo/lists/list-1/tasks', 7],
     ] as const) {
       await client.query(
-        `INSERT INTO webhook_subscriptions
-           (id, tenant_id, provider, account_id, resource, subscription_id, client_state,
-            expires_at, delta_link, last_synced_at, last_run_items, total_items, sync_status)
-         VALUES (gen_random_uuid(), $1, 'microsoft', $2, $3, 'graph-sub', 'state',
-                 NOW() + interval '2 days', 'delta-1', NOW(), 0, $4, 'idle')`,
-        [fixture.tenantId, fixture.accountId, resource, total]
+        `INSERT INTO webhook_subscriptions\n           (id, provider, account_id, resource, subscription_id, client_state,\n            expires_at, delta_link, last_synced_at, last_run_items, total_items, sync_status)\n         VALUES (gen_random_uuid(), 'microsoft', $1, $2, 'graph-sub', 'state',\n                 NOW() + interval '2 days', 'delta-1', NOW(), 0, $3, 'idle')`,
+        [fixture.accountId, resource, total]
       );
     }
   });
@@ -164,9 +128,8 @@ async function seedTenant(fixture: Fixture): Promise<void> {
 async function savedIndexing(fixture: Fixture): Promise<unknown> {
   return withDb(async (client) => {
     const result = await client.query<{ indexing: unknown }>(
-      `SELECT metadata -> 'indexing' AS indexing FROM provider_grants
-        WHERE tenant_id = $1 AND provider = 'microsoft' AND subject = $2`,
-      [fixture.tenantId, fixture.subject]
+      `SELECT metadata -> 'indexing' AS indexing FROM provider_grants\n        WHERE provider = 'microsoft' AND subject = $1`,
+      [fixture.subject]
     );
     return result.rows[0]?.indexing;
   });
@@ -175,7 +138,7 @@ async function savedIndexing(fixture: Fixture): Promise<unknown> {
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -200,7 +163,7 @@ test('Outlook opt-in: Mail is a trigger feed; Tasks and Calendar are gone', asyn
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/connectors`);
+  await page.goto(`/connectors`);
   await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
 
   const card = page.locator('[data-coach="card-microsoft"]');

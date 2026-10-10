@@ -86,7 +86,6 @@ async function bulkWorklogs(maxJqlResults = 100): Promise<ToolHandler> {
   await registerWorklogTools(
     server,
     {
-      tenantId: 'tenant-1',
       accountId: 'acct-1',
       siteUrl: 'https://example.atlassian.net',
       apiBaseUrl,

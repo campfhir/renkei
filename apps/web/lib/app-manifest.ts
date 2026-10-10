@@ -3,7 +3,7 @@ import type { MetadataRoute } from 'next';
 /**
  * Shared by app/manifest.ts (the generic, tenant-less manifest served at "/")
  * and app/api/manifest/[slug]/route.ts (the per-tenant one linked from
- * app/[slug]/layout.tsx). Everything but `start_url` is the same either way.
+ * app/(app)/layout.tsx). Everything but `start_url` is the same either way.
  */
 export function buildManifest(startUrl: string): MetadataRoute.Manifest {
   return {

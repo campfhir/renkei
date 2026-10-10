@@ -60,7 +60,7 @@ const store = jest.requireMock<{
 const vault = new SecretVault({ sweepIntervalMs: 60 * 60_000 });
 
 const API_KEY = 'test-worker-key';
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice' };
+const TARGET = { subject: 'auth0|alice' };
 const RENDERED = {
   bytes: Buffer.from('png-bytes'),
   mediaType: 'image/png',

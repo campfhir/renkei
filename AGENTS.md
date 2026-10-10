@@ -29,9 +29,9 @@ viewport pass.
   way a browser would, against the delegate the config starts), plus
   `SANDBOX_WORKER_URL=http://127.0.0.1:8092`,
   `SANDBOX_WORKER_API_KEY=e2e-sandbox-key` so the sandbox stub is reachable
-  (which sandbox features the seeded tenant gets — code workspaces,
-  services, the browser, charts — is written by `e2e/seed.ts` as that
-  tenant's own org settings, not by environment variables); then
+  (which sandbox features the seeded organization gets — code workspaces,
+  services, the browser, charts — is written by `e2e/seed.ts` as org
+  settings, not by environment variables); then
   `pnpm --filter @renkei/db migrate`. After that,
   `npx playwright test <spec>.spec.ts --project=desktop-light` from
   `apps/web` drives everything else (dev server, sandbox stub, the
@@ -53,10 +53,15 @@ viewport pass.
   "does this layout still work at phone width", which is nearly always the
   actual question.
 - **Isolate what you create.** If a spec creates a row through the UI (not
-  just reads seeded fixtures), give it its own tenant rather than reusing
-  `e2e/seed.ts`'s shared one — Playwright runs projects concurrently
-  against the same dev database, and a shared tenant races on uniqueness
+  just reads seeded fixtures), give it its own person rather than reusing
+  `e2e/seed.ts`'s shared session — Playwright runs projects concurrently
+  against the same dev database, and a shared subject races on uniqueness
   constraints and on any "empty state" assertion. `llm-models.spec.ts`
-  derives a deterministic tenant/session per project name for exactly this
-  reason; copy that pattern rather than the shared-tenant one when your
-  spec writes data.
+  derives a deterministic subject/session per project name for exactly
+  this reason; copy that pattern rather than the shared-session one when
+  your spec writes data, and clear your person's rows with
+  `deleteRowsOf(client, subject, tables)` from `e2e/seed.ts`. There is one
+  organization per deployment, so organization-wide tables (`settings`,
+  `connector_configs`, `llm_model_configs`, `oauth_clients`) are shared by
+  every spec in a run: a spec that writes one of them cannot assume an
+  empty state and should keep its own writes distinctive.

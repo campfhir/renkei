@@ -46,15 +46,14 @@ export interface GitHubAccount {
 /** The auth for one signed-in person, from a route's request. */
 export async function githubAuthFor(
   request: NextRequest,
-  tenantId: string,
   subject: string
 ): Promise<GitHubAuth> {
   const origin = await getOrigin(request);
-  return githubAuthOf({ tenantId, subject, origin: origin.ok ? origin.val : '' });
+  return githubAuthOf({ subject, origin: origin.ok ? origin.val : '' });
 }
 
 /** The auth for one person outside a request (a server page). */
-export function githubAuthOf(context: { tenantId: string; subject: string; origin: string }): GitHubAuth {
+export function githubAuthOf(context: { subject: string; origin: string }): GitHubAuth {
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   return oauthGitHubAuth(context as MCPToolContext);
 }

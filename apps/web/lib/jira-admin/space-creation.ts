@@ -45,7 +45,6 @@ export const CREATE_SPACE_KIND = 'create_space';
 export const SPACE_KEY_PATTERN = /^[A-Z][A-Z0-9_]{1,9}$/;
 
 interface LogScope {
-  tenantId: string;
   subject?: string;
 }
 

@@ -139,7 +139,7 @@ describe('ingestObjectChunks — embedding batches', () => {
     const text = Array.from({ length: 40 }, (_, i) => `paragraph ${i} with some words`).join(
       '\n\n'
     );
-    const result = await ingestObjectChunks('tenant-1', embedderRecording(calls), object(text), {
+    const result = await ingestObjectChunks(embedderRecording(calls), object(text), {
       maxChars: 200,
       overlap: 20,
     });
@@ -152,7 +152,7 @@ describe('ingestObjectChunks — embedding batches', () => {
   it('splits into multiple requests only past the 64-piece batch cap', async () => {
     const calls: string[][] = [];
     const text = Array.from({ length: 80 }, (_, i) => `p${i} ${'x'.repeat(90)}`).join('\n\n');
-    const result = await ingestObjectChunks('tenant-1', embedderRecording(calls), object(text), {
+    const result = await ingestObjectChunks(embedderRecording(calls), object(text), {
       maxChars: 100,
       overlap: 0,
     });
@@ -166,7 +166,6 @@ describe('ingestObjectChunks — embedding batches', () => {
   it('skips the embed call entirely when a matching vector is precomputed', async () => {
     const calls: string[][] = [];
     const result = await ingestObjectChunks(
-      'tenant-1',
       embedderRecording(calls),
       object('short content'),
       { precomputed: { content: 'short content', vector: [0.5, 0.5] } }
@@ -177,7 +176,7 @@ describe('ingestObjectChunks — embedding batches', () => {
 
   it('ignores a precomputed vector whose content does not match what will be stored', async () => {
     const calls: string[][] = [];
-    await ingestObjectChunks('tenant-1', embedderRecording(calls), object('short content'), {
+    await ingestObjectChunks(embedderRecording(calls), object('short content'), {
       precomputed: { content: 'different content', vector: [0.5] },
     });
     expect(calls).toHaveLength(1);
@@ -199,7 +198,6 @@ describe('ingestObjectChunks — embedding batches', () => {
         '\n\n'
       );
       const result = await ingestObjectChunks(
-        'tenant-1',
         embedderRecording([]),
         { ...object(text), metadata: { title: 'Runbook' } },
         { maxChars: 200, overlap: 20, keywords: extractorReturning(['ENG-787', 'printers'], seen) }
@@ -213,7 +211,7 @@ describe('ingestObjectChunks — embedding batches', () => {
     });
 
     it('stores NULL (not extracted) when there is no extractor, and on failure', async () => {
-      await ingestObjectChunks('tenant-1', embedderRecording([]), object('short'), {
+      await ingestObjectChunks(embedderRecording([]), object('short'), {
         keywords: null,
       });
       expect(inserted[0]?.keywords).toBeNull();
@@ -222,7 +220,7 @@ describe('ingestObjectChunks — embedding batches', () => {
       const failing: KeywordExtractor = {
         extract: async () => ({ ok: false, err: { type: 'KEYWORDS_FAILED' as const } }),
       };
-      const result = await ingestObjectChunks('tenant-1', embedderRecording([]), object('short'), {
+      const result = await ingestObjectChunks(embedderRecording([]), object('short'), {
         keywords: failing,
       });
       // Enrichment only: the object still indexes.
@@ -235,7 +233,7 @@ describe('ingestObjectChunks — embedding batches', () => {
       // The org would resolve an extractor here; a supplied list must win
       // without it ever being asked — the mock resolver records nothing,
       // and an explicit extractor is not consulted either.
-      await ingestObjectChunks('tenant-1', embedderRecording([]), object('short'), {
+      await ingestObjectChunks(embedderRecording([]), object('short'), {
         keywords: [' "ENG-787" ', 'Printers', 'printers', ''],
       });
       expect(inserted[0]?.keywords).toEqual(['ENG-787', 'Printers']);
@@ -243,7 +241,7 @@ describe('ingestObjectChunks — embedding batches', () => {
     });
 
     it('stores an empty list when extraction ran and found nothing', async () => {
-      await ingestObjectChunks('tenant-1', embedderRecording([]), object('short'), {
+      await ingestObjectChunks(embedderRecording([]), object('short'), {
         keywords: extractorReturning([], []),
       });
       expect(inserted[0]?.keywords).toEqual([]);
@@ -251,7 +249,7 @@ describe('ingestObjectChunks — embedding batches', () => {
 
     it('does not disturb the precomputed-vector fast path', async () => {
       const calls: string[][] = [];
-      await ingestObjectChunks('tenant-1', embedderRecording(calls), object('short content'), {
+      await ingestObjectChunks(embedderRecording(calls), object('short content'), {
         precomputed: { content: 'short content', vector: [0.5, 0.5] },
         keywords: extractorReturning(['x'], []),
       });

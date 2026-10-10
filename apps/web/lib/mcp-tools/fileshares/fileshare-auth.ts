@@ -29,7 +29,7 @@ const NOT_AVAILABLE = 'File shares are not available for this caller.';
 export interface FileshareAuth {
   readonly kind: 'user' | 'denied';
   /** The tenant/subject the tools act as; a string is a user-visible refusal. */
-  target(): { tenantId: string; subject: string } | string;
+  target(): { subject: string } | string;
   /** The shares this caller has connected. A string is a user-visible refusal. */
   listConnected(): Promise<ConnectedShare[] | string>;
   /** The caller's connection (exposure choice) on one share, or a refusal. */
@@ -42,7 +42,7 @@ export function userFileshareAuth(context: MCPToolContext): FileshareAuth {
     target() {
       const subject = context.subject;
       if (!subject) return NOT_AVAILABLE;
-      return { tenantId: context.tenantId, subject };
+      return { subject };
     },
 
     async listConnected() {
@@ -50,7 +50,7 @@ export function userFileshareAuth(context: MCPToolContext): FileshareAuth {
       if (!subject) return NOT_AVAILABLE;
       const dbResult = getDatabase();
       if (!dbResult.ok) return 'Database unavailable.';
-      const connected = await listConnectedShares(dbResult.val, context.tenantId, subject);
+      const connected = await listConnectedShares(dbResult.val, subject);
       if (!connected.ok) return 'Could not read your share connections.';
       return connected.val;
     },
@@ -60,7 +60,7 @@ export function userFileshareAuth(context: MCPToolContext): FileshareAuth {
       if (!subject) return NOT_AVAILABLE;
       const dbResult = getDatabase();
       if (!dbResult.ok) return 'Database unavailable.';
-      const connection = await getConnection(dbResult.val, context.tenantId, shareId, subject);
+      const connection = await getConnection(dbResult.val, shareId, subject);
       if (!connection.ok) return 'Could not read your share connections.';
       if (!connection.val) return NO_SUCH_SHARE;
       return connection.val;

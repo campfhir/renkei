@@ -31,6 +31,7 @@ import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import { keyFor } from './keys';
 import { encodeGif } from '@renkei/document-render';
+import { deleteRowsOf } from './seed';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 /** The first hit on a route compiles it (`next dev` builds lazily). */
@@ -57,7 +58,6 @@ function uuidFrom(seed: string): string {
 function fixtureFor(projectName: string) {
   const id = (what: string) => uuidFrom(`image-generation-e2e:${what}:${projectName}`);
   return {
-    tenantId: id('tenant'),
     sessionId: id('session'),
     slug: `e2e-image-generation-${projectName}`,
     subject: `e2e-image-${projectName}@example.com`,
@@ -137,7 +137,7 @@ async function seedTenant(f: Fixture): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    for (const table of [
+    await deleteRowsOf(client, [f.subject, f.otherSubject], [
       'image_usage',
       'chat_attachments',
       'chats',
@@ -145,35 +145,24 @@ async function seedTenant(f: Fixture): Promise<void> {
       'user_preferences',
       'sessions',
       'identities',
-    ]) {
-      await client.query(`DELETE FROM ${table} WHERE tenant_id = $1`, [f.tenantId]);
-    }
-    await client.query('DELETE FROM tenants WHERE id = $1', [f.tenantId]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [f.tenantId, f.slug]);
+    ]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-      [
-        f.sessionId,
-        f.tenantId,
-        f.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
+      [f.sessionId, f.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     for (const [subject, name] of [
       [f.subject, 'E2E Tester'],
       [f.otherSubject, 'Another Person'],
     ]) {
       await client.query(
-        `INSERT INTO identities (tenant_id, subject, email, display_name) VALUES ($1, $2, $3, $4)`,
-        [f.tenantId, subject, subject, name]
+        `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
+        [subject, subject, name]
       );
     }
     // No coach marks tour stealing focus mid-screenshot.
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [f.tenantId, f.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+      [f.subject]
     );
   } finally {
     await client.end();
@@ -187,23 +176,20 @@ async function addModels(f: Fixture, which: ('chat' | 'painter' | 'fox')[]): Pro
     const secret = sealSecret(JSON.stringify({ apiKey: 'e2e' }));
     if (which.includes('chat')) {
       await client.query(
-        `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)
-         VALUES ($1, $2, 'Chatty', 'anthropic', 'e2e-model', 'http://127.0.0.1:8092/anthropic', $3, true, false)`,
-        [f.chatModelId, f.tenantId, secret]
+        `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)\n         VALUES ($1, 'Chatty', 'anthropic', 'e2e-model', 'http://127.0.0.1:8092/anthropic', $2, true, false)`,
+        [f.chatModelId, secret]
       );
     }
     if (which.includes('painter')) {
       await client.query(
-        `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, settings, enabled, is_default)
-         VALUES ($1, $2, 'Painter', 'openai', 'gpt-image-1', $3, '{"apiSurface":"images"}'::jsonb, true, false)`,
-        [f.painterId, f.tenantId, secret]
+        `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, settings, enabled, is_default)\n         VALUES ($1, 'Painter', 'openai', 'gpt-image-1', $2, '{"apiSurface":"images"}'::jsonb, true, false)`,
+        [f.painterId, secret]
       );
     }
     if (which.includes('fox')) {
       await client.query(
-        `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, settings, enabled, is_default)
-         VALUES ($1, $2, 'Fox', 'openai', 'FLUX.2-flex', $3, '{"apiSurface":"flux","apiVersion":"preview"}'::jsonb, true, false)`,
-        [f.foxId, f.tenantId, secret]
+        `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, settings, enabled, is_default)\n         VALUES ($1, 'Fox', 'openai', 'FLUX.2-flex', $2, '{"apiSurface":"flux","apiVersion":"preview"}'::jsonb, true, false)`,
+        [f.foxId, secret]
       );
     }
   } finally {
@@ -214,7 +200,7 @@ async function addModels(f: Fixture, which: ('chat' | 'painter' | 'fox')[]): Pro
 async function signIn(page: Page, f: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${f.tenantId}`,
+      name: `renkei_session`,
       value: f.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -256,7 +242,6 @@ async function seedRows(
 ): Promise<Map<number, string>> {
   const ids = new Map<number, string>();
   const chatKey = await keyFor(client, {
-    tenantId: f.tenantId,
     kind: 'chat',
     resourceId: chatId,
     ownerSubject: f.subject,
@@ -264,21 +249,8 @@ async function seedRows(
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     const inserted = await client.query(
-      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)
-       VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10, $11) RETURNING id`,
-      [
-        f.tenantId,
-        chatId,
-        turnId,
-        row.seq,
-        row.role,
-        row.kind,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? f.chatModelId : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'e2e-model' : null,
-        assistant ? 'tool_use' : null,
-      ]
+      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9, $10) RETURNING id`,
+      [chatId, turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? f.chatModelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null, assistant ? 'tool_use' : null]
     );
     ids.set(row.seq, inserted.rows[0].id);
   }
@@ -291,14 +263,12 @@ async function seedDoneChat(f: Fixture): Promise<void> {
   await client.connect();
   try {
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-       VALUES ($1, $2, $3, 'Polar bear', $4, NOW())`,
-      [f.doneChatId, f.tenantId, f.subject, f.chatModelId]
+      `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, 'Polar bear', $3, NOW())`,
+      [f.doneChatId, f.subject, f.chatModelId]
     );
     await client.query(
-      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
-       VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
-      [f.doneTurnId, f.tenantId, f.doneChatId, f.chatModelId]
+      `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n       VALUES ($1, $2, 'completed', $3, 2, NOW())`,
+      [f.doneTurnId, f.doneChatId, f.chatModelId]
     );
     const ids = await seedRows(client, f, f.doneChatId, f.doneTurnId, [
       { seq: 1, role: 'user', kind: 'prompt', blocks: [{ type: 'text', text: PROMPT }] },
@@ -347,16 +317,8 @@ async function seedDoneChat(f: Fixture): Promise<void> {
     ]);
     // The file the call kept, as the runner stores it: tied to the results row.
     await client.query(
-      `INSERT INTO chat_attachments (id, tenant_id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id)
-       VALUES ($1, $2, $3, $4, $5, 'cute_polar_bear.png', 'image/png', 2345, 'none', 'model', $6)`,
-      [
-        f.attachmentId,
-        f.tenantId,
-        f.subject,
-        f.doneChatId,
-        `chat/${f.tenantId}/${f.doneTurnId}`,
-        ids.get(3),
-      ]
+      `INSERT INTO chat_attachments (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id)\n       VALUES ($1, $2, $3, $4, 'cute_polar_bear.png', 'image/png', 2345, 'none', 'model', $5)`,
+      [f.attachmentId, f.subject, f.doneChatId, `chat/e2e/${f.doneTurnId}`, ids.get(3)]
     );
   } finally {
     await client.end();
@@ -386,14 +348,12 @@ async function seedGifChat(f: Fixture, sizeBytes: number): Promise<void> {
   await client.connect();
   try {
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-       VALUES ($1, $2, $3, 'Bouncing ball', $4, NOW())`,
-      [f.gifChatId, f.tenantId, f.subject, f.chatModelId]
+      `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, 'Bouncing ball', $3, NOW())`,
+      [f.gifChatId, f.subject, f.chatModelId]
     );
     await client.query(
-      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
-       VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
-      [f.gifTurnId, f.tenantId, f.gifChatId, f.chatModelId]
+      `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n       VALUES ($1, $2, 'completed', $3, 2, NOW())`,
+      [f.gifTurnId, f.gifChatId, f.chatModelId]
     );
     const ids = await seedRows(client, f, f.gifChatId, f.gifTurnId, [
       {
@@ -431,17 +391,8 @@ async function seedGifChat(f: Fixture, sizeBytes: number): Promise<void> {
       },
     ]);
     await client.query(
-      `INSERT INTO chat_attachments (id, tenant_id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id)
-       VALUES ($1, $2, $3, $4, $5, 'ball.gif', 'image/gif', $6, 'none', 'model', $7)`,
-      [
-        f.gifAttachmentId,
-        f.tenantId,
-        f.subject,
-        f.gifChatId,
-        `chat/${f.tenantId}/${f.gifTurnId}`,
-        sizeBytes,
-        ids.get(3),
-      ]
+      `INSERT INTO chat_attachments (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id)\n       VALUES ($1, $2, $3, $4, 'ball.gif', 'image/gif', $5, 'none', 'model', $6)`,
+      [f.gifAttachmentId, f.subject, f.gifChatId, `chat/e2e/${f.gifTurnId}`, sizeBytes, ids.get(3)]
     );
   } finally {
     await client.end();
@@ -463,9 +414,8 @@ async function seedWaitingChat(
   try {
     await client.query('DELETE FROM chats WHERE id = $1', [f.waitingChatId]);
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-       VALUES ($1, $2, $3, 'Waiting for a picture', $4, NOW())`,
-      [f.waitingChatId, f.tenantId, f.subject, f.chatModelId]
+      `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, 'Waiting for a picture', $3, NOW())`,
+      [f.waitingChatId, f.subject, f.chatModelId]
     );
     const ask = {
       toolUseId: f.waitingCall,
@@ -477,13 +427,13 @@ async function seedWaitingChat(
     };
     await client.query(
       parked
-        ? `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, stage, stage_at, tool_permission)
-           VALUES ($1, $2, $3, 'running', $4, 1, 'permission:chat_generate_image', NOW(), $5::jsonb)`
-        : `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, stage_at)
-           VALUES ($1, $2, $3, 'running', $4, 1, NOW())`,
+        ? `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, stage, stage_at, tool_permission)
+           VALUES ($1, $2, 'running', $3, 1, 'permission:chat_generate_image', NOW(), $4::jsonb)`
+        : `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, stage_at)
+           VALUES ($1, $2, 'running', $3, 1, NOW())`,
       parked
-        ? [f.waitingTurnId, f.tenantId, f.waitingChatId, f.chatModelId, JSON.stringify(ask)]
-        : [f.waitingTurnId, f.tenantId, f.waitingChatId, f.chatModelId]
+        ? [f.waitingTurnId, f.waitingChatId, f.chatModelId, JSON.stringify(ask)]
+        : [f.waitingTurnId, f.waitingChatId, f.chatModelId]
     );
     const ids = await seedRows(client, f, f.waitingChatId, f.waitingTurnId, [
       { seq: 1, role: 'user', kind: 'prompt', blocks: [{ type: 'text', text: PROMPT }] },
@@ -512,11 +462,11 @@ async function seedUsage(f: Fixture): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    const row = `INSERT INTO image_usage (tenant_id, subject, surface, provider, model, images, image_bytes, width, height, input_tokens, output_tokens)
-                 VALUES ($1, $2, $3, 'openai', $4, 1, $5, 1024, 1024, $6, $7)`;
-    await client.query(row, [f.tenantId, f.subject, 'images', 'gpt-image-1', 3_000_000, 61, 4160]);
-    await client.query(row, [f.tenantId, f.subject, 'images', 'gpt-image-1', 1_000_000, 40, 1000]);
-    await client.query(row, [f.tenantId, f.otherSubject, 'flux', 'FLUX.2-flex', 500_000, 0, 0]);
+    const row = `INSERT INTO image_usage (subject, surface, provider, model, images, image_bytes, width, height, input_tokens, output_tokens)
+                 VALUES ($1, $2, 'openai', $3, 1, $4, 1024, 1024, $5, $6)`;
+    await client.query(row, [f.subject, 'images', 'gpt-image-1', 3_000_000, 61, 4160]);
+    await client.query(row, [f.subject, 'images', 'gpt-image-1', 1_000_000, 40, 1000]);
+    await client.query(row, [f.otherSubject, 'flux', 'FLUX.2-flex', 500_000, 0, 0]);
   } finally {
     await client.end();
   }
@@ -539,12 +489,12 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   // 3:2, like the size asked for; the bytes stand in for the blob store.
   const png = solidPng(3000, 2000, [120, 170, 230]);
   await page.route(
-    `**/api/tenant/${fixture.tenantId}/chat/attachments/${fixture.attachmentId}`,
+    `**/api/chat/attachments/${fixture.attachmentId}`,
     (route) => route.fulfill({ status: 200, contentType: 'image/png', body: png })
   );
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/chat/${fixture.doneChatId}`);
+  await page.goto(`/chat/${fixture.doneChatId}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Polar bear' })).toBeVisible();
 
   const cards = page.getByTestId('image-card');
@@ -640,7 +590,7 @@ test('installed to the iOS home screen, Download opens the file over the app ins
   await seedDoneChat(fixture);
   const png = solidPng(300, 200, [120, 170, 230]);
   await page.route(
-    `**/api/tenant/${fixture.tenantId}/chat/attachments/${fixture.attachmentId}`,
+    `**/api/chat/attachments/${fixture.attachmentId}`,
     (route) => route.fulfill({ status: 200, contentType: 'image/png', body: png })
   );
   // iOS WebKit's marker for a home-screen (standalone) launch; nothing else sets it.
@@ -650,7 +600,7 @@ test('installed to the iOS home screen, Download opens the file over the app ins
   await signIn(page, fixture);
   await page.setViewportSize(MOBILE_VIEWPORT);
 
-  const chatUrl = `/${fixture.slug}/chat/${fixture.doneChatId}`;
+  const chatUrl = `/chat/${fixture.doneChatId}`;
   await page.goto(chatUrl);
   const drawn = page.getByTestId('image-card').nth(0);
   await expect(drawn).toHaveAttribute('data-state', 'done', COLD);
@@ -683,7 +633,7 @@ test('installed to the iOS home screen with file sharing, Download opens the sha
   let prefetched!: () => void;
   const fetchedAhead = new Promise<void>((resolve) => (prefetched = resolve));
   await page.route(
-    `**/api/tenant/${fixture.tenantId}/chat/attachments/${fixture.attachmentId}`,
+    `**/api/chat/attachments/${fixture.attachmentId}`,
     async (route) => {
       await route.fulfill({ status: 200, contentType: 'image/png', body: png });
       if (route.request().resourceType() === 'fetch') prefetched();
@@ -710,7 +660,7 @@ test('installed to the iOS home screen with file sharing, Download opens the sha
   await signIn(page, fixture);
   await page.setViewportSize(MOBILE_VIEWPORT);
 
-  const chatUrl = `/${fixture.slug}/chat/${fixture.doneChatId}`;
+  const chatUrl = `/chat/${fixture.doneChatId}`;
   await page.goto(chatUrl);
   const drawn = page.getByTestId('image-card').nth(0);
   await expect(drawn).toHaveAttribute('data-state', 'done', COLD);
@@ -741,7 +691,7 @@ test('a call waiting on permission shows no outline; once approved it is an outl
 
   // Parked on the permission ask: nothing is being drawn, so no outline — only the caption.
   await seedWaitingChat(fixture, { filename: 'bear.png', size: '1024x1536' }, { parked: true });
-  await page.goto(`/${fixture.slug}/chat/${fixture.waitingChatId}`);
+  await page.goto(`/chat/${fixture.waitingChatId}`);
   await expect(
     page.getByRole('heading', { level: 1, name: 'Waiting for a picture' })
   ).toBeVisible();
@@ -795,7 +745,7 @@ test('an animated GIF is worded as an animation while it is made, and plays inli
 
   // Being made: an animation, in the 16:9 shape asked for.
   await seedWaitingChat(fixture, { filename: 'ball.gif', aspectRatio: '16:9' }, { parked: false });
-  await page.goto(`/${fixture.slug}/chat/${fixture.waitingChatId}`);
+  await page.goto(`/chat/${fixture.waitingChatId}`);
   const waiting = page.getByTestId('image-card');
   await expect(waiting).toHaveAttribute('data-state', 'pending', COLD);
   await expect(waiting).toHaveAttribute('data-kind', 'animation');
@@ -807,10 +757,10 @@ test('an animated GIF is worded as an animation while it is made, and plays inli
   const gif = ballGif();
   await seedGifChat(fixture, gif.byteLength);
   await page.route(
-    `**/api/tenant/${fixture.tenantId}/chat/attachments/${fixture.gifAttachmentId}`,
+    `**/api/chat/attachments/${fixture.gifAttachmentId}`,
     (route) => route.fulfill({ status: 200, contentType: 'image/gif', body: gif })
   );
-  await page.goto(`/${fixture.slug}/chat/${fixture.gifChatId}`);
+  await page.goto(`/chat/${fixture.gifChatId}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Bouncing ball' })).toBeVisible(COLD);
   const card = page.getByTestId('image-card');
   await expect(card).toHaveAttribute('data-state', 'done', COLD);
@@ -860,7 +810,7 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
 
   // No image model in the org: the section is not there.
   await addModels(fixture, ['chat']);
-  await page.goto(`/${fixture.slug}/preferences`);
+  await page.goto(`/preferences`);
   await expect(page.getByRole('heading', { name: 'Preferences', level: 1 })).toBeVisible(COLD);
   await expect(page.getByRole('heading', { name: 'Image generation' })).toHaveCount(0);
 
@@ -891,8 +841,8 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
   await client.connect();
   try {
     const stored = await client.query(
-      `SELECT value FROM user_preferences WHERE tenant_id = $1 AND subject = $2 AND key = 'image'`,
-      [fixture.tenantId, fixture.subject]
+      `SELECT value FROM user_preferences WHERE subject = $1 AND key = 'image'`,
+      [fixture.subject]
     );
     expect(stored.rows[0].value).toEqual({ modelId: fixture.painterId });
   } finally {
@@ -919,7 +869,7 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
   await signIn(page, fixture);
 
   // Mine: two pictures, 4 million bytes, 101 tokens in and 5.2k out.
-  await page.goto(`/${fixture.slug}/utilization`);
+  await page.goto(`/utilization`);
   const mine = page.getByRole('main').getByTestId('image-usage-card');
   await expect(mine).toBeVisible(COLD);
   await expect(mine.getByTestId('image-usage-count')).toHaveText('2');
@@ -936,7 +886,7 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
   await shot(page, testInfo, 'usage-images-mine.png');
 
   // The organization: three pictures, and who has the most.
-  await page.goto(`/${fixture.slug}/admin/usage`);
+  await page.goto(`/admin/usage`);
   const org = page.getByRole('main').getByTestId('image-usage-card');
   await expect(org).toBeVisible(COLD);
   await expect(org.getByTestId('image-usage-count')).toHaveText('3');
@@ -975,7 +925,7 @@ test('the Tokens chart shows images by colour beside chat and agents, hour by ho
   // The chart's bars carry a tooltip; the ones with any tokens are the filled ones.
   const imageBars = main.locator('[role="img"] [title*="Images"]');
 
-  await page.goto(`/${fixture.slug}/admin/usage`);
+  await page.goto(`/admin/usage`);
   await expect(main.getByTestId('image-usage-card')).toBeVisible(COLD);
 
   // There is no switch for images: the chart's own switch is Tokens, Agent runs, Tool calls.
@@ -1007,13 +957,13 @@ test('the Tokens chart shows images by colour beside chat and agents, hour by ho
   await expect(main.locator('[title*="Images"]')).toHaveCount(0);
 
   // My usage keeps its own input/output chart, with no Images switch.
-  await page.goto(`/${fixture.slug}/utilization`);
+  await page.goto(`/utilization`);
   await expect(main.getByTestId('image-usage-card')).toBeVisible(COLD);
   await expect(main.getByRole('button', { name: 'Images', exact: true })).toHaveCount(0);
 
   // Phone width.
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto(`/${fixture.slug}/admin/usage`);
+  await page.goto(`/admin/usage`);
   await expect(main.getByTestId('image-usage-card')).toBeVisible(COLD);
   await expect(imageBars).toHaveCount(1);
   await shot(page, testInfo, 'usage-tokens-chart-images-mobile.png');

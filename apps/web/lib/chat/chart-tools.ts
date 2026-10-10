@@ -83,7 +83,7 @@ export function chartTools(): LocalTool[] {
         if (!name.ok) return errorResult(name.reason);
 
         const rendered = await sbChartRender(
-          { tenantId: context.tenantId, subject: context.subject },
+          { subject: context.subject },
           {
             source: parsed.request.source,
             format: parsed.request.format,

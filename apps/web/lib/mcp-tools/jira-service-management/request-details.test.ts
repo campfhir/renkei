@@ -54,7 +54,7 @@ async function toolsOf(): Promise<Map<string, Handler>> {
   } as unknown as McpServer;
   await registerRequestDetailsTools(
     server,
-    { tenantId: 't' } as unknown as MCPToolContext,
+    { } as unknown as MCPToolContext,
     stubAuth
   );
   return registered;

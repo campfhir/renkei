@@ -25,13 +25,12 @@ const STALE_LOCK_MS = 5 * 60 * 1000;
 async function acquireRefreshLock(
   db: Kysely<DB>,
   provider: string,
-  tenantId: string,
   accountId: string
 ): Promise<boolean> {
   try {
     await db
       .insertInto('provider_refresh_locks')
-      .values({ tenant_id: tenantId, provider, account_id: accountId, locked_at: new Date() })
+      .values({ provider, account_id: accountId, locked_at: new Date() })
       .execute();
     return true;
   } catch {
@@ -42,13 +41,11 @@ async function acquireRefreshLock(
 async function releaseRefreshLock(
   db: Kysely<DB>,
   provider: string,
-  tenantId: string,
   accountId: string
 ): Promise<void> {
   try {
     await db
       .deleteFrom('provider_refresh_locks')
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', provider)
       .where('account_id', '=', accountId)
       .execute();
@@ -61,7 +58,6 @@ async function releaseRefreshLock(
 async function waitForRefreshLock(
   db: Kysely<DB>,
   provider: string,
-  tenantId: string,
   accountId: string
 ): Promise<void> {
   let attempts = 0;
@@ -71,7 +67,6 @@ async function waitForRefreshLock(
     const lock = await db
       .selectFrom('provider_refresh_locks')
       .select('locked_at')
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', provider)
       .where('account_id', '=', accountId)
       .executeTakeFirst();
@@ -79,7 +74,7 @@ async function waitForRefreshLock(
     if (!lock) return;
 
     if (Date.now() - lock.locked_at.getTime() > STALE_LOCK_MS) {
-      await releaseRefreshLock(db, provider, tenantId, accountId);
+      await releaseRefreshLock(db, provider, accountId);
       return;
     }
 
@@ -91,35 +86,32 @@ async function waitForRefreshLock(
 
 export async function refreshGrantTokens(
   adapter: ProviderAdapter,
-  tenantId: string,
   accountId: string,
   logger: GrantLogger = silentLogger
 ): Promise<Result<RefreshedTokens, RefreshError>> {
   const provider = adapter.provider;
-  logger.debug('[Refresh] Starting token refresh', { provider, tenantId, accountId });
+  logger.debug('[Refresh] Starting token refresh', { provider, accountId });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    logger.error('[Refresh] Database unavailable', { provider, tenantId, accountId });
+    logger.error('[Refresh] Database unavailable', { provider, accountId });
     return err('REFRESH_FAILED' as const);
   }
   const db = dbResult.val;
 
   try {
-    const lockAcquired = await acquireRefreshLock(db, provider, tenantId, accountId);
+    const lockAcquired = await acquireRefreshLock(db, provider, accountId);
     if (!lockAcquired) {
       logger.debug('[Refresh] Lock not acquired, waiting for other process', {
         provider,
-        tenantId,
         accountId,
       });
-      await waitForRefreshLock(db, provider, tenantId, accountId);
+      await waitForRefreshLock(db, provider, accountId);
       // The other process may have refreshed already — reuse its result.
-      const refetch = await getGrant(provider, tenantId, accountId);
+      const refetch = await getGrant(provider, accountId);
       if (refetch.ok && refetch.val) {
         logger.debug('[Refresh] Using refreshed token from other process', {
           provider,
-          tenantId,
           accountId,
         });
         return ok({
@@ -130,14 +122,13 @@ export async function refreshGrantTokens(
       }
       logger.debug('[Refresh] Re-fetch failed, proceeding with refresh', {
         provider,
-        tenantId,
         accountId,
       });
     }
 
-    const grantResult = await getGrant(provider, tenantId, accountId);
+    const grantResult = await getGrant(provider, accountId);
     if (!grantResult.ok || !grantResult.val) {
-      logger.error('[Refresh] No usable grant found', { provider, tenantId, accountId });
+      logger.error('[Refresh] No usable grant found', { provider, accountId });
       return err('REFRESH_FAILED' as const);
     }
     const grant = grantResult.val;
@@ -147,10 +138,9 @@ export async function refreshGrantTokens(
       if (refreshed.err.type === 'GRANT_REVOKED') {
         logger.warn('[Refresh] Refresh token rejected by provider, deleting grant', {
           provider,
-          tenantId,
           accountId,
         });
-        await deleteGrant(provider, tenantId, accountId);
+        await deleteGrant(provider, accountId);
         return err('GRANT_REVOKED' as const);
       }
       // The kind and the provider's own words: without them this line
@@ -158,7 +148,6 @@ export async function refreshGrantTokens(
       // from a misconfigured client, which are three different fixes.
       logger.error('[Refresh] Provider refresh failed: {kind} {message}', {
         provider,
-        tenantId,
         accountId,
         kind: refreshed.err.type,
         message:
@@ -178,10 +167,10 @@ export async function refreshGrantTokens(
     // Sealed under the owner's key (store.ts). A grant that opened has an
     // owner, so the subject is there to seal for.
     if (!grant.subject) return err('REFRESH_FAILED' as const);
-    const sealedAccess = await sealGrantToken(db, tenantId, grant.subject, accessToken);
-    const sealedRefresh = await sealGrantToken(db, tenantId, grant.subject, refreshToken);
+    const sealedAccess = await sealGrantToken(db, grant.subject, accessToken);
+    const sealedRefresh = await sealGrantToken(db, grant.subject, refreshToken);
     if (!sealedAccess.ok || !sealedRefresh.ok) {
-      logger.error('[Refresh] Could not seal refreshed tokens', { provider, tenantId, accountId });
+      logger.error('[Refresh] Could not seal refreshed tokens', { provider, accountId });
       return err('REFRESH_FAILED' as const);
     }
     const updateResult = await wrapAsync(
@@ -195,7 +184,6 @@ export async function refreshGrantTokens(
             updated_at: new Date(),
             ...(grantedScopes ? { granted_scopes: grantedScopes } : {}),
           })
-          .where('tenant_id', '=', tenantId)
           .where('provider', '=', provider)
           .where('provider_account_id', '=', accountId)
           .execute(),
@@ -205,7 +193,6 @@ export async function refreshGrantTokens(
     if (!updateResult.ok) {
       logger.error('[Refresh] Failed to persist refreshed tokens', {
         provider,
-        tenantId,
         accountId,
       });
       return updateResult;
@@ -213,7 +200,6 @@ export async function refreshGrantTokens(
 
     logger.debug('[Refresh] Token refreshed successfully', {
       provider,
-      tenantId,
       accountId,
       expiresAt: expiresAt.toISOString(),
     });
@@ -221,12 +207,11 @@ export async function refreshGrantTokens(
   } catch (error) {
     logger.error('[Refresh] Unexpected error during refresh', {
       provider,
-      tenantId,
       accountId,
       error: error instanceof Error ? error.message : String(error),
     });
     return err('REFRESH_FAILED' as const);
   } finally {
-    await releaseRefreshLock(db, provider, tenantId, accountId);
+    await releaseRefreshLock(db, provider, accountId);
   }
 }

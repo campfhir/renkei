@@ -35,13 +35,12 @@ function formFieldOf(suggestedAction: unknown): unknown {
 
 export async function getOwnerRunPageData(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   viewerIsOwner: boolean,
   agentId: string,
   runId: string
 ): Promise<OwnerRunPageData | null> {
-  const run = await getRunForOwner(db, tenantId, ownerSubject, agentId, runId);
+  const run = await getRunForOwner(db, ownerSubject, agentId, runId);
   if (!run) return null;
 
   // The run page mirrors the home-page pause card while the run waits, so

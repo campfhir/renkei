@@ -91,7 +91,6 @@ export interface OptionChangeInput {
 type Check = { ok: true } | { ok: false; reason: string };
 
 interface LogScope {
-  tenantId: string;
   subject?: string;
 }
 

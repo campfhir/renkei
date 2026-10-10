@@ -368,7 +368,6 @@ export async function registerChangeTools(
       if (!dbResult.ok) return errText('Database unavailable; nothing was proposed.');
       const reason = text(args.reason);
       const change = await createChangeRequest(dbResult.val, {
-        tenantId: context.tenantId,
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId: access.cloudId,
@@ -385,7 +384,6 @@ export async function registerChangeTools(
       if (replaces) {
         const cancelled = await cancelChangeRequest(
           dbResult.val,
-          context.tenantId,
           context.subject,
           replaces
         );
@@ -396,7 +394,7 @@ export async function registerChangeTools(
         );
       }
 
-      const link = `${await reviewPrefix(context)}${change.id}`;
+      const link = `${reviewPrefix(context)}${change.id}`;
       const { operations, reach } = describeChange(change);
       const lines = [
         'Proposed — nothing has changed in Jira yet.',
@@ -442,7 +440,7 @@ export async function registerChangeTools(
 
       const id = typeof args.change === 'string' ? args.change.trim() : '';
       if (id) {
-        const change = await getChangeRequest(db, context.tenantId, context.subject, id);
+        const change = await getChangeRequest(db, context.subject, id);
         if (!change) return errText(`No change request ${id} of this user’s.`);
         const { operations, reach } = describeChange(change);
         const state = stateOf(change);
@@ -461,12 +459,12 @@ export async function registerChangeTools(
               )
             : operationLines(operations)),
           '',
-          `${await reviewPrefix(context)}${change.id}`,
+          `${reviewPrefix(context)}${change.id}`,
         ];
         return textResult(lines.join('\n'));
       }
 
-      const changes = await listChangeRequests(db, context.tenantId, context.subject, {
+      const changes = await listChangeRequests(db, context.subject, {
         limit: 20,
         pendingOnly: args.pending === true,
       });
@@ -477,7 +475,7 @@ export async function registerChangeTools(
             : 'No Jira admin change requests yet.'
         );
       }
-      const prefix = await reviewPrefix(context);
+      const prefix = reviewPrefix(context);
       return textResult(
         changes.map((change) => changeLine(change, `${prefix}${change.id}`)).join('\n')
       );

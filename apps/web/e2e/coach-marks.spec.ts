@@ -16,7 +16,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_TENANT_ID } from './seed';
+import { E2E_SLUG } from './seed';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -39,7 +39,7 @@ test.use({
     await use({
       cookies: [
         {
-          name: `renkei_session_${E2E_TENANT_ID}`,
+          name: `renkei_session`,
           value: sessionIdFor(testInfo.project.name),
           domain: '127.0.0.1',
           path: '/',
@@ -93,19 +93,16 @@ let subject: string;
 
 async function progressOf(tourId: string): Promise<ProgressRow | null> {
   const result = await client.query<ProgressRow>(
-    `SELECT status, step_reached, steps_total, view_count, completed_count, dismissed_count
-       FROM coach_mark_progress
-      WHERE tenant_id = $1 AND subject = $2 AND tour_id = $3`,
-    [E2E_TENANT_ID, subject, tourId]
+    `SELECT status, step_reached, steps_total, view_count, completed_count, dismissed_count\n       FROM coach_mark_progress\n      WHERE subject = $1 AND tour_id = $2`,
+    [subject, tourId]
   );
   return result.rows[0] ?? null;
 }
 
 async function autoStartPref(): Promise<boolean | null> {
   const result = await client.query<{ value: { autoStart?: boolean } }>(
-    `SELECT value FROM user_preferences
-      WHERE tenant_id = $1 AND subject = $2 AND key = 'coach_marks'`,
-    [E2E_TENANT_ID, subject]
+    `SELECT value FROM user_preferences\n      WHERE subject = $1 AND key = 'coach_marks'`,
+    [subject]
   );
   return result.rows[0]?.value.autoStart ?? null;
 }
@@ -117,30 +114,15 @@ test.beforeAll(async ({}, testInfo) => {
   await client.connect();
 
   // A clean slate for this person: no rows, no preference, a fresh session.
-  await client.query('DELETE FROM coach_mark_progress WHERE tenant_id = $1 AND subject = $2', [
-    E2E_TENANT_ID,
-    subject,
-  ]);
-  await client.query('DELETE FROM user_preferences WHERE tenant_id = $1 AND subject = $2', [
-    E2E_TENANT_ID,
-    subject,
-  ]);
-  await client.query('DELETE FROM sessions WHERE tenant_id = $1 AND subject = $2', [
-    E2E_TENANT_ID,
-    subject,
-  ]);
+  await client.query('DELETE FROM coach_mark_progress WHERE subject = $1', [subject]);
+  await client.query('DELETE FROM user_preferences WHERE subject = $1', [subject]);
+  await client.query('DELETE FROM sessions WHERE subject = $1', [subject]);
   // No identities row on purpose: the usage screenshots count the tenant's
   // identities and expect the seed's one. The report names this person by
   // subject instead, which is what it does for anyone the spine lacks.
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day')`,
-    [
-      sessionIdFor(testInfo.project.name),
-      E2E_TENANT_ID,
-      subject,
-      ['renkei-user', 'renkei-operator'],
-    ]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')`,
+    [sessionIdFor(testInfo.project.name), subject, ['renkei-user', 'renkei-operator']]
   );
 });
 
@@ -151,7 +133,7 @@ test.afterAll(async () => {
 test('the welcome tour greets a newcomer on the home page and records a completion', async ({
   page,
 }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}`);
+  await page.goto(`/`);
   const card = page.getByTestId(CARD);
   await expect(card).toBeVisible();
   await expect(card).toHaveAttribute('data-coach-tour', 'welcome');
@@ -220,7 +202,7 @@ test('the welcome tour greets a newcomer on the home page and records a completi
 });
 
 test('skipping a tour records the dismissal and where it happened', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents`);
+  await page.goto(`/agents`);
   const card = page.getByTestId(CARD);
   await expect(card).toBeVisible();
   await expect(card).toHaveAttribute('data-coach-tour', 'agents');
@@ -251,7 +233,7 @@ test('skipping a tour records the dismissal and where it happened', async ({ pag
 });
 
 test('Escape skips as well', async ({ page }) => {
-  await page.goto(`/${E2E_SLUG}/connectors`);
+  await page.goto(`/connectors`);
   const card = page.getByTestId(CARD);
   await expect(card).toBeVisible();
   await expect(card).toHaveAttribute('data-coach-tour', 'connectors');
@@ -268,7 +250,7 @@ test('Escape skips as well', async ({ page }) => {
 test('the Tutorials page lists every tour with its state and replays one', async ({
   page,
 }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents`);
+  await page.goto(`/agents`);
   await page.getByRole('button', { name: 'Account menu' }).click();
   const menu = page.getByRole('menu');
   // The door: Tutorials sits with the person's own settings, behind the avatar.
@@ -310,10 +292,10 @@ test('the Tutorials page lists every tour with its state and replays one', async
     });
 
   // Start, for a tour never taken: the chat's, which begins on a fresh thread.
-  await page.goto(`/${E2E_SLUG}/tutorials`);
+  await page.goto(`/tutorials`);
   await page.getByTestId('tutorial-chat').getByRole('button', { name: 'Start' }).click();
   await expect(card).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/chat/[0-9a-f-]{36}`));
+  await expect(page).toHaveURL(new RegExp(`/chat/[0-9a-f-]{36}`));
   await expect(card).toHaveAttribute('data-coach-tour', 'chat');
   await expect(card).toHaveAttribute('data-coach-step', 'composer');
   await expect(page.getByTestId('coach-mark-spotlight')).toBeVisible();
@@ -341,7 +323,7 @@ test('"Don\'t show tutorials" and the switch both stop tours starting unasked', 
 }, testInfo) => {
   // The operator console's tour has not been seen: it starts, and the
   // offer to stop them all is taken.
-  await page.goto(`/${E2E_SLUG}/admin`);
+  await page.goto(`/admin`);
   const card = page.getByTestId(CARD);
   await expect(card).toBeVisible();
   await expect(card).toHaveAttribute('data-coach-tour', 'admin');
@@ -352,26 +334,26 @@ test('"Don\'t show tutorials" and the switch both stop tours starting unasked', 
   await expect.poll(() => progressOf('admin')).toMatchObject({ status: 'dismissed' });
 
   // The switch on the Tutorials page reads the change, and flips it back.
-  await page.goto(`/${E2E_SLUG}/tutorials`);
+  await page.goto(`/tutorials`);
   const toggle = page.getByRole('switch', { name: 'Show tours automatically' });
   await expect(toggle).not.toBeChecked();
   await shot(page, testInfo, 'coach-tutorials-off');
 
   // Off: a tour never taken (the agents' was skipped; reset it) stays away.
   await client.query(
-    'DELETE FROM coach_mark_progress WHERE tenant_id = $1 AND subject = $2 AND tour_id = $3',
-    [E2E_TENANT_ID, subject, 'agents']
+    'DELETE FROM coach_mark_progress WHERE subject = $1 AND tour_id = $2',
+    [subject, 'agents']
   );
-  await page.goto(`/${E2E_SLUG}/agents`);
+  await page.goto(`/agents`);
   await expect(page.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
   await expectNoTour(page);
 
   // On again: it comes.
-  await page.goto(`/${E2E_SLUG}/tutorials`);
+  await page.goto(`/tutorials`);
   await toggle.click();
   await expect(toggle).toBeChecked();
   await expect.poll(() => autoStartPref()).toBe(true);
-  await page.goto(`/${E2E_SLUG}/agents`);
+  await page.goto(`/agents`);
   await expect(card).toBeVisible();
   await expect(card).toHaveAttribute('data-coach-tour', 'agents');
   await card.getByRole('button', { name: 'Skip tour' }).click();
@@ -380,7 +362,7 @@ test('"Don\'t show tutorials" and the switch both stop tours starting unasked', 
 });
 
 test('the operator report shows who viewed, finished and skipped', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/admin/tutorials`);
+  await page.goto(`/admin/tutorials`);
   await expect(page.getByRole('heading', { level: 1, name: 'Tutorials' })).toBeVisible();
   // The report has a tour of its own, and this person may still have
   // auto-start on: let it greet, then skip it, so the table below is

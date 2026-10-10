@@ -154,7 +154,6 @@ export async function registerHistoryTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_get_issue_history invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

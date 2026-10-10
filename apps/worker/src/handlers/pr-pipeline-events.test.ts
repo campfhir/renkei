@@ -97,12 +97,9 @@ describe('parseBitbucketRepoFullName', () => {
   });
 });
 
-const TENANT_ID = 'tenant-1';
-
 function workflowRunEvent(prNumbers: number[]): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: TENANT_ID,
     source: 'github',
     type: 'workflow_run',
     attempts: 1,
@@ -240,7 +237,6 @@ describe('createGitHubPrPipelineHandler', () => {
     await createGitHubPrPipelineHandler()(workflowRunEvent([42]));
 
     expect(mockInsertChatNote).toHaveBeenCalledWith(
-      TENANT_ID,
       'chat-1',
       expect.stringContaining('#42')
     );

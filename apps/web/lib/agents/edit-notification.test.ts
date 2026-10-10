@@ -54,11 +54,11 @@ import { authedFetch } from '@renkei/delegate-client';
 /** The owner's grants as the delegate hands them out: fetchers, never tokens. */
 const graphAuth = authedFetch(
   async () => new Response('{}', { status: 202 }),
-  'microsoft:tenant-1:ms-account-1'
+  'microsoft:ms-account-1'
 );
 const webexAuth = authedFetch(
   async () => new Response('{}', { status: 200 }),
-  'webex:tenant-1:webex-account-1'
+  'webex:webex-account-1'
 );
 
 const { getNotificationPrefs: mockGetNotificationPrefs } = jest.requireMock<{
@@ -79,8 +79,6 @@ const { WebexClient: MockWebexClient } = jest.requireMock<{ WebexClient: jest.Mo
 );
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
-
-const TENANT_ID = 'tenant-1';
 const OWNER_SUBJECT = 'owner-1';
 const AGENT_ID = 'agent-1';
 
@@ -100,7 +98,6 @@ function prefs(
 
 function edit(): void {
   notifyAgentEdited({
-    tenantId: TENANT_ID,
     ownerSubject: OWNER_SUBJECT,
     actorSubject: 'editor-1',
     agentId: AGENT_ID,
@@ -112,7 +109,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   inserted.length = 0;
   dbAvailable = true;
-  mockGetIdentityDisplay.mockImplementation(async (_tenantId: string, subject: string) =>
+  mockGetIdentityDisplay.mockImplementation(async (subject: string) =>
     subject === OWNER_SUBJECT
       ? { email: 'owner@example.com', displayName: 'Owner' }
       : { email: 'editor@example.com', displayName: 'Editor' }

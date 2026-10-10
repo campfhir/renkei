@@ -62,7 +62,7 @@ function deps(): ServiceDeps {
 }
 
 function target() {
-  return { tenantId: 'tenant-1', shareId: SHARE_ID, subject: 'auth0|alice' };
+  return { shareId: SHARE_ID, subject: 'auth0|alice' };
 }
 
 function summary(overrides?: Partial<ShareSummary>): ShareSummary {
@@ -200,12 +200,7 @@ describe('resolution failures', () => {
   it('resolves the CALLER as the credential owner', async () => {
     arm({ '/': [] });
     await serviceListFolder(deps(), target(), '/');
-    expect(readConnectionCiphertext).toHaveBeenCalledWith(
-      expect.anything(),
-      'tenant-1',
-      SHARE_ID,
-      'auth0|alice'
-    );
+    expect(readConnectionCiphertext).toHaveBeenCalledWith(expect.anything(), SHARE_ID, 'auth0|alice');
   });
 });
 
@@ -347,7 +342,7 @@ describe('test connection', () => {
       '/': [{ name: 'a.txt', kind: 'file', size: 1, modifiedAt: null }],
     });
     openBackend.mockResolvedValue({ ok: true, val: backend });
-    const result = await serviceTestConnection(deps(), 'tenant-1', SHARE_ID, {
+    const result = await serviceTestConnection(deps(), SHARE_ID, {
       protocol: 'sftp',
       username: 'alice',
       password: 'pw',
@@ -360,7 +355,7 @@ describe('test connection', () => {
 
   it('refuses a credential whose protocol does not match the share', async () => {
     getShare.mockResolvedValue(shareRow());
-    const result = await serviceTestConnection(deps(), 'tenant-1', SHARE_ID, {
+    const result = await serviceTestConnection(deps(), SHARE_ID, {
       protocol: 'smb',
       username: 'alice',
       password: 'pw',
@@ -371,7 +366,7 @@ describe('test connection', () => {
 
   it('answers no_share for a missing or disabled share', async () => {
     getShare.mockResolvedValue({ ok: true, val: null });
-    const missing = await serviceTestConnection(deps(), 'tenant-1', SHARE_ID, {
+    const missing = await serviceTestConnection(deps(), SHARE_ID, {
       protocol: 'sftp',
       username: 'alice',
       password: 'pw',

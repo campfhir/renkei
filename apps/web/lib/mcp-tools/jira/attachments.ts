@@ -103,7 +103,6 @@ export async function registerAttachmentTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_add_attachment invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -244,7 +243,6 @@ export async function registerAttachmentTools(
       }
       logger.info('jira_request_attachment_upload minted {uploadId}', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         uploadId: slot.uploadId,
         issueKey,

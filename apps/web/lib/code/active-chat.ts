@@ -55,7 +55,6 @@ export type CreateChatInProjectError =
 export async function createChatInProject(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     ownerSubject: string;
     projectId: string;
     llmModelId: string | null;
@@ -67,7 +66,6 @@ export async function createChatInProject(
     const project = await trx
       .selectFrom('chat_projects')
       .select(['id', 'kind', 'active_chat_id'])
-      .where('tenant_id', '=', input.tenantId)
       .where('id', '=', input.projectId)
       .forUpdate()
       .executeTakeFirst();
@@ -76,7 +74,6 @@ export async function createChatInProject(
       return err('TURN_RUNNING' as const);
     }
     const chatId = await createChat(trx, {
-      tenantId: input.tenantId,
       ownerSubject: input.ownerSubject,
       projectId: input.projectId,
       llmModelId: input.llmModelId,
@@ -88,7 +85,6 @@ export async function createChatInProject(
       await trx
         .updateTable('chat_projects')
         .set({ active_chat_id: chatId })
-        .where('tenant_id', '=', input.tenantId)
         .where('id', '=', input.projectId)
         .execute();
     }
@@ -103,13 +99,11 @@ export async function createChatInProject(
  */
 export async function releaseActiveChat(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string
 ): Promise<void> {
   await db
     .updateTable('chat_projects')
     .set({ active_chat_id: null })
-    .where('tenant_id', '=', tenantId)
     .where('kind', '=', 'code')
     .where('active_chat_id', '=', chatId)
     .execute();

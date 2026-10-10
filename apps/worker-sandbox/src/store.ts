@@ -20,7 +20,6 @@ import type { DB } from '@renkei/db';
 import type { SandboxFileSummary } from '@renkei/connector-sandbox';
 
 export interface SandboxTarget {
-  tenantId: string;
   subject: string;
 }
 
@@ -75,7 +74,6 @@ export async function insertFile(
     .insertInto('sandbox_files')
     .values({
       id: randomUUID(),
-      tenant_id: input.tenantId,
       subject: input.subject,
       filename: input.filename,
       content_type: input.contentType,
@@ -98,7 +96,6 @@ export async function listFiles(
   let query = db
     .selectFrom('sandbox_files')
     .select(SUMMARY_COLUMNS)
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject);
   if (batchId) query = query.where('batch_id', '=', batchId);
   const rows = await query.orderBy('created_at', 'desc').execute();
@@ -110,7 +107,6 @@ export async function totalStagedBytes(db: Kysely<DB>, target: SandboxTarget): P
   const row = await db
     .selectFrom('sandbox_files')
     .select((eb) => eb.fn.sum<string>('size_bytes').as('total'))
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .executeTakeFirst();
   return row?.total ? Number(row.total) : 0;
@@ -120,7 +116,6 @@ export async function countFiles(db: Kysely<DB>, target: SandboxTarget): Promise
   const row = await db
     .selectFrom('sandbox_files')
     .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .executeTakeFirst();
   return row?.count ? Number(row.count) : 0;
@@ -134,13 +129,11 @@ export async function countFiles(db: Kysely<DB>, target: SandboxTarget): Promise
  */
 export async function totalStagedBytesForBatch(
   db: Kysely<DB>,
-  tenantId: string,
   batchId: string
 ): Promise<number> {
   const row = await db
     .selectFrom('sandbox_files')
     .select((eb) => eb.fn.sum<string>('size_bytes').as('total'))
-    .where('tenant_id', '=', tenantId)
     .where('batch_id', '=', batchId)
     .executeTakeFirst();
   return row?.total ? Number(row.total) : 0;
@@ -148,13 +141,11 @@ export async function totalStagedBytesForBatch(
 
 export async function countFilesForBatch(
   db: Kysely<DB>,
-  tenantId: string,
   batchId: string
 ): Promise<number> {
   const row = await db
     .selectFrom('sandbox_files')
     .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', tenantId)
     .where('batch_id', '=', batchId)
     .executeTakeFirst();
   return row?.count ? Number(row.count) : 0;
@@ -175,7 +166,6 @@ export async function getFile(
   const row = await db
     .selectFrom('sandbox_files')
     .select(['id', 'filename', 'content_type', 'storage_key'])
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .where('id', '=', fileId)
     .executeTakeFirst();
@@ -195,7 +185,6 @@ export async function deleteFile(
 ): Promise<StoredFile | undefined> {
   const row = await db
     .deleteFrom('sandbox_files')
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .where('id', '=', fileId)
     .returning(['id', 'filename', 'content_type', 'storage_key'])

@@ -20,11 +20,10 @@ export interface VoiceAvailability {
 }
 
 export async function loadVoiceAvailability(
-  tenantId: string,
   subject: string
 ): Promise<VoiceAvailability | null> {
-  const config = await resolveVoiceConfig(tenantId);
+  const config = await resolveVoiceConfig();
   if (!config) return null;
-  const prefs = await getVoicePrefs(tenantId, subject, { fresh: true });
+  const prefs = await getVoicePrefs(subject, { fresh: true });
   return { defaultVoice: config.defaultVoice, defaultLocale: config.defaultLocale, prefs };
 }

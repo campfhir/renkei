@@ -6,9 +6,9 @@
  *
  * Layout on the volume (SANDBOX_WORKSPACES_DIR, default /workspaces):
  *
- *   <root>/<tenantId>/<sha256(subject)>/            one caller, mode 0700
- *   <root>/<tenantId>/<sha256(subject)>/home/       their HOME — caches, dotfiles
- *   <root>/<tenantId>/<sha256(subject)>/<uuid>/     one checkout
+ *   <root>/<sha256(subject)>/            one caller, mode 0700
+ *   <root>/<sha256(subject)>/home/       their HOME — caches, dotfiles
+ *   <root>/<sha256(subject)>/<uuid>/     one checkout
  *
  * Every path is built from ids and a hash, never from a repository name;
  * caller-supplied paths inside a checkout are validated by
@@ -132,15 +132,22 @@ export interface ExecIdentity {
   gid: number;
 }
 
-export function identityFor(target: { tenantId: string; subject: string }): ExecIdentity | null {
+/** The key domain uids derive under; set once at boot (configureExecDomain). */
+let execDomain = 'renkei';
+
+export function configureExecDomain(domain: string): void {
+  execDomain = domain;
+}
+
+export function identityFor(target: { subject: string }): ExecIdentity | null {
   if (!canIsolateByUid()) return null;
-  const uid = execUidFor(target.tenantId, target.subject);
+  const uid = execUidFor(execDomain, target.subject);
   return { uid, gid: uid };
 }
 
 /** A fresh storage key for a new checkout — persisted on the row. */
-export function newWorkspaceStorageKey(tenantId: string, subject: string): string {
-  return join(tenantId, subjectSegmentOf(subject), randomUUID());
+export function newWorkspaceStorageKey(subject: string): string {
+  return join(subjectSegmentOf(subject), randomUUID());
 }
 
 export function workspaceDir(storageKey: string): string {
@@ -226,11 +233,6 @@ export async function ensureCallerDirs(
   identity: ExecIdentity | null
 ): Promise<void> {
   const caller = callerDir(storageKey);
-  const tenantDir = dirname(caller);
-  // Same traversable-not-listable shape, and the same umask hazard, as
-  // the workspaces root above.
-  await mkdir(tenantDir, { recursive: true, mode: 0o711 });
-  await chmod(tenantDir, 0o711);
   await mkdir(caller, { recursive: true, mode: 0o700 });
   await chownIf(caller, identity);
   const home = homeDir(storageKey);
@@ -753,7 +755,7 @@ export async function measureWorkspace(dir: string): Promise<number> {
 }
 
 /**
- * A storage key names exactly one checkout: tenant, caller hash, checkout
+ * A storage key names exactly one checkout: caller hash, checkout
  * id. Anything else (an empty key, one that climbs) would make the
  * recursive removal below reach for a caller's whole directory or the
  * volume itself, so it is refused rather than trusted.

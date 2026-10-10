@@ -56,7 +56,7 @@ async function tools(): Promise<Map<string, ToolHandler>> {
   } as unknown as McpServer;
   await registerIssueLinkTools(
     server,
-    { tenantId: 'tenant-1', accountId: 'acct-1' } as unknown as MCPToolContext,
+    { accountId: 'acct-1' } as unknown as MCPToolContext,
     stubAuth()
   );
   return registered;

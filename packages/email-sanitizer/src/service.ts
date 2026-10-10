@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { vectorLiteral } from '@renkei/knowledge';
 import type { EmbeddingProvider } from '@renkei/knowledge';
 import { sanitizeEmail } from './pipeline';
+import { stripTags } from './normalize';
 import { listClassifierRules } from './persistence/rules';
 import { listActiveTemplates } from './persistence/templates';
 import { hasRecentDuplicate, recordClassification } from './persistence/log';
@@ -29,8 +30,7 @@ function hashContent(content: string): string {
 }
 
 function excerptOf(raw: RawEmail): string {
-  const snippet = raw.body.content
-    .replace(/<[^>]+>/g, ' ')
+  const snippet = stripTags(raw.body.content, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 400);
@@ -41,7 +41,6 @@ function excerptOf(raw: RawEmail): string {
 }
 
 export interface SanitizeForTenantOptions {
-  tenantId: string;
   provider: string;
   refId: string;
   /** The mailbox owner's identity — the only scope any later read of this message's log row will use. */
@@ -74,12 +73,11 @@ export interface SanitizeForTenantOptions {
  * and what fields the guest is handed.
  */
 async function runScriptsOver(
-  tenantId: string,
   kind: CleanerScriptKind,
   content: string,
   fields: Omit<CleanerScriptRunInput, 'text' | 'kind'>
 ): Promise<string> {
-  const scriptsResult = await listActiveCleanerScripts(tenantId, kind);
+  const scriptsResult = await listActiveCleanerScripts(kind);
   if (!scriptsResult.ok || scriptsResult.val.length === 0) return content;
 
   const separator = content.indexOf('\n\n');
@@ -92,10 +90,9 @@ async function runScriptsOver(
     const run = await runCleanerScript(script.compiled, { ...fields, text: body, kind });
     if (run.ok) {
       body = run.val;
-      if (script.lastError) await recordCleanerScriptError(tenantId, script.id, null);
+      if (script.lastError) await recordCleanerScriptError(script.id, null);
     } else {
       await recordCleanerScriptError(
-        tenantId,
         script.id,
         `${run.err.type}: ${run.detail ?? ''}`.trim()
       );
@@ -108,7 +105,7 @@ async function applyCleanerScripts(
   options: SanitizeForTenantOptions,
   content: string
 ): Promise<string> {
-  return runScriptsOver(options.tenantId, 'msg', content, {
+  return runScriptsOver('msg', content, {
     subject: options.raw.subject,
     fromAddress: options.raw.fromAddress,
     fromName: options.raw.fromName,
@@ -131,12 +128,11 @@ async function applyCleanerScripts(
  * strip boilerplate, so that is what it gets.
  */
 export async function applyCleanerScriptsToItem(inputs: {
-  tenantId: string;
   kind: CleanerScriptKind;
   content: string;
   fields?: Partial<Omit<CleanerScriptRunInput, 'text' | 'kind'>>;
 }): Promise<string> {
-  return runScriptsOver(inputs.tenantId, inputs.kind, inputs.content, {
+  return runScriptsOver(inputs.kind, inputs.content, {
     ...inputs.fields,
     subject: inputs.fields?.subject ?? '',
     fromAddress: inputs.fields?.fromAddress ?? '',
@@ -178,8 +174,8 @@ export async function sanitizeEmailForTenant(
   options: SanitizeForTenantOptions
 ): Promise<TenantSanitizeResult> {
   const [rulesResult, templatesResult] = await Promise.all([
-    listClassifierRules(options.tenantId),
-    listActiveTemplates(options.tenantId),
+    listClassifierRules(),
+    listActiveTemplates(),
   ]);
   const rules = rulesResult.ok ? rulesResult.val : [];
   const templates = templatesResult.ok ? templatesResult.val : new Map();
@@ -202,7 +198,6 @@ export async function sanitizeEmailForTenant(
   if (result.action === 'index') {
     contentHash = hashContent(result.content);
     const dupResult = await hasRecentDuplicate(
-      options.tenantId,
       contentHash,
       DUPLICATE_LOOKBACK_DAYS,
       { ownerUpn: options.ownerUpn, refId: options.refId }
@@ -216,7 +211,6 @@ export async function sanitizeEmailForTenant(
       const embedded = await options.embedder.embed([result.content]);
       if (embedded.ok && embedded.val[0]) {
         const nearDupResult = await hasNearDuplicateChunk(
-          options.tenantId,
           vectorLiteral(embedded.val[0]),
           { refId: options.refId, refIdPrefix: namespaceOf(options.refId) }
         );
@@ -230,7 +224,6 @@ export async function sanitizeEmailForTenant(
   }
 
   await recordClassification({
-    tenantId: options.tenantId,
     provider: options.provider,
     refId: options.refId,
     ownerUpn: options.ownerUpn,

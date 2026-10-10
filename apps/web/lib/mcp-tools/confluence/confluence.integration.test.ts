@@ -102,7 +102,6 @@ describeOrSkip(SUITE_NAME, () => {
     // tenantId/subject are log context only — auth carries everything
     // HTTP-related.
     context = {
-      tenantId: 'integration-test',
       subject: 'integration-test',
     } as unknown as MCPToolContext;
 

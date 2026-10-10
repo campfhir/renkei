@@ -418,7 +418,6 @@ export async function registerZoomTools(
       const body = rec(await result.response.json().catch(() => null));
       logger.info('zoom_create_meeting created', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         meetingId: String(body.id ?? ''),
         recurring: recurrence.val !== null,
       });
@@ -539,7 +538,6 @@ export async function registerZoomTools(
       const body = rec(await result.response.json().catch(() => null));
       logger.info('zoom_create_meeting_confirm created', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         meetingId: String(body.id ?? ''),
         recurring: recurrence.val !== null,
       });
@@ -651,7 +649,6 @@ export async function registerZoomTools(
       if (!result.ok) return errText(result.error);
       logger.info('zoom_update_meeting updated', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         meetingId,
         ...(occurrenceId ? { occurrenceId } : {}),
         fields: Object.keys(patch),
@@ -707,7 +704,6 @@ export async function registerZoomTools(
       if (!result.ok) return errText(result.error);
       logger.info('zoom_delete_meeting cancelled', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         meetingId,
         ...(occurrenceId ? { occurrenceId } : {}),
       });
@@ -1192,7 +1188,6 @@ export async function registerZoomTools(
       const body = rec(await result.response.json().catch(() => null));
       logger.info('zoom_create_doc created', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         fileId: str(body.file_id),
       });
       return textResult(
@@ -1246,7 +1241,6 @@ export async function registerZoomTools(
       if (!result.ok) return errText(result.error);
       logger.info('zoom_append_to_doc appended', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         fileId,
       });
       return textResult(`Appended to doc ${fileId}.`);

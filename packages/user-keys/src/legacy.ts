@@ -54,14 +54,14 @@ export type LegacyKekError =
 /** The KEK a pre-enrollment row yields, for the one read that moves everything off it. */
 export function legacyKekOf(
   row: LegacyKeyRow,
-  tenantId: string,
+  domain: string,
   subject: string,
   passphrase?: string
 ): Result<Buffer, LegacyKekError> {
   const salt = Buffer.from(row.salt, 'base64');
   if (row.mode === 'own') {
     if (passphrase && row.verifier) {
-      const kek = deriveOwnKek(passphrase, salt, tenantId, subject);
+      const kek = deriveOwnKek(passphrase, salt, domain, subject);
       return verifierMatches(kek, row.verifier) ? ok(kek) : err('WRONG_PASSPHRASE' as const);
     }
     const master = userKeyMaster();
@@ -75,13 +75,29 @@ export function legacyKekOf(
     }
     const unsealed = unwrapKey(
       row.sealed_kek,
-      deriveUnlockKey(master.val, salt, tenantId, subject)
+      deriveUnlockKey(master.val, salt, domain, subject)
     );
     return unsealed.ok ? ok(unsealed.val) : err('KEY_LOCKED' as const);
   }
   const master = userKeyMaster();
   if (!master.ok) return err('MIGRATION_UNAVAILABLE' as const);
-  return ok(deriveUserKek(master.val, salt, tenantId, subject));
+  return ok(deriveUserKek(master.val, salt, domain, subject));
+}
+
+/**
+ * The domain the pre-enrollment KEKs were derived under: the id of the
+ * organization row this deployment had while it was multi-tenant, kept in
+ * the `legacy_key_domain` setting by the migration that removed tenants.
+ * A deployment born single-organization has no such rows and no setting;
+ * the empty string then derives nothing anyone stored.
+ */
+export async function legacyKeyDomain(db: Kysely<DB>): Promise<string> {
+  const row = await db
+    .selectFrom('settings')
+    .select('value')
+    .where('key', '=', 'legacy_key_domain')
+    .executeTakeFirst();
+  return typeof row?.value === 'string' ? row.value : '';
 }
 
 /** Is the master present, so managed rows can still be moved? */
@@ -96,25 +112,23 @@ export function legacyMasterAvailable(): boolean {
  */
 export async function legacyManagedKek(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<{ key: Buffer; version: number }, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED'>> {
   const master = userKeyMaster();
   if (!master.ok) return err('MIGRATION_UNAVAILABLE' as const);
   await db
     .insertInto('user_encryption_keys')
-    .values({ tenant_id: tenantId, subject, salt: generateUserKeySalt().toString('base64') })
-    .onConflict((oc) => oc.columns(['tenant_id', 'subject']).doNothing())
+    .values({ subject, salt: generateUserKeySalt().toString('base64') })
+    .onConflict((oc) => oc.columns(['subject']).doNothing())
     .execute();
   const row = await db
     .selectFrom('user_encryption_keys')
     .select(['salt', 'mode', 'version'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .executeTakeFirstOrThrow();
   if (row.mode !== 'managed') return err('NOT_MANAGED' as const);
   return ok({
-    key: deriveUserKek(master.val, Buffer.from(row.salt, 'base64'), tenantId, subject),
+    key: deriveUserKek(master.val, Buffer.from(row.salt, 'base64'), await legacyKeyDomain(db), subject),
     version: row.version,
   });
 }
@@ -122,11 +136,10 @@ export async function legacyManagedKek(
 /** The sweep's seal: a `uenc1:` value under the person's managed key. */
 export async function legacySealForSubject(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   plaintext: string
 ): Promise<Result<string, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED'>> {
-  const kek = await legacyManagedKek(db, tenantId, subject);
+  const kek = await legacyManagedKek(db, subject);
   if (!kek.ok) return kek;
   return ok(sealForUser(plaintext, kek.val.key));
 }
@@ -139,12 +152,12 @@ export async function legacySealForSubject(
  */
 export async function legacyEnsureResourceKey(
   db: Kysely<DB>,
-  ref: { tenantId: string; kind: string; resourceId: string },
+  ref: { kind: string; resourceId: string },
   ownerSubject: string
 ): Promise<
   Result<{ id: string; key: Buffer }, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED' | 'DECRYPTION_ERROR'>
 > {
-  const kek = await legacyManagedKek(db, ref.tenantId, ownerSubject);
+  const kek = await legacyManagedKek(db, ownerSubject);
   if (!kek.ok) return kek;
   const existing = await db
     .selectFrom('resource_keys as k')
@@ -155,7 +168,6 @@ export async function legacyEnsureResourceKey(
         .on('g.holder', '=', ownerSubject)
     )
     .select(['k.id', 'g.wrapped_key'])
-    .where('k.tenant_id', '=', ref.tenantId)
     .where('k.resource_kind', '=', ref.kind)
     .where('k.resource_id', '=', ref.resourceId)
     .executeTakeFirst();
@@ -167,14 +179,13 @@ export async function legacyEnsureResourceKey(
   const key = generateDataKey();
   const inserted = await db
     .insertInto('resource_keys')
-    .values({ tenant_id: ref.tenantId, resource_kind: ref.kind, resource_id: ref.resourceId })
+    .values({ resource_kind: ref.kind, resource_id: ref.resourceId })
     .returning('id')
     .executeTakeFirstOrThrow();
   await db
     .insertInto('resource_key_grants')
     .values({
       resource_key_id: inserted.id,
-      tenant_id: ref.tenantId,
       holder_kind: 'user',
       holder: ownerSubject,
       wrapped_key: wrapKey(key, kek.val.key),
@@ -188,17 +199,15 @@ export async function legacyEnsureResourceKey(
 export async function legacyShareResourceKey(
   db: Kysely<DB>,
   key: { id: string; key: Buffer },
-  tenantId: string,
   fromSubject: string,
   toSubject: string
 ): Promise<Result<void, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED'>> {
-  const kek = await legacyManagedKek(db, tenantId, toSubject);
+  const kek = await legacyManagedKek(db, toSubject);
   if (!kek.ok) return kek;
   await db
     .insertInto('resource_key_grants')
     .values({
       resource_key_id: key.id,
-      tenant_id: tenantId,
       holder_kind: 'user',
       holder: toSubject,
       wrapped_key: wrapKey(key.key, kek.val.key),

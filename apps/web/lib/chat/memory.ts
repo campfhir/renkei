@@ -39,7 +39,6 @@ function clip(text: string, max: number): string {
 
 export async function readProjectMemory(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string,
   cipher: ContentCipher,
   options: { maxEntries?: number } = {}
@@ -48,7 +47,6 @@ export async function readProjectMemory(
   const rows = await db
     .selectFrom('chat_project_memories')
     .select(['id', 'kind', 'content', 'author_subject', 'chat_id', 'created_at'])
-    .where('tenant_id', '=', tenantId)
     .where('project_id', '=', projectId)
     .orderBy('created_at', 'desc')
     .limit((options.maxEntries ?? PROJECT_MEMORY_INJECT_MAX_ENTRIES) + 1)
@@ -91,7 +89,6 @@ export function renderProjectMemory(memory: ProjectMemory): string | null {
 export async function appendProjectMemory(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     projectId: string;
     content: string;
     authorSubject: string;
@@ -107,7 +104,6 @@ export async function appendProjectMemory(
   const inserted = await db
     .insertInto('chat_project_memories')
     .values({
-      tenant_id: input.tenantId,
       project_id: input.projectId,
       kind: 'entry',
       content: sealed.val,
@@ -132,14 +128,12 @@ export async function appendProjectMemory(
 
 export async function forgetProjectMemory(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string,
   target: { kind: 'all' } | { kind: 'entries'; ids: string[] }
 ): Promise<number> {
   if (!isUuid(projectId)) return 0;
   let query = db
     .deleteFrom('chat_project_memories')
-    .where('tenant_id', '=', tenantId)
     .where('project_id', '=', projectId);
   if (target.kind === 'entries') {
     const ids = target.ids.filter(isUuid);

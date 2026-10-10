@@ -34,7 +34,6 @@ import { logger } from '@/lib/logger';
 type RegisterToolArgs = Parameters<McpServer['registerTool']>;
 
 export interface RedactionContext {
-  tenantId: string;
   detectors: readonly DetectorKey[];
   mrnFormats: readonly string[];
   policy: DisclosurePolicy;
@@ -94,7 +93,6 @@ function redactResult(result: unknown, context: RedactionContext): unknown {
   // keep it out of.
   logger.debug('redacted tool result: {summary}', {
     component: 'mcp/redaction',
-    tenantId: context.tenantId,
     summary: Object.entries(counts)
       .map(([label, n]) => `${label}=${n}`)
       .join(' '),
@@ -128,7 +126,6 @@ export function withRedaction(server: McpServer, context: RedactionContext): Mcp
               // alive and says plainly that this result was withheld.
               logger.error('redaction failed, withholding tool result: {error}', {
                 component: 'mcp/redaction',
-                tenantId: context.tenantId,
                 tool: name,
                 error: error instanceof Error ? error.message : String(error),
               });

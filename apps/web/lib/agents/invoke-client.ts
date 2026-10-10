@@ -24,20 +24,18 @@ async function postConfirmable(url: string, confirm: boolean): Promise<InvokeAge
 }
 
 export async function invokeAgentRun(
-  tenantId: string,
   agentId: string,
   confirm = false
 ): Promise<InvokeAgentRunResult> {
-  return postConfirmable(`/api/tenant/${tenantId}/agents/${agentId}/invoke`, confirm);
+  return postConfirmable(`/api/agents/${agentId}/invoke`, confirm);
 }
 
 export async function rerunAgentRun(
-  tenantId: string,
   agentId: string,
   runId: string,
   confirm = false
 ): Promise<InvokeAgentRunResult> {
-  return postConfirmable(`/api/tenant/${tenantId}/agents/${agentId}/runs/${runId}/rerun`, confirm);
+  return postConfirmable(`/api/agents/${agentId}/runs/${runId}/rerun`, confirm);
 }
 
 /**
@@ -46,14 +44,13 @@ export async function rerunAgentRun(
  * of the agent already in flight turns the 409 into a confirm step.
  */
 export async function resumeAgentRun(
-  tenantId: string,
   agentId: string,
   runId: string,
   guidance: string,
   confirm = false
 ): Promise<InvokeAgentRunResult> {
   const result = await sendJsonFull<{ runId?: string; code?: string }>(
-    `/api/tenant/${tenantId}/agents/${agentId}/runs/${runId}/resume`,
+    `/api/agents/${agentId}/runs/${runId}/resume`,
     'POST',
     { guidance, confirm }
   );

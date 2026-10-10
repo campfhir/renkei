@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase, closeDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
 import { upsertWatch, repairWatch } from './content-watches';
 
@@ -16,7 +16,6 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('watch repair and cursor inheritance', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
   const scopeKey = `ENG-${randomUUID().slice(0, 8)}`;
   const cursor = '2026-08-01T00:00:00.000Z';
 
@@ -24,17 +23,12 @@ maybe('watch repair and cursor inheritance', () => {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('no database');
     db = dbResult.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `wr-${tenantId.slice(0, 8)}` })
-      .execute();
     // The broken watch: owned by a departed subject, mid-history cursor,
     // failing every poll.
     await db
       .insertInto('content_watches')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         provider: 'jira',
         account_id: 'dead-account',
         subject: 'departed-user',
@@ -50,14 +44,12 @@ maybe('watch repair and cursor inheritance', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('content_watches').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
-    await closeDatabase();
+    await db.deleteFrom('content_watches').where('scope_key', '=', scopeKey).execute();
   });
 
   it('rebinds the watch to the caller, keeping the cursor', async () => {
     const result = await repairWatch(
-      { tenantId, subject: 'alice', accountId: 'alice-account' },
+      { subject: 'alice', accountId: 'alice-account' },
       'jira',
       'project',
       scopeKey
@@ -67,7 +59,6 @@ maybe('watch repair and cursor inheritance', () => {
     const row = await db
       .selectFrom('content_watches')
       .select(['subject', 'account_id', 'cursor', 'last_error', 'sync_status', 'last_synced_at'])
-      .where('tenant_id', '=', tenantId)
       .where('scope_key', '=', scopeKey)
       .executeTakeFirstOrThrow();
     expect(row.subject).toBe('alice');
@@ -81,7 +72,7 @@ maybe('watch repair and cursor inheritance', () => {
 
   it('reports zero when no watch exists for the scope', async () => {
     const result = await repairWatch(
-      { tenantId, subject: 'alice', accountId: 'alice-account' },
+      { subject: 'alice', accountId: 'alice-account' },
       'jira',
       'project',
       'NOPE'
@@ -91,7 +82,7 @@ maybe('watch repair and cursor inheritance', () => {
 
   it('a fresh watch on an already-indexed scope inherits the cursor', async () => {
     const result = await upsertWatch(
-      { tenantId, subject: 'bob', accountId: 'bob-account' },
+      { subject: 'bob', accountId: 'bob-account' },
       'jira',
       'project',
       scopeKey,
@@ -102,7 +93,6 @@ maybe('watch repair and cursor inheritance', () => {
     const row = await db
       .selectFrom('content_watches')
       .select(['cursor'])
-      .where('tenant_id', '=', tenantId)
       .where('scope_key', '=', scopeKey)
       .where('subject', '=', 'bob')
       .executeTakeFirstOrThrow();

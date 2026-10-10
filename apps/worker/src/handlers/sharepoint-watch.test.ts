@@ -64,7 +64,6 @@ const access = (): MicrosoftAccess => ({
 
 const row = (over: Partial<DriveWatchRow> = {}): DriveWatchRow => ({
   id: 'watch-1',
-  tenant_id: 'tenant-1',
   account_id: 'acct-1',
   scope_key: 'drive-1',
   scope_label: 'Engineering / Shared Documents',
@@ -91,17 +90,16 @@ const delta = (items: unknown[], over: Record<string, unknown> = {}) => ({
   val: { items, deltaLink: 'https://graph/delta?token=next', nextLink: null, ...over },
 });
 
-const eventsOfType = (type: string) => mockEnqueue.mock.calls.filter((call) => call[1] === type);
+const eventsOfType = (type: string) => mockEnqueue.mock.calls.filter((call) => call[0] === type);
 
 describe('runDriveWatchSync', () => {
   it('enqueues a reference per changed document — never the bytes', async () => {
     mockRunDeltaRound.mockResolvedValue(delta([fileEntry()]));
 
-    const result = await runDriveWatchSync('tenant-1', access(), row());
+    const result = await runDriveWatchSync(access(), row());
 
     expect(result.items).toBe(1);
-    const [tenantId, type, payload, orderingKey] = eventsOfType('ingest.document')[0]!;
-    expect(tenantId).toBe('tenant-1');
+    const [type, payload, orderingKey] = eventsOfType('ingest.document')[0]!;
     expect(type).toBe('ingest.document');
     expect(payload).toMatchObject({
       provider: 'sharepoint',
@@ -121,10 +119,10 @@ describe('runDriveWatchSync', () => {
   it('treats a `deleted` facet as a deletion — mail’s @removed never appears', async () => {
     mockRunDeltaRound.mockResolvedValue(delta([{ id: 'item-9', deleted: { state: 'deleted' } }]));
 
-    const result = await runDriveWatchSync('tenant-1', access(), row());
+    const result = await runDriveWatchSync(access(), row());
 
     expect(result.removed).toBe(1);
-    expect(eventsOfType('delete.object')[0]![2]).toEqual({
+    expect(eventsOfType('delete.object')[0]![1]).toEqual({
       provider: 'sharepoint',
       refId: 'drive-1/item-9',
     });
@@ -139,7 +137,7 @@ describe('runDriveWatchSync', () => {
     });
     mockRunDeltaRound.mockResolvedValue(delta([fileEntry({ cTag: 'ctag-1' })]));
 
-    const result = await runDriveWatchSync('tenant-1', access(), row());
+    const result = await runDriveWatchSync(access(), row());
 
     expect(result.skipped).toBe(1);
     expect(result.items).toBe(0);
@@ -153,7 +151,7 @@ describe('runDriveWatchSync', () => {
     });
     mockRunDeltaRound.mockResolvedValue(delta([fileEntry({ cTag: 'ctag-NEW' })]));
 
-    const result = await runDriveWatchSync('tenant-1', access(), row());
+    const result = await runDriveWatchSync(access(), row());
     expect(result.items).toBe(1);
   });
 
@@ -166,7 +164,7 @@ describe('runDriveWatchSync', () => {
       ])
     );
 
-    const result = await runDriveWatchSync('tenant-1', access(), row());
+    const result = await runDriveWatchSync(access(), row());
 
     expect(result.items).toBe(0);
     expect(mockEnqueue).not.toHaveBeenCalled();
@@ -177,7 +175,7 @@ describe('runDriveWatchSync', () => {
       delta([fileEntry({ id: 'v1', name: 'demo.mp4', file: { mimeType: 'video/mp4' } })])
     );
 
-    const result = await runDriveWatchSync('tenant-1', access(), row());
+    const result = await runDriveWatchSync(access(), row());
 
     expect(result.unsupported).toBe(1);
     expect(eventsOfType('ingest.document')).toHaveLength(0);
@@ -188,7 +186,7 @@ describe('runDriveWatchSync', () => {
       delta([fileEntry({ id: 'big', name: 'huge.pdf', size: 500 * 1024 * 1024 })])
     );
 
-    const result = await runDriveWatchSync('tenant-1', access(), row());
+    const result = await runDriveWatchSync(access(), row());
     expect(result.oversized).toBe(1);
     expect(eventsOfType('ingest.document')).toHaveLength(0);
   });
@@ -198,7 +196,7 @@ describe('runDriveWatchSync', () => {
       delta([], { deltaLink: null, nextLink: 'https://graph/page-11' })
     );
 
-    const result = await runDriveWatchSync('tenant-1', access(), row());
+    const result = await runDriveWatchSync(access(), row());
 
     expect(result.cursor).toBe('https://graph/page-11');
     expect(written).toMatchObject({ cursor: 'https://graph/page-11', sync_status: 'syncing' });
@@ -212,7 +210,7 @@ describe('runDriveWatchSync', () => {
       err: { type: 'GRAPH_API_ERROR', cause: 410, message: 'resyncRequired' },
     });
 
-    const result = await runDriveWatchSync('tenant-1', access(), row());
+    const result = await runDriveWatchSync(access(), row());
 
     expect(result.cursor).toBeNull();
     expect(written).toMatchObject({ cursor: null });
@@ -224,19 +222,19 @@ describe('runDriveWatchSync', () => {
       err: { type: 'GRAPH_API_ERROR', cause: 503, message: 'service unavailable' },
     });
 
-    await expect(runDriveWatchSync('tenant-1', access(), row())).rejects.toThrow(/delta round/);
+    await expect(runDriveWatchSync(access(), row())).rejects.toThrow(/delta round/);
   });
 
   it('reconciles only when a cursorless enumeration actually closes', async () => {
     mockRunDeltaRound.mockResolvedValue(delta([fileEntry()]));
 
-    await runDriveWatchSync('tenant-1', access(), row({ cursor: null }));
+    await runDriveWatchSync(access(), row({ cursor: null }));
 
     const reconcile = eventsOfType('reconcile.drive');
     expect(reconcile).toHaveLength(1);
-    expect(reconcile[0]![2]).toMatchObject({ provider: 'sharepoint', driveId: 'drive-1' });
+    expect(reconcile[0]![1]).toMatchObject({ provider: 'sharepoint', driveId: 'drive-1' });
     // Same ordering key as the ingests, so lane FIFO puts it last.
-    expect(reconcile[0]![3]).toBe('sharepoint/drive-1');
+    expect(reconcile[0]![2]).toBe('sharepoint/drive-1');
     // And it carries the SAME epoch the ingests were stamped with, or it
     // would delete everything the round just wrote.
     const ingestEpoch = eventsOfType('ingest.document')[0]![2].syncEpoch;
@@ -248,21 +246,21 @@ describe('runDriveWatchSync', () => {
       delta([fileEntry()], { deltaLink: null, nextLink: 'https://graph/page-2' })
     );
 
-    await runDriveWatchSync('tenant-1', access(), row({ cursor: null }));
+    await runDriveWatchSync(access(), row({ cursor: null }));
 
     expect(eventsOfType('reconcile.drive')).toHaveLength(0);
   });
 
   it('does not reconcile an incremental round', async () => {
     mockRunDeltaRound.mockResolvedValue(delta([fileEntry()]));
-    await runDriveWatchSync('tenant-1', access(), row({ cursor: 'https://graph/delta?token=abc' }));
+    await runDriveWatchSync(access(), row({ cursor: 'https://graph/delta?token=abc' }));
     expect(eventsOfType('reconcile.drive')).toHaveLength(0);
   });
 
   it('writes the cursor and counters last, together', async () => {
     mockRunDeltaRound.mockResolvedValue(delta([fileEntry()]));
 
-    await runDriveWatchSync('tenant-1', access(), row());
+    await runDriveWatchSync(access(), row());
 
     // A crash before this point replays into idempotent enqueues; advancing
     // the cursor first would skip unprocessed items permanently.

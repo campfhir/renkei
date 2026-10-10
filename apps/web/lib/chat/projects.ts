@@ -28,7 +28,6 @@ export interface ProjectRepo {
 
 export interface ProjectRow {
   id: string;
-  tenantId: string;
   ownerSubject: string;
   kind: ProjectKind;
   name: string;
@@ -57,7 +56,6 @@ export interface ProjectRow {
 
 const PROJECT_COLUMNS = [
   'id',
-  'tenant_id',
   'owner_subject',
   'kind',
   'name',
@@ -78,7 +76,6 @@ export const PROJECT_INSTRUCTIONS_MAX_CHARS = 20_000;
 
 function rowOf(raw: {
   id: string;
-  tenant_id: string;
   owner_subject: string;
   kind: string;
   name: string;
@@ -95,7 +92,6 @@ function rowOf(raw: {
 }): ProjectRow {
   return {
     id: raw.id,
-    tenantId: raw.tenant_id,
     ownerSubject: raw.owner_subject,
     kind: raw.kind === 'code' ? 'code' : 'chat',
     name: raw.name,
@@ -127,14 +123,12 @@ export function openProjectInstructions(
 
 export async function getProjectRow(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string
 ): Promise<ProjectRow | null> {
   if (!isUuid(projectId)) return null;
   const raw = await db
     .selectFrom('chat_projects')
     .select(PROJECT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', projectId)
     .executeTakeFirst();
   return raw ? rowOf(raw) : null;
@@ -142,13 +136,11 @@ export async function getProjectRow(
 
 export async function listOwnedProjects(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string
 ): Promise<ProjectRow[]> {
   const rows = await db
     .selectFrom('chat_projects')
     .select(PROJECT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .orderBy('updated_at', 'desc')
     .execute();
@@ -157,7 +149,6 @@ export async function listOwnedProjects(
 
 export async function listProjectsById(
   db: Kysely<DB>,
-  tenantId: string,
   projectIds: string[]
 ): Promise<ProjectRow[]> {
   const ids = projectIds.filter(isUuid);
@@ -165,7 +156,6 @@ export async function listProjectsById(
   const rows = await db
     .selectFrom('chat_projects')
     .select(PROJECT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('id', 'in', ids)
     .orderBy('updated_at', 'desc')
     .execute();
@@ -175,7 +165,6 @@ export async function listProjectsById(
 export async function createProject(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     ownerSubject: string;
     name: string;
     description: string | null;
@@ -188,7 +177,6 @@ export async function createProject(
   const inserted = await db
     .insertInto('chat_projects')
     .values({
-      tenant_id: input.tenantId,
       owner_subject: input.ownerSubject,
       name: input.name,
       description: input.description,
@@ -209,7 +197,6 @@ export async function createProject(
   // instructions, memory and files are sealed under it.
   const key = await createKey(db, 'chat_project', {
     id: inserted.id,
-    tenantId: input.tenantId,
     ownerSubject: input.ownerSubject,
   });
   if (input.instructions) {
@@ -247,7 +234,6 @@ export interface ProjectPatch {
  */
 export async function updateProject(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string,
   patch: ProjectPatch,
   cipher?: ContentCipher
@@ -284,7 +270,6 @@ export async function updateProject(
       ...(patch.activeChatId !== undefined ? { active_chat_id: patch.activeChatId } : {}),
       updated_at: sql<Date>`NOW()`,
     })
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', projectId)
     .executeTakeFirst();
   return Number(result.numUpdatedRows) > 0;
@@ -292,14 +277,12 @@ export async function updateProject(
 
 export async function deleteProject(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   projectId: string
 ): Promise<boolean> {
   if (!isUuid(projectId)) return false;
   const result = await db
     .deleteFrom('chat_projects')
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', projectId)
     .executeTakeFirst();
@@ -307,11 +290,10 @@ export async function deleteProject(
   if (deleted) {
     await db
       .deleteFrom('resource_access_grants')
-      .where('tenant_id', '=', tenantId)
       .where('resource_kind', '=', 'chat_project')
       .where('resource_id', '=', projectId)
       .execute();
-    await deleteKey(db, 'chat_project', tenantId, projectId);
+    await deleteKey(db, 'chat_project', projectId);
   }
   return deleted;
 }

@@ -148,7 +148,6 @@ async function publish(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
   const at = phase === 'started' ? batch.started_at : batch.finished_at;
   try {
     await publishDomainEvent({
-      tenantId: batch.tenant_id,
       provider: 'batch',
       type: phase === 'started' ? 'job.started' : 'job.completed',
       ownerSubject: batch.subject,
@@ -159,7 +158,6 @@ async function publish(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
   } catch (error) {
     logger.warn('batch {batchJobId} {phase} event not published: {error}', {
       component: COMPONENT,
-      tenantId: batch.tenant_id,
       batchJobId: batch.id,
       phase,
       error: error instanceof Error ? error.message : String(error),
@@ -168,7 +166,7 @@ async function publish(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
 }
 
 async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase): Promise<void> {
-  const prefs = await getNotificationPrefs(batch.tenant_id, batch.subject);
+  const prefs = await getNotificationPrefs(batch.subject);
   const key: BatchEvent = phase === 'started' ? 'batchStarted' : batchEventForStatus(batch.status);
   const wanted = prefs[key];
 
@@ -186,7 +184,6 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
         .insertInto('agent_notifications')
         .values({
           id,
-          tenant_id: batch.tenant_id,
           subject: batch.subject,
           kind: notificationKindFor(batch, phase),
           connector: BATCH_JOBS_CONNECTOR,
@@ -202,7 +199,6 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
       if (keyResult.ok) {
         void sendPush(
           db,
-          batch.tenant_id,
           batch.subject,
           keyResult.val,
           {
@@ -218,7 +214,6 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
     } catch (error) {
       logger.warn('could not record a notification for batch {batchJobId}: {error}', {
         component: COMPONENT,
-        tenantId: batch.tenant_id,
         batchJobId: batch.id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -227,13 +222,12 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
 
   // Send email/WebEx if preferred (independent of app preference)
   if (wanted.email || wanted.webex) {
-    const base = await registrationUrl(batch.tenant_id);
+    const base = await registrationUrl();
     const link = base ? `${base}/batch-jobs/${batch.id}` : null;
     const body =
       `${kindLabel} batch “${batch.name}” ${phase === 'started' ? 'started' : describeBatchOutcome(batch)}.` +
       (link ? `\n\nSee the batch: ${link}` : '');
     await deliverToOwnerChannels(db, {
-      tenantId: batch.tenant_id,
       ownerSubject: batch.subject,
       email: wanted.email,
       webex: wanted.webex,
@@ -253,7 +247,6 @@ async function announce(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase): 
   } catch (error) {
     logger.warn('could not notify the owner of batch {batchJobId}: {error}', {
       component: COMPONENT,
-      tenantId: batch.tenant_id,
       batchJobId: batch.id,
       error: error instanceof Error ? error.message : String(error),
     });

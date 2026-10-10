@@ -16,7 +16,7 @@
 
 import { test, expect } from '@playwright/test';
 import pg from 'pg';
-import { E2E_SLUG, E2E_TENANT_ID, E2E_SUBJECT } from './seed';
+import { E2E_SUBJECT } from './seed';
 
 test.use({
   launchOptions: {
@@ -80,8 +80,8 @@ async function subscriptionRow(): Promise<{
   await client.connect();
   try {
     const { rows } = await client.query(
-      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE tenant_id = $1 AND subject = $2',
-      [E2E_TENANT_ID, E2E_SUBJECT]
+      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE subject = $1',
+      [E2E_SUBJECT]
     );
     return rows[0] ?? null;
   } finally {
@@ -93,10 +93,7 @@ async function clearSubscriptions(): Promise<void> {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM push_subscriptions WHERE tenant_id = $1 AND subject = $2', [
-      E2E_TENANT_ID,
-      E2E_SUBJECT,
-    ]);
+    await client.query('DELETE FROM push_subscriptions WHERE subject = $1', [E2E_SUBJECT]);
   } finally {
     await client.end();
   }
@@ -113,7 +110,7 @@ test('flipping the switch on subscribes this device and records it, off removes 
   await context.grantPermissions(['notifications']);
   await mockPushManager(page);
 
-  await page.goto(`/${E2E_SLUG}/preferences`);
+  await page.goto(`/preferences`);
   const checkbox = page.getByRole('checkbox', { name: /Show system notifications/i });
   await expect(checkbox).toBeVisible();
   await expect(checkbox).not.toBeChecked();
@@ -136,63 +133,11 @@ test('flipping the switch on subscribes this device and records it, off removes 
   await expect.poll(async () => subscriptionRow(), { timeout: 10_000 }).toBeNull();
 });
 
-/**
- * The tenant id push-subscription.ts's rememberTenantForPush writes to
- * IndexedDB — sw.js's own `pushsubscriptionchange` handler reads it back
- * from the exact same db/store/key to know which tenant to re-subscribe
- * and re-POST under when a browser silently rotates a subscription with no
- * page open. Real `pushsubscriptionchange` recovery isn't exercised here
- * (it would need `PushManager.subscribe()` to work for real inside the
- * worker too, which Chrome refuses under Playwright — see this file's
- * header note); this instead guards the one thing that would silently
- * break that recovery: the two hardcoded db/store/key names in
- * push-subscription.ts and sw.js drifting apart.
- */
-async function storedTenantId(page: import('@playwright/test').Page): Promise<string | null> {
-  return page.evaluate(
-    () =>
-      new Promise<string | null>((resolve) => {
-        const openRequest = indexedDB.open('renkei-push', 1);
-        openRequest.onerror = () => resolve(null);
-        openRequest.onsuccess = () => {
-          const db = openRequest.result;
-          if (!db.objectStoreNames.contains('config')) {
-            resolve(null);
-            return;
-          }
-          const getRequest = db
-            .transaction('config', 'readonly')
-            .objectStore('config')
-            .get('tenantId');
-          getRequest.onerror = () => resolve(null);
-          getRequest.onsuccess = () => resolve(getRequest.result ?? null);
-        };
-      })
-  );
-}
-
-test('subscribing remembers the tenant id where sw.js can find it after a browser-side rotation', async ({
-  page,
-  context,
-}) => {
-  await context.grantPermissions(['notifications']);
-  await mockPushManager(page);
-
-  await page.goto(`/${E2E_SLUG}/preferences`);
-  const checkbox = page.getByRole('checkbox', { name: /Show system notifications/i });
-  await expect(checkbox).toBeVisible();
-
-  await checkbox.click();
-  await expect(checkbox).toBeChecked({ timeout: 10_000 });
-
-  await expect.poll(async () => storedTenantId(page), { timeout: 10_000 }).toBe(E2E_TENANT_ID);
-});
-
 test('with the switch left off, nothing gets subscribed', async ({ page, context }) => {
   await context.grantPermissions(['notifications']);
   await mockPushManager(page);
 
-  await page.goto(`/${E2E_SLUG}/preferences`);
+  await page.goto(`/preferences`);
   const checkbox = page.getByRole('checkbox', { name: /Show system notifications/i });
   await expect(checkbox).toBeVisible();
   await expect(checkbox).not.toBeChecked();

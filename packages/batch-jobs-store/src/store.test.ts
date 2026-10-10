@@ -21,7 +21,6 @@ interface Recorded {
 /** What the guarded terminal flip's RETURNING hands back when it wins. */
 const FINALIZED_ROW = {
   id: 'batch-1',
-  tenant_id: 'tenant-1',
   subject: 'auth0|alice',
   name: 'Nightly scans',
   kind: 'document-ocr-pipeline',

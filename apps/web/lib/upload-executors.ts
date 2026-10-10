@@ -51,7 +51,6 @@ const WEBEX_API_BASE = 'https://webexapis.com/v1';
 
 export interface UploadSlotRow {
   id: string;
-  tenant_id: string;
   subject: string;
   account_id: string;
   kind: string;
@@ -88,7 +87,7 @@ async function resolveAtlassian(
   candidates.push({ provider: ATLASSIAN, accountId: slot.account_id });
 
   for (const candidate of candidates) {
-    const grant = { tenantId: slot.tenant_id, ...candidate };
+    const grant = { ...candidate };
     const described = await delegateGrants().describe(grant);
     if (!described.ok) continue;
     const site = readAtlassianMetadata(described.val.metadata);
@@ -101,8 +100,8 @@ async function resolveAtlassian(
   return 'No usable Atlassian grant for this upload — reconnect Jira and request a new endpoint.';
 }
 
-function graphContextOf(slot: UploadSlotRow): { tenantId: string; subject: string } {
-  return { tenantId: slot.tenant_id, subject: slot.subject };
+function graphContextOf(slot: UploadSlotRow): { subject: string } {
+  return { subject: slot.subject };
 }
 
 async function jiraAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
@@ -344,7 +343,7 @@ async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Uplo
   // Posted as the user, so the ledger must know it — or their own webhook
   // re-ingests it as something they typed (see sent-ledger.ts).
   const sent = rec(await response.json().catch(() => ({})));
-  await recordSentWebexMessage(slot.tenant_id, str(sent.id), slot.account_id);
+  await recordSentWebexMessage(str(sent.id), slot.account_id);
   return { ok: true, detail: `Attached "${slot.filename}" to the WebEx message.` };
 }
 
@@ -369,11 +368,11 @@ async function webexNoteToSelfAttachment(
     bytes: new Uint8Array(bytes),
   };
 
-  const bot = await webexBotClient(slot.tenant_id);
+  const bot = await webexBotClient();
   if (bot && access.personEmail) {
     const viaBot = await bot.postMessage({ toPersonEmail: access.personEmail, markdown, file });
     if (viaBot.ok && viaBot.val.roomId) {
-      await recordSentWebexMessage(slot.tenant_id, viaBot.val.id, slot.account_id);
+      await recordSentWebexMessage(viaBot.val.id, slot.account_id);
       return {
         ok: true,
         detail: `Sent "${slot.filename}" as a direct message from the org's WebEx bot.`,
@@ -381,7 +380,6 @@ async function webexNoteToSelfAttachment(
     }
     logger.warn('webex note-to-self upload: the bot could not deliver; posting to the solo space', {
       component: 'upload-executors',
-      tenantId: slot.tenant_id,
       reason: viaBot.ok ? 'no roomId in the bot response' : viaBot.err.message,
     });
   }
@@ -389,7 +387,7 @@ async function webexNoteToSelfAttachment(
   const user = new WebexClient(access.auth, { lane: 'interactive' });
   const sent = await user.sendNoteToSelf(markdown ?? '', file);
   if (!sent.ok) return { ok: false, detail: sent.err.message ?? 'WebEx refused the note.' };
-  await recordSentWebexMessage(slot.tenant_id, sent.val.id, slot.account_id);
+  await recordSentWebexMessage(sent.val.id, slot.account_id);
   return {
     ok: true,
     detail: `Sent "${slot.filename}" to your "Note to Self" space (room ${sent.val.roomId}).`,
@@ -411,7 +409,7 @@ async function fileshareFile(slot: UploadSlotRow, bytes: Buffer): Promise<Upload
 
   const target = fileshareChildPath(folder, slot.filename);
   const written = await fsWriteFile(
-    { tenantId: slot.tenant_id, shareId, subject: slot.subject },
+    { shareId, subject: slot.subject },
     target,
     new Uint8Array(bytes)
   );
@@ -451,7 +449,6 @@ async function onbaseDocument(
     ? slot.filename.slice(slot.filename.lastIndexOf('.') + 1)
     : 'dat';
   const staged = await obApi({
-    tenantId: slot.tenant_id,
     subject: slot.subject,
     method: 'POST',
     path: '/documents/uploads',
@@ -482,7 +479,6 @@ async function onbaseDocument(
   for (let part = 0; part < partCount; part += 1) {
     const chunk = bytes.subarray(part * filePartSize, (part + 1) * filePartSize);
     const put = await obPutBytes({
-      tenantId: slot.tenant_id,
       subject: slot.subject,
       uploadId: onbaseUploadId,
       filePart: part + 1,

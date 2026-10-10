@@ -1,0 +1,311 @@
+/**
+ * The org settings that have no more specific home. Connector switches live
+ * on the connectors page, redaction on its own page, run retention on agent
+ * oversight — everything else (read-only mode, agent guardrails, token
+ * lifetimes, request limits) is read and written here for the settings page.
+ *
+ * Every numeric setting is clamped to a stated range rather than trusted:
+ * these values feed guards (rate limits, chain depth, timeouts), and a guard
+ * set to zero or a million by typo is a guard removed.
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
+import {
+  getOrgSettings,
+  setOrgSettings,
+  isActApprovalPolicy,
+  isLogLevel,
+  ACT_APPROVAL_POLICIES,
+  LOG_LEVELS,
+  type ActApprovalPolicy,
+  type OrgSettings,
+  type LogLevel,
+} from '@renkei/settings';
+import { recordAuditEvent } from '@/lib/audit-events';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+
+/** key → [min, max]; the UI states the same ranges. */
+const NUMERIC_BOUNDS = {
+  maxJqlResults: [1, 1000],
+  maxAttachmentBytes: [1_048_576, 104_857_600], // 1MB..100MB
+  massUploadThreshold: [2, 500],
+  rateLimitPerUserPerMinute: [1, 10_000],
+  accessTokenTtlMinutes: [5, 1_440],
+  authorizationCodeTtlSeconds: [30, 600],
+  refreshTokenTtlDays: [1, 365],
+  // Floor 15 minutes (below that nobody finishes a form); the ceiling is
+  // the session's absolute 30-day lifetime, past which the dial is inert.
+  sessionIdleTimeoutMinutes: [15, 43_200],
+  agentMaxChainDepth: [1, 10],
+  agentRunTimeoutMinutes: [1, 120],
+  // Above the 10 default is allowed on purpose; 100 is the typo guard.
+  agentMaxStepAttempts: [1, 100],
+  // Same shape: above the 20 default is allowed, 100 stops a typo from
+  // authorizing hundred-step plans nobody meant to permit.
+  agentMaxSteps: [1, 100],
+  agentMaxRunsPerDay: [1, 10_000],
+  // Ceiling on how long an approval node may wait for its owner; 90 days
+  // is the typo guard, 1 the floor (a sub-day org bound would make the
+  // feature useless).
+  agentApprovalMaxWaitDays: [1, 90],
+  // Floor 5: the worker's sweep wakes every 5 minutes, so smaller values
+  // would promise a freshness the sweep cannot deliver.
+  contentPollMinutes: [5, 1_440],
+  // Floor 15: the worker's sweep wakes every 15 minutes. Unlike content
+  // polling, a shorter interval here buys nothing but rate-limit risk —
+  // this is a repair check, not a sync, and WebEx pushes the real events.
+  webexWebhookHealthMinutes: [15, 1_440],
+  // 0 = keep forever; a year of logs is the typo guard on the other end.
+  logRetentionDays: [0, 3_650],
+  // Floor 1, not 0: "delete instantly" is a footgun with no use case, and
+  // switching notifications OFF is the per-user preference's job, not this
+  // ceiling's. A year is the typo guard.
+  agentNotificationRetentionDays: [1, 365],
+  // The usage ledgers hold ids, integers, and on failure a step name and a
+  // clipped error — no arguments or results; five years is the typo guard.
+  agentUsageRetentionDays: [1, 1_825],
+  // 0 = keep chats until their owners delete them; ten years is the typo guard.
+  chatRetentionDays: [0, 3_650],
+  // The optimizer's evidence window. A year is the typo guard; below a
+  // day there is nothing to analyze.
+  agentOptimizerWindowDays: [1, 365],
+  // 0 sends every item for keyword extraction; the ceiling is well past
+  // the 12k chars the extractor shows the model, so a typo cannot turn
+  // enrichment into a no-op that looks switched on.
+  knowledgeKeywordMinChars: [0, 100_000],
+  // 0 = off (every chat reply notifies, no presence check at all). 300 is
+  // the typo guard — past a few minutes "recently streamed to this chat"
+  // stops meaning anything the check is for.
+  chatReplyPresenceWindowSeconds: [0, 300],
+  // Per-checkout size limit on the sandbox: 1GB floor (a monorepo will not
+  // fit below it), 64GB the typo guard and the most a request may ask for.
+  sandboxWorkspaceMaxBytes: [1_073_741_824, 68_719_476_736],
+} as const;
+
+const NUMERIC_KEYS = [
+  'maxJqlResults',
+  'maxAttachmentBytes',
+  'massUploadThreshold',
+  'rateLimitPerUserPerMinute',
+  'accessTokenTtlMinutes',
+  'authorizationCodeTtlSeconds',
+  'refreshTokenTtlDays',
+  'sessionIdleTimeoutMinutes',
+  'agentMaxChainDepth',
+  'agentRunTimeoutMinutes',
+  'agentMaxStepAttempts',
+  'agentMaxSteps',
+  'agentMaxRunsPerDay',
+  'agentApprovalMaxWaitDays',
+  'contentPollMinutes',
+  'webexWebhookHealthMinutes',
+  'logRetentionDays',
+  'agentNotificationRetentionDays',
+  'agentUsageRetentionDays',
+  'chatRetentionDays',
+  'agentOptimizerWindowDays',
+  'knowledgeKeywordMinChars',
+  'chatReplyPresenceWindowSeconds',
+  'sandboxWorkspaceMaxBytes',
+] as const;
+
+const BOOLEAN_KEYS = [
+  'readOnly',
+  'enableDcr',
+  'knowledgeKeywordEnrichment',
+  'coachMarksEnabled',
+  'phiConnectorsRequireCoveredModel',
+  'sandboxBrowserEnabled',
+  'sandboxChartsEnabled',
+  'sandboxWorkspacesEnabled',
+  'sandboxServicesEnabled',
+  'sandboxScriptsEnabled',
+  'sandboxScriptsAllowNetwork',
+] as const;
+
+/** The organization's name: one line, long enough for any registered name. */
+const ORGANIZATION_NAME_MAX_CHARS = 80;
+
+type EditableKey =
+  | keyof typeof NUMERIC_BOUNDS
+  | (typeof BOOLEAN_KEYS)[number]
+  | 'logLevel'
+  | 'agentActStepsRequireApproval'
+  | 'organizationName';
+type EditableValue = boolean | number | string | LogLevel | ActApprovalPolicy;
+
+function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
+  return {
+    organizationName: settings.organizationName,
+    readOnly: settings.readOnly,
+    enableDcr: settings.enableDcr,
+    logLevel: settings.logLevel,
+    agentActStepsRequireApproval: settings.agentActStepsRequireApproval,
+    maxJqlResults: settings.maxJqlResults,
+    maxAttachmentBytes: settings.maxAttachmentBytes,
+    massUploadThreshold: settings.massUploadThreshold,
+    rateLimitPerUserPerMinute: settings.rateLimitPerUserPerMinute,
+    accessTokenTtlMinutes: settings.accessTokenTtlMinutes,
+    authorizationCodeTtlSeconds: settings.authorizationCodeTtlSeconds,
+    refreshTokenTtlDays: settings.refreshTokenTtlDays,
+    sessionIdleTimeoutMinutes: settings.sessionIdleTimeoutMinutes,
+    agentMaxChainDepth: settings.agentMaxChainDepth,
+    agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
+    agentMaxStepAttempts: settings.agentMaxStepAttempts,
+    agentMaxSteps: settings.agentMaxSteps,
+    agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
+    agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
+    contentPollMinutes: settings.contentPollMinutes,
+    webexWebhookHealthMinutes: settings.webexWebhookHealthMinutes,
+    logRetentionDays: settings.logRetentionDays,
+    agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
+    agentUsageRetentionDays: settings.agentUsageRetentionDays,
+    chatRetentionDays: settings.chatRetentionDays,
+    agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
+    knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
+    knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
+    coachMarksEnabled: settings.coachMarksEnabled,
+    phiConnectorsRequireCoveredModel: settings.phiConnectorsRequireCoveredModel,
+    chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
+    sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
+    sandboxBrowserEnabled: settings.sandboxBrowserEnabled,
+    sandboxChartsEnabled: settings.sandboxChartsEnabled,
+    sandboxWorkspacesEnabled: settings.sandboxWorkspacesEnabled,
+    sandboxServicesEnabled: settings.sandboxServicesEnabled,
+    sandboxScriptsEnabled: settings.sandboxScriptsEnabled,
+    sandboxScriptsAllowNetwork: settings.sandboxScriptsAllowNetwork,
+  };
+}
+
+export async function GET(
+  _request: NextRequest
+): Promise<NextResponse> {
+  if (!(await checkAccess([ROLE_OPERATOR]))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const settings = await getOrgSettings();
+  if (!settings.ok) {
+    return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
+  }
+  return NextResponse.json({ settings: editable(settings.val) });
+}
+
+export async function PUT(
+  request: NextRequest
+): Promise<NextResponse> {
+  const access = await checkAccess([ROLE_OPERATOR]);
+  if (!access) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const body: unknown = await request.json().catch(() => null);
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return NextResponse.json({ error: 'JSON body required' }, { status: 400 });
+  }
+  const submitted: Record<string, unknown> = { ...body };
+
+  const current = await getOrgSettings();
+  if (!current.ok) {
+    return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
+  }
+  const before = editable(current.val);
+
+  const updates: Partial<OrgSettings> = {};
+  const changed: Record<string, { from: EditableValue; to: EditableValue }> = {};
+
+  for (const key of BOOLEAN_KEYS) {
+    if (!(key in submitted)) continue;
+    if (typeof submitted[key] !== 'boolean') {
+      return NextResponse.json({ error: `${key} must be true or false` }, { status: 400 });
+    }
+    if (submitted[key] !== before[key]) {
+      updates[key] = submitted[key];
+      changed[key] = { from: before[key], to: submitted[key] };
+    }
+  }
+
+  for (const key of NUMERIC_KEYS) {
+    if (!(key in submitted)) continue;
+    const [min, max] = NUMERIC_BOUNDS[key];
+    const value = submitted[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return NextResponse.json({ error: `${key} must be a number` }, { status: 400 });
+    }
+    const clamped = Math.min(Math.max(Math.trunc(value), min), max);
+    if (clamped !== before[key]) {
+      updates[key] = clamped;
+      changed[key] = { from: before[key], to: clamped };
+    }
+  }
+
+  if ('organizationName' in submitted) {
+    const value = submitted.organizationName;
+    if (typeof value !== 'string' || !value.trim()) {
+      return NextResponse.json({ error: 'organizationName must be a name' }, { status: 400 });
+    }
+    const trimmed = value.trim().slice(0, ORGANIZATION_NAME_MAX_CHARS);
+    if (trimmed !== before.organizationName) {
+      updates.organizationName = trimmed;
+      changed.organizationName = { from: before.organizationName, to: trimmed };
+    }
+  }
+
+  if ('logLevel' in submitted) {
+    const value = submitted.logLevel;
+    if (!isLogLevel(value)) {
+      return NextResponse.json(
+        { error: `logLevel must be one of: ${LOG_LEVELS.join(', ')}` },
+        { status: 400 }
+      );
+    }
+    if (value !== before.logLevel) {
+      updates.logLevel = value;
+      changed.logLevel = { from: before.logLevel, to: value };
+    }
+  }
+
+  if ('agentActStepsRequireApproval' in submitted) {
+    const value = submitted.agentActStepsRequireApproval;
+    if (!isActApprovalPolicy(value)) {
+      return NextResponse.json(
+        {
+          error: `agentActStepsRequireApproval must be one of: ${ACT_APPROVAL_POLICIES.join(', ')}`,
+        },
+        { status: 400 }
+      );
+    }
+    if (value !== before.agentActStepsRequireApproval) {
+      updates.agentActStepsRequireApproval = value;
+      changed.agentActStepsRequireApproval = {
+        from: before.agentActStepsRequireApproval,
+        to: value,
+      };
+    }
+  }
+
+  if (Object.keys(updates).length > 0) {
+    const saved = await setOrgSettings(updates);
+    if (!saved.ok) {
+      return NextResponse.json({ error: 'Could not save settings' }, { status: 500 });
+    }
+    recordAuditEvent({
+      actorSubject: access.subject,
+      action: 'settings.updated',
+      targetKind: 'settings',
+      // Which knobs and both values: settings are config, not content, and
+      // "who set read-only, and when" is precisely an audit question.
+      details: { changed },
+    });
+    // readOnly is the one editable setting here the tool catalog reads (the
+    // scope gate strips mutating tools org-wide); every other key is inert
+    // to it, so only invalidate when it actually moved.
+    if ('readOnly' in changed) invalidateToolCatalogCache();
+  }
+
+  const after = await getOrgSettings();
+  return NextResponse.json({
+    settings: after.ok ? editable(after.val) : { ...before, ...updates },
+  });
+}

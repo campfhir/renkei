@@ -133,7 +133,7 @@ function grantFor(prefixes: string[], scopeFor: (tool: string) => string[]): Gra
 }
 
 const INSTANCE_ID = '11111111-2222-3333-4444-555555555555';
-const context = { tenantId: 'tenant-1', subject: 'subject-1' } as unknown as MCPToolContext;
+const context = { subject: 'subject-1' } as unknown as MCPToolContext;
 
 function collecting(): { server: McpServer; names: string[] } {
   const names: string[] = [];
@@ -154,7 +154,7 @@ function mirthToolNames(): string[] {
     context,
     {
       kind: 'user',
-      target: () => ({ tenantId: 'tenant-1', subject: 'subject-1' }),
+      target: () => ({ subject: 'subject-1' }),
       listConnected: async () => [
         {
           instance: {
@@ -187,7 +187,7 @@ function admanagerToolNames(): string[] {
     context,
     {
       kind: 'user',
-      target: () => ({ tenantId: 'tenant-1', subject: 'subject-1' }),
+      target: () => ({ subject: 'subject-1' }),
       listConnected: async () => [
         {
           instance: {
@@ -234,7 +234,7 @@ beforeEach(() => {
 
 describe('the agents’ fixed high-risk tool list', () => {
   it('names only tools the registration actually produces', async () => {
-    const granted = await listAvailableTools('tenant-1', 'subject-1');
+    const granted = await listAvailableTools('subject-1');
     const registered = new Set([
       ...granted.map((tool) => tool.name),
       ...mirthToolNames(),
@@ -246,7 +246,7 @@ describe('the agents’ fixed high-risk tool list', () => {
   });
 
   it('names only tools that act — a read on the list would pause for nothing', async () => {
-    const granted = await listAvailableTools('tenant-1', 'subject-1');
+    const granted = await listAvailableTools('subject-1');
     const kinds = new Map(granted.map((tool) => [tool.name, tool.kind]));
     const reads = ALWAYS_APPROVAL_TOOLS.filter((tool) => kinds.get(tool) === 'read');
     expect(reads).toEqual([]);

@@ -16,7 +16,6 @@ import { logger } from '@/lib/logger';
 export type VoiceUsageKind = 'speech' | 'transcription';
 
 export interface RecordVoiceUsageInput {
-  tenantId: string;
   subject: string;
   kind: VoiceUsageKind;
   /** Characters sent to be spoken (`speech`); 0 for a transcription. */
@@ -52,7 +51,6 @@ export async function recordVoiceUsage(
     await db
       .insertInto('voice_usage')
       .values({
-        tenant_id: input.tenantId,
         subject: input.subject,
         kind: input.kind,
         characters: Math.max(0, Math.round(input.characters ?? 0)),
@@ -63,9 +61,8 @@ export async function recordVoiceUsage(
       })
       .execute();
   } catch (error) {
-    logger.warn('voice usage not recorded for tenant {tenantId}', {
+    logger.warn('voice usage not recorded', {
       component: 'web/voice-usage',
-      tenantId: input.tenantId,
       kind: input.kind,
       error: error instanceof Error ? error.message : String(error),
     });

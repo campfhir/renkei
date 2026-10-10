@@ -21,7 +21,7 @@ import {
   clientFailure,
 } from './index';
 
-const TARGET = { tenantId: 'tenant-1', shareId: 'share-1', subject: 'auth0|alice' };
+const TARGET = { shareId: 'share-1', subject: 'auth0|alice' };
 const SHARE = { id: 'share-1', name: 'Accounting' };
 
 const ORIGINAL_ENV = process.env;
@@ -194,7 +194,6 @@ describe('JSON ops (list, stat, mkdir, remove, remove-preview, move, rename, tes
       .mockResolvedValue(new Response(JSON.stringify({ entries: 4 }), { status: 200 }));
 
     const payload = {
-      tenantId: 'tenant-1',
       shareId: 'share-1',
       credentials: { protocol: 'sftp' as const, username: 'alice', password: 'secret' },
     };
@@ -281,7 +280,6 @@ describe('fsWriteFile', () => {
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/forward/fileshares/write?');
     const query = new URL(url).searchParams;
-    expect(query.get('tenantId')).toBe(TARGET.tenantId);
     expect(query.get('shareId')).toBe(TARGET.shareId);
     expect(query.get('subject')).toBe(TARGET.subject);
     expect(query.get('path')).toBe('/new.txt');

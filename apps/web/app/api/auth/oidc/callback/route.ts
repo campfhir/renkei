@@ -76,7 +76,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Look up pending OIDC state
     const pendingSignIn = await db
       .selectFrom('pending_oidc_signin')
-      .select(['tenant_id', 'expires_at', 'nonce'])
+      .select(['expires_at', 'nonce'])
       .where('state', '=', state)
       .executeTakeFirst();
 
@@ -90,27 +90,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'State expired' }, { status: 400 });
     }
 
-    const tenantId = pendingSignIn.tenant_id;
-
     // CSRF / session-fixation defense: the state must match the cookie the login
     // route set in THIS browser. A state+code pair captured elsewhere and
     // replayed into a victim's browser carries no matching cookie, so it is
     // rejected here before any session is minted. The cookie is cleared on the
     // response below regardless of outcome.
-    const stateCookie = request.cookies.get(`oidc_state_${tenantId}`)?.value;
+    const stateCookie = request.cookies.get('oidc_state')?.value;
     if (!stateCookie || stateCookie !== state) {
       await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
       logger.warn('OIDC state cookie missing or mismatched; rejecting callback', {
         component: 'auth/oidc',
-        tenantId,
       });
       const response = NextResponse.json({ error: 'Invalid state' }, { status: 400 });
-      response.cookies.delete(`oidc_state_${tenantId}`);
+      response.cookies.delete('oidc_state');
       return response;
     }
 
     // Get OIDC config
-    const oidcResult = await getTenantOidc(tenantId);
+    const oidcResult = await getTenantOidc();
     if (!oidcResult.ok) {
       return NextResponse.json({ error: 'Failed to retrieve OIDC configuration' }, { status: 500 });
     }
@@ -170,7 +167,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       if (tokenUrlError instanceof BlockedUrlError) {
         logger.error('Token endpoint is not an allowed URL: {detail}', {
           component: 'auth/oidc',
-          tenantId,
           detail: tokenUrlError.message,
         });
         return NextResponse.json({ error: 'Invalid token endpoint' }, { status: 400 });
@@ -198,7 +194,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       if (tokenFetchError instanceof BlockedUrlError) {
         logger.error('Token endpoint is not an allowed URL: {detail}', {
           component: 'auth/oidc',
-          tenantId,
           detail: tokenFetchError.message,
         });
         return NextResponse.json({ error: 'Invalid token endpoint' }, { status: 400 });
@@ -226,7 +221,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!subject) {
       logger.error("No 'sub' claim in id_token; cannot establish session", {
         component: 'auth/oidc',
-        tenantId,
       });
       return NextResponse.json(
         { error: 'Identity provider did not return a subject claim' },
@@ -248,11 +242,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
       logger.error('id_token claim validation failed: {detail}', {
         component: 'auth/oidc',
-        tenantId,
         detail: claimError,
       });
       const response = NextResponse.json({ error: 'Invalid id_token' }, { status: 400 });
-      response.cookies.delete(`oidc_state_${tenantId}`);
+      response.cookies.delete('oidc_state');
       return response;
     }
 
@@ -271,19 +264,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // record and every audience-scoped connector is closed to them.
       logger.warn(
         'id_token omits the groups claim (groups overage); audience rules fail closed for this subject',
-        { component: 'auth/oidc', tenantId, subject, groupsClaim }
+        { component: 'auth/oidc', subject, groupsClaim }
       );
     }
     if (identityClaims) {
-      const recorded = await upsertIdentity(tenantId, subject, identityClaims);
+      const recorded = await upsertIdentity(subject, identityClaims);
       if (!recorded.ok) {
         console.warn(
-          `[OIDC ${tenantId}] could not record identity for subject; gates will fail closed`
+          `[OIDC] could not record identity for subject; gates will fail closed`
         );
       }
     } else {
       console.warn(
-        `[OIDC ${tenantId}] id_token carries no email claim; gates will fail closed for this user`
+        `[OIDC] id_token carries no email claim; gates will fail closed for this user`
       );
     }
 
@@ -308,10 +301,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         // Require user to have at least one renkei role
         if (userRoles.size === 0) {
           console.error(
-            `[OIDC ${tenantId}] User has no authorized roles. IDP claim "${oidc.roleClaim}": ${JSON.stringify(idpClaim)}`
+            `[OIDC] User has no authorized roles. IDP claim "${oidc.roleClaim}": ${JSON.stringify(idpClaim)}`
           );
           return NextResponse.json(
-            { error: 'User role not authorized for this tenant' },
+            { error: 'User role not authorized' },
             { status: 403 }
           );
         }
@@ -321,18 +314,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Delete used state token
     await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
 
-    // Get redirect target from cookie; without one, land on the tenant's home
-    // page — the slug tree, not the retired /mcp/[tenantId] page.
-    const redirectCookie = request.cookies.get(`oidc_redirect_${tenantId}`)?.value;
-    let redirect = redirectCookie || '';
-    if (!redirect) {
-      const tenantRow = await db
-        .selectFrom('tenants')
-        .select('slug')
-        .where('id', '=', tenantId)
-        .executeTakeFirst();
-      redirect = tenantRow ? `/${tenantRow.slug}` : '/';
-    }
+    // Get redirect target from cookie; without one, land on the home page.
+    const redirect = request.cookies.get('oidc_redirect')?.value || '/';
 
     // Create a server-side session. Subject and roles are stored in the database
     // and never sent to the client; the cookie holds only an opaque id. Previously
@@ -343,7 +326,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // tying our own session to its (often hour-long) lifetime made every
     // sign-in expire far sooner than anyone signing in expects.
     const sessionResult = await createSession(
-      tenantId,
       subject,
       Array.from(userRoles),
       SESSION_TTL_SECONDS
@@ -351,21 +333,21 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!sessionResult.ok) {
       return NextResponse.json({ error: 'Failed to establish session' }, { status: 500 });
     }
-    recordAuditEvent({ tenantId, actorSubject: subject, action: 'user.signed_in' });
+    recordAuditEvent({ actorSubject: subject, action: 'user.signed_in' });
 
     const response = NextResponse.redirect(new URL(redirect, origin));
     response.cookies.set(
-      sessionCookieName(tenantId),
+      sessionCookieName(),
       sessionResult.val.id,
       sessionCookieOptions(SESSION_TTL_SECONDS)
     );
 
     // Retire the forgeable cookies from the previous scheme.
-    response.cookies.delete(`oidc_token_${tenantId}`);
-    response.cookies.delete(`oidc_roles_${tenantId}`);
-    response.cookies.delete(`oidc_redirect_${tenantId}`);
+    response.cookies.delete('oidc_token');
+    response.cookies.delete('oidc_roles');
+    response.cookies.delete('oidc_redirect');
     // The one-time CSRF binding cookie has done its job.
-    response.cookies.delete(`oidc_state_${tenantId}`);
+    response.cookies.delete('oidc_state');
 
     return response;
   } catch (error) {

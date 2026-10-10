@@ -68,12 +68,12 @@ export const REWRAP_TARGETS: readonly RewrapTarget[] = [
   // Organization → Storage account key, which is a connector row).
   {
     table: 'connector_configs',
-    idColumns: ['tenant_id', 'connector'],
+    idColumns: ['connector'],
     column: 'encrypted_secrets',
     prefix: '',
     ring: 'token',
   },
-  // apps/web/app/api/admin/[slug]/llm-models: a model's API key.
+  // apps/web/app/api/admin/llm-models: a model's API key.
   {
     table: 'llm_model_configs',
     idColumns: ['id'],
@@ -82,7 +82,7 @@ export const REWRAP_TARGETS: readonly RewrapTarget[] = [
     ring: 'token',
   },
   // apps/web/lib/tenant-operations.ts: the OIDC client secret.
-  { table: 'tenant_oidc', idColumns: ['id'], column: 'client_secret', prefix: '', ring: 'token' },
+  { table: 'oidc_config', idColumns: ['id'], column: 'client_secret', prefix: '', ring: 'token' },
   // packages/knowledge: chunk bodies, `renc1:` + envelope (packages/crypto content.ts).
   {
     table: 'knowledge_chunks',

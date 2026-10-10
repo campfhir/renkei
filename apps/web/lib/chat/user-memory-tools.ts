@@ -29,7 +29,6 @@ export function userMemoryTools(): LocalTool[] {
         const note = typeof input.note === 'string' ? input.note.trim() : '';
         if (!note) return errorResult('Nothing to remember: `note` is empty.');
         const id = await appendUserMemory(context.db, {
-          tenantId: context.tenantId,
           ownerSubject: context.subject,
           content: note,
           chatId: context.chatId,
@@ -55,7 +54,7 @@ export function userMemoryTools(): LocalTool[] {
           return errorResult('This chat is in a project; use project_memory_forget.');
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const id = typeof input.id === 'string' ? input.id : '';
-        const deleted = await forgetUserMemory(context.db, context.tenantId, context.subject, {
+        const deleted = await forgetUserMemory(context.db, context.subject, {
           kind: 'entries',
           ids: [id],
         });
@@ -72,7 +71,7 @@ export function userMemoryTools(): LocalTool[] {
       async execute(_input, context) {
         if (context.projectId)
           return errorResult('This chat is in a project; use project_memory_list.');
-        const memory = await readUserMemory(context.db, context.tenantId, context.subject, {
+        const memory = await readUserMemory(context.db, context.subject, {
           maxEntries: 100,
         });
         if (!memory.summary && memory.entries.length === 0)

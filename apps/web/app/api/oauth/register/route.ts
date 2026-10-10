@@ -11,7 +11,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 /**
  * Open by specification (RFC 7591) and each call writes a row, so the
  * throttle is what keeps it from being a client-row factory — the same
- * budget as the tenant-scoped endpoint, keyed on this system-level one.
+ * budget as the MCP endpoint's own registration route, keyed on this one.
  */
 const LIMITS = {
   perClient: { limit: 10, windowMs: 10 * 60_000 },
@@ -19,17 +19,9 @@ const LIMITS = {
 };
 
 /**
- * System-level Dynamic Client Registration endpoint (RFC 7591).
- *
- * This endpoint has no tenant of its own; it exists only for a caller that
- * reaches it without ever fetching tenant-scoped discovery metadata (which
- * 404s at the system level — see app/api/.well-known/oauth-authorization-
- * server/route.ts). The only signal available is the Referer header a
- * browser sends when it followed a link from the tenant-scoped MCP
- * endpoint's own pages; a bare API caller (curl, most DCR clients) sends
- * none. Once the tenant is known, THAT organization's registration setting
- * decides — this used to consult the platform default instead, so an org
- * that had switched registration off still took registrations here.
+ * Dynamic Client Registration endpoint (RFC 7591), at the path a client
+ * that never fetched the discovery metadata guesses. The organization's
+ * own registration setting decides whether it answers at all.
  *
  * Example request:
  *   POST /api/oauth/register
@@ -50,23 +42,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const referer = request.headers.get('referer');
-  const tenantId = referer?.match(/\/api\/mcp\/([a-f0-9-]{36})/i)?.[1];
-  if (!tenantId) {
-    return NextResponse.json(
-      {
-        error: 'invalid_request',
-        error_description:
-          'Could not determine which tenant to register against. Discover the ' +
-          'tenant-scoped registration endpoint from the resource_metadata field of ' +
-          'the WWW-Authenticate challenge your MCP endpoint returned, or POST to ' +
-          '/api/mcp/{tenantId}/oauth/register directly.',
-      },
-      { status: 400 }
-    );
-  }
-
-  const settingsResult = await getOrgSettings(tenantId);
+  const settingsResult = await getOrgSettings();
   const settings = settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS;
   if (!settings.enableDcr) {
     return NextResponse.json(
@@ -103,20 +79,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const db = dbResult.val;
 
   try {
-    // Verify the tenant the Referer named actually exists.
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('id')
-      .where('id', '=', tenantId)
-      .executeTakeFirst();
-
-    if (!tenant) {
-      return NextResponse.json(
-        { error: 'invalid_request', error_description: 'Tenant not found' },
-        { status: 400 }
-      );
-    }
-
     const clientId = `client_${randomUUID()}`;
     const clientSecret = generateSecret(32);
 
@@ -124,7 +86,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .insertInto('oauth_clients')
       .values({
         client_id: clientId,
-        tenant_id: tenantId,
         // Only the digest is stored; the secret itself exists solely in the
         // registration response below and in the client that receives it.
         client_secret_hash: hashToken(clientSecret),
@@ -136,7 +97,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .execute();
 
     recordAuditEvent({
-      tenantId,
       actorSubject: null,
       action: 'oauth.client_registered',
       targetKind: 'oauth_client',

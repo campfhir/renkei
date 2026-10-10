@@ -1,0 +1,165 @@
+/**
+ * The projects, spaces and libraries a user could watch, for the picker.
+ *
+ * A free-text key field would be the smaller change, but it puts the user
+ * back where the assistant was: guessing keys and reading provider errors.
+ * Listing what they can actually see makes the choice self-validating.
+ *
+ * SharePoint is the one provider that cannot be listed in a single step.
+ * Graph has no "every site I can reach" call — /sites needs a search term —
+ * and a tenant's libraries are not a flat set worth enumerating even if it
+ * did. So it answers in two: sites for a query (or the ones the user
+ * follows, which is the closest thing to a useful default), then the
+ * libraries on the chosen site.
+ *
+ * Deliberately not cached: which projects a person can see is exactly the
+ * kind of thing that changes without Renkei being told.
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { ATLASSIAN, ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
+import { atlassianFetch, listOf, str } from '@renkei/connector-atlassian';
+import { getSessionFromRequest } from '@/lib/session';
+import { resolveAtlassianUserAccess } from '@/lib/atlassian-user-access';
+import {
+  graphStr as gstr,
+  graphValues,
+  resolveSharePointAccess,
+  resolveSharePointSite,
+  sharePointGet,
+} from '../sharepoint-access';
+
+export interface WatchOption {
+  /** What gets stored as scope_key — a project key, a space id, or a driveId. */
+  key: string;
+  label: string;
+  /** Shown beside the label: project type, space key, or library web URL. */
+  hint: string;
+}
+
+export async function GET(
+  request: NextRequest
+): Promise<NextResponse> {
+  const session = await getSessionFromRequest(request);
+  if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+  const provider = request.nextUrl.searchParams.get('provider');
+  if (provider !== 'jira' && provider !== 'confluence' && provider !== 'sharepoint') {
+    return NextResponse.json(
+      { error: 'provider must be jira, confluence or sharepoint' },
+      { status: 400 }
+    );
+  }
+
+  if (provider === 'sharepoint') {
+    return sharePointOptions(
+      { subject: session.subject },
+      request.nextUrl.searchParams.get('site')?.trim() ?? '',
+      request.nextUrl.searchParams.get('q')?.trim() ?? ''
+    );
+  }
+
+  const access = await resolveAtlassianUserAccess(
+    session.subject,
+    provider === 'jira' ? ATLASSIAN : ATLASSIAN_CONFLUENCE
+  );
+  if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
+
+  if (provider === 'jira') {
+    const response = await atlassianFetch({
+      product: 'jira',
+      cloudId: access.cloudId,
+      auth: access.auth,
+      path: '/rest/api/3/project/search?maxResults=100&orderBy=key',
+    });
+    if (!response.ok) {
+      return NextResponse.json(
+        {
+          error:
+            response.status === 401 || response.status === 403
+              ? 'Your Jira connection cannot list projects yet — the project endpoints require a ' +
+                'scope that was missing from Renkei until recently. Reconnect Jira to pick it up. ' +
+                'Watching works either way; enter a project key below.'
+              : `Jira answered ${response.status}.`,
+        },
+        { status: 400 }
+      );
+    }
+    const options: WatchOption[] = listOf(response.body, 'values').map((project) => ({
+      key: str(project.key),
+      label: str(project.name) || str(project.key),
+      hint: str(project.projectTypeKey),
+    }));
+    return NextResponse.json({ options });
+  }
+
+  const response = await atlassianFetch({
+    product: 'confluence',
+    cloudId: access.cloudId,
+    auth: access.auth,
+    path: '/wiki/api/v2/spaces?limit=100&status=current',
+  });
+  if (!response.ok) {
+    return NextResponse.json({ error: `Confluence answered ${response.status}.` }, { status: 400 });
+  }
+  const options: WatchOption[] = listOf(response.body, 'results').map((space) => ({
+    // Space ID, not key: it is what the v2 page listing the poller uses
+    // filters on.
+    key: str(space.id),
+    label: str(space.name) || str(space.key),
+    hint: str(space.key),
+  }));
+  return NextResponse.json({ options });
+}
+
+/**
+ * SharePoint, in two steps.
+ *
+ * With `site`, the answer is that site's document libraries, keyed by
+ * driveId — which is what a watch stores. Without it, the answer is sites:
+ * a search when the user typed something, and otherwise the sites they
+ * follow, so the picker opens with something in it rather than an empty box
+ * demanding a query.
+ *
+ * Sites come back under `sites` rather than `options` so a caller cannot
+ * mistake one for the other and POST a siteId as a scope key.
+ */
+async function sharePointOptions(
+  owner: { subject: string },
+  site: string,
+  query: string
+): Promise<NextResponse> {
+  const access = await resolveSharePointAccess(owner.subject);
+  if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
+
+  if (site) {
+    const resolved = await resolveSharePointSite(access, site);
+    if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: 400 });
+
+    const drives = await sharePointGet(
+      access,
+      `/sites/${resolved.siteId}/drives?$select=id,name,webUrl,driveType`
+    );
+    if (!drives.ok) return NextResponse.json({ error: drives.error }, { status: 400 });
+
+    const options: WatchOption[] = graphValues(drives.body).map((drive) => ({
+      key: gstr(drive.id),
+      label: gstr(drive.name),
+      hint: gstr(drive.webUrl),
+    }));
+    return NextResponse.json({ options, siteId: resolved.siteId, siteName: resolved.name });
+  }
+
+  const path = query
+    ? `/sites?search=${encodeURIComponent(query)}&$top=25&$select=id,displayName,webUrl`
+    : '/me/followedSites?$select=id,displayName,webUrl';
+  const found = await sharePointGet(access, path);
+  if (!found.ok) return NextResponse.json({ error: found.error }, { status: 400 });
+
+  const sites = graphValues(found.body).map((entry) => ({
+    id: gstr(entry.id),
+    name: gstr(entry.displayName),
+    webUrl: gstr(entry.webUrl),
+  }));
+  return NextResponse.json({ sites });
+}

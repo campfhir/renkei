@@ -42,7 +42,7 @@ const stubAuth: JiraAdminAuth = {
     siteUrl: 'https://acme.atlassian.net',
     accountId: 'acct-1',
     // The delegate's fetcher stands in for the grant; the suite's global.fetch answers it.
-    auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:tenant-1:acct-1'),
+    auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:acct-1'),
   }),
 };
 
@@ -55,7 +55,7 @@ async function tools(scopes?: string[]): Promise<Map<string, ToolHandler>> {
   } as unknown as McpServer;
   await registerJiraAdminTools(
     server,
-    { tenantId: 'tenant-1', subject: 'subject-1', jiraAdminScopes: scopes } as MCPToolContext,
+    { subject: 'subject-1', jiraAdminScopes: scopes } as MCPToolContext,
     stubAuth
   );
   return registered;
@@ -116,7 +116,7 @@ describe('registration', () => {
     } as unknown as McpServer;
     await registerJiraAdminTools(
       server,
-      { tenantId: 'tenant-1', subject: 'subject-1' } as MCPToolContext,
+      { subject: 'subject-1' } as MCPToolContext,
       stubAuth
     );
     expect(configs.length).toBe(14);

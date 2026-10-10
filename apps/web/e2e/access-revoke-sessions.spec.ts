@@ -33,7 +33,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`access-revoke-e2e-tenant:${projectName}`),
     slug: `e2e-access-revoke-${projectName}`,
     operator: {
       sessionId: uuidFrom(`access-revoke-e2e-op-session:${projectName}`),
@@ -61,65 +60,45 @@ async function withDb<T>(fn: (client: Client) => Promise<T>): Promise<T> {
 
 async function seed(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    await client.query('DELETE FROM oauth_access_tokens WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM oauth_refresh_tokens WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM oauth_clients WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM audit_events WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-    await client.query(
-      'INSERT INTO tenants (id, slug, domain_verified_at) VALUES ($1, $2, NOW())',
-      [fixture.tenantId, fixture.slug]
-    );
+    for (const subject of [fixture.operator.subject, fixture.target.subject]) {
+      await client.query('DELETE FROM oauth_access_tokens WHERE subject = $1', [subject]);
+      await client.query('DELETE FROM oauth_refresh_tokens WHERE subject = $1', [subject]);
+      await client.query('DELETE FROM audit_events WHERE actor_subject = $1', [subject]);
+      await client.query('DELETE FROM sessions WHERE subject = $1', [subject]);
+      await client.query('DELETE FROM identities WHERE subject = $1', [subject]);
+    }
+    await client.query('DELETE FROM oauth_clients WHERE client_id = $1', [fixture.target.clientId]);
     const inAnHour = new Date(Date.now() + 3_600_000);
     for (const [person, roles] of [
       [fixture.operator, ['renkei-user', 'renkei-operator']],
       [fixture.target, ['renkei-user']],
     ] as const) {
       await client.query(
-        `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-        [person.sessionId, fixture.tenantId, person.subject, roles, inAnHour]
+        `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
+        [person.sessionId, person.subject, roles, inAnHour]
       );
       await client.query(
-        `INSERT INTO identities (tenant_id, subject, email, display_name) VALUES ($1, $2, $3, $4)`,
-        [fixture.tenantId, person.subject, person.subject, person.subject.split('@')[0]]
+        `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
+        [person.subject, person.subject, person.subject.split('@')[0]]
       );
     }
     // The target also holds an MCP client connection: an access token and a
     // refresh token, both of which the button must end.
     await client.query(
-      `INSERT INTO oauth_clients (client_id, tenant_id, client_name, client_secret_hash, redirect_uris)
-       VALUES ($1, $2, 'e2e', 'unused', ARRAY['https://client.example/cb'])`,
-      [fixture.target.clientId, fixture.tenantId]
+      `INSERT INTO oauth_clients (client_id, client_name, client_secret_hash, redirect_uris)\n       VALUES ($1, 'e2e', 'unused', ARRAY['https://client.example/cb'])`,
+      [fixture.target.clientId]
     );
     await client.query(
-      `INSERT INTO oauth_access_tokens (token_hash, tenant_id, client_id, subject, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        `hash-${fixture.target.sessionId}`,
-        fixture.tenantId,
-        fixture.target.clientId,
-        fixture.target.subject,
-        inAnHour,
-      ]
+      `INSERT INTO oauth_access_tokens (token_hash, client_id, subject, expires_at)\n       VALUES ($1, $2, $3, $4)`,
+      [`hash-${fixture.target.sessionId}`, fixture.target.clientId, fixture.target.subject, inAnHour]
     );
     await client.query(
-      `INSERT INTO oauth_refresh_tokens (token_id, tenant_id, client_id, subject, token_hash, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        uuidFrom(`rt:${fixture.tenantId}`),
-        fixture.tenantId,
-        fixture.target.clientId,
-        fixture.target.subject,
-        `rhash-${fixture.target.sessionId}`,
-        inAnHour,
-      ]
+      `INSERT INTO oauth_refresh_tokens (token_id, client_id, subject, token_hash, expires_at)\n       VALUES ($1, $2, $3, $4, $5)`,
+      [uuidFrom(`rt:${fixture.slug}`), fixture.target.clientId, fixture.target.subject, `rhash-${fixture.target.sessionId}`, inAnHour]
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.operator.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
+      [fixture.operator.subject]
     );
   });
 }
@@ -130,14 +109,13 @@ async function remaining(fixture: Fixture) {
       Number(
         (
           await client.query(
-            `SELECT count(*) FROM ${table} WHERE tenant_id = $1 AND subject = $2`,
-            [fixture.tenantId, fixture.target.subject]
+            `SELECT count(*) FROM ${table} WHERE subject = $1`,
+            [fixture.target.subject]
           )
         ).rows[0].count
       );
     const audit = await client.query(
-      `SELECT action, target_label FROM audit_events WHERE tenant_id = $1 AND action = 'user.sessions_revoked'`,
-      [fixture.tenantId]
+      `SELECT action, target_label FROM audit_events WHERE action = 'user.sessions_revoked'`
     );
     return {
       sessions: await count('sessions'),
@@ -151,7 +129,7 @@ async function remaining(fixture: Fixture) {
 async function signInAsOperator(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.operator.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -174,7 +152,7 @@ test('admin access: sign a person out everywhere', async ({ page }, testInfo) =>
   await seed(fixture);
   await signInAsOperator(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/access`);
+  await page.goto(`/admin/access`);
   await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
 
   const button = page.getByTestId(`revoke-sessions-${fixture.target.subject}`);

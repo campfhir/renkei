@@ -95,7 +95,7 @@ The earlier design recommended Renkei-local groups because the OIDC config
 read one claim and mapped it to two values. The org chose IdP claims: groups
 already exist at the IdP, and a second membership list in Renkei would drift.
 
-**Recording.** `tenant_oidc.groups_claim` names the id_token claim (NULL is
+**Recording.** `oidc_config.groups_claim` names the id_token claim (NULL is
 the conventional `groups`; separate from `role_claim` because Entra puts app
 roles and directory groups in different claims). `identities.idp_groups`
 holds the raw values the claim carried at the person's LAST sign-in,
@@ -108,7 +108,7 @@ claim per app registration (Entra) or claim mapping (Okta, Keycloak).
 
 **Rules.** `OrgSettings.connectorAudiences`: capability key → the group
 values a person must carry, any one of them. Absent or empty means everyone.
-In `tenant_settings` rather than a table of its own so it rides the same
+In `settings` rather than a table of its own so it rides the same
 cache, invalidation and tool-surface version as `disabledConnectors`.
 
 **Enforcement is the fifth gate of the capability projection.**
@@ -131,7 +131,7 @@ person has no groups on record and audience-scoped connectors are closed to
 them. The admin hint and the person page (People → subject → Groups) make it
 visible; the fix is at the IdP (app roles, or a group filter on the claim).
 
-**Cache story.** Rules change → `tenant_settings.updated_at` moves the
+**Cache story.** Rules change → `settings.updated_at` moves the
 tool-surface version tenant-wide, and the audience route invalidates the
 tool catalog. A person's groups change → their next sign-in bumps
 `identities.updated_at`, which moves their own version. The 60-second

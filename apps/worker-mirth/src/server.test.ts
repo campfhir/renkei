@@ -19,7 +19,7 @@ import type { UpstreamRequest, UpstreamResponse } from './upstream';
 
 const API_KEY = 'test-worker-key';
 const INSTANCE_ID = '11111111-2222-3333-4444-555555555555';
-const TARGET = { tenantId: 'tenant-1', instanceId: INSTANCE_ID, subject: 'auth0|alice' };
+const TARGET = { instanceId: INSTANCE_ID, subject: 'auth0|alice' };
 
 const instance: InstanceRow = {
   summary: {
@@ -74,7 +74,7 @@ beforeAll(async () => {
       target.instanceId === INSTANCE_ID && target.subject === 'auth0|alice'
         ? { ok: true, val: resolved }
         : { ok: false, err: { type: 'not_connected' } as never },
-    resolveInstance: async (_tenantId, instanceId) =>
+    resolveInstance: async (instanceId) =>
       instanceId === INSTANCE_ID
         ? { ok: true, val: instance }
         : { ok: false, err: { type: 'no_instance' } as never },
@@ -290,7 +290,6 @@ describe('test-connection', () => {
       ok('', { status: 204 }),
     ];
     const response = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       credentials: { username: 'carol', password: 'pw2' },
     });
@@ -304,13 +303,11 @@ describe('test-connection', () => {
   it('answers 403 login_failed on a rejected credential and 404 on an unknown instance', async () => {
     script = [{ status: 401, headers: {}, body: Buffer.from('') }];
     const rejected = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
       instanceId: INSTANCE_ID,
       credentials: { username: 'carol', password: 'wrong' },
     });
     expect(rejected.status).toBe(403);
     const missing = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
       instanceId: 'other',
       credentials: { username: 'carol', password: 'pw' },
     });
@@ -322,7 +319,6 @@ describe('probe', () => {
   it('treats a 401 from an unsaved URL as reachable, and refuses plaintext unless allowed', async () => {
     script = [{ status: 401, headers: {}, body: Buffer.from('') }];
     const response = await post('/v1/probe', {
-      tenantId: 'tenant-1',
       unsaved: { baseUrl: 'https://new.example:8443/', tlsVerify: false },
     });
     expect(await response.json()).toEqual({ ok: true, status: 401, version: null });
@@ -330,7 +326,6 @@ describe('probe', () => {
     expect(calls[0].tls.verify).toBe(false);
 
     const plain = await post('/v1/probe', {
-      tenantId: 'tenant-1',
       unsaved: { baseUrl: 'http://lab.example:8080' },
     });
     expect(plain.status).toBe(400);
@@ -338,7 +333,7 @@ describe('probe', () => {
 
   it('reports an unreachable server as a successful request with ok: false', async () => {
     script = [{ failed: 'unreachable', detail: 'could not be reached' }];
-    const response = await post('/v1/probe', { tenantId: 'tenant-1', instanceId: INSTANCE_ID });
+    const response = await post('/v1/probe', { instanceId: INSTANCE_ID });
     expect(response.status).toBe(200);
     expect(((await response.json()) as { ok: boolean }).ok).toBe(false);
   });

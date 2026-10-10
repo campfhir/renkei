@@ -35,7 +35,7 @@ import { oauthJiraAdminAuth } from './jira-admin-auth';
 import type { MCPToolContext } from '../common';
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
-  ({ tenantId: 'tenant-1', subject: 'subject-1', ...overrides }) as unknown as MCPToolContext;
+  ({ subject: 'subject-1', ...overrides }) as unknown as MCPToolContext;
 
 const described = (overrides: Record<string, unknown> = {}) => ({
   ok: true,
@@ -61,11 +61,10 @@ describe('oauthJiraAdminAuth', () => {
       accountId: 'acct-1',
     });
     expect(typeof access === 'string' ? '' : access.auth.grantKey).toBe(
-      'atlassian-admin:tenant-1:subject-1'
+      'atlassian-admin:subject-1'
     );
     // The admin grant, never the everyday Jira one.
     expect(describeMock).toHaveBeenCalledWith({
-      tenantId: 'tenant-1',
       provider: 'atlassian-admin',
       subject: 'subject-1',
     });

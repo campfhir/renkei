@@ -13,7 +13,7 @@ import path from 'node:path';
 import { expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import type { VoiceInfo } from '@renkei/voice';
-import { E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { keyFor } from './keys';
 
 export const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
@@ -123,72 +123,55 @@ export async function seedVoice(client: Client): Promise<void> {
 
 async function seedVoiceRows(client: Client): Promise<void> {
   // The org's speech service, as the admin form stores it.
-  await client.query('DELETE FROM connector_configs WHERE tenant_id = $1 AND connector = $2', [
-    E2E_TENANT_ID,
-    'voice',
-  ]);
+  await client.query('DELETE FROM connector_configs WHERE connector = $1', ['voice']);
   await client.query(
-    `INSERT INTO connector_configs (tenant_id, connector, enabled, settings, encrypted_secrets)
-     VALUES ($1, 'voice', true, $2, $3)`,
-    [
-      E2E_TENANT_ID,
-      JSON.stringify({
-        provider: 'azure-speech',
-        region: 'eastus',
-        endpoint: '',
-        defaultVoice: 'en-US-AvaMultilingualNeural',
-        defaultLocale: 'en-US',
-      }),
-      secretbox(JSON.stringify({ apiKey: 'e2e-speech-key' })),
-    ]
+    `INSERT INTO connector_configs (connector, enabled, settings, encrypted_secrets)\n     VALUES ('voice', true, $1, $2)`,
+    [JSON.stringify({
+              provider: 'azure-speech',
+              region: 'eastus',
+              endpoint: '',
+              defaultVoice: 'en-US-AvaMultilingualNeural',
+              defaultLocale: 'en-US',
+            }), secretbox(JSON.stringify({ apiKey: 'e2e-speech-key' }))]
   );
   // This person's own voice: a British voice, a touch faster than natural.
   await client.query(
-    'DELETE FROM user_preferences WHERE tenant_id = $1 AND subject = $2 AND key = $3',
-    [E2E_TENANT_ID, E2E_SUBJECT, 'voice']
+    'DELETE FROM user_preferences WHERE subject = $1 AND key = $2',
+    [E2E_SUBJECT, 'voice']
   );
   await client.query(
-    `INSERT INTO user_preferences (tenant_id, subject, key, value, updated_at)
-     VALUES ($1, $2, 'voice', $3, NOW())`,
-    [
-      E2E_TENANT_ID,
-      E2E_SUBJECT,
-      JSON.stringify({
-        voice: 'en-GB-SoniaNeural',
-        rate: 1.25,
-        autoPlay: false,
-        locale: 'en-GB',
-        detectLanguage: true,
-        pushToTalk: false,
-        accent: 'rainbow',
-        userAccent: 'emerald',
-      }),
-    ]
+    `INSERT INTO user_preferences (subject, key, value, updated_at)\n     VALUES ($1, 'voice', $2, NOW())`,
+    [E2E_SUBJECT, JSON.stringify({
+              voice: 'en-GB-SoniaNeural',
+              rate: 1.25,
+              autoPlay: false,
+              locale: 'en-GB',
+              detectLanguage: true,
+              pushToTalk: false,
+              accent: 'rainbow',
+              userAccent: 'emerald',
+            })]
   );
 
   // A chat with one completed turn, so there is a reply to Listen to.
   await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [MODEL_ID]);
   await client.query(
-    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, 'Claude Sonnet 5', 'anthropic', 'claude-sonnet-5', $3, true, false)`,
-    [MODEL_ID, E2E_TENANT_ID, secretbox(JSON.stringify({ apiKey: 'e2e' }))]
+    `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n     VALUES ($1, 'Claude Sonnet 5', 'anthropic', 'claude-sonnet-5', $2, true, false)`,
+    [MODEL_ID, secretbox(JSON.stringify({ apiKey: 'e2e' }))]
   );
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, thinking_enabled, last_message_at)
-     VALUES ($1, $2, $3, $4, $5, false, NOW())`,
-    [CHAT_ID, E2E_TENANT_ID, E2E_SUBJECT, CHAT_TITLE, MODEL_ID]
+    `INSERT INTO chats (id, owner_subject, title, llm_model_id, thinking_enabled, last_message_at)\n     VALUES ($1, $2, $3, $4, false, NOW())`,
+    [CHAT_ID, E2E_SUBJECT, CHAT_TITLE, MODEL_ID]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: CHAT_ID,
     ownerSubject: E2E_SUBJECT,
   });
   await client.query(
-    `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, input_tokens, output_tokens, finished_at)
-     VALUES ($1, $2, $3, 'completed', $4, 1, 800, 210, NOW())`,
-    [TURN_ID, E2E_TENANT_ID, CHAT_ID, MODEL_ID]
+    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, input_tokens, output_tokens, finished_at)\n     VALUES ($1, $2, 'completed', $3, 1, 800, 210, NOW())`,
+    [TURN_ID, CHAT_ID, MODEL_ID]
   );
   const rows = [
     {
@@ -207,21 +190,8 @@ async function seedVoiceRows(client: Client): Promise<void> {
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     await client.query(
-      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)
-       VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10, $11)`,
-      [
-        E2E_TENANT_ID,
-        CHAT_ID,
-        TURN_ID,
-        row.seq,
-        row.role,
-        row.kind,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? MODEL_ID : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'claude-sonnet-5' : null,
-        assistant ? 'end_turn' : null,
-      ]
+      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9, $10)`,
+      [CHAT_ID, TURN_ID, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? MODEL_ID : null, assistant ? 'anthropic' : null, assistant ? 'claude-sonnet-5' : null, assistant ? 'end_turn' : null]
     );
   }
 }

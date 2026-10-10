@@ -43,7 +43,7 @@ export async function startProjectClone(
   credential: WorkspaceGitAccess,
   options: { depth?: number } = {}
 ): Promise<CodeOutcome<WireWorkspace>> {
-  if (!(await sandboxWorkspacesEnabled(project.tenantId))) {
+  if (!(await sandboxWorkspacesEnabled())) {
     return {
       ok: false,
       status: 503,
@@ -53,11 +53,11 @@ export async function startProjectClone(
   if (!project.repo) return { ok: false, status: 400, message: 'The project names no repository.' };
   const repo = validateRepoFullName(project.repo.fullName);
   if (!repo.ok) return { ok: false, status: 400, message: repo.message };
-  const target = codeProjectTarget(project.tenantId, project.id);
+  const target = codeProjectTarget(project.id);
   if (project.workspaceId) {
     // Best effort: a checkout the sweep already retired is simply gone.
     await sbWorkspaceDelete(target, project.workspaceId);
-    await updateProject(db, project.tenantId, project.id, { workspaceId: null });
+    await updateProject(db, project.id, { workspaceId: null });
   }
   const cloned = await sbWorkspaceClone(target, {
     provider: project.repo.provider,
@@ -71,23 +71,23 @@ export async function startProjectClone(
     const failure = clientFailure(cloned.err);
     return { ok: false, status: failure.status, message: failure.message };
   }
-  await updateProject(db, project.tenantId, project.id, { workspaceId: cloned.val.id });
+  await updateProject(db, project.id, { workspaceId: cloned.val.id });
   return { ok: true, val: cloned.val };
 }
 
 /** The checkout as the worker sees it now, or null when there is none to see. */
 export async function projectWorkspace(project: ProjectRow): Promise<WireWorkspace | null> {
-  if (!project.workspaceId || !(await sandboxWorkspacesEnabled(project.tenantId))) return null;
+  if (!project.workspaceId || !(await sandboxWorkspacesEnabled())) return null;
   const got = await sbWorkspaceGet(
-    codeProjectTarget(project.tenantId, project.id),
+    codeProjectTarget(project.id),
     project.workspaceId
   );
   return got.ok ? got.val : null;
 }
 
 export async function projectEnv(project: ProjectRow): Promise<WireEnvVariable[]> {
-  if (!(await sandboxWorkspacesEnabled(project.tenantId))) return [];
-  const listed = await sbEnvList(codeProjectTarget(project.tenantId, project.id));
+  if (!(await sandboxWorkspacesEnabled())) return [];
+  const listed = await sbEnvList(codeProjectTarget(project.id));
   return listed.ok ? listed.val : [];
 }
 
@@ -101,7 +101,7 @@ export async function replaceProjectEnv(
   project: ProjectRow,
   dotenvText: string
 ): Promise<CodeOutcome<{ variables: WireEnvVariable[]; problems: string[] }>> {
-  if (!(await sandboxWorkspacesEnabled(project.tenantId))) {
+  if (!(await sandboxWorkspacesEnabled())) {
     return {
       ok: false,
       status: 503,
@@ -110,7 +110,7 @@ export async function replaceProjectEnv(
   }
   const parsed = parseDotenv(dotenvText);
   const replaced = await sbEnvReplace(
-    codeProjectTarget(project.tenantId, project.id),
+    codeProjectTarget(project.id),
     parsed.values
   );
   if (!replaced.ok) {
@@ -123,16 +123,15 @@ export async function replaceProjectEnv(
 /** The project row, its checkout and its variables gone together. */
 export async function deleteCodeProject(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   projectId: string
 ): Promise<boolean> {
-  const project = await getProjectRow(db, tenantId, projectId);
+  const project = await getProjectRow(db, projectId);
   if (!project || project.ownerSubject !== ownerSubject) return false;
-  const deleted = await deleteProject(db, tenantId, ownerSubject, projectId);
+  const deleted = await deleteProject(db, ownerSubject, projectId);
   if (!deleted) return false;
-  if (await sandboxWorkspacesEnabled(tenantId)) {
-    const target = codeProjectTarget(tenantId, projectId);
+  if (await sandboxWorkspacesEnabled()) {
+    const target = codeProjectTarget(projectId);
     // Best effort, after the row: what the worker still holds expires on
     // its own if this does not reach it.
     if (project.workspaceId) await sbWorkspaceDelete(target, project.workspaceId);

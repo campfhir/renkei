@@ -1,5 +1,5 @@
 /**
- * @renkei/connector-config — per-tenant connector configuration, stored in
+ * @renkei/connector-config — the organization's connector configuration, stored in
  * the database rather than the environment (RENKEI.md Decision #13: which
  * connectors an org runs, and with what credentials, is org-admin policy).
  *
@@ -40,7 +40,6 @@ function readStringRecord(value: unknown): Record<string, string> {
 }
 
 export async function getConnectorConfig(
-  tenantId: string,
   connector: string,
   encryptionKey: Buffer
 ): Promise<Result<ConnectorConfig | null, ConnectorConfigError>> {
@@ -52,7 +51,6 @@ export async function getConnectorConfig(
       dbResult.val
         .selectFrom('connector_configs')
         .select(['enabled', 'settings', 'encrypted_secrets'])
-        .where('tenant_id', '=', tenantId)
         .where('connector', '=', connector)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -81,7 +79,6 @@ export async function getConnectorConfig(
 }
 
 export async function setConnectorConfig(
-  tenantId: string,
   connector: string,
   config: { enabled: boolean; settings: Record<string, unknown>; secrets: Record<string, string> },
   encryptionKey: Buffer
@@ -97,7 +94,6 @@ export async function setConnectorConfig(
       dbResult.val
         .insertInto('connector_configs')
         .values({
-          tenant_id: tenantId,
           connector,
           enabled: config.enabled,
           settings,
@@ -106,7 +102,7 @@ export async function setConnectorConfig(
           updated_at: new Date().toISOString(),
         })
         .onConflict((oc) =>
-          oc.columns(['tenant_id', 'connector']).doUpdateSet({
+          oc.columns(['connector']).doUpdateSet({
             enabled: config.enabled,
             settings,
             encrypted_secrets: encryptedSecrets,
@@ -136,30 +132,21 @@ export const CONFIG_CACHE_TTL_MS = 60_000;
  * are cached — an error must not be remembered as "not configured".
  */
 export async function readConnectorConfigCached(
-  tenantId: string,
   connector: string,
   encryptionKey: Buffer
 ): Promise<Result<ConnectorConfig | null, ConnectorConfigError>> {
-  const key = `${tenantId}:${connector}`;
-  const cached = configCache.get(key);
+  const cached = configCache.get(connector);
   if (cached && cached.expiresAt > Date.now()) return ok(cached.value);
 
-  const result = await getConnectorConfig(tenantId, connector, encryptionKey);
+  const result = await getConnectorConfig(connector, encryptionKey);
   if (result.ok) {
-    configCache.set(key, { value: result.val, expiresAt: Date.now() + CONFIG_CACHE_TTL_MS });
+    configCache.set(connector, { value: result.val, expiresAt: Date.now() + CONFIG_CACHE_TTL_MS });
   }
   return result;
 }
 
 /** Drop a cached entry — used after setConnectorConfig and by tests. */
-export function invalidateConnectorConfigCache(tenantId?: string, connector?: string): void {
-  if (!tenantId) {
-    configCache.clear();
-    return;
-  }
-  for (const key of configCache.keys()) {
-    if (key.startsWith(`${tenantId}:`) && (!connector || key === `${tenantId}:${connector}`)) {
-      configCache.delete(key);
-    }
-  }
+export function invalidateConnectorConfigCache(connector?: string): void {
+  if (!connector) configCache.clear();
+  else configCache.delete(connector);
 }

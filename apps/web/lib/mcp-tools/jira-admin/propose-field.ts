@@ -440,7 +440,6 @@ export async function registerProposeFieldTools(
       };
       const reason = text(args.reason);
       const change = await createChangeRequest(db, {
-        tenantId: context.tenantId,
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId: access.cloudId,
@@ -455,7 +454,6 @@ export async function registerProposeFieldTools(
       if (replaces) {
         const cancelled = await cancelChangeRequest(
           db,
-          context.tenantId,
           context.subject,
           replaces
         );
@@ -466,7 +464,7 @@ export async function registerProposeFieldTools(
         );
       }
 
-      const link = `${await reviewPrefix(context)}${change.id}`;
+      const link = `${reviewPrefix(context)}${change.id}`;
       const { operations: described, reach } = describeChange(change);
       const lines = [
         'Proposed — nothing has changed in Jira yet.',

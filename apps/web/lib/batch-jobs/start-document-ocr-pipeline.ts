@@ -2,7 +2,7 @@
  * The document-ocr-pipeline start glue — create the batch row, enqueue its
  * discovery message — shared by the batch_start_document_pipeline MCP tool
  * (apps/web/lib/mcp-tools/batch-jobs/index.ts, for an agent) and the plain
- * POST route (apps/web/app/api/tenant/[tenantId]/batch-jobs/route.ts, for a
+ * POST route (apps/web/app/api/batch-jobs/route.ts, for a
  * human using the "start a batch job" form) so the two paths cannot drift.
  */
 
@@ -37,7 +37,6 @@ export interface DocumentPipelineConfig {
 }
 
 export interface StartDocumentOcrPipelineInput {
-  tenantId: string;
   subject: string;
   /** A human-readable name to tell this batch apart from others in the list. */
   name: string;
@@ -75,13 +74,12 @@ export async function startDocumentOcrPipeline(
   input: StartDocumentOcrPipelineInput
 ): Promise<BatchJobRow> {
   const batch = await createBatch(db, {
-    tenantId: input.tenantId,
     subject: input.subject,
     name: input.name,
     kind: DOCUMENT_OCR_PIPELINE_KIND,
     config: { ...documentPipelineConfig(input) },
     scheduleId: input.scheduleId,
   });
-  await enqueueDiscover(batchJobsQueue().producer, input.tenantId, batch.id);
+  await enqueueDiscover(batchJobsQueue().producer, batch.id);
   return batch;
 }

@@ -30,11 +30,10 @@ import { oauthJsmOpsAuth, opsScopes } from './ops-auth';
 import type { MCPToolContext } from '../common';
 
 /** The grant's fetcher as the delegate would hand it out; never called here — jiraFetch is mocked. */
-const jiraAuth = authedFetch(async () => new Response('{}'), 'atlassian-jsm:tenant-1:acct-1');
+const jiraAuth = authedFetch(async () => new Response('{}'), 'atlassian-jsm:acct-1');
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     cloudId: 'cloud-1',
     jiraAuth,

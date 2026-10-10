@@ -3,7 +3,6 @@ import {
   isEligible,
   isSettled,
   pickAutoStartTour,
-  slugRelativePath,
   stateLabel,
   toursFor,
 } from './select';
@@ -41,19 +40,6 @@ const progressOf = (...rows: CoachMarkProgressView[]) =>
   new Map(rows.map((entry) => [entry.tourId, entry]));
 
 const onScreen = (...anchors: CoachAnchor[]): ReadonlySet<CoachAnchor> => new Set(anchors);
-
-describe('slugRelativePath', () => {
-  it('strips the slug and keeps the rest', () => {
-    expect(slugRelativePath('/e2e', 'e2e')).toBe('/');
-    expect(slugRelativePath('/e2e/agents', 'e2e')).toBe('/agents');
-    expect(slugRelativePath('/e2e/chat/abc', 'e2e')).toBe('/chat/abc');
-  });
-
-  it('leaves a path outside the slug alone', () => {
-    expect(slugRelativePath('/e2e-other/agents', 'e2e')).toBe('/e2e-other/agents');
-    expect(slugRelativePath('/', 'e2e')).toBe('/');
-  });
-});
 
 describe('toursFor', () => {
   it('hides operator tours from everyone else, in registry order', () => {

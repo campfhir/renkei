@@ -319,10 +319,12 @@ export const EXEC_UID_SPAN = 1_000_000_000;
  * workspaces (mode 0700, other uids) are unreadable from it, and the
  * environment of one caller's process is not another's to read. A
  * collision between two callers would merely put them in one uid — the
- * span makes that a rounding error, not a plan.
+ * span makes that a rounding error, not a plan. `domain` is the key
+ * domain (@renkei/settings getKeyDomain): the organization id these uids
+ * were first derived under, so files already on disk keep their owner.
  */
-export function execUidFor(tenantId: string, subject: string): number {
-  const digest = createHash('sha256').update(`${tenantId}\n${subject}`).digest();
+export function execUidFor(domain: string, subject: string): number {
+  const digest = createHash('sha256').update(`${domain}\n${subject}`).digest();
   // Eight bytes are plenty for a modulus far below 2^53.
   const value = Number(digest.readBigUInt64BE(0) % BigInt(EXEC_UID_SPAN));
   return EXEC_UID_BASE + value;

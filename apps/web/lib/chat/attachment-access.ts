@@ -11,11 +11,10 @@ import type { ContentCipher } from './content-crypto';
 
 export async function mayReadAttachment(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   row: { chatId: string | null; projectId: string | null }
 ): Promise<boolean> {
-  return (await attachmentCipherFor(db, tenantId, subject, row)) !== null;
+  return (await attachmentCipherFor(db, subject, row)) !== null;
 }
 
 /**
@@ -24,16 +23,15 @@ export async function mayReadAttachment(
  */
 export async function attachmentCipherFor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   row: { chatId: string | null; projectId: string | null }
 ): Promise<ContentCipher | null> {
   if (row.chatId) {
-    const access = await resolveChatAccess(db, tenantId, subject, row.chatId);
+    const access = await resolveChatAccess(db, subject, row.chatId);
     return access?.cipher ?? null;
   }
   if (row.projectId) {
-    const access = await resolveProjectAccess(db, tenantId, subject, row.projectId);
+    const access = await resolveProjectAccess(db, subject, row.projectId);
     return access?.cipher ?? null;
   }
   return null;

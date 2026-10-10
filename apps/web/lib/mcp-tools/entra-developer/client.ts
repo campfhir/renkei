@@ -40,13 +40,12 @@ export interface EntraAccess {
   accountId: string;
   /** The person's user principal name, for "connected as". */
   upn: string;
-  /** The directory the grant was minted in. */
+  /** The Entra directory (Microsoft tenant) the grant was minted in. */
   tenantId: string;
 }
 
 /** What the request wrapper needs of its caller — an MCPToolContext satisfies it. */
 export interface EntraCallContext {
-  tenantId: string;
   subject?: string;
   origin?: string;
 }
@@ -59,7 +58,7 @@ export interface EntraCallContext {
 export async function resolveEntraAccess(context: EntraCallContext): Promise<EntraAccess | string> {
   if (!context.subject) return 'No signed-in identity on this request.';
 
-  const grant = { tenantId: context.tenantId, provider: ENTRA_DEVELOPER, subject: context.subject };
+  const grant = { provider: ENTRA_DEVELOPER, subject: context.subject };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) {
     return described.err.type === 'NO_GRANT'
@@ -141,7 +140,6 @@ export async function entraRequest(
     const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'entra-developer/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       method,
       path: pathAndQuery,
@@ -174,7 +172,6 @@ export async function entraRequest(
   if (!response.ok) {
     logger.warn('Graph API non-OK response', {
       component: 'entra-developer/fetch',
-      tenantId: context.tenantId,
       subject: context.subject,
       method,
       path: pathAndQuery,

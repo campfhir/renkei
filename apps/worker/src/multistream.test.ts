@@ -38,7 +38,6 @@ jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: jest.fn(),
   ingestObjectChunks: jest.fn(
     async (
-      _tenantId: string,
       embedder: { embed: (t: string[]) => Promise<{ ok: boolean }> },
       object: { content: string }
     ) => {
@@ -78,7 +77,7 @@ jest.mock('@renkei/knowledge', () => ({
   ingestChunk: jest.fn(async () => ({ ok: true, val: undefined })),
 }));
 jest.mock('@renkei/email-sanitizer', () => ({
-  // The To Do path runs the tenant's cleaner scripts over each task; none
+  // The To Do path runs the organization's cleaner scripts over each task; none
   // are configured here, so the text passes through.
   applyCleanerScriptsToItem: jest.fn(async (inputs: { content: string }) => inputs.content),
   decodeBody: (value: string) => value,
@@ -139,11 +138,10 @@ jest.mock('./handlers/zoom-access', () => ({
 jest.mock('./enqueue', () => ({
   KNOWLEDGE_SOURCE: 'knowledge',
   enqueueKnowledgeEvent: (
-    tenantId: string,
     type: string,
     payload: Record<string, unknown>,
     orderingKey: string | null = null
-  ) => mockEnqueueImpl(tenantId, type, payload, orderingKey),
+  ) => mockEnqueueImpl(type, payload, orderingKey),
 }));
 // The worker's queue module reaches for Postgres; these suites bind the
 // loops to in-memory queues directly, so neuter the construction.
@@ -193,7 +191,6 @@ import { authedFetch } from '@renkei/delegate-client';
 const auth = authedFetch(async () => new Response(), 'test:tenant-1:acct-1');
 
 let mockEnqueueImpl: (
-  tenantId: string,
   type: string,
   payload: Record<string, unknown>,
   orderingKey: string | null
@@ -247,7 +244,7 @@ function hungEmbedder(): { embedder: Embedder; release: (result: EmbedResult) =>
   };
 }
 
-/** Shared DB stub: dedup misses, tenant slug resolves, inserts and updates recorded. */
+/** Shared DB stub: dedup misses, inserts and updates recorded. */
 function stubDb(state: {
   inserted: Array<Record<string, unknown>>;
   updates: Array<Record<string, unknown>>;
@@ -257,15 +254,10 @@ function stubDb(state: {
     where: () => missChain,
     executeTakeFirst: async () => undefined,
   };
-  const tenantChain = {
-    select: () => tenantChain,
-    where: () => tenantChain,
-    executeTakeFirst: async () => ({ slug: 'tenant-one' }),
-  };
   mockGetDatabase.mockReturnValue({
     ok: true,
     val: {
-      selectFrom: (table: string) => (table === 'tenants' ? tenantChain : missChain),
+      selectFrom: () => missChain,
       insertInto: () => ({
         values: (row: Record<string, unknown>) => ({
           execute: async () => {
@@ -353,8 +345,8 @@ function registerAllHandlers(handled: Handled[]): void {
   // publishes the mail.received trigger per new message and feeds the
   // embedding queue nothing — so the Microsoft stream is a third
   // interactive-latency stream here, not a saturation source.
-  registerHandler('microsoft', 'change-notification', async (event) => {
-    await runSubscriptionSync(event.tenant_id, microsoftAccess(), {
+  registerHandler('microsoft', 'change-notification', async () => {
+    await runSubscriptionSync(microsoftAccess(), {
       id: 'sub-row-1',
       resource: "me/mailFolders('inbox')/messages",
       subscription_id: 'graph-sub-1',
@@ -398,28 +390,25 @@ async function stopAll(loops: EventLoop[], running: Promise<void>[]): Promise<vo
 function insertWebex(events: InMemoryQueue, messageId: string): number {
   const at = Date.now();
   void events.producer.enqueue({
-    tenantId: 'tenant-1',
     source: 'webex',
     type: 'user-message.created',
     payload: { id: messageId, roomId: 'room-1', accountId: 'acct-w' },
-    orderingKey: `webex/tenant-1/acct-w/room-1`,
+    orderingKey: `webex/acct-w/room-1`,
   });
   return at;
 }
 
 function insertZoom(events: InMemoryQueue, uuid: string): void {
   void events.producer.enqueue({
-    tenantId: 'tenant-1',
     source: 'zoom',
     type: 'recording.transcript_completed',
     payload: { data: { meeting_uuid: uuid, topic: 'Standup', start_time: '2026-08-13T09:00:00Z' } },
-    orderingKey: `zoom/tenant-1/${uuid}`,
+    orderingKey: `zoom/${uuid}`,
   });
 }
 
 function insertMicrosoft(events: InMemoryQueue): void {
   void events.producer.enqueue({
-    tenantId: 'tenant-1',
     source: 'microsoft',
     type: 'change-notification',
     payload: { accountId: 'acct-1', subscriptionId: 'graph-sub-1' },
@@ -441,7 +430,7 @@ beforeEach(() => {
   embedding = new InMemoryQueue();
   stubDb(dbState);
   registerAllHandlers(handled);
-  mockEnqueueImpl = async (tenantId, type, payload, orderingKey) => {
+  mockEnqueueImpl = async (type, payload, orderingKey) => {
     // Mirrors the real enqueueKnowledgeEvent's payload encryption too — the
     // consuming handlers are strict and would dead-letter plaintext, which
     // would read here as a drain failure instead of a crypto one.
@@ -457,7 +446,6 @@ beforeEach(() => {
       );
     }
     await embedding.producer.enqueue({
-      tenantId,
       // Mirrors the real enqueueKnowledgeEvent: the provider is a fairness
       // LANE on the source. Hardcoding 'knowledge' here would leave this
       // whole pipeline test proving something production never writes, and a
@@ -557,7 +545,6 @@ describe('multi-stream: hung embedding queue (Scenario B)', () => {
 
     // Seed the embedding queue directly with an ingest and let it wedge.
     await embedding.producer.enqueue({
-      tenantId: 'tenant-1',
       source: 'knowledge',
       type: 'ingest.object',
       payload: {
@@ -632,7 +619,7 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
     let sameKeyOverlap = false;
     const completedByKey = new Map<string, string[]>();
     mockIngestObjectChunks.mockImplementation(
-      async (_tenantId: string, embedder: Embedder, object: { refId: string }) => {
+      async (embedder: Embedder, object: { refId: string }) => {
         const key = object.refId.split('/')[0]!;
         const current = (inFlightByKey.get(key) ?? 0) + 1;
         if (current > 1) sameKeyOverlap = true;
@@ -652,7 +639,6 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
     // Two keyed sequences plus an unkeyed straggler.
     for (const refId of ['alpha/1', 'alpha/2', 'alpha/3']) {
       await embedding.producer.enqueue({
-        tenantId: 'tenant-1',
         source: 'knowledge',
         type: 'ingest.object',
         payload: { provider: 'test', refId, content: encPayloadContent(refId) },
@@ -661,7 +647,6 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
     }
     for (const refId of ['beta/1', 'beta/2', 'beta/3']) {
       await embedding.producer.enqueue({
-        tenantId: 'tenant-1',
         source: 'knowledge',
         type: 'ingest.object',
         payload: { provider: 'test', refId, content: encPayloadContent(refId) },
@@ -669,7 +654,6 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
       });
     }
     await embedding.producer.enqueue({
-      tenantId: 'tenant-1',
       source: 'knowledge',
       type: 'ingest.object',
       payload: { provider: 'test', refId: 'solo/1', content: encPayloadContent('solo') },

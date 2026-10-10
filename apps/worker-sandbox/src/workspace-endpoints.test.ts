@@ -53,7 +53,7 @@ const workspaceStore = jest.requireMock<Record<string, jest.Mock>>('./workspace-
 const envStore = jest.requireMock<Record<string, jest.Mock>>('./env-secrets-store');
 
 const API_KEY = 'test-worker-key';
-const TARGET = { tenantId: 'tenant-1', subject: 'alice' };
+const TARGET = { subject: 'alice' };
 const STORAGE_KEY = 'tenant-1/hash/ws-1';
 
 let root: string;
@@ -65,7 +65,6 @@ let disabledBase: string;
 function readyWorkspace() {
   return {
     id: 'ws-1',
-    tenantId: 'tenant-1',
     subject: 'alice',
     provider: 'atlassian-bitbucket',
     repoFullName: 'acme/demo',
@@ -149,7 +148,6 @@ describe('when workspaces are not enabled', () => {
 describe('scope', () => {
   it('does not find another caller’s workspace', async () => {
     const result = await post(enabledBase, 'workspaces/read', {
-      tenantId: 'tenant-1',
       subject: 'mallory',
       id: 'ws-1',
       path: 'src/config.ts',
@@ -285,7 +283,6 @@ describe('a command whose caller goes away', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${API_KEY}` },
       body: JSON.stringify({
-        tenantId: 'tenant-1',
         subject: 'alice',
         id: 'ws-1',
         command: 'sleep 30; echo never',
@@ -799,7 +796,6 @@ describe('language servers over the wire', () => {
     });
     expect(noClient.status).toBe(400);
     const notMine = await post(lspBase, 'workspaces/lsp/open', {
-      tenantId: 'tenant-1',
       subject: 'bob',
       id: 'ws-1',
       server: 'typescript',
@@ -837,7 +833,6 @@ describe('language servers over the wire', () => {
     });
     expect(lifecycle.status).toBe(400);
     const someoneElse = await post(lspBase, 'workspaces/lsp/send', {
-      tenantId: 'tenant-1',
       subject: 'bob',
       session,
       message: { jsonrpc: '2.0', id: 1, method: 'textDocument/hover', params: {} },

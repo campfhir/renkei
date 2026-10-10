@@ -72,14 +72,8 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 
 /** Test hook, and the admin routes' invalidation on config writes. */
-export function invalidateLlmCache(tenantId?: string): void {
-  if (tenantId === undefined) {
-    cache.clear();
-    return;
-  }
-  for (const key of cache.keys()) {
-    if (key.startsWith(`${tenantId}:`)) cache.delete(key);
-  }
+export function invalidateLlmCache(): void {
+  cache.clear();
 }
 
 interface ModelRow {
@@ -175,10 +169,9 @@ function apiKeyOf(row: ModelRow): Result<string, ResolveLlmError> {
 
 export async function resolveAgentLlm(
   db: Kysely<DB>,
-  tenantId: string,
   agentModelConfigId: string | null
 ): Promise<Result<ResolvedLlm, ResolveLlmError>> {
-  const cacheKey = `${tenantId}:${agentModelConfigId ?? 'default'}`;
+  const cacheKey = agentModelConfigId ?? 'default';
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return ok(cached.value);
 
@@ -186,7 +179,6 @@ export async function resolveAgentLlm(
     let query = db
       .selectFrom('llm_model_configs')
       .select(['id', 'provider', 'model', 'base_url', 'settings', 'encrypted_secrets'])
-      .where('tenant_id', '=', tenantId)
       .where('enabled', '=', true)
       .where(chatModelsOnly);
     query = agentModelConfigId
@@ -199,7 +191,7 @@ export async function resolveAgentLlm(
   // An override that no longer resolves falls back to the org default —
   // the agent should degrade to the org's model, not to nothing.
   if (!rowResult.val && agentModelConfigId) {
-    return resolveAgentLlm(db, tenantId, null);
+    return resolveAgentLlm(db, null);
   }
   const row = rowResult.val;
   if (!row) {
@@ -262,14 +254,12 @@ function fluxOptionsOf(row: ModelRow): ImageModelConfig['fluxOptions'] {
 
 export async function resolveImageModel(
   db: Kysely<DB>,
-  tenantId: string,
   modelConfigId: string | null
 ): Promise<Result<ResolvedImageModel, ResolveLlmError>> {
   const rowResult = await wrapAsync(async () => {
     let query = db
       .selectFrom('llm_model_configs')
       .select(['id', 'label', 'provider', 'model', 'base_url', 'settings', 'encrypted_secrets'])
-      .where('tenant_id', '=', tenantId)
       .where('enabled', '=', true)
       .where(imageModelsOnly);
     if (modelConfigId) query = query.where('id', '=', modelConfigId);

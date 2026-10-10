@@ -1,5 +1,5 @@
 /**
- * The two housekeeping sweeps: retention (delete run history past each
+ * The two housekeeping sweeps: retention (delete run history past the
  * org's window) and the stuck-run janitor (close runs whose queue job is
  * gone). Both are idempotent and re-runnable, so N replicas sweeping at
  * once cost duplicate reads, never wrong writes.
@@ -16,54 +16,46 @@ import { sendPush, deleteStaleChatPresence } from '@renkei/notifications';
 import { logger } from './logger';
 
 /**
- * Well past any org's `chatReplyPresenceWindowSeconds` (capped at 300s at
- * the admin API) — a presence row this old cannot satisfy any org's
- * window, so there is nothing tenant-specific to decide here, unlike the
- * sweeps above.
+ * Well past the org's `chatReplyPresenceWindowSeconds` (capped at 300s at
+ * the admin API) — a presence row this old cannot satisfy the window, so
+ * there is no setting to consult here, unlike the sweeps above.
  */
 const CHAT_PRESENCE_MAX_AGE_MS = 60 * 60_000;
 
 const RETENTION_BATCH = 500;
 
 /**
- * Delete runs older than each tenant's agentRunRetentionDays. Batched so a
- * neglected table never produces one giant delete; steps go via cascade.
- * One batch per tenant per pass — the hourly cadence catches up quickly
- * and a pass stays cheap.
+ * Delete runs older than agentRunRetentionDays. Batched so a neglected
+ * table never produces one giant delete; steps go via cascade. One batch
+ * per pass — the hourly cadence catches up quickly and a pass stays cheap.
  */
 export function createRetentionSweep(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
-    const tenants = await db.selectFrom('agent_runs').select('tenant_id').distinct().execute();
+    const settingsResult = await getOrgSettings();
+    if (!settingsResult.ok) return;
+    const days = settingsResult.val.agentRunRetentionDays;
 
-    for (const { tenant_id: tenantId } of tenants) {
-      const settingsResult = await getOrgSettings(tenantId);
-      if (!settingsResult.ok) continue;
-      const days = settingsResult.val.agentRunRetentionDays;
-
-      const deleted = await sql<{ id: string }>`
-        DELETE FROM agent_runs WHERE id IN (
-          SELECT id FROM agent_runs
-          WHERE tenant_id = ${tenantId}
-            AND status IN ('succeeded', 'failed', 'canceled', 'stopped')
-            AND created_at < NOW() - make_interval(days => ${days})
-          ORDER BY created_at
-          LIMIT ${RETENTION_BATCH}
-        ) RETURNING id
-      `.execute(db);
-      if (deleted.rows.length > 0) {
-        logger.info('retention pruned {count} runs for tenant {tenantId}', {
-          component: 'worker-agents/retention',
-          tenantId,
-          count: deleted.rows.length,
-        });
-      }
+    const deleted = await sql<{ id: string }>`
+      DELETE FROM agent_runs WHERE id IN (
+        SELECT id FROM agent_runs
+        WHERE status IN ('succeeded', 'failed', 'canceled', 'stopped')
+          AND created_at < NOW() - make_interval(days => ${days})
+        ORDER BY created_at
+        LIMIT ${RETENTION_BATCH}
+      ) RETURNING id
+    `.execute(db);
+    if (deleted.rows.length > 0) {
+      logger.info('retention pruned {count} runs', {
+        component: 'worker-agents/retention',
+        count: deleted.rows.length,
+      });
     }
   };
 }
 
 /**
- * Delete notifications older than each tenant's
- * agentNotificationRetentionDays — the same shape as the run sweep above,
+ * Delete notifications older than agentNotificationRetentionDays — the
+ * same shape as the run sweep above,
  * and unwrapped by `withSweepLock` for the same reason: a bounded DELETE is
  * idempotent, so two replicas running it cost a duplicate read and never a
  * wrong write.
@@ -75,33 +67,23 @@ export function createRetentionSweep(db: Kysely<DB>) {
  */
 export function createNotificationRetentionSweep(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
-    const tenants = await db
-      .selectFrom('agent_notifications')
-      .select('tenant_id')
-      .distinct()
-      .execute();
+    const settingsResult = await getOrgSettings();
+    if (!settingsResult.ok) return;
+    const days = settingsResult.val.agentNotificationRetentionDays;
 
-    for (const { tenant_id: tenantId } of tenants) {
-      const settingsResult = await getOrgSettings(tenantId);
-      if (!settingsResult.ok) continue;
-      const days = settingsResult.val.agentNotificationRetentionDays;
-
-      const deleted = await sql<{ id: string }>`
-        DELETE FROM agent_notifications WHERE id IN (
-          SELECT id FROM agent_notifications
-          WHERE tenant_id = ${tenantId}
-            AND created_at < NOW() - make_interval(days => ${days})
-          ORDER BY created_at
-          LIMIT ${RETENTION_BATCH}
-        ) RETURNING id
-      `.execute(db);
-      if (deleted.rows.length > 0) {
-        logger.info('retention pruned {count} notifications for tenant {tenantId}', {
-          component: 'worker-agents/notification-retention',
-          tenantId,
-          count: deleted.rows.length,
-        });
-      }
+    const deleted = await sql<{ id: string }>`
+      DELETE FROM agent_notifications WHERE id IN (
+        SELECT id FROM agent_notifications
+        WHERE created_at < NOW() - make_interval(days => ${days})
+        ORDER BY created_at
+        LIMIT ${RETENTION_BATCH}
+      ) RETURNING id
+    `.execute(db);
+    if (deleted.rows.length > 0) {
+      logger.info('retention pruned {count} notifications', {
+        component: 'worker-agents/notification-retention',
+        count: deleted.rows.length,
+      });
     }
   };
 }
@@ -120,7 +102,7 @@ export function createStuckRunJanitor(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
     const stuck = await db
       .selectFrom('agent_runs')
-      .select(['id', 'tenant_id', 'agent_id', 'owner_subject', 'started_at'])
+      .select(['id', 'agent_id', 'owner_subject', 'started_at'])
       .where('status', 'in', ['queued', 'running'])
       .where('created_at', '<', sql<Date>`NOW() - INTERVAL '2 hours'`)
       .limit(50)
@@ -149,7 +131,6 @@ export function createStuckRunJanitor(db: Kysely<DB>) {
         .execute();
       // The run log must agree: an abandoned run is a failed run there too.
       await recordAgentRunOutcome(db, {
-        tenantId: run.tenant_id,
         agentId: run.agent_id,
         runId: run.id,
         ownerSubject: run.owner_subject,
@@ -160,7 +141,6 @@ export function createStuckRunJanitor(db: Kysely<DB>) {
       logger.warn('janitor closed abandoned run {runId}', {
         component: 'worker-agents/janitor',
         runId: run.id,
-        tenantId: run.tenant_id,
       });
     }
   };
@@ -182,7 +162,6 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
     const stale = await sql<{
       id: string;
-      tenant_id: string;
       owner_subject: string;
       name: string;
     }>`
@@ -190,7 +169,7 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
          SET enabled = false, updated_at = NOW()
        WHERE enabled = true
          AND (steps->>'version')::int < ${CURRENT_STEPS_VERSION}
-      RETURNING id, tenant_id, owner_subject, name
+      RETURNING id, owner_subject, name
     `.execute(db);
 
     const encryptionKeyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
@@ -205,7 +184,6 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
           .insertInto('agent_notifications')
           .values({
             id,
-            tenant_id: agent.tenant_id,
             subject: agent.owner_subject,
             kind: 'agent_disabled',
             headline,
@@ -219,7 +197,6 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
         if (encryptionKeyResult.ok) {
           void sendPush(
             db,
-            agent.tenant_id,
             agent.owner_subject,
             encryptionKeyResult.val,
             { title: headline, body: agent.name, tag: id, refUrl: null, notificationId: id },
@@ -231,14 +208,12 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
         // missed notification costs reach, not correctness.
         logger.warn('could not notify owner of stale-version agent {agentId}', {
           component: 'worker-agents/stale-version',
-          tenantId: agent.tenant_id,
           agentId: agent.id,
           error: error instanceof Error ? error.message : String(error),
         });
       }
       logger.warn('disabled stale-version agent {agentId} ({name})', {
         component: 'worker-agents/stale-version',
-        tenantId: agent.tenant_id,
         agentId: agent.id,
         name: agent.name,
       });
@@ -248,83 +223,66 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
 
 /**
  * Prune the usage ledgers — the run log (083), the token ledger (085)
- * the voice ledger (110) and the image ledger (132) — past each org's
- * agentUsageRetentionDays. The run sweep's shape: one
- * bounded, idempotent DELETE per table per tenant per pass. Longer than
- * run retention by default (a year vs 30 days) because these are what
- * make a year of usage readable after the runs are gone.
+ * the voice ledger (110) and the image ledger (132) — past the org's
+ * agentUsageRetentionDays. The run sweep's shape: one bounded, idempotent
+ * DELETE per table per pass. Longer than run retention by default (a year
+ * vs 30 days) because these are what make a year of usage readable after
+ * the runs are gone.
  */
 export function createUsageRetentionSweep(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
-    const tenants = await sql<{ tenant_id: string }>`
-      SELECT tenant_id FROM agent_run_log
-      UNION
-      SELECT tenant_id FROM llm_calls
-      UNION
-      SELECT tenant_id FROM voice_usage
-      UNION
-      SELECT tenant_id FROM image_usage
+    const settingsResult = await getOrgSettings();
+    if (!settingsResult.ok) return;
+    const days = settingsResult.val.agentUsageRetentionDays;
+
+    const runs = await sql<{ run_id: string }>`
+      DELETE FROM agent_run_log WHERE run_id IN (
+        SELECT run_id FROM agent_run_log
+        WHERE created_at < NOW() - make_interval(days => ${days})
+        ORDER BY created_at
+        LIMIT ${RETENTION_BATCH}
+      ) RETURNING run_id
     `.execute(db);
-
-    for (const { tenant_id: tenantId } of tenants.rows) {
-      const settingsResult = await getOrgSettings(tenantId);
-      if (!settingsResult.ok) continue;
-      const days = settingsResult.val.agentUsageRetentionDays;
-
-      const runs = await sql<{ run_id: string }>`
-        DELETE FROM agent_run_log WHERE run_id IN (
-          SELECT run_id FROM agent_run_log
-          WHERE tenant_id = ${tenantId}
-            AND created_at < NOW() - make_interval(days => ${days})
-          ORDER BY created_at
-          LIMIT ${RETENTION_BATCH}
-        ) RETURNING run_id
-      `.execute(db);
-      const calls = await sql<{ id: string }>`
-        DELETE FROM llm_calls WHERE id IN (
-          SELECT id FROM llm_calls
-          WHERE tenant_id = ${tenantId}
-            AND created_at < NOW() - make_interval(days => ${days})
-          ORDER BY created_at
-          LIMIT ${RETENTION_BATCH}
-        ) RETURNING id
-      `.execute(db);
-      const voice = await sql<{ id: string }>`
-        DELETE FROM voice_usage WHERE id IN (
-          SELECT id FROM voice_usage
-          WHERE tenant_id = ${tenantId}
-            AND created_at < NOW() - make_interval(days => ${days})
-          ORDER BY created_at
-          LIMIT ${RETENTION_BATCH}
-        ) RETURNING id
-      `.execute(db);
-      const images = await sql<{ id: string }>`
-        DELETE FROM image_usage WHERE id IN (
-          SELECT id FROM image_usage
-          WHERE tenant_id = ${tenantId}
-            AND created_at < NOW() - make_interval(days => ${days})
-          ORDER BY created_at
-          LIMIT ${RETENTION_BATCH}
-        ) RETURNING id
-      `.execute(db);
-      if (
-        runs.rows.length > 0 ||
-        calls.rows.length > 0 ||
-        voice.rows.length > 0 ||
-        images.rows.length > 0
-      ) {
-        logger.info(
-          'retention pruned {runs} run log row(s), {calls} token ledger row(s), {voice} voice ledger row(s) and {images} image ledger row(s) for tenant {tenantId}',
-          {
-            component: 'worker-agents/usage-retention',
-            tenantId,
-            voice: voice.rows.length,
-            images: images.rows.length,
-            runs: runs.rows.length,
-            calls: calls.rows.length,
-          }
-        );
-      }
+    const calls = await sql<{ id: string }>`
+      DELETE FROM llm_calls WHERE id IN (
+        SELECT id FROM llm_calls
+        WHERE created_at < NOW() - make_interval(days => ${days})
+        ORDER BY created_at
+        LIMIT ${RETENTION_BATCH}
+      ) RETURNING id
+    `.execute(db);
+    const voice = await sql<{ id: string }>`
+      DELETE FROM voice_usage WHERE id IN (
+        SELECT id FROM voice_usage
+        WHERE created_at < NOW() - make_interval(days => ${days})
+        ORDER BY created_at
+        LIMIT ${RETENTION_BATCH}
+      ) RETURNING id
+    `.execute(db);
+    const images = await sql<{ id: string }>`
+      DELETE FROM image_usage WHERE id IN (
+        SELECT id FROM image_usage
+        WHERE created_at < NOW() - make_interval(days => ${days})
+        ORDER BY created_at
+        LIMIT ${RETENTION_BATCH}
+      ) RETURNING id
+    `.execute(db);
+    if (
+      runs.rows.length > 0 ||
+      calls.rows.length > 0 ||
+      voice.rows.length > 0 ||
+      images.rows.length > 0
+    ) {
+      logger.info(
+        'retention pruned {runs} run log row(s), {calls} token ledger row(s), {voice} voice ledger row(s) and {images} image ledger row(s)',
+        {
+          component: 'worker-agents/usage-retention',
+          voice: voice.rows.length,
+          images: images.rows.length,
+          runs: runs.rows.length,
+          calls: calls.rows.length,
+        }
+      );
     }
   };
 }
@@ -332,9 +290,9 @@ export function createUsageRetentionSweep(db: Kysely<DB>) {
 /**
  * Prune `chat_presence` rows a chat's turn stream heartbeat left behind
  * (@renkei/notifications' presence.ts, touched by chats/[chatId]/turns/
- * [turnId]/stream/route.ts). Not per-tenant like the sweeps above: this is
- * hygiene on a table nothing reads past a fixed, generous age, not a
- * retention policy an org has a reason to tune.
+ * [turnId]/stream/route.ts). Unlike the sweeps above this is hygiene on a
+ * table nothing reads past a fixed, generous age, not a retention policy
+ * an org has a reason to tune.
  */
 export function createChatPresenceSweep(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {

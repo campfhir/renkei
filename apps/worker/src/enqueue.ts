@@ -112,7 +112,6 @@ function withEncryptedContent(
 }
 
 export async function enqueueKnowledgeEvent(
-  tenantId: string,
   type: KnowledgeEventType,
   payload: Record<string, unknown>,
   orderingKey: string | null = null,
@@ -125,7 +124,6 @@ export async function enqueueKnowledgeEvent(
     logger.error('knowledge job {type} not enqueued: {error}', {
       component: 'worker/enqueue',
       type,
-      tenantId,
       error: message,
     });
     return;
@@ -138,7 +136,6 @@ export async function enqueueKnowledgeEvent(
   // waited its turn. Dispatch resolves the lane back to `knowledge`.
   const provider = typeof payload.provider === 'string' ? payload.provider : null;
   const enqueued = await embeddingQueue.producer.enqueue({
-    tenantId,
     source: provider ? `${KNOWLEDGE_SOURCE}:${provider}` : KNOWLEDGE_SOURCE,
     type,
     payload: encrypted,
@@ -151,7 +148,6 @@ export async function enqueueKnowledgeEvent(
     logger.error('knowledge job {type} not enqueued: {error}', {
       component: 'worker/enqueue',
       type,
-      tenantId,
       error: enqueued.err.message ?? 'unknown',
     });
   }

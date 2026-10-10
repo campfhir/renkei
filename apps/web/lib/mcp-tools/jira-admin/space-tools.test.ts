@@ -16,14 +16,7 @@ jest.mock('../common', () => ({
   withPresentationHint: (body: string) => body,
 }));
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: () => ({
-        select: () => ({ where: () => ({ executeTakeFirst: async () => ({ slug: 'acme' }) }) }),
-      }),
-    },
-  }),
+  getDatabase: () => ({ ok: true, val: {} }),
 }));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({}));
@@ -83,12 +76,11 @@ const stubAuth: JiraAdminAuth = {
     siteUrl: 'https://acme.atlassian.net',
     accountId: 'acct-1',
     // The delegate's fetcher stands in for the grant; the suite's global.fetch answers it.
-    auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:tenant-1:acct-1'),
+    auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:acct-1'),
   }),
 };
 
 const context = {
-  tenantId: 'tenant-1',
   subject: 'subject-1',
   origin: 'https://renkei.example',
   jiraAdminScopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
@@ -262,7 +254,6 @@ describe('jira_admin_save_space_template', () => {
     expect(result.isError).toBeUndefined();
     const input = jest.mocked(saveSpaceTemplate).mock.calls[0]?.[1];
     expect(input).toMatchObject({
-      tenantId: 'tenant-1',
       cloudId: 'cloud-1',
       sourceSpaceKey: 'OPS',
       subject: 'subject-1',
@@ -421,7 +412,7 @@ describe('jira_admin_propose_space', () => {
       },
     });
 
-    const link = `https://renkei.example/acme/jira-admin/changes/${CHANGE_ID}`;
+    const link = `https://renkei.example/jira-admin/changes/${CHANGE_ID}`;
     expect(text(result)).toContain('Proposed — nothing has been created in Jira yet.');
     expect(text(result)).toContain(
       '• [access] Create the software space FIN — “Finance” — led by Dana Admin, on the schemes of template “Ops standard”'

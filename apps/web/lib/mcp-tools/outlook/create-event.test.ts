@@ -120,7 +120,6 @@ async function createEvent(args: Record<string, unknown>): Promise<ToolResult> {
   } as unknown as McpServer;
 
   const context = {
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
     siteUrl: '',

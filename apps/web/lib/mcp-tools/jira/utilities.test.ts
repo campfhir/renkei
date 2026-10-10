@@ -50,7 +50,6 @@ function fakeDb(result: unknown): {
 
 function contextWith(db: MCPToolContext['db']): MCPToolContext {
   return {
-    tenantId: 'tenant-1',
     accountId: 'acct-caller',
     siteUrl: 'https://example.atlassian.net',
     apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
@@ -95,7 +94,7 @@ describe('jira_connect', () => {
     const { db } = fakeDb(undefined);
     const { text } = await connectJira(db);
 
-    expect(text).toContain('https://mcp.example.com/api/mcp/tenant-1/authorize');
+    expect(text).toContain('https://mcp.example.com/api/mcp/authorize');
     expect(text).not.toContain('auth.atlassian.com');
     expect(text).not.toContain('jira-setup');
   });

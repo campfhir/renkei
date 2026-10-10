@@ -118,7 +118,6 @@ beforeEach(() => {
 
 const context = (): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
     origin: 'https://renkei.example',
@@ -162,7 +161,7 @@ describe('sharepoint tools', () => {
     // The grant is named by the caller's subject; the fetcher it yields is
     // what carried the requests, and this process attached no credential.
     expect(mockGrantFetch).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantId: 'tenant-1', provider: 'microsoft', subject: 'subject-1' })
+      expect.objectContaining({ provider: 'microsoft', subject: 'subject-1' })
     );
     const fetcher: jest.Mock = mockGrantFetch.mock.results[0]?.value;
     expect(fetcher).toHaveBeenCalledTimes(requests.length);

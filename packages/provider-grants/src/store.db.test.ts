@@ -16,8 +16,8 @@ import { getGrant, setGrant } from './store';
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('provider grant store under per-user keys', () => {
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const legacyKey = randomBytes(32);
   const base = {
     clientId: 'client-1',
@@ -33,16 +33,11 @@ maybe('provider grant store under per-user keys', () => {
   beforeAll(async () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
-    await result.val
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `grants-${tenantId.slice(0, 8)}` })
-      .execute();
     // The owner holds a key, as their browser would have enrolled them, with
     // a session delegation to this test's own delegate instance.
     const instance = await registerTestInstance(result.val);
     instanceId = instance.id;
     await enrollTestPerson(result.val, {
-      tenantId,
       subject,
       instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
     });
@@ -53,13 +48,12 @@ maybe('provider grant store under per-user keys', () => {
     const result = getDatabase();
     if (result.ok) {
       await result.val.deleteFrom('delegate_instances').where('id', '=', instanceId).execute();
-      await result.val.deleteFrom('tenants').where('id', '=', tenantId).execute();
     }
     await closeDatabase();
   });
 
   it('seals an owned grant under the owner’s key and opens it back', async () => {
-    const set = await setGrant('atlassian', tenantId, {
+    const set = await setGrant('atlassian', {
       ...base,
       accountId: 'acct-1',
       subject,
@@ -72,7 +66,6 @@ maybe('provider grant store under per-user keys', () => {
     const row = await db.val
       .selectFrom('provider_grants')
       .select(['encrypted_access_token', 'encrypted_refresh_token'])
-      .where('tenant_id', '=', tenantId)
       .where('provider_account_id', '=', 'acct-1')
       .executeTakeFirstOrThrow();
     expect(isUserSealed(row.encrypted_access_token)).toBe(true);
@@ -80,13 +73,13 @@ maybe('provider grant store under per-user keys', () => {
     // Not the deployment key: that key opens nothing here.
     expect(decrypt(row.encrypted_access_token.slice('uenc1:'.length), legacyKey).ok).toBe(false);
 
-    const got = await getGrant('atlassian', tenantId, 'acct-1');
+    const got = await getGrant('atlassian', 'acct-1');
     expect(got.ok && got.val?.accessToken).toBe('access-1');
     expect(got.ok && got.val?.refreshToken).toBe('refresh-1');
   });
 
   it('a reconnect with an empty refresh token keeps the stored one, re-sealed or not', async () => {
-    const set = await setGrant('atlassian', tenantId, {
+    const set = await setGrant('atlassian', {
       ...base,
       accountId: 'acct-1',
       subject,
@@ -94,7 +87,7 @@ maybe('provider grant store under per-user keys', () => {
       refreshToken: '',
     });
     expect(set.ok).toBe(true);
-    const got = await getGrant('atlassian', tenantId, 'acct-1');
+    const got = await getGrant('atlassian', 'acct-1');
     expect(got.ok && got.val?.accessToken).toBe('access-2');
     expect(got.ok && got.val?.refreshToken).toBe('refresh-1');
   });
@@ -108,17 +101,16 @@ maybe('provider grant store under per-user keys', () => {
         encrypted_access_token: encrypt('legacy-access', legacyKey),
         encrypted_refresh_token: encrypt('legacy-refresh', legacyKey),
       })
-      .where('tenant_id', '=', tenantId)
       .where('provider_account_id', '=', 'acct-1')
       .execute();
-    const got = await getGrant('atlassian', tenantId, 'acct-1');
+    const got = await getGrant('atlassian', 'acct-1');
     expect(!got.ok && got.err.type).toBe('DECRYPTION_ERROR');
   });
 
   it('a row with no owner has no key and does not open', async () => {
     const db = getDatabase();
     if (!db.ok) throw new Error('db');
-    const set = await setGrant('atlassian', tenantId, {
+    const set = await setGrant('atlassian', {
       ...base,
       accountId: 'acct-2',
       subject,
@@ -126,10 +118,10 @@ maybe('provider grant store under per-user keys', () => {
       refreshToken: 'r',
     });
     expect(set.ok).toBe(true);
-    await sql`UPDATE provider_grants SET subject = NULL WHERE tenant_id = ${tenantId} AND provider_account_id = 'acct-2'`.execute(
+    await sql`UPDATE provider_grants SET subject = NULL WHERE provider_account_id = 'acct-2'`.execute(
       db.val
     );
-    const got = await getGrant('atlassian', tenantId, 'acct-2');
+    const got = await getGrant('atlassian', 'acct-2');
     expect(!got.ok && got.err.type).toBe('DECRYPTION_ERROR');
   });
 });

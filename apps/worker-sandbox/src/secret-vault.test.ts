@@ -15,7 +15,7 @@ import { SecretVault } from './secret-vault';
 
 const PASSPHRASE = 'correct horse battery staple';
 const FIELDS = { username: 'alice', password: 'hunter2!' };
-const ALICE = { tenantId: 'tenant-1', subject: 'auth0|alice' };
+const ALICE = { subject: 'auth0|alice' };
 
 describe('SecretVault', () => {
   it('unlocks only with the right passphrase and opens the fields while held', async () => {
@@ -74,7 +74,7 @@ describe('SecretVault', () => {
 
     it('another replica opens what this one unlocked, and a lock anywhere locks all', async () => {
       const clock = { now: 1_000 };
-      const store = createSecretKeyStore(root, Buffer.alloc(32, 3))!;
+      const store = createSecretKeyStore(root, 'renkei', Buffer.alloc(32, 3))!;
       const here = new SecretVault({ now: () => clock.now, sweepIntervalMs: 60 * 60_000, store });
       const there = new SecretVault({ now: () => clock.now, sweepIntervalMs: 60 * 60_000, store });
       const sealed = sealSecretFields(FIELDS, PASSPHRASE);
@@ -84,7 +84,7 @@ describe('SecretVault', () => {
       expect(await there.unlockedUntil(ALICE, 's1')).toEqual(new Date(6_000));
       // Another owner's replica cannot open it under its own derivation.
       expect(
-        await there.open({ tenantId: 'tenant-1', subject: 'auth0|bob' }, 's1', sealed)
+        await there.open({ subject: 'auth0|bob' }, 's1', sealed)
       ).toBeNull();
       await here.unlock(ALICE, 's1', sealed, PASSPHRASE, clock.now + 5000);
       expect(await there.lock('s1')).toBe(true);

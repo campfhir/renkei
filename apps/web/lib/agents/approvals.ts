@@ -88,7 +88,6 @@ function proposalOf(suggestedAction: unknown): {
  */
 export async function listPendingApprovals(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   options: { agentId?: string | undefined; limit?: number | undefined } = {}
 ): Promise<PendingApproval[]> {
@@ -107,7 +106,6 @@ export async function listPendingApprovals(
       'a.name as agentName',
       'r.waiting_until as waitingUntil',
     ])
-    .where('c.tenant_id', '=', tenantId)
     .where('c.owner_subject', '=', subject)
     .where('c.kind', '=', 'approval')
     // 'suggested' is the only undecided state; the sweep expires the rest.
@@ -193,7 +191,6 @@ export type DecideApprovalResult =
 export async function decideApproval(
   db: Kysely<DB>,
   producer: QueueProducer,
-  tenantId: string,
   subject: string,
   input: {
     cardId: string;
@@ -222,7 +219,6 @@ export async function decideApproval(
     .selectFrom('actionable_items')
     .select(['id', 'kind', 'status', 'run_id'])
     .where('id', '=', input.cardId)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', subject)
     .executeTakeFirst();
   if (!item) return { outcome: 'not-found' };
@@ -258,11 +254,9 @@ export async function decideApproval(
     .selectFrom('agent_runs')
     .select(['id', 'agent_id'])
     .where('id', '=', item.run_id)
-    .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
   const enqueue = run
     ? await producer.enqueue({
-        tenantId,
         source: `agents:${run.agent_id}`,
         type: 'run',
         payload: { runId: run.id },
@@ -307,7 +301,6 @@ function questionOf(suggestedAction: unknown): { message: string; form: FormNode
 /** The questions waiting on this person, oldest first. */
 export async function listPendingQuestions(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   options: { agentId?: string | undefined; limit?: number | undefined } = {}
 ): Promise<PendingQuestion[]> {
@@ -325,7 +318,6 @@ export async function listPendingQuestions(
       'a.name as agentName',
       'r.waiting_until as waitingUntil',
     ])
-    .where('c.tenant_id', '=', tenantId)
     .where('c.owner_subject', '=', subject)
     .where('c.kind', '=', 'question')
     .where('c.status', '=', 'suggested')
@@ -371,7 +363,6 @@ export type AnswerQuestionResult =
 export async function answerQuestion(
   db: Kysely<DB>,
   producer: QueueProducer,
-  tenantId: string,
   subject: string,
   input: { cardId: string; answers: unknown }
 ): Promise<AnswerQuestionResult> {
@@ -379,7 +370,6 @@ export async function answerQuestion(
     .selectFrom('actionable_items')
     .select(['id', 'kind', 'status', 'run_id', 'suggested_action'])
     .where('id', '=', input.cardId)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', subject)
     .executeTakeFirst();
   if (!item) return { outcome: 'not-found' };
@@ -412,11 +402,9 @@ export async function answerQuestion(
     .selectFrom('agent_runs')
     .select(['id', 'agent_id'])
     .where('id', '=', item.run_id)
-    .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
   const enqueue = run
     ? await producer.enqueue({
-        tenantId,
         source: `agents:${run.agent_id}`,
         type: 'run',
         payload: { runId: run.id },

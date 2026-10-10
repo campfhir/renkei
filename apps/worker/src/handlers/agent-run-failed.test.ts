@@ -47,8 +47,6 @@ const { resolveMicrosoftAccess: mockResolveMicrosoftAccess } = jest.requireMock<
 const { resolveWebexUserAccessBySubject: mockResolveWebexAccess } = jest.requireMock<{
   resolveWebexUserAccessBySubject: jest.Mock;
 }>('./webex-linked-user');
-
-const TENANT_ID = 'tenant-1';
 const OWNER_SUBJECT = 'owner-1';
 
 /** Any `.select(...).where(...).where(...).executeTakeFirst()` chain resolves to `rows[table]`. */
@@ -74,7 +72,6 @@ function prefs(runFailed: Partial<NotificationPrefs['runFailed']>): Notification
 function event(): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: TENANT_ID,
     source: 'agents',
     type: 'run.failed',
     attempts: 1,

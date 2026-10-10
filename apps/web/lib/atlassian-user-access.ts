@@ -34,12 +34,11 @@ const LABELS: Record<string, string> = {
 };
 
 export async function resolveAtlassianUserAccess(
-  tenantId: string,
   subject: string,
   provider: AtlassianUserProvider
 ): Promise<AtlassianUserAccess | string> {
   const label = LABELS[provider] ?? provider;
-  const ref = { tenantId, provider, subject };
+  const ref = { provider, subject };
 
   const described = await delegateGrants().describe(ref);
   if (!described.ok) {

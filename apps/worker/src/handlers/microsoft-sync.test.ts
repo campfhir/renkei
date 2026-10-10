@@ -102,13 +102,12 @@ describe('runSubscriptionSync — the inbox is a trigger feed, not an index', ()
   it('publishes mail.received for a new message and writes nothing else', async () => {
     mockRunDeltaRound.mockResolvedValue(ok({ items: [messageEntry()], deltaLink: 'delta-2' }));
 
-    const result = await runSubscriptionSync('tenant-1', access(), inboxRow());
+    const result = await runSubscriptionSync(access(), inboxRow());
 
     expect(result).toEqual({ changed: 1, removed: 0 });
     expect(mockPublishDomainEvent).toHaveBeenCalledTimes(1);
     expect(mockPublishDomainEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        tenantId: 'tenant-1',
         provider: 'microsoft',
         type: 'mail.received',
         ownerSubject: 'subject-alice',
@@ -119,7 +118,7 @@ describe('runSubscriptionSync — the inbox is a trigger feed, not an index', ()
           messageId: 'msg-1',
         },
         occurredAt: '2026-08-10T12:00:00Z',
-        orderingKey: 'microsoft/tenant-1/acct-1',
+        orderingKey: 'microsoft/acct-1',
       })
     );
   });
@@ -131,7 +130,7 @@ describe('runSubscriptionSync — the inbox is a trigger feed, not an index', ()
     // publishes and nothing else.
     mockRunDeltaRound.mockResolvedValue(ok({ items: [messageEntry()], deltaLink: 'delta-2' }));
 
-    await runSubscriptionSync('tenant-1', access(), inboxRow());
+    await runSubscriptionSync(access(), inboxRow());
 
     expect(mockPublishDomainEvent).toHaveBeenCalledTimes(1);
   });
@@ -140,7 +139,7 @@ describe('runSubscriptionSync — the inbox is a trigger feed, not an index', ()
     // A fresh series replays the whole mailbox: none of it "arrives".
     mockRunDeltaRound.mockResolvedValue(ok({ items: [messageEntry()], deltaLink: 'delta-1' }));
 
-    await runSubscriptionSync('tenant-1', access(), { ...inboxRow(), delta_link: null });
+    await runSubscriptionSync(access(), { ...inboxRow(), delta_link: null });
 
     expect(mockPublishDomainEvent).not.toHaveBeenCalled();
   });
@@ -149,7 +148,7 @@ describe('runSubscriptionSync — the inbox is a trigger feed, not an index', ()
     mockIsRecentMail.mockReturnValue(false);
     mockRunDeltaRound.mockResolvedValue(ok({ items: [messageEntry()], deltaLink: 'delta-2' }));
 
-    await runSubscriptionSync('tenant-1', access(), inboxRow());
+    await runSubscriptionSync(access(), inboxRow());
 
     expect(mockPublishDomainEvent).not.toHaveBeenCalled();
   });
@@ -159,7 +158,7 @@ describe('runSubscriptionSync — the inbox is a trigger feed, not an index', ()
       ok({ items: [{ id: 'msg-9', '@removed': { reason: 'deleted' } }], deltaLink: 'delta-2' })
     );
 
-    const result = await runSubscriptionSync('tenant-1', access(), inboxRow());
+    const result = await runSubscriptionSync(access(), inboxRow());
 
     expect(result).toEqual({ changed: 0, removed: 1 });
     expect(mockPublishDomainEvent).not.toHaveBeenCalled();
@@ -169,7 +168,7 @@ describe('runSubscriptionSync — the inbox is a trigger feed, not an index', ()
     const set = stubDb();
     mockRunDeltaRound.mockResolvedValue(ok({ items: [], deltaLink: 'delta-2', nextLink: null }));
 
-    await runSubscriptionSync('tenant-1', access(), inboxRow());
+    await runSubscriptionSync(access(), inboxRow());
 
     expect(set).toHaveBeenCalledWith(
       expect.objectContaining({ delta_link: 'delta-2', sync_status: 'idle' })
@@ -181,7 +180,7 @@ describe('runSubscriptionSync — a retired calendar row', () => {
   it('never polls me/events and writes nothing', async () => {
     const set = stubDb();
 
-    const result = await runSubscriptionSync('tenant-1', access(), {
+    const result = await runSubscriptionSync(access(), {
       ...inboxRow(),
       resource: 'me/events',
     });
@@ -197,7 +196,7 @@ describe('runSubscriptionSync — a retired To Do row', () => {
   it('never polls a To Do list and writes nothing', async () => {
     const set = stubDb();
 
-    const result = await runSubscriptionSync('tenant-1', access(), {
+    const result = await runSubscriptionSync(access(), {
       ...inboxRow(),
       id: 'sub-row-2',
       resource: 'me/todo/lists/list-1/tasks',

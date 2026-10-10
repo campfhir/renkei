@@ -49,7 +49,6 @@ beforeEach(() => {
 describe('recordAuditEvent', () => {
   it('writes an attributed, labelled row', async () => {
     recordAuditEvent({
-      tenantId: 'tenant-1',
       actorSubject: 'subject-1',
       action: 'connector.connected',
       targetKind: 'connector',
@@ -58,7 +57,6 @@ describe('recordAuditEvent', () => {
     await flush();
 
     expect(inserted[0]).toMatchObject({
-      tenant_id: 'tenant-1',
       actor_subject: 'subject-1',
       action: 'connector.connected',
       target_kind: 'connector',
@@ -69,7 +67,6 @@ describe('recordAuditEvent', () => {
 
   it('caps the target label at the schema limit', async () => {
     recordAuditEvent({
-      tenantId: 'tenant-1',
       actorSubject: 'subject-1',
       action: 'agent.created',
       targetKind: 'agent',
@@ -81,7 +78,6 @@ describe('recordAuditEvent', () => {
 
   it('serializes details and omits them when absent', async () => {
     recordAuditEvent({
-      tenantId: 'tenant-1',
       actorSubject: 'operator-1',
       action: 'agent.disabled',
       targetKind: 'agent',
@@ -95,7 +91,7 @@ describe('recordAuditEvent', () => {
   it('swallows a failed write with a warning, never a throw', async () => {
     insertFails = true;
     expect(() =>
-      recordAuditEvent({ tenantId: 'tenant-1', actorSubject: null, action: 'user.signed_in' })
+      recordAuditEvent({ actorSubject: null, action: 'user.signed_in' })
     ).not.toThrow();
     await flush();
     expect(logger.warn).toHaveBeenCalled();
@@ -103,7 +99,7 @@ describe('recordAuditEvent', () => {
 
   it('is a no-op when the database is unavailable', async () => {
     dbAvailable = false;
-    recordAuditEvent({ tenantId: 'tenant-1', actorSubject: null, action: 'user.signed_out' });
+    recordAuditEvent({ actorSubject: null, action: 'user.signed_out' });
     await flush();
     expect(inserted).toHaveLength(0);
   });

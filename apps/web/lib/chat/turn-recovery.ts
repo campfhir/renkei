@@ -163,7 +163,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   ) =>
     logger[level](message, {
       component: 'chat/turn-recovery',
-      tenantId: turn.tenantId,
       chatId: turn.chatId,
       turnId: turn.id,
       resumeCount: turn.resumeCount,
@@ -194,9 +193,9 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   // No person is signed in for a resumed turn: the chat's rows are opened
   // and written as its owner (chat-keys.ts). A chat already gone leaves
   // the rows unopenable and the turn ends below either way.
-  const chat = await getChatRow(db, turn.tenantId, turn.chatId);
+  const chat = await getChatRow(db, turn.chatId);
   const cipher = chat ? await cipherAsOwner(db, 'chat', chat) : unavailableCipher('no-key');
-  const rows = await listTurnMessages(db, turn.tenantId, turn.id, cipher);
+  const rows = await listTurnMessages(db, turn.id, cipher);
   const seed = resumeSeedOf(rows, turn.startedAt);
   const plan = planResume(rows);
 
@@ -207,7 +206,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   if (plan.kind === 'finish') return end(plan.status, turn.error, seed);
 
   if (!chat) return end('interrupted', 'The chat is gone.', seed);
-  const llmResult = await resolveAgentLlm(db, turn.tenantId, turn.llmModelId);
+  const llmResult = await resolveAgentLlm(db, turn.llmModelId);
   if (!llmResult.ok) {
     return end(
       'failed',
@@ -219,8 +218,8 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   }
   const llm = llmResult.val;
   const roles =
-    turn.runner?.roles ?? (await latestSessionRoles(db, turn.tenantId, chat.ownerSubject));
-  const settingsResult = await getOrgSettings(turn.tenantId);
+    turn.runner?.roles ?? (await latestSessionRoles(db, chat.ownerSubject));
+  const settingsResult = await getOrgSettings();
 
   // Reconcile the rows to a state the loop can start from: a results row
   // for the calls cut off, the note, and a fresh row for the next reply.
@@ -235,7 +234,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
       isError: true,
     }));
     const inserted = await insertMessage(db, {
-      tenantId: turn.tenantId,
       chatId: turn.chatId,
       turnId: turn.id,
       role: 'user',
@@ -247,7 +245,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     if (!inserted) return end('failed', 'The content encryption key is not configured.', seed);
   }
   const note = await insertMessage(db, {
-    tenantId: turn.tenantId,
     chatId: turn.chatId,
     turnId: turn.id,
     role: 'user',
@@ -258,7 +255,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   });
   if (!note) return end('failed', 'The content encryption key is not configured.', seed);
   const assistant = await insertMessage(db, {
-    tenantId: turn.tenantId,
     chatId: turn.chatId,
     turnId: turn.id,
     role: 'assistant',
@@ -278,7 +274,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     iterations: seed.iterations,
   });
   await executeChatTurn(db, {
-    tenantId: turn.tenantId,
     session: { subject: chat.ownerSubject, roles },
     chat: { ...chat, llmModelId: llm.modelConfigId },
     cipher,
@@ -299,13 +294,11 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
  */
 async function latestSessionRoles(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<string[]> {
   const row = await db
     .selectFrom('sessions')
     .select('roles')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .orderBy('last_used_at', 'desc')
     .limit(1)
@@ -342,7 +335,6 @@ export async function recoverOrphanedTurns(db: Kysely<DB>): Promise<number> {
     void resumeChatTurn(db, turn).catch((error: unknown) => {
       logger.error('chat turn resume crashed: {message}', {
         component: 'chat/turn-recovery',
-        tenantId: turn.tenantId,
         chatId: turn.chatId,
         turnId: turn.id,
         message: error instanceof Error ? error.message : String(error),

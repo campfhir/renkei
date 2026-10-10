@@ -22,15 +22,14 @@ export interface WebexUserAccess {
 }
 
 export async function resolveWebexUserAccess(
-  tenantId: string,
   subject: string
 ): Promise<WebexUserAccess | null> {
-  const described = await delegateGrants().describe({ tenantId, provider: WEBEX_USER, subject });
+  const described = await delegateGrants().describe({ provider: WEBEX_USER, subject });
   if (!described.ok) return null;
   const accountId = described.val.accountId;
   return {
     accountId,
-    auth: grantFetch({ tenantId, provider: WEBEX_USER, accountId }),
+    auth: grantFetch({ provider: WEBEX_USER, accountId }),
     metadata: { ...described.val.metadata },
   };
 }
@@ -40,7 +39,6 @@ export async function resolveWebexUserAccess(
  * their verified email, not their subject; identities is the bridge.
  */
 export async function resolveWebexUserAccessByEmail(
-  tenantId: string,
   email: string
 ): Promise<WebexUserAccess | null> {
   const dbResult = getDatabase();
@@ -48,9 +46,8 @@ export async function resolveWebexUserAccessByEmail(
   const row = await dbResult.val
     .selectFrom('identities')
     .select('subject')
-    .where('tenant_id', '=', tenantId)
     .where('email', '=', email.toLowerCase())
     .executeTakeFirst();
   if (!row) return null;
-  return resolveWebexUserAccess(tenantId, row.subject);
+  return resolveWebexUserAccess(row.subject);
 }

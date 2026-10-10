@@ -149,7 +149,6 @@ export async function loadFieldSchema(
     schemaCache.set(key, { fields, fetchedAt: Date.now() });
     logger.debug('Loaded', {
       component: 'jira/field-schema',
-      tenantId: context.tenantId,
       accountId: context.accountId,
       fields: fields.length,
     });

@@ -27,19 +27,17 @@ import { delegateClient } from '@renkei/delegate-client';
 /** The note's blocks sealed the way the chat's own rows are: under the chat's key, as its owner. */
 async function sealNote(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   text: string
 ): Promise<string> {
   const chat = await db
     .selectFrom('chats')
     .select('owner_subject')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', chatId)
     .executeTakeFirst();
   if (!chat) throw new Error('the chat is gone');
   const key = await delegateClient().ensureResourceKey(
-    { tenantId, kind: 'chat', resourceId: chatId },
+    { kind: 'chat', resourceId: chatId },
     chat.owner_subject
   );
   if (!key.ok) throw new Error(`the chat's key could not be opened (${key.err.type})`);
@@ -47,19 +45,17 @@ async function sealNote(
 }
 
 export async function insertChatNote(
-  tenantId: string,
   chatId: string,
   text: string
 ): Promise<void> {
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('database unavailable');
   const db = dbResult.val;
-  const sealed = await sealNote(db, tenantId, chatId, text);
+  const sealed = await sealNote(db, chatId, text);
 
   await db
     .insertInto('chat_messages')
     .values({
-      tenant_id: tenantId,
       chat_id: chatId,
       turn_id: null,
       seq: sql<number>`(SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_messages WHERE chat_id = ${chatId})`,

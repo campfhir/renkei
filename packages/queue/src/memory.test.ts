@@ -14,7 +14,6 @@ import type { ClaimedMessage } from './contract';
 
 function input(over: Partial<{ type: string; orderingKey: string | null }> = {}) {
   return {
-    tenantId: 'tenant-1',
     source: 'test',
     type: over.type ?? 'thing.happened',
     payload: { n: 1 },
@@ -239,7 +238,7 @@ describe('ordering keys — the horizontal-scaling contract', () => {
 
 describe('source fixation and fair claiming', () => {
   function fromSource(source: string, type: string) {
-    return { tenantId: 'tenant-1', source, type, payload: { n: 1 }, orderingKey: null };
+    return { source, type, payload: { n: 1 }, orderingKey: null };
   }
 
   it('a sources filter fixates the consumer, leaving other sources untouched', async () => {
@@ -289,7 +288,6 @@ describe('source fixation and fair claiming', () => {
 
 describe('discardPending — the other half of a rebuild', () => {
   const ingest = (refId: string, project: string, content: string) => ({
-    tenantId: 't1',
     source: 'knowledge',
     type: 'ingest.object',
     payload: { provider: 'jira', refId, content, metadata: { project } },
@@ -302,7 +300,7 @@ describe('discardPending — the other half of a rebuild', () => {
     await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
     await queue.producer.enqueue(ingest('ENG-2', 'ENG', 'old'));
 
-    const discarded = await queue.purger.discardPending('t1', 'ingest.object', [
+    const discarded = await queue.purger.discardPending('ingest.object', [
       { path: ['provider'], value: 'jira' },
       { path: ['metadata', 'project'], value: 'ENG' },
     ]);
@@ -316,7 +314,7 @@ describe('discardPending — the other half of a rebuild', () => {
     await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
     await queue.producer.enqueue(ingest('OPS-1', 'OPS', 'old'));
 
-    await queue.purger.discardPending('t1', 'ingest.object', [
+    await queue.purger.discardPending('ingest.object', [
       { path: ['provider'], value: 'jira' },
       { path: ['metadata', 'project'], value: 'ENG' },
     ]);
@@ -325,12 +323,12 @@ describe('discardPending — the other half of a rebuild', () => {
     expect(claimed?.payload).toMatchObject({ refId: 'OPS-1' });
   });
 
-  it('leaves another tenant’s work alone', async () => {
+  it('leaves another provider’s work alone', async () => {
     const queue = new InMemoryQueue();
-    await queue.producer.enqueue({ ...ingest('ENG-1', 'ENG', 'old'), tenantId: 't2' });
+    await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
 
-    const discarded = await queue.purger.discardPending('t1', 'ingest.object', [
-      { path: ['provider'], value: 'jira' },
+    const discarded = await queue.purger.discardPending('ingest.object', [
+      { path: ['provider'], value: 'confluence' },
       { path: ['metadata', 'project'], value: 'ENG' },
     ]);
     expect(discarded.ok && discarded.val).toBe(0);
@@ -344,7 +342,7 @@ describe('discardPending — the other half of a rebuild', () => {
     const claimed = await queue.consumer.claim();
     expect(claimed).not.toBeNull();
 
-    const discarded = await queue.purger.discardPending('t1', 'ingest.object', [
+    const discarded = await queue.purger.discardPending('ingest.object', [
       { path: ['provider'], value: 'jira' },
       { path: ['metadata', 'project'], value: 'ENG' },
     ]);
@@ -355,7 +353,7 @@ describe('discardPending — the other half of a rebuild', () => {
     const queue = new InMemoryQueue();
     await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
 
-    const discarded = await queue.purger.discardPending('t1', 'ingest.object', []);
+    const discarded = await queue.purger.discardPending('ingest.object', []);
     expect(discarded.ok).toBe(false);
     // And the message it refused to match is still there.
     expect(await queue.consumer.claim()).not.toBeNull();
@@ -366,7 +364,6 @@ describe('coalescing', () => {
   it('drops a coalesced message while an identical one is still waiting, but not once it is claimed', async () => {
     const queue = new InMemoryQueue();
     const message = {
-      tenantId: 't1',
       source: 'microsoft',
       type: 'change-notification',
       payload: { subscriptionId: 's1' },
@@ -393,7 +390,6 @@ describe('coalescing', () => {
   it('coalesces nothing without an ordering key', async () => {
     const queue = new InMemoryQueue();
     const message = {
-      tenantId: 't1',
       source: 'x',
       type: 'y',
       payload: {},

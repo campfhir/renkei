@@ -25,7 +25,7 @@ export interface GitHubApp {
   redirectUri: string;
   /** The App's public slug (github.com/apps/<slug>), for the install link. Empty until set. */
   appSlug: string;
-  /** Verifies inbound webhook deliveries (app/api/webhooks/github/[tenantId]/route.ts); null until an operator sets one. */
+  /** Verifies inbound webhook deliveries (app/api/webhooks/github/route.ts); null until an operator sets one. */
   webhookSecret: string | null;
 }
 
@@ -35,21 +35,19 @@ export interface GitHubApp {
  * start. `origin` supplies the default redirect URI so authorize and
  * token-exchange always derive the same value.
  */
-export async function getGitHubApp(tenantId: string, origin: string): Promise<GitHubApp | null> {
+export async function getGitHubApp(origin: string): Promise<GitHubApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/github',
-      tenantId,
     });
     return null;
   }
 
-  const configResult = await readConnectorConfigCached(tenantId, GITHUB_CONNECTOR, keyResult.val);
+  const configResult = await readConnectorConfigCached(GITHUB_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     logger.error('Could not read github connector config', {
       component: 'connectors/github',
-      tenantId,
     });
     return null;
   }
@@ -61,7 +59,6 @@ export async function getGitHubApp(tenantId: string, origin: string): Promise<Gi
   if (typeof clientId !== 'string' || !clientId || !clientSecret) {
     logger.warn('github connector config missing clientId or clientSecret', {
       component: 'connectors/github',
-      tenantId,
     });
     return null;
   }

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * The one place batch_start_document_pipeline (an agent's MCP tool call)
- * and POST /api/tenant/[tenantId]/batch-jobs (a human's form submit) meet:
+ * and POST /api/batch-jobs (a human's form submit) meet:
  * both must produce the identical createBatch config shape and enqueue the
  * discovery message the same way, or the two paths silently diverge.
  */
@@ -33,7 +33,6 @@ describe('startDocumentOcrPipeline', () => {
     createBatchMock.mockResolvedValue({ id: 'batch-1' });
 
     const batch = await startDocumentOcrPipeline(FAKE_DB as never, {
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       shareId: 'share-1',
@@ -42,7 +41,6 @@ describe('startDocumentOcrPipeline', () => {
     });
 
     expect(createBatchMock).toHaveBeenCalledWith(FAKE_DB, {
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       kind: 'document-ocr-pipeline',
@@ -57,7 +55,7 @@ describe('startDocumentOcrPipeline', () => {
       },
       scheduleId: undefined,
     });
-    expect(enqueueDiscoverMock).toHaveBeenCalledWith('the-producer', 'tenant-1', 'batch-1');
+    expect(enqueueDiscoverMock).toHaveBeenCalledWith('the-producer', 'batch-1');
     expect(batch.id).toBe('batch-1');
   });
 
@@ -65,7 +63,6 @@ describe('startDocumentOcrPipeline', () => {
     createBatchMock.mockResolvedValue({ id: 'batch-2' });
 
     await startDocumentOcrPipeline(FAKE_DB as never, {
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       name: 'Scanner dump',
       shareId: 'share-1',

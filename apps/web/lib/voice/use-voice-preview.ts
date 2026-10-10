@@ -16,7 +16,6 @@ import { SpeechQueue } from './speech-queue';
 export const DEFAULT_VOICE_KEY = '';
 
 export function useVoicePreview(
-  tenantId: string,
   options: {
     rate: number;
     /** This device's chosen speaker; null for the default. */
@@ -37,7 +36,7 @@ export function useVoicePreview(
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const queue = new SpeechQueue(tenantId, setError);
+    const queue = new SpeechQueue(setError);
     const unsubscribe = queue.subscribe((state) => {
       if (state !== 'idle') return;
       playingRef.current = null;
@@ -49,7 +48,7 @@ export function useVoicePreview(
       queue.dispose();
       queueRef.current = null;
     };
-  }, [tenantId]);
+  }, []);
   useEffect(() => {
     queueRef.current?.setOutputDevice(outputDevice);
   }, [outputDevice]);

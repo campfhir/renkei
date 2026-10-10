@@ -17,7 +17,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { MODEL_ID, mockVendor, seedVoice, shot } from './voice-fixtures';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -55,15 +55,12 @@ test.beforeEach(async ({ browserName: _browser }, testInfo) => {
     await client.query('DELETE FROM chats WHERE project_id = $1', [ids.projectId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'A code project.', 'code', 'atlassian-bitbucket', 'acme/tools-menu', 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'A code project.', 'code', 'atlassian-bitbucket', 'acme/tools-menu', 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.projectName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, llm_model_id, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-      [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.chatTitle, MODEL_ID]
+      `INSERT INTO chats (id, owner_subject, project_id, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, $3, $4, $5, NOW())`,
+      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle, MODEL_ID]
     );
     await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
       ids.chatId,
@@ -77,7 +74,7 @@ test.beforeEach(async ({ browserName: _browser }, testInfo) => {
 async function openChat(page: Page, project: string): Promise<void> {
   const ids = idsFor(project);
   await mockVendor(page);
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await expect(page.getByLabel('Message')).toBeVisible();
   // The dev server's floating "N" badge sits over the composer's left edge
   // at phone width, swallowing clicks and hiding the very buttons under test.

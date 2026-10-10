@@ -5,7 +5,7 @@
  * needed before the database can answer — the connection, the root
  * encryption key, process wiring. Everything else is policy, and policy is
  * data: deployment-scoped values in `platform_settings`, org-scoped policy
- * in `tenant_settings`, both read here through typed accessors with explicit
+ * in `settings`, both read here through typed accessors with explicit
  * defaults and a short cache.
  */
 
@@ -313,6 +313,8 @@ export interface OrgSettings {
    * the Tutorials page says so, and nobody can start one by hand either.
    */
   coachMarksEnabled: boolean;
+  /** What the organization is called where the app names it: the sign-in and consent pages. */
+  organizationName: string;
   /**
    * Items shorter than this many characters are not sent for keyword
    * extraction. A one-line chat message or a two-sentence mail has nothing
@@ -391,6 +393,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   logLevel: 'info',
   knowledgeKeywordEnrichment: false,
   coachMarksEnabled: true,
+  organizationName: 'Renkei',
   knowledgeKeywordMinChars: 500,
   chatReplyPresenceWindowSeconds: 30,
   sandboxWorkspaceMaxBytes: 8 * 1_073_741_824, // 8GB
@@ -403,7 +406,12 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-const orgCache = new Map<string, CacheEntry<OrgSettings>>();
+let orgCache: CacheEntry<OrgSettings> | null = null;
+
+/** A stored string, trimmed; anything else (or an empty string) is the default. */
+function coerceString(current: unknown, fallback: string): string {
+  return typeof current === 'string' && current.trim() ? current.trim() : fallback;
+}
 
 function coerce(current: unknown, fallback: boolean | number): boolean | number {
   if (typeof fallback === 'boolean') return typeof current === 'boolean' ? current : fallback;
@@ -445,9 +453,8 @@ export function coerceStringListRecord(
  * a change takes effect within the TTL (or immediately after a setter, which
  * invalidates).
  */
-export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettings, 'DB_ERROR'>> {
-  const cached = orgCache.get(tenantId);
-  if (cached && cached.expiresAt > Date.now()) return ok(cached.value);
+export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>> {
+  if (orgCache && orgCache.expiresAt > Date.now()) return ok(orgCache.value);
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -455,9 +462,8 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
   const rowsResult = await wrapAsync(
     () =>
       dbResult.val
-        .selectFrom('tenant_settings')
+        .selectFrom('settings')
         .select(['key', 'value'])
-        .where('tenant_id', '=', tenantId)
         .execute(),
     'DB_ERROR' as const
   );
@@ -560,6 +566,7 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
       coerce(stored.get('knowledge_keyword_enrichment'), d.knowledgeKeywordEnrichment)
     ),
     coachMarksEnabled: Boolean(coerce(stored.get('coach_marks_enabled'), d.coachMarksEnabled)),
+    organizationName: coerceString(stored.get('organization_name'), d.organizationName),
     knowledgeKeywordMinChars: Number(
       coerce(stored.get('knowledge_keyword_min_chars'), d.knowledgeKeywordMinChars)
     ),
@@ -571,13 +578,40 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     ),
   };
 
-  orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
+  orgCache = { value: settings, expiresAt: Date.now() + CACHE_TTL_MS };
   return ok(settings);
+}
+
+/**
+ * The domain keys and storage paths were derived under while this
+ * deployment was multi-tenant: the organization's id then, kept as the
+ * `legacy_key_domain` setting by the migration that removed tenants. A
+ * deployment born single-organization has no such row and uses a fixed
+ * word. Read once per process: it never changes while the process runs.
+ */
+const FRESH_KEY_DOMAIN = 'renkei';
+let keyDomain: string | null = null;
+
+export async function getKeyDomain(): Promise<string> {
+  if (keyDomain !== null) return keyDomain;
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return FRESH_KEY_DOMAIN;
+  const row = await dbResult.val
+    .selectFrom('settings')
+    .select('value')
+    .where('key', '=', 'legacy_key_domain')
+    .executeTakeFirst();
+  keyDomain = typeof row?.value === 'string' && row.value ? row.value : FRESH_KEY_DOMAIN;
+  return keyDomain;
+}
+
+/** Test hook. */
+export function resetKeyDomain(): void {
+  keyDomain = null;
 }
 
 /** Upsert a subset of org settings; unspecified fields keep their value. */
 export async function setOrgSettings(
-  tenantId: string,
   updates: Partial<OrgSettings>
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -627,6 +661,7 @@ export async function setOrgSettings(
     ['log_level', updates.logLevel],
     ['knowledge_keyword_enrichment', updates.knowledgeKeywordEnrichment],
     ['coach_marks_enabled', updates.coachMarksEnabled],
+    ['organization_name', updates.organizationName],
     ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
     ['chat_reply_presence_window_seconds', updates.chatReplyPresenceWindowSeconds],
     ['sandbox_workspace_max_bytes', updates.sandboxWorkspaceMaxBytes],
@@ -637,15 +672,14 @@ export async function setOrgSettings(
     const result = await wrapAsync(
       () =>
         db
-          .insertInto('tenant_settings')
+          .insertInto('settings')
           .values({
-            tenant_id: tenantId,
             key,
             value: JSON.stringify(value),
             updated_at: new Date().toISOString(),
           })
           .onConflict((oc) =>
-            oc.columns(['tenant_id', 'key']).doUpdateSet({
+            oc.columns(['key']).doUpdateSet({
               value: JSON.stringify(value),
               updated_at: new Date().toISOString(),
             })
@@ -656,7 +690,7 @@ export async function setOrgSettings(
     if (!result.ok) return result;
   }
 
-  orgCache.delete(tenantId);
+  orgCache = null;
   return ok();
 }
 
@@ -669,10 +703,9 @@ export async function setOrgSettings(
  * database blip never turns into a refusal to write.
  */
 export async function getWorkspaceLimitBytes(
-  tenantId: string,
   subject: string
 ): Promise<Result<number, 'DB_ERROR'>> {
-  const org = await getOrgSettings(tenantId);
+  const org = await getOrgSettings();
   if (!org.ok) return org;
   const dbResult = getDatabase();
   if (!dbResult.ok) return ok(org.val.sandboxWorkspaceMaxBytes);
@@ -681,7 +714,6 @@ export async function getWorkspaceLimitBytes(
       dbResult.val
         .selectFrom('sandbox_size_requests')
         .select('requested_bytes')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .where('status', '=', 'approved')
         .execute(),
@@ -711,7 +743,7 @@ export function getPublicBaseUrl(): string | null {
 
 /** Test hook. */
 export function invalidateSettingsCache(): void {
-  orgCache.clear();
+  orgCache = null;
 }
 
 export { getEffectiveLogLevel, watchLogLevel } from './log-level-sync';

@@ -26,7 +26,6 @@ import {
 } from '@/lib/mcp-tools/jira-admin/client';
 
 interface LogScope {
-  tenantId: string;
   subject?: string;
 }
 

@@ -94,21 +94,18 @@ describe('DelegateClient', () => {
   it('binds a session or a run to every body of a derived client', async () => {
     const { fetchImpl, calls } = scripted(() => json(200, { enrolled: true }));
     const client = new DelegateClient(new DelegateTransport(config, fetchImpl));
-    await client.forSession('session-1').keyStatus('tenant-1', 'alice');
-    await client.forRun('run-1').keyStatus('tenant-1', 'alice');
-    await client.keyStatus('tenant-1', 'alice');
+    await client.forSession('session-1').keyStatus('alice');
+    await client.forRun('run-1').keyStatus('alice');
+    await client.keyStatus('alice');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
-      tenantId: 'tenant-1',
       subject: 'alice',
       sessionId: 'session-1',
     });
     expect(JSON.parse(String(calls[1]!.init.body))).toEqual({
-      tenantId: 'tenant-1',
       subject: 'alice',
       runId: 'run-1',
     });
     expect(JSON.parse(String(calls[2]!.init.body))).toEqual({
-      tenantId: 'tenant-1',
       subject: 'alice',
     });
   });
@@ -116,7 +113,7 @@ describe('DelegateClient', () => {
   it('posts one op under /v1 with the bearer key and a JSON body', async () => {
     const { fetchImpl, calls } = scripted(() => json(200, { held: 2, managed: 1, own: 0 }));
     const client = new DelegateClient(new DelegateTransport(config, fetchImpl));
-    const census = await client.enrollmentCensus('tenant-1');
+    const census = await client.enrollmentCensus();
     expect(census).toEqual({ ok: true, val: { held: 2, managed: 1, own: 0 } });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe('http://delegate.test:8096/v1/keys/census');
@@ -126,7 +123,7 @@ describe('DelegateClient', () => {
         ? Object.fromEntries(Object.entries(calls[0]!.init.headers))
         : {};
     expect(headers.authorization).toBe('Bearer k-1');
-    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ tenantId: 'tenant-1' });
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ });
   });
 
   it('reads a key status into dates and string lists, defaulting what is missing', async () => {
@@ -143,7 +140,7 @@ describe('DelegateClient', () => {
       })
     );
     const client = new DelegateClient(new DelegateTransport(config, fetchImpl));
-    const status = await client.keyStatus('tenant-1', 'alice', 'session-1');
+    const status = await client.keyStatus('alice', 'session-1');
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.val).toEqual({
@@ -167,7 +164,7 @@ describe('DelegateClient', () => {
       json(423, { error: { type: 'NEEDS_DELEGATION', message: 'seal again' } })
     );
     const client = new DelegateClient(new DelegateTransport(config, locked.fetchImpl));
-    const status = await client.keyStatus('tenant-1', 'alice');
+    const status = await client.keyStatus('alice');
     expect(status.ok).toBe(false);
     if (status.ok) return;
     expect(status.err.type).toBe('NEEDS_DELEGATION');
@@ -184,7 +181,7 @@ describe('DelegateClient', () => {
     const unconfigured = new DelegateClient(
       new DelegateTransport(null, scripted(() => json(200, {})).fetchImpl)
     );
-    const missing = await unconfigured.keyStatus('tenant-1', 'alice');
+    const missing = await unconfigured.keyStatus('alice');
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.err.type).toBe('DELEGATE_UNCONFIGURED');
@@ -193,7 +190,7 @@ describe('DelegateClient', () => {
       throw new TypeError('fetch failed');
     });
     const client = new DelegateClient(new DelegateTransport(config, down.fetchImpl));
-    const status = await client.keyStatus('tenant-1', 'alice');
+    const status = await client.keyStatus('alice');
     expect(status.ok).toBe(false);
     if (status.ok) return;
     expect(status.err.type).toBe('DELEGATE_UNREACHABLE');

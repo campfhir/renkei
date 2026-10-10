@@ -9,11 +9,10 @@ import type { DB } from '@renkei/db';
 import { chatModelsOnly, imageModelsOnly } from '@renkei/agent-llm';
 import type { ModelOption } from './views';
 
-export async function listChatModels(db: Kysely<DB>, tenantId: string): Promise<ModelOption[]> {
+export async function listChatModels(db: Kysely<DB>): Promise<ModelOption[]> {
   const rows = await db
     .selectFrom('llm_model_configs')
     .select(['id', 'label', 'provider', 'model', 'is_default'])
-    .where('tenant_id', '=', tenantId)
     .where('enabled', '=', true)
     // An image generation model cannot answer chat: never in the picker.
     .where(chatModelsOnly)
@@ -38,13 +37,11 @@ export interface ImageModelChoice {
 }
 
 export async function listImageModels(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<ImageModelChoice[]> {
   const rows = await db
     .selectFrom('llm_model_configs')
     .select(['id', 'label', 'model'])
-    .where('tenant_id', '=', tenantId)
     .where('enabled', '=', true)
     .where(imageModelsOnly)
     .orderBy('label', 'asc')

@@ -18,7 +18,6 @@ import {
 
 export async function nextRunAtFor(
   db: Kysely<DB>,
-  tenantId: string,
   config: ScheduleConfig
 ): Promise<Date> {
   let calendarDates: BlackoutEntry[] = [];
@@ -26,7 +25,6 @@ export async function nextRunAtFor(
     const row = await db
       .selectFrom('schedule_calendars')
       .select(['dates'])
-      .where('tenant_id', '=', tenantId)
       .where('id', '=', config.calendarId)
       .executeTakeFirst();
     calendarDates = row && Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : [];

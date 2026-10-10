@@ -52,7 +52,6 @@ const PAGE_SIZE = 500;
  */
 export async function searchChatMessages(
   db: Kysely<DB>,
-  tenantId: string,
   chatIds: string[],
   query: string,
   ciphers: Map<string, ContentCipher> = new Map()
@@ -73,7 +72,6 @@ export async function searchChatMessages(
         'chat_messages.chat_id as chat_id',
         'chat_messages.content as content',
       ])
-      .where('chat_messages.tenant_id', '=', tenantId)
       .where('chat_messages.chat_id', 'in', ids)
       .where('chat_messages.kind', 'in', ['prompt', 'assistant'])
       .orderBy('chats.updated_at', 'desc')

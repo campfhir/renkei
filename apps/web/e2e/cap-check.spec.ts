@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_TENANT_ID, AGENT_RICH_ID } from './seed';
+import { AGENT_RICH_ID } from './seed';
 
 // Proves the BUILDER validates against the org ceiling rather than the
 // MAX_STEPS default: set the tenant ceiling to 1 and a multi-step agent must
@@ -10,18 +10,15 @@ test('builder honours the org step ceiling', async ({ page }) => {
   await client.connect();
   try {
     await client.query(
-      `INSERT INTO tenant_settings (tenant_id, key, value) VALUES ($1, 'agent_max_steps', '1'::jsonb)
-       ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value`,
-      [E2E_TENANT_ID]
+      `INSERT INTO settings (key, value) VALUES ('agent_max_steps', '1'::jsonb)\n       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`
     );
 
-    await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
+    await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await expect(page.getByText(/Keep the agent to 1 steps or fewer/)).toBeVisible();
   } finally {
     await client.query(
-      `DELETE FROM tenant_settings WHERE tenant_id = $1 AND key = 'agent_max_steps'`,
-      [E2E_TENANT_ID]
+      `DELETE FROM settings WHERE key = 'agent_max_steps'`
     );
     await client.end();
   }

@@ -16,8 +16,8 @@ import {
 } from './browser-state';
 
 const KEY = Buffer.alloc(32, 7);
-const ALICE = { tenantId: 'tenant-1', subject: 'auth0|alice' };
-const BOB = { tenantId: 'tenant-1', subject: 'auth0|bob' };
+const ALICE = { subject: 'auth0|alice' };
+const BOB = { subject: 'auth0|bob' };
 
 const state = (url = 'https://example.com/inbox'): SavedBrowserState => ({
   url,
@@ -52,11 +52,11 @@ afterEach(async () => {
 
 describe('createBrowserStateStore', () => {
   it('is null without a sealing key', () => {
-    expect(createBrowserStateStore(root, null)).toBeNull();
+    expect(createBrowserStateStore(root, 'renkei', null)).toBeNull();
   });
 
   it('round-trips a session, sealed on disk, and only for its own caller', async () => {
-    const store = createBrowserStateStore(root, KEY)!;
+    const store = createBrowserStateStore(root, 'renkei', KEY)!;
     const saved = state();
     await store.save(ALICE, saved);
     expect(await store.load(ALICE)).toEqual(saved);
@@ -67,20 +67,20 @@ describe('createBrowserStateStore', () => {
     expect(bytes).not.toContain('example.com');
     // Bob has his own file name, and Alice's key opens nothing of his.
     expect(await store.load(BOB)).toBeNull();
-    expect(browserStateKey(KEY, ALICE).equals(browserStateKey(KEY, BOB))).toBe(false);
-    expect(browserStateKey(KEY, ALICE).equals(browserStateKey(KEY, ALICE))).toBe(true);
+    expect(browserStateKey(KEY, 'renkei', ALICE).equals(browserStateKey(KEY, 'renkei', BOB))).toBe(false);
+    expect(browserStateKey(KEY, 'renkei', ALICE).equals(browserStateKey(KEY, 'renkei', ALICE))).toBe(true);
   });
 
   it('drops a file that does not open under the caller’s key', async () => {
-    const store = createBrowserStateStore(root, KEY)!;
+    const store = createBrowserStateStore(root, 'renkei', KEY)!;
     await store.save(ALICE, state());
-    const other = createBrowserStateStore(root, Buffer.alloc(32, 9))!;
+    const other = createBrowserStateStore(root, 'renkei', Buffer.alloc(32, 9))!;
     expect(await other.load(ALICE)).toBeNull();
     expect(await readdir(join(root, 'browser-state'))).toEqual([]);
   });
 
   it('forgets a session on remove and past its TTL', async () => {
-    const store = createBrowserStateStore(root, KEY)!;
+    const store = createBrowserStateStore(root, 'renkei', KEY)!;
     await store.save(ALICE, state());
     await store.remove(ALICE);
     expect(await store.load(ALICE)).toBeNull();
@@ -89,7 +89,7 @@ describe('createBrowserStateStore', () => {
   });
 
   it('sweeps files older than the TTL and leaves the rest', async () => {
-    const store = createBrowserStateStore(root, KEY)!;
+    const store = createBrowserStateStore(root, 'renkei', KEY)!;
     await store.save(ALICE, state());
     await store.save(BOB, state());
     const [first] = await readdir(join(root, 'browser-state'));

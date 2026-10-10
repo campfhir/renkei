@@ -80,7 +80,6 @@ export function createMicrosoftGrantConnectedHandler(): EventHandler {
   return async (event) => {
     const payload = payloadOf(event);
     const accountId = requireString(payload, 'accountId');
-    const tenantId = event.tenant_id;
 
     const baseUrl = getPublicBaseUrl();
     if (!baseUrl) {
@@ -89,19 +88,18 @@ export function createMicrosoftGrantConnectedHandler(): EventHandler {
       throw new Error('public base URL not set; cannot mint Graph notification URLs');
     }
 
-    const access = await resolveMicrosoftAccess(tenantId, accountId);
-    const rows = await ensureMicrosoftSubscriptions(tenantId, access, baseUrl);
+    const access = await resolveMicrosoftAccess(accountId);
+    const rows = await ensureMicrosoftSubscriptions(access, baseUrl);
 
     // Initial backfill: one bounded delta round per resource. Idempotent —
     // a retry after a partial pass re-runs into upserts.
     let indexed = 0;
     for (const row of rows) {
-      const synced = await runSubscriptionSync(tenantId, access, row);
+      const synced = await runSubscriptionSync(access, row);
       indexed += synced.changed;
     }
     logger.info('microsoft bootstrap complete: {subscriptions} subscriptions, {indexed} objects', {
       component: COMPONENT,
-      tenantId,
       subscriptions: rows.length,
       indexed,
     });
@@ -113,14 +111,12 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
     const payload = payloadOf(event);
     const accountId = requireString(payload, 'accountId');
     const subscriptionId = requireString(payload, 'subscriptionId');
-    const tenantId = event.tenant_id;
 
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
     const row = await dbResult.val
       .selectFrom('webhook_subscriptions')
       .select(['id', 'resource', 'subscription_id', 'client_state', 'expires_at', 'delta_link'])
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', MICROSOFT)
       .where('account_id', '=', accountId)
       .where('subscription_id', '=', subscriptionId)
@@ -129,17 +125,15 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
       // Disconnected between delivery and processing — nothing to sync.
       logger.info('notification for a subscription that no longer exists; dropping', {
         component: COMPONENT,
-        tenantId,
         subscriptionId,
       });
       return 'skipped';
     }
 
-    const access = await resolveMicrosoftAccess(tenantId, accountId);
-    const synced = await runSubscriptionSync(tenantId, access, row);
+    const access = await resolveMicrosoftAccess(accountId);
+    const synced = await runSubscriptionSync(access, row);
     logger.debug('delta round for {resource}: {changed} changed, {removed} removed', {
       component: COMPONENT,
-      tenantId,
       resource: row.resource,
       changed: synced.changed,
       removed: synced.removed,
@@ -153,20 +147,18 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
     const accountId = requireString(payload, 'accountId');
     const subscriptionId = requireString(payload, 'subscriptionId');
     const lifecycleEvent = typeof payload.lifecycleEvent === 'string' ? payload.lifecycleEvent : '';
-    const tenantId = event.tenant_id;
 
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
     const db = dbResult.val;
 
     if (lifecycleEvent === 'reauthorizationRequired') {
-      const access = await resolveMicrosoftAccess(tenantId, accountId);
+      const access = await resolveMicrosoftAccess(accountId);
       const renewed = await renewGraphSubscription(access.auth, subscriptionId);
       if (renewed.ok) {
         await db
           .updateTable('webhook_subscriptions')
           .set({ expires_at: renewed.val.expiresAt, updated_at: sql`NOW()` })
-          .where('tenant_id', '=', tenantId)
           .where('provider', '=', MICROSOFT)
           .where('subscription_id', '=', subscriptionId)
           .execute();
@@ -176,7 +168,6 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
       // recreates from scratch.
       logger.warn('reauthorization renewal failed; clearing for recreate', {
         component: COMPONENT,
-        tenantId,
         subscriptionId,
       });
     }
@@ -187,13 +178,11 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
     await db
       .updateTable('webhook_subscriptions')
       .set({ subscription_id: null, expires_at: null, updated_at: sql`NOW()` })
-      .where('tenant_id', '=', tenantId)
       .where('provider', '=', MICROSOFT)
       .where('subscription_id', '=', subscriptionId)
       .execute();
     logger.warn('lifecycle {lifecycleEvent}: subscription cleared for recreate', {
       component: COMPONENT,
-      tenantId,
       lifecycleEvent: lifecycleEvent || '(unknown)',
     });
   };
@@ -217,7 +206,6 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
     const objectId = requireString(payload, 'objectId');
     const refId = requireString(payload, 'refId');
     const override = requireOverride(payload);
-    const tenantId = event.tenant_id;
 
     // The same mailbox-kind ordering key runSubscriptionSync uses — refIds
     // are `${upn}/${kind}/${objectId}`, so the first two segments name the
@@ -229,7 +217,6 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
       // message is still queued there, the shared ordering key puts this
       // delete after it — an inline delete could run first and lose the race.
       await enqueueKnowledgeEvent(
-        tenantId,
         'delete.object',
         { provider: MICROSOFT, refId },
         orderingKey
@@ -237,19 +224,18 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
       return;
     }
 
-    const access = await resolveMicrosoftAccess(tenantId, accountId);
-    const embedder = await resolveEmbeddingProvider(tenantId);
+    const access = await resolveMicrosoftAccess(accountId);
+    const embedder = await resolveEmbeddingProvider();
     if (!embedder) {
       logger.warn('message-override skipped: knowledge layer is off for this org', {
         component: COMPONENT,
-        tenantId,
       });
       return;
     }
 
     const fetched = await graphRequest(access.auth, `/me/messages/${objectId}`);
     if (!fetched.ok || !isRecord(fetched.val)) {
-      throw new Error(`could not re-fetch message ${objectId} for override (tenant ${tenantId})`);
+      throw new Error(`could not re-fetch message ${objectId} for override`);
     }
 
     // The sanitize-and-ingest runs in the embedding queue (Decision #20);
@@ -264,7 +250,6 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
     // record instead of improving it.
     const received = str(fetched.val.receivedDateTime);
     await enqueueKnowledgeEvent(
-      tenantId,
       'ingest.email',
       {
         provider: MICROSOFT,

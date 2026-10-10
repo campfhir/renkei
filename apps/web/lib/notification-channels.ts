@@ -29,7 +29,6 @@ const OUTLOOK_REQUIRED = outlookScopeFor('outlook_send_mail');
 const WEBEX_REQUIRED = webexScopeFor('webex_note_to_self');
 
 export async function getChannelAvailability(
-  tenantId: string,
   subject: string
 ): Promise<ChannelAvailability> {
   const dbResult = getDatabase();
@@ -38,7 +37,6 @@ export async function getChannelAvailability(
   const rows = await dbResult.val
     .selectFrom('provider_grants')
     .select(['provider', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('provider', 'in', [MICROSOFT, WEBEX_USER])
     .execute()

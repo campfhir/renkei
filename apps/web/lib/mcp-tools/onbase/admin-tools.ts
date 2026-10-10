@@ -117,7 +117,7 @@ async function loadAdminCatalog(
   auth: OnBaseAuth,
   kind: AdminCatalogKind
 ): Promise<NamedThing[] | string> {
-  const cacheKey = `${context.tenantId}:${kind}`;
+  const cacheKey = kind;
   const cached = adminCatalogCache.get(cacheKey);
   if (cached) return cached;
   const result = await apiJson(
@@ -133,7 +133,7 @@ async function loadAdminCatalog(
 
 /** Drop a cached page so the next resolveAdminRef re-fetches it after a write. */
 function invalidateAdminCatalog(context: MCPToolContext, kind: AdminCatalogKind): void {
-  adminCatalogCache.invalidate(`${context.tenantId}:${kind}`);
+  adminCatalogCache.invalidate(kind);
 }
 
 async function resolveAdminRef(
@@ -323,7 +323,7 @@ async function userLabels(
   const details = new Map<string, Record<string, unknown>>();
   await Promise.all(
     unique.slice(0, USER_DETAIL_LIMIT).map(async (id) => {
-      const key = `${context.tenantId}:user:${id}`;
+      const key = `user:${id}`;
       const cached = userDetailCache.get(key);
       if (cached) {
         details.set(id, cached);

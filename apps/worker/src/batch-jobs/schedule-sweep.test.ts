@@ -22,23 +22,18 @@ maybe('batch-job schedule sweep', () => {
   // its callback to register tests).
   let db: Kysely<DB>;
 
-  const tenantId = randomUUID();
-  const subject = `sched-subject-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `sched-subject-${suiteId.slice(0, 8)}`;
 
   beforeAll(async () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `batch-sched-test-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM batch_jobs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM batch_job_schedules WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM batch_jobs WHERE subject = ${subject}`.execute(db);
+    await sql`DELETE FROM batch_job_schedules WHERE subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
@@ -51,7 +46,6 @@ maybe('batch-job schedule sweep', () => {
       .insertInto('batch_job_schedules')
       .values({
         id,
-        tenant_id: tenantId,
         subject,
         name: `sched-batch-${id.slice(0, 8)}`,
         kind: 'document-ocr-pipeline',

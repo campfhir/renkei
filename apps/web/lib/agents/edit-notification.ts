@@ -29,7 +29,6 @@ import { getIdentityDisplay } from '@/lib/identity';
 import { logger } from '@/lib/logger';
 
 export function notifyAgentEdited(input: {
-  tenantId: string;
   /** Whose agent it is — the notification's reader. */
   ownerSubject: string;
   /** Who saved the change. */
@@ -40,11 +39,11 @@ export function notifyAgentEdited(input: {
   void (async () => {
     // fresh: the preferences page saves through a different module graph,
     // and "I just turned this off" must hold for the very next edit.
-    const prefs = await getNotificationPrefs(input.tenantId, input.ownerSubject, { fresh: true });
+    const prefs = await getNotificationPrefs(input.ownerSubject, { fresh: true });
     const wanted = effectiveDelivery(prefs, input.agentId, 'agentEditedByOthers');
     if (!wanted.app && !wanted.email && !wanted.webex) return;
 
-    const who = await getIdentityDisplay(input.tenantId, input.actorSubject);
+    const who = await getIdentityDisplay(input.actorSubject);
     const editorName = who?.displayName || who?.email || 'Someone you shared it with';
     const headline = `${editorName} edited your agent "${input.agentName}"`;
 
@@ -56,7 +55,6 @@ export function notifyAgentEdited(input: {
           .insertInto('agent_notifications')
           .values({
             id,
-            tenant_id: input.tenantId,
             subject: input.ownerSubject,
             kind: 'agent_edited',
             headline,
@@ -71,7 +69,6 @@ export function notifyAgentEdited(input: {
         if (keyResult.ok) {
           void sendPush(
             dbResult.val,
-            input.tenantId,
             input.ownerSubject,
             keyResult.val,
             { title: headline, body: input.agentName, tag: id, refUrl: null, notificationId: id },
@@ -82,21 +79,19 @@ export function notifyAgentEdited(input: {
     }
 
     if (wanted.email) {
-      const owner = await getIdentityDisplay(input.tenantId, input.ownerSubject);
+      const owner = await getIdentityDisplay(input.ownerSubject);
       if (owner?.email) {
         const access = await resolveGraphAccess({
-          tenantId: input.tenantId,
           subject: input.ownerSubject,
         });
         if (typeof access === 'string') {
           logger.warn('agent-edited mail not sent: {reason}', {
             component: 'agents/edit-notification',
-            tenantId: input.tenantId,
             agentId: input.agentId,
             reason: access,
           });
         } else {
-          const context = { tenantId: input.tenantId, subject: input.ownerSubject };
+          const context = { subject: input.ownerSubject };
           const sent = await graphPost(context, access.auth, '/me/sendMail', {
             message: {
               subject: headline,
@@ -108,7 +103,6 @@ export function notifyAgentEdited(input: {
           if (!sent.ok) {
             logger.warn('agent-edited mail not sent: {reason}', {
               component: 'agents/edit-notification',
-              tenantId: input.tenantId,
               agentId: input.agentId,
               reason: sent.error,
             });
@@ -118,13 +112,12 @@ export function notifyAgentEdited(input: {
     }
 
     if (wanted.webex) {
-      const access = await resolveWebexUserAccess(input.tenantId, input.ownerSubject);
+      const access = await resolveWebexUserAccess(input.ownerSubject);
       if (access) {
-        const sent = await sendWebexNote(input.tenantId, access, `**${headline}**`);
+        const sent = await sendWebexNote(access, `**${headline}**`);
         if (!sent.ok) {
           logger.warn('agent-edited WebEx note not sent for agent {agentId}', {
             component: 'agents/edit-notification',
-            tenantId: input.tenantId,
             agentId: input.agentId,
           });
         }
@@ -133,7 +126,6 @@ export function notifyAgentEdited(input: {
   })().catch((error: unknown) => {
     logger.warn('agent-edited notification not recorded', {
       component: 'agents/edit-notification',
-      tenantId: input.tenantId,
       agentId: input.agentId,
       error: error instanceof Error ? error.message : String(error),
     });

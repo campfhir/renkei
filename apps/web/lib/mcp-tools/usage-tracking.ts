@@ -75,7 +75,6 @@ function errorSummaryOf(result: unknown): string | null {
 }
 
 export interface UsageContext {
-  tenantId: string;
   /** OIDC subject; usage is attributed deliberately (see migration 032). */
   subject: string | null;
   /**
@@ -101,7 +100,6 @@ function record(
     .insertInto('tool_calls')
     .values({
       id: randomUUID(),
-      tenant_id: context.tenantId,
       subject: context.subject,
       agent_id: context.agentId ?? null,
       tool,
@@ -120,7 +118,6 @@ function record(
       // otherwise flood the log with a problem nobody can act on per-call.
       logger.debug('tool usage not recorded: {error}', {
         component: 'mcp/usage',
-        tenantId: context.tenantId,
         tool,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -148,7 +145,7 @@ async function actorFor(context: UsageContext): Promise<{ subject: string; displ
   try {
     const dbResult = getDatabase();
     if (!dbResult.ok) return fallback;
-    return await describeActor(dbResult.val, context.tenantId, context.subject);
+    return await describeActor(dbResult.val, context.subject);
   } catch {
     return fallback;
   }
@@ -170,7 +167,6 @@ async function logToolCall(
   const title = typeof config?.title === 'string' ? config.title : null;
   const fields = {
     component: 'mcp/tools',
-    tenantId: context.tenantId,
     userName: actor.displayName,
     subject: actor.subject,
     toolLabel: friendlyToolName(tool, title),

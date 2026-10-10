@@ -98,33 +98,32 @@ describe('applyThemeMode', () => {
 });
 
 describe('the per-browser cache', () => {
-  it('is scoped by tenant and ignores anything that is not a mode', () => {
-    setStoredThemeMode('t1', 'dark');
-    expect(getStoredThemeMode('t1')).toBe('dark');
-    expect(getStoredThemeMode('t2')).toBeNull();
-    stored.set(themeStorageKey('t2'), 'blue');
-    expect(getStoredThemeMode('t2')).toBeNull();
+  it('remembers a mode and ignores anything that is not one', () => {
+    setStoredThemeMode('dark');
+    expect(getStoredThemeMode()).toBe('dark');
+    stored.set(themeStorageKey(), 'blue');
+    expect(getStoredThemeMode()).toBeNull();
   });
 
-  it('tells a subscriber in this tab about a pick for its tenant only', () => {
+  it('tells a subscriber in this tab about a pick', () => {
     const seen: string[] = [];
-    const unsubscribe = subscribeStoredThemeMode('t1', (mode) => seen.push(mode));
-    setStoredThemeMode('t1', 'dark');
-    setStoredThemeMode('t2', 'light');
-    setStoredThemeMode('t1', 'auto');
-    expect(seen).toEqual(['dark', 'auto']);
+    const unsubscribe = subscribeStoredThemeMode((mode) => seen.push(mode));
+    setStoredThemeMode('dark');
+    setStoredThemeMode('light');
+    setStoredThemeMode('auto');
+    expect(seen).toEqual(['dark', 'light', 'auto']);
 
     unsubscribe();
-    setStoredThemeMode('t1', 'light');
-    expect(seen).toEqual(['dark', 'auto']);
+    setStoredThemeMode('dark');
+    expect(seen).toEqual(['dark', 'light', 'auto']);
   });
 
   it("tells a subscriber what another tab wrote, and 'auto' once it is gone", () => {
     const seen: string[] = [];
-    const unsubscribe = subscribeStoredThemeMode('t1', (mode) => seen.push(mode));
+    const unsubscribe = subscribeStoredThemeMode((mode) => seen.push(mode));
     // Another tab's write shows up as a storage event, never as our custom one.
-    stored.set(themeStorageKey('t1'), 'dark');
-    window.dispatchEvent(storageEvent(themeStorageKey('t1')));
+    stored.set(themeStorageKey(), 'dark');
+    window.dispatchEvent(storageEvent(themeStorageKey()));
     // Some other key in the same origin is not our business.
     window.dispatchEvent(storageEvent('renkei:something-else'));
     // localStorage.clear() elsewhere arrives with a null key.

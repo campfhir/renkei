@@ -64,13 +64,11 @@ function uuidFrom(seed: string): string {
 
 /** This project's own tenant/session/slug — isolated from every other project and spec. */
 function fixtureFor(projectName: string): {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`admanager-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`admanager-e2e-session:${projectName}`),
     slug: `e2e-admanager-${projectName}`,
     subject: `e2e-admanager-${projectName}@example.com`,
@@ -80,44 +78,28 @@ function fixtureFor(projectName: string): {
 type Fixture = ReturnType<typeof fixtureFor>;
 
 async function baseSeed(client: Client, fixture: Fixture): Promise<void> {
-  await client.query('DELETE FROM admanager_instance_connections WHERE tenant_id = $1', [
-    fixture.tenantId,
-  ]);
-  await client.query('DELETE FROM admanager_instances WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM user_encryption_keys WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-  await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-    fixture.tenantId,
-    fixture.slug,
-  ]);
+  await client.query('DELETE FROM admanager_instance_connections WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM admanager_instances');
+  await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM user_encryption_keys WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [
-      fixture.sessionId,
-      fixture.tenantId,
-      fixture.subject,
-      ['renkei-user', 'renkei-operator'],
-      new Date(Date.now() + 24 * 3_600_000),
-    ]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, $4)`,
+    [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
   );
   await client.query(
-    `INSERT INTO identities (tenant_id, subject, email, display_name)
-     VALUES ($1, $2, $3, $4)`,
-    [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+    `INSERT INTO identities (subject, email, display_name)\n     VALUES ($1, $2, $3)`,
+    [fixture.subject, fixture.subject, 'E2E Tester']
   );
   // No coach marks tour stealing focus mid-screenshot.
   await client.query(
-    `INSERT INTO user_preferences (tenant_id, subject, key, value)
-     VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-    [fixture.tenantId, fixture.subject]
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+    [fixture.subject]
   );
   // Enrolled already (docs/delegate-key-design.md), so the first-sign-in
   // "your encryption key is ready" dialog does not sit over the forms.
-  await enrollForE2E(client, fixture.tenantId, fixture.subject);
+  await enrollForE2E(client, fixture.subject);
 }
 
 async function seedAdminTenant(fixture: Fixture): Promise<void> {
@@ -143,32 +125,20 @@ async function seedUserTenant(fixture: Fixture): Promise<{ instanceId: string }>
     await baseSeed(client, fixture);
     const instanceId = randomUUID();
     await client.query(
-      `INSERT INTO admanager_instances (id, tenant_id, name, environment, base_url, enabled)
-       VALUES ($1, $2, $3, $4, $5, true)`,
-      [instanceId, fixture.tenantId, 'ADManager Plus prod', 'prod', 'https://admp.example.com:8080']
+      `INSERT INTO admanager_instances (id, name, environment, base_url, enabled)\n       VALUES ($1, $2, $3, $4, true)`,
+      [instanceId, 'ADManager Plus prod', 'prod', 'https://admp.example.com:8080']
     );
     await client.query(
-      `INSERT INTO admanager_instance_connections
-         (tenant_id, instance_id, subject, encrypted_credentials, technician_name, permissions)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        fixture.tenantId,
-        instanceId,
-        fixture.subject,
-        await sealForSubject(
-          client,
-          fixture.tenantId,
-          fixture.subject,
-          JSON.stringify({ authToken: 'e2e-seeded-authtoken' })
-        ),
-        'Jamie Lee',
-        ['accounts.read'],
-      ]
+      `INSERT INTO admanager_instance_connections\n         (instance_id, subject, encrypted_credentials, technician_name, permissions)\n       VALUES ($1, $2, $3, $4, $5)`,
+      [instanceId, fixture.subject, await sealForSubject(
+                  client,
+                  fixture.subject,
+                  JSON.stringify({ authToken: 'e2e-seeded-authtoken' })
+                ), 'Jamie Lee', ['accounts.read']]
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'connectors', '{"added": ["admanager"]}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{"added": ["admanager"]}'::jsonb)`,
+      [fixture.subject]
     );
     return { instanceId };
   } finally {
@@ -179,7 +149,7 @@ async function seedUserTenant(fixture: Fixture): Promise<{ instanceId: string }>
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -204,7 +174,7 @@ test('admin: ADManager Plus instance registry — create, reachability, edit, de
   await seedAdminTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/admanager`);
+  await page.goto(`/admin/admanager`);
   await expect(page.getByRole('heading', { name: 'ADManager Plus', exact: true })).toBeVisible();
   await expect(page.getByText('No instances registered yet.')).toBeVisible();
   await shot(page, testInfo, 'admanager-admin-01-empty');
@@ -273,7 +243,7 @@ test('admin: ADManager Plus instance registry — create, reachability, edit, de
   // Delete, through the real DELETE route, back to the empty state.
   page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: 'Delete instance' }).click();
-  await expect(page).toHaveURL(new RegExp(`/${fixture.slug}/admin/admanager$`));
+  await expect(page).toHaveURL(new RegExp(`/admin/admanager$`));
   await expect(page.getByText('No instances registered yet.')).toBeVisible();
 });
 
@@ -284,7 +254,7 @@ test('admin: transport security off is refused for production or a public host, 
   await seedAdminTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/admanager`);
+  await page.goto(`/admin/admanager`);
   await expect(page.getByText('No instances registered yet.')).toBeVisible();
   await page.getByRole('button', { name: '+ New instance' }).click();
   await page.getByLabel('Name').fill('ADManager Plus lab');
@@ -341,7 +311,7 @@ test('user: an already-connected ADManager Plus card — real permission persist
   await seedUserTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/connectors`);
+  await page.goto(`/connectors`);
   await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
   const card = page.locator('[data-coach="card-admanager"]');
   await expect(card.getByRole('heading', { name: 'ADManager Plus' })).toBeVisible();

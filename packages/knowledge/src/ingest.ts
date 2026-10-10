@@ -96,18 +96,16 @@ function sourceAtValue(sourceAt: string | null | undefined): Date | null {
 }
 
 export async function ingestChunk(
-  tenantId: string,
   embedder: EmbeddingProvider,
   chunk: KnowledgeChunkInput
 ): Promise<Result<void, 'EMBEDDING_FAILED' | 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {
   const embedded = await embedder.embed([chunk.content], 'passage');
   if (!embedded.ok) return embedded;
-  return upsertChunkRow(tenantId, chunk, embedded.val[0] ?? []);
+  return upsertChunkRow(chunk, embedded.val[0] ?? []);
 }
 
 /** The upsert half of ingestChunk, for callers that already hold the vector. */
 export async function upsertChunkRow(
-  tenantId: string,
   chunk: KnowledgeChunkInput,
   embedding: readonly number[]
 ): Promise<Result<void, 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {
@@ -135,7 +133,6 @@ export async function upsertChunkRow(
         .insertInto('knowledge_chunks')
         .values({
           id: randomUUID(),
-          tenant_id: tenantId,
           provider: chunk.provider,
           ref_id: chunk.refId,
           metadata: JSON.stringify(chunk.metadata),
@@ -149,7 +146,7 @@ export async function upsertChunkRow(
           // source_at must be in the update set too: a re-ingest of an edited
           // page carries a newer document date, and omitting it here would
           // pin the row to whatever date the first ingest saw.
-          oc.columns(['tenant_id', 'provider', 'ref_id']).doUpdateSet({
+          oc.columns(['provider', 'ref_id']).doUpdateSet({
             metadata: JSON.stringify(chunk.metadata),
             content: storedContent,
             embedding: sql`${vector}::vector`,

@@ -37,20 +37,17 @@ const MAX_PER_PASS = 25;
  */
 async function calendarDatesOf(
   db: Kysely<DB>,
-  tenantId: string,
   calendarId: string
 ): Promise<BlackoutEntry[]> {
   const row = await db
     .selectFrom('schedule_calendars')
     .select(['dates'])
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', calendarId)
     .executeTakeFirst();
   if (!row) {
     logger.warn('schedule calendar {calendarId} not found; firing without blackouts', {
       component: 'worker-agents/schedule',
       calendarId,
-      tenantId,
     });
     return [];
   }
@@ -64,7 +61,6 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
       .innerJoin('agents as a', 'a.id', 't.agent_id')
       .select([
         't.id as trigger_id',
-        't.tenant_id',
         't.agent_id',
         't.config',
         't.next_run_at',
@@ -102,7 +98,7 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
       if (!observed) continue;
       const scheduledFor = observed.toISOString();
       const calendarDates = config.calendarId
-        ? await calendarDatesOf(db, row.tenant_id, config.calendarId)
+        ? await calendarDatesOf(db, config.calendarId)
         : [];
       let next: Date;
       try {
@@ -141,7 +137,6 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
       }
 
       const result = await createAgentRun(db, producer, {
-        tenantId: row.tenant_id,
         agentId: row.agent_id,
         ownerSubject: row.owner_subject,
         steps: row.steps,
@@ -168,7 +163,6 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
         component: 'worker-agents/schedule',
         agentId: row.agent_id,
         runId: result.val.runId,
-        tenantId: row.tenant_id,
         subject: row.owner_subject,
       });
     }

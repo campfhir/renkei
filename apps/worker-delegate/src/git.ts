@@ -6,7 +6,7 @@
  * for the one clone, pull or push, and this module relays the smart-HTTP
  * exchange to the real host with the person's token attached.
  *
- *   grant/git-ticket  — `{ tenantId, provider, subject, write }`: a ticket
+ *   grant/git-ticket  — `{ provider, subject, write }`: a ticket
  *                       bound to one person, one provider's host and one
  *                       direction, good for a few minutes. Answers the
  *                       ticket and the host; the caller builds the proxy
@@ -106,11 +106,10 @@ export class GitTickets {
 
   /** `grant/git-ticket` */
   async issue(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
-    const tenantId = str(body.tenantId);
     const provider = str(body.provider);
     const subject = str(body.subject);
     const write = body.write === true;
-    if (!tenantId || !provider || !subject) {
+    if (!provider || !subject) {
       return sendJson(response, 400, { error: { type: 'bad_request' } });
     }
     const host = Object.prototype.hasOwnProperty.call(HOSTS, provider) ? HOSTS[provider] : null;
@@ -121,7 +120,7 @@ export class GitTickets {
     }
     // The grant must exist and open now, so a missing connection fails at
     // the ask and not minutes later inside git's output.
-    const access = await this.grants.accessFor(tenantId, provider, { subject });
+    const access = await this.grants.accessFor(provider, { subject });
     if (!access.ok) {
       return sendJson(response, access.status, { error: { type: access.error } });
     }
@@ -132,7 +131,6 @@ export class GitTickets {
       .insertInto('delegate_git_tickets')
       .values({
         id,
-        tenant_id: tenantId,
         subject,
         provider,
         host: host.host,
@@ -174,7 +172,7 @@ export class GitTickets {
 
     const ticket = await this.db
       .selectFrom('delegate_git_tickets')
-      .select(['tenant_id', 'subject', 'provider', 'host', 'write', 'secret_hash', 'expires_at'])
+      .select(['subject', 'provider', 'host', 'write', 'secret_hash', 'expires_at'])
       .where('id', '=', id)
       .executeTakeFirst();
     if (
@@ -188,7 +186,7 @@ export class GitTickets {
     const writing = verb === 'git-receive-pack' || service === 'git-receive-pack';
     if (writing && !ticket.write) return refuse(response, 403, 'read_only_ticket');
 
-    const access = await this.grants.accessFor(ticket.tenant_id, ticket.provider, {
+    const access = await this.grants.accessFor(ticket.provider, {
       subject: ticket.subject,
     });
     if (!access.ok) return refuse(response, statusForGrantError(access.error), access.error);

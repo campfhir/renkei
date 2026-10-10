@@ -44,10 +44,10 @@ export interface ZoomAccess {
  * collectors AND for the two ZoomClient-based tools in index.ts.
  */
 export async function resolveZoomAccess(
-  context: Pick<MCPToolContext, 'tenantId' | 'subject'>
+  context: Pick<MCPToolContext, 'subject'>
 ): Promise<ZoomAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const grant = { tenantId: context.tenantId, provider: ZOOM, subject: context.subject };
+  const grant = { provider: ZOOM, subject: context.subject };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) return grantRefusalText(described.err.type, LABEL);
   const email =
@@ -112,7 +112,6 @@ export function oauthZoomAuth(context: MCPToolContext): ZoomAuth {
       } catch {
         logger.warn('Zoom API unreachable', {
           component: 'zoom/fetch',
-          tenantId: context.tenantId,
           subject: context.subject,
           path,
           method,
@@ -132,7 +131,6 @@ export function oauthZoomAuth(context: MCPToolContext): ZoomAuth {
           .catch(() => '');
         logger.warn('Zoom API non-OK response', {
           component: 'zoom/fetch',
-          tenantId: context.tenantId,
           subject: context.subject,
           path,
           method,

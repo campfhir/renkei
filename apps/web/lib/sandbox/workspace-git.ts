@@ -22,7 +22,7 @@ export interface WorkspaceGitAccess {
   username: string;
 }
 
-type GitContext = Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'> & {
+type GitContext = Pick<MCPToolContext, 'subject' | 'origin'> & {
   provider: string;
   bitbucketScopes?: string[];
   githubScopes?: string[];
@@ -69,13 +69,11 @@ async function resolveHostGitAccess(
   const grants = delegateGrants();
   const [ticket, described] = await Promise.all([
     grants.gitTicket({
-      tenantId: context.tenantId,
       provider: context.provider,
       subject: context.subject,
       write: options.write,
     }),
     grants.describe({
-      tenantId: context.tenantId,
       provider: context.provider,
       subject: context.subject,
     }),

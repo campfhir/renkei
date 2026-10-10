@@ -48,7 +48,7 @@ import {
   type KeyError,
   type KeyRing,
 } from './keyring';
-import { legacyKekOf, type LegacyKekError } from './legacy';
+import { legacyKekOf, legacyKeyDomain, type LegacyKekError } from './legacy';
 import { verifySession } from './request-scope';
 import { PRIVATE_ENVELOPE_PREFIX } from './user-sealed';
 import { keyVault } from './vault';
@@ -64,7 +64,6 @@ export interface SealedDelegation {
 }
 
 export interface DelegationInput {
-  tenantId: string;
   subject: string;
   /** The browser session the session delegations live and die with. */
   sessionId: string;
@@ -210,7 +209,6 @@ function openUnderOld(
  */
 async function moveSealedRows(
   trx: Transaction<DB>,
-  tenantId: string,
   subject: string,
   old: { userKey: Buffer; automationKey: Buffer } | { legacy: Buffer },
   next: { userKey: Buffer; automationKey: Buffer; version: number }
@@ -218,7 +216,6 @@ async function moveSealedRows(
   const grants = await trx
     .selectFrom('resource_key_grants')
     .select(['resource_key_id', 'holder_kind', 'wrapped_key'])
-    .where('tenant_id', '=', tenantId)
     .where('holder', '=', subject)
     .where('holder_kind', 'in', ['user', 'automation'])
     .forUpdate()
@@ -250,7 +247,7 @@ async function moveSealedRows(
     const selected = [...spec.idColumns, ...spec.columns].map((column) => sql.ref(column));
     const rows = await sql<Record<string, unknown>>`
       SELECT ${sql.join(selected)} FROM ${table}
-       WHERE tenant_id = ${tenantId} AND ${subjectColumn} = ${subject}
+       WHERE ${subjectColumn} = ${subject}
        FOR UPDATE
     `.execute(trx);
     for (const row of rows.rows) {
@@ -272,7 +269,7 @@ async function moveSealedRows(
       );
       await sql`
         UPDATE ${table} SET ${sql.join(assignments)}
-         WHERE tenant_id = ${tenantId} AND ${subjectColumn} = ${subject}
+         WHERE ${subjectColumn} = ${subject}
            AND ${sql.join(identity, sql` AND `)}
       `.execute(trx);
       values += 1;
@@ -354,7 +351,7 @@ async function boundSession(
   trx: Kysely<DB> | Transaction<DB>,
   input: DelegationInput
 ): Promise<Result<{ expiresAt: Date }, 'SESSION_MISMATCH'>> {
-  const session = await verifySession(trx, input.tenantId, input.subject, input.sessionId);
+  const session = await verifySession(trx, input.subject, input.sessionId);
   return session ? ok(session) : err('SESSION_MISMATCH' as const);
 }
 
@@ -374,7 +371,6 @@ async function writeDelegations(
   );
   await trx
     .deleteFrom('key_delegations')
-    .where('tenant_id', '=', input.tenantId)
     .where('subject', '=', input.subject)
     .where('scope', '=', 'session')
     .where('session_id', '=', input.sessionId)
@@ -385,7 +381,6 @@ async function writeDelegations(
       .insertInto('key_delegations')
       .values(
         session.map((entry) => ({
-          tenant_id: input.tenantId,
           subject: input.subject,
           instance_id: entry.instanceId,
           scope: 'session',
@@ -400,7 +395,6 @@ async function writeDelegations(
   if (automation.length > 0) {
     await trx
       .deleteFrom('key_delegations')
-      .where('tenant_id', '=', input.tenantId)
       .where('subject', '=', input.subject)
       .where('scope', '=', 'automation')
       .execute();
@@ -409,7 +403,6 @@ async function writeDelegations(
       .insertInto('key_delegations')
       .values(
         automation.map((entry) => ({
-          tenant_id: input.tenantId,
           subject: input.subject,
           instance_id: entry.instanceId,
           scope: 'automation',
@@ -438,7 +431,6 @@ export async function enroll(
     const existing = await trx
       .selectFrom('user_encryption_keys')
       .select(['salt', 'mode', 'version', 'verifier', 'sealed_kek', 'unlocked_until'])
-      .where('tenant_id', '=', input.tenantId)
       .where('subject', '=', input.subject)
       .forUpdate()
       .executeTakeFirst();
@@ -458,11 +450,10 @@ export async function enroll(
     const version = (existing?.version ?? 0) + 1;
     let migrated = { grants: 0, values: 0 };
     if (existing) {
-      const legacy = legacyKekOf(existing, input.tenantId, input.subject, input.passphrase);
+      const legacy = legacyKekOf(existing, await legacyKeyDomain(trx), input.subject, input.passphrase);
       if (!legacy.ok) return legacy;
       const moved = await moveSealedRows(
         trx,
-        input.tenantId,
         input.subject,
         { legacy: legacy.val },
         {
@@ -477,7 +468,6 @@ export async function enroll(
     await trx
       .insertInto('user_encryption_keys')
       .values({
-        tenant_id: input.tenantId,
         subject: input.subject,
         salt: existing?.salt ?? Buffer.alloc(32).toString('base64'),
         mode: 'held',
@@ -494,7 +484,7 @@ export async function enroll(
         rotated_at: existing ? enrolledAt : null,
       })
       .onConflict((oc) =>
-        oc.columns(['tenant_id', 'subject']).doUpdateSet({
+        oc.columns(['subject']).doUpdateSet({
           mode: 'held',
           version,
           public_key: input.publicKey,
@@ -529,7 +519,7 @@ export async function storeDelegations(
 ): Promise<Result<void, DelegateError>> {
   const vault = keyVault();
   if (!vault) return err('NO_VAULT' as const);
-  const row = await readKeyRow(db, input.tenantId, input.subject);
+  const row = await readKeyRow(db, input.subject);
   if (!row) return err('NO_USER_KEY' as const);
   if (row.mode !== 'held') return err('NOT_ENROLLED' as const);
   if (input.session.length === 0 && !input.revokeSession) {
@@ -541,7 +531,7 @@ export async function storeDelegations(
   let ring: KeyRing | null = null;
   if (ownSession) {
     const userKey = vault.open(ownSession.sealedKey);
-    const made = userKey ? ringFromUserKey(input.tenantId, input.subject, row, userKey) : null;
+    const made = userKey ? ringFromUserKey(input.subject, row, userKey) : null;
     if (!made || !made.ok) return err('BAD_DELEGATION' as const);
     ring = made.val;
   }
@@ -559,12 +549,10 @@ export async function storeDelegations(
 /** Revoke every automation delegation: the person's agents pause until their next sign-in. */
 export async function revokeAutomation(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<number> {
   const result = await db
     .deleteFrom('key_delegations')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('scope', '=', 'automation')
     .executeTakeFirst();
@@ -586,11 +574,11 @@ export async function rotateUserKey(
   db: Kysely<DB>,
   input: RotateInput
 ): Promise<Result<{ version: number; moved: number }, RotateError>> {
-  const current = await getKeyRing(db, input.tenantId, input.subject, 'session');
+  const current = await getKeyRing(db, input.subject, 'session');
   if (!current.ok) return current;
   const ring = current.val;
   if (!ring.userKey) return err('NEEDS_SESSION' as const);
-  const row = await readKeyRow(db, input.tenantId, input.subject);
+  const row = await readKeyRow(db, input.subject);
   if (!row) return err('NO_USER_KEY' as const);
   const next = openOwnDelegation(input.session, {
     public_key: row.public_key,
@@ -611,7 +599,6 @@ export async function rotateUserKey(
       const version = row.version + 1;
       const moved = await moveSealedRows(
         trx,
-        input.tenantId,
         input.subject,
         { userKey: ring.userKey ?? Buffer.alloc(0), automationKey: ring.automationKey },
         { userKey: next.val.userKey, automationKey: next.val.automationKey, version }
@@ -625,7 +612,6 @@ export async function rotateUserKey(
           wrapped_automation_key: input.wrappedAutomationKey,
           rotated_at: new Date(),
         })
-        .where('tenant_id', '=', input.tenantId)
         .where('subject', '=', input.subject)
         .execute();
       // Every other session's delegation carries the OLD key: gone, so those
@@ -633,7 +619,6 @@ export async function rotateUserKey(
       // first replace through device approval or by typing the new key).
       await trx
         .deleteFrom('key_delegations')
-        .where('tenant_id', '=', input.tenantId)
         .where('subject', '=', input.subject)
         .execute();
       await writeDelegations(trx, input, session.val.expiresAt);
@@ -648,19 +633,16 @@ export async function rotateUserKey(
  */
 export async function shredUserKey(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<boolean> {
   return db.transaction().execute(async (trx) => {
     await trx
       .deleteFrom('resource_key_grants')
-      .where('tenant_id', '=', tenantId)
       .where('holder', '=', subject)
       .where('holder_kind', 'in', ['user', 'automation', 'public'])
       .execute();
     const result = await trx
       .deleteFrom('user_encryption_keys')
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .executeTakeFirst();
     return Number(result.numDeletedRows) > 0;
@@ -669,15 +651,13 @@ export async function shredUserKey(
 
 /** How many people still carry a pre-enrollment row — the operator's signal for removing the master. */
 export async function enrollmentCensus(
-  db: Kysely<DB>,
-  tenantId?: string
+  db: Kysely<DB>
 ): Promise<{ held: number; managed: number; own: number }> {
-  let query = db
+  const rows = await db
     .selectFrom('user_encryption_keys')
     .select(['mode', (eb) => eb.fn.countAll<string>().as('count')])
-    .groupBy('mode');
-  if (tenantId) query = query.where('tenant_id', '=', tenantId);
-  const rows = await query.execute();
+    .groupBy('mode')
+    .execute();
   const census = { held: 0, managed: 0, own: 0 };
   for (const row of rows) {
     if (row.mode === 'held') census.held = Number(row.count);

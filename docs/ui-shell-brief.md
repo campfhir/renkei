@@ -1,3 +1,10 @@
+> **Status (2026-10):** historical brief. The `/[slug]/*` tree it proposes was
+> built and has since become the root tree: a deployment serves one
+> organization, so there is no slug, no home-realm sign-in page and no
+> organization creation. Sign-in starts at `/api/auth/oidc/login`, first-run
+> setup at `/setup` (see `DEPLOYMENT.md`), and the MCP endpoint is
+> `/api/mcp/[transport]`. Paths below are as they were when this was written.
+
 # UI shell brief — app nav, routing, and connector self-service
 
 Working brief, captured so the conversation can be picked up from another
@@ -9,7 +16,7 @@ touched this line. What remains open is at the bottom.
 
 The deploy was rebuilt on a fresh database to get pgvector, so
 `connector_configs` is empty and the Atlassian OAuth app has to be re-registered
-from scratch. There is no UI for that — only `PUT /api/admin/[slug]/connectors/atlassian`,
+from scratch. There is no UI for that — only `PUT /api/admin/connectors/atlassian`,
 which needs an operator cookie and a devtools console. That gap is what kicked
 this off.
 
@@ -19,7 +26,7 @@ this off.
 
 An org-admin screen for the Jira/Atlassian connector: client id, client secret,
 scopes, optional redirect override, enabled toggle. Backed by the routes that
-already exist under `apps/web/app/api/admin/[slug]/connectors/` (`atlassian`,
+already exist under `apps/web/app/api/admin/connectors/` (`atlassian`,
 `webex`, `embeddings`). GET reports presence only — the secret never comes back
 over the wire, so the form has to handle "already set, leave alone" as a state.
 
@@ -57,11 +64,11 @@ Keep the tenant model, drop the `/tenant/` and `/mcp/` prefixes.
 **Pages are keyed by slug, not tenantId** — a slug is memorable, a UUID is not,
 and `admin/[slug]` already works this way. Each page segment resolves slug →
 tenantId server-side (`tenantIdForSlug` in
-`apps/web/app/api/admin/[slug]/connectors/atlassian/route.ts` is the existing
+`apps/web/app/api/admin/connectors/atlassian/route.ts` is the existing
 one; lift it into a shared helper) and 404s on an unknown slug.
 
 **`/api/mcp/*` keeps the tenantId.** Moving it to slug was considered and
-dropped. `{base}/api/mcp/{tenantId}` is the OAuth issuer — it lives in the
+dropped. `{base}/api/mcp` is the OAuth issuer — it lives in the
 discovery documents, the `next.config.ts` rewrites, and every MCP client that
 has registered — so putting the org's mutable name inside it means a rename
 invalidates that org's registrations, and a freed slug re-claimed by another

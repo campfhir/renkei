@@ -25,8 +25,8 @@ maybe('finalize hook', () => {
   // and fail the whole file instead of skipping it.
   let db: Kysely<DB>;
 
-  const tenantId = randomUUID();
-  const owner = `chain-owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const owner = `chain-owner-${suiteId.slice(0, 8)}`;
 
   // The run-creation gate (isCurrentStepsDoc) refuses any other version,
   // so a hard-coded number here silently seeds an agent nothing will fire.
@@ -48,17 +48,12 @@ maybe('finalize hook', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `chain-test-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE owner_subject = ${owner}`.execute(db);
+    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${owner})`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject = ${owner}`.execute(db);
     await closeDatabase();
   });
 
@@ -68,7 +63,6 @@ maybe('finalize hook', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: owner,
         name: `${name}-${agentId.slice(0, 8)}`,
         steps: JSON.stringify(steps),
@@ -84,7 +78,6 @@ maybe('finalize hook', () => {
       .insertInto('agent_triggers')
       .values({
         id: triggerId,
-        tenant_id: tenantId,
         agent_id: targetAgentId,
         kind: 'agent',
         config: JSON.stringify({ callerAgentId }),
@@ -100,7 +93,6 @@ maybe('finalize hook', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: owner,
         trigger_kind: 'manual',
@@ -120,7 +112,6 @@ maybe('finalize hook', () => {
       .insertInto('agent_triggers')
       .values({
         id: triggerId,
-        tenant_id: tenantId,
         agent_id: agentId,
         kind: 'event',
         event_source: 'webex',
@@ -134,7 +125,6 @@ maybe('finalize hook', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: owner,
         trigger_id: triggerId,
@@ -154,7 +144,6 @@ maybe('finalize hook', () => {
     status: 'succeeded' | 'failed'
   ): FinalizedRun => ({
     runId,
-    tenantId,
     agentId,
     ownerSubject: owner,
     status,
@@ -181,7 +170,6 @@ maybe('finalize hook', () => {
     const child = await db
       .selectFrom('agent_runs')
       .select(['agent_id', 'parent_run_id', 'lineage', 'depth', 'trigger_kind', 'initial_state'])
-      .where('tenant_id', '=', tenantId)
       .where('agent_id', '=', b)
       .executeTakeFirstOrThrow();
     expect(child.parent_run_id).toBe(parentRunId);

@@ -44,7 +44,6 @@ function toRule(row: RuleRow): ClassifierRule {
 }
 
 export async function listClassifierRules(
-  tenantId: string
 ): Promise<Result<ClassifierRule[], 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -62,7 +61,6 @@ export async function listClassifierRules(
           'priority',
           'enabled',
         ])
-        .where('tenant_id', '=', tenantId)
         .orderBy('priority', 'asc')
         .execute(),
     'DB_ERROR' as const
@@ -82,7 +80,6 @@ export interface ClassifierRuleInput {
 }
 
 export async function upsertClassifierRule(
-  tenantId: string,
   rule: ClassifierRuleInput
 ): Promise<Result<string, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -96,7 +93,6 @@ export async function upsertClassifierRule(
         .insertInto('email_classifier_rules')
         .values({
           id,
-          tenant_id: tenantId,
           category: rule.category,
           match_type: rule.matchType,
           match_value: matchValue,
@@ -134,7 +130,6 @@ export async function upsertClassifierRule(
  * clobbered.
  */
 export async function seedDefaultClassifierRules(
-  tenantId: string
 ): Promise<Result<{ inserted: number }, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -144,7 +139,6 @@ export async function seedDefaultClassifierRules(
       dbResult.val
         .selectFrom('email_classifier_rules')
         .select(['match_type', 'match_value'])
-        .where('tenant_id', '=', tenantId)
         .execute(),
     'DB_ERROR' as const
   );
@@ -163,7 +157,6 @@ export async function seedDefaultClassifierRules(
         .values(
           missing.map((rule) => ({
             id: randomUUID(),
-            tenant_id: tenantId,
             category: rule.category,
             match_type: rule.matchType,
             match_value: rule.matchValue,
@@ -182,7 +175,6 @@ export async function seedDefaultClassifierRules(
 }
 
 export async function deleteClassifierRule(
-  tenantId: string,
   id: string
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -192,7 +184,6 @@ export async function deleteClassifierRule(
     () =>
       dbResult.val
         .deleteFrom('email_classifier_rules')
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', id)
         .execute(),
     'DB_ERROR' as const

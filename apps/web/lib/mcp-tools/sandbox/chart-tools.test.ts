@@ -70,7 +70,6 @@ async function collect(context: MCPToolContext): Promise<Map<string, Registered>
 
 const context = (subject = 'auth0|alice'): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     subject,
     origin: 'https://renkei.example',
   }) as unknown as MCPToolContext;
@@ -119,7 +118,7 @@ describe('sandbox_render_chart', () => {
 
     expect(result.isError).toBeUndefined();
     expect(client.sbChartStage).toHaveBeenCalledWith(
-      { tenantId: 'tenant-1', subject: 'auth0|alice' },
+      { subject: 'auth0|alice' },
       {
         source: SOURCE,
         format: 'png',

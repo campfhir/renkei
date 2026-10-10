@@ -8,7 +8,7 @@
  * off, tools' files are not kept, and the model is told not to produce
  * any.
  *
- * Stores are built once per configuration and kept on globalThis like
+ * The store is built once per configuration and kept on globalThis like
  * the environment singleton; the connector-config cache bounds how long
  * a saved change takes to reach a running process (its TTL), and the
  * admin route drops that cache in the process that saved.
@@ -31,11 +31,7 @@ interface TenantStoreState {
 }
 
 declare global {
-  var __renkeiTenantBlobStores: Map<string, TenantStoreState> | undefined;
-}
-
-function stores(): Map<string, TenantStoreState> {
-  return (globalThis.__renkeiTenantBlobStores ??= new Map());
+  var __renkeiTenantBlobStore: TenantStoreState | undefined;
 }
 
 /** The store's settings as the admin page reads and writes them (no secret). */
@@ -67,11 +63,10 @@ export function blobStoreConfigOfRow(
 
 /** The configuration in force for an org: its own row, else the environment. */
 export async function resolveTenantBlobConfig(
-  tenantId: string
 ): Promise<Result<BlobStoreConfig, 'BLOB_UNCONFIGURED'>> {
   const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (key.ok) {
-    const row = await readConnectorConfigCached(tenantId, BLOB_STORAGE_CONNECTOR, key.val);
+    const row = await readConnectorConfigCached(BLOB_STORAGE_CONNECTOR, key.val);
     if (row.ok && row.val && row.val.enabled) {
       return blobStoreConfigOfRow(row.val.settings, row.val.secrets);
     }
@@ -85,26 +80,25 @@ export function blobStoreFor(config: BlobStoreConfig): BlobStore {
 }
 
 export async function resolveTenantBlobStore(
-  tenantId: string
 ): Promise<Result<BlobStore, 'BLOB_UNCONFIGURED'>> {
-  const config = await resolveTenantBlobConfig(tenantId);
+  const config = await resolveTenantBlobConfig();
   if (!config.ok) return config;
   const fingerprint = JSON.stringify(config.val);
-  const known = stores().get(tenantId);
+  const known = globalThis.__renkeiTenantBlobStore;
   if (known && known.fingerprint === fingerprint) return ok(known.store);
   const store = blobStoreFor(config.val);
-  stores().set(tenantId, { store, fingerprint });
+  globalThis.__renkeiTenantBlobStore = { store, fingerprint };
   return ok(store);
 }
 
 /** Whether this org can hold files at all — the "attachments on" switch. */
-export async function tenantBlobStoreConfigured(tenantId: string): Promise<boolean> {
-  return (await resolveTenantBlobConfig(tenantId)).ok;
+export async function tenantBlobStoreConfigured(): Promise<boolean> {
+  return (await resolveTenantBlobConfig()).ok;
 }
 
 /** Test hook. */
 export function resetTenantBlobStores(): void {
-  globalThis.__renkeiTenantBlobStores = undefined;
+  globalThis.__renkeiTenantBlobStore = undefined;
 }
 
 export function tenantBlobStoreUnavailable(): Result<never, 'BLOB_UNCONFIGURED'> {

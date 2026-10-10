@@ -58,7 +58,6 @@ import * as rules from './image-rules-store';
 import { logger } from './logger';
 
 export const SERVICE_LABEL = 'renkei.sandbox.service';
-const LABEL_TENANT = 'renkei.sandbox.tenant';
 const LABEL_SUBJECT = 'renkei.sandbox.subject';
 const LABEL_ID = 'renkei.sandbox.id';
 const LABEL_NAME = 'renkei.sandbox.name';
@@ -130,10 +129,9 @@ export class ServiceManager {
 
   /** Which rule admits an image, and the credential its host pulls with — or the refusal. */
   private async admit(
-    tenantId: string,
     image: ImageReference
   ): Promise<{ auth: RegistryAuth | null }> {
-    const all = await rules.listImageRulesForMatching(this.db, tenantId);
+    const all = await rules.listImageRulesForMatching(this.db);
     const winner = matchImageRule(all, image);
     if (!winner) {
       const allowed = all.map((rule) => rule.pattern).sort();
@@ -205,7 +203,7 @@ export class ServiceManager {
         `A project runs at most ${SERVICE_MAX_PER_SUBJECT} services at once; stop one first.`
       );
     }
-    const { auth } = await this.admit(target.tenantId, image);
+    const { auth } = await this.admit(image);
 
     const row = await store.insertService(this.db, {
       ...target,
@@ -246,7 +244,6 @@ export class ServiceManager {
         env: input.env,
         labels: {
           [SERVICE_LABEL]: '1',
-          [LABEL_TENANT]: target.tenantId,
           [LABEL_SUBJECT]: subjectSegmentOf(target.subject),
           [LABEL_ID]: row.id,
           [LABEL_NAME]: input.name,

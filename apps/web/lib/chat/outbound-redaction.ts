@@ -35,12 +35,11 @@ const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
 const redactionKey = deriveRedactionKey(keyResult.ok ? keyResult.val : null);
 
 export function createOutboundRedactor(
-  tenantId: string,
   settings: Pick<OrgSettings, 'redactionEnabled' | 'redactionDetectors' | 'redactionMrnFormats'>
 ): OutboundRedactor | null {
   if (!settings.redactionEnabled) return null;
   const detectors: readonly DetectorKey[] = knownDetectors(settings.redactionDetectors);
-  const pseudonymizer: Pseudonymizer = createPseudonymizer(redactionKey, tenantId);
+  const pseudonymizer: Pseudonymizer = createPseudonymizer(redactionKey);
   return {
     apply(text) {
       if (!text) return { text, counts: {} };

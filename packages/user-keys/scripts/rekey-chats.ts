@@ -75,10 +75,11 @@ interface Resealer {
 async function resealerFor(
   db: Kysely<DB>,
   kind: 'chat' | 'chat_project',
-  resource: { id: string; tenant_id: string; owner_subject: string },
+  resource: { id: string;
+ owner_subject: string },
   contentKey: Buffer
 ): Promise<Resealer | null> {
-  const ref = { tenantId: resource.tenant_id, kind, resourceId: resource.id };
+  const ref = { kind, resourceId: resource.id };
   const key = await legacyEnsureResourceKey(db, ref, resource.owner_subject);
   if (!key.ok) {
     console.warn(`  ${kind} ${resource.id}: no key (${key.err.type}); skipped`);
@@ -87,7 +88,6 @@ async function resealerFor(
   const grantees = await db
     .selectFrom('resource_access_grants')
     .select('grantee_subject')
-    .where('tenant_id', '=', resource.tenant_id)
     .where('resource_kind', '=', kind)
     .where('resource_id', '=', resource.id)
     .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date())]))
@@ -96,7 +96,6 @@ async function resealerFor(
     const shared = await legacyShareResourceKey(
       db,
       key.val,
-      resource.tenant_id,
       resource.owner_subject,
       grantee.grantee_subject
     );
@@ -153,7 +152,8 @@ async function resealAttachments(
 
 async function rekeyChat(
   db: Kysely<DB>,
-  chat: { id: string; tenant_id: string; owner_subject: string },
+  chat: { id: string;
+ owner_subject: string },
   contentKey: Buffer
 ): Promise<{ rows: number; skipped: number }> {
   const resealer = await resealerFor(db, 'chat', chat, contentKey);
@@ -224,7 +224,8 @@ async function rekeyChat(
 /** A project: its instructions, its memory, and its files under the project's key. */
 async function rekeyProject(
   db: Kysely<DB>,
-  project: { id: string; tenant_id: string; owner_subject: string; instructions: string | null },
+  project: { id: string;
+ owner_subject: string; instructions: string | null },
   contentKey: Buffer
 ): Promise<{ rows: number; skipped: number }> {
   const resealer = await resealerFor(db, 'chat_project', project, contentKey);
@@ -260,7 +261,7 @@ async function rekeyProject(
 async function rekeyProjects(db: Kysely<DB>, contentKey: Buffer): Promise<void> {
   const projects = await db
     .selectFrom('chat_projects')
-    .select(['id', 'tenant_id', 'owner_subject', 'instructions'])
+    .select(['id', 'owner_subject', 'instructions'])
     .orderBy('id', 'asc')
     .execute();
   let rows = 0;
@@ -279,14 +280,14 @@ async function rekeyProjects(db: Kysely<DB>, contentKey: Buffer): Promise<void> 
 async function rekeyUserMemories(db: Kysely<DB>, contentKey: Buffer): Promise<void> {
   const rows = await db
     .selectFrom('chat_user_memories')
-    .select(['id', 'tenant_id', 'owner_subject', 'content'])
+    .select(['id', 'owner_subject', 'content'])
     .where('content', 'not like', `${USER_ENVELOPE_PREFIX}%`)
     .execute();
   let moved = 0;
   for (const row of rows) {
     const text = openLegacy(row.content, contentKey, false);
     if (text === null) continue;
-    const sealed = await legacySealForSubject(db, row.tenant_id, row.owner_subject, text);
+    const sealed = await legacySealForSubject(db, row.owner_subject, text);
     if (!sealed.ok) continue;
     await db
       .updateTable('chat_user_memories')
@@ -313,7 +314,7 @@ async function rekeyChats(db: Kysely<DB>): Promise<void> {
   for (;;) {
     let query = db
       .selectFrom('chats')
-      .select(['id', 'tenant_id', 'owner_subject'])
+      .select(['id', 'owner_subject'])
       .orderBy('id', 'asc')
       .limit(BATCH);
     if (after) query = query.where('id', '>', after);
@@ -343,7 +344,7 @@ async function rekeyCredentials(
 ): Promise<void> {
   const rows = await db
     .selectFrom(table)
-    .select(['tenant_id', 'subject', 'encrypted_credentials'])
+    .select(['subject', 'encrypted_credentials'])
     .where('encrypted_credentials', 'not like', `${USER_ENVELOPE_PREFIX}%`)
     .execute();
   let moved = 0;
@@ -355,7 +356,7 @@ async function rekeyCredentials(
       );
       continue;
     }
-    const sealed = await legacySealForSubject(db, row.tenant_id, row.subject, opened.val);
+    const sealed = await legacySealForSubject(db, row.subject, opened.val);
     if (!sealed.ok) {
       console.warn(`  ${table}: ${row.subject} could not be sealed (${sealed.err.type}); skipped`);
       continue;
@@ -363,7 +364,6 @@ async function rekeyCredentials(
     await db
       .updateTable(table)
       .set({ encrypted_credentials: sealed.val })
-      .where('tenant_id', '=', row.tenant_id)
       .where('subject', '=', row.subject)
       .where('encrypted_credentials', '=', row.encrypted_credentials)
       .execute();
@@ -375,9 +375,7 @@ async function rekeyCredentials(
 async function rekeyProviderGrants(db: Kysely<DB>, legacyKey: Buffer): Promise<void> {
   const rows = await db
     .selectFrom('provider_grants')
-    .select([
-      'tenant_id',
-      'provider',
+    .select(['provider',
       'provider_account_id',
       'subject',
       'encrypted_access_token',
@@ -404,7 +402,7 @@ async function rekeyProviderGrants(db: Kysely<DB>, legacyKey: Buffer): Promise<v
         broken = true;
         break;
       }
-      const sealed = await legacySealForSubject(db, row.tenant_id, row.subject, opened.val);
+      const sealed = await legacySealForSubject(db, row.subject, opened.val);
       if (!sealed.ok) {
         broken = true;
         break;
@@ -420,7 +418,6 @@ async function rekeyProviderGrants(db: Kysely<DB>, legacyKey: Buffer): Promise<v
     await db
       .updateTable('provider_grants')
       .set(next)
-      .where('tenant_id', '=', row.tenant_id)
       .where('provider', '=', row.provider)
       .where('provider_account_id', '=', row.provider_account_id)
       .execute();

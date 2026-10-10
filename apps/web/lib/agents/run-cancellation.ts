@@ -25,7 +25,6 @@ export async function requestRunCancellation(
   db: Kysely<DB>,
   producer: QueueProducer,
   input: {
-    tenantId: string;
     agentId: string;
     runId: string;
     /** The run's owner_subject — whose grants it acts under. */
@@ -38,7 +37,6 @@ export async function requestRunCancellation(
     .selectFrom('agent_runs')
     .select(['id', 'status'])
     .where('id', '=', input.runId)
-    .where('tenant_id', '=', input.tenantId)
     .where('agent_id', '=', input.agentId)
     .where('owner_subject', '=', input.ownerSubject)
     .executeTakeFirst();
@@ -76,7 +74,6 @@ export async function requestRunCancellation(
   // flag gets noticed promptly instead of at the next unrelated poll.
   if (run.status === 'queued' || run.status === 'waiting') {
     await producer.enqueue({
-      tenantId: input.tenantId,
       source: `agents:${input.agentId}`,
       type: 'run',
       payload: { runId: input.runId },

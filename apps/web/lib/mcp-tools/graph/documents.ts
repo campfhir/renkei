@@ -301,7 +301,6 @@ export function registerDocumentTools(
         if (extracted.err.type === 'PDF_BACKEND_UNAVAILABLE') {
           logger.error('PDF extraction backend unavailable: {reason}', {
             component: 'graph/documents',
-            tenantId: context.tenantId,
             subject: context.subject,
             reason: extracted.err.message,
           });

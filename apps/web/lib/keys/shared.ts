@@ -1,6 +1,6 @@
 /**
  * What the key status looks like on both sides of the wire
- * (docs/delegate-key-design.md): the shape GET /api/tenant/[tenantId]/keys
+ * (docs/delegate-key-design.md): the shape GET /api/keys
  * serves and the KeyGuard and the preferences section read, plus the
  * automation-window choices. Nothing server-only is imported here, so a
  * client component can import this file without dragging the database

@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect as baseExpect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -45,7 +46,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`size-requests-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`size-requests-e2e-session:${projectName}`),
     projectId: uuidFrom(`size-requests-e2e-project:${projectName}`),
     slug: `e2e-size-requests-${projectName}`,
@@ -61,7 +61,7 @@ async function seed(fixture: Fixture): Promise<void> {
     authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
     'content-type': 'application/json',
   };
-  const target = { tenantId: fixture.tenantId, subject: `code-project:${fixture.projectId}` };
+  const target = { subject: `code-project:${fixture.projectId}` };
   const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
     method: 'POST',
     headers,
@@ -92,39 +92,35 @@ async function seed(fixture: Fixture): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    const t = fixture.tenantId;
-    await client.query('DELETE FROM sandbox_size_requests WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM tenant_settings WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM chat_projects WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [t]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [t, fixture.slug]);
+    // Requests are keyed by the project's own target subject, and this
+    // project's id is the same every run.
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        t,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      'DELETE FROM sandbox_size_requests WHERE subject = $1 OR requested_by = $2',
+      [target.subject, fixture.subject]
+    );
+    await client.query(`DELETE FROM settings WHERE key = 'sandbox_workspace_max_bytes'`);
+    await client.query('DELETE FROM chat_projects WHERE owner_subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
+    await client.query(
+      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name) VALUES ($1, $2, $3, 'E2E Tester')`,
-      [t, fixture.subject, fixture.subject]
+      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, 'E2E Tester')`,
+      [fixture.subject, fixture.subject]
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [t, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
+      [fixture.subject]
     );
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch, workspace_id)
-       VALUES ($1, $2, $3, $4, 'code', 'atlassian-bitbucket', 'acme/monorepo', 'main', $5)`,
-      [fixture.projectId, t, fixture.subject, fixture.projectName, workspace.id]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch, workspace_id)\n       VALUES ($1, $2, $3, 'code', 'atlassian-bitbucket', 'acme/monorepo', 'main', $4)`,
+      [fixture.projectId, fixture.subject, fixture.projectName, workspace.id]
     );
+    // Enrolled already, so the first-sign-in "your encryption key is ready"
+    // dialog does not sit over the project page this spec works in.
+    await enrollForE2E(client, fixture.subject);
   } finally {
     await client.end();
   }
@@ -133,7 +129,7 @@ async function seed(fixture: Fixture): Promise<void> {
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -161,7 +157,7 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 
 async function dbRows<T extends Record<string, unknown>>(
   sql: string,
-  params: unknown[]
+  params: unknown[] = []
 ): Promise<T[]> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
@@ -179,8 +175,8 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   const fixture = fixtureFor(testInfo.project.name);
   await seed(fixture);
   await signIn(page, fixture);
-  const projectUrl = `/${fixture.slug}/code/${fixture.projectId}`;
-  const settingsUrl = `/${fixture.slug}/admin/settings`;
+  const projectUrl = `/code/${fixture.projectId}`;
+  const settingsUrl = `/admin/settings`;
   // Scoped to the main region: across a navigation the dev server can leave
   // the outgoing page's span in the DOM for a beat, and strict mode would
   // count two.
@@ -217,7 +213,7 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await shot(page, testInfo, '04-request-pending');
 
   // The server refuses a duplicate and a request at or under the limit.
-  const api = `/api/tenant/${fixture.tenantId}/code/projects/${fixture.projectId}/size-request`;
+  const api = `/api/code/projects/${fixture.projectId}/size-request`;
   const duplicate = await page.request.post(api, {
     data: { requestedBytes: 30 * GB, reason: 'again' },
   });
@@ -272,18 +268,17 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByText('Saved.')).toBeVisible();
   const stored = await dbRows<{ value: string }>(
-    `SELECT value FROM tenant_settings WHERE tenant_id = $1 AND key = 'sandbox_workspace_max_bytes'`,
-    [fixture.tenantId]
+    `SELECT value FROM settings WHERE key = 'sandbox_workspace_max_bytes'`
   );
   expect(Number(stored[0]?.value)).toBe(12 * GB);
-  const read = await page.request.get(`/api/admin/${fixture.slug}/org-settings`);
+  const read = await page.request.get(`/api/admin/org-settings`);
   expect((await read.json()).settings.sandboxWorkspaceMaxBytes).toBe(12 * GB);
   // Out of range is clamped, never stored as typed.
-  const clamped = await page.request.put(`/api/admin/${fixture.slug}/org-settings`, {
+  const clamped = await page.request.put(`/api/admin/org-settings`, {
     data: { sandboxWorkspaceMaxBytes: 500 * GB },
   });
   expect((await clamped.json()).settings.sandboxWorkspaceMaxBytes).toBe(64 * GB);
-  await page.request.put(`/api/admin/${fixture.slug}/org-settings`, {
+  await page.request.put(`/api/admin/org-settings`, {
     data: { sandboxWorkspaceMaxBytes: 12 * GB },
   });
   await shot(page, testInfo, '08-settings-org-limit');

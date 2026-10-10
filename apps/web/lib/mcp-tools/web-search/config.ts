@@ -8,7 +8,7 @@
  * domain lists) shape what comes back.
  *
  * Settings (inspectable jsonb) and secrets (sealed) keys, mirrored by the
- * admin route at app/api/admin/[slug]/connectors/web-search/route.ts:
+ * admin route at app/api/admin/connectors/web-search/route.ts:
  *   settings.baseUrl         the Responses surface's base: for Azure AI
  *                            Foundry https://{resource}.openai.azure.com/openai/v1
  *   settings.model           the DEPLOYMENT name on Azure (e.g. gpt-5.5)
@@ -131,12 +131,11 @@ export function parseReasoningEffort(value: unknown): string | null {
  * Cached briefly through readConnectorConfigCached, same as every other
  * per-call connector lookup.
  */
-export async function resolveWebSearchConfig(tenantId: string): Promise<WebSearchConfig | null> {
+export async function resolveWebSearchConfig(): Promise<WebSearchConfig | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
 
   const configResult = await readConnectorConfigCached(
-    tenantId,
     WEB_SEARCH_CONNECTOR,
     keyResult.val
   );

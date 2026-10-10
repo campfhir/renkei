@@ -136,7 +136,6 @@ function row(
 }
 
 const baseOptions = {
-  tenantId: 'tenant-1',
   userEmail: 'scott@example.com',
   query: 'anything',
   k: 5,
@@ -154,7 +153,6 @@ describe('searchKnowledge filter construction', () => {
   it('filters nothing when no filters are given', async () => {
     await searchKnowledge({ ...baseOptions });
     const sqlText = renderedSql();
-    expect(sqlText).toContain('tenant_id =');
     // The no-filter path must stay identical to the original plan.
     expect(sqlText).not.toContain('provider =');
     expect(sqlText).not.toContain("metadata ->> 'kind'");
@@ -267,7 +265,6 @@ describe('owner-scoped candidate narrowing', () => {
 
   it('applies the same narrowing to the recency browse', async () => {
     await listRecentKnowledge({
-      tenantId: 'tenant-1',
       userEmail: 'scott@example.com',
       k: 5,
       verifiers: new Map([['microsoft', ownerScopedVerifier('microsoft')]]),
@@ -299,7 +296,7 @@ describe('hybrid retrieval', () => {
   });
 
   it('raises hnsw.ef_search before running the query, every search is filtered', async () => {
-    // Every search here carries a WHERE clause (tenant, at minimum), and HNSW's
+    // Every search here carries a WHERE clause, and HNSW's
     // graph traversal doesn't see that filter — it explores neighbours in raw
     // embedding space and checks the filter afterward. Left at pgvector's
     // default (40, already under MAX_OVERFETCH's 60), a real match can be
@@ -447,7 +444,6 @@ describe('searchKnowledge result shape', () => {
 
 describe('listRecentKnowledge', () => {
   const recentOptions = {
-    tenantId: 'tenant-1',
     userEmail: 'scott@example.com',
     k: 5,
     verifiers: new Map(),

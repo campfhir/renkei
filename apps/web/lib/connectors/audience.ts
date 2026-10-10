@@ -57,16 +57,15 @@ function closed(restricted?: string[]): AudienceResolution {
 
 export async function resolveAudience(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<AudienceResolution> {
-  const settings = await getOrgSettings(tenantId);
+  const settings = await getOrgSettings();
   if (!settings.ok) return closed();
   const audiences = settings.val.connectorAudiences ?? {};
   const restricted = restrictedKeys(audiences);
   if (restricted.length === 0) return { restrictedConnectors: [], allowedConnectors: [] };
 
-  const groups = await idpGroupsFor(db, tenantId, subject);
+  const groups = await idpGroupsFor(db, subject);
   if (!groups.ok) return closed(restricted);
   return {
     restrictedConnectors: restricted,
@@ -77,10 +76,9 @@ export async function resolveAudience(
 /** The same answer as a predicate, for the connectors page's catalog. */
 export async function resolveAudienceAllows(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<AudienceAllows> {
-  const resolution = await resolveAudience(db, tenantId, subject);
+  const resolution = await resolveAudience(db, subject);
   const restricted = new Set(resolution.restrictedConnectors);
   const allowed = new Set(resolution.allowedConnectors);
   return (capabilityKey) => !restricted.has(capabilityKey) || allowed.has(capabilityKey);

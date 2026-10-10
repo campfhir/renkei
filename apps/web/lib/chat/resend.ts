@@ -29,7 +29,6 @@ import { startChatTurn, type StartTurnError, type StartedTurn } from './start-tu
 export type ResendError = StartTurnError | 'NOT_PROMPT';
 
 export interface ResendInput {
-  tenantId: string;
   session: { subject: string; roles: string[] };
   chatId: string;
   messageId: string;
@@ -74,7 +73,6 @@ export function promptTextOf(content: string, cipher: ContentCipher): string {
  */
 async function originalPromptText(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string,
   prompt: { turn_id: string | null; content: string },
   cipher: ContentCipher
@@ -83,7 +81,6 @@ async function originalPromptText(
   const rows = await db
     .selectFrom('chat_messages')
     .select(['content'])
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .where('turn_id', '=', prompt.turn_id)
     .where('role', '=', 'user')
@@ -102,7 +99,7 @@ export async function resendFromMessage(
   input: ResendInput
 ): Promise<Result<Resent, ResendError>> {
   if (!isUuid(input.messageId)) return err('NOT_FOUND' as const);
-  const access = await resolveChatAccess(db, input.tenantId, input.session.subject, input.chatId);
+  const access = await resolveChatAccess(db, input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   if (await getActiveTurn(db, access.chat.id)) return err('ALREADY_RUNNING' as const);
@@ -110,7 +107,6 @@ export async function resendFromMessage(
   const prompt = await db
     .selectFrom('chat_messages')
     .select(['id', 'seq', 'kind', 'content', 'turn_id'])
-    .where('tenant_id', '=', input.tenantId)
     .where('chat_id', '=', access.chat.id)
     .where('id', '=', input.messageId)
     .executeTakeFirst();
@@ -120,11 +116,10 @@ export async function resendFromMessage(
   const text =
     input.text !== null
       ? input.text
-      : await originalPromptText(db, input.tenantId, access.chat.id, prompt, access.cipher);
+      : await originalPromptText(db, access.chat.id, prompt, access.cipher);
   const ownUploads = await db
     .selectFrom('chat_attachments')
     .select('id')
-    .where('tenant_id', '=', input.tenantId)
     .where('chat_id', '=', access.chat.id)
     .where('message_id', '=', prompt.id)
     .where('origin', '=', 'upload')
@@ -176,7 +171,7 @@ export async function resendFromMessage(
     }
   });
   if (removedBlobKeys.length > 0) {
-    const store = await resolveTenantBlobStore(input.tenantId);
+    const store = await resolveTenantBlobStore();
     if (store.ok) {
       for (const key of removedBlobKeys) {
         const deleted = await store.val.deleteObject(key);
@@ -192,7 +187,6 @@ export async function resendFromMessage(
   }
 
   const started = await startChatTurn(db, {
-    tenantId: input.tenantId,
     session: input.session,
     chatId: access.chat.id,
     text,

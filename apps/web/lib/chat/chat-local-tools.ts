@@ -50,7 +50,6 @@ export async function chatLocalTools(
   const hasFiles = await db
     .selectFrom('chat_attachments')
     .select('id')
-    .where('tenant_id', '=', context.tenantId)
     .where((eb) =>
       eb.or([
         eb('chat_id', '=', context.chatId),
@@ -66,8 +65,8 @@ export async function chatLocalTools(
     // without one in the org the tool is simply not offered. A failed
     // lookup costs the turn this one tool, not the turn.
     const [imageModels, imagePrefs] = await Promise.all([
-      listImageModels(db, context.tenantId).catch(() => []),
-      getImagePrefs(context.tenantId, context.subject),
+      listImageModels(db).catch(() => []),
+      getImagePrefs(context.subject),
     ]);
     const imageTool = imageGenerationTool({
       models: imageModels,
@@ -75,7 +74,7 @@ export async function chatLocalTools(
     });
     if (imageTool) tools.push(imageTool);
     // A chart needs the worker's Chromium as well as somewhere to keep the file.
-    if (await sandboxChartsEnabled(context.tenantId)) tools.push(...chartTools());
+    if (await sandboxChartsEnabled()) tools.push(...chartTools());
   }
   if (context.projectId) {
     if (!context.readOnly) tools.push(...memoryTools());

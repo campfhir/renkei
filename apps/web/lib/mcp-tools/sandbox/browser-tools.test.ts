@@ -81,12 +81,11 @@ async function collect(context: MCPToolContext): Promise<Map<string, Registered>
 
 const context = (subject = 'auth0|alice'): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     subject,
     origin: 'https://renkei.example',
   }) as unknown as MCPToolContext;
 
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice' };
+const TARGET = { subject: 'auth0|alice' };
 const PAGE = {
   url: 'https://example.com/',
   title: 'Example',

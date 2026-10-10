@@ -19,7 +19,6 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('image generation models', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
   const chatId = randomUUID();
   const imageId = randomUUID();
   const fluxId = randomUUID();
@@ -46,7 +45,6 @@ maybe('image generation models', () => {
       .insertInto('llm_model_configs')
       .values({
         id: values.id,
-        tenant_id: tenantId,
         label: values.label,
         provider: values.provider,
         model: values.model,
@@ -64,10 +62,6 @@ maybe('image generation models', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `images-${tenantId.slice(0, 8)}` })
-      .execute();
     await addModel({
       id: chatId,
       label: 'Chatty',
@@ -106,21 +100,20 @@ maybe('image generation models', () => {
       model: 'claude-x',
       settings: {},
     });
-    invalidateLlmCache(tenantId);
+    invalidateLlmCache();
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM llm_model_configs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM llm_model_configs WHERE id IN (${chatId}, ${imageId}, ${fluxId}, ${offImageId}, ${anthropicId})`.execute(db);
     await closeDatabase();
     if (previousKey === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
     else process.env.TOKEN_ENCRYPTION_KEY = previousKey;
   });
 
   it('keeps image models out of the chat picker, and chat models out of the image list', async () => {
-    const chat = await listChatModels(db, tenantId);
+    const chat = await listChatModels(db);
     expect(chat.map((model) => model.label).sort()).toEqual(['Chatty', 'Claude']);
-    const images = await listImageModels(db, tenantId);
+    const images = await listImageModels(db);
     // The disabled one is not offered either.
     expect(images).toEqual([
       { id: fluxId, label: 'Fox', model: 'FLUX.2-flex' },
@@ -130,36 +123,41 @@ maybe('image generation models', () => {
 
   it('never resolves an image model as a chat model, by id or as the default', async () => {
     for (const imageModel of [imageId, fluxId]) {
-      const byId = await resolveAgentLlm(db, tenantId, imageModel);
+      const byId = await resolveAgentLlm(db, imageModel);
       // An override that is not a chat model falls back to the org default.
       expect(byId.ok && byId.val.modelConfigId).toBe(chatId);
     }
-    const fallback = await resolveAgentLlm(db, tenantId, null);
+    const fallback = await resolveAgentLlm(db, null);
     expect(fallback.ok && fallback.val.modelConfigId).toBe(chatId);
   });
 
   it('resolves an image model with its key, and only an enabled image model', async () => {
     // The first by label is the FLUX row, and its surface travels with it.
-    const first = await resolveImageModel(db, tenantId, null);
+    const first = await resolveImageModel(db, null);
     expect(first.ok && first.val).toMatchObject({
       modelConfigId: fluxId,
       label: 'Fox',
       config: { apiKey: 'sk-test', model: 'FLUX.2-flex', surface: 'flux' },
     });
-    const named = await resolveImageModel(db, tenantId, imageId);
+    const named = await resolveImageModel(db, imageId);
     expect(named.ok && named.val).toMatchObject({
       modelConfigId: imageId,
       config: { model: 'gpt-image-1', surface: 'images' },
     });
 
     for (const notAnImageModel of [chatId, anthropicId, offImageId]) {
-      const refused = await resolveImageModel(db, tenantId, notAnImageModel);
+      const refused = await resolveImageModel(db, notAnImageModel);
       expect(!refused.ok && refused.err.type).toBe('NO_MODEL');
     }
   });
 
-  it('has no image model to resolve for an org that has none', async () => {
-    const result = await resolveImageModel(db, randomUUID(), null);
+  it('has no image model to resolve once the organization has none left on', async () => {
+    await db
+      .updateTable('llm_model_configs')
+      .set({ enabled: false })
+      .where('id', 'in', [imageId, fluxId])
+      .execute();
+    const result = await resolveImageModel(db, null);
     expect(!result.ok && result.err.type).toBe('NO_MODEL');
   });
 });

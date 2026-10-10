@@ -15,7 +15,7 @@
  * Plus instances are registered one at a time on their own pages).
  *
  * User cards are deliberately NOT bound here: they are suite cards with
- * server-built props, wired by `suite` in `[slug]/connectors/page.tsx`.
+ * server-built props, wired by `suite` in `(app)/connectors/page.tsx`.
  * Binding them by reference would be a fiction the page could not use.
  */
 
@@ -27,24 +27,22 @@ import {
   AtlassianConfluenceForm,
   AtlassianBitbucketForm,
   AtlassianAdminForm,
-} from '@/app/[slug]/admin/connectors/forms/atlassian-forms';
-import { GitHubForm } from '@/app/[slug]/admin/connectors/forms/github-form';
-import { WebexUserForm } from '@/app/[slug]/admin/connectors/forms/webex-user-form';
-import { WebexBotForm } from '@/app/[slug]/admin/connectors/forms/webex-bot-form';
-import { MicrosoftForm } from '@/app/[slug]/admin/connectors/forms/microsoft-form';
-import { EntraDeveloperForm } from '@/app/[slug]/admin/connectors/forms/entra-developer-form';
-import { ZoomForm } from '@/app/[slug]/admin/connectors/forms/zoom-form';
-import { OnBaseForm } from '@/app/[slug]/admin/connectors/forms/onbase-form';
-import { OnBaseAdminForm } from '@/app/[slug]/admin/connectors/forms/onbase-admin-form';
-import { MistralOcrForm } from '@/app/[slug]/admin/connectors/forms/mistral-ocr-form';
-import { EmbeddingsForm } from '@/app/[slug]/admin/connectors/forms/embeddings-form';
-import { WebSearchForm } from '@/app/[slug]/admin/connectors/forms/web-search-form';
-import { VoiceForm } from '@/app/[slug]/admin/connectors/forms/voice-form';
+} from '@/app/(app)/admin/connectors/forms/atlassian-forms';
+import { GitHubForm } from '@/app/(app)/admin/connectors/forms/github-form';
+import { WebexUserForm } from '@/app/(app)/admin/connectors/forms/webex-user-form';
+import { WebexBotForm } from '@/app/(app)/admin/connectors/forms/webex-bot-form';
+import { MicrosoftForm } from '@/app/(app)/admin/connectors/forms/microsoft-form';
+import { EntraDeveloperForm } from '@/app/(app)/admin/connectors/forms/entra-developer-form';
+import { ZoomForm } from '@/app/(app)/admin/connectors/forms/zoom-form';
+import { OnBaseForm } from '@/app/(app)/admin/connectors/forms/onbase-form';
+import { OnBaseAdminForm } from '@/app/(app)/admin/connectors/forms/onbase-admin-form';
+import { MistralOcrForm } from '@/app/(app)/admin/connectors/forms/mistral-ocr-form';
+import { EmbeddingsForm } from '@/app/(app)/admin/connectors/forms/embeddings-form';
+import { WebSearchForm } from '@/app/(app)/admin/connectors/forms/web-search-form';
+import { VoiceForm } from '@/app/(app)/admin/connectors/forms/voice-form';
 
 /** Every admin form takes the same props, so the detail page can render any. */
 export interface AdminFormProps {
-  slug: string;
-  tenantId: string;
   origin: string | null;
 }
 
@@ -58,7 +56,7 @@ export interface ConnectorDefinition {
   /** The form editing this config's credentials and settings, when it has any. */
   adminForm?: ComponentType<AdminFormProps>;
   /** Where the connector is really managed, when not on its own page here. */
-  manageHref?: (slug: string) => string;
+  manageHref?: () => string;
 }
 
 /** The forms, by the configKey whose row they edit. Add a form here and it has a page. */
@@ -87,10 +85,10 @@ const CONFIG_LABELS: Record<string, string> = {
   microsoft: 'Microsoft 365',
 };
 
-const MANAGE_ELSEWHERE: Record<string, (slug: string) => string> = {
-  fileshares: (slug) => `/${slug}/admin/file-shares`,
-  mirth: (slug) => `/${slug}/admin/mirth`,
-  admanager: (slug) => `/${slug}/admin/admanager`,
+const MANAGE_ELSEWHERE: Record<string, () => string> = {
+  fileshares: () => '/admin/file-shares',
+  mirth: () => '/admin/mirth',
+  admanager: () => '/admin/admanager',
 };
 
 function build(): ConnectorDefinition[] {

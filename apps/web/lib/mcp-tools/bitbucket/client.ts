@@ -48,14 +48,13 @@ export interface BitbucketAccess {
 
 /** The caller's Bitbucket grant as a fetcher, plus who it is. */
 export async function resolveBitbucketAccess(
-  context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
+  context: Pick<MCPToolContext, 'subject' | 'origin'>
 ): Promise<BitbucketAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
 
   // By subject: the delegate picks the person's grant on this provider, the
   // way the row lookup here used to (newest wins on a reconnect).
   const ref = {
-    tenantId: context.tenantId,
     provider: ATLASSIAN_BITBUCKET,
     subject: context.subject,
   };
@@ -74,7 +73,6 @@ export async function resolveBitbucketAccess(
 }
 
 interface BitbucketLogScope {
-  tenantId: string;
   subject?: string;
 }
 
@@ -117,7 +115,6 @@ export async function bitbucketRequest(
     const timedOut = isTimeoutError(error);
     logger.warn('Bitbucket API unreachable', {
       component: 'bitbucket/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       path: pathAndQuery,
       method: init?.method ?? 'GET',
@@ -136,7 +133,6 @@ export async function bitbucketRequest(
     // words, not Bitbucket's anonymous 404.
     logger.warn('Delegate refused the Bitbucket call', {
       component: 'bitbucket/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       path: pathAndQuery,
       refusal,
@@ -150,7 +146,6 @@ export async function bitbucketRequest(
       .catch(() => '');
     logger.warn('Bitbucket API non-OK response', {
       component: 'bitbucket/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       path: pathAndQuery,
       method: init?.method ?? 'GET',

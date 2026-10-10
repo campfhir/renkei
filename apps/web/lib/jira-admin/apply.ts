@@ -52,12 +52,11 @@ type Gate = { ok: true } | { ok: false; reason: string };
 
 export async function applyGate(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   roles: readonly string[],
   change: Pick<ChangeRequest, 'kind' | 'payload'>
 ): Promise<Gate> {
-  const settingsResult = await getOrgSettings(tenantId);
+  const settingsResult = await getOrgSettings();
   if (!settingsResult.ok)
     return { ok: false, reason: 'Could not read your organization’s settings.' };
   const settings = settingsResult.val;
@@ -72,8 +71,8 @@ export async function applyGate(
   }
 
   const [availability, audience] = await Promise.all([
-    resolveConnectorAvailability(db, tenantId, subject),
-    resolveAudience(db, tenantId, subject),
+    resolveConnectorAvailability(db, subject),
+    resolveAudience(db, subject),
   ]);
   if (
     audience.restrictedConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR) &&
@@ -129,16 +128,16 @@ export async function applyGate(
  * decide, as they decide whether its tools register. Read-only mode does
  * not: looking changes nothing.
  */
-export async function viewGate(db: Kysely<DB>, tenantId: string, subject: string): Promise<Gate> {
-  const settingsResult = await getOrgSettings(tenantId);
+export async function viewGate(db: Kysely<DB>, subject: string): Promise<Gate> {
+  const settingsResult = await getOrgSettings();
   if (!settingsResult.ok)
     return { ok: false, reason: 'Could not read your organization’s settings.' };
   if (settingsResult.val.disabledConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR)) {
     return { ok: false, reason: 'Jira Administration is switched off for your organization.' };
   }
   const [availability, audience] = await Promise.all([
-    resolveConnectorAvailability(db, tenantId, subject),
-    resolveAudience(db, tenantId, subject),
+    resolveConnectorAvailability(db, subject),
+    resolveAudience(db, subject),
   ]);
   if (
     audience.restrictedConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR) &&
@@ -160,7 +159,7 @@ export async function viewGate(db: Kysely<DB>, tenantId: string, subject: string
 }
 
 export async function applyChangeRequest(
-  scope: { tenantId: string; subject?: string },
+  scope: { subject?: string },
   access: JiraAdminAccess,
   change: Pick<ChangeRequest, 'kind' | 'payload'>
 ): Promise<{ status: 'applied' | 'partial' | 'failed'; results: OperationResult[] }> {

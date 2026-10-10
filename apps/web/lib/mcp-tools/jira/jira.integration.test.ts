@@ -96,7 +96,6 @@ describeOrSkip(SUITE_NAME, () => {
     // siteUrl/tenantId/accountId are used for logging and the issue link
     // only — auth carries everything HTTP-related.
     const context = {
-      tenantId: 'integration-test',
       accountId: 'integration-test',
       siteUrl: testCreds.baseUrl,
       apiBaseUrl: '',

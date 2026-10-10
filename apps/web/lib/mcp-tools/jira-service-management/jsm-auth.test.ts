@@ -23,7 +23,7 @@ jest.mock('../common', () => ({
 const { jiraFetch } = jest.requireMock('../common') as { jiraFetch: jest.Mock };
 
 /** The grant's fetcher as the delegate would hand it out; never called here — jiraFetch is mocked. */
-const jiraAuth = authedFetch(async () => new Response('{}'), 'atlassian-jsm:tenant-1:acct-1');
+const jiraAuth = authedFetch(async () => new Response('{}'), 'atlassian-jsm:acct-1');
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
   ({

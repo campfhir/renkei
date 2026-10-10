@@ -11,9 +11,6 @@ import {
   hasSignatureShape,
   readWebhookBody,
 } from './webhook-intake';
-
-const TENANT = '00000000-0000-4000-8000-000000000001';
-
 describe('readWebhookBody', () => {
   it('returns the body text when it is under the cap', async () => {
     const request = new NextRequest('http://localhost/api/webhooks/x', {
@@ -84,17 +81,16 @@ describe('signature shapes', () => {
 describe('checkWebhookLimit', () => {
   beforeEach(() => resetInboundLimits());
 
-  it('keys the budget by provider and tenant', () => {
+  it('keys the budget by provider', () => {
     const request = new NextRequest('http://localhost/api/webhooks/github/x', {
       method: 'POST',
       headers: { 'x-forwarded-for': '203.0.113.9' },
     });
     for (let i = 0; i < WEBHOOK_LIMITS.perClient.limit; i += 1) {
-      expect(checkWebhookLimit('github', TENANT, request).allowed).toBe(true);
+      expect(checkWebhookLimit('github', request).allowed).toBe(true);
     }
-    expect(checkWebhookLimit('github', TENANT, request).allowed).toBe(false);
-    // Another tenant's (or provider's) budget is untouched.
-    expect(checkWebhookLimit('github', 'other-tenant', request).allowed).toBe(true);
-    expect(checkWebhookLimit('zoom', TENANT, request).allowed).toBe(true);
+    expect(checkWebhookLimit('github', request).allowed).toBe(false);
+    // Another provider's budget is untouched.
+    expect(checkWebhookLimit('zoom', request).allowed).toBe(true);
   });
 });

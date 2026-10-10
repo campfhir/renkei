@@ -62,7 +62,7 @@ let requests: { method: string; path: string; body: unknown; headers: Record<str
 const stubAuth: EntraAuth = {
   kind: 'oauth',
   resolve: async () => ({
-    auth: authedFetch((url, init) => fetch(url, init), 'entra-developer:tenant-1:oid-me'),
+    auth: authedFetch((url, init) => fetch(url, init), 'entra-developer:oid-me'),
     accountId: 'oid-me',
     upn: 'dana@contoso.com',
     tenantId: 'tenant-dir',
@@ -82,7 +82,7 @@ async function tools(
   } as unknown as McpServer;
   await registerEntraDeveloperTools(
     server,
-    { tenantId: 'tenant-1', subject: 'subject-1', entraDeveloperScopes: scopes } as MCPToolContext,
+    { subject: 'subject-1', entraDeveloperScopes: scopes } as MCPToolContext,
     stubAuth
   );
   return { handlers, configs };
@@ -338,7 +338,7 @@ describe('entra_check_access', () => {
     } as unknown as McpServer;
     await registerEntraDeveloperTools(
       server,
-      { tenantId: 'tenant-1', subject: 'subject-1' } as MCPToolContext,
+      { subject: 'subject-1' } as MCPToolContext,
       { kind: 'oauth', resolve: async () => 'Entra Developer is not connected.' }
     );
     const result = await handlers.get('entra_list_applications')!({});

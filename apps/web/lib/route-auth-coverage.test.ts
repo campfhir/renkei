@@ -4,12 +4,11 @@
  * The App Router gives us no framework hook that forces a route to be
  * authenticated, and Next's own guidance rules out the two places one
  * instinctively reaches for: a layout check does not re-run on client-side
- * navigation (partial rendering), and the proxy cannot resolve a slug to the
- * tenant id that names the session cookie without the database. So the guard
- * lives per route — which means the only thing standing between us and a
+ * navigation (partial rendering), and the proxy runs before the database the
+ * session cookie resolves against. So the guard lives per route — which means the only thing standing between us and a
  * forgotten check is this test.
  *
- * The tenant layout (app/[slug]/layout.tsx) ALSO redirects a signed-out
+ * The tenant layout (app/(app)/layout.tsx) ALSO redirects a signed-out
  * visitor, but that is for the first byte, not for security: it stops the
  * shell streaming before a page's guard fires. It never sees a client-side
  * navigation, so it excuses no page from the rule below.
@@ -55,27 +54,27 @@ const NON_SESSION_AUTH: Record<string, string> = {
   'api/auth/oidc/callback/route.ts': 'single-use OIDC state row; mints the session itself',
   'api/logs/route.ts': 'LOG_SHIP_API_KEY bearer gate inside lib/log-ingest',
   'api/logs/register/route.ts': 'same LOG_SHIP_API_KEY bearer gate (trust on first use)',
-  'api/mcp/[tenantId]/[transport]/route.ts': 'MCP access-token bearer (resolveAccessToken)',
-  'api/tenant/[tenantId]/agents/draft/[draftId]/run/route.ts':
+  'api/mcp/[transport]/route.ts': 'MCP access-token bearer (resolveAccessToken)',
+  'api/agents/draft/[draftId]/run/route.ts':
     'agent-worker bearer (resolveAccessToken, application "agent"); the token names the ' +
     'subject the draft is built for, and the row is read under that subject',
-  'api/tenant/[tenantId]/agents/optimize/[optimizationId]/run/route.ts':
+  'api/agents/optimize/[optimizationId]/run/route.ts':
     'agent-worker bearer (resolveAccessToken, application "agent"); the token names the ' +
     'owner whose run history the analysis may read, and the row is read under that subject',
-  'api/mcp/[tenantId]/oauth/token/route.ts':
+  'api/mcp/oauth/token/route.ts':
     'OAuth token endpoint: client secret + PKCE code_verifier',
   'api/oauth/callback/route.ts':
     'single-use OAuth state row bound to the pending authorization, to the starting ' +
     'browser (connect_state_ cookie) and to its session subject (lib/connect-flow-binding.ts)',
   'api/upload/[slotId]/route.ts': 'opaque per-slot bearer, single-use claim, expiring',
-  'api/webhooks/microsoft/[tenantId]/[accountId]/route.ts':
+  'api/webhooks/microsoft/[accountId]/route.ts':
     'per-subscription clientState secret matched against webhook_subscriptions',
-  'api/webhooks/webex/[tenantId]/user/[accountId]/route.ts':
+  'api/webhooks/webex/user/[accountId]/route.ts':
     'x-spark-signature HMAC over raw bytes, per-user grant secret',
-  'api/webhooks/zoom/[tenantId]/route.ts': 'x-zm-signature HMAC over raw bytes',
-  'api/webhooks/github/[tenantId]/route.ts':
+  'api/webhooks/zoom/route.ts': 'x-zm-signature HMAC over raw bytes',
+  'api/webhooks/github/route.ts':
     'x-hub-signature-256 HMAC over raw bytes, the GitHub App Webhook secret (verifyGitHubSignature)',
-  'api/webhooks/bitbucket/[tenantId]/route.ts':
+  'api/webhooks/bitbucket/route.ts':
     'shared secret (X-Renkei-Webhook-Secret header, or legacy ?secret=) matched against the ' +
     'Bitbucket connector config (verifyBitbucketSecret)',
 };
@@ -86,28 +85,17 @@ const NON_SESSION_AUTH: Record<string, string> = {
  */
 const PUBLIC: Record<string, string> = {
   // Sign-in entry points: there is by definition no session yet.
-  'page.tsx': 'home-realm sign-in landing — collects an email, starts discovery',
-  'create-organization/page.tsx': 'org onboarding form; the endpoints it posts to enforce access',
+  'setup/page.tsx':
+    'first-run setup — the identity provider does not exist yet, so no session can; the form ' +
+    'posts with the one-time setup secret the page mints into the server log (lib/setup-secret.ts), ' +
+    'and the page redirects home once a provider exists',
   'api/auth/oidc/login/route.ts': 'starts the OIDC redirect — the thing that creates sessions',
-  'api/home-realm/route.ts': 'home-realm discovery: maps an email domain to its tenant',
-  'api/home-realm/create/route.ts':
-    'self-service onboarding — no session can exist before the first tenant; ' +
-    'throttled per-client and globally (checkInboundLimit)',
-  'api/tenant/[tenantId]/verify-domain/route.ts':
-    'DNS TXT ownership check for onboarding — before any session can exist; it proves ' +
-    'control of the domain, writes nothing but the verified timestamp, and is throttled (checkInboundLimit)',
-  'api/manifest/[slug]/route.ts':
-    "the tenant-scoped Web App Manifest linked from [slug]/layout.tsx's generateMetadata; " +
-    'a manifest is fetched by the OS before any page runs, same as the public icon it names, ' +
-    "and holds nothing but this tenant's slug",
   // Protocol discovery documents. Public by specification.
-  'api/.well-known/oauth-authorization-server/route.ts': 'RFC 8414 metadata, public by spec',
-  'api/.well-known/oauth-protected-resource/route.ts': 'RFC 9728 metadata, public by spec',
-  'api/mcp/[tenantId]/.well-known/oauth-authorization-server/route.ts':
+  'api/mcp/.well-known/oauth-authorization-server/route.ts':
     'RFC 8414 metadata, public by spec',
-  'api/mcp/[tenantId]/.well-known/oauth-protected-resource/route.ts':
+  'api/mcp/.well-known/oauth-protected-resource/route.ts':
     'RFC 9728 metadata, public by spec',
-  'api/mcp/[tenantId]/oauth/register/route.ts': 'RFC 7591 dynamic client registration',
+  'api/mcp/oauth/register/route.ts': 'RFC 7591 dynamic client registration',
   'api/oauth/register/route.ts': 'RFC 7591 dynamic client registration',
   // Operational.
   'api/health/route.ts': 'liveness probe — content-free',
@@ -118,8 +106,8 @@ const PUBLIC: Record<string, string> = {
  * and the destination guards itself.
  */
 const REDIRECT_ONLY: Record<string, string> = {
-  '[slug]/home/page.tsx': 'redirects to /{slug}',
-  '[slug]/admin/grants/page.tsx': 'redirects to /{slug}/admin/access',
+  '(app)/home/page.tsx': 'redirects to /',
+  '(app)/admin/grants/page.tsx': 'redirects to /admin/access',
 };
 
 /**
@@ -129,9 +117,9 @@ const REDIRECT_ONLY: Record<string, string> = {
  * Next recommends).
  */
 const GUARDED_BY_ACTION: Record<string, string> = {
-  '[slug]/logs/page.tsx': 'searchLogs resolves the session and scope',
-  '[slug]/usage/page.tsx': 'getUsageReport resolves the session and scope',
-  '[slug]/utilization/page.tsx':
+  '(app)/logs/page.tsx': 'searchLogs resolves the session and scope',
+  '(app)/usage/page.tsx': 'getUsageReport resolves the session and scope',
+  '(app)/utilization/page.tsx':
     "getUtilizationReport resolves the session; subject is the session's own",
 };
 

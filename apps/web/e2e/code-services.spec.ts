@@ -13,8 +13,6 @@
 
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
-import { E2E_SLUG } from './seed';
-
 test.use({
   browserName: 'chromium',
   launchOptions: {
@@ -48,7 +46,7 @@ test.describe('code services', () => {
       });
 
     // ── The admin page: the seeded public images, each with its shape ──
-    await page.goto(`/${E2E_SLUG}/admin/code-services`);
+    await page.goto(`/admin/code-services`);
     await expect(page.getByRole('heading', { level: 1, name: 'Code services' })).toBeVisible();
     const list = page.getByRole('list', { name: 'Allowed images' });
     /** The row whose pattern is exactly this — `acme.azurecr.io` is not `acme.azurecr.io/platform/*`. */
@@ -131,12 +129,12 @@ test.describe('code services', () => {
     await shot('code-services-admin-restored.png');
 
     // ── The organization page lists the area ──
-    await page.goto(`/${E2E_SLUG}/admin`);
+    await page.goto(`/admin`);
     await expect(page.getByRole('link', { name: /Code services/ })).toBeVisible();
 
     // ── Phone width: the list and the form still fit ──
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/${E2E_SLUG}/admin/code-services`);
+    await page.goto(`/admin/code-services`);
     await expect(page.getByRole('heading', { level: 1, name: 'Code services' })).toBeVisible();
     await expect(list.getByText('docker.io/library/postgres')).toBeVisible();
     await page.getByRole('button', { name: '+ New rule' }).click();

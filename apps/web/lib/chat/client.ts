@@ -23,27 +23,27 @@ import type { StartedTurn } from './start-turn';
 import type { ChatSearchHit } from './search-text';
 import type { WidgetModelContextOutcome } from './widget-tools';
 
-const base = (tenantId: string) => `/api/tenant/${tenantId}/chat`;
+const base = () => `/api/chat`;
 
 export const chatClient = {
-  sidebar: (tenantId: string) => getJson<ChatSidebarData>(`${base(tenantId)}/chats`),
+  sidebar: () => getJson<ChatSidebarData>(`${base()}/chats`),
 
   /** The next page of the viewer's own chats older than `before` — the sidebar's "Load more". */
-  moreChats: (tenantId: string, before: string) =>
+  moreChats: (before: string) =>
     getJson<{ chats: ChatSidebarData['chats']; nextBefore: string | null }>(
-      `${base(tenantId)}/chats/more?${new URLSearchParams({ before }).toString()}`
+      `${base()}/chats/more?${new URLSearchParams({ before }).toString()}`
     ),
 
   /** The listed chats whose messages contain `query`, with a snippet each. */
-  searchChats: (tenantId: string, query: string) =>
+  searchChats: (query: string) =>
     getJson<{ query: string; hits: ChatSearchHit[] }>(
-      `${base(tenantId)}/chats/search?${new URLSearchParams({ q: query }).toString()}`
+      `${base()}/chats/search?${new URLSearchParams({ q: query }).toString()}`
     ),
 
   /** A sub-agent's run — its task, progress, report and full transcript — by the delegating call. */
-  getSubagentRun: (tenantId: string, chatId: string, toolUseId: string) =>
+  getSubagentRun: (chatId: string, toolUseId: string) =>
     getJson<{ run: SubagentRunView }>(
-      `${base(tenantId)}/chats/${chatId}/subagents/${encodeURIComponent(toolUseId)}`
+      `${base()}/chats/${chatId}/subagents/${encodeURIComponent(toolUseId)}`
     ),
 
   /**
@@ -51,14 +51,13 @@ export const chatClient = {
    * becomes the project's active one — refused (409 `turn-running`) while
    * the current active chat is mid-reply, with the reason in `error`.
    */
-  createChat: (tenantId: string, input: { projectId?: string | null }) =>
-    sendJsonFull<{ chatId: string; code?: string }>(`${base(tenantId)}/chats`, 'POST', input),
+  createChat: (input: { projectId?: string | null }) =>
+    sendJsonFull<{ chatId: string; code?: string }>(`${base()}/chats`, 'POST', input),
 
-  getChat: (tenantId: string, chatId: string) =>
-    getJson<{ chat: ChatView; messages: ChatMessageView[] }>(`${base(tenantId)}/chats/${chatId}`),
+  getChat: (chatId: string) =>
+    getJson<{ chat: ChatView; messages: ChatMessageView[] }>(`${base()}/chats/${chatId}`),
 
   updateChat: (
-    tenantId: string,
     chatId: string,
     patch: {
       title?: string | null;
@@ -68,32 +67,30 @@ export const chatClient = {
       autoMode?: boolean;
       archived?: boolean;
     }
-  ) => sendJsonFull(`${base(tenantId)}/chats/${chatId}`, 'PATCH', patch),
+  ) => sendJsonFull(`${base()}/chats/${chatId}`, 'PATCH', patch),
 
-  deleteChat: (tenantId: string, chatId: string) =>
-    sendJsonFull(`${base(tenantId)}/chats/${chatId}`, 'DELETE'),
+  deleteChat: (chatId: string) =>
+    sendJsonFull(`${base()}/chats/${chatId}`, 'DELETE'),
 
-  moveChat: (tenantId: string, chatId: string, projectId: string | null) =>
-    sendJsonFull(`${base(tenantId)}/chats/${chatId}/move`, 'POST', { projectId }),
+  moveChat: (chatId: string, projectId: string | null) =>
+    sendJsonFull(`${base()}/chats/${chatId}/move`, 'POST', { projectId }),
 
   sendTurn: (
-    tenantId: string,
     chatId: string,
     input: { text: string; attachmentIds: string[]; llmModelId?: string | null; voice?: boolean }
   ) =>
     sendJsonFull<StartedTurn & { code?: string }>(
-      `${base(tenantId)}/chats/${chatId}/turns`,
+      `${base()}/chats/${chatId}/turns`,
       'POST',
       input
     ),
 
   /** Replace the chat's held sends with `queue` — the whole list, so a stale write cannot resurrect a sent one. */
-  saveQueue: (tenantId: string, chatId: string, queue: QueuedSend[]) =>
-    sendJsonFull(`${base(tenantId)}/chats/${chatId}/queue`, 'PUT', { queue }),
+  saveQueue: (chatId: string, queue: QueuedSend[]) =>
+    sendJsonFull(`${base()}/chats/${chatId}/queue`, 'PUT', { queue }),
 
   /** Resend a prompt (text null = as it was), removing the replies after it. */
   resend: (
-    tenantId: string,
     chatId: string,
     messageId: string,
     input: {
@@ -104,13 +101,13 @@ export const chatClient = {
     }
   ) =>
     sendJsonFull<StartedTurn & { fromSeq: number; removedArtifactIds: string[]; code?: string }>(
-      `${base(tenantId)}/chats/${chatId}/messages/${messageId}/resend`,
+      `${base()}/chats/${chatId}/messages/${messageId}/resend`,
       'POST',
       input
     ),
 
   /** The person's connected network shares, for copying a file out. */
-  shares: (tenantId: string) =>
+  shares: () =>
     getJson<{
       shares: {
         id: string;
@@ -120,60 +117,58 @@ export const chatClient = {
         shareName: string;
         connection: { username: string } | null;
       }[];
-    }>(`/api/tenant/${tenantId}/fileshares`),
+    }>(`/api/fileshares`),
 
   copyAttachment: (
-    tenantId: string,
     attachmentId: string,
     destination: { kind: 'fileshare-file'; shareId: string; path: string }
   ) =>
     sendJsonFull<{ ok: boolean; detail: string }>(
-      `${base(tenantId)}/attachments/${attachmentId}/copy`,
+      `${base()}/attachments/${attachmentId}/copy`,
       'POST',
       destination
     ),
 
-  cancelTurn: (tenantId: string, chatId: string, turnId: string) =>
-    sendJsonFull(`${base(tenantId)}/chats/${chatId}/turns/${turnId}/cancel`, 'POST'),
+  cancelTurn: (chatId: string, turnId: string) =>
+    sendJsonFull(`${base()}/chats/${chatId}/turns/${turnId}/cancel`, 'POST'),
 
   /** Answer the tool call a turn is waiting on: allow once, always, or deny. */
   decideToolPermission: (
-    tenantId: string,
     chatId: string,
     turnId: string,
     toolUseId: string,
     decision: ToolPermissionDecision
   ) =>
     sendJsonFull<{ ok: boolean; decision: ToolPermissionDecision; code?: string }>(
-      `${base(tenantId)}/chats/${chatId}/turns/${turnId}/permission`,
+      `${base()}/chats/${chatId}/turns/${turnId}/permission`,
       'POST',
       { toolUseId, decision }
     ),
 
   /** What this person decided ahead of time about the chat's act tools (permission-prefs.ts). */
-  toolPermissions: (tenantId: string) =>
-    getJson<{ alwaysAllow: string[]; alwaysDeny: string[] }>(`${base(tenantId)}/tool-permissions`),
+  toolPermissions: () =>
+    getJson<{ alwaysAllow: string[]; alwaysDeny: string[] }>(`${base()}/tool-permissions`),
 
-  setToolPermissions: (tenantId: string, prefs: { alwaysAllow: string[]; alwaysDeny: string[] }) =>
+  setToolPermissions: (prefs: { alwaysAllow: string[]; alwaysDeny: string[] }) =>
     sendJsonFull<{ alwaysAllow: string[]; alwaysDeny: string[] }>(
-      `${base(tenantId)}/tool-permissions`,
+      `${base()}/tool-permissions`,
       'PUT',
       prefs
     ),
 
   /** Force a compaction pass now — /compact, or "compact this chat" picked from the prompt picker. */
-  compact: (tenantId: string, chatId: string) =>
+  compact: (chatId: string) =>
     sendJsonFull<{ turnId: string; code?: string }>(
-      `${base(tenantId)}/chats/${chatId}/compact`,
+      `${base()}/chats/${chatId}/compact`,
       'POST'
     ),
 
-  streamUrl: (tenantId: string, chatId: string, turnId: string) =>
-    `${base(tenantId)}/chats/${chatId}/turns/${turnId}/stream`,
+  streamUrl: (chatId: string, turnId: string) =>
+    `${base()}/chats/${chatId}/turns/${turnId}/stream`,
 
-  models: (tenantId: string) => getJson<{ models: ModelOption[] }>(`${base(tenantId)}/models`),
+  models: () => getJson<{ models: ModelOption[] }>(`${base()}/models`),
 
-  connectors: (tenantId: string) =>
+  connectors: () =>
     getJson<{
       connectors: ConnectorOption[];
       core: string[];
@@ -182,23 +177,21 @@ export const chatClient = {
       /** The person's saved default for new code projects, if any. */
       userCodeDefault?: { connectors: string[] } | null;
       userDefault: { connectors: string[] } | null;
-    }>(`${base(tenantId)}/tools`),
+    }>(`${base()}/tools`),
 
   /** Save (or, with null, clear) this person's default chat toolset. */
   /** Save or clear one of the person's defaults: for new chats, or for new code projects. */
   setDefaultTools: (
-    tenantId: string,
     connectors: string[] | null,
     kind: 'chat' | 'code' = 'chat'
   ) =>
     sendJsonFull<{ userDefault: { connectors: string[] } | null }>(
-      `${base(tenantId)}/tools`,
+      `${base()}/tools`,
       'PUT',
       { userDefault: connectors ? { connectors } : null, kind }
     ),
 
   uploadAttachment: async (
-    tenantId: string,
     home: { chatId: string } | { projectId: string },
     file: File
   ): Promise<{ data: AttachmentView | null; error: string | null }> => {
@@ -208,7 +201,7 @@ export const chatClient = {
       contentType: file.type || 'application/octet-stream',
     });
     try {
-      const response = await fetch(`${base(tenantId)}/attachments?${query.toString()}`, {
+      const response = await fetch(`${base()}/attachments?${query.toString()}`, {
         method: 'PUT',
         body: file,
       });
@@ -228,12 +221,11 @@ export const chatClient = {
 
   /** OCRs unsent files that came up needs_ocr; returns each one's new status. */
   ocrAttachments: async (
-    tenantId: string,
     chatId: string,
     attachmentIds: string[]
   ): Promise<Array<{ id: string; extractStatus: string }>> => {
     try {
-      const response = await fetch(`${base(tenantId)}/attachments/ocr`, {
+      const response = await fetch(`${base()}/attachments/ocr`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ chatId, attachmentIds }),
@@ -245,37 +237,36 @@ export const chatClient = {
     }
   },
 
-  deleteAttachment: (tenantId: string, attachmentId: string) =>
-    sendJsonFull(`${base(tenantId)}/attachments/${attachmentId}`, 'DELETE'),
+  deleteAttachment: (attachmentId: string) =>
+    sendJsonFull(`${base()}/attachments/${attachmentId}`, 'DELETE'),
 
-  attachmentUrl: (tenantId: string, attachmentId: string) =>
-    `${base(tenantId)}/attachments/${attachmentId}`,
+  attachmentUrl: (attachmentId: string) =>
+    `${base()}/attachments/${attachmentId}`,
 
-  grants: (tenantId: string, kind: ResourceKind, resourceId: string) =>
-    getJson<{ grants: GrantView[] }>(`${base(tenantId)}/${grantPath(kind, resourceId)}`),
+  grants: (kind: ResourceKind, resourceId: string) =>
+    getJson<{ grants: GrantView[] }>(`${base()}/${grantPath(kind, resourceId)}`),
 
   grant: (
-    tenantId: string,
     kind: ResourceKind,
     resourceId: string,
     input: { granteeSubject: string; role: GrantRole; expiresAt: string | null }
-  ) => sendJsonFull(`${base(tenantId)}/${grantPath(kind, resourceId)}`, 'POST', input),
+  ) => sendJsonFull(`${base()}/${grantPath(kind, resourceId)}`, 'POST', input),
 
-  revoke: (tenantId: string, kind: ResourceKind, resourceId: string, grantId: string) =>
-    sendJsonFull(`${base(tenantId)}/${grantPath(kind, resourceId)}/${grantId}`, 'DELETE'),
+  revoke: (kind: ResourceKind, resourceId: string, grantId: string) =>
+    sendJsonFull(`${base()}/${grantPath(kind, resourceId)}/${grantId}`, 'DELETE'),
 
-  people: (tenantId: string) =>
+  people: () =>
     getJson<{ people: { subject: string; email: string; displayName: string | null }[] }>(
-      `${base(tenantId)}/people`
+      `${base()}/people`
     ),
 
   /** The HTML document of one chat_show_mockup call (mockup-card.tsx's iframe src). */
-  mockupUrl: (tenantId: string, chatId: string, toolUseId: string) =>
-    `${base(tenantId)}/chats/${chatId}/mockups/${encodeURIComponent(toolUseId)}`,
+  mockupUrl: (chatId: string, toolUseId: string) =>
+    `${base()}/chats/${chatId}/mockups/${encodeURIComponent(toolUseId)}`,
 
   /** Where a widget card's `ui://` resource HTML is served (widget-card.tsx's iframe src). */
-  widgetResourceUrl: (tenantId: string, resourceUri: string) =>
-    `${base(tenantId)}/widgets?${new URLSearchParams({ uri: resourceUri }).toString()}`,
+  widgetResourceUrl: (resourceUri: string) =>
+    `${base()}/widgets?${new URLSearchParams({ uri: resourceUri }).toString()}`,
 
   /**
    * A card's confirm button, run for real (widget-card.tsx's `tools/call`
@@ -284,14 +275,13 @@ export const chatClient = {
    * rather than running a non-idempotent confirm tool a second time.
    */
   confirmWidgetTool: (
-    tenantId: string,
     chatId: string,
     name: string,
     args: Record<string, unknown>,
     stateKey?: string
   ) =>
     sendJsonFull<{ result: McpToolResult }>(
-      `${base(tenantId)}/chats/${chatId}/widget/tool-call`,
+      `${base()}/chats/${chatId}/widget/tool-call`,
       'POST',
       { name, arguments: args, ...(stateKey ? { stateKey } : {}) }
     ),
@@ -302,13 +292,12 @@ export const chatClient = {
    * shows this receipt instead of live Confirm/Cancel buttons.
    */
   reportWidgetDecision: (
-    tenantId: string,
     chatId: string,
     stateKey: string,
     decision: 'confirmed' | 'cancelled',
     state: WidgetDecisionState
   ) =>
-    sendJsonFull(`${base(tenantId)}/chats/${chatId}/widget/decision`, 'POST', {
+    sendJsonFull(`${base()}/chats/${chatId}/widget/decision`, 'POST', {
       stateKey,
       decision,
       state,
@@ -322,9 +311,9 @@ export const chatClient = {
    * has an undecided sibling — the model answers once every card in that
    * reply has one, not once per card).
    */
-  appendWidgetModelContext: (tenantId: string, chatId: string, text: string, stateKey?: string) =>
+  appendWidgetModelContext: (chatId: string, text: string, stateKey?: string) =>
     sendJsonFull<WidgetModelContextOutcome>(
-      `${base(tenantId)}/chats/${chatId}/widget/model-context`,
+      `${base()}/chats/${chatId}/widget/model-context`,
       'POST',
       { text, ...(stateKey ? { stateKey } : {}) }
     ),

@@ -1,0 +1,56 @@
+/**
+ * Disconnect the caller's grant on the third Atlassian app ("Renkei
+ * Confluence"). Subject-scoped: the session decides whose grant dies,
+ * never a parameter.
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { getDatabase } from '@renkei/db';
+import { getSessionFromRequest } from '@/lib/session';
+import { recordAuditEvent } from '@/lib/audit-events';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+import { ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
+import { delegateGrants } from '@renkei/delegate-client';
+
+export async function DELETE(
+  request: NextRequest
+): Promise<NextResponse> {
+  const session = await getSessionFromRequest(request);
+  if (!session) {
+    return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+  }
+
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  }
+
+  const grant = await dbResult.val
+    .selectFrom('provider_grants')
+    .select('provider_account_id')
+    .where('provider', '=', ATLASSIAN_CONFLUENCE)
+    .where('subject', '=', session.subject)
+    .executeTakeFirst();
+
+  if (!grant) {
+    return NextResponse.json({ message: 'Nothing to disconnect' });
+  }
+
+  // The delegate owns the grant rows (docs/delegate-key-design.md); it
+  // deletes ours, and revokes at the provider where one can.
+  const deleted = await delegateGrants().delete({
+    provider: ATLASSIAN_CONFLUENCE,
+    accountId: grant.provider_account_id,
+  });
+  if (!deleted.ok) {
+    return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
+  }
+  recordAuditEvent({
+    actorSubject: session.subject,
+    action: 'connector.disconnected',
+    targetKind: 'connector',
+    targetLabel: ATLASSIAN_CONFLUENCE,
+  });
+  invalidateToolCatalogCache(session.subject);
+  return NextResponse.json({ message: 'Confluence disconnected' });
+}

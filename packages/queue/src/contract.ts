@@ -38,7 +38,6 @@ import type { Result } from '@campfhir/safe-functions/types';
 
 /** What a producer hands the queue. */
 export interface QueueMessageInput {
-  tenantId: string;
   /** The producing connector or subsystem ('webex', 'knowledge', ...). */
   source: string;
   /** The message kind within the source's namespace. */
@@ -51,7 +50,7 @@ export interface QueueMessageInput {
    */
   orderingKey?: string | null;
   /**
-   * Skip this message when one of the same tenant, source, type and
+   * Skip this message when one of the same source, type and
    * ordering key is still waiting to be claimed. For a message that is a
    * bare "go look" (a change notification whose handler runs a delta round
    * that catches up on everything anyway), a second copy behind an unclaimed
@@ -68,7 +67,6 @@ export interface QueueMessageInput {
  */
 export interface ClaimedMessage {
   id: string;
-  tenant_id: string;
   source: string;
   type: string;
   payload: Json;
@@ -114,7 +112,6 @@ export interface QueueConsumer {
 
 export interface DeadLetter {
   id: string;
-  tenant_id: string;
   source: string;
   type: string;
   payload: Json;
@@ -157,7 +154,6 @@ export interface QueuePurger {
    * compared as JSON text at the given path. Returns how many went.
    */
   discardPending(
-    tenantId: string,
     type: string,
     match: readonly { path: readonly string[]; value: string }[]
   ): Promise<Result<number, 'QUEUE_ERROR'>>;

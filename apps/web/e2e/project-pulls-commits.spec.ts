@@ -20,7 +20,7 @@
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
@@ -69,15 +69,12 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'code', 'github', 'acme/site', 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'github', 'acme/site', 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.projectName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.chatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
     );
     await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
       ids.chatId,
@@ -103,10 +100,8 @@ async function seedNoAccessFixture(ids: ReturnType<typeof noAccessIdsFor>): Prom
   try {
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'code', 'github', 'acme/no-access-repo', 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'github', 'acme/no-access-repo', 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.projectName]
     );
   } finally {
     await client.end();
@@ -249,7 +244,7 @@ test.describe('project pulls, commits and actions', () => {
     const main = page.getByRole('main');
 
     // ── The project screen: Pulls, Commits and Actions cards ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
 
     const pulls = main.locator('section', {
@@ -283,7 +278,7 @@ test.describe('project pulls, commits and actions', () => {
     await shot(page, testInfo, 'project-pulls-page.png');
 
     // ── The full Commits page, with Load more ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}/commits`);
+    await page.goto(`/code/${ids.projectId}/commits`);
     await expect(page.getByRole('heading', { level: 1, name: 'Commits' })).toBeVisible();
     await expect(page.getByText('Fix the timeout')).toBeVisible();
     const loadMore = page.getByRole('button', { name: 'Load more' });
@@ -295,7 +290,7 @@ test.describe('project pulls, commits and actions', () => {
     if (!mobile) return;
 
     // ── Mobile: the cards still render at phone width ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await page.setViewportSize(MOBILE_VIEWPORT);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     await expect(page.getByText('#42 Fix the timeout')).toBeVisible();
@@ -309,7 +304,7 @@ test.describe('project pulls, commits and actions', () => {
     await seedNoAccessFixture(ids);
     try {
       const main = page.getByRole('main');
-      await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+      await page.goto(`/code/${ids.projectId}`);
       await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
 
       const pulls = main.locator('section', {

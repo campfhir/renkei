@@ -406,7 +406,6 @@ export function registerAdManagerTools(
       // are not, matching those other clients' own `url` field.
       logger.warn('ADManager Plus worker call failed', {
         component: 'admanager/fetch',
-        tenantId: full.tenantId,
         subject: full.subject,
         instanceId,
         path: request.path,
@@ -422,7 +421,6 @@ export function registerAdManagerTools(
     if (answered.val.status < 200 || answered.val.status >= 300) {
       logger.warn('ADManager Plus non-OK response', {
         component: 'admanager/fetch',
-        tenantId: full.tenantId,
         subject: full.subject,
         instanceId,
         path: request.path,

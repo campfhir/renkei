@@ -103,7 +103,7 @@ describe('loadSourceImage', () => {
     'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACAQMAAABIeJ9nAAAAA1BMVEX/AAAZ4gk3AAAADElEQVQI12NgYGAAAAAEAAEnNCcKAAAAAElFTkSuQmCC',
     'base64'
   ); // a real 2x2 PNG
-  const SCOPE = { db: null as never, tenantId: 't', chatId: 'c' };
+  const SCOPE = { db: null as never, chatId: 'c' };
   const row = (over: Partial<AttachmentRow>): AttachmentRow => ({
     id: 'a1',
     ownerSubject: 'u',
@@ -143,7 +143,7 @@ describe('loadSourceImage', () => {
       expect(loaded.image.bytes.subarray(1, 4).toString()).toBe('PNG');
       expect(loaded.image.bytes.includes(Buffer.from('script'))).toBe(false);
     }
-    expect(listAttachmentsMock).toHaveBeenCalledWith(null, 't', { chatId: 'c' });
+    expect(listAttachmentsMock).toHaveBeenCalledWith(null, { chatId: 'c' });
   });
 
   it('says what is there when the name is not', async () => {

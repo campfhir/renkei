@@ -48,8 +48,7 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-const cacheKey = (tenantId: string, subject: string, kind: ToolDefaultsKind) =>
-  `${tenantId} ${subject} ${kind}`;
+const cacheKey = (subject: string, kind: ToolDefaultsKind) => `${subject} ${kind}`;
 
 /**
  * This person's saved default toolset, or null when they have never set one
@@ -61,12 +60,11 @@ const cacheKey = (tenantId: string, subject: string, kind: ToolDefaultsKind) =>
  * preference would be a worse failure than starting it with the core set.
  */
 export async function getDefaultChatTools(
-  tenantId: string,
   subject: string,
   options: { fresh?: boolean; kind?: ToolDefaultsKind } = {}
 ): Promise<ChatToolConfig | null> {
   const kind = options.kind ?? 'chat';
-  const key = cacheKey(tenantId, subject, kind);
+  const key = cacheKey(subject, kind);
   const cached = cache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
@@ -78,7 +76,6 @@ export async function getDefaultChatTools(
       dbResult.val
         .selectFrom('user_preferences')
         .select('value')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .where('key', '=', prefKey(kind))
         .executeTakeFirst(),
@@ -93,7 +90,6 @@ export async function getDefaultChatTools(
 
 /** Save, or clear (pass null) this person's default toolset of that kind. */
 export async function setDefaultChatTools(
-  tenantId: string,
   subject: string,
   config: ChatToolConfig | null,
   kind: ToolDefaultsKind = 'chat'
@@ -107,7 +103,6 @@ export async function setDefaultChatTools(
     if (config === null) {
       await db
         .deleteFrom('user_preferences')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .where('key', '=', key)
         .execute();
@@ -117,14 +112,14 @@ export async function setDefaultChatTools(
     const now = new Date().toISOString();
     await db
       .insertInto('user_preferences')
-      .values({ tenant_id: tenantId, subject, key, value, updated_at: now })
+      .values({ subject, key, value, updated_at: now })
       .onConflict((oc) =>
-        oc.columns(['tenant_id', 'subject', 'key']).doUpdateSet({ value, updated_at: now })
+        oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
       )
       .execute();
   }, 'DB_ERROR' as const);
   if (!written.ok) return written;
 
-  cache.delete(cacheKey(tenantId, subject, kind));
+  cache.delete(cacheKey(subject, kind));
   return ok();
 }

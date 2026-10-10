@@ -246,7 +246,7 @@ async function discover(db: Kysely<DB>, batch: BatchJobRow): Promise<DiscoverOut
   if ('error' in config) return { ok: false, error: config.error };
 
   const listed = await fsListFolder(
-    { tenantId: batch.tenant_id, shareId: config.shareId, subject: batch.subject },
+    { shareId: config.shareId, subject: batch.subject },
     config.path
   );
   if (!listed.ok) return { ok: false, error: fileshareClientFailure(listed.err).message };
@@ -277,7 +277,6 @@ async function discover(db: Kysely<DB>, batch: BatchJobRow): Promise<DiscoverOut
   // hash me", which item time does.
   const recorded = await findProcessedByPath(
     db,
-    batch.tenant_id,
     config.shareId,
     entries.map((entry) => entry.path)
   );
@@ -413,9 +412,9 @@ async function runItem(
     return { ok: false, error: 'Item payload carries no share or source paths.' };
   }
   const sourcePaths = sources.map((source) => source.path);
-  const target: FileshareTarget = { tenantId: batch.tenant_id, shareId, subject: batch.subject };
+  const target: FileshareTarget = { shareId, subject: batch.subject };
 
-  const mistralConfig = await resolveMistralOcrConfig(batch.tenant_id);
+  const mistralConfig = await resolveMistralOcrConfig();
   if (!mistralConfig.ok) {
     return {
       ok: false,
@@ -442,7 +441,7 @@ async function runItem(
   const contentHashes = files.map((file) => file.contentHash);
 
   if (config.skipProcessed) {
-    const known = await findProcessedHashes(db, batch.tenant_id, shareId, contentHashes);
+    const known = await findProcessedHashes(db, shareId, contentHashes);
     if (files.every((file) => known.has(file.contentHash))) {
       return {
         ok: true,
@@ -473,7 +472,7 @@ async function runItem(
 
   const assembled = sections.join('\n\n---\n\n');
   const staged = await sbWriteFile(
-    { tenantId: batch.tenant_id, subject: batch.subject },
+    { subject: batch.subject },
     {
       filename: `${documentKey}.md`,
       contentType: 'text/markdown',
@@ -491,7 +490,6 @@ async function runItem(
     try {
       await recordProcessedFiles(
         db,
-        batch.tenant_id,
         shareId,
         batch.id,
         files.map((file) => ({
@@ -507,7 +505,6 @@ async function runItem(
         'batch {batchJobId}: could not record processed files for "{documentKey}": {error}',
         {
           component: COMPONENT,
-          tenantId: batch.tenant_id,
           batchJobId: batch.id,
           documentKey,
           error: error instanceof Error ? error.message : String(error),

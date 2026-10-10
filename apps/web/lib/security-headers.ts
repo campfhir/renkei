@@ -46,11 +46,11 @@ export interface HeaderRule {
  * in place of the global deny.
  */
 export const FRAMED_ROUTES = [
-  // The MCP widget card's HTML (app/[slug]/chat/_components/widget-card.tsx,
-  // app/[slug]/approval-widget-card.tsx).
-  '/api/tenant/:tenantId/chat/widgets',
-  // A chat mockup's document (app/[slug]/chat/_components/mockup-viewer.tsx).
-  '/api/tenant/:tenantId/chat/chats/:chatId/mockups/:toolUseId',
+  // The MCP widget card's HTML (app/(app)/chat/_components/widget-card.tsx,
+  // app/(app)/approval-widget-card.tsx).
+  '/api/chat/widgets',
+  // A chat mockup's document (app/(app)/chat/_components/mockup-viewer.tsx).
+  '/api/chat/chats/:chatId/mockups/:toolUseId',
 ];
 
 const PERMISSIONS_POLICY = [

@@ -39,11 +39,10 @@ const cache = new Map<string, CacheEntry>();
  */
 export async function describeActor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string | null | undefined
 ): Promise<Actor> {
   if (!subject) return { subject: '(none)', displayName: '(none)' };
-  const key = `${tenantId}:${subject}`;
+  const key = subject;
   const now = Date.now();
   const hit = cache.get(key);
   if (hit && hit.expiresAt > now) return hit.actor;
@@ -53,7 +52,6 @@ export async function describeActor(
     const row = await db
       .selectFrom('identities')
       .select(['display_name', 'email'])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .executeTakeFirst();
     displayName = row?.display_name || row?.email || subject;
@@ -73,11 +71,10 @@ export async function describeActor(
  */
 export async function describeAccountActor(
   db: Kysely<DB>,
-  tenantId: string,
   accountId: string | null | undefined
 ): Promise<Actor> {
   if (!accountId) return { subject: '(none)', displayName: '(none)' };
-  const key = `${tenantId}:account:${accountId}`;
+  const key = `account:${accountId}`;
   const now = Date.now();
   const hit = cache.get(key);
   if (hit && hit.expiresAt > now) return hit.actor;
@@ -88,12 +85,11 @@ export async function describeAccountActor(
     const grant = await db
       .selectFrom('provider_grants')
       .select(['subject', 'display_name'])
-      .where('tenant_id', '=', tenantId)
       .where('provider_account_id', '=', accountId)
       .executeTakeFirst();
     if (grant?.subject) {
       subject = grant.subject;
-      const resolved = await describeActor(db, tenantId, grant.subject);
+      const resolved = await describeActor(db, grant.subject);
       displayName = resolved.displayName;
     } else if (grant?.display_name) {
       displayName = grant.display_name;

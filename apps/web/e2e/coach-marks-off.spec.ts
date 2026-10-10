@@ -14,6 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 /**
  * A tenant per project: the three projects run side by side, and a tenant
@@ -24,7 +25,6 @@ function idsFor(project: string) {
   const uuid = (offset: number) =>
     `${hex.slice(offset, offset + 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
   return {
-    tenantId: uuid(0),
     sessionId: uuid(4),
     slug: `e2e-tours-off-${project}`,
     subject: `e2e-tours-off-${project}@example.com`,
@@ -42,7 +42,7 @@ test.use({
     await use({
       cookies: [
         {
-          name: `renkei_session_${ids.tenantId}`,
+          name: `renkei_session`,
           value: ids.sessionId,
           domain: '127.0.0.1',
           path: '/',
@@ -74,11 +74,10 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 let client: Client;
 let ids: ReturnType<typeof idsFor>;
 
-async function removeTenant(): Promise<void> {
-  // tenant_settings does not cascade from tenants; sessions does not either.
-  await client.query('DELETE FROM tenant_settings WHERE tenant_id = $1', [ids.tenantId]);
-  await client.query('DELETE FROM sessions WHERE tenant_id = $1', [ids.tenantId]);
-  await client.query('DELETE FROM tenants WHERE id = $1', [ids.tenantId]);
+async function reset(): Promise<void> {
+  // The org switch back to its default (on), and this spec's person gone.
+  await client.query(`DELETE FROM settings WHERE key = 'coach_marks_enabled'`);
+  await client.query('DELETE FROM sessions WHERE subject = $1', [ids.subject]);
 }
 
 // eslint-disable-next-line no-empty-pattern
@@ -86,21 +85,21 @@ test.beforeAll(async ({}, testInfo) => {
   ids = idsFor(testInfo.project.name);
   client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
-  await removeTenant();
-  await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [ids.tenantId, ids.slug]);
+  await reset();
   await client.query(
-    `INSERT INTO tenant_settings (tenant_id, key, value) VALUES ($1, 'coach_marks_enabled', 'false'::jsonb)`,
-    [ids.tenantId]
+    `INSERT INTO settings (key, value) VALUES ('coach_marks_enabled', 'false'::jsonb)`
   );
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day')`,
-    [ids.sessionId, ids.tenantId, ids.subject, ['renkei-user', 'renkei-operator']]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')`,
+    [ids.sessionId, ids.subject, ['renkei-user', 'renkei-operator']]
   );
+  // Enrolled already, so the first-sign-in "your encryption key is ready"
+  // dialog does not sit over the shell this spec clicks through.
+  await enrollForE2E(client, ids.subject);
 });
 
 test.afterAll(async () => {
-  await removeTenant();
+  await reset();
   await client.end();
 });
 
@@ -108,13 +107,13 @@ test('with the org switch off, no tour runs and the Tutorials door is closed', a
   page,
 }, testInfo) => {
   // The welcome tour would greet a newcomer here; the switch says no.
-  await page.goto(`/${ids.slug}`);
+  await page.goto(`/`);
   await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
   await page.waitForTimeout(1200);
   await expect(page.getByTestId('coach-mark')).toHaveCount(0);
 
   // Nor does a link that asks for one by name.
-  await page.goto(`/${ids.slug}?tour=welcome`);
+  await page.goto(`/?tour=welcome`);
   await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
   await page.waitForTimeout(1200);
   await expect(page.getByTestId('coach-mark')).toHaveCount(0);
@@ -127,13 +126,13 @@ test('with the org switch off, no tour runs and the Tutorials door is closed', a
   await page.keyboard.press('Escape');
 
   // The page itself still answers, and says why there is nothing to start.
-  await page.goto(`/${ids.slug}/tutorials`);
+  await page.goto(`/tutorials`);
   await expect(page.getByTestId('tutorials-off')).toBeVisible();
   await expect(page.getByRole('button', { name: /Start|Replay/ })).toHaveCount(0);
   await shot(page, testInfo, 'coach-off-tutorials');
 
   // Where the switch lives.
-  await page.goto(`/${ids.slug}/admin/settings`);
+  await page.goto(`/admin/settings`);
   const toggle = page.getByRole('switch', { name: 'Guided tours' });
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute('aria-checked', 'false');

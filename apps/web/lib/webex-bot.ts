@@ -33,19 +33,17 @@ export interface WebexBot {
 }
 
 /** The tenant's bot, or null when none is configured, it is disabled, or it cannot be read. */
-export async function getWebexBot(tenantId: string): Promise<WebexBot | null> {
+export async function getWebexBot(): Promise<WebexBot | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
   try {
     const configResult = await readConnectorConfigCached(
-      tenantId,
       WEBEX_BOT_CONNECTOR,
       keyResult.val
     );
     if (!configResult.ok) {
       logger.warn('Could not read webex-bot connector config', {
         component: 'connectors/webex-bot',
-        tenantId,
       });
       return null;
     }
@@ -62,7 +60,6 @@ export async function getWebexBot(tenantId: string): Promise<WebexBot | null> {
   } catch (error) {
     logger.warn('webex-bot lookup errored: {error}', {
       component: 'connectors/webex-bot',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
@@ -71,9 +68,8 @@ export async function getWebexBot(tenantId: string): Promise<WebexBot | null> {
 
 /** A client speaking as the bot, or null when the org has none — the `bot` sendNoteToPerson takes. */
 export async function webexBotClient(
-  tenantId: string,
   lane: 'interactive' | 'background' = 'interactive'
 ): Promise<WebexClient | null> {
-  const bot = await getWebexBot(tenantId);
+  const bot = await getWebexBot();
   return bot ? new WebexClient(bot.token, { lane }) : null;
 }

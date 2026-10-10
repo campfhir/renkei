@@ -50,7 +50,6 @@ const DRIVE_MAX_PAGES = 10;
 
 export interface DriveWatchRow {
   id: string;
-  tenant_id: string;
   account_id: string;
   scope_key: string;
   scope_label: string | null;
@@ -89,7 +88,6 @@ function isContainer(entry: Record<string, unknown>): boolean {
 }
 
 export async function runDriveWatchSync(
-  tenantId: string,
   access: MicrosoftAccess,
   row: DriveWatchRow
 ): Promise<DriveSyncResult> {
@@ -117,7 +115,6 @@ export async function runDriveWatchSync(
         .execute();
       logger.info('drive delta token expired for {scope}; will re-enumerate', {
         component: COMPONENT,
-        tenantId,
         scope: row.scope_label ?? driveId,
       });
       return {
@@ -141,7 +138,6 @@ export async function runDriveWatchSync(
     .filter((entry) => !isDeleted(entry) && !isContainer(entry) && str(entry.id))
     .map((entry) => sharepointRefId(driveId, str(entry.id)));
   const stored = await readObjectMetadataBatch(
-    tenantId,
     SHAREPOINT_KNOWLEDGE_PROVIDER,
     candidateRefIds
   );
@@ -168,7 +164,6 @@ export async function runDriveWatchSync(
 
     if (isDeleted(entry)) {
       await enqueueKnowledgeEvent(
-        tenantId,
         'delete.object',
         { provider: SHAREPOINT_KNOWLEDGE_PROVIDER, refId },
         orderingKey
@@ -209,7 +204,6 @@ export async function runDriveWatchSync(
 
     const parent = isRecord(entry.parentReference) ? entry.parentReference : {};
     await enqueueKnowledgeEvent(
-      tenantId,
       'ingest.document',
       {
         provider: SHAREPOINT_KNOWLEDGE_PROVIDER,
@@ -248,7 +242,6 @@ export async function runDriveWatchSync(
   // ordering key guarantees this runs after every ingest above.
   if (fullEnumeration && round.val.deltaLink !== null) {
     await enqueueKnowledgeEvent(
-      tenantId,
       'reconcile.drive',
       { provider: SHAREPOINT_KNOWLEDGE_PROVIDER, driveId, syncEpoch },
       orderingKey
@@ -272,10 +265,9 @@ export async function runDriveWatchSync(
     .where('id', '=', row.id)
     .execute();
 
-  const actor = await actorForAccount(db, tenantId, row.account_id);
+  const actor = await actorForAccount(db, row.account_id);
   const fields = {
     component: COMPONENT,
-    tenantId,
     scope: row.scope_label ?? driveId,
     // The opaque drive id stays searchable in the metadata.
     driveId,

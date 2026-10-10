@@ -16,30 +16,6 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// Shared origin storage with the page (push-subscription.ts's
-// rememberTenantForPush) — a worker woken only for `pushsubscriptionchange`
-// has no page open to ask, so the tenant id has to already be sitting
-// somewhere this worker can read.
-const PUSH_DB_NAME = 'renkei-push';
-const PUSH_DB_STORE = 'config';
-
-function idbGetTenantId() {
-  return new Promise((resolve) => {
-    const openRequest = indexedDB.open(PUSH_DB_NAME, 1);
-    openRequest.onupgradeneeded = () => openRequest.result.createObjectStore(PUSH_DB_STORE);
-    openRequest.onerror = () => resolve(null);
-    openRequest.onsuccess = () => {
-      const db = openRequest.result;
-      const getRequest = db
-        .transaction(PUSH_DB_STORE, 'readonly')
-        .objectStore(PUSH_DB_STORE)
-        .get('tenantId');
-      getRequest.onerror = () => resolve(null);
-      getRequest.onsuccess = () => resolve(getRequest.result || null);
-    };
-  });
-}
-
 /** VAPID keys travel base64url; `applicationServerKey` wants raw bytes — same
  *  decode as push-subscription.ts's urlBase64ToUint8Array. */
 function urlBase64ToUint8Array(base64url) {
@@ -59,11 +35,8 @@ function urlBase64ToUint8Array(base64url) {
 self.addEventListener('pushsubscriptionchange', (event) => {
   event.waitUntil(
     (async () => {
-      const tenantId = await idbGetTenantId();
-      if (!tenantId) return;
-
       // Reuse the key the old subscription was minted with when the browser
-      // still has it; only fall back to the tenant's public-key endpoint
+      // still has it; only fall back to the public-key endpoint
       // (an extra round trip, and one more thing that can fail) when it doesn't.
       let applicationServerKey =
         event.oldSubscription && event.oldSubscription.options
@@ -72,7 +45,7 @@ self.addEventListener('pushsubscriptionchange', (event) => {
 
       if (!applicationServerKey) {
         try {
-          const keyResponse = await fetch(`/api/tenant/${tenantId}/push/public-key`);
+          const keyResponse = await fetch('/api/push/public-key');
           if (!keyResponse.ok) return;
           const body = await keyResponse.json();
           if (typeof body.publicKey !== 'string') return;
@@ -97,7 +70,7 @@ self.addEventListener('pushsubscriptionchange', (event) => {
       const json = subscription.toJSON();
       if (typeof json.endpoint !== 'string' || !json.keys) return;
 
-      await fetch(`/api/tenant/${tenantId}/push/subscribe`, {
+      await fetch('/api/push/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),

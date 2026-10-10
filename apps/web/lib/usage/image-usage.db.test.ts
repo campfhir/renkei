@@ -2,8 +2,8 @@
  * The image ledger against a real database (skipped without DATABASE_URL):
  * one row per picture is written content-free and attributed to a person;
  * totals read back org-wide or for one person within a span; the per-user
- * rows carry names for the leaderboard; and a row outside the span, or
- * another org's, is not counted.
+ * rows carry names for the leaderboard; and a row outside the span is not
+ * counted.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -17,26 +17,18 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('image usage ledger', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const otherTenantId = randomUUID();
-  const ann = `ann-${tenantId.slice(0, 8)}`;
-  const bo = `bo-${tenantId.slice(0, 8)}`;
+  const runId = randomUUID();
+  const ann = `ann-${runId.slice(0, 8)}`;
+  const bo = `bo-${runId.slice(0, 8)}`;
   const span = { days: 7, endOffsetDays: 0 };
 
   beforeAll(async () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    for (const id of [tenantId, otherTenantId]) {
-      await db
-        .insertInto('tenants')
-        .values({ id, slug: `image-usage-${id.slice(0, 8)}` })
-        .execute();
-    }
     await db
       .insertInto('identities')
       .values({
-        tenant_id: tenantId,
         subject: ann,
         display_name: 'Ann Example',
         email: 'ann@example.test',
@@ -46,7 +38,6 @@ maybe('image usage ledger', () => {
     const base = { surface: 'images', provider: 'openai', model: 'gpt-image-1' };
     await recordImageUsage(db, {
       ...base,
-      tenantId,
       subject: ann,
       imageBytes: 3_000_000,
       width: 1024,
@@ -56,7 +47,6 @@ maybe('image usage ledger', () => {
     });
     await recordImageUsage(db, {
       ...base,
-      tenantId,
       subject: ann,
       imageBytes: 1_000_000,
       width: 1536,
@@ -68,38 +58,27 @@ maybe('image usage ledger', () => {
       surface: 'flux',
       provider: 'openai',
       model: 'FLUX.2-flex',
-      tenantId,
       subject: bo,
       imageBytes: 500_000,
       width: 1024,
       height: 1024,
     });
-    // Another org's picture is not this org's.
-    await recordImageUsage(db, {
-      ...base,
-      tenantId: otherTenantId,
-      subject: ann,
-      imageBytes: 9_000_000,
-    });
     // A picture from long ago is outside the span.
     await sql`
-      INSERT INTO image_usage (tenant_id, subject, surface, images, image_bytes, created_at)
-      VALUES (${tenantId}, ${ann}, 'images', 1, 7000000, NOW() - interval '60 days')
+      INSERT INTO image_usage (subject, surface, images, image_bytes, created_at)
+      VALUES (${ann}, 'images', 1, 7000000, NOW() - interval '60 days')
     `.execute(db);
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM image_usage WHERE tenant_id IN (${tenantId}, ${otherTenantId})`.execute(
-      db
-    );
-    await sql`DELETE FROM identities WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id IN (${tenantId}, ${otherTenantId})`.execute(db);
+    await sql`DELETE FROM image_usage WHERE subject IN (${ann}, ${bo})`.execute(db);
+    await sql`DELETE FROM identities WHERE subject IN (${ann}, ${bo})`.execute(db);
     await closeDatabase();
   });
 
   it('stores one content-free row per picture', async () => {
     const rows = await sql<Record<string, unknown>>`
-      SELECT * FROM image_usage WHERE tenant_id = ${tenantId} AND subject = ${bo}
+      SELECT * FROM image_usage WHERE subject = ${bo}
     `.execute(db);
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0]).toMatchObject({
@@ -126,31 +105,30 @@ maybe('image usage ledger', () => {
         'provider',
         'subject',
         'surface',
-        'tenant_id',
         'width',
       ].sort()
     );
   });
 
-  it('totals the org over the span, leaving out other orgs and old pictures', async () => {
-    const totals = await getImageTotals(db, tenantId, span, 'UTC');
+  it('totals the org over the span, leaving out old pictures', async () => {
+    const totals = await getImageTotals(db, span, 'UTC');
     expect(totals).toEqual({ images: 3, bytes: 4_500_000, inputTokens: 101, outputTokens: 5160 });
   });
 
   it('totals one person on their own', async () => {
-    expect(await getImageTotals(db, tenantId, span, 'UTC', ann)).toEqual({
+    expect(await getImageTotals(db, span, 'UTC', ann)).toEqual({
       images: 2,
       bytes: 4_000_000,
       inputTokens: 101,
       outputTokens: 5160,
     });
-    expect(await getImageTotals(db, tenantId, span, 'UTC', bo)).toEqual({
+    expect(await getImageTotals(db, span, 'UTC', bo)).toEqual({
       images: 1,
       bytes: 500_000,
       inputTokens: 0,
       outputTokens: 0,
     });
-    expect(await getImageTotals(db, tenantId, span, 'UTC', 'nobody')).toEqual({
+    expect(await getImageTotals(db, span, 'UTC', 'nobody')).toEqual({
       images: 0,
       bytes: 0,
       inputTokens: 0,
@@ -159,7 +137,7 @@ maybe('image usage ledger', () => {
   });
 
   it('puts image tokens, pictures and bytes in the org series by the hour and the day', async () => {
-    const hourly = await getOrgDailySeries(db, tenantId, span, 'UTC', null, 'hour');
+    const hourly = await getOrgDailySeries(db, span, 'UTC', null, 'hour');
     const images = hourly.filter((row) => row.images > 0);
     // Every picture was drawn in the current hour.
     expect(images).toHaveLength(1);
@@ -173,11 +151,11 @@ maybe('image usage ledger', () => {
     });
     expect(images[0]!.day).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}$/);
 
-    const daily = await getOrgDailySeries(db, tenantId, span, 'UTC', null, 'day');
+    const daily = await getOrgDailySeries(db, span, 'UTC', null, 'day');
     expect(daily.find((row) => row.images > 0)).toMatchObject({ images: 3, imageBytes: 4_500_000 });
 
     // One person: Ann's two pictures, none of Bo's FLUX picture.
-    const mine = await getOrgDailySeries(db, tenantId, span, 'UTC', ann, 'day');
+    const mine = await getOrgDailySeries(db, span, 'UTC', ann, 'day');
     expect(mine.find((row) => row.images > 0)).toMatchObject({
       images: 2,
       imageBytes: 4_000_000,
@@ -188,34 +166,34 @@ maybe('image usage ledger', () => {
   });
 
   it('counts the tokens image models billed as their own surface, beside chat and agents', async () => {
-    const org = await getSurfaceTokenTotals(db, tenantId, span, 'UTC');
+    const org = await getSurfaceTokenTotals(db, span, 'UTC');
     expect(org.images).toEqual({ input: 101, output: 5160 });
     // Nothing else was spent here.
     expect(org.chat).toEqual({ input: 0, output: 0 });
     expect(org.agents).toEqual({ input: 0, output: 0 });
     // Scoped to a person: Ann's own, and FLUX (which bills no tokens) adds none for Bo.
-    expect((await getSurfaceTokenTotals(db, tenantId, span, 'UTC', ann)).images).toEqual({
+    expect((await getSurfaceTokenTotals(db, span, 'UTC', ann)).images).toEqual({
       input: 101,
       output: 5160,
     });
-    expect((await getSurfaceTokenTotals(db, tenantId, span, 'UTC', bo)).images).toEqual({
+    expect((await getSurfaceTokenTotals(db, span, 'UTC', bo)).images).toEqual({
       input: 0,
       output: 0,
     });
     // The picture from 60 days ago carries no tokens, and a wider span still leaves them as they are.
     expect(
-      (await getSurfaceTokenTotals(db, tenantId, { days: 90, endOffsetDays: 0 }, 'UTC')).images
+      (await getSurfaceTokenTotals(db, { days: 90, endOffsetDays: 0 }, 'UTC')).images
     ).toEqual({ input: 101, output: 5160 });
   });
 
   it('reads a wider span back to include the old picture', async () => {
-    const wide = await getImageTotals(db, tenantId, { days: 90, endOffsetDays: 0 }, 'UTC');
+    const wide = await getImageTotals(db, { days: 90, endOffsetDays: 0 }, 'UTC');
     expect(wide.images).toBe(4);
     expect(wide.bytes).toBe(11_500_000);
   });
 
   it('lists everyone with images, named where the org knows them', async () => {
-    const users = await getImageUsers(db, tenantId, span, 'UTC');
+    const users = await getImageUsers(db, span, 'UTC');
     const bySubject = new Map(users.map((u) => [u.subject, u]));
     expect(bySubject.get(ann)).toMatchObject({
       label: 'Ann Example',
@@ -230,15 +208,14 @@ maybe('image usage ledger', () => {
   });
 
   it('never throws when a row cannot be written', async () => {
-    // A tenant that does not exist breaks the foreign key; the picture must still reach the person.
+    // A size the column cannot hold breaks the insert; the picture must still reach the person.
     await expect(
       recordImageUsage(db, {
         surface: 'images',
         provider: 'openai',
         model: 'm',
-        tenantId: randomUUID(),
         subject: ann,
-        imageBytes: 1,
+        imageBytes: Number.NaN,
       })
     ).resolves.toBeUndefined();
   });

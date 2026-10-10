@@ -122,13 +122,11 @@ export function shownKeys(
 /** Every grant this person holds in the tenant, one query. */
 export async function grantsFor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Map<string, GrantSummary>> {
   const rows = await db
     .selectFrom('provider_grants')
     .select(['provider', 'display_name', 'requested_scopes', 'granted_scopes', 'metadata'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .execute();
   const grants = new Map<string, GrantSummary>();
@@ -146,7 +144,6 @@ export async function grantsFor(
 
 export async function resolveUserCatalog(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   options: {
     /** The audience gate's verdict per capability key; absent means everyone. */
@@ -160,15 +157,14 @@ export async function resolveUserCatalog(
       db
         .selectFrom('connector_configs')
         .select('connector')
-        .where('tenant_id', '=', tenantId)
         .where('enabled', '=', true)
         .execute(),
-      getOrgSettings(tenantId),
-      listSharesWithConnection(db, tenantId, subject),
-      listInstancesWithConnection(db, tenantId, subject),
-      listAdManagerInstancesWithConnection(db, tenantId, subject),
-      grantsFor(db, tenantId, subject),
-      getConnectorPrefs(tenantId, subject, { fresh: options.fresh }),
+      getOrgSettings(),
+      listSharesWithConnection(db, subject),
+      listInstancesWithConnection(db, subject),
+      listAdManagerInstancesWithConnection(db, subject),
+      grantsFor(db, subject),
+      getConnectorPrefs(subject, { fresh: options.fresh }),
     ]);
 
   const shareRows = shares.ok ? shares.val : [];

@@ -33,7 +33,7 @@
  * tool closed over:
  *
  *   - `provider_grants`  — which connectors this caller has, and their scopes
- *   - `tenant_settings`  — read-only mode, disabled connectors, redaction
+ *   - `settings`  — read-only mode, disabled connectors, redaction
  *   - `connector_configs`— embeddings (the knowledge tools) and per-connector setup
  *   - `file_shares`      — which shares exist for the tenant
  *   - `file_share_connections` — this caller's per-share credentials and opt-ins
@@ -59,26 +59,25 @@ import type { DB } from '@renkei/db';
  */
 export async function toolSurfaceVersion(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<string> {
   try {
     const row = await sql<{ version: string | null }>`
       SELECT to_char(MAX(t), 'YYYYMMDDHH24MISS.US') AS version FROM (
         SELECT MAX(updated_at) AS t FROM provider_grants
-          WHERE tenant_id = ${tenantId} AND subject = ${subject}
+          WHERE subject = ${subject}
         UNION ALL
-        SELECT MAX(updated_at) FROM tenant_settings WHERE tenant_id = ${tenantId}
+        SELECT MAX(updated_at) FROM settings
         UNION ALL
-        SELECT MAX(updated_at) FROM connector_configs WHERE tenant_id = ${tenantId}
+        SELECT MAX(updated_at) FROM connector_configs
         UNION ALL
-        SELECT MAX(updated_at) FROM file_shares WHERE tenant_id = ${tenantId}
+        SELECT MAX(updated_at) FROM file_shares
         UNION ALL
         SELECT MAX(updated_at) FROM file_share_connections
-          WHERE tenant_id = ${tenantId} AND subject = ${subject}
+          WHERE subject = ${subject}
         UNION ALL
         SELECT MAX(updated_at) FROM identities
-          WHERE tenant_id = ${tenantId} AND subject = ${subject}
+          WHERE subject = ${subject}
       ) AS sources
     `.execute(db);
     return row.rows[0]?.version ?? 'empty';

@@ -46,21 +46,19 @@ function withResolvedWidgets(
 
 export async function loadChatView(
   db: Kysely<DB>,
-  tenantId: string,
   access: ChatAccess,
   viewerSubject: string
 ): Promise<{ chat: ChatView; messages: ChatMessageView[] }> {
   const { chat } = access;
   const [rows, active, project, owner, attachments, widgetDecisions, queue] = await Promise.all([
-    listMessages(db, tenantId, chat.id, access.cipher),
+    listMessages(db, chat.id, access.cipher),
     getActiveTurn(db, chat.id),
-    chat.projectId ? getProjectRow(db, tenantId, chat.projectId) : Promise.resolve(null),
+    chat.projectId ? getProjectRow(db, chat.projectId) : Promise.resolve(null),
     chat.ownerSubject === viewerSubject
       ? Promise.resolve(null)
       : db
           .selectFrom('identities')
           .select(['display_name', 'email'])
-          .where('tenant_id', '=', tenantId)
           .where('subject', '=', chat.ownerSubject)
           .executeTakeFirst(),
     db
@@ -74,19 +72,18 @@ export async function loadChatView(
         'message_id',
         'origin',
       ])
-      .where('tenant_id', '=', tenantId)
       .where('chat_id', '=', chat.id)
       .orderBy('created_at', 'asc')
       .execute(),
-    listWidgetDecisions(db, tenantId, chat.id),
+    listWidgetDecisions(db, chat.id),
     // Only the owner sends, so only the owner has a queue to show.
     chat.ownerSubject === viewerSubject
-      ? loadQueuedSends(db, tenantId, chat.id)
+      ? loadQueuedSends(db, chat.id)
       : Promise.resolve([]),
   ]);
   const branches =
     project?.kind === 'code' && project.workspaceId
-      ? await workspaceBranches(db, tenantId, [project.workspaceId])
+      ? await workspaceBranches(db, [project.workspaceId])
       : new Map<string, string>();
   const byMessage = new Map<string, AttachmentView[]>();
   const artifacts: AttachmentView[] = [];

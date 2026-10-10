@@ -45,14 +45,12 @@ export function createFinalizeHook(
       logger.info('run {runId} stopped quietly', {
         component: 'worker-agents/finalize',
         runId: run.runId,
-        tenantId: run.tenantId,
       });
       return;
     }
 
     if (run.status === 'failed') {
       const enqueued = await eventsProducer.enqueue({
-        tenantId: run.tenantId,
         source: 'agents',
         type: 'run.failed',
         payload: {
@@ -91,7 +89,6 @@ export function createFinalizeHook(
       .selectFrom('agent_triggers as t')
       .innerJoin('agents as a', 'a.id', 't.agent_id')
       .select(['t.id as trigger_id', 't.agent_id', 'a.owner_subject', 'a.steps', 'a.llm_model_id'])
-      .where('t.tenant_id', '=', run.tenantId)
       .where('t.kind', '=', 'agent')
       .where('t.enabled', '=', true)
       .where('a.enabled', '=', true)
@@ -104,7 +101,6 @@ export function createFinalizeHook(
         .map(([name, value]) => `${name}: ${value}`)
         .join('; ');
       const result = await createAgentRun(db, agentProducer, {
-        tenantId: run.tenantId,
         agentId: trigger.agent_id,
         ownerSubject: trigger.owner_subject,
         steps: trigger.steps,

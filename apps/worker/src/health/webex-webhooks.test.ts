@@ -34,13 +34,12 @@ const { getPublicBaseUrl: mockGetPublicBaseUrl, getOrgSettings: mockGetOrgSettin
   }>('@renkei/settings');
 
 interface GrantRow {
-  tenant_id: string;
   provider_account_id: string;
   metadata: unknown;
 }
 
 function dbWithGrants(rows: GrantRow[]) {
-  const updates: Array<{ tenant_id: string; provider_account_id: string }> = [];
+  const updates: Array<{ provider_account_id: string }> = [];
   mockGetDatabase.mockReturnValue({
     ok: true,
     val: {
@@ -53,13 +52,11 @@ function dbWithGrants(rows: GrantRow[]) {
       }),
       updateTable: () => ({
         set: () => ({
-          where: (_column: string, _op: string, tenantId: string) => ({
-            where: () => ({
-              where: (_c: string, _o: string, accountId: string) => ({
-                execute: async () => {
-                  updates.push({ tenant_id: tenantId, provider_account_id: accountId });
-                },
-              }),
+          where: () => ({
+            where: (_c: string, _o: string, accountId: string) => ({
+              execute: async () => {
+                updates.push({ provider_account_id: accountId });
+              },
             }),
           }),
         }),
@@ -102,11 +99,10 @@ beforeEach(() => {
 
 describe('sweepWebexWebhooks', () => {
   const grant: GrantRow = {
-    tenant_id: 'tenant-1',
     provider_account_id: 'acct-1',
     metadata: { allSpaces: true, allSpacesSecret: 'secret-1' },
   };
-  const TARGET = 'https://renkei.example.com/api/webhooks/webex/tenant-1/user/acct-1';
+  const TARGET = 'https://renkei.example.com/api/webhooks/webex/user/acct-1';
 
   it('skips entirely with no public base URL — never a wrong-target registration', async () => {
     mockGetPublicBaseUrl.mockReturnValue(null);
@@ -152,7 +148,7 @@ describe('sweepWebexWebhooks', () => {
 
     await sweepWebexWebhooks({
       makeClient: () => client,
-      resolveAccess: async (_tenantId, accountId) =>
+      resolveAccess: async (accountId) =>
         accountId === 'acct-dead' ? null : { auth, subject: 'subj-1', personEmail: null },
     });
 
@@ -204,7 +200,7 @@ describe('sweepWebexWebhooks', () => {
     });
 
     expect(created).toHaveLength(1);
-    expect(updates).toEqual([{ tenant_id: 'tenant-1', provider_account_id: 'acct-1' }]);
+    expect(updates).toEqual([{ provider_account_id: 'acct-1' }]);
   });
 
   it('records the check time even when the API call fails, so a 429 backs off instead of retrying every wake', async () => {
@@ -227,7 +223,7 @@ describe('sweepWebexWebhooks', () => {
       resolveAccess: async () => ({ auth, subject: 'subj-1', personEmail: null }),
     });
 
-    expect(updates).toEqual([{ tenant_id: 'tenant-1', provider_account_id: 'acct-1' }]);
+    expect(updates).toEqual([{ provider_account_id: 'acct-1' }]);
     expect(logger.error).toHaveBeenCalled();
   });
 });

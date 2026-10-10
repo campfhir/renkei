@@ -14,7 +14,7 @@
 import path from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { keyFor, sealForSubject } from './keys';
 
 test.use({
@@ -57,43 +57,20 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     // expiry so nothing tries to refresh them. The stub never checks the
     // header; the app only needs to be able to build one.
     await client.query(
-      `INSERT INTO provider_grants
-         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)
-       VALUES ($1, 'atlassian-bitbucket', 'e2e-bitbucket-account', $2, 'e2e-client', 'E2E Bitbucket',
-               $3, $4, $5, $6, $7)
-       ON CONFLICT (tenant_id, provider, provider_account_id) DO UPDATE
-         SET subject = EXCLUDED.subject,
-             encrypted_access_token = EXCLUDED.encrypted_access_token,
-             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
-             expires_at = EXCLUDED.expires_at`,
-      [
-        E2E_TENANT_ID,
-        E2E_SUBJECT,
-        await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-access-token'),
-        await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-refresh-token'),
-        new Date(Date.now() + 365 * 86_400_000),
-        ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'],
-        JSON.stringify({ username: 'e2e-dev' }),
-      ]
+      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)\n       VALUES ('atlassian-bitbucket', 'e2e-bitbucket-account', $1, 'e2e-client', 'E2E Bitbucket',\n               $2, $3, $4, $5, $6)\n       ON CONFLICT (provider, provider_account_id) DO UPDATE\n         SET subject = EXCLUDED.subject,\n             encrypted_access_token = EXCLUDED.encrypted_access_token,\n             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,\n             expires_at = EXCLUDED.expires_at`,
+      [E2E_SUBJECT, await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'), await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'), new Date(Date.now() + 365 * 86_400_000), ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'], JSON.stringify({ username: 'e2e-dev' })]
     );
     await client.query('DELETE FROM chats WHERE id = $1', [ids.seededChatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.seededProjectId]);
-    await client.query(`DELETE FROM chat_projects WHERE tenant_id = $1 AND name = ANY($2)`, [
-      E2E_TENANT_ID,
-      [ids.newName, ids.createdRepoName],
-    ]);
+    await client.query(`DELETE FROM chat_projects WHERE name = ANY($1)`, [[ids.newName, ids.createdRepoName]]);
     // A code project with no checkout yet — the first chat makes one.
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'Invoices, dunning and the nightly jobs.', 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
-      [ids.seededProjectId, E2E_TENANT_ID, E2E_SUBJECT, ids.seededName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Invoices, dunning and the nightly jobs.', 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
+      [ids.seededProjectId, E2E_SUBJECT, ids.seededName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.seededChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.seededProjectId, ids.seededChatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.seededChatId, E2E_SUBJECT, ids.seededProjectId, ids.seededChatTitle]
     );
     // The one chat in the project is its active chat, as starting it
     // through the app would have left it (lib/code/active-chat.ts).
@@ -111,10 +88,7 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   try {
     await client.query('DELETE FROM chats WHERE id = $1', [ids.seededChatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.seededProjectId]);
-    await client.query(`DELETE FROM chat_projects WHERE tenant_id = $1 AND name = ANY($2)`, [
-      E2E_TENANT_ID,
-      [ids.newName, ids.createdRepoName],
-    ]);
+    await client.query(`DELETE FROM chat_projects WHERE name = ANY($1)`, [[ids.newName, ids.createdRepoName]]);
   } finally {
     await client.end();
   }
@@ -220,31 +194,19 @@ async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
   ];
   const client = await db();
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.seededChatId,
     ownerSubject: E2E_SUBJECT,
   });
   try {
     await client.query(
-      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)
-       VALUES ($1, $2, $3, 'completed', 2, 900, 120, NOW())`,
-      [turnId, E2E_TENANT_ID, ids.seededChatId]
+      `INSERT INTO chat_turns (id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)\n       VALUES ($1, $2, 'completed', 2, 900, 120, NOW())`,
+      [turnId, ids.seededChatId]
     );
     for (const row of rows) {
       await client.query(
-        `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, stop_reason)
-         VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8)`,
-        [
-          E2E_TENANT_ID,
-          ids.seededChatId,
-          turnId,
-          row.seq,
-          row.role,
-          row.kind,
-          chatKey.seal(JSON.stringify(row.blocks)),
-          row.stop,
-        ]
+        `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, stop_reason)\n         VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7)`,
+        [ids.seededChatId, turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), row.stop]
       );
     }
   } finally {
@@ -263,7 +225,7 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
     authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
     'content-type': 'application/json',
   };
-  const target = { tenantId: E2E_TENANT_ID, subject: `code-project:${ids.seededProjectId}` };
+  const target = { subject: `code-project:${ids.seededProjectId}` };
   const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
     method: 'POST',
     headers,
@@ -338,7 +300,7 @@ test.describe('code projects', () => {
       main.locator('section', { has: page.getByRole('heading', { level: 2, name }) });
 
     // ── The index: the seeded project under Mine, its repository beneath ──
-    await page.goto(`/${E2E_SLUG}/code`);
+    await page.goto(`/code`);
     await expect(page.getByRole('heading', { level: 1, name: 'Code' })).toBeVisible();
     const seededRow = main.getByRole('link', { name: ids.seededName });
     await expect(seededRow).toBeVisible();
@@ -463,7 +425,7 @@ test.describe('code projects', () => {
 
     // ── Back to Code, and in again ──
     await main.getByRole('link', { name: 'Back to Code' }).click();
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code$`));
+    await expect(page).toHaveURL(new RegExp(`/code$`));
     await seededRow.click();
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
 
@@ -528,10 +490,10 @@ test.describe('code projects', () => {
       timeout: 30_000,
     });
     const crumb = main.getByRole('link', { name: ids.seededName });
-    await expect(crumb).toHaveAttribute('href', `/${E2E_SLUG}/code/${ids.seededProjectId}`);
+    await expect(crumb).toHaveAttribute('href', `/code/${ids.seededProjectId}`);
     await expect(main.getByRole('link', { name: 'Back to project' })).toHaveAttribute(
       'href',
-      `/${E2E_SLUG}/code/${ids.seededProjectId}`
+      `/code/${ids.seededProjectId}`
     );
     // The code pane opens beside a code chat on a wide screen (its own
     // test below) and narrows the chat's column into its compact title
@@ -623,7 +585,7 @@ test.describe('code projects', () => {
     // ── A new code project through the form: the repository browsed on
     //    Bitbucket (workspace → project → repositories), a .env pasted,
     //    the brief there to start from; nothing cloned yet ──
-    await page.goto(`/${E2E_SLUG}/code/new`);
+    await page.goto(`/code/new`);
     await expect(page.getByRole('heading', { level: 1, name: 'New code project' })).toBeVisible();
     await expect(page.getByText('Connect Bitbucket first')).toHaveCount(0);
     const create = page.getByRole('button', { name: 'Create project' });
@@ -650,7 +612,7 @@ test.describe('code projects', () => {
     await shot('code-new.png');
     await expect(create).toBeEnabled();
     await create.click();
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code/[0-9a-f-]{36}$`));
+    await expect(page).toHaveURL(new RegExp(`/code/[0-9a-f-]{36}$`));
     await expect(page.getByRole('heading', { level: 1, name: ids.newName })).toBeVisible();
     const newRepo = sectionOf('Repository');
     await expect(newRepo.getByText('acme/notifications-gateway')).toBeVisible();
@@ -666,7 +628,7 @@ test.describe('code projects', () => {
       page.getByText(/checkout on the sandbox, its environment variables/)
     ).toBeVisible();
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code$`));
+    await expect(page).toHaveURL(new RegExp(`/code$`));
     await expect(main.getByRole('link', { name: ids.newName })).toHaveCount(0);
     await expect(main.getByRole('link', { name: ids.seededName })).toBeVisible();
   });
@@ -690,7 +652,7 @@ test.describe('code projects', () => {
       });
     const main = page.getByRole('main');
     await seedCheckout(ids);
-    await page.goto(`/${E2E_SLUG}/chat/${ids.seededChatId}`);
+    await page.goto(`/chat/${ids.seededChatId}`);
     await expect(page.getByRole('heading', { name: ids.seededChatTitle })).toBeVisible();
 
     if (mobile) {
@@ -773,7 +735,7 @@ test.describe('code projects', () => {
     await expect(tree.getByText('package.json')).toBeVisible({ timeout: 20_000 });
     await expect(main.locator('[data-testid="pane-branch"]')).toContainText('main');
     const back = main.getByRole('link', { name: 'Back to project' });
-    await expect(back).toHaveAttribute('href', `/${E2E_SLUG}/code/${ids.seededProjectId}`);
+    await expect(back).toHaveAttribute('href', `/code/${ids.seededProjectId}`);
     expect((await back.boundingBox())!.x).toBeLessThan((await tree.boundingBox())!.x);
     expect((await back.boundingBox())!.x).toBeLessThan((await openFiles.boundingBox())!.x);
     // The chat column is narrow beside the pane: its title bar folds.
@@ -874,7 +836,7 @@ test.describe('code projects', () => {
       });
     const main = page.getByRole('main');
     await seedCheckout(ids);
-    await page.goto(`/${E2E_SLUG}/chat/${ids.seededChatId}`);
+    await page.goto(`/chat/${ids.seededChatId}`);
     await expect(page.getByRole('heading', { name: ids.seededChatTitle })).toBeVisible();
 
     if (mobile) {
@@ -979,9 +941,7 @@ test.describe('code projects', () => {
           const client = await db();
           try {
             const rows = await client.query(
-              `SELECT reason, sample_path FROM code_language_gaps
-                WHERE tenant_id = $1 AND extension = 'json' AND language = 'json'`,
-              [E2E_TENANT_ID]
+              `SELECT reason, sample_path FROM code_language_gaps\n                WHERE extension = 'json' AND language = 'json'`
             );
             return rows.rows[0] ?? null;
           } finally {
@@ -1014,7 +974,7 @@ test.describe('code projects', () => {
     // ── "Create new repository", beside "Choose existing": pick the
     //    workspace and project, name it, and an empty repo appears on
     //    Bitbucket — used exactly like one the browser would have found ──
-    await page.goto(`/${E2E_SLUG}/code/new`);
+    await page.goto(`/code/new`);
     await page.getByLabel(/^Name/).fill(ids.createdRepoName);
     await page.getByRole('tab', { name: 'Create new' }).click();
     const workspacePick = page.getByRole('combobox', { name: /^Workspace/ });
@@ -1048,7 +1008,7 @@ test.describe('code projects', () => {
     // First hit on these routes in this test (unlike the big walkthrough
     // above, which has already warmed them up) — dev-mode's on-demand
     // compile can outrun the default assertion timeout.
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code/[0-9a-f-]{36}$`), {
+    await expect(page).toHaveURL(new RegExp(`/code/[0-9a-f-]{36}$`), {
       timeout: 20_000,
     });
     await expect(page.getByRole('heading', { level: 1, name: ids.createdRepoName })).toBeVisible();

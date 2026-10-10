@@ -80,7 +80,6 @@ export async function registerJsmTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_list_service_desks invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -146,7 +145,6 @@ export async function registerJsmTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_list_request_types invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -227,7 +225,6 @@ export async function registerJsmTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_list_requests invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -397,7 +394,6 @@ export async function registerJsmTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_get_request invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -472,7 +468,6 @@ export async function registerJsmTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_list_components invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -579,7 +574,6 @@ export async function registerJsmTools(
     const displayName = getCachedDisplayName(context.accountId);
     logger.debug('jsm_create_request invoked', {
       component: 'mcp/tool',
-      tenantId: context.tenantId,
       accountId: context.accountId,
       displayName,
     });
@@ -1095,7 +1089,6 @@ export async function registerJsmTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_add_request_comment invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -1162,7 +1155,6 @@ export async function registerJsmTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_list_request_transitions invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -1218,7 +1210,6 @@ export async function registerJsmTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_transition_request invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -1306,7 +1297,6 @@ export async function registerJsmTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jsm_list_customers invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

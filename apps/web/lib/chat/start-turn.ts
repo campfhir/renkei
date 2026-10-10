@@ -159,7 +159,6 @@ export interface StartedTurn {
 }
 
 export interface StartTurnInput {
-  tenantId: string;
   session: { subject: string; roles: string[] };
   chatId: string;
   text: string;
@@ -195,7 +194,7 @@ export async function startChatTurn(
     return err('EMPTY' as const);
   }
   if (text.length > USER_MESSAGE_MAX_CHARS) return err('TOO_LONG' as const);
-  const access = await resolveChatAccess(db, input.tenantId, input.session.subject, input.chatId);
+  const access = await resolveChatAccess(db, input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   const chat = access.chat;
@@ -205,7 +204,6 @@ export async function startChatTurn(
     ...(input.attachmentIds && input.attachmentIds.length > 0
       ? await attachmentPromptBlocks(
           db,
-          input.tenantId,
           input.session.subject,
           chat.id,
           input.attachmentIds,
@@ -217,7 +215,7 @@ export async function startChatTurn(
   // A code project's history chat is read-only, its owner's or not: the
   // project's checkout is the active chat's to work in.
   if (chat.projectId) {
-    const project = await getProjectRow(db, input.tenantId, chat.projectId);
+    const project = await getProjectRow(db, chat.projectId);
     if (isHistoryChat(project, chat.id)) return err('HISTORY' as const);
   }
 
@@ -225,7 +223,7 @@ export async function startChatTurn(
     input.llmModelId !== undefined && input.llmModelId !== null && isUuid(input.llmModelId)
       ? input.llmModelId
       : (chat.llmModelId ?? null);
-  const llmResult = await resolveAgentLlm(db, input.tenantId, requestedModel);
+  const llmResult = await resolveAgentLlm(db, requestedModel);
   if (!llmResult.ok) {
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),
@@ -236,9 +234,9 @@ export async function startChatTurn(
   }
   const llm = llmResult.val;
 
-  const settingsResult = await getOrgSettings(input.tenantId);
+  const settingsResult = await getOrgSettings();
   const settings = settingsResult.ok ? settingsResult.val : null;
-  const redactor = settings ? createOutboundRedactor(input.tenantId, settings) : null;
+  const redactor = settings ? createOutboundRedactor(settings) : null;
   const redacted = redactor ? redactor.apply(text) : { text, counts: {} };
 
   const thinkingBudget =
@@ -250,7 +248,6 @@ export async function startChatTurn(
   try {
     const opened = await db.transaction().execute(async (trx) => {
       const turn = await createTurn(trx, {
-        tenantId: input.tenantId,
         chatId: chat.id,
         llmModelId: llm.modelConfigId,
         thinkingBudget,
@@ -262,7 +259,6 @@ export async function startChatTurn(
       let user: InsertedMessage | null = null;
       for (const blocks of chunkedUserBlocks(redacted.text, extraBlocks)) {
         const inserted = await insertMessage(trx, {
-          tenantId: input.tenantId,
           chatId: chat.id,
           turnId: turn.val,
           role: 'user',
@@ -276,7 +272,6 @@ export async function startChatTurn(
       }
       if (!user) return err('CONTENT_KEY' as const);
       const assistant = await insertMessage(trx, {
-        tenantId: input.tenantId,
         chatId: chat.id,
         turnId: turn.val,
         role: 'assistant',
@@ -293,7 +288,6 @@ export async function startChatTurn(
         await trx
           .updateTable('chat_attachments')
           .set({ message_id: user.id })
-          .where('tenant_id', '=', input.tenantId)
           .where('chat_id', '=', chat.id)
           .where('owner_subject', '=', input.session.subject)
           .where('id', 'in', input.attachmentIds.filter(isUuid))
@@ -337,7 +331,6 @@ export async function startChatTurn(
     };
     defer(() =>
       executeChatTurn(db, {
-        tenantId: input.tenantId,
         session: input.session,
         chat: { ...chat, llmModelId: llm.modelConfigId },
         cipher: access.cipher,
@@ -352,7 +345,6 @@ export async function startChatTurn(
   } catch (error) {
     logger.warn('chat turn could not start: {error}', {
       component: 'chat/turn',
-      tenantId: input.tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return err('DB_ERROR' as const);
@@ -361,7 +353,6 @@ export async function startChatTurn(
 }
 
 export interface ExecuteTurnInput {
-  tenantId: string;
   session: { subject: string; roles: string[] };
   chat: ChatRow;
   /** The chat's cipher (access.cipher; chat-keys.ts for a resumed turn). */
@@ -440,7 +431,6 @@ async function executeTurnBody(
   prepared: () => void
 ): Promise<void> {
   const store = createTurnStore(db, {
-    tenantId: input.tenantId,
     chatId: input.chat.id,
     turnId: input.turnId,
     subject: input.session.subject,
@@ -459,7 +449,6 @@ async function executeTurnBody(
   ) =>
     logger[level](message, {
       component: 'chat/turn',
-      tenantId: input.tenantId,
       chatId: input.chat.id,
       turnId: input.turnId,
       ...fields,
@@ -475,10 +464,10 @@ async function executeTurnBody(
   const preparingSince = Date.now();
   try {
     const project = input.chat.projectId
-      ? await getProjectRow(db, input.tenantId, input.chat.projectId)
+      ? await getProjectRow(db, input.chat.projectId)
       : null;
     // The project's content — instructions, memory, files — under its own key.
-    const projectCipher = project ? await projectCipherById(db, input.tenantId, project.id) : null;
+    const projectCipher = project ? await projectCipherById(db, project.id) : null;
     const defaultsKind = project?.kind === 'code' ? 'code' : 'chat';
     // Only consulted when neither the chat nor the project has its own
     // toolset, so a cache miss here never costs a chat that already has
@@ -489,8 +478,8 @@ async function executeTurnBody(
     const [userDefault, permissionPrefs] = await Promise.all([
       input.chat.toolConfig || project?.toolConfig
         ? null
-        : getDefaultChatTools(input.tenantId, input.session.subject, { kind: defaultsKind }),
-      getChatToolPermissionPrefs(input.tenantId, input.session.subject, { fresh: true }),
+        : getDefaultChatTools(input.session.subject, { kind: defaultsKind }),
+      getChatToolPermissionPrefs(input.session.subject, { fresh: true }),
     ]);
     // A code project's chats always carry the Bitbucket connector on top
     // of whatever was chosen (tool-config.ts): the code_* tools push, the
@@ -518,7 +507,6 @@ async function executeTurnBody(
     // the turn's context is read. The release is taken the moment it is
     // known, so a failure among the other reads still revokes the token.
     const surfacing = resolveChatToolSurface(db, {
-      tenantId: input.tenantId,
       subject: input.session.subject,
       roles: input.session.roles,
       config: toolConfig,
@@ -535,9 +523,9 @@ async function executeTurnBody(
 
     const readOnly = input.settings?.readOnly ?? false;
     const [initialRows, person, filesAllowed, code, context, models, surface] = await Promise.all([
-      listMessages(db, input.tenantId, input.chat.id, input.cipher),
-      getIdentityDisplay(input.tenantId, input.session.subject),
-      tenantBlobStoreConfigured(input.tenantId),
+      listMessages(db, input.chat.id, input.cipher),
+      getIdentityDisplay(input.session.subject),
+      tenantBlobStoreConfigured(),
       // A code project's checkout, when it is there to work in: the code_*
       // tools bound to it, and what the prompt says about it either way.
       project?.kind === 'code'
@@ -547,11 +535,11 @@ async function executeTurnBody(
             auto: input.chat.autoMode && !readOnly,
           })
         : null,
-      chatPromptContext(db, input.tenantId, input.chat, project, projectCipher),
+      chatPromptContext(db, input.chat, project, projectCipher),
       // The roster a chat's sub-agent picks from; a code project's chat has
       // no such sub-agent (see `delegate` below), nor does a caller with
       // its own local tools.
-      input.localTools || project?.kind === 'code' ? null : listChatModels(db, input.tenantId),
+      input.localTools || project?.kind === 'code' ? null : listChatModels(db),
       surfacing,
     ]);
     // Compaction runs before history is built, not as a background sweep:
@@ -562,7 +550,6 @@ async function executeTurnBody(
     if (needsCompaction(rows)) {
       try {
         const compacted = await compactChat(db, {
-          tenantId: input.tenantId,
           chatId: input.chat.id,
           llm: input.llm,
           createdBy: 'auto',
@@ -571,7 +558,7 @@ async function executeTurnBody(
           onProgress: (progress) =>
             channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
         });
-        if (compacted) rows = await listMessages(db, input.tenantId, input.chat.id, input.cipher);
+        if (compacted) rows = await listMessages(db, input.chat.id, input.cipher);
         // The pass's own end, so the thread's card does not take a reply
         // that fails later for a fold that did not.
         channel.emit({
@@ -605,10 +592,9 @@ async function executeTurnBody(
       input.llm
     );
     if (phiRefusal) throw new TurnRefused(phiRefusal);
-    const chatSummary = await latestChatSummary(db, input.tenantId, input.chat.id, input.cipher);
+    const chatSummary = await latestChatSummary(db, input.chat.id, input.cipher);
     const localContext = {
       db,
-      tenantId: input.tenantId,
       subject: input.session.subject,
       chatId: input.chat.id,
       cipher: input.cipher,
@@ -622,7 +608,6 @@ async function executeTurnBody(
       recordImageUsage: (report: ImageUsageReport) =>
         recordImageUsage(db, {
           ...report,
-          tenantId: input.tenantId,
           subject: input.session.subject,
         }),
       recordUsage: (usage: LlmUsage, model?: LlmCallModel | null) =>
@@ -641,7 +626,6 @@ async function executeTurnBody(
       subagents: createSubagentRecorder(
         db,
         {
-          tenantId: input.tenantId,
           chatId: input.chat.id,
           turnId: input.turnId,
           cipher: input.cipher,
@@ -727,7 +711,7 @@ async function executeTurnBody(
         surface.discoverable.some((entry) => entry.def.name === 'outlook_search_users'),
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
       filesAllowed,
-      chartsAllowed: filesAllowed && (await sandboxChartsEnabled(input.tenantId)),
+      chartsAllowed: filesAllowed && (await sandboxChartsEnabled()),
       autoMode: auto,
       now: new Date(),
     });
@@ -796,7 +780,6 @@ async function executeTurnBody(
     // only one waiting on it.
     if (outcome.status === 'completed') {
       notifyChatReplyDesktop({
-        tenantId: input.tenantId,
         ownerSubject: input.session.subject,
         chatId: input.chat.id,
         chatTitle: input.chat.title,
@@ -853,7 +836,6 @@ async function executeTurnBody(
 /** What the system prompt says about the project and the files at hand. */
 export async function chatPromptContext(
   db: Kysely<DB>,
-  tenantId: string,
   chat: ChatRow,
   project: Awaited<ReturnType<typeof getProjectRow>>,
   /** The project's cipher (chat-keys.ts), when the chat is in one. */
@@ -866,7 +848,6 @@ export async function chatPromptContext(
   const files = await db
     .selectFrom('chat_attachments')
     .select(['id', 'filename', 'content_type', 'size_bytes', 'chat_id', 'project_id'])
-    .where('tenant_id', '=', tenantId)
     .where((eb) =>
       eb.or([eb('chat_id', '=', chat.id), ...(project ? [eb('project_id', '=', project.id)] : [])])
     )
@@ -884,23 +865,22 @@ export async function chatPromptContext(
         ? {
             name: project.name,
             instructions: openProjectInstructions(project, projectCipher),
-            memoryText: await projectMemoryText(db, tenantId, project.id, projectCipher),
+            memoryText: await projectMemoryText(db, project.id, projectCipher),
             files: files.filter((row) => row.project_id === project.id).map(shape),
             code: null,
           }
         : null,
     userMemoryText: project
       ? null
-      : renderUserMemory(await readUserMemory(db, tenantId, chat.ownerSubject)),
+      : renderUserMemory(await readUserMemory(db, chat.ownerSubject)),
     chatFiles: files.filter((row) => row.chat_id === chat.id).map(shape),
   };
 }
 
 async function projectMemoryText(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string,
   cipher: ContentCipher
 ): Promise<string | null> {
-  return renderProjectMemory(await readProjectMemory(db, tenantId, projectId, cipher));
+  return renderProjectMemory(await readProjectMemory(db, projectId, cipher));
 }

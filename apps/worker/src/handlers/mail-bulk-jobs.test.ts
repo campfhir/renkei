@@ -52,9 +52,7 @@ function fakeDb() {
   return {
     selectFrom: () => ({
       selectAll: () => ({
-        where: () => ({
-          where: () => ({ executeTakeFirst: async () => jobRow }),
-        }),
+        where: () => ({ executeTakeFirst: async () => jobRow }),
       }),
     }),
     updateTable: () => ({
@@ -69,7 +67,6 @@ function fakeDb() {
 function claimedEvent(): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: 'tenant-1',
     source: 'mailjobs',
     type: 'bulk-action',
     payload: { jobId: 'job-1' },
@@ -80,7 +77,6 @@ function claimedEvent(): ClaimedEvent {
 function job(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: 'job-1',
-    tenant_id: 'tenant-1',
     subject: 'user-1',
     account_id: 'acct-1',
     action: 'markRead',

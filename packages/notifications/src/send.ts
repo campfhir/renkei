@@ -104,8 +104,6 @@ export interface PushWirePayload {
  * how to open it, nothing more.
  */
 export function pushClickTarget(input: {
-  tenantId: string;
-  slug: string;
   refUrl: string | null;
   notificationId?: string;
   appPath?: string;
@@ -114,10 +112,10 @@ export function pushClickTarget(input: {
   const appUrl =
     input.appPath && input.appPath.startsWith('/') && !input.appPath.startsWith('//')
       ? input.appPath
-      : `/${input.slug}/notifications`;
+      : '/notifications';
   const external = input.openInSourceApp && isExternalNotificationUrl(input.refUrl);
   const openUrl = input.notificationId
-    ? `/api/tenant/${input.tenantId}/notifications/${input.notificationId}/open`
+    ? `/api/notifications/${input.notificationId}/open`
     : external && input.refUrl
       ? input.refUrl
       : appUrl;
@@ -126,7 +124,6 @@ export function pushClickTarget(input: {
 
 export async function sendPush(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   encryptionKey: Buffer,
   payload: PushPayload,
@@ -134,31 +131,19 @@ export async function sendPush(
 ): Promise<void> {
   const { log, agent } = options;
   try {
-    const subscriptions = await listSubscriptions(db, tenantId, subject);
+    const subscriptions = await listSubscriptions(db, subject);
     if (subscriptions.length === 0) return;
 
-    const [{ publicKey, privateKey }, tenant, prefs] = await Promise.all([
+    const [{ publicKey, privateKey }, prefs] = await Promise.all([
       getVapidKeys(db, encryptionKey),
-      db
-        .selectFrom('tenants')
-        .select('slug')
-        .where('id', '=', tenantId)
-        .executeTakeFirst()
-        .catch(() => undefined),
-      getNotificationPrefs(tenantId, subject),
+      getNotificationPrefs(subject),
     ]);
-    // No slug means no tenant to land in; the click falls back to the
-    // app's root, the same as a payload with no link at all.
-    const target = tenant
-      ? pushClickTarget({
-          tenantId,
-          slug: tenant.slug,
-          refUrl: payload.refUrl,
-          ...(payload.notificationId ? { notificationId: payload.notificationId } : {}),
-          ...(payload.appPath ? { appPath: payload.appPath } : {}),
-          openInSourceApp: prefs.openInSourceApp,
-        })
-      : { appUrl: '/', openUrl: '/', external: false };
+    const target = pushClickTarget({
+      refUrl: payload.refUrl,
+      ...(payload.notificationId ? { notificationId: payload.notificationId } : {}),
+      ...(payload.appPath ? { appPath: payload.appPath } : {}),
+      openInSourceApp: prefs.openInSourceApp,
+    });
     const wire: PushWirePayload = {
       title: payload.title,
       body: payload.body,
@@ -180,12 +165,11 @@ export async function sendPush(
           // The browser itself revoked this subscription — no retry will
           // ever land, so it is dead weight from here on.
           if (statusCode === 404 || statusCode === 410) {
-            await deleteSubscriptionByEndpoint(db, tenantId, subscription.endpoint);
+            await deleteSubscriptionByEndpoint(db, subscription.endpoint);
             return;
           }
-          log?.('push send failed for tenant {tenantId}', {
+          log?.('push send failed', {
             component: '@renkei/notifications',
-            tenantId,
             statusCode,
             error: error instanceof Error ? error.message : String(error),
           });
@@ -193,9 +177,8 @@ export async function sendPush(
       })
     );
   } catch (error) {
-    log?.('push send skipped for tenant {tenantId}', {
+    log?.('push send skipped', {
       component: '@renkei/notifications',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
   }

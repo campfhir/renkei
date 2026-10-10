@@ -37,7 +37,7 @@ import {
  * afterAll.
  */
 export function useTestDelegate(): {
-  enroll: (tenantId: string, subject: string) => Promise<BrowserKeys>;
+  enroll: (subject: string) => Promise<BrowserKeys>;
 } {
   let started: TestDelegate | null = null;
   beforeAll(async () => {
@@ -50,9 +50,9 @@ export function useTestDelegate(): {
     started = null;
   });
   return {
-    enroll: async (tenantId, subject) => {
+    enroll: async (subject) => {
       if (!started) throw new Error('the test delegate is not running');
-      return started.enrollPerson(tenantId, subject);
+      return started.enrollPerson(subject);
     },
   };
 }
@@ -62,7 +62,7 @@ export interface TestDelegate {
   apiKey: string;
   instance: TestInstance;
   /** Enroll a person as their browser would, with a session delegation to this instance. */
-  enrollPerson(tenantId: string, subject: string): Promise<BrowserKeys>;
+  enrollPerson(subject: string): Promise<BrowserKeys>;
   stop(): Promise<void>;
 }
 
@@ -93,10 +93,9 @@ export async function startTestDelegate(
     url,
     apiKey,
     instance,
-    enrollPerson: async (tenantId, subject) =>
+    enrollPerson: async (subject) =>
       (
         await enrollTestPerson(db, {
-          tenantId,
           subject,
           instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
         })

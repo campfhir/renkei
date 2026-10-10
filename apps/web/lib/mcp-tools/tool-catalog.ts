@@ -123,7 +123,6 @@ function collectingServer(): { server: McpServer; tools: ToolDescriptor[] } {
 
 async function jiraScopesFor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<{ connected: boolean; scopes: string[]; accountId: string | null }> {
   // Read straight from the grant row rather than asking the delegate to
@@ -132,7 +131,6 @@ async function jiraScopesFor(
   const row = await db
     .selectFrom('provider_grants')
     .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', ATLASSIAN)
     .where('subject', '=', subject)
     .limit(1)
@@ -157,13 +155,11 @@ async function jiraScopesFor(
  */
 async function jsmGrantScopesFor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<{ accountId: string; scopes: string[] } | null> {
   const row = await db
     .selectFrom('provider_grants')
     .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', ATLASSIAN_JSM)
     .where('subject', '=', subject)
     .limit(1)
@@ -196,24 +192,20 @@ const catalogCache = new Map<string, CacheEntry>();
 // Roles are part of the key: a role-gated tool is in an operator's list and
 // not a user's, and one subject can be asked about under both (a session
 // versus a run token). Sorted so order never mints a second entry.
-const cacheKey = (tenantId: string, subject: string, roles: readonly string[] = []) =>
-  `${tenantId} ${subject} ${[...roles].sort().join(',')}`;
+const cacheKey = (subject: string, roles: readonly string[] = []) =>
+  `${subject} ${[...roles].sort().join(',')}`;
 
 /**
  * Drop cached catalogs — used after a connector connects or disconnects for
- * some caller, and by tests. Omitting `subject` clears every cached caller
- * in that tenant; omitting `tenantId` too clears everything.
+ * some caller, and by tests. Omitting `subject` clears every cached caller.
  */
-export function invalidateToolCatalogCache(tenantId?: string, subject?: string): void {
-  if (!tenantId) {
+export function invalidateToolCatalogCache(subject?: string): void {
+  if (!subject) {
     catalogCache.clear();
     return;
   }
-  const prefix = `${tenantId} `;
   for (const key of catalogCache.keys()) {
-    if (key.startsWith(prefix) && (!subject || key.startsWith(`${tenantId} ${subject} `))) {
-      catalogCache.delete(key);
-    }
+    if (key.startsWith(`${subject} `)) catalogCache.delete(key);
   }
 }
 
@@ -232,7 +224,6 @@ export function invalidateToolCatalogCache(tenantId?: string, subject?: string):
  * must not have that failure remembered as "this caller has no tools".
  */
 export async function listAvailableTools(
-  tenantId: string,
   subject: string,
   options: {
     fresh?: boolean;
@@ -246,7 +237,7 @@ export async function listAvailableTools(
   } = {}
 ): Promise<ToolDescriptor[]> {
   const roles = options.roles ?? [];
-  const key = cacheKey(tenantId, subject, roles);
+  const key = cacheKey(subject, roles);
   const cached = catalogCache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
@@ -255,22 +246,21 @@ export async function listAvailableTools(
   const db = dbResult.val;
 
   const [jira, jsm] = await Promise.all([
-    jiraScopesFor(db, tenantId, subject),
-    jsmGrantScopesFor(db, tenantId, subject),
+    jiraScopesFor(db, subject),
+    jsmGrantScopesFor(db, subject),
   ]);
 
-  const settingsResult = await getOrgSettings(tenantId);
+  const settingsResult = await getOrgSettings();
   if (!settingsResult.ok) return [];
   const settings = settingsResult.val;
 
   const [availability, audience] = await Promise.all([
-    resolveConnectorAvailability(db, tenantId, subject),
-    resolveAudience(db, tenantId, subject),
+    resolveConnectorAvailability(db, subject),
+    resolveAudience(db, subject),
   ]);
   const projection = buildProjection({ settings, availability, roles, audience });
 
   const context: MCPToolContext = {
-    tenantId,
     accountId: jira.accountId ?? '',
     // Deliberately empty: enumeration must not be able to call a provider.
     siteUrl: '',
@@ -306,7 +296,6 @@ export async function listAvailableTools(
     // rather than fail outright.
     logger.warn('tool catalog enumeration failed: {error}', {
       component: 'mcp/catalog',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return [];

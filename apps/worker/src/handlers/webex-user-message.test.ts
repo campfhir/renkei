@@ -21,13 +21,11 @@ import { authedFetch } from '@renkei/delegate-client';
 const auth = authedFetch(async () => new Response(), 'webex:tenant-1:watcher');
 
 const WATCHER_ACCOUNT = 'watcher-account-id';
-const TENANT = 'tenant-1';
 
 function event(messageId: string): ClaimedEvent {
   // Only the fields the handler reads; the queue row carries more.
   const claimed: unknown = {
     id: 'queue-row-1',
-    tenant_id: TENANT,
     source: 'webex',
     type: 'user-message.created',
     payload: { id: messageId, accountId: WATCHER_ACCOUNT },
@@ -130,7 +128,6 @@ describe('webex all-spaces ingest', () => {
     await handler(event('msg-1'));
 
     expect(published[0]).toMatchObject({
-      tenantId: TENANT,
       provider: 'webex',
       type: 'message.received',
       ownerSubject: 'watcher@example.com',

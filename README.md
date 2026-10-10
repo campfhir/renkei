@@ -2,14 +2,14 @@
 
 Renkei (連携 — "linkage, cooperation") is a permission-aware knowledge and action layer for the tools an organization already uses. The full product vision, architecture, and roadmap live in [RENKEI.md](./RENKEI.md).
 
-**What this repo is today:** the first module of that platform — a multi-tenant **Jira MCP server**. It exposes 50+ Jira and Jira Service Management tools over the Model Context Protocol, with per-user OAuth so every action happens as the calling user and reads honor that user's Jira permissions.
+**What this repo is today:** the first module of that platform — a **Jira MCP server** for one organization. It exposes 50+ Jira and Jira Service Management tools over the Model Context Protocol, with per-user OAuth so every action happens as the calling user and reads honor that user's Jira permissions.
 
 > This section describes the repo's original scope. The MCP tool surface has since grown to cover Confluence, Bitbucket, WebEx, Outlook/Graph, SharePoint, OneDrive, Zoom, OnBase, Mirth Connect, and network fileshares, plus an agent system, permission-aware knowledge search, and cross-tool cards — see [`docs/architecture.md`](./docs/architecture.md) for the current, maintained picture and [`docs/README.md`](./docs/README.md) for the full documentation index.
 
 ## How it works
 
-- **MCP endpoint:** `/api/mcp/{tenantId}/{transport}` (streamable HTTP, JSON-RPC via `mcp-handler`). Beyond the Jira tools, `search_knowledge` searches what Renkei has indexed from connected tools — every result is verified against the source system for the calling user's access before disclosure, and withheld results are reported as a count. `web_search` reaches the public web through the org's Azure OpenAI deployment and its built-in `web_search` tool (Grounding with Bing), returning a cited answer — configured org-wide by an admin, off until then.
-- **Auth, layer 1:** the server is an OAuth 2.1 authorization server toward MCP clients — per-tenant authorize/register/token endpoints with PKCE and RFC 8414/9728 discovery. Users sign in through their tenant's own OIDC provider.
+- **MCP endpoint:** `/api/mcp/{transport}` (streamable HTTP, JSON-RPC via `mcp-handler`). Beyond the Jira tools, `search_knowledge` searches what Renkei has indexed from connected tools — every result is verified against the source system for the calling user's access before disclosure, and withheld results are reported as a count. `web_search` reaches the public web through the org's Azure OpenAI deployment and its built-in `web_search` tool (Grounding with Bing), returning a cited answer — configured org-wide by an admin, off until then.
+- **Auth, layer 1:** the server is an OAuth 2.1 authorization server toward MCP clients — authorize/register/token endpoints with PKCE and RFC 8414/9728 discovery. Users sign in through the organization's own OIDC provider.
 - **Auth, layer 2:** each signed-in user links their own Atlassian account (OAuth 2.0 3LO). The grant is bound to the user's OIDC subject and encrypted at rest; tool calls hit `api.atlassian.com` with that user's token.
 - **Storage:** PostgreSQL 16 via Kysely. Migrations live in `lib/migrations/`; `/api/health` returns 503 while migrations are pending, which gates deployments.
 
@@ -31,7 +31,7 @@ MCP clients need a public HTTPS origin for OAuth callbacks during development �
 and secret from developer.webex.com) on the WebEx page under Connector
 setup; each person then grants Renkei their own access from Connectors,
 and may opt in to the all-spaces webhook there, which Renkei registers with
-that person's token at `/api/webhooks/webex/{tenantId}/user/{accountId}`.
+that person's token at `/api/webhooks/webex/user/{accountId}`.
 The worker re-checks those webhooks periodically (every 60 minutes by
 default — tunable per org via the "WebEx webhook health interval" setting,
 floor 15 minutes) and re-creates any that were deleted, disabled by WebEx

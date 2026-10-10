@@ -26,11 +26,10 @@ function readMetadata(metadata: unknown): Record<string, unknown> {
 /** A token as stored: under its owner's key. */
 export async function sealGrantToken(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   token: string
 ): Promise<Result<string, 'SEAL_ERROR'>> {
-  const sealed = await sealForSubject(db, tenantId, subject, token);
+  const sealed = await sealForSubject(db, subject, token);
   if (!sealed.ok) return err('SEAL_ERROR' as const, { message: sealed.err.type });
   return ok(sealed.val);
 }
@@ -43,29 +42,27 @@ export async function sealGrantToken(
  */
 async function openGrantToken(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string | null,
   stored: string
 ): Promise<Result<string, 'DECRYPTION_ERROR'>> {
   if (!subject) {
     return err('DECRYPTION_ERROR' as const, { message: 'grant has no owner, so no key' });
   }
-  const opened = await openForSubject(db, tenantId, subject, stored);
+  const opened = await openForSubject(db, subject, stored);
   if (!opened.ok) return err('DECRYPTION_ERROR' as const, { message: opened.err.type });
   return ok(opened.val);
 }
 
 export async function setGrant(
   provider: string,
-  tenantId: string,
   grant: NewProviderGrant
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
-  const sealedAccess = await sealGrantToken(db, tenantId, grant.subject, grant.accessToken);
-  const sealedRefresh = await sealGrantToken(db, tenantId, grant.subject, grant.refreshToken);
+  const sealedAccess = await sealGrantToken(db, grant.subject, grant.accessToken);
+  const sealedRefresh = await sealGrantToken(db, grant.subject, grant.refreshToken);
   if (!sealedAccess.ok || !sealedRefresh.ok) return err('DB_ERROR' as const);
   const encryptedAccessToken = sealedAccess.val;
   const encryptedRefreshToken = sealedRefresh.val;
@@ -76,7 +73,6 @@ export async function setGrant(
       db
         .insertInto('provider_grants')
         .values({
-          tenant_id: tenantId,
           provider,
           provider_account_id: grant.accountId,
           client_id: grant.clientId,
@@ -92,7 +88,7 @@ export async function setGrant(
           updated_at: new Date().toISOString(),
         })
         .onConflict((oc) =>
-          oc.columns(['tenant_id', 'provider', 'provider_account_id']).doUpdateSet({
+          oc.columns(['provider', 'provider_account_id']).doUpdateSet({
             encrypted_access_token: encryptedAccessToken,
             // A repeat authorization while a grant already exists can come
             // back with no refresh_token at all (observed on Bitbucket,
@@ -128,7 +124,6 @@ export async function setGrant(
 
 export async function getGrant(
   provider: string,
-  tenantId: string,
   accountId: string
 ): Promise<Result<ProviderGrant | null, 'DB_ERROR' | 'DECRYPTION_ERROR'>> {
   const dbResult = getDatabase();
@@ -151,7 +146,6 @@ export async function getGrant(
           'granted_scopes',
           'subject',
         ])
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where('provider_account_id', '=', accountId)
         .executeTakeFirst(),
@@ -165,7 +159,6 @@ export async function getGrant(
 
   const accessTokenResult = await openGrantToken(
     db,
-    tenantId,
     row.subject,
     row.encrypted_access_token
   );
@@ -173,7 +166,6 @@ export async function getGrant(
 
   const refreshTokenResult = await openGrantToken(
     db,
-    tenantId,
     row.subject,
     row.encrypted_refresh_token
   );
@@ -196,7 +188,6 @@ export async function getGrant(
 
 export async function deleteGrant(
   provider: string,
-  tenantId: string,
   accountId: string
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -206,7 +197,6 @@ export async function deleteGrant(
     () =>
       dbResult.val
         .deleteFrom('provider_grants')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where('provider_account_id', '=', accountId)
         .execute(),

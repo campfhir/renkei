@@ -79,7 +79,6 @@ async function sprintTools(): Promise<Map<string, ToolHandler>> {
   await registerSprintTools(
     server,
     {
-      tenantId: 'tenant-1',
       accountId: 'acct-1',
       siteUrl: 'https://example.atlassian.net',
       apiBaseUrl,

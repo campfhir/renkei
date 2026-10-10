@@ -487,8 +487,8 @@ credential in a transcript, a log, and every prompt after. So secrets go
 around the model entirely:
 
 - _Supplied in the Renkei UI, never over MCP._ The "Browser secrets" card
-  on the connectors page (`apps/web/app/[slug]/connectors/sandbox-secrets.tsx`,
-  routes under `/api/tenant/[tenantId]/sandbox/secrets`) is where a person
+  on the connectors page (`apps/web/app/(app)/connectors/sandbox-secrets.tsx`,
+  routes under `/api/sandbox/secrets`) is where a person
   adds, unlocks, locks and revokes them, with their own session. The MCP
   surface can list secrets (`sandbox_browser_list_secrets`: name, field
   names, hosts, lock state — never a value) and type one

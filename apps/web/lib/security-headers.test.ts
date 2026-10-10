@@ -65,8 +65,8 @@ describe('security header rules', () => {
   it('lets the framed routes be framed by this origin and nothing else', () => {
     const framed = production.slice(1);
     expect(framed.map((rule) => rule.source)).toEqual(FRAMED_ROUTES);
-    expect(FRAMED_ROUTES).toContain('/api/tenant/:tenantId/chat/widgets');
-    expect(FRAMED_ROUTES).toContain('/api/tenant/:tenantId/chat/chats/:chatId/mockups/:toolUseId');
+    expect(FRAMED_ROUTES).toContain('/api/chat/widgets');
+    expect(FRAMED_ROUTES).toContain('/api/chat/chats/:chatId/mockups/:toolUseId');
     for (const rule of framed) {
       const headers = headerMap(rule.headers);
       expect(headers['X-Frame-Options']).toBe('SAMEORIGIN');

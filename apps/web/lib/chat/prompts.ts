@@ -87,14 +87,12 @@ function promptOf(raw: {
 
 export async function getLibrary(
   db: Kysely<DB>,
-  tenantId: string,
   libraryId: string
 ): Promise<LibraryRow | null> {
   if (!isUuid(libraryId)) return null;
   const raw = await db
     .selectFrom('prompt_libraries')
     .select(LIBRARY_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', libraryId)
     .executeTakeFirst();
   return raw ? libraryOf(raw) : null;
@@ -103,18 +101,16 @@ export async function getLibrary(
 /** Every library this person can open: theirs, and the ones shared with them. */
 export async function listAccessibleLibraries(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<{ library: LibraryRow; role: 'owner' | 'editor' | 'viewer' }[]> {
   const [owned, granted] = await Promise.all([
     db
       .selectFrom('prompt_libraries')
       .select(LIBRARY_COLUMNS)
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
       .orderBy('updated_at', 'desc')
       .execute(),
-    listGrantedResources(db, tenantId, subject, 'prompt_library'),
+    listGrantedResources(db, subject, 'prompt_library'),
   ]);
   const grantIds = granted.map((grant) => grant.resourceId).filter(isUuid);
   const grantedRows =
@@ -122,7 +118,6 @@ export async function listAccessibleLibraries(
       ? await db
           .selectFrom('prompt_libraries')
           .select(LIBRARY_COLUMNS)
-          .where('tenant_id', '=', tenantId)
           .where('id', 'in', grantIds)
           .execute()
       : [];
@@ -143,12 +138,11 @@ export async function listAccessibleLibraries(
 
 export async function createLibrary(
   db: Kysely<DB>,
-  input: { tenantId: string; ownerSubject: string; name: string; description: string | null }
+  input: { ownerSubject: string; name: string; description: string | null }
 ): Promise<string> {
   const inserted = await db
     .insertInto('prompt_libraries')
     .values({
-      tenant_id: input.tenantId,
       owner_subject: input.ownerSubject,
       name: input.name,
       description: input.description,
@@ -160,7 +154,6 @@ export async function createLibrary(
 
 export async function updateLibrary(
   db: Kysely<DB>,
-  tenantId: string,
   libraryId: string,
   patch: { name?: string; description?: string | null }
 ): Promise<boolean> {
@@ -172,7 +165,6 @@ export async function updateLibrary(
       ...(patch.description !== undefined ? { description: patch.description } : {}),
       updated_at: sql<Date>`NOW()`,
     })
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', libraryId)
     .executeTakeFirst();
   return Number(result.numUpdatedRows) > 0;
@@ -180,14 +172,12 @@ export async function updateLibrary(
 
 export async function deleteLibrary(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   libraryId: string
 ): Promise<boolean> {
   if (!isUuid(libraryId)) return false;
   const result = await db
     .deleteFrom('prompt_libraries')
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', libraryId)
     .executeTakeFirst();
@@ -195,7 +185,6 @@ export async function deleteLibrary(
   if (deleted) {
     await db
       .deleteFrom('resource_access_grants')
-      .where('tenant_id', '=', tenantId)
       .where('resource_kind', '=', 'prompt_library')
       .where('resource_id', '=', libraryId)
       .execute();
@@ -205,14 +194,12 @@ export async function deleteLibrary(
 
 export async function listPrompts(
   db: Kysely<DB>,
-  tenantId: string,
   libraryId: string
 ): Promise<PromptRow[]> {
   if (!isUuid(libraryId)) return [];
   const rows = await db
     .selectFrom('prompts')
     .selectAll()
-    .where('tenant_id', '=', tenantId)
     .where('library_id', '=', libraryId)
     .orderBy('position', 'asc')
     .orderBy('created_at', 'asc')
@@ -222,12 +209,11 @@ export async function listPrompts(
 
 export async function createPrompt(
   db: Kysely<DB>,
-  input: { tenantId: string; libraryId: string; title: string; body: string; subject: string }
+  input: { libraryId: string; title: string; body: string; subject: string }
 ): Promise<string> {
   const inserted = await db
     .insertInto('prompts')
     .values({
-      tenant_id: input.tenantId,
       library_id: input.libraryId,
       title: input.title,
       body: input.body,
@@ -243,7 +229,6 @@ export async function createPrompt(
 
 export async function updatePrompt(
   db: Kysely<DB>,
-  tenantId: string,
   libraryId: string,
   promptId: string,
   patch: { title?: string; body?: string; position?: number },
@@ -259,7 +244,6 @@ export async function updatePrompt(
       updated_by_subject: subject,
       updated_at: sql<Date>`NOW()`,
     })
-    .where('tenant_id', '=', tenantId)
     .where('library_id', '=', libraryId)
     .where('id', '=', promptId)
     .executeTakeFirst();
@@ -270,14 +254,12 @@ export async function updatePrompt(
 
 export async function deletePrompt(
   db: Kysely<DB>,
-  tenantId: string,
   libraryId: string,
   promptId: string
 ): Promise<boolean> {
   if (!isUuid(libraryId) || !isUuid(promptId)) return false;
   const result = await db
     .deleteFrom('prompts')
-    .where('tenant_id', '=', tenantId)
     .where('library_id', '=', libraryId)
     .where('id', '=', promptId)
     .executeTakeFirst();
@@ -297,16 +279,14 @@ async function touchLibrary(db: Kysely<DB>, libraryId: string): Promise<void> {
 /** The composer's picker: every prompt in every library this person can open. */
 export async function listPickerPrompts(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<{ id: string; title: string; body: string; libraryName: string }[]> {
-  const libraries = await listAccessibleLibraries(db, tenantId, subject);
+  const libraries = await listAccessibleLibraries(db, subject);
   if (libraries.length === 0) return [];
   const names = new Map(libraries.map((entry) => [entry.library.id, entry.library.name]));
   const rows = await db
     .selectFrom('prompts')
     .select(['id', 'library_id', 'title', 'body'])
-    .where('tenant_id', '=', tenantId)
     .where('library_id', 'in', [...names.keys()])
     .orderBy('library_id')
     .orderBy('position', 'asc')

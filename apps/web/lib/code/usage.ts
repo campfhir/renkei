@@ -25,7 +25,6 @@ const EMPTY_USAGE: CodeProjectUsage = { total: { inputTokens: 0, outputTokens: 0
 
 export async function loadCodeProjectUsage(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string
 ): Promise<CodeProjectUsage> {
   const rows = await db
@@ -36,7 +35,6 @@ export async function loadCodeProjectUsage(
       fn.sum<string>('chat_turns.input_tokens').as('input_tokens'),
       fn.sum<string>('chat_turns.output_tokens').as('output_tokens'),
     ])
-    .where('chat_turns.tenant_id', '=', tenantId)
     .where('chats.project_id', '=', projectId)
     .groupBy('chat_turns.chat_id')
     .execute();

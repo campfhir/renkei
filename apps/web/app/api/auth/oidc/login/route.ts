@@ -24,18 +24,13 @@ const LIMITS = {
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
-  const tenantId = searchParams.get('tenantId');
-  // Empty means "no preference": the callback then derives the tenant's home
-  // page from its slug rather than this route hardcoding a landing. Only a
+  // Empty means "no preference": the callback then lands on the home page
+  // rather than this route hardcoding a landing. Only a
   // path on this origin is kept — anyone can author this query string, and
   // the callback would otherwise send a fresh session wherever it said.
   const redirect = safeReturnPath(searchParams.get('redirect')) ?? '';
 
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Missing tenantId' }, { status: 400 });
-  }
-
-  const verdict = checkInboundLimit(`oidc/login:${tenantId}`, request, LIMITS);
+  const verdict = checkInboundLimit('oidc/login', request, LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
       { error: 'Too many sign-in attempts. Try again shortly.' },
@@ -50,34 +45,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const db = dbResult.val;
 
   try {
-    // Verify tenant exists
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('id')
-      .where('id', '=', tenantId)
-      .executeTakeFirst();
-
-    if (!tenant) {
-      // A browser gets here by following the proxy's redirect, so answering
-      // with JSON leaves it stranded. The tenant being gone while the browser
-      // still holds a session cookie for it is the loop this clears: the cookie
-      // makes the proxy report "signed in", every page then fails to resolve a
-      // session, and the only route back to authentication is this one.
-      const home = new URL('/', request.url);
-      home.searchParams.set('error', 'tenant_not_found');
-      const stranded = NextResponse.redirect(home);
-      stranded.cookies.delete(sessionCookieName(tenantId));
-      return stranded;
-    }
-
     // Get OIDC config
-    const oidcResult = await getTenantOidc(tenantId);
+    const oidcResult = await getTenantOidc();
     if (!oidcResult.ok) {
       return NextResponse.json({ error: 'Failed to retrieve OIDC configuration' }, { status: 500 });
     }
     const oidc = oidcResult.val;
     if (!oidc) {
-      return NextResponse.json({ error: 'OIDC not configured for this tenant' }, { status: 400 });
+      // Nobody can sign in until the identity provider exists; the setup
+      // page is where it is created. A browser arriving here from the
+      // signed-out redirect would otherwise land on a JSON error.
+      const originForSetup = await getOrigin(request);
+      const base = originForSetup.ok ? originForSetup.val : request.nextUrl.origin;
+      return NextResponse.redirect(new URL('/setup', base));
     }
 
     // Generate state (CSRF) and nonce (id_token replay). The nonce is sent to
@@ -92,7 +72,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .values({
         id: randomUUID(),
         state,
-        tenant_id: tenantId,
         nonce,
         expires_at: stateExpiresAt.toISOString(),
       })
@@ -156,9 +135,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // route allowed but unauthenticated, with no path back here. The callback
     // issues a fresh cookie; abandoning the flow now leaves the browser plainly
     // signed out instead of stuck.
-    response.cookies.delete(sessionCookieName(tenantId));
+    response.cookies.delete(sessionCookieName());
 
-    response.cookies.set(`oidc_redirect_${tenantId}`, redirect, {
+    response.cookies.set('oidc_redirect', redirect, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
@@ -170,7 +149,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // replayed into a victim's browser (login CSRF / session fixation) fails:
     // the victim's browser never carries the attacker's state cookie. sameSite
     // 'lax' still sends it on the top-level redirect back from the IdP.
-    response.cookies.set(`oidc_state_${tenantId}`, state, {
+    response.cookies.set('oidc_state', state, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',

@@ -66,7 +66,6 @@ interface SubscriptionRow {
 }
 
 async function activeSubscriptions(
-  tenantId: string,
   provider: string,
   repoFullName: string,
   prNumber?: number
@@ -84,7 +83,6 @@ async function activeSubscriptions(
       'repo_full_name',
       'pr_number',
     ])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', provider)
     .where('repo_full_name', '=', repoFullName)
     .where('status', '=', 'active')
@@ -141,7 +139,6 @@ export function isTerminal(conclusion: PipelineConclusion): boolean {
 }
 
 async function actOnSubscription(
-  tenantId: string,
   provider: typeof GITHUB | typeof ATLASSIAN_BITBUCKET,
   subscription: SubscriptionRow,
   providerRunId: string,
@@ -160,8 +157,8 @@ async function actOnSubscription(
   if (conclusion === 'success' && subscription.auto_merge) {
     const access =
       provider === GITHUB
-        ? await resolveGitHubSubjectAccess(tenantId, subscription.subscriber_subject)
-        : await resolveBitbucketSubjectAccess(tenantId, subscription.subscriber_subject);
+        ? await resolveGitHubSubjectAccess(subscription.subscriber_subject)
+        : await resolveBitbucketSubjectAccess(subscription.subscriber_subject);
     const merged = access
       ? provider === GITHUB
         ? await mergeGitHubPullRequest(access.auth, target, subscription.pr_number)
@@ -186,7 +183,6 @@ async function actOnSubscription(
   } else if (conclusion === 'failure' && subscription.auto_fix && subscription.chat_id) {
     try {
       await insertChatNote(
-        tenantId,
         subscription.chat_id,
         fixNote(subscription.repo_full_name, subscription.pr_number)
       );
@@ -223,19 +219,18 @@ export function createGitHubPrPipelineHandler(): EventHandler {
   return async (event: ClaimedEvent) => {
     const parsed = parseGitHubWorkflowRun(rec(event.payload));
     if (!parsed || parsed.prNumbers.length === 0) return 'skipped';
-    const tenantId = event.tenant_id;
 
     const candidates = (
       await Promise.all(
         parsed.prNumbers.map((number) =>
-          activeSubscriptions(tenantId, GITHUB, parsed.repoFullName, number)
+          activeSubscriptions(GITHUB, parsed.repoFullName, number)
         )
       )
     ).flat();
     if (candidates.length === 0) return 'skipped';
 
     for (const subscription of candidates) {
-      const access = await resolveGitHubSubjectAccess(tenantId, subscription.subscriber_subject);
+      const access = await resolveGitHubSubjectAccess(subscription.subscriber_subject);
       if (!access) continue;
       const conclusion = await getGitHubWorkflowRunConclusion(
         access.auth,
@@ -244,7 +239,6 @@ export function createGitHubPrPipelineHandler(): EventHandler {
       );
       if (!conclusion) continue;
       await actOnSubscription(
-        tenantId,
         GITHUB,
         subscription,
         parsed.runId,
@@ -280,13 +274,12 @@ export function createBitbucketPrPipelineHandler(): EventHandler {
   return async (event: ClaimedEvent) => {
     const repoFullName = parseBitbucketRepoFullName(rec(event.payload));
     if (!repoFullName) return 'skipped';
-    const tenantId = event.tenant_id;
 
-    const candidates = await activeSubscriptions(tenantId, ATLASSIAN_BITBUCKET, repoFullName);
+    const candidates = await activeSubscriptions(ATLASSIAN_BITBUCKET, repoFullName);
     if (candidates.length === 0) return 'skipped';
 
     for (const subscription of candidates) {
-      const access = await resolveBitbucketSubjectAccess(tenantId, subscription.subscriber_subject);
+      const access = await resolveBitbucketSubjectAccess(subscription.subscriber_subject);
       if (!access) continue;
       const head = await bitbucketPrHead(access.auth, repoFullName, subscription.pr_number);
       if (!head) continue;
@@ -300,7 +293,6 @@ export function createBitbucketPrPipelineHandler(): EventHandler {
       // commit on the same PR is treated as a new run, since Bitbucket
       // gives this path no single pipeline-run identifier to key off.
       await actOnSubscription(
-        tenantId,
         ATLASSIAN_BITBUCKET,
         subscription,
         head,

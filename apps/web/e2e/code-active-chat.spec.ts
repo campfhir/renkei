@@ -11,7 +11,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 
 test.use({
   // The mobile project's device descriptor asks for WebKit, which is not
@@ -56,15 +56,12 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'Postings, refunds and the month-end close.', 'code', 'atlassian-bitbucket', 'acme/ledger-service', 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Postings, refunds and the month-end close.', 'code', 'atlassian-bitbucket', 'acme/ledger-service', 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.projectName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.chatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
     );
     await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
       ids.chatId,
@@ -80,8 +77,8 @@ async function seedRunningTurn(chatId: string): Promise<void> {
   const client = await db();
   try {
     await client.query(
-      `INSERT INTO chat_turns (tenant_id, chat_id, status) VALUES ($1, $2, 'running')`,
-      [E2E_TENANT_ID, chatId]
+      `INSERT INTO chat_turns (chat_id, status) VALUES ($1, 'running')`,
+      [chatId]
     );
   } finally {
     await client.end();
@@ -114,7 +111,7 @@ test.describe('code project active chat', () => {
     const composer = main.getByPlaceholder('Message Renkei');
 
     // ── The seeded chat is the active one: it has its composer, no notice ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { name: ids.chatTitle })).toBeVisible({
       timeout: 30_000,
     });
@@ -123,7 +120,7 @@ test.describe('code project active chat', () => {
     await expect(page.getByTestId('chat-tag')).toHaveCount(0);
 
     // ── The project page: the active chat on its own, no previous ones ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
     ).toBeVisible({ timeout: 30_000 });
@@ -134,7 +131,7 @@ test.describe('code project active chat', () => {
 
     // ── New chat: the browser lands in it, with a composer ──
     await main.getByRole('button', { name: 'New chat' }).click();
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/chat/[0-9a-f-]{36}$`), {
+    await expect(page).toHaveURL(new RegExp(`/chat/[0-9a-f-]{36}$`), {
       timeout: 30_000,
     });
     const newChatId = page.url().split('/').pop()!;
@@ -146,7 +143,7 @@ test.describe('code project active chat', () => {
     await expect(page.getByTestId('chat-history-notice')).toHaveCount(0);
 
     // ── The previous chat is history: no composer, the notice, the tag ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { name: ids.chatTitle })).toBeVisible({
       timeout: 30_000,
     });
@@ -155,7 +152,7 @@ test.describe('code project active chat', () => {
     await expect(notice).toContainText('This chat is history.');
     await expect(notice.getByRole('link', { name: 'Open the active chat' })).toHaveAttribute(
       'href',
-      `/${E2E_SLUG}/chat/${newChatId}`
+      `/chat/${newChatId}`
     );
     await expect(notice.getByRole('button', { name: 'Start a new chat' })).toBeVisible();
     await expect(composer).toHaveCount(0);
@@ -167,7 +164,7 @@ test.describe('code project active chat', () => {
 
     // ── And the route refuses a send there, whatever the page shows ──
     const refused = await page.request.post(
-      `/api/tenant/${E2E_TENANT_ID}/chat/chats/${ids.chatId}/turns`,
+      `/api/chat/chats/${ids.chatId}/turns`,
       { data: { text: 'One more thing' } }
     );
     expect(refused.status()).toBe(409);
@@ -180,14 +177,14 @@ test.describe('code project active chat', () => {
     await expect(row.getByTestId('chat-history-tag')).toHaveText('history');
     if (mobile) await page.getByRole('button', { name: 'Close menu' }).click();
 
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
     ).toBeVisible({ timeout: 30_000 });
     const active = main.getByTestId('project-active-chat');
     await expect(active.getByRole('link', { name: 'New chat' })).toHaveAttribute(
       'href',
-      `/${E2E_SLUG}/chat/${newChatId}`
+      `/chat/${newChatId}`
     );
     await expect(active.getByRole('link', { name: ids.chatTitle })).toHaveCount(0);
     await expect(
@@ -198,12 +195,12 @@ test.describe('code project active chat', () => {
     });
 
     // ── The Open the active chat link goes where it says ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await page
       .getByTestId('chat-history-notice')
       .getByRole('link', { name: 'Open the active chat' })
       .click();
-    await expect(page).toHaveURL(`/${E2E_SLUG}/chat/${newChatId}`);
+    await expect(page).toHaveURL(`/chat/${newChatId}`);
     await expect(composer).toBeVisible({ timeout: 30_000 });
   });
 
@@ -211,12 +208,12 @@ test.describe('code project active chat', () => {
     const ids = idsFor(testInfo.project.name);
     const main = page.getByRole('main');
 
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
     ).toBeVisible({ timeout: 30_000 });
     await main.getByRole('button', { name: 'New chat' }).click();
-    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/chat/[0-9a-f-]{36}$`), {
+    await expect(page).toHaveURL(new RegExp(`/chat/[0-9a-f-]{36}$`), {
       timeout: 30_000,
     });
 
@@ -230,7 +227,7 @@ test.describe('code project active chat', () => {
     const main = page.getByRole('main');
     await seedRunningTurn(ids.chatId);
 
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
     ).toBeVisible({ timeout: 30_000 });
@@ -239,7 +236,7 @@ test.describe('code project active chat', () => {
     // alerts of their own (no host token in this seed).
     const alert = main.getByRole('alert').filter({ hasText: 'The active chat is still replying' });
     await expect(alert).toBeVisible();
-    await expect(page).toHaveURL(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await expect(page).toHaveURL(`/code/${ids.projectId}`);
     // The active chat is still the seeded one.
     await expect(
       main.getByTestId('project-active-chat').getByRole('link', { name: ids.chatTitle })
@@ -251,18 +248,18 @@ test.describe('code project active chat', () => {
     const ids = idsFor(testInfo.project.name);
     await page.setViewportSize({ width: 390, height: 844 });
     // A second chat through the API, the way the page's button does it.
-    const created = await page.request.post(`/api/tenant/${E2E_TENANT_ID}/chat/chats`, {
+    const created = await page.request.post(`/api/chat/chats`, {
       data: { projectId: ids.projectId },
     });
     expect(created.status()).toBe(201);
     const { chatId: newChatId }: { chatId: string } = await created.json();
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     const notice = page.getByTestId('chat-history-notice');
     await expect(notice).toBeVisible({ timeout: 30_000 });
     await expect(notice.getByRole('link', { name: 'Open the active chat' })).toHaveAttribute(
       'href',
-      `/${E2E_SLUG}/chat/${newChatId}`
+      `/chat/${newChatId}`
     );
     await expect(page.getByRole('main').getByPlaceholder('Message Renkei')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);

@@ -145,7 +145,6 @@ export async function registerSprintTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_create_sprint invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -206,7 +205,6 @@ export async function registerSprintTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_move_issue_to_sprint invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -264,7 +262,6 @@ export async function registerSprintTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_remove_issue_from_sprint invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -358,7 +355,6 @@ export async function registerSprintTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_bulk_move_sprint_issues invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -421,7 +417,6 @@ export async function registerSprintTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_complete_sprint invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

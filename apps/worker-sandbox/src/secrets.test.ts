@@ -21,7 +21,7 @@ const store = jest.requireMock<{ getSecretByName: jest.Mock; touchSecretUsed: je
   './secrets-store'
 );
 
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice' };
+const TARGET = { subject: 'auth0|alice' };
 const PASSPHRASE = 'correct horse battery staple';
 const SEALED = sealSecretFields({ username: 'alice', password: 'hunter2!' }, PASSPHRASE);
 const ROW = {

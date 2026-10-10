@@ -46,17 +46,16 @@ export interface ProjectView {
 
 export async function loadProjectView(
   db: Kysely<DB>,
-  tenantId: string,
   viewerSubject: string,
   projectId: string,
   access: ProjectAccess
 ): Promise<ProjectView | null> {
-  const project = await getProjectRow(db, tenantId, projectId);
+  const project = await getProjectRow(db, projectId);
   if (!project) return null;
   const [files, memory, chats] = await Promise.all([
-    listAttachments(db, tenantId, { projectId }),
-    readProjectMemory(db, tenantId, projectId, access.cipher, { maxEntries: 300 }),
-    listProjectChats(db, tenantId, [projectId], null),
+    listAttachments(db, { projectId }),
+    readProjectMemory(db, projectId, access.cipher, { maxEntries: 300 }),
+    listProjectChats(db, [projectId], null),
   ]);
   const subjects = [
     project.ownerSubject,
@@ -69,7 +68,6 @@ export async function loadProjectView(
       ? await db
           .selectFrom('identities')
           .select(['subject', 'display_name', 'email'])
-          .where('tenant_id', '=', tenantId)
           .where('subject', 'in', unique)
           .execute()
       : [];

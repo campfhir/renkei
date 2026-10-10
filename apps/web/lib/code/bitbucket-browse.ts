@@ -37,16 +37,14 @@ export interface RepoChoice {
 /** The auth for one signed-in person, from a route's request. */
 export async function bitbucketAuthFor(
   request: NextRequest,
-  tenantId: string,
   subject: string
 ): Promise<BitbucketAuth> {
   const origin = await getOrigin(request);
-  return bitbucketAuthOf({ tenantId, subject, origin: origin.ok ? origin.val : '' });
+  return bitbucketAuthOf({ subject, origin: origin.ok ? origin.val : '' });
 }
 
 /** The auth for one person outside a request (a server page). */
 export function bitbucketAuthOf(context: {
-  tenantId: string;
   subject: string;
   origin: string;
 }): BitbucketAuth {

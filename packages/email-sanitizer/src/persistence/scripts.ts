@@ -53,7 +53,6 @@ function kindsOf(stored: readonly string[] | null): CleanerScriptKind[] {
 }
 
 export async function listCleanerScripts(
-  tenantId: string
 ): Promise<Result<CleanerScript[], 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -63,7 +62,6 @@ export async function listCleanerScripts(
       dbResult.val
         .selectFrom('email_cleaner_scripts')
         .select(['id', 'name', 'script', 'compiled', 'enabled', 'applies_to', 'last_error'])
-        .where('tenant_id', '=', tenantId)
         .orderBy('created_at', 'asc')
         .execute(),
     'DB_ERROR' as const
@@ -93,10 +91,9 @@ export async function listCleanerScripts(
  * behaviour.
  */
 export async function listActiveCleanerScripts(
-  tenantId: string,
   kind: CleanerScriptKind = 'msg'
 ): Promise<Result<CleanerScript[], 'DB_ERROR'>> {
-  const result = await listCleanerScripts(tenantId);
+  const result = await listCleanerScripts();
   if (!result.ok) return result;
   return ok(result.val.filter((script) => script.enabled && script.appliesTo.includes(kind)));
 }
@@ -113,7 +110,6 @@ export interface CleanerScriptInput {
 }
 
 export async function upsertCleanerScript(
-  tenantId: string,
   input: CleanerScriptInput
 ): Promise<Result<CleanerScript, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -135,7 +131,6 @@ export async function upsertCleanerScript(
           last_error: null,
           updated_at: sql`now()`,
         })
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', input.id)
         .execute();
     } else {
@@ -143,7 +138,6 @@ export async function upsertCleanerScript(
         .insertInto('email_cleaner_scripts')
         .values({
           id,
-          tenant_id: tenantId,
           name: input.name,
           script: input.script,
           compiled: input.compiled ?? null,
@@ -166,7 +160,6 @@ export async function upsertCleanerScript(
 }
 
 export async function deleteCleanerScript(
-  tenantId: string,
   id: string
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -175,7 +168,6 @@ export async function deleteCleanerScript(
     () =>
       dbResult.val
         .deleteFrom('email_cleaner_scripts')
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', id)
         .execute(),
     'DB_ERROR' as const
@@ -186,7 +178,6 @@ export async function deleteCleanerScript(
 
 /** Best-effort health write; a failure here must never block mail flow. */
 export async function recordCleanerScriptError(
-  tenantId: string,
   id: string,
   error: string | null
 ): Promise<void> {
@@ -197,7 +188,6 @@ export async function recordCleanerScriptError(
       dbResult.val
         .updateTable('email_cleaner_scripts')
         .set({ last_error: error, updated_at: sql`now()` })
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', id)
         .execute(),
     'DB_ERROR' as const

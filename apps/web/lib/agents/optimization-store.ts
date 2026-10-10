@@ -95,12 +95,11 @@ const COLUMNS = [
 /** Start a pass. The queue job that does the work is enqueued by the caller. */
 export async function createOptimization(
   db: Kysely<DB>,
-  params: { tenantId: string; ownerSubject: string; agentId: string; request: OptimizationRequest }
+  params: { ownerSubject: string; agentId: string; request: OptimizationRequest }
 ): Promise<string> {
   const row = await db
     .insertInto('agent_optimizations')
     .values({
-      tenant_id: params.tenantId,
       owner_subject: params.ownerSubject,
       agent_id: params.agentId,
       status: 'queued',
@@ -114,7 +113,6 @@ export async function createOptimization(
 /** One pass, for its owner. Null for anyone else — the same answer as "none". */
 export async function getOptimization(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   optimizationId: string
 ): Promise<AgentOptimization | null> {
@@ -122,7 +120,6 @@ export async function getOptimization(
   const row = await db
     .selectFrom('agent_optimizations')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', optimizationId)
     .executeTakeFirst();
@@ -132,7 +129,6 @@ export async function getOptimization(
 /** The newest pass for an agent, whatever its status — what the page shows. */
 export async function latestOptimization(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string
 ): Promise<AgentOptimization | null> {
@@ -140,7 +136,6 @@ export async function latestOptimization(
   const row = await db
     .selectFrom('agent_optimizations')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId)
     .orderBy('created_at', 'desc')
@@ -152,13 +147,11 @@ export async function latestOptimization(
 /** A pass still queued or running for this agent — one at a time is plenty. */
 export async function inFlightOptimization(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<{ id: string } | null> {
   const row = await db
     .selectFrom('agent_optimizations')
     .select('id')
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('status', 'in', ['queued', 'running'])
     .orderBy('created_at', 'desc')
@@ -225,7 +218,6 @@ export async function finishOptimization(
  */
 export async function markOptimizationApplied(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   optimizationId: string,
   draftId: string
@@ -237,7 +229,6 @@ export async function markOptimizationApplied(
       applied_at: new Date(),
       updated_at: new Date(),
     })
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', optimizationId)
     .execute();

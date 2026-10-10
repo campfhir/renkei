@@ -111,7 +111,6 @@ export interface ShareWithConnection {
  */
 export async function listSharesWithConnection(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<ShareWithConnection[], StoreError>> {
   const rows = await wrapAsync(
@@ -120,7 +119,6 @@ export async function listSharesWithConnection(
         .selectFrom('file_shares')
         .leftJoin('file_share_connections', (join) =>
           join
-            .onRef('file_share_connections.tenant_id', '=', 'file_shares.tenant_id')
             .onRef('file_share_connections.share_id', '=', 'file_shares.id')
             .on('file_share_connections.subject', '=', subject)
         )
@@ -130,7 +128,6 @@ export async function listSharesWithConnection(
           'file_share_connections.tool_access',
           'file_share_connections.allow_delete',
         ])
-        .where('file_shares.tenant_id', '=', tenantId)
         .where('file_shares.enabled', '=', true)
         .orderBy('file_shares.name')
         .execute(),
@@ -160,10 +157,9 @@ export async function listSharesWithConnection(
 /** The shares this subject has connected — what the tools and browser list. */
 export async function listConnectedShares(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<ConnectedShare[], StoreError>> {
-  const all = await listSharesWithConnection(db, tenantId, subject);
+  const all = await listSharesWithConnection(db, subject);
   if (!all.ok) return all;
   return ok(
     all.val.flatMap((entry) =>
@@ -175,7 +171,6 @@ export async function listConnectedShares(
 /** One connection's exposure row (no credential), or null if not connected. */
 export async function getConnection(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   subject: string
 ): Promise<Result<ShareConnection | null, StoreError>> {
@@ -184,7 +179,6 @@ export async function getConnection(
       db
         .selectFrom('file_share_connections')
         .select(['username', 'tool_access', 'allow_delete'])
-        .where('tenant_id', '=', tenantId)
         .where('share_id', '=', shareId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -198,7 +192,6 @@ export async function getConnection(
 /** The sealed credential for one connection — only the worker decrypts it. */
 export async function readConnectionCiphertext(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   subject: string
 ): Promise<Result<string | null, StoreError>> {
@@ -207,7 +200,6 @@ export async function readConnectionCiphertext(
       db
         .selectFrom('file_share_connections')
         .select('encrypted_credentials')
-        .where('tenant_id', '=', tenantId)
         .where('share_id', '=', shareId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -229,7 +221,6 @@ export interface ConnectionInput {
 /** Store or replace this subject's connection to a share. */
 export async function upsertConnection(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   subject: string,
   input: ConnectionInput
@@ -239,7 +230,6 @@ export async function upsertConnection(
       db
         .insertInto('file_share_connections')
         .values({
-          tenant_id: tenantId,
           share_id: shareId,
           subject,
           encrypted_credentials: input.encryptedCredentials,
@@ -266,7 +256,6 @@ export async function upsertConnection(
 /** Change only the exposure choice, keeping the stored credential. */
 export async function updateConnectionExposure(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   subject: string,
   toolAccess: ShareConnection['toolAccess'],
@@ -277,7 +266,6 @@ export async function updateConnectionExposure(
       db
         .updateTable('file_share_connections')
         .set({ tool_access: toolAccess, allow_delete: allowDelete, updated_at: new Date() })
-        .where('tenant_id', '=', tenantId)
         .where('share_id', '=', shareId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -290,7 +278,6 @@ export async function updateConnectionExposure(
 /** Remove this subject's connection (credential included). */
 export async function deleteConnection(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   subject: string
 ): Promise<Result<boolean, StoreError>> {
@@ -298,7 +285,6 @@ export async function deleteConnection(
     () =>
       db
         .deleteFrom('file_share_connections')
-        .where('tenant_id', '=', tenantId)
         .where('share_id', '=', shareId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
@@ -324,7 +310,6 @@ export interface ToolExposure {
  */
 export async function resolveToolExposure(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<ToolExposure, StoreError>> {
   const rows = await wrapAsync(
@@ -333,7 +318,6 @@ export async function resolveToolExposure(
         .selectFrom('file_share_connections')
         .innerJoin('file_shares', 'file_shares.id', 'file_share_connections.share_id')
         .select(['file_share_connections.tool_access', 'file_share_connections.allow_delete'])
-        .where('file_share_connections.tenant_id', '=', tenantId)
         .where('file_share_connections.subject', '=', subject)
         .where('file_shares.enabled', '=', true)
         .execute(),
@@ -357,15 +341,13 @@ export async function resolveToolExposure(
 // ---------------------------------------------------------------------------
 
 export async function listShares(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<Result<ShareRow[], StoreError>> {
   const rows = await wrapAsync(
     () =>
       db
         .selectFrom('file_shares')
         .selectAll()
-        .where('tenant_id', '=', tenantId)
         .orderBy('name')
         .execute(),
     'DB_ERROR' as const
@@ -388,7 +370,6 @@ export async function listShares(
 
 export async function getShare(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string
 ): Promise<Result<ShareRow | null, StoreError>> {
   const row = await wrapAsync(
@@ -396,7 +377,6 @@ export async function getShare(
       db
         .selectFrom('file_shares')
         .selectAll()
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', shareId)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -432,7 +412,6 @@ export interface ShareInput {
 
 export async function createShare(
   db: Kysely<DB>,
-  tenantId: string,
   input: ShareInput
 ): Promise<Result<string, StoreError | 'DUPLICATE_NAME'>> {
   const inserted = await wrapAsync(
@@ -440,7 +419,6 @@ export async function createShare(
       db
         .insertInto('file_shares')
         .values({
-          tenant_id: tenantId,
           name: input.name,
           protocol: input.protocol,
           host: input.host,
@@ -464,7 +442,6 @@ export async function createShare(
 
 export async function updateShare(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   input: ShareInput
 ): Promise<Result<boolean, StoreError | 'DUPLICATE_NAME'>> {
@@ -484,7 +461,6 @@ export async function updateShare(
           host_key_fingerprint: input.hostKeyFingerprint,
           updated_at: new Date().toISOString(),
         })
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', shareId)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -504,7 +480,6 @@ export async function updateShare(
  */
 export async function recordHostKeyFingerprint(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string,
   fingerprint: string
 ): Promise<Result<boolean, StoreError>> {
@@ -513,7 +488,6 @@ export async function recordHostKeyFingerprint(
       db
         .updateTable('file_shares')
         .set({ host_key_fingerprint: fingerprint, updated_at: new Date().toISOString() })
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', shareId)
         .where('host_key_fingerprint', 'is', null)
         .executeTakeFirst(),
@@ -525,14 +499,12 @@ export async function recordHostKeyFingerprint(
 
 export async function deleteShare(
   db: Kysely<DB>,
-  tenantId: string,
   shareId: string
 ): Promise<Result<boolean, StoreError>> {
   const deleted = await wrapAsync(
     () =>
       db
         .deleteFrom('file_shares')
-        .where('tenant_id', '=', tenantId)
         .where('id', '=', shareId)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -546,6 +518,6 @@ function isDuplicateName(cause: unknown): boolean {
     isRecord(cause) &&
     cause.code === '23505' &&
     typeof cause.constraint === 'string' &&
-    cause.constraint === 'idx_file_shares_tenant_name'
+    cause.constraint === 'idx_file_shares_name'
   );
 }

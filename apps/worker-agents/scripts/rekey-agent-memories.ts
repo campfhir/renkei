@@ -44,7 +44,6 @@ async function main(): Promise<void> {
       .innerJoin('agents as a', 'a.id', 'm.agent_id')
       .select([
         'm.id as id',
-        'm.tenant_id as tenant_id',
         'm.content as content',
         'a.owner_subject as owner',
       ])
@@ -59,18 +58,17 @@ async function main(): Promise<void> {
     // One delegate call per owner in the batch.
     const byOwner = new Map<string, typeof rows>();
     for (const row of rows) {
-      const key = `${row.tenant_id}\u0000${row.owner}`;
+      const key = row.owner;
       byOwner.set(key, [...(byOwner.get(key) ?? []), row]);
     }
     for (const [key, owned] of byOwner) {
       if (skippedOwners.has(key)) continue;
-      const { tenant_id: tenantId, owner } = owned[0];
+      const { owner } = owned[0];
       if (dryRun) {
         sealed += owned.length;
         continue;
       }
       const envelopes = await delegate.sealForSubject(
-        tenantId,
         owner,
         owned.map((row) => row.content),
         'automation'

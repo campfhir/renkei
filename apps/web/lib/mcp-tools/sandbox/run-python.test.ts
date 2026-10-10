@@ -70,7 +70,6 @@ async function collect(context: MCPToolContext): Promise<Map<string, Registered>
 
 const context = (subject = 'auth0|alice'): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     subject,
     origin: 'https://renkei.example',
   }) as unknown as MCPToolContext;
@@ -172,7 +171,7 @@ describe('sandbox_run_python', () => {
       timeoutSeconds: 120,
     });
     expect(client.sbRunScript).toHaveBeenCalledWith(
-      { tenantId: 'tenant-1', subject: 'auth0|alice' },
+      { subject: 'auth0|alice' },
       { code: 'import pandas as pd\nprint("hi")', files: [INPUT_ID], timeoutMs: 120_000 }
     );
     expect(result.isError).toBeUndefined();

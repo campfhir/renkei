@@ -51,7 +51,6 @@ export function readCreateIssueAction(suggestedAction: unknown): CreateIssueArgs
 }
 
 export async function executeCreateIssue(
-  tenantId: string,
   subject: string,
   args: CreateIssueArgs,
   projectKey: string
@@ -59,7 +58,7 @@ export async function executeCreateIssue(
   // The approver's own grant, by subject — never someone else's. The
   // delegate describes it (site, account) and carries its token; this
   // process only ever holds the fetcher.
-  const ref = { tenantId, provider: ATLASSIAN, subject };
+  const ref = { provider: ATLASSIAN, subject };
   const described = await delegateGrants().describe(ref);
   if (!described.ok) {
     return described.err.type === 'NO_GRANT'
@@ -91,7 +90,6 @@ export async function executeCreateIssue(
 
     logger.info('Issue created from approved card', {
       component: 'cards/execute',
-      tenantId,
       subject,
       issueKey,
     });
@@ -100,7 +98,6 @@ export async function executeCreateIssue(
     const message = error instanceof Error ? error.message : String(error);
     logger.warn('Issue creation failed', {
       component: 'cards/execute',
-      tenantId,
       subject,
       error: message,
     });

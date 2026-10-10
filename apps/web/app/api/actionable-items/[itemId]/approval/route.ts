@@ -1,0 +1,94 @@
+/**
+ * Deciding a `needsApproval` gate's card — the web feed's half of a
+ * paused agent run.
+ *
+ * The claim semantics live in `lib/agents/approvals.ts`, shared with the
+ * MCP tools that offer the same decision to a caller who is not looking at
+ * the feed. This route is the HTTP shape over them: which outcome is which
+ * status code, and the session that says who is deciding.
+ *
+ * The two rules worth restating where they are read: the loser of a
+ * concurrent decision sees 409 rather than overwriting a decision that
+ * already stands, and a failed enqueue is 502 with "will resume
+ * automatically" — the claim is durable and the approval sweep picks the
+ * run up, so a rollback would be the lie.
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { getDatabase } from '@renkei/db';
+import { agentJobsQueue } from '@renkei/queue';
+import { getSessionFromRequest } from '@/lib/session';
+import { decideApproval } from '@/lib/agents/approvals';
+import { MAX_QUESTION_ANSWER_CHARS } from '@renkei/agents';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ itemId: string }> }
+): Promise<NextResponse> {
+  const { itemId } = await params;
+
+  const session = await getSessionFromRequest(request);
+  if (!session) {
+    return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+  }
+
+  const body: unknown = await request.json().catch(() => null);
+  if (!isRecord(body) || (body.decision !== 'approve' && body.decision !== 'decline')) {
+    return NextResponse.json({ error: "decision must be 'approve' or 'decline'" }, { status: 400 });
+  }
+  const comment = typeof body.comment === 'string' ? body.comment : '';
+  const argsOverride = isRecord(body.args) ? body.args : undefined;
+
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  }
+
+  const result = await decideApproval(
+    dbResult.val,
+    agentJobsQueue().producer,
+    session.subject,
+    { cardId: itemId, decision: body.decision, comment, argsOverride }
+  );
+
+  switch (result.outcome) {
+    case 'comment-too-long':
+      return NextResponse.json(
+        { error: `comment must stay under ${MAX_QUESTION_ANSWER_CHARS} characters` },
+        { status: 413 }
+      );
+    case 'not-found':
+      return NextResponse.json({ error: 'Item not found' }, { status: 404 });
+    case 'not-approval':
+      return NextResponse.json(
+        { error: 'This card is not an approval — use its regular decision controls' },
+        { status: 422 }
+      );
+    case 'already-decided':
+      return NextResponse.json(
+        {
+          error:
+            result.status === 'decided'
+              ? 'Item was already decided'
+              : `Item is already ${result.status}`,
+        },
+        { status: 409 }
+      );
+    case 'decided': {
+      const status = result.decision === 'approve' ? 'approved' : 'declined';
+      return result.resumed
+        ? NextResponse.json({ status })
+        : NextResponse.json(
+            {
+              status,
+              warning: 'Your decision is saved; the run will resume automatically shortly.',
+            },
+            { status: 502 }
+          );
+    }
+  }
+}

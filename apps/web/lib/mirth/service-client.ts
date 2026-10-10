@@ -38,7 +38,6 @@ export interface WireApiResponse {
 }
 
 export interface MirthTarget {
-  tenantId: string;
   instanceId: string;
   subject: string;
 }
@@ -161,7 +160,6 @@ export async function mirthApi(
 }
 
 export interface TestConnectionPayload {
-  tenantId: string;
   /** The stored instance the credential is tried against. */
   instanceId: string;
   credentials: MirthCredentials;
@@ -187,7 +185,6 @@ export interface ProbeResult {
 
 /** The admin form's reachability test, against a stored or unsaved instance. */
 export async function mirthProbe(
-  tenantId: string,
   target:
     | { instanceId: string }
     | {
@@ -199,7 +196,7 @@ export async function mirthProbe(
         };
       }
 ): Promise<MirthClientResult<ProbeResult>> {
-  const result = await callOp('probe', { tenantId, ...target });
+  const result = await callOp('probe', { ...target });
   if (!result.ok) return result;
   const value = result.val;
   if (!isRecord(value) || typeof value.ok !== 'boolean') return malformed();

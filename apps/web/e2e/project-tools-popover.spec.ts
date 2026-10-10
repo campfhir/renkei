@@ -45,14 +45,12 @@ function uuidFrom(seed: string): string {
 
 /** This project's own tenant/session/project/slug — isolated from every other spec. */
 function fixtureFor(projectName: string): {
-  tenantId: string;
   sessionId: string;
   projectId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`project-tools-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`project-tools-e2e-session:${projectName}`),
     projectId: uuidFrom(`project-tools-e2e-project:${projectName}`),
     slug: `e2e-project-tools-${projectName}`,
@@ -66,37 +64,23 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
   try {
     // Delete-then-insert, same idempotent shape as e2e/seed.ts, scoped to
     // just this project's own tenant.
-    await client.query('DELETE FROM chats WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM chat_projects WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-      fixture.tenantId,
-      fixture.slug,
-    ]);
+    await client.query('DELETE FROM chats WHERE owner_subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM chat_projects WHERE owner_subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name)
-       VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Tester']
     );
     // No coach marks tour stealing focus mid-test.
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+      [fixture.subject]
     );
     // This person's own personal chat default — deliberately just 'cards',
     // so it reads nothing like the project's own toolset (below) or the
@@ -106,22 +90,14 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
     // embedding provider is configured org-wide, which this fixture does
     // not set up; 'agents'/'cards'/'sandbox' need no such provisioning.)
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'chatTools', '{"connectors": ["cards"]}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'chatTools', '{"connectors": ["cards"]}'::jsonb)`,
+      [fixture.subject]
     );
     // The project's own toolset: agents only, no cards or sandbox —
     // distinct from both the personal default above and the core default.
     await client.query(
-      `INSERT INTO chat_projects (id, tenant_id, owner_subject, name, tool_config)
-       VALUES ($1, $2, $3, $4, $5::jsonb)`,
-      [
-        fixture.projectId,
-        fixture.tenantId,
-        fixture.subject,
-        'Docs project',
-        JSON.stringify({ connectors: ['agents'] }),
-      ]
+      `INSERT INTO chat_projects (id, owner_subject, name, tool_config)\n       VALUES ($1, $2, $3, $4::jsonb)`,
+      [fixture.projectId, fixture.subject, 'Docs project', JSON.stringify({ connectors: ['agents'] })]
     );
   } finally {
     await client.end();
@@ -131,7 +107,7 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
 async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -152,7 +128,7 @@ test('a new chat in a project starts from the project’s toolset, not the perso
   // "+ New" inside the project: the real creation path (chat/new/page.tsx)
   // — an empty chat with tool_config = NULL, same as clicking the
   // project's own "+ New chat" button.
-  await page.goto(`/${fixture.slug}/chat/new?project=${fixture.projectId}`);
+  await page.goto(`/chat/new?project=${fixture.projectId}`);
   await page.waitForURL(/\/chat\/[0-9a-f-]{36}$/);
 
   await page.getByRole('button', { name: 'Tools', exact: true }).click();

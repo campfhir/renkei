@@ -16,7 +16,6 @@ jest.mock('./service-store', () => {
     insertService: jest.fn(async (_db: unknown, input: any) => {
       const row = {
         id: `svc-${rows.size + 1}`,
-        tenantId: input.tenantId,
         subject: input.subject,
         name: input.name,
         image: input.image,
@@ -117,7 +116,7 @@ const workspaceStore = jest.requireMock<Record<string, jest.Mock>>('./workspace-
 const envStore = jest.requireMock<Record<string, jest.Mock>>('./env-secrets-store');
 
 const API_KEY = 'test-worker-key';
-const TARGET = { tenantId: 'tenant-1', subject: 'code-project:p1' };
+const TARGET = { subject: 'code-project:p1' };
 const NETWORK = 'renkei-sandbox-services';
 const STORAGE_KEY = 'tenant-1/hash/ws-1';
 
@@ -267,7 +266,6 @@ const RULES = [
 function readyWorkspace() {
   return {
     id: 'ws-1',
-    tenantId: TARGET.tenantId,
     subject: TARGET.subject,
     provider: 'atlassian-bitbucket',
     repoFullName: 'acme/demo',
@@ -458,7 +456,6 @@ describe('start', () => {
     });
     expect(spec.name).toMatch(/^renkei-svc-/);
     expect(spec.labels['renkei.sandbox.service']).toBe('1');
-    expect(spec.labels['renkei.sandbox.tenant']).toBe('tenant-1');
     expect(spec.labels['renkei.sandbox.name']).toBe('db');
     // The subject is labelled by its hash, never in the clear.
     expect(spec.labels['renkei.sandbox.subject']).not.toContain('code-project');
@@ -648,7 +645,6 @@ describe('a running service and the project’s commands', () => {
   it('another project never sees it', async () => {
     await post(enabledBase, 'services/start', { ...TARGET, name: 'db', image: 'postgres' });
     const other = await post(enabledBase, 'services/list', {
-      tenantId: 'tenant-1',
       subject: 'code-project:p2',
     });
     expect(other.json.services).toEqual([]);
@@ -707,7 +703,6 @@ describe('rules', () => {
       updatedAt: new Date(),
     }));
     const { status, json } = await post(enabledBase, 'services/rules/set', {
-      tenantId: 'tenant-1',
       pattern: 'MyOrg.azurecr.io/',
       note: 'Our registry',
       registryUsername: 'sp-pull',
@@ -735,7 +730,6 @@ describe('rules', () => {
       updatedAt: new Date(),
     }));
     const tagged = await post(enabledBase, 'services/rules/set', {
-      tenantId: 'tenant-1',
       pattern: 'redis:7',
     });
     expect(tagged.status).toBe(201);
@@ -744,13 +738,11 @@ describe('rules', () => {
       dropped: 'the tag 7',
     });
     const half = await post(enabledBase, 'services/rules/set', {
-      tenantId: 'tenant-1',
       pattern: 'x.io',
       registryUsername: 'u',
     });
     expect(half.status).toBe(400);
     const bad = await post(enabledBase, 'services/rules/set', {
-      tenantId: 'tenant-1',
       pattern: 'x.io/*/y',
     });
     expect(bad.status).toBe(400);
@@ -758,25 +750,24 @@ describe('rules', () => {
 
   it('list, delete and restore go to the store', async () => {
     ruleStore.listImageRules.mockResolvedValue([]);
-    expect((await post(enabledBase, 'services/rules/list', { tenantId: 'tenant-1' })).json).toEqual(
+    expect((await post(enabledBase, 'services/rules/list', { })).json).toEqual(
       { rules: [] }
     );
     ruleStore.deleteImageRule.mockResolvedValue(false);
     expect(
       (
         await post(enabledBase, 'services/rules/delete', {
-          tenantId: 'tenant-1',
           id: '33333333-3333-4333-8333-333333333333',
         })
       ).status
     ).toBe(404);
     expect(
-      (await post(enabledBase, 'services/rules/delete', { tenantId: 'tenant-1', id: 'nope' }))
+      (await post(enabledBase, 'services/rules/delete', { id: 'nope' }))
         .status
     ).toBe(400);
     ruleStore.restoreDefaultImageRules.mockResolvedValue(3);
     expect(
-      (await post(enabledBase, 'services/rules/restore', { tenantId: 'tenant-1' })).json.added
+      (await post(enabledBase, 'services/rules/restore', { })).json.added
     ).toBe(3);
   });
 });

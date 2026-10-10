@@ -18,7 +18,6 @@ import {
 } from './fetch-guard';
 
 export interface MCPToolContext {
-  tenantId: string;
   accountId: string;
   /**
    * Bare site domain (https://your-domain.atlassian.net). Browser links only —
@@ -341,13 +340,13 @@ async function describeFailure(response: Response): Promise<Failure> {
 
 /**
  * The grant behind an `AuthedFetch`, read off its `grantKey`
- * (`provider:tenant:account-or-subject`) for log context. Never a token:
+ * (`provider:account-or-subject`) for log context. Never a token:
  * these records are persisted by the Postgres log adapter and are readable
  * over HTTP.
  */
-function grantScope(auth: AuthedFetch): { tenantId?: string; accountId?: string } {
-  const [, tenantId, accountId] = auth.grantKey.split(':');
-  return { tenantId: tenantId || undefined, accountId: accountId || undefined };
+function grantScope(auth: AuthedFetch): { accountId?: string } {
+  const [, accountId] = auth.grantKey.split(':');
+  return { accountId: accountId || undefined };
 }
 
 /**
@@ -372,7 +371,6 @@ export async function jiraFetch(
   const displayName = scope.accountId ? getCachedDisplayName(scope.accountId) : undefined;
   logger.debug('Request', {
     component: 'jira/fetch',
-    tenantId: scope.tenantId,
     accountId: scope.accountId,
     displayName,
     url,
@@ -413,7 +411,6 @@ export async function jiraFetch(
   }
   logger.debug('Response', {
     component: 'jira/fetch',
-    tenantId: scope.tenantId,
     accountId: scope.accountId,
     url,
     status: response.status,
@@ -426,7 +423,6 @@ export async function jiraFetch(
   if (refusal) {
     logger.warn('Delegate refused the Jira call', {
       component: 'jira/fetch',
-      tenantId: scope.tenantId,
       accountId: scope.accountId,
       url,
       refusal,
@@ -449,7 +445,6 @@ export async function jiraFetch(
     // encrypts them at rest once encrypt/decrypt keys are configured.
     logger.warn('Non-OK response', {
       component: 'jira/fetch',
-      tenantId: scope.tenantId,
       accountId: scope.accountId,
       displayName,
       url,
@@ -477,7 +472,6 @@ export async function jiraFetch(
   // user's content.
   logger.debug('OK response', {
     component: 'jira/fetch',
-    tenantId: scope.tenantId,
     accountId: scope.accountId,
     displayName,
     url,

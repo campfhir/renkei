@@ -20,7 +20,7 @@
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
@@ -58,20 +58,16 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     ]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.projectName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.activeChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.activeChatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.activeChatId, E2E_SUBJECT, ids.projectId, ids.activeChatTitle]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.historyChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.historyChatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.historyChatId, E2E_SUBJECT, ids.projectId, ids.historyChatTitle]
     );
     await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
       ids.activeChatId,
@@ -95,7 +91,7 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
     authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
     'content-type': 'application/json',
   };
-  const target = { tenantId: E2E_TENANT_ID, subject: `code-project:${ids.projectId}` };
+  const target = { subject: `code-project:${ids.projectId}` };
   const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
     method: 'POST',
     headers,
@@ -268,7 +264,7 @@ test.describe('branch switcher', () => {
 
     // ── The project screen: about the repository as a whole, no branch
     //    picker or mention of one in the Repository card ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     const repository = main.locator('section', {
       has: page.getByRole('heading', { level: 2, name: 'Repository' }),
@@ -285,7 +281,7 @@ test.describe('branch switcher', () => {
     // ── The active chat's title bar: a plain read-only label, and
     //    "Switch branch" in the overflow menu opens the picker as a
     //    modal — the only path, at any width ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.activeChatId}`);
+    await page.goto(`/chat/${ids.activeChatId}`);
     await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
     const chatBranch = main.locator('[data-testid="chat-branch"]');
     await expect(chatBranch).toBeVisible();
@@ -303,7 +299,7 @@ test.describe('branch switcher', () => {
 
     // ── A history chat: the plain read-only label, no switcher and no
     //    "Switch branch" entry — it can no longer send turns ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.historyChatId}`);
+    await page.goto(`/chat/${ids.historyChatId}`);
     await expect(page.getByRole('heading', { name: ids.historyChatTitle })).toBeVisible();
     const historyBranch = main.locator('[data-testid="chat-branch"]');
     await expect(historyBranch).toBeVisible();
@@ -324,7 +320,7 @@ test.describe('branch switcher', () => {
 
     // ── Picking a branch on a dirty checkout: a modal names the problem,
     //    not an overlapping inline error, with a way through ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.activeChatId}`);
+    await page.goto(`/chat/${ids.activeChatId}`);
     await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
     const chatBranch = main.locator('[data-testid="chat-branch"]');
     await expect(chatBranch).toContainText('main');

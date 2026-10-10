@@ -46,7 +46,7 @@ describe('reembedBatch cursor filter', () => {
       val: { selectFrom: () => fakeSelect([], wheres) },
     });
 
-    const result = await reembedBatch('tenant-1', noopEmbedder, Buffer.alloc(32), null, 64);
+    const result = await reembedBatch(noopEmbedder, Buffer.alloc(32), null, 64);
 
     expect(result.ok).toBe(true);
     expect(wheres.some((args) => args[0] === 'id')).toBe(false);
@@ -60,7 +60,6 @@ describe('reembedBatch cursor filter', () => {
     });
 
     const result = await reembedBatch(
-      'tenant-1',
       noopEmbedder,
       Buffer.alloc(32),
       'row-50',

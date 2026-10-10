@@ -75,7 +75,6 @@ async function register(context: Partial<MCPToolContext>): Promise<Registered> {
   // The stub covers exactly the slice of McpServer the module uses.
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   await registerKnowledgeTools(server as unknown as McpServer, {
-    tenantId: 'tenant-1',
     accountId: 'account-1',
     siteUrl: '',
     apiBaseUrl: '',
@@ -147,7 +146,6 @@ describe('registerKnowledgeTools', () => {
 
     const searchArgs = mockSearch.mock.calls[0]?.[0];
     expect(searchArgs.userEmail).toBe('sam@example.com');
-    expect(searchArgs.tenantId).toBe('tenant-1');
     expect(searchArgs.k).toBe(3);
   });
 

@@ -27,11 +27,10 @@ export interface PipelinesProjectContext {
 
 export async function pipelinesProjectContext(
   request: NextRequest,
-  tenantId: string,
   projectId: string,
   options: { write?: boolean } = {}
 ): Promise<{ ok: true; context: PipelinesProjectContext } | { ok: false; response: NextResponse }> {
-  const ready = await codeProjectContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready;
   const { db, session, access, project } = ready.context;
   if (!project.repo || project.repo.provider !== ATLASSIAN_BITBUCKET) {
@@ -47,7 +46,7 @@ export async function pipelinesProjectContext(
         response: jsonError(403, 'read-only', 'Only editors can change this project’s pipelines.'),
       };
     }
-    const settings = await getOrgSettings(tenantId);
+    const settings = await getOrgSettings();
     if (settings.ok && settings.val.readOnly) {
       return {
         ok: false,
@@ -55,7 +54,7 @@ export async function pipelinesProjectContext(
       };
     }
   }
-  const scopes = await grantScopes(db, tenantId, session.subject, ATLASSIAN_BITBUCKET);
+  const scopes = await grantScopes(db, session.subject, ATLASSIAN_BITBUCKET);
   return {
     ok: true,
     context: { project: { ...project, repo: project.repo }, subject: session.subject, scopes },

@@ -43,13 +43,11 @@ function payloadOf(value: unknown): DraftJobPayload | null {
  */
 async function ownerOf(
   db: Kysely<DB>,
-  tenantId: string,
   draftId: string
 ): Promise<{ subject: string; agentId: string | null } | null> {
   const row = await db
     .selectFrom('agent_drafts')
     .select(['owner_subject', 'agent_id', 'status'])
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', draftId)
     .executeTakeFirst();
   if (!row) return null;
@@ -76,26 +74,23 @@ export function createDraftHandler(deps: {
   const doFetch: PostJson = deps.fetchImpl ?? fetch;
 
   return async function handleDraft(event: {
-    tenant_id: string;
     payload: unknown;
   }): Promise<'skipped' | undefined> {
     const payload = payloadOf(event.payload);
     if (!payload) throw new Error('draft job payload missing draftId');
 
-    const owner = await ownerOf(deps.db, event.tenant_id, payload.draftId);
+    const owner = await ownerOf(deps.db, payload.draftId);
     if (!owner) {
       // The draft was deleted, or its agent was and took it with it. Nothing
       // to do and nothing wrong — retrying would never find it.
       logger.debug('draft {draftId} no longer exists; dropping the job', {
         component: 'worker-agents/draft',
-        tenantId: event.tenant_id,
         draftId: payload.draftId,
       });
       return 'skipped';
     }
 
     const token = await mintRunToken(deps.db, {
-      tenantId: event.tenant_id,
       subject: owner.subject,
       // Drafting acts as the PERSON, not as an agent — there is usually no
       // agent yet, and even when revising one the draft is the author's work.
@@ -105,7 +100,7 @@ export function createDraftHandler(deps: {
 
     try {
       const url =
-        `${deps.webBaseUrl}/api/tenant/${encodeURIComponent(event.tenant_id)}` +
+        `${deps.webBaseUrl}/api` +
         `/agents/draft/${encodeURIComponent(payload.draftId)}/run`;
       const response = await doFetch(url, {
         method: 'POST',
@@ -122,7 +117,6 @@ export function createDraftHandler(deps: {
       }
       logger.debug('draft {draftId} completed', {
         component: 'worker-agents/draft',
-        tenantId: event.tenant_id,
         draftId: payload.draftId,
       });
       return undefined;

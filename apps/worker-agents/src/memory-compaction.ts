@@ -53,13 +53,12 @@ export function createMemoryCompactionSweep(db: Kysely<DB>) {
       .selectFrom('agent_memories as m')
       .innerJoin('agents as a', 'a.id', 'm.agent_id')
       .select([
-        'm.tenant_id as tenant_id',
         'm.agent_id as agent_id',
         'a.owner_subject as owner_subject',
         sql<string>`count(*)`.as('entries'),
       ])
       .where('m.kind', '=', 'entry')
-      .groupBy(['m.tenant_id', 'm.agent_id', 'a.owner_subject'])
+      .groupBy(['m.agent_id', 'a.owner_subject'])
       .having(sql`count(*)`, '>', MEMORY_COMPACT_THRESHOLD)
       .orderBy(sql`count(*)`, 'desc')
       .limit(MAX_AGENTS_PER_PASS)
@@ -67,16 +66,15 @@ export function createMemoryCompactionSweep(db: Kysely<DB>) {
 
     for (const candidate of candidates) {
       try {
-        await compactOne(db, candidate.tenant_id, candidate.agent_id, candidate.owner_subject);
+        await compactOne(db, candidate.agent_id, candidate.owner_subject);
       } catch (error) {
         logger.warn('memory compaction failed for agent {agentId}: {error}', {
           component: 'worker-agents/memory-compaction',
           agentId: candidate.agent_id,
-          tenantId: candidate.tenant_id,
           subject: candidate.owner_subject,
           error: error instanceof Error ? error.message : String(error),
         });
-        await enforceHardCap(db, candidate.tenant_id, candidate.agent_id, candidate.owner_subject);
+        await enforceHardCap(db, candidate.agent_id, candidate.owner_subject);
       }
     }
   };
@@ -84,7 +82,6 @@ export function createMemoryCompactionSweep(db: Kysely<DB>) {
 
 async function compactOne(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   ownerSubject: string
 ): Promise<void> {
@@ -92,7 +89,6 @@ async function compactOne(
   const entries = await db
     .selectFrom('agent_memories')
     .select(['id', 'content', 'created_at'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('kind', '=', 'entry')
     .orderBy('created_at', 'desc')
@@ -105,7 +101,6 @@ async function compactOne(
   const summaryRow = await db
     .selectFrom('agent_memories')
     .select(['content'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('kind', '=', 'summary')
     .executeTakeFirst();
@@ -120,7 +115,7 @@ async function compactOne(
     return;
   }
 
-  const llmResult = await resolveAgentLlm(db, tenantId, agentRow.llm_model_id);
+  const llmResult = await resolveAgentLlm(db, agentRow.llm_model_id);
   if (!llmResult.ok) {
     throw new Error(llmResult.err.message ?? `no model to compact with (${llmResult.err.type})`);
   }
@@ -129,7 +124,7 @@ async function compactOne(
   // The rows are sealed under the owner's automation key (memory.ts);
   // opened here as the owner, in one call, or the pass is left for the
   // next sweep — a summary folded from envelopes would be garbage.
-  const opened = await openAgentMemoryContents(tenantId, ownerSubject, [
+  const opened = await openAgentMemoryContents(ownerSubject, [
     ...(summaryRow ? [summaryRow.content] : []),
     ...entries.map((entry) => entry.content),
   ]);
@@ -168,7 +163,7 @@ async function compactOne(
   // Summary FIRST, then the deletes: a crash between the two leaves the
   // folded entries present AND summarized — duplication the next fold
   // collapses — never a hole.
-  await writeAgentMemorySummary(db, tenantId, agentId, summary);
+  await writeAgentMemorySummary(db, agentId, summary);
   await db
     .deleteFrom('agent_memories')
     .where(
@@ -181,7 +176,6 @@ async function compactOne(
   logger.info('compacted {folded} memory entr(ies) for agent {agentId}', {
     component: 'worker-agents/memory-compaction',
     agentId,
-    tenantId,
     subject: ownerSubject,
     folded: entries.length,
   });
@@ -190,14 +184,12 @@ async function compactOne(
 /** The lossy last resort, only past the hard cap: drop the oldest rows. */
 async function enforceHardCap(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   ownerSubject: string
 ): Promise<void> {
   const over = await db
     .selectFrom('agent_memories')
     .select(['id'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('kind', '=', 'entry')
     .orderBy('created_at', 'desc')
@@ -218,7 +210,6 @@ async function enforceHardCap(
     {
       component: 'worker-agents/memory-compaction',
       agentId,
-      tenantId,
       subject: ownerSubject,
       dropped: over.length,
     }

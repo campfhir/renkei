@@ -9,7 +9,7 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import {
   decrypt,
   encrypt,
@@ -24,7 +24,6 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('rewrap under the current key of the ring', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
   const oldEncoded = randomBytes(32).toString('base64');
   const newEncoded = randomBytes(32).toString('base64');
   const strangerEncoded = randomBytes(32).toString('base64');
@@ -43,16 +42,11 @@ maybe('rewrap under the current key of the ring', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `rewrap-${tenantId.slice(0, 8)}` })
-      .execute();
     // v1 under the old key (a bare key writes v1, as every row from before rings is).
     await db
-      .insertInto('tenant_oidc')
+      .insertInto('oidc_config')
       .values({
         id: oidcId,
-        tenant_id: tenantId,
         issuer: 'https://idp.test',
         client_id: 'client',
         client_secret: encrypt('oidc-secret', oldBare.val),
@@ -63,7 +57,6 @@ maybe('rewrap under the current key of the ring', () => {
       .insertInto('llm_model_configs')
       .values({
         id: modelId,
-        tenant_id: tenantId,
         provider: 'openai',
         model: 'gpt-test',
         label: 'test',
@@ -75,12 +68,10 @@ maybe('rewrap under the current key of the ring', () => {
       .insertInto('connector_configs')
       .values([
         {
-          tenant_id: tenantId,
           connector: 'rewrap-old',
           encrypted_secrets: encrypt(JSON.stringify({ s: 'old' }), oldBare.val),
         },
         {
-          tenant_id: tenantId,
           connector: 'rewrap-current',
           encrypted_secrets: encrypt(JSON.stringify({ s: 'current' }), newRing.val),
         },
@@ -91,7 +82,6 @@ maybe('rewrap under the current key of the ring', () => {
       .insertInto('sandbox_env_secrets')
       .values({
         id: envSecretId,
-        tenant_id: tenantId,
         subject: 'alice',
         name: 'NPM_TOKEN',
         sealed: `env1.${encrypt('npm-token', oldBare.val)}`,
@@ -101,13 +91,11 @@ maybe('rewrap under the current key of the ring', () => {
       .insertInto('code_service_image_rules')
       .values([
         {
-          tenant_id: tenantId,
           pattern: 'rewrap.test/old/*',
           registry_username: 'u',
           registry_sealed: `reg1.${encrypt('pull-token', oldRing.val)}`,
         },
         {
-          tenant_id: tenantId,
           pattern: 'rewrap.test/stranger/*',
           registry_username: 'u',
           registry_sealed: `reg1.${encrypt('lost', stranger.val)}`,
@@ -119,18 +107,16 @@ maybe('rewrap under the current key of the ring', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('code_service_image_rules').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('sandbox_env_secrets').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('connector_configs').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('llm_model_configs').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('tenant_oidc').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
-    await closeDatabase();
+    await db.deleteFrom('code_service_image_rules').execute();
+    await db.deleteFrom('sandbox_env_secrets').execute();
+    await db.deleteFrom('connector_configs').execute();
+    await db.deleteFrom('llm_model_configs').execute();
+    await db.deleteFrom('oidc_config').execute();
   });
 
   async function stored() {
     const oidc = await db
-      .selectFrom('tenant_oidc')
+      .selectFrom('oidc_config')
       .select('client_secret')
       .where('id', '=', oidcId)
       .executeTakeFirstOrThrow();
@@ -142,7 +128,6 @@ maybe('rewrap under the current key of the ring', () => {
     const connectors = await db
       .selectFrom('connector_configs')
       .select(['connector', 'encrypted_secrets'])
-      .where('tenant_id', '=', tenantId)
       .orderBy('connector')
       .execute();
     const env = await db
@@ -153,7 +138,6 @@ maybe('rewrap under the current key of the ring', () => {
     const rules = await db
       .selectFrom('code_service_image_rules')
       .select(['pattern', 'registry_sealed'])
-      .where('tenant_id', '=', tenantId)
       .orderBy('pattern')
       .execute();
     return { oidc, model, connectors, env, rules };
@@ -162,7 +146,7 @@ maybe('rewrap under the current key of the ring', () => {
   it('a dry run counts and changes nothing', async () => {
     const before = await stored();
     const report = await rewrapAll(db, rings, { dryRun: true });
-    expect(report.targets['tenant_oidc.client_secret']?.rewrapped).toBe(1);
+    expect(report.targets['oidc_config.client_secret']?.rewrapped).toBe(1);
     expect(report.targets['llm_model_configs.encrypted_secrets']?.rewrapped).toBe(1);
     expect(report.targets['connector_configs.encrypted_secrets']?.rewrapped).toBe(1);
     expect(report.targets['sandbox_env_secrets.sealed']?.rewrapped).toBe(1);
@@ -176,7 +160,7 @@ maybe('rewrap under the current key of the ring', () => {
   it('moves v1 and old-kid rows under the current key, and they still open', async () => {
     const lines: string[] = [];
     const report = await rewrapAll(db, rings, { log: (line) => lines.push(line) });
-    expect(report.targets['tenant_oidc.client_secret']).toEqual({
+    expect(report.targets['oidc_config.client_secret']).toEqual({
       rewrapped: 1,
       skipped: 0,
       unreadable: [],

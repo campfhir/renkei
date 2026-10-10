@@ -5,7 +5,7 @@
  * to seal to, and the wrapped keys the browser opens with the user key it
  * holds. Nothing here is a key: public keys, wrappings and dates only.
  *
- * Served by GET /api/tenant/[tenantId]/keys and rendered on the
+ * Served by GET /api/keys and rendered on the
  * preferences page; the KeyGuard decides from it what the browser must do.
  * The shape itself lives in shared.ts, which client code imports; this
  * module is server-only (it reads the database).
@@ -30,13 +30,11 @@ import {
 
 async function automationDaysOf(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<number> {
   const row = await db
     .selectFrom('user_preferences')
     .select('value')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('key', '=', 'encryption_key')
     .executeTakeFirst();
@@ -52,21 +50,19 @@ async function automationDaysOf(
 
 export async function setAutomationDays(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   days: number
 ): Promise<void> {
   await db
     .insertInto('user_preferences')
     .values({
-      tenant_id: tenantId,
       subject,
       key: 'encryption_key',
       value: JSON.stringify({ automationDays: days }),
     })
     .onConflict((oc) =>
       oc
-        .columns(['tenant_id', 'subject', 'key'])
+        .columns(['subject', 'key'])
         .doUpdateSet({ value: JSON.stringify({ automationDays: days }) })
     )
     .execute();
@@ -75,17 +71,15 @@ export async function setAutomationDays(
 /**
  * The asks still open for a person's key: when each was made and from what
  * browser, never the code — the approver types that off the asking screen
- * (app/api/tenant/[tenantId]/keys/devices).
+ * (app/api/keys/devices).
  */
 export async function pendingDevicesOf(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<{ id: string; createdAt: string; userAgent: string | null }[]> {
   const rows = await db
     .selectFrom('device_key_requests')
     .select(['id', 'created_at', 'user_agent'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('sealed_key', 'is', null)
     .where('consumed_at', 'is', null)
@@ -102,7 +96,6 @@ export async function pendingDevicesOf(
 
 /** The status for the signed-in person, as of their session. */
 export async function keyStatusView(
-  tenantId: string,
   session: Session
 ): Promise<KeyStatusView | null> {
   const dbResult = getDatabase();
@@ -110,10 +103,10 @@ export async function keyStatusView(
   const db = dbResult.val;
   const client = delegateClient();
   const [status, instances, automationDays, pendingDevices] = await Promise.all([
-    client.keyStatus(tenantId, session.subject, session.id),
+    client.keyStatus(session.subject, session.id),
     client.keyInstancesSigned(),
-    automationDaysOf(db, tenantId, session.subject),
-    pendingDevicesOf(db, tenantId, session.subject),
+    automationDaysOf(db, session.subject),
+    pendingDevicesOf(db, session.subject),
   ]);
   if (!status.ok || !instances.ok) {
     return {

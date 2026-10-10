@@ -18,9 +18,16 @@ const STORE = 'keys';
 /** The delegate instance keys this browser has sealed to, and the signing keys it accepts lists from. */
 const TRUST_STORE = 'trust';
 const VERSION = 2;
+/**
+ * Each store holds one record. The key path is still called `tenantId`
+ * from when a browser could hold a key per organization; records written
+ * then are read back whatever their key says (there is only ever one), and
+ * new records are written under this value.
+ */
+const KEY_PATH = 'tenantId';
+const RECORD_KEY = 'renkei';
 
 interface StoredKey {
-  tenantId: string;
   deviceKey: CryptoKey;
   iv: Uint8Array<ArrayBuffer>;
   wrapped: Uint8Array<ArrayBuffer>;
@@ -42,10 +49,10 @@ function openDatabase(): Promise<IDBDatabase | null> {
       const request = indexedDB.open(DB_NAME, VERSION);
       request.onupgradeneeded = () => {
         if (!request.result.objectStoreNames.contains(STORE)) {
-          request.result.createObjectStore(STORE, { keyPath: 'tenantId' });
+          request.result.createObjectStore(STORE, { keyPath: KEY_PATH });
         }
         if (!request.result.objectStoreNames.contains(TRUST_STORE)) {
-          request.result.createObjectStore(TRUST_STORE, { keyPath: 'tenantId' });
+          request.result.createObjectStore(TRUST_STORE, { keyPath: KEY_PATH });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -64,13 +71,34 @@ function requestToPromise<T>(request: IDBRequest<T>): Promise<T | null> {
   });
 }
 
-async function read(tenantId: string): Promise<StoredKey | null> {
+/** The store's one record, whatever key it was written under. */
+async function firstRecord(db: IDBDatabase, store: string): Promise<unknown> {
+  const all = await requestToPromise(db.transaction(store, 'readonly').objectStore(store).getAll());
+  return Array.isArray(all) && all.length > 0 ? all[0] : null;
+}
+
+/** Replace the store's record: whatever was there goes, this is what remains. */
+async function replaceRecord(db: IDBDatabase, store: string, record: object): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(store, 'readwrite');
+      const objects = tx.objectStore(store);
+      objects.clear();
+      objects.put({ ...record, [KEY_PATH]: RECORD_KEY });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function read(): Promise<StoredKey | null> {
   const db = await openDatabase();
   if (!db) return null;
   try {
-    const found = await requestToPromise(
-      db.transaction(STORE, 'readonly').objectStore(STORE).get(tenantId)
-    );
+    const found = await firstRecord(db, STORE);
     db.close();
     if (
       typeof found === 'object' &&
@@ -80,11 +108,9 @@ async function read(tenantId: string): Promise<StoredKey | null> {
       'wrapped' in found &&
       found.iv instanceof Uint8Array &&
       found.wrapped instanceof Uint8Array &&
-      typeof found.deviceKey === 'object' &&
-      found.deviceKey !== null
+      found.deviceKey instanceof CryptoKey
     ) {
       return {
-        tenantId,
         deviceKey: found.deviceKey,
         iv: copy(found.iv),
         wrapped: copy(found.wrapped),
@@ -101,21 +127,14 @@ async function read(tenantId: string): Promise<StoredKey | null> {
 async function write(record: StoredKey): Promise<boolean> {
   const db = await openDatabase();
   if (!db) return false;
-  try {
-    const done = await requestToPromise(
-      db.transaction(STORE, 'readwrite').objectStore(STORE).put(record)
-    );
-    db.close();
-    return done !== null;
-  } catch {
-    db.close();
-    return false;
-  }
+  const done = await replaceRecord(db, STORE, record);
+  db.close();
+  return done;
 }
 
-/** The user key this device holds for the tenant, or null. */
-export async function loadUserKey(tenantId: string): Promise<Uint8Array<ArrayBuffer> | null> {
-  const record = await read(tenantId);
+/** The user key this device holds, or null. */
+export async function loadUserKey(): Promise<Uint8Array<ArrayBuffer> | null> {
+  const record = await read();
   if (!record) return null;
   try {
     const opened = await crypto.subtle.decrypt(
@@ -132,7 +151,6 @@ export async function loadUserKey(tenantId: string): Promise<Uint8Array<ArrayBuf
 
 /** Keep the user key on this device, under a fresh non-extractable device key. */
 export async function saveUserKey(
-  tenantId: string,
   userKey: Uint8Array,
   options: { acknowledged?: boolean } = {}
 ): Promise<boolean> {
@@ -145,29 +163,29 @@ export async function saveUserKey(
     const wrapped = new Uint8Array(
       await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, deviceKey, copy(userKey))
     );
-    return write({ tenantId, deviceKey, iv, wrapped, acknowledged: options.acknowledged === true });
+    return write({ deviceKey, iv, wrapped, acknowledged: options.acknowledged === true });
   } catch {
     return false;
   }
 }
 
 /** Has the person confirmed they wrote the key down? */
-export async function keyAcknowledged(tenantId: string): Promise<boolean> {
-  const record = await read(tenantId);
+export async function keyAcknowledged(): Promise<boolean> {
+  const record = await read();
   return record?.acknowledged === true;
 }
 
-export async function acknowledgeKey(tenantId: string): Promise<void> {
-  const record = await read(tenantId);
+export async function acknowledgeKey(): Promise<void> {
+  const record = await read();
   if (record) await write({ ...record, acknowledged: true });
 }
 
 /** Forget this device: the key is gone from here; the person types it or approves from another device next time. */
-export async function forgetUserKey(tenantId: string): Promise<void> {
+export async function forgetUserKey(): Promise<void> {
   const db = await openDatabase();
   if (!db) return;
   try {
-    await requestToPromise(db.transaction(STORE, 'readwrite').objectStore(STORE).delete(tenantId));
+    await requestToPromise(db.transaction(STORE, 'readwrite').objectStore(STORE).clear());
   } catch {
     // Nothing to forget.
   }
@@ -195,14 +213,12 @@ function stringList(value: unknown): string[] {
     : [];
 }
 
-/** What this browser trusts for the tenant; null when it has never sealed here (first use). */
-export async function loadInstanceTrust(tenantId: string): Promise<InstanceTrust | null> {
+/** What this browser trusts; null when it has never sealed here (first use). */
+export async function loadInstanceTrust(): Promise<InstanceTrust | null> {
   const db = await openDatabase();
   if (!db) return null;
   try {
-    const found = await requestToPromise(
-      db.transaction(TRUST_STORE, 'readonly').objectStore(TRUST_STORE).get(tenantId)
-    );
+    const found = await firstRecord(db, TRUST_STORE);
     db.close();
     if (typeof found !== 'object' || found === null) return null;
     const record: Record<string, unknown> = Object.fromEntries(Object.entries(found));
@@ -218,11 +234,10 @@ export async function loadInstanceTrust(tenantId: string): Promise<InstanceTrust
 
 /** Remember these instance keys (and signing key) as trusted, beside what already is. */
 export async function trustInstances(
-  tenantId: string,
   instanceKeys: string[],
   signingKey: string | null
 ): Promise<boolean> {
-  const current = (await loadInstanceTrust(tenantId)) ?? { instanceKeys: [], signingKeys: [] };
+  const current = (await loadInstanceTrust()) ?? { instanceKeys: [], signingKeys: [] };
   const next: InstanceTrust = {
     instanceKeys: [...new Set([...current.instanceKeys, ...instanceKeys])],
     signingKeys: signingKey
@@ -231,17 +246,7 @@ export async function trustInstances(
   };
   const db = await openDatabase();
   if (!db) return false;
-  try {
-    const done = await requestToPromise(
-      db
-        .transaction(TRUST_STORE, 'readwrite')
-        .objectStore(TRUST_STORE)
-        .put({ tenantId, ...next })
-    );
-    db.close();
-    return done !== null;
-  } catch {
-    db.close();
-    return false;
-  }
+  const done = await replaceRecord(db, TRUST_STORE, next);
+  db.close();
+  return done;
 }

@@ -39,7 +39,6 @@ async function findAttachment(
       'extract_status',
       'chat_id',
     ])
-    .where('tenant_id', '=', context.tenantId)
     .where('id', '=', attachmentId)
     .where((eb) =>
       eb.or([
@@ -135,12 +134,12 @@ export function attachmentTools(toolConfig: ChatToolConfig): LocalTool[] {
         const id = typeof input.attachmentId === 'string' ? input.attachmentId : '';
         const attachment = await findAttachment(context, id);
         if (!attachment) return errorResult('No such attachment in this chat.');
-        const store = await resolveTenantBlobStore(context.tenantId);
+        const store = await resolveTenantBlobStore();
         if (!store.ok) return errorResult('No file store is configured.');
         const object = await store.val.getObject(attachment.blobKey);
         if (!object.ok) return errorResult(`The file could not be read (${object.err.type}).`);
         const staged = await sbWriteFile(
-          { tenantId: context.tenantId, subject: context.subject },
+          { subject: context.subject },
           { filename: attachment.filename, contentType: attachment.contentType, source: 'chat' },
           object.val.bytes
         );

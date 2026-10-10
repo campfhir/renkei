@@ -12,22 +12,22 @@
  * (see notification-permission-nudge.tsx): one person can sign into more
  * than one tenant from the same browser, and each has its own answer.
  */
-function storageKey(tenantId: string): string {
-  return `renkei:desktop-notifications-enabled:${tenantId}`;
+function storageKey(): string {
+  return 'renkei:desktop-notifications-enabled';
 }
 
-export function getDesktopNotificationsEnabled(tenantId: string): boolean {
+export function getDesktopNotificationsEnabled(): boolean {
   try {
-    return window.localStorage.getItem(storageKey(tenantId)) === '1';
+    return window.localStorage.getItem(storageKey()) === '1';
   } catch {
     // No storage, no memory of an earlier opt-in — off is the safe default.
     return false;
   }
 }
 
-export function setDesktopNotificationsEnabled(tenantId: string, enabled: boolean): void {
+export function setDesktopNotificationsEnabled(enabled: boolean): void {
   try {
-    window.localStorage.setItem(storageKey(tenantId), enabled ? '1' : '0');
+    window.localStorage.setItem(storageKey(), enabled ? '1' : '0');
   } catch {
     // The preference just won't stick in this browser.
   }

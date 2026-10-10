@@ -18,8 +18,8 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('searchChatMessages', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const chatA = randomUUID();
   const chatB = randomUUID();
   const chatC = randomUUID();
@@ -46,7 +46,6 @@ maybe('searchChatMessages', () => {
     db
       .insertInto('chat_messages')
       .values({
-        tenant_id: tenantId,
         chat_id: chatId,
         turn_id: null,
         seq: ++seq,
@@ -62,16 +61,11 @@ maybe('searchChatMessages', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `search-${tenantId.slice(0, 8)}` })
-      .execute();
     // The keys are minted in this process: it registers a delegate instance
     // of its own and enrolls the person as their browser would.
     const instance = await registerTestInstance(db);
     instanceId = instance.id;
     await enrollTestPerson(db, {
-      tenantId,
       subject,
       instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
     });
@@ -85,13 +79,12 @@ maybe('searchChatMessages', () => {
         .insertInto('chats')
         .values({
           id,
-          tenant_id: tenantId,
           owner_subject: subject,
           title,
           updated_at: new Date(updatedAt),
         })
         .execute();
-      const key = await createResourceKey(db, { tenantId, kind: 'chat', resourceId: id }, subject);
+      const key = await createResourceKey(db, { kind: 'chat', resourceId: id }, subject);
       if (!key.ok) throw new Error('no chat key');
       ciphers.set(id, resourceCipher(key.val));
     }
@@ -121,38 +114,36 @@ maybe('searchChatMessages', () => {
   afterAll(async () => {
     setKeyVault(null);
     await db.deleteFrom('delegate_instances').where('id', '=', instanceId).execute();
-    await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chats WHERE owner_subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
   it('finds prompts and replies, newest chat first, one hit per chat with the newest match', async () => {
-    const hits = await searchChatMessages(db, tenantId, ids, '  Zoom   webhook ', ciphers);
+    const hits = await searchChatMessages(db, ids, '  Zoom   webhook ', ciphers);
     expect(hits.map((hit) => hit.chatId)).toEqual([chatA, chatB]);
     expect(hits[0]?.snippet).toBe('Then move the Zoom webhook rotation to the next sprint.');
     expect(hits[1]?.snippet).toBe('Who owns the zoom WEBHOOK?');
   });
 
   it('never opens tool calls, tool results or thinking', async () => {
-    expect(await searchChatMessages(db, tenantId, ids, 'jira_search_issues', ciphers)).toEqual([]);
-    expect(await searchChatMessages(db, tenantId, ids, 'think about', ciphers)).toEqual([]);
+    expect(await searchChatMessages(db, ids, 'jira_search_issues', ciphers)).toEqual([]);
+    expect(await searchChatMessages(db, ids, 'think about', ciphers)).toEqual([]);
   });
 
   it('stays within the chats it was handed', async () => {
     const hits = await searchChatMessages(
       db,
-      tenantId,
       [chatOutside, chatB],
       'zoom webhook',
       ciphers
     );
     expect(hits.map((hit) => hit.chatId)).toEqual([chatOutside, chatB]);
-    expect(await searchChatMessages(db, tenantId, ['not-a-uuid'], 'zoom webhook', ciphers)).toEqual(
+    expect(await searchChatMessages(db, ['not-a-uuid'], 'zoom webhook', ciphers)).toEqual(
       []
     );
   });
 
   it('answers nothing to a query too short to mean anything', async () => {
-    expect(await searchChatMessages(db, tenantId, ids, 'z', ciphers)).toEqual([]);
+    expect(await searchChatMessages(db, ids, 'z', ciphers)).toEqual([]);
   });
 });

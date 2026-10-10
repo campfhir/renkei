@@ -163,7 +163,7 @@ export async function loadCatalog(
   kind:
     'keyword-types' | 'document-types' | 'document-type-groups' | 'custom-queries' | 'note-types'
 ): Promise<NamedThing[] | string> {
-  const cacheKey = `${context.tenantId}:${kind}`;
+  const cacheKey = kind;
   const cached = catalogCache.get(cacheKey);
   if (cached) return cached;
   const result = await apiJson(auth, { method: 'GET', path: `/${kind}` }, `list ${kind}`);
@@ -618,7 +618,7 @@ export function registerOnbaseTools(
         documentId: args.documentId,
       });
       return textResult(
-        `Download (requires this org's sign-in): ${context.origin}/api/tenant/${context.tenantId}/onbase/documents/${id}/content`
+        `Download (requires this org's sign-in): ${context.origin}/api/onbase/documents/${id}/content`
       );
     }
   );
@@ -879,7 +879,6 @@ export function registerOnbaseTools(
         .selectFrom('upload_slots')
         .select(['id', 'kind', 'status', 'destination', 'filename', 'subject'])
         .where('id', '=', args.uploadId)
-        .where('tenant_id', '=', context.tenantId)
         .executeTakeFirst();
       if (!slot || slot.kind !== 'onbase-document' || slot.subject !== context.subject) {
         return errText('No OnBase upload with that id belongs to you.');

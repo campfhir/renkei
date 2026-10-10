@@ -39,7 +39,6 @@ export async function registerBulkTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_bulk_update_issues invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -197,7 +196,6 @@ export async function registerBulkTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_bulk_transition_issues invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

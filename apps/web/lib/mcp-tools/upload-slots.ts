@@ -73,7 +73,6 @@ export async function createUploadSlot(
     .values({
       id: uploadId,
       token_hash: hashUploadToken(token),
-      tenant_id: context.tenantId,
       subject: context.subject,
       account_id: context.accountId,
       kind,
@@ -100,7 +99,6 @@ export async function createUploadSlot(
 
 export interface ClaimedUploadSlot {
   id: string;
-  tenant_id: string;
   subject: string;
   account_id: string;
   kind: string;
@@ -134,13 +132,11 @@ export async function claimPendingUploadSlotByOwner(
     .updateTable('upload_slots')
     .set({ status: 'completed', completed_at: sql`NOW()` })
     .where('id', '=', uploadId)
-    .where('tenant_id', '=', context.tenantId)
     .where('subject', '=', context.subject)
     .where('status', '=', 'pending')
     .where('expires_at', '>', sql<Date>`NOW()`)
     .returning([
       'id',
-      'tenant_id',
       'subject',
       'account_id',
       'kind',
@@ -202,7 +198,6 @@ export function registerUploadStatusTool(server: McpServer, context: MCPToolCont
         .selectFrom('upload_slots')
         .select(['id', 'kind', 'filename', 'status', 'result', 'expires_at', 'completed_at'])
         .where('id', '=', uploadId)
-        .where('tenant_id', '=', context.tenantId)
         .where('subject', '=', context.subject)
         .executeTakeFirst();
       if (!slot) {

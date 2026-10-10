@@ -82,11 +82,11 @@ const stubKeyStatus = async () =>
         },
       }
     : { ok: false, err: { type: 'internal', message: 'down' } };
-const stubSealForSubject = async (_tenantId: string, _subject: string, values: string[]) =>
+const stubSealForSubject = async (_subject: string, values: string[]) =>
   ownerDelegated
     ? { ok: true, val: values.map(fakeSeal) }
     : { ok: false, err: { type: 'NEEDS_DELEGATION' } };
-const stubOpenForSubject = async (_tenantId: string, _subject: string, stored: string[]) =>
+const stubOpenForSubject = async (_subject: string, stored: string[]) =>
   ownerDelegated
     ? { ok: true, val: stored.map(fakeOpen) }
     : { ok: false, err: { type: 'NEEDS_DELEGATION' } };
@@ -183,21 +183,16 @@ maybe('agent run engine', () => {
   // and fail the whole file instead of skipping it.
   let db: Kysely<DB>;
 
-  const tenantId = randomUUID();
-  const subject = `test-subject-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `test-subject-${suiteId.slice(0, 8)}`;
 
   beforeAll(async () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `engine-test-${tenantId.slice(0, 8)}` })
-      .execute();
-    await db
       .insertInto('identities')
       .values({
-        tenant_id: tenantId,
         subject,
         email: 'owner@example.com',
         display_name: 'Test Owner',
@@ -206,17 +201,13 @@ maybe('agent run engine', () => {
   });
 
   afterAll(async () => {
-    // Cascades take agents/runs/steps/triggers/tokens with the tenant.
-    await db.deleteFrom('oauth_access_tokens').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('oauth_clients').where('tenant_id', '=', tenantId).execute();
-    await sql`DELETE FROM actionable_items WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_run_steps WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM identities WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenant_settings WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await db.deleteFrom('oauth_access_tokens').where('subject', '=', subject).execute();
+    await sql`DELETE FROM actionable_items WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agent_run_steps WHERE run_id IN (SELECT id FROM agent_runs WHERE owner_subject = ${subject})`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${subject})`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM identities WHERE subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
@@ -229,7 +220,6 @@ maybe('agent run engine', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: subject,
         name: `agent-${agentId.slice(0, 8)}`,
         steps: JSON.stringify(steps),
@@ -241,7 +231,6 @@ maybe('agent run engine', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: subject,
         trigger_kind: options.triggerKind ?? 'manual',
@@ -526,7 +515,6 @@ maybe('agent run engine', () => {
       .insertInto('agent_memories')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         agent_id: agentId,
         kind: 'entry',
         content: 'Replied to message 123 about the outage.',
@@ -1131,7 +1119,6 @@ maybe('agent run engine', () => {
       .insertInto('agent_run_steps')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         run_id: runId,
         step_id: stepId,
         step_index: 0,
@@ -1177,7 +1164,7 @@ maybe('agent run engine', () => {
     // new is catching the deadline INSIDE that one attempt, once real time
     // (simulated here by the tool call's delay) carries the clock past it
     // before the attempt's next turn.
-    await setOrgSettings(tenantId, { agentRunTimeoutMinutes: 100 / 60_000 });
+    await setOrgSettings({ agentRunTimeoutMinutes: 100 / 60_000 });
     let completions = 0;
     const llm = stubLlm(() => {
       completions += 1;
@@ -1219,9 +1206,9 @@ maybe('agent run engine', () => {
         .execute();
       expect(attempts).toHaveLength(0);
     } finally {
-      // Restore the default so later tests in this file (sharing tenantId)
-      // don't inherit a hair-trigger deadline.
-      await setOrgSettings(tenantId, { agentRunTimeoutMinutes: 15 });
+      // Restore the default so later tests in this file (sharing the one
+      // organization's settings) don't inherit a hair-trigger deadline.
+      await setOrgSettings({ agentRunTimeoutMinutes: 15 });
     }
   });
 
@@ -1652,7 +1639,6 @@ maybe('agent run engine', () => {
       },
     };
     const resumed = await resumeAgentRun(db, producer, {
-      tenantId,
       agentId,
       runId,
       ownerSubject: subject,
@@ -1693,7 +1679,6 @@ maybe('agent run engine', () => {
       resume_guidance: 'The CIO project has no Task type — file it as a Project.',
     });
     const again = await resumeAgentRun(db, producer, {
-      tenantId,
       agentId,
       runId,
       ownerSubject: subject,
@@ -1947,7 +1932,7 @@ maybe('agent run engine', () => {
   });
 
   it('refuses a run that reaches a PHI connector on a model without a recorded BAA, when the org requires one', async () => {
-    await setOrgSettings(tenantId, { phiConnectorsRequireCoveredModel: true });
+    await setOrgSettings({ phiConnectorsRequireCoveredModel: true });
     try {
       const phiStep = singleStep({
         tool: 'mirth_get_message',
@@ -2011,7 +1996,7 @@ maybe('agent run engine', () => {
         .executeTakeFirstOrThrow();
       expect(untouched.status).toBe('succeeded');
     } finally {
-      await setOrgSettings(tenantId, { phiConnectorsRequireCoveredModel: false });
+      await setOrgSettings({ phiConnectorsRequireCoveredModel: false });
     }
   });
 
@@ -2676,7 +2661,6 @@ maybe('agent run engine', () => {
     const syntheticStep = randomUUID();
     const synthetic = Array.from({ length: 250 }, (_, index) => ({
       id: randomUUID(),
-      tenant_id: tenantId,
       run_id: runId,
       step_id: syntheticStep,
       step_index: 0,
@@ -3305,7 +3289,7 @@ maybe('agent run engine', () => {
     // to have opted in. The one test that leaves this alone (below) covers
     // the actual default.
     beforeAll(async () => {
-      await setNotificationPrefs(tenantId, subject, {
+      await setNotificationPrefs(subject, {
         ...DEFAULT_NOTIFICATION_PREFS,
         approvalNeeded: { email: true, webex: true },
       });
@@ -3478,7 +3462,7 @@ maybe('agent run engine', () => {
       // The card is never optional — only whether it ALSO pages outside the
       // app is a preference, and it starts off. Reset-then-restore so the
       // rest of this block keeps testing the delivery mechanism itself.
-      await setNotificationPrefs(tenantId, subject, DEFAULT_NOTIFICATION_PREFS);
+      await setNotificationPrefs(subject, DEFAULT_NOTIFICATION_PREFS);
       try {
         const { doc, gateId } = gatedDoc({ approvalTimeoutHours: 4 });
         const { runId } = await seedRun(doc);
@@ -3494,7 +3478,7 @@ maybe('agent run engine', () => {
         expect(card.step_id).toBe(gateId);
         expect(calls).toHaveLength(0);
       } finally {
-        await setNotificationPrefs(tenantId, subject, {
+        await setNotificationPrefs(subject, {
           ...DEFAULT_NOTIFICATION_PREFS,
           approvalNeeded: { email: true, webex: true },
         });
@@ -3950,7 +3934,7 @@ maybe('agent run engine', () => {
    */
   describe('act-approval policy', () => {
     afterEach(async () => {
-      await setOrgSettings(tenantId, { agentActStepsRequireApproval: 'externally_triggered' });
+      await setOrgSettings({ agentActStepsRequireApproval: 'externally_triggered' });
     });
 
     /** One ungated step calling `tool`. */
@@ -4067,7 +4051,7 @@ maybe('agent run engine', () => {
     });
 
     it("a high-risk tool pauses even on a manual run with the policy 'off'", async () => {
-      await setOrgSettings(tenantId, { agentActStepsRequireApproval: 'off' });
+      await setOrgSettings({ agentActStepsRequireApproval: 'off' });
       // jira_delete_issue rather than outlook_send_mail: the notifier mails
       // the owner about the pause through that very tool, which would make
       // "no call fired" ambiguous here.
@@ -4138,7 +4122,7 @@ maybe('agent run engine', () => {
     // Same reasoning as the needsApproval block above: most of this suite
     // tests the delivery mechanism, which needs opt-in to fire at all.
     beforeAll(async () => {
-      await setNotificationPrefs(tenantId, subject, {
+      await setNotificationPrefs(subject, {
         ...DEFAULT_NOTIFICATION_PREFS,
         questionAsked: { email: true, webex: true },
       });
@@ -4275,7 +4259,7 @@ maybe('agent run engine', () => {
     });
 
     it('delivers nothing by email or WebEx until the owner opts in — the card is still raised', async () => {
-      await setNotificationPrefs(tenantId, subject, DEFAULT_NOTIFICATION_PREFS);
+      await setNotificationPrefs(subject, DEFAULT_NOTIFICATION_PREFS);
       try {
         const { runId } = await seedAskableRun(true);
         const { mcp, calls } = recordingMcp(['outlook_send_mail', 'webex_note_to_self']);
@@ -4290,7 +4274,7 @@ maybe('agent run engine', () => {
         expect(card.kind).toBe('question');
         expect(calls).toHaveLength(0);
       } finally {
-        await setNotificationPrefs(tenantId, subject, {
+        await setNotificationPrefs(subject, {
           ...DEFAULT_NOTIFICATION_PREFS,
           questionAsked: { email: true, webex: true },
         });
@@ -4744,29 +4728,24 @@ maybe('agent run engine', () => {
 maybe('resolve_time — the free, deterministic clock', () => {
   jest.setTimeout(20_000);
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `test-subject-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `test-subject-${suiteId.slice(0, 8)}`;
 
   beforeAll(async () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `rt-${tenantId.slice(0, 8)}` })
-      .execute();
-    await db
       .insertInto('identities')
-      .values({ tenant_id: tenantId, subject, email: 'owner@example.com', display_name: 'Owner' })
+      .values({ subject, email: 'owner@example.com', display_name: 'Owner' })
       .execute();
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_run_steps WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM identities WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_run_steps WHERE run_id IN (SELECT id FROM agent_runs WHERE owner_subject = ${subject})`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM identities WHERE subject = ${subject}`.execute(db);
     // This suite reopened the pool the previous one closed; leave it shut so
     // the worker process exits instead of hanging on an idle connection.
     await closeDatabase();
@@ -4791,7 +4770,6 @@ maybe('resolve_time — the free, deterministic clock', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: subject,
         name: `agent-${agentId.slice(0, 8)}`,
         steps: JSON.stringify(doc),
@@ -4803,7 +4781,6 @@ maybe('resolve_time — the free, deterministic clock', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: subject,
         trigger_kind: 'manual',

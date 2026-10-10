@@ -123,7 +123,6 @@ const RENEW_WITHIN_MS = 24 * 60 * 60 * 1000;
  * connect bootstrap and every sweep alike.
  */
 export async function ensureMicrosoftSubscriptions(
-  tenantId: string,
   access: MicrosoftAccess,
   publicBaseUrl: string
 ): Promise<SubscriptionRow[]> {
@@ -132,8 +131,7 @@ export async function ensureMicrosoftSubscriptions(
   const db = dbResult.val;
 
   const notificationUrl =
-    `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/microsoft/` +
-    `${encodeURIComponent(tenantId)}/${encodeURIComponent(access.accountId)}`;
+    `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/microsoft/${encodeURIComponent(access.accountId)}`;
 
   const resources = desiredResources(access);
   for (const resource of resources) {
@@ -141,14 +139,13 @@ export async function ensureMicrosoftSubscriptions(
       .insertInto('webhook_subscriptions')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         provider: MICROSOFT,
         account_id: access.accountId,
         resource,
         client_state: randomUUID(),
       })
       .onConflict((oc) =>
-        oc.columns(['tenant_id', 'provider', 'account_id', 'resource']).doNothing()
+        oc.columns(['provider', 'account_id', 'resource']).doNothing()
       )
       .execute();
   }
@@ -156,7 +153,6 @@ export async function ensureMicrosoftSubscriptions(
   const rows = await db
     .selectFrom('webhook_subscriptions')
     .select(['id', 'resource', 'subscription_id', 'client_state', 'expires_at', 'delta_link'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', MICROSOFT)
     .where('account_id', '=', access.accountId)
     .execute();
@@ -174,7 +170,6 @@ export async function ensureMicrosoftSubscriptions(
         if (!removed.ok) {
           logger.warn('could not delete Graph subscription for {resource}', {
             component: COMPONENT,
-            tenantId,
             resource: row.resource,
           });
         }
@@ -203,7 +198,6 @@ export async function ensureMicrosoftSubscriptions(
         // Loud but not fatal to the rest of the set: the sweep retries.
         logger.warn('could not create Graph subscription for {resource}', {
           component: COMPONENT,
-          tenantId,
           resource: row.resource,
         });
         continue;
@@ -242,7 +236,6 @@ export async function ensureMicrosoftSubscriptions(
         // dropped; clear it so the next pass recreates instead of renewing.
         logger.warn('renewal failed for {resource}; will recreate next pass', {
           component: COMPONENT,
-          tenantId,
           resource: row.resource,
         });
         await db
@@ -307,7 +300,6 @@ export function rawEmailOf(item: Record<string, unknown>): RawEmail {
  * or To Do row is never polled.
  */
 export async function runSubscriptionSync(
-  tenantId: string,
   access: MicrosoftAccess,
   row: SubscriptionRow
 ): Promise<{ changed: number; removed: number }> {
@@ -323,7 +315,6 @@ export async function runSubscriptionSync(
     // a mailbox feed.
     logger.info('skipping delta round for retired resource {resource}', {
       component: COMPONENT,
-      tenantId,
       resource: row.resource,
     });
     return { changed: 0, removed: 0 };
@@ -349,15 +340,14 @@ export async function runSubscriptionSync(
         .execute();
       logger.info('delta token expired for {resource}; restarting the series', {
         component: COMPONENT,
-        tenantId,
         resource: row.resource,
       });
-      return runSubscriptionSync(tenantId, access, { ...row, delta_link: null });
+      return runSubscriptionSync(access, { ...row, delta_link: null });
     }
     // The Graph status and URL ride along — "delta round failed" alone once
     // hid a permanent 410 behind five retries per notification.
     throw new Error(
-      `delta round failed for ${row.resource} (tenant ${tenantId}): ${round.err.message ?? 'unknown'}`
+      `delta round failed for ${row.resource}: ${round.err.message ?? 'unknown'}`
     );
   }
 
@@ -386,10 +376,9 @@ export async function runSubscriptionSync(
     // preview, never a body.
     const receivedAt = str(entry.receivedDateTime);
     if (fullRebuild || !isRecentMail(receivedAt)) continue;
-    const ownerSubject = await subjectForMicrosoftAccount(tenantId, access.accountId);
+    const ownerSubject = await subjectForMicrosoftAccount(access.accountId);
     if (!ownerSubject) continue;
     await publishDomainEvent({
-      tenantId,
       provider: 'microsoft',
       type: 'mail.received',
       ownerSubject,
@@ -400,7 +389,7 @@ export async function runSubscriptionSync(
         messageId: objectId,
       },
       occurredAt: receivedAt,
-      orderingKey: `microsoft/${tenantId}/${access.accountId}`,
+      orderingKey: `microsoft/${access.accountId}`,
     });
   }
   await persistCursor(db, row.id, round.val, changed);

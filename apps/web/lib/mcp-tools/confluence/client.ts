@@ -58,7 +58,6 @@ export async function resolveConfluenceAccess(
   if (!context.subject) return 'No signed-in subject on this MCP session.';
 
   const ref = {
-    tenantId: context.tenantId,
     provider: ATLASSIAN_CONFLUENCE,
     subject: context.subject,
   };
@@ -94,7 +93,6 @@ function truncateForLog(text: string): string {
 }
 
 interface ConfluenceLogScope {
-  tenantId: string;
   subject?: string;
 }
 
@@ -129,7 +127,6 @@ async function confluenceRequest(
     const timedOut = isTimeoutError(error);
     logger.warn('Confluence API unreachable', {
       component: 'confluence/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       path: pathAndQuery,
       method: init?.method ?? 'GET',
@@ -148,7 +145,6 @@ async function confluenceRequest(
   if (refusal) {
     logger.warn('Delegate refused the Confluence call', {
       component: 'confluence/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       path: pathAndQuery,
       refusal,
@@ -159,7 +155,6 @@ async function confluenceRequest(
     const responseBody = await response.text().catch(() => '');
     logger.warn('Confluence API non-OK response', {
       component: 'confluence/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       path: pathAndQuery,
       method: init?.method ?? 'GET',

@@ -30,7 +30,7 @@ const NOT_AVAILABLE = 'ADManager Plus is not available for this caller.';
 export interface AdManagerAuth {
   readonly kind: 'user' | 'denied';
   /** The tenant/subject the tools act as; a string is a user-visible refusal. */
-  target(): { tenantId: string; subject: string } | string;
+  target(): { subject: string } | string;
   /** The instances this caller has connected. A string is a user-visible refusal. */
   listConnected(): Promise<ConnectedInstance[] | string>;
   /** The caller's connection (exposure choice) on one instance, or a refusal. */
@@ -43,7 +43,7 @@ export function userAdManagerAuth(context: MCPToolContext): AdManagerAuth {
     target() {
       const subject = context.subject;
       if (!subject) return NOT_AVAILABLE;
-      return { tenantId: context.tenantId, subject };
+      return { subject };
     },
 
     async listConnected() {
@@ -51,7 +51,7 @@ export function userAdManagerAuth(context: MCPToolContext): AdManagerAuth {
       if (!subject) return NOT_AVAILABLE;
       const dbResult = getDatabase();
       if (!dbResult.ok) return 'Database unavailable.';
-      const connected = await listConnectedInstances(dbResult.val, context.tenantId, subject);
+      const connected = await listConnectedInstances(dbResult.val, subject);
       if (!connected.ok) return 'Could not read your ADManager Plus connections.';
       return connected.val;
     },
@@ -61,7 +61,7 @@ export function userAdManagerAuth(context: MCPToolContext): AdManagerAuth {
       if (!subject) return NOT_AVAILABLE;
       const dbResult = getDatabase();
       if (!dbResult.ok) return 'Database unavailable.';
-      const connection = await getConnection(dbResult.val, context.tenantId, instanceId, subject);
+      const connection = await getConnection(dbResult.val, instanceId, subject);
       if (!connection.ok) return 'Could not read your ADManager Plus connections.';
       if (!connection.val) return NO_SUCH_INSTANCE;
       return connection.val;

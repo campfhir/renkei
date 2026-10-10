@@ -34,12 +34,11 @@ export function isUserSealed(value: string): boolean {
 /** Seal a person's own value under the key its scope names. */
 export async function sealForSubject(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   plaintext: string,
   scope: SealScope = 'automation'
 ): Promise<Result<string, SealError>> {
-  const ring = await getKeyRing(db, tenantId, subject, scope === 'session' ? 'session' : 'any');
+  const ring = await getKeyRing(db, subject, scope === 'session' ? 'session' : 'any');
   if (!ring.ok) return err(ring.err.type === 'NO_USER_KEY' ? 'NOT_ENROLLED' : ring.err.type);
   if (scope === 'session') {
     if (!ring.val.userKey) return err('NEEDS_SESSION' as const);
@@ -51,12 +50,11 @@ export async function sealForSubject(
 /** Open a person's value under the key its envelope names; anything else is an error. */
 export async function openForSubject(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   stored: string
 ): Promise<Result<string, OpenError>> {
   if (stored.startsWith(PRIVATE_ENVELOPE_PREFIX)) {
-    const ring = await getKeyRing(db, tenantId, subject, 'session');
+    const ring = await getKeyRing(db, subject, 'session');
     if (!ring.ok) return ring;
     if (!ring.val.userKey) return err('NEEDS_SESSION' as const);
     const opened = decrypt(stored.slice(PRIVATE_ENVELOPE_PREFIX.length), ring.val.userKey);
@@ -67,7 +65,7 @@ export async function openForSubject(
       message: 'value is not sealed under a user key — run the rekey sweep',
     });
   }
-  const ring = await getKeyRing(db, tenantId, subject);
+  const ring = await getKeyRing(db, subject);
   if (!ring.ok) return ring;
   const opened = decrypt(stored.slice(USER_ENVELOPE_PREFIX.length), ring.val.automationKey);
   return opened.ok ? ok(opened.val) : err('DECRYPTION_ERROR' as const);

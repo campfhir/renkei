@@ -55,11 +55,10 @@ type Handler = (args: Record<string, unknown>) => Promise<{
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
 const SHARE = { id: SHARE_ID, name: 'Accounting' };
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice', shareId: SHARE_ID };
+const TARGET = { subject: 'auth0|alice', shareId: SHARE_ID };
 
 function contextOf(): MCPToolContext {
   return {
-    tenantId: 'tenant-1',
     subject: 'auth0|alice',
     origin: 'https://renkei.example.test',
     maxAttachmentBytes: 1024 * 1024,
@@ -89,7 +88,7 @@ function authOf(connection: ShareConnection): FileshareAuth {
   return {
     kind: 'user',
     target() {
-      return { tenantId: 'tenant-1', subject: 'auth0|alice' };
+      return { subject: 'auth0|alice' };
     },
     async listConnected() {
       return [{ share: summary(), connection }];
@@ -263,7 +262,7 @@ test('download_file hands out the session-guarded REST link, folders refused', a
   });
   expect(result.isError).toBeUndefined();
   expect(textOf(result)).toContain(
-    `https://renkei.example.test/api/tenant/tenant-1/fileshares/${SHARE_ID}/file?path=%2Freport.pdf`
+    `https://renkei.example.test/api/fileshares/${SHARE_ID}/file?path=%2Freport.pdf`
   );
 
   client.fsStatEntry.mockResolvedValue({
@@ -479,7 +478,6 @@ describe('PHI access trail', () => {
     expect(recordPhiAccess).toHaveBeenCalledTimes(1);
     const [event] = recordPhiAccess.mock.calls[0] as [Record<string, unknown>];
     expect(event).toEqual({
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       agentId: null,
       connector: 'fileshare',

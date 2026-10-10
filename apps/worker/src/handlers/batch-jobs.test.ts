@@ -55,13 +55,12 @@ const { enqueueItem } = jest.requireMock<{ enqueueItem: jest.Mock }>('../batch-j
 const FAKE_DB = {};
 
 function event(type: string, payload: Record<string, string>): ClaimedEvent {
-  return { id: 'evt-1', tenant_id: 'tenant-1', source: 'batch', type, payload, attempts: 1 };
+  return { id: 'evt-1', source: 'batch', type, payload, attempts: 1 };
 }
 
 function batch(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: 'batch-1',
-    tenant_id: 'tenant-1',
     subject: 'auth0|alice',
     kind: 'document-ocr-pipeline',
     config: {},
@@ -139,8 +138,8 @@ describe('discover handler', () => {
 
     expect(store.insertItem).toHaveBeenNthCalledWith(1, FAKE_DB, 'batch-1', { sourcePaths: ['/a.tif'] });
     expect(store.insertItem).toHaveBeenNthCalledWith(2, FAKE_DB, 'batch-1', { sourcePaths: ['/b.tif'] });
-    expect(enqueueItem).toHaveBeenNthCalledWith(1, expect.anything(), 'tenant-1', 'batch-1', 'item-1');
-    expect(enqueueItem).toHaveBeenNthCalledWith(2, expect.anything(), 'tenant-1', 'batch-1', 'item-2');
+    expect(enqueueItem).toHaveBeenNthCalledWith(1, expect.anything(), 'batch-1', 'item-1');
+    expect(enqueueItem).toHaveBeenNthCalledWith(2, expect.anything(), 'batch-1', 'item-2');
     expect(store.activateBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 2, 0);
   });
 
@@ -178,7 +177,7 @@ describe('discover handler', () => {
       { status: 'skipped', result: { skipped: true, reason: 'already-processed' } }
     );
     expect(enqueueItem).toHaveBeenCalledTimes(1);
-    expect(enqueueItem).toHaveBeenCalledWith(expect.anything(), 'tenant-1', 'batch-1', 'item-1');
+    expect(enqueueItem).toHaveBeenCalledWith(expect.anything(), 'batch-1', 'item-1');
     expect(store.activateBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 2, 1);
   });
 

@@ -15,18 +15,16 @@ jest.mock('@renkei/connector-config', () => ({ readConnectorConfigCached: jest.f
 import { NextRequest } from 'next/server';
 import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 import { WEBHOOK_LIMITS, WEBHOOK_MAX_BODY_BYTES } from '@/lib/webhook-intake';
-import { POST as githubPost } from './github/[tenantId]/route';
-import { POST as bitbucketPost } from './bitbucket/[tenantId]/route';
-import { POST as zoomPost } from './zoom/[tenantId]/route';
-import { POST as webexPost } from './webex/[tenantId]/user/[accountId]/route';
-import { POST as microsoftPost } from './microsoft/[tenantId]/[accountId]/route';
+import { POST as githubPost } from './github/route';
+import { POST as bitbucketPost } from './bitbucket/route';
+import { POST as zoomPost } from './zoom/route';
+import { POST as webexPost } from './webex/user/[accountId]/route';
+import { POST as microsoftPost } from './microsoft/[accountId]/route';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { readConnectorConfigCached: mockReadConfig } = jest.requireMock<{
   readConnectorConfigCached: jest.Mock;
 }>('@renkei/connector-config');
-
-const TENANT = '00000000-0000-4000-8000-000000000001';
 const ACCOUNT = 'acct-1';
 const HEX64 = 'a'.repeat(64);
 
@@ -34,7 +32,7 @@ const HEX64 = 'a'.repeat(64);
  * Every route's context, as a superset: a handler that destructures only
  * `tenantId` accepts it, and the two per-account routes read both.
  */
-type RouteParams = { tenantId: string; accountId: string };
+type RouteParams = { accountId: string };
 type Handler = (
   request: NextRequest,
   context: { params: Promise<RouteParams> }
@@ -55,16 +53,16 @@ const ROUTES: Route[] = [
   {
     name: 'github',
     post: githubPost,
-    path: `/api/webhooks/github/${TENANT}`,
-    params: { tenantId: TENANT, accountId: ACCOUNT },
+    path: `/api/webhooks/github`,
+    params: { accountId: ACCOUNT },
     validHeaders: { 'x-hub-signature-256': `sha256=${HEX64}`, 'x-github-event': 'workflow_run' },
     malformedHeaders: { 'x-hub-signature-256': 'sha256=not-hex' },
   },
   {
     name: 'bitbucket',
     post: bitbucketPost,
-    path: `/api/webhooks/bitbucket/${TENANT}`,
-    params: { tenantId: TENANT, accountId: ACCOUNT },
+    path: `/api/webhooks/bitbucket`,
+    params: { accountId: ACCOUNT },
     validHeaders: {
       'x-renkei-webhook-secret': 'shared',
       'x-event-key': 'repo:commit_status_updated',
@@ -74,24 +72,24 @@ const ROUTES: Route[] = [
   {
     name: 'zoom',
     post: zoomPost,
-    path: `/api/webhooks/zoom/${TENANT}`,
-    params: { tenantId: TENANT, accountId: ACCOUNT },
+    path: `/api/webhooks/zoom`,
+    params: { accountId: ACCOUNT },
     validHeaders: { 'x-zm-signature': `v0=${HEX64}`, 'x-zm-request-timestamp': '1700000000' },
     malformedHeaders: { 'x-zm-signature': `v0=${HEX64}`, 'x-zm-request-timestamp': 'yesterday' },
   },
   {
     name: 'webex',
     post: webexPost,
-    path: `/api/webhooks/webex/${TENANT}/user/${ACCOUNT}`,
-    params: { tenantId: TENANT, accountId: ACCOUNT },
+    path: `/api/webhooks/webex/user/${ACCOUNT}`,
+    params: { accountId: ACCOUNT },
     validHeaders: { 'x-spark-signature': 'b'.repeat(40) },
     malformedHeaders: { 'x-spark-signature': 'short' },
   },
   {
     name: 'microsoft',
     post: microsoftPost,
-    path: `/api/webhooks/microsoft/${TENANT}/${ACCOUNT}`,
-    params: { tenantId: TENANT, accountId: ACCOUNT },
+    path: `/api/webhooks/microsoft`,
+    params: { accountId: ACCOUNT },
     validHeaders: {},
     malformedHeaders: null,
   },

@@ -139,7 +139,7 @@ beforeEach(() => {
   fileshareConnections = [];
   fetchSpy.mockReset();
   global.fetch = fetchSpy as unknown as typeof fetch;
-  // Every test below reuses the same tenant/subject with different mocked
+  // Every test below reuses the same subject with different mocked
   // state, so a cached result from the previous test must not leak in.
   invalidateToolCatalogCache();
 });
@@ -155,25 +155,25 @@ describe('listAvailableTools', () => {
     grants = {
       microsoft: { requested_scopes: ['Mail.Read', 'Mail.Send'], granted_scopes: null },
     };
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('jira_'))).toBe(false);
     expect(tools.some((name) => name.startsWith('outlook_'))).toBe(true);
   });
 
   it('lists the Jira tools for a connected caller', async () => {
-    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    const tools = await listAvailableTools('subject-1');
     expect(namesOf(tools)).toContain('jira_search_issues');
     expect(namesOf(tools)).toContain('whoami');
   });
 
   it('never calls out to a provider while enumerating', async () => {
     // Rendering a page must not transact with anyone's Jira, Graph or Zoom.
-    await listAvailableTools('tenant-1', 'subject-1');
+    await listAvailableTools('subject-1');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('omits connectors the caller has not connected', async () => {
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('outlook_'))).toBe(false);
     expect(tools.some((name) => name.startsWith('zoom_'))).toBe(false);
     expect(tools.some((name) => name.startsWith('confluence_'))).toBe(false);
@@ -192,7 +192,7 @@ describe('listAvailableTools', () => {
         granted_scopes: ['read:jira-user', 'read:jira-work'],
       },
     };
-    let tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    let tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('jira_admin_check_access');
     expect(tools).toContain('jira_admin_list_fields');
     expect(tools).toContain('jira_admin_list_plans');
@@ -206,8 +206,8 @@ describe('listAvailableTools', () => {
         granted_scopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
       },
     };
-    invalidateToolCatalogCache('tenant-1', 'subject-1');
-    tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    invalidateToolCatalogCache('subject-1');
+    tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('jira_admin_get_field');
     expect(tools).toContain('jira_admin_get_space_configuration');
     expect(tools).toContain('jira_admin_propose_option_changes');
@@ -228,7 +228,7 @@ describe('listAvailableTools', () => {
       },
     };
     readOnly = true;
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).not.toContain('jira_admin_propose_option_changes');
     expect(tools).not.toContain('jira_admin_propose_space');
     expect(tools).not.toContain('jira_admin_save_space_template');
@@ -248,7 +248,7 @@ describe('listAvailableTools', () => {
       },
     };
     disabledConnectors = ['jira-admin'];
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('jira_admin_'))).toBe(false);
     expect(tools).toContain('jira_search_issues');
   });
@@ -263,7 +263,7 @@ describe('listAvailableTools', () => {
         granted_scopes: ['Mail.Read', 'offline_access'],
       },
     };
-    let tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    let tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('outlook_list_messages');
     expect(tools.some((name) => name.startsWith('entra_'))).toBe(false);
 
@@ -276,8 +276,8 @@ describe('listAvailableTools', () => {
         granted_scopes: ['Application.Read.All', 'User.Read'],
       },
     };
-    invalidateToolCatalogCache('tenant-1', 'subject-1');
-    tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    invalidateToolCatalogCache('subject-1');
+    tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('entra_check_access');
     expect(tools).toContain('entra_get_application');
     expect(tools).not.toContain('entra_create_application_preview');
@@ -300,8 +300,8 @@ describe('listAvailableTools', () => {
         ],
       },
     };
-    invalidateToolCatalogCache('tenant-1', 'subject-1');
-    tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    invalidateToolCatalogCache('subject-1');
+    tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('entra_create_application_preview');
     expect(tools).toContain('entra_assign_app_role_preview');
     // The confirm half is app-only, but it is still a registered tool.
@@ -317,15 +317,15 @@ describe('listAvailableTools', () => {
       },
     };
     readOnly = true;
-    let tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    let tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('entra_get_application');
     expect(tools).not.toContain('entra_create_application_preview');
     expect(tools).not.toContain('entra_create_application_confirm');
 
     readOnly = false;
     disabledConnectors = ['entra-developer'];
-    invalidateToolCatalogCache('tenant-1', 'subject-1');
-    tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    invalidateToolCatalogCache('subject-1');
+    tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('entra_'))).toBe(false);
     expect(tools).toContain('jira_search_issues');
   });
@@ -351,7 +351,7 @@ describe('listAvailableTools', () => {
         ],
       },
     };
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('bitbucket_list_repositories');
     expect(tools).toContain('bitbucket_list_pull_requests');
     expect(tools.some((name) => name.startsWith('bitbucket_'))).toBe(true);
@@ -366,7 +366,7 @@ describe('listAvailableTools', () => {
       atlassian: ATLASSIAN_GRANT,
       microsoft: { requested_scopes: ['Mail.Read', 'Mail.Send'], granted_scopes: null },
     };
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('outlook_'))).toBe(true);
     // Mail scopes alone are not SharePoint or OneDrive — one grant, three
     // namespaces, separated by scope.
@@ -382,7 +382,7 @@ describe('listAvailableTools', () => {
         granted_scopes: null,
       },
     };
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('sharepoint_'))).toBe(true);
     expect(tools.some((name) => name.startsWith('onedrive_'))).toBe(true);
   });
@@ -402,25 +402,25 @@ describe('listAvailableTools', () => {
         granted_scopes: null,
       },
     };
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('jsm_list_request_types');
     expect(tools).toContain('jsm_create_request');
   });
 
   it('omits JSM tools when neither Atlassian grant carries the JSM scopes', async () => {
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('jsm_'))).toBe(false);
   });
 
   it('drops mutating tools in org read-only mode', async () => {
     readOnly = true;
-    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    const tools = await listAvailableTools('subject-1');
     expect(tools.length).toBeGreaterThan(0);
     expect(tools.every((tool) => tool.kind === 'read')).toBe(true);
   });
 
   it('omits every fileshare tool for a caller with no connected share', async () => {
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('fileshare_'))).toBe(false);
   });
 
@@ -428,7 +428,7 @@ describe('listAvailableTools', () => {
     // No provider_grants involvement: Renkei's own connections table IS
     // the provisioning signal for this connector.
     fileshareConnections = [{ tool_access: 'read', allow_delete: false }];
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('fileshare_list_shares');
     expect(tools).toContain('fileshare_read_file');
     expect(tools).not.toContain('fileshare_request_file_upload');
@@ -437,7 +437,7 @@ describe('listAvailableTools', () => {
 
   it('write and delete opt-ins mount their tool families', async () => {
     fileshareConnections = [{ tool_access: 'read_write', allow_delete: true }];
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('fileshare_request_file_upload');
     expect(tools).toContain('fileshare_move_entry');
     expect(tools).toContain('fileshare_rename_entry');
@@ -446,7 +446,7 @@ describe('listAvailableTools', () => {
 
   it('marks the fileshare delete confirm app-only, like every card button', async () => {
     fileshareConnections = [{ tool_access: 'read_write', allow_delete: true }];
-    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    const tools = await listAvailableTools('subject-1');
     const confirm = tools.find((tool) => tool.name === 'fileshare_delete_entry_confirm');
     expect(confirm?.appOnly).toBe(true);
     const preview = tools.find((tool) => tool.name === 'fileshare_delete_entry_preview');
@@ -454,7 +454,7 @@ describe('listAvailableTools', () => {
   });
 
   it("classifies each preview tool's widget as an approval or a display card", async () => {
-    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    const tools = await listAvailableTools('subject-1');
     const widgetKindOf = (name: string) => tools.find((tool) => tool.name === name)?.widgetKind;
 
     // Confirm/cancel cards — a write awaiting the user's decision.
@@ -476,7 +476,7 @@ describe('listAvailableTools', () => {
   it('drops the fileshare act tools in org read-only mode, keeps the reads', async () => {
     fileshareConnections = [{ tool_access: 'read_write', allow_delete: true }];
     readOnly = true;
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).toContain('fileshare_list_folder');
     expect(tools.some((name) => name === 'fileshare_request_file_upload')).toBe(false);
     expect(tools.some((name) => name === 'fileshare_create_folder')).toBe(false);
@@ -485,7 +485,7 @@ describe('listAvailableTools', () => {
   it('drops the fileshare tools when the org admin switches the connector off', async () => {
     fileshareConnections = [{ tool_access: 'read_write', allow_delete: true }];
     disabledConnectors = ['fileshares'];
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('fileshare_'))).toBe(false);
   });
 
@@ -495,7 +495,7 @@ describe('listAvailableTools', () => {
       microsoft: { requested_scopes: ['Mail.Read'], granted_scopes: null },
     };
     disabledConnectors = ['microsoft'];
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('outlook_'))).toBe(false);
     expect(tools.some((name) => name.startsWith('jira_'))).toBe(true);
   });
@@ -508,11 +508,11 @@ describe('listAvailableTools', () => {
       atlassian: ATLASSIAN_GRANT,
       microsoft: { requested_scopes: ['Mail.Read'], granted_scopes: null },
     };
-    const enabled = namesOf(await listAvailableTools('tenant-1', 'subject-1', { fresh: true }));
+    const enabled = namesOf(await listAvailableTools('subject-1', { fresh: true }));
     expect(enabled).toContain('outlook_mail_summary');
 
     disabledConnectors = ['microsoft'];
-    const disabled = namesOf(await listAvailableTools('tenant-1', 'subject-1', { fresh: true }));
+    const disabled = namesOf(await listAvailableTools('subject-1', { fresh: true }));
     expect(disabled).not.toContain('outlook_mail_summary');
     // The orchestrator itself is Jira-gated and stays.
     expect(disabled).toContain('daily_summary');
@@ -523,39 +523,39 @@ describe('listAvailableTools', () => {
     // someone who has connected nothing still gets it, and the chat's
     // picker (which reads this list) can offer it.
     grants = {};
-    expect(namesOf(await listAvailableTools('tenant-1', 'subject-1'))).not.toContain('web_search');
+    expect(namesOf(await listAvailableTools('subject-1'))).not.toContain('web_search');
 
     webSearchProvisioned = true;
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1', { fresh: true }));
+    const tools = namesOf(await listAvailableTools('subject-1', { fresh: true }));
     expect(tools).toContain('web_search');
   });
 
-  it('keeps a cached list until the tenant is invalidated — what an org-wide config save must do', async () => {
+  it('keeps a cached list until the catalog is invalidated — what an org-wide config save must do', async () => {
     // The web-search and embeddings admin routes call
-    // invalidateToolCatalogCache(tenantId) after a save for exactly this
+    // invalidateToolCatalogCache() after a save for exactly this
     // reason: nothing else would make a caller's cached list notice a
     // connector that appeared for everyone at once.
-    const before = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const before = namesOf(await listAvailableTools('subject-1'));
     expect(before).not.toContain('web_search');
 
     webSearchProvisioned = true;
-    const stale = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const stale = namesOf(await listAvailableTools('subject-1'));
     expect(stale).not.toContain('web_search');
 
-    invalidateToolCatalogCache('tenant-1');
-    const fresh = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    invalidateToolCatalogCache();
+    const fresh = namesOf(await listAvailableTools('subject-1'));
     expect(fresh).toContain('web_search');
   });
 
   it('drops web_search when the org admin switches the connector off', async () => {
     webSearchProvisioned = true;
     disabledConnectors = ['web-search'];
-    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools).not.toContain('web_search');
   });
 
   it('carries an outcome set on every tool, catch-all included', async () => {
-    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    const tools = await listAvailableTools('subject-1');
     expect(tools.length).toBeGreaterThan(0);
     for (const tool of tools) {
       expect(tool.outcomes.success.label.length).toBeGreaterThan(0);
@@ -564,7 +564,7 @@ describe('listAvailableTools', () => {
   });
 
   it('serves curated outcomes for the tools that have them', async () => {
-    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    const tools = await listAvailableTools('subject-1');
     const createIssue = tools.find((tool) => tool.name === 'jira_create_issue');
     expect(createIssue?.outcomes.failures.map((f) => f.code)).toContain('project-not-found');
     // A tool with no curated entry still enumerates the generic conditions.
@@ -577,7 +577,7 @@ describe('listAvailableTools', () => {
       atlassian: ATLASSIAN_GRANT,
       microsoft: { requested_scopes: ['Mail.Read'], granted_scopes: null },
     };
-    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    const tools = await listAvailableTools('subject-1');
     const outlook = tools.find((tool) => tool.name.startsWith('outlook_'));
     // 'microsoft' is what the catalog, the logo and the admin toggle all use.
     expect(outlook?.connector).toBe('microsoft');

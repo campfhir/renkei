@@ -128,13 +128,13 @@ describe('approvalFieldRows', () => {
 
 describe('jiraIssueApprovalPreview', () => {
   it('returns null for a tool a needsApproval gate never proposes directly', async () => {
-    expect(await jiraIssueApprovalPreview('jira_add_comment', {}, 't1', 'alice')).toBeNull();
+    expect(await jiraIssueApprovalPreview('jira_add_comment', {}, 'alice')).toBeNull();
     // The chat-only twins — a step's `tool` never references these.
     expect(
-      await jiraIssueApprovalPreview('jira_create_issue_preview', {}, 't1', 'alice')
+      await jiraIssueApprovalPreview('jira_create_issue_preview', {}, 'alice')
     ).toBeNull();
     expect(
-      await jiraIssueApprovalPreview('jira_create_issue_confirm', {}, 't1', 'alice')
+      await jiraIssueApprovalPreview('jira_create_issue_confirm', {}, 'alice')
     ).toBeNull();
   });
 
@@ -147,7 +147,6 @@ describe('jiraIssueApprovalPreview', () => {
         summary: 'Salesforce Incentive-Program Tracking',
         fields: { 'Anti-Kickback Review': 'Required' },
       },
-      't1',
       'alice'
     );
     expect(preview?.resourceUri).toBe(ISSUE_PREVIEW_URI);
@@ -181,7 +180,6 @@ describe('jiraIssueApprovalPreview', () => {
     const again = await jiraIssueApprovalPreview(
       'jira_create_issue',
       { projectKey: 'CIO' },
-      't1',
       'alice'
     );
     expect(preview?.structuredContent.previewId).not.toBe(again?.structuredContent.previewId);
@@ -191,7 +189,6 @@ describe('jiraIssueApprovalPreview', () => {
     const preview = await jiraIssueApprovalPreview(
       'jira_update_issue',
       { issueKey: 'CIO-51', summary: 'New summary' },
-      't1',
       'alice'
     );
     expect(preview?.structuredContent).toMatchObject({
@@ -218,7 +215,6 @@ describe('jiraIssueApprovalPreview', () => {
     const preview = await jiraIssueApprovalPreview(
       'jira_create_issue',
       { projectKey: 'CIO', issueType: 'Project', summary: 'x', priority: 'High' },
-      't1',
       'alice'
     );
     const rows = preview?.structuredContent.fields as { editable?: { kind: string } }[];

@@ -82,7 +82,6 @@ const sha = (bytes: number[]) => createHash('sha256').update(Uint8Array.from(byt
 function batch(config: Record<string, unknown>): BatchJobRow {
   return {
     id: 'batch-1',
-    tenant_id: 'tenant-1',
     subject: 'auth0|alice',
     name: 'Test batch',
     kind: 'document-ocr-pipeline',
@@ -257,7 +256,7 @@ describe('discover', () => {
       const outcome = await kind.discover(DB, batch({}));
 
       if (!outcome.ok) throw new Error(outcome.error);
-      expect(findProcessedByPathMock).toHaveBeenCalledWith(DB, 'tenant-1', 'share-1', [
+      expect(findProcessedByPathMock).toHaveBeenCalledWith(DB, 'share-1', [
         '/in/old.pdf',
         '/in/new.pdf',
       ]);
@@ -402,7 +401,7 @@ describe('runItem', () => {
         contentHashes: [sha([1]), sha([2])],
       },
     });
-    expect(recordProcessedFilesMock).toHaveBeenCalledWith(DB, 'tenant-1', 'share-1', 'batch-1', [
+    expect(recordProcessedFilesMock).toHaveBeenCalledWith(DB, 'share-1', 'batch-1', [
       expect.objectContaining({
         contentHash: sha([1]),
         path: '/in/inv-7-p1.tif',
@@ -433,7 +432,7 @@ describe('runItem', () => {
 
     const outcome = await kind.runItem(DB, batch({}), item());
 
-    expect(findProcessedHashesMock).toHaveBeenCalledWith(DB, 'tenant-1', 'share-1', [
+    expect(findProcessedHashesMock).toHaveBeenCalledWith(DB, 'share-1', [
       sha([1]),
       sha([2]),
     ]);

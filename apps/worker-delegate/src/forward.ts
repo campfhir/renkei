@@ -218,19 +218,18 @@ export class Forwarder {
     connector: Connector,
     body: Record<string, unknown>
   ): Promise<{ ok: true } | { ok: false; status: number; type: string; message?: string }> {
-    const tenantId = str(body.tenantId);
     const subject = str(body.subject);
-    if (!tenantId || !subject) {
+    if (!subject) {
       return {
         ok: false,
         status: 400,
         type: 'bad_request',
-        message: 'tenantId and subject are required',
+        message: 'subject is required',
       };
     }
     if (connector === 'onbase') {
       const connectorName = str(body.connector) || 'onbase';
-      const access = await this.grants.accessFor(tenantId, connectorName, { subject });
+      const access = await this.grants.accessFor(connectorName, { subject });
       if (!access.ok) return { ok: false, status: access.status, type: access.error };
       body.accessToken = access.token;
       return { ok: true };
@@ -246,13 +245,13 @@ export class Forwarder {
     }
     const ciphertext =
       connector === 'mirth'
-        ? await readMirthCiphertext(this.db, tenantId, id, subject)
+        ? await readMirthCiphertext(this.db, id, subject)
         : connector === 'admanager'
-          ? await readAdManagerCiphertext(this.db, tenantId, id, subject)
-          : await readShareCiphertext(this.db, tenantId, id, subject);
+          ? await readAdManagerCiphertext(this.db, id, subject)
+          : await readShareCiphertext(this.db, id, subject);
     if (!ciphertext.ok) return { ok: false, status: 500, type: 'store' };
     if (ciphertext.val === null) return { ok: false, status: 403, type: 'not_connected' };
-    const opened = await this.open(tenantId, subject, ciphertext.val);
+    const opened = await this.open(subject, ciphertext.val);
     if (!opened.ok) return opened;
     const credentials =
       connector === 'mirth'
@@ -267,13 +266,12 @@ export class Forwarder {
 
   /** The person's sealed value opened and parsed as JSON; locked and unreadable keys told apart. */
   private async open(
-    tenantId: string,
     subject: string,
     ciphertext: string
   ): Promise<
     { ok: true; value: unknown } | { ok: false; status: number; type: string; message?: string }
   > {
-    const opened = await openForSubject(this.db, tenantId, subject, ciphertext);
+    const opened = await openForSubject(this.db, subject, ciphertext);
     if (!opened.ok) {
       if (
         opened.err.type === 'NEEDS_DELEGATION' ||
@@ -302,14 +300,13 @@ export class Forwarder {
     request: IncomingMessage,
     response: ServerResponse
   ): Promise<void> {
-    const tenantId = url.searchParams.get('tenantId') ?? '';
     const shareId = url.searchParams.get('shareId') ?? '';
     const subject = url.searchParams.get('subject') ?? '';
-    if (!tenantId || !shareId || !subject) return fail(response, 400, 'bad_request');
-    const ciphertext = await readShareCiphertext(this.db, tenantId, shareId, subject);
+    if (!shareId || !subject) return fail(response, 400, 'bad_request');
+    const ciphertext = await readShareCiphertext(this.db, shareId, subject);
     if (!ciphertext.ok) return fail(response, 500, 'store');
     if (ciphertext.val === null) return fail(response, 403, 'not_connected');
-    const opened = await this.open(tenantId, subject, ciphertext.val);
+    const opened = await this.open(subject, ciphertext.val);
     if (!opened.ok) return fail(response, opened.status, opened.type, opened.message);
     const credentials: ShareCredentials | null = parseShareCredentials(opened.value);
     if (!credentials) return fail(response, 503, 'bad_credentials');
@@ -331,13 +328,12 @@ export class Forwarder {
     request: IncomingMessage,
     response: ServerResponse
   ): Promise<void> {
-    const tenantId = url.searchParams.get('tenantId') ?? str(request.headers['x-onbase-tenant']);
     const subject = str(request.headers['x-onbase-subject']);
     const connectorName = str(request.headers['x-onbase-connector']) || 'onbase';
-    if (!tenantId || !subject) {
-      return fail(response, 400, 'bad_request', 'tenantId and x-onbase-subject are required');
+    if (!subject) {
+      return fail(response, 400, 'bad_request', 'x-onbase-subject is required');
     }
-    const access = await this.grants.accessFor(tenantId, connectorName, { subject });
+    const access = await this.grants.accessFor(connectorName, { subject });
     if (!access.ok) return fail(response, access.status, access.error);
     const bytes = await readBody(request, MAX_RAW_BYTES);
     if (bytes === null) return fail(response, 413, 'too_large');

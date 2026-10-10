@@ -65,7 +65,7 @@ export function registerWatchTools(
 
       const label = `${site.name} / ${library.name}`;
       const result = await upsertWatch(
-        { tenantId: context.tenantId, subject: context.subject, accountId: context.accountId },
+        { subject: context.subject, accountId: context.accountId },
         'sharepoint',
         'drive',
         library.driveId,
@@ -109,7 +109,7 @@ export function registerWatchTools(
       if (!library.ok) return errText(library.error);
 
       const result = await disableWatch(
-        { tenantId: context.tenantId, subject: context.subject, accountId: context.accountId },
+        { subject: context.subject, accountId: context.accountId },
         'sharepoint',
         'drive',
         library.driveId
@@ -134,7 +134,7 @@ export function registerWatchTools(
         return errText('No signed-in Microsoft identity on this request.');
       }
       const result = await listWatches(
-        { tenantId: context.tenantId, subject: context.subject, accountId: context.accountId },
+        { subject: context.subject, accountId: context.accountId },
         'sharepoint'
       );
       if (!result.ok) return errText(result.error);

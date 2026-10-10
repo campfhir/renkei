@@ -3,14 +3,14 @@
  * allow-list — dispatched from server.ts under `/v1/services/*`, the same
  * bearer-keyed JSON POST shape as every other sandbox operation.
  *
- *   services/start   { tenantId, subject, name, image, env?, exports? }
- *   services/list    { tenantId, subject }
- *   services/logs    { tenantId, subject, name, lines?, since?, match? }
- *   services/tail    { tenantId, subject, lines?, since?, match? }   every service, one stream
- *   services/stop    { tenantId, subject, name }
+ *   services/start   { subject, name, image, env?, exports? }
+ *   services/list    { subject }
+ *   services/logs    { subject, name, lines?, since?, match? }
+ *   services/tail    { subject, lines?, since?, match? }   every service, one stream
+ *   services/stop    { subject, name }
  *   services/rules/list     { tenantId }
- *   services/rules/set      { tenantId, id?, pattern, note?, registryUsername?, registrySecret?, clearCredential? }
- *   services/rules/delete   { tenantId, id }
+ *   services/rules/set      { id?, pattern, note?, registryUsername?, registrySecret?, clearCredential? }
+ *   services/rules/delete   { id }
  *   services/rules/restore  { tenantId }
  *
  * The service verbs are scoped by (tenantId, subject) like a checkout;
@@ -51,7 +51,7 @@ export interface ServiceHandlerDeps {
   /** The manager, when the engine answered at boot; null answers every verb 503. */
   manager: ServiceManager | null;
   /** Whether the organization has services on (its settings, with workspaces), asked per request. */
-  enabledFor: (tenantId: string) => Promise<boolean>;
+  enabledFor: () => Promise<boolean>;
 }
 
 type Body = Record<string, unknown>;
@@ -140,25 +140,23 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
   }
 
   async function handleRules(op: string, body: Body, response: ServerResponse): Promise<void> {
-    const tenantId = str(body.tenantId);
-    if (!tenantId) return sendError(response, 400, 'bad_request');
     switch (op) {
       case 'list':
         return sendJson(response, 200, {
-          rules: (await rules.listImageRules(db, tenantId)).map(ruleWire),
+          rules: (await rules.listImageRules(db)).map(ruleWire),
         });
       case 'restore': {
-        const added = await rules.restoreDefaultImageRules(db, tenantId);
+        const added = await rules.restoreDefaultImageRules(db);
         return sendJson(response, 200, {
           added,
-          rules: (await rules.listImageRules(db, tenantId)).map(ruleWire),
+          rules: (await rules.listImageRules(db)).map(ruleWire),
         });
       }
       case 'delete': {
         const id = str(body.id);
         if (!UUID_PATTERN.test(id))
           return sendError(response, 400, 'bad_request', 'A rule id is required.');
-        const deleted = await rules.deleteImageRule(db, tenantId, id);
+        const deleted = await rules.deleteImageRule(db, id);
         if (!deleted) return sendError(response, 404, 'not_found', 'No such rule.');
         return sendJson(response, 200, { deleted: true, id });
       }
@@ -214,7 +212,6 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
           if (!UUID_PATTERN.test(id))
             return sendError(response, 400, 'bad_request', 'A rule id is a uuid.');
           const updated = await rules.updateImageRule(db, {
-            tenantId,
             id,
             pattern: normalized.rule.pattern,
             note,
@@ -223,7 +220,7 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
           if (!updated) return sendError(response, 404, 'not_found', 'No such rule.');
           return sendJson(response, 200, { rule: ruleWire(updated), dropped: normalized.dropped });
         }
-        if ((await rules.countImageRules(db, tenantId)) >= IMAGE_RULE_MAX_PER_TENANT) {
+        if ((await rules.countImageRules(db)) >= IMAGE_RULE_MAX_PER_TENANT) {
           return sendError(
             response,
             429,
@@ -232,7 +229,6 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
           );
         }
         const created = await rules.insertImageRule(db, {
-          tenantId,
           pattern: normalized.rule.pattern,
           note,
           registryUsername: credential ? credential.registryUsername : null,
@@ -248,15 +244,13 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
   async function handleServices(op: string, body: Body, response: ServerResponse): Promise<void> {
     const manager = deps.manager;
     if (!manager) return unavailable(response, 'deployment');
-    const tenantId = str(body.tenantId);
-    if (!tenantId) return sendError(response, 400, 'bad_request');
-    if (!(await deps.enabledFor(tenantId))) return unavailable(response, 'organization');
+    if (!(await deps.enabledFor())) return unavailable(response, 'organization');
     if (op.startsWith('rules/')) {
       return guarded(response, () => handleRules(op.slice('rules/'.length), body, response));
     }
     const subject = str(body.subject);
     if (!subject) return sendError(response, 400, 'bad_request');
-    const target: ServiceTarget = { tenantId, subject };
+    const target: ServiceTarget = { subject };
     return guarded(response, async () => {
       switch (op) {
         case 'list':

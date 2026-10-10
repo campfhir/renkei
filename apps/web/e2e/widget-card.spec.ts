@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { keyFor } from './keys';
 
 test.use({
@@ -125,31 +125,21 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
   // base_url points the app's Anthropic adapter at the stub, so the turn
   // a decision opens gets a reply without the network.
   await client.query(
-    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, $3, 'anthropic', 'e2e-model', $4, $5, true, false)`,
-    [
-      ids.modelId,
-      E2E_TENANT_ID,
-      ids.modelLabel,
-      STUB_MODEL_BASE_URL,
-      sealSecret(JSON.stringify({ apiKey: 'e2e' })),
-    ]
+    `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, $4, true, false)`,
+    [ids.modelId, ids.modelLabel, STUB_MODEL_BASE_URL, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
   );
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
+    `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n     VALUES ($1, $2, $3, $4, NOW())`,
+    [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.chatId,
     ownerSubject: E2E_SUBJECT,
   });
   await client.query(
-    `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
-     VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
-    [ids.turnId, E2E_TENANT_ID, ids.chatId, ids.modelId]
+    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n     VALUES ($1, $2, 'completed', $3, 2, NOW())`,
+    [ids.turnId, ids.chatId, ids.modelId]
   );
   const rows: { seq: number; role: string; kind: string; blocks: unknown[] }[] = [
     {
@@ -192,20 +182,8 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     await client.query(
-      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)
-       VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10)`,
-      [
-        E2E_TENANT_ID,
-        ids.chatId,
-        ids.turnId,
-        row.seq,
-        row.role,
-        row.kind,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? ids.modelId : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'e2e-model' : null,
-      ]
+      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9)`,
+      [ids.chatId, ids.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? ids.modelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null]
     );
   }
 }
@@ -220,31 +198,21 @@ async function seedTwoCardChat(
   await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
   await client.query(
-    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, $3, 'anthropic', 'e2e-model', $4, $5, true, false)`,
-    [
-      ids.modelId,
-      E2E_TENANT_ID,
-      ids.modelLabel,
-      STUB_MODEL_BASE_URL,
-      sealSecret(JSON.stringify({ apiKey: 'e2e' })),
-    ]
+    `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, $4, true, false)`,
+    [ids.modelId, ids.modelLabel, STUB_MODEL_BASE_URL, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
   );
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
+    `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n     VALUES ($1, $2, $3, $4, NOW())`,
+    [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.chatId,
     ownerSubject: E2E_SUBJECT,
   });
   await client.query(
-    `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
-     VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
-    [ids.turnId, E2E_TENANT_ID, ids.chatId, ids.modelId]
+    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n     VALUES ($1, $2, 'completed', $3, 2, NOW())`,
+    [ids.turnId, ids.chatId, ids.modelId]
   );
   const toolUseIdA = `${ids.toolUseId}_a`;
   const toolUseIdB = `${ids.toolUseId}_b`;
@@ -300,20 +268,8 @@ async function seedTwoCardChat(
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     await client.query(
-      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)
-       VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10)`,
-      [
-        E2E_TENANT_ID,
-        ids.chatId,
-        ids.turnId,
-        row.seq,
-        row.role,
-        row.kind,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? ids.modelId : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'e2e-model' : null,
-      ]
+      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9)`,
+      [ids.chatId, ids.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? ids.modelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null]
     );
   }
   return { toolUseIdA, toolUseIdB };
@@ -400,7 +356,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
       });
     });
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
     // The card, not a folded raw-JSON block: the widget iframe with its own
@@ -482,7 +438,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
     const freshContext = await page.context().browser()!.newContext();
     try {
       const freshPage = await freshContext.newPage();
-      await freshPage.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+      await freshPage.goto(`/chat/${ids.chatId}`);
       await expect(freshPage.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
       const freshFrame = freshPage.frameLocator('iframe[title="Preview card"]');
       await expect(freshFrame.locator('.done-headline')).toHaveText('Created issue OPS-99.', COLD);
@@ -511,7 +467,7 @@ test('cancelling the card is a decision too: the model replies to it', async ({
       await route.fulfill({ status: 500, json: { error: 'not expected' } });
     });
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
     const frame = page.frameLocator('iframe[title="Preview card"]');
     const cancelButton = frame.getByRole('button', { name: 'Cancel' });
@@ -563,7 +519,7 @@ test('a stale card refuses to re-run a confirm tool another device already decid
       if (req.url().includes('/widget/tool-call')) toolCallRequests.push(req.postDataJSON());
     });
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
     const frame = page.frameLocator('iframe[title="Preview card"]');
     const confirmButton = frame.getByRole('button', { name: 'Create' });
@@ -573,15 +529,8 @@ test('a stale card refuses to re-run a confirm tool another device already decid
     // showing its (now stale) live form — the same row `/widget/decision`
     // would write, inserted directly rather than driving a second browser.
     await client.query(
-      `INSERT INTO chat_widget_decisions (tenant_id, chat_id, state_key, decision, state, decided_by)
-       VALUES ($1, $2, $3, 'confirmed', $4, $5)`,
-      [
-        E2E_TENANT_ID,
-        ids.chatId,
-        `renkei-preview:${previewId}`,
-        JSON.stringify({ icon: 'sent', headline: 'Created issue OPS-1.' }),
-        E2E_SUBJECT,
-      ]
+      `INSERT INTO chat_widget_decisions (chat_id, state_key, decision, state, decided_by)\n       VALUES ($1, $2, 'confirmed', $3, $4)`,
+      [ids.chatId, `renkei-preview:${previewId}`, JSON.stringify({ icon: 'sent', headline: 'Created issue OPS-1.' }), E2E_SUBJECT]
     );
 
     // This stale page's Confirm still fires — confirmWidgetTool
@@ -613,7 +562,7 @@ test('the card still renders at phone width', async ({ page }, testInfo) => {
   try {
     await seedChat(client, ids, randomUUID());
     await page.setViewportSize(MOBILE_VIEWPORT);
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
     const frame = page.frameLocator('iframe[title="Preview card"]');
@@ -657,7 +606,7 @@ test('two cards from one reply: deciding both opens exactly one turn, informed b
       });
     });
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
     const iframes = page.locator('iframe[title="Preview card"]');

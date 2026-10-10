@@ -194,9 +194,9 @@ endpoint returns real file bytes with content negotiation.
   (every connector now injects rather than reading `context.accessToken`
   inline — see the `connector_auth_dependency_injection` note).
 - `apps/web/lib/connector-catalog.ts` — one entry, `toolPrefix: 'onbase_*'`.
-- `apps/web/app/[slug]/admin/connectors` — a config card, which needs more
+- `apps/web/app/(app)/admin/connectors` — a config card, which needs more
   fields than any existing one (base URL, issuer, scope name).
-- `apps/web/app/[slug]/connectors` — a connect card; drops into the new
+- `apps/web/app/(app)/connectors` — a connect card; drops into the new
   column layout with no work.
 - `packages/capability-registry` — capability key `onbase`.
 - Migration: none. `connector_configs` and `provider_grants` already fit.
@@ -426,7 +426,7 @@ mirroring that precedent line for line:
   (`OnBaseAdminForm`/`.../connectors/onbase-admin/route.ts`);
 - its own `provider_grants` provider (`ONBASE_ADMIN` /
   `OnBaseAdminAdapter` in `@renkei/provider-grants`) and its own connect
-  flow (`/api/onbase-admin/[tenantId]/authorize` and `/grant`, dispatched
+  flow (`/api/onbase-admin/authorize` and `/grant`, dispatched
   in the shared `/api/oauth/callback` route by `pendingSignIn.provider`);
   its own capability gate (`onbase-admin`, `registerOnbaseAdminTools`
   registered separately in `registry.ts`, gated on its own grant);

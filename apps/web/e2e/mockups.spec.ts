@@ -20,7 +20,7 @@ import { createCipheriv, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { keyFor } from './keys';
 
 test.use({
@@ -117,31 +117,21 @@ async function seedChat(client: Client, ids: Ids): Promise<void> {
   await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
   await client.query(
-    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, $3, 'anthropic', 'e2e-model', $4, $5, true, false)`,
-    [
-      ids.modelId,
-      E2E_TENANT_ID,
-      ids.modelLabel,
-      'http://127.0.0.1:8092/anthropic',
-      sealSecret(JSON.stringify({ apiKey: 'e2e' })),
-    ]
+    `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, $4, true, false)`,
+    [ids.modelId, ids.modelLabel, 'http://127.0.0.1:8092/anthropic', sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
   );
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
+    `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n     VALUES ($1, $2, $3, $4, NOW())`,
+    [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.chatId,
     ownerSubject: E2E_SUBJECT,
   });
   await client.query(
-    `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
-     VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
-    [ids.turnId, E2E_TENANT_ID, ids.chatId, ids.modelId]
+    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n     VALUES ($1, $2, 'completed', $3, 2, NOW())`,
+    [ids.turnId, ids.chatId, ids.modelId]
   );
   const rows: { seq: number; role: string; kind: string; blocks: unknown[] }[] = [
     {
@@ -214,20 +204,8 @@ async function seedChat(client: Client, ids: Ids): Promise<void> {
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     await client.query(
-      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)
-       VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10)`,
-      [
-        E2E_TENANT_ID,
-        ids.chatId,
-        ids.turnId,
-        row.seq,
-        row.role,
-        row.kind,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? ids.modelId : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'e2e-model' : null,
-      ]
+      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9)`,
+      [ids.chatId, ids.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? ids.modelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null]
     );
   }
 }
@@ -273,7 +251,7 @@ const zoomPercent = async (page: Page) =>
 test('a reply’s mockups are drawn inline, each in its format, and a refused call draws none', async ({
   page,
 }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
   // Three cards — the call the tool refused stays in the fold, no card for it.
@@ -321,7 +299,7 @@ test('a reply’s mockups are drawn inline, each in its format, and a refused ca
 test('clicking a card opens it full screen, live, with zoom, widths, pan and a way back', async ({
   page,
 }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   const opener = page.getByRole('button', { name: 'Open Settings page full screen' });
   await expect(opener).toBeVisible(COLD);
   await opener.click();
@@ -405,7 +383,7 @@ test('clicking a card opens it full screen, live, with zoom, widths, pan and a w
 });
 
 test('Escape and zoom keys still work while the mockup itself has focus', async ({ page }) => {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await page.getByRole('button', { name: 'Open Settings page full screen' }).click();
   const dialog = page.getByRole('dialog', { name: 'Mockup: Settings page' });
   const frame = dialog.frameLocator('iframe');
@@ -420,7 +398,7 @@ test('Escape and zoom keys still work while the mockup itself has focus', async 
 test('a mockup’s document can neither reach the network nor read cookies, and links go nowhere', async ({
   page,
 }) => {
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await expect(inlineFrame(page, 'Mobile hero').getByRole('heading')).toBeVisible(COLD);
 
   const mockupFrame = page.frames().find((frame) => frame.url().includes('/mockups/'));
@@ -465,7 +443,7 @@ test('at a phone’s width the cards fit the screen and the viewer stays reachab
   page,
 }, testInfo) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+  await page.goto(`/chat/${ids.chatId}`);
   await expect(page.locator('figure')).toHaveCount(3, COLD);
 
   // Frames load lazily, as they scroll near: bring each into view and wait for its design.

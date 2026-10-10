@@ -14,7 +14,7 @@ import { createCipheriv, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { keyFor } from './keys';
 
 test.use({
@@ -80,25 +80,21 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, title, last_message_at)
-       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.chatTitle]
+      `INSERT INTO chats (id, owner_subject, title, last_message_at)\n       VALUES ($1, $2, $3, NOW())`,
+      [ids.chatId, E2E_SUBJECT, ids.chatTitle]
     );
     const chatKey = await keyFor(client, {
-      tenantId: E2E_TENANT_ID,
       kind: 'chat',
       resourceId: ids.chatId,
       ownerSubject: E2E_SUBJECT,
     });
     await client.query(
-      `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
-       VALUES ($1, $2, $3, 'anthropic', 'claude-haiku-4-5', $4, TRUE, FALSE)`,
-      [ids.fastModelId, E2E_TENANT_ID, ids.fastModelLabel, secretbox('{"apiKey":"e2e"}')]
+      `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n       VALUES ($1, $2, 'anthropic', 'claude-haiku-4-5', $3, TRUE, FALSE)`,
+      [ids.fastModelId, ids.fastModelLabel, secretbox('{"apiKey":"e2e"}')]
     );
     await client.query(
-      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)
-       VALUES ($1, $2, $3, 'completed', 2, 1540, 210, NOW())`,
-      [ids.turnId, E2E_TENANT_ID, ids.chatId]
+      `INSERT INTO chat_turns (id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)\n       VALUES ($1, $2, 'completed', 2, 1540, 210, NOW())`,
+      [ids.turnId, ids.chatId]
     );
     const rows: {
       seq: number;
@@ -157,18 +153,8 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
     ];
     for (const row of rows) {
       await client.query(
-        `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, stop_reason)
-         VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8)`,
-        [
-          E2E_TENANT_ID,
-          ids.chatId,
-          ids.turnId,
-          row.seq,
-          row.role,
-          row.kind,
-          chatKey.seal(JSON.stringify(row.blocks)),
-          row.stop,
-        ]
+        `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, stop_reason)\n         VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7)`,
+        [ids.chatId, ids.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), row.stop]
       );
     }
     const transcript = [
@@ -200,20 +186,8 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
       { role: 'assistant', content: [{ type: 'text', text: REPORT }] },
     ];
     await client.query(
-      `INSERT INTO chat_subagent_runs
-         (tenant_id, chat_id, turn_id, tool_use_id, status, task, read_only, max_steps, steps, tool_calls,
-          transcript, report, input_tokens, output_tokens, llm_model_id, provider, model, finished_at)
-       VALUES ($1, $2, $3, 'toolu_e2e_chat_delegate', 'completed', $4, TRUE, 15, 2, 1, $5, $6, 640, 90,
-               $7, 'anthropic', 'claude-haiku-4-5', NOW())`,
-      [
-        E2E_TENANT_ID,
-        ids.chatId,
-        ids.turnId,
-        chatKey.seal(TASK),
-        chatKey.seal(JSON.stringify(transcript)),
-        chatKey.seal(REPORT),
-        ids.fastModelId,
-      ]
+      `INSERT INTO chat_subagent_runs\n         (chat_id, turn_id, tool_use_id, status, task, read_only, max_steps, steps, tool_calls,\n          transcript, report, input_tokens, output_tokens, llm_model_id, provider, model, finished_at)\n       VALUES ($1, $2, 'toolu_e2e_chat_delegate', 'completed', $3, TRUE, 15, 2, 1, $4, $5, 640, 90,\n               $6, 'anthropic', 'claude-haiku-4-5', NOW())`,
+      [ids.chatId, ids.turnId, chatKey.seal(TASK), chatKey.seal(JSON.stringify(transcript)), chatKey.seal(REPORT), ids.fastModelId]
     );
   } finally {
     await client.end();
@@ -255,7 +229,7 @@ test.describe('ordinary chat sub-agent', () => {
       });
     const main = page.getByRole('main');
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(main.getByText('Which issues slipped out of the last OPS sprint?')).toBeVisible();
 
     // ── The card, folded: a chat sub-agent is read-only by nature, ran on

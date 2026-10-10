@@ -93,14 +93,12 @@ export function validReason(value: unknown): string | null {
 /** This project's newest request, whatever its state, for its page. */
 export async function latestSizeRequest(
   db: Kysely<DB>,
-  tenantId: string,
   projectId: string
 ): Promise<SizeRequestView | null> {
   const row = await db
     .selectFrom('sandbox_size_requests')
     .selectAll()
-    .where('tenant_id', '=', tenantId)
-    .where('subject', '=', codeProjectTarget(tenantId, projectId).subject)
+    .where('subject', '=', codeProjectTarget(projectId).subject)
     .orderBy('created_at', 'desc')
     .limit(1)
     .executeTakeFirst();
@@ -111,7 +109,6 @@ export async function latestSizeRequest(
 export async function createSizeRequest(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     projectId: string;
     projectName: string;
     requestedBy: string;
@@ -122,14 +119,13 @@ export async function createSizeRequest(
   const row = await db
     .insertInto('sandbox_size_requests')
     .values({
-      tenant_id: input.tenantId,
-      subject: codeProjectTarget(input.tenantId, input.projectId).subject,
+      subject: codeProjectTarget(input.projectId).subject,
       requested_by: input.requestedBy,
       requested_bytes: input.requestedBytes,
       reason: input.reason,
     })
     .onConflict((oc) =>
-      oc.columns(['tenant_id', 'subject']).where('status', '=', 'pending').doNothing()
+      oc.columns(['subject']).where('status', '=', 'pending').doNothing()
     )
     .returningAll()
     .executeTakeFirst();
@@ -139,19 +135,16 @@ export async function createSizeRequest(
 /** The org's requests, pending first then newest, for the admin page. */
 export async function listSizeRequests(
   db: Kysely<DB>,
-  tenantId: string,
   limit = 100
 ): Promise<SizeRequestView[]> {
   const rows = await db
     .selectFrom('sandbox_size_requests as r')
     .leftJoin('chat_projects as p', (join) =>
       join
-        .onRef('p.tenant_id', '=', 'r.tenant_id')
         .on(sql<boolean>`r.subject = ${PROJECT_PREFIX} || p.id::text`)
     )
     .selectAll('r')
     .select('p.name as project_name')
-    .where('r.tenant_id', '=', tenantId)
     .orderBy((eb) => eb.case().when('r.status', '=', 'pending').then(0).else(1).end())
     .orderBy('r.created_at', 'desc')
     .limit(limit)
@@ -165,7 +158,6 @@ export type DecideOutcome = { ok: true; request: SizeRequestView } | { ok: false
 export async function decideSizeRequest(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     id: string;
     decision: 'approved' | 'denied';
     decidedBy: string;
@@ -184,7 +176,6 @@ export async function decideSizeRequest(
         ? { requested_bytes: input.approvedBytes }
         : {}),
     })
-    .where('tenant_id', '=', input.tenantId)
     .where('id', '=', input.id)
     .where('status', '=', 'pending')
     .returningAll()

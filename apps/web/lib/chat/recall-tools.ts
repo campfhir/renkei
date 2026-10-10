@@ -62,13 +62,12 @@ function scoreOf(haystack: string, terms: string[]): number {
 
 async function transcriptOf(
   db: Kysely<DB>,
-  tenantId: string,
   chat: ChatRow,
   maxChars: number
 ): Promise<string> {
   // The person's own chat, or a fellow member's in the project: opened as
   // its owner either way (chat-keys.ts), the way a project read is.
-  const rows = await listMessages(db, tenantId, chat.id, await cipherAsOwner(db, 'chat', chat));
+  const rows = await listMessages(db, chat.id, await cipherAsOwner(db, 'chat', chat));
   const lines: string[] = [];
   let spent = 0;
   for (const row of rows) {
@@ -113,13 +112,12 @@ async function listOthers(context: LocalToolContext): Promise<ChatRow[]> {
   if (context.projectId) {
     const inProject = await listProjectChats(
       context.db,
-      context.tenantId,
       [context.projectId],
       null
     );
     return inProject.filter((chat) => chat.id !== context.chatId && chat.lastMessageAt !== null);
   }
-  const owned = await listOwnedChats(context.db, context.tenantId, context.subject);
+  const owned = await listOwnedChats(context.db, context.subject);
   return owned.filter((chat) => chat.id !== context.chatId);
 }
 
@@ -130,16 +128,16 @@ async function listOthers(context: LocalToolContext): Promise<ChatRow[]> {
  */
 async function readable(context: LocalToolContext, chatId: string): Promise<ChatRow | null> {
   if (context.projectId) {
-    const chat = await getChatRow(context.db, context.tenantId, chatId);
+    const chat = await getChatRow(context.db, chatId);
     return chat && chat.projectId === context.projectId ? chat : null;
   }
-  return getChatForOwner(context.db, context.tenantId, context.subject, chatId);
+  return getChatForOwner(context.db, context.subject, chatId);
 }
 
 async function readOne(context: LocalToolContext, chatId: string) {
   const chat = await readable(context, chatId);
   if (!chat) return errorResult('No such chat.');
-  const transcript = await transcriptOf(context.db, context.tenantId, chat, READ_MAX_CHARS);
+  const transcript = await transcriptOf(context.db, chat, READ_MAX_CHARS);
   if (!transcript) return textResult(`${titleOf(chat)} (${dateOf(chat)}) has no text to show.`);
   return textResult(
     `${titleOf(chat)} (last active ${dateOf(chat)}), chat id ${chat.id}:\n\n${transcript}`
@@ -154,7 +152,7 @@ async function search(context: LocalToolContext, query: string, limit: number) {
   const candidates = others.slice(0, SCAN_LIMIT);
   const scored = await Promise.all(
     candidates.map(async (chat) => {
-      const transcript = await transcriptOf(context.db, context.tenantId, chat, 4_000);
+      const transcript = await transcriptOf(context.db, chat, 4_000);
       const titleScore = scoreOf(titleOf(chat).toLowerCase(), terms) * TITLE_MATCH_WEIGHT;
       const bodyScore = scoreOf(transcript.toLowerCase(), terms);
       return { chat, transcript, score: titleScore + bodyScore };

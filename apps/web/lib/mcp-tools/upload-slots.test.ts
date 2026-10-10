@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * Upload slots: the token must exist only in the returned instructions —
- * the row keeps its sha256 — and the status tool must scope by tenant AND
+ * the row keeps its sha256 — and the status tool must scope by
  * subject so a foreign upload id reads as nonexistent.
  */
 
@@ -59,7 +59,6 @@ function stubDb(selectRow: Record<string, unknown> | undefined): Recorded {
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
   ({
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
     origin: 'https://renkei.example',
@@ -102,7 +101,6 @@ describe('createUploadSlot', () => {
     expect(inserted.id).toBe(slot.uploadId);
     expect(inserted.kind).toBe('jira-attachment');
     expect(inserted.destination).toBe(JSON.stringify({ issueKey: 'PROJ-1' }));
-    expect(inserted.tenant_id).toBe('tenant-1');
     expect(inserted.subject).toBe('subject-1');
 
     expect(slot.instructions).toContain(
@@ -154,7 +152,7 @@ describe('check_file_upload', () => {
     return handler;
   }
 
-  it('scopes the lookup by tenant AND subject, and a miss reads as nonexistent', async () => {
+  it('scopes the lookup by subject, and a miss reads as nonexistent', async () => {
     const recorded = stubDb(undefined);
     const handler = await statusHandler();
 
@@ -162,7 +160,6 @@ describe('check_file_upload', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe('No such upload.');
-    expect(recorded.filters).toContainEqual(['tenant_id', '=', 'tenant-1']);
     expect(recorded.filters).toContainEqual(['subject', '=', 'subject-1']);
   });
 
@@ -230,7 +227,6 @@ describe('claimPendingUploadSlotByOwner', () => {
 
   const CLAIMED_ROW = {
     id: 'upload-1',
-    tenant_id: 'tenant-1',
     subject: 'subject-1',
     account_id: 'acct-1',
     kind: 'onbase-document',
@@ -240,7 +236,7 @@ describe('claimPendingUploadSlotByOwner', () => {
     max_bytes: 1024,
   };
 
-  it('claims by tenant + subject, never by a bearer token', async () => {
+  it('claims by subject, never by a bearer token', async () => {
     const recorded = stubClaimDb(CLAIMED_ROW);
 
     const claimed = await claimPendingUploadSlotByOwner(context(), 'upload-1');
@@ -249,7 +245,6 @@ describe('claimPendingUploadSlotByOwner', () => {
     expect(claimed.val).toEqual(CLAIMED_ROW);
     expect(recorded.setValues?.status).toBe('completed');
     expect(recorded.filters).toContainEqual(['id', '=', 'upload-1']);
-    expect(recorded.filters).toContainEqual(['tenant_id', '=', 'tenant-1']);
     expect(recorded.filters).toContainEqual(['subject', '=', 'subject-1']);
     expect(recorded.filters).toContainEqual(['status', '=', 'pending']);
   });

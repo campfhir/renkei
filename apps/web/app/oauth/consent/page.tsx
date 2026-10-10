@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { getDatabase } from '@renkei/db';
+import { DEFAULT_ORG_SETTINGS, getOrgSettings } from '@renkei/settings';
 import RenkeiMark from '@/components/renkei-mark';
 import { getSessionFromCookies } from '@/lib/session';
 import { describeRedirectTarget } from '@/lib/oauth-redirect-uri';
@@ -7,16 +8,15 @@ import { describeRedirectTarget } from '@/lib/oauth-redirect-uri';
 /**
  * The consent page of the MCP OAuth flow: the one screen between a
  * signed-in person and a client acting as them. The authorize endpoint
- * (api/mcp/[tenantId]/oauth/authorize) sends the browser here with the id
+ * (api/mcp/oauth/authorize) sends the browser here with the id
  * of the request it recorded against this session; the page names the
  * client, says where its code would go and as whom it would act, and the
  * two buttons POST the answer straight back to that endpoint, which checks
  * the same session is answering. No client-side code: a plain form, so the
  * page works the same with scripts off and has nothing to hydrate.
  *
- * Routed outside `[slug]` on purpose: the request row names the tenant,
- * and the person reaches this page from a client, not from the app's
- * navigation.
+ * Routed outside the app shell on purpose: the person reaches this page
+ * from a client, not from the app's navigation.
  */
 
 export const metadata: Metadata = { title: 'Authorize application' };
@@ -49,10 +49,8 @@ export default async function ConsentPage({
   const pending = await db
     .selectFrom('oauth_consent_requests as r')
     .innerJoin('oauth_clients as c', 'c.client_id', 'r.client_id')
-    .innerJoin('tenants as t', 't.id', 'r.tenant_id')
     .select([
       'r.id',
-      'r.tenant_id',
       'r.session_id',
       'r.subject',
       'r.redirect_uri',
@@ -60,7 +58,6 @@ export default async function ConsentPage({
       'r.expires_at',
       'c.client_name',
       'c.created_at as client_created_at',
-      't.slug',
     ])
     .where('r.id', '=', requestId)
     .executeTakeFirst();
@@ -74,7 +71,7 @@ export default async function ConsentPage({
     );
   }
 
-  const session = await getSessionFromCookies(pending.tenant_id);
+  const session = await getSessionFromCookies();
   if (!session || session.id !== pending.session_id) {
     return (
       <Notice
@@ -87,11 +84,12 @@ export default async function ConsentPage({
   const identity = await db
     .selectFrom('identities')
     .select(['email', 'display_name'])
-    .where('tenant_id', '=', pending.tenant_id)
     .where('subject', '=', pending.subject)
     .executeTakeFirst();
 
   const clientName = pending.client_name?.trim() || 'An application';
+  const settings = await getOrgSettings();
+  const organizationName = (settings.ok ? settings.val : DEFAULT_ORG_SETTINGS).organizationName;
   const target = describeRedirectTarget(pending.redirect_uri);
   const registeredAgoMs = Date.now() - new Date(pending.client_created_at).getTime();
   const recentlyRegistered = registeredAgoMs < RECENTLY_REGISTERED_MS;
@@ -103,7 +101,7 @@ export default async function ConsentPage({
     <main className="flex min-h-full flex-1 items-center justify-center bg-background px-4 py-10 text-foreground">
       <form
         method="post"
-        action={`/api/mcp/${pending.tenant_id}/oauth/authorize`}
+        action={`/api/mcp/oauth/authorize`}
         className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-950"
       >
         <input type="hidden" name="request" value={pending.id} />
@@ -111,7 +109,7 @@ export default async function ConsentPage({
           <RenkeiMark className="h-8 w-8" title="Renkei" />
           <div>
             <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-              {pending.slug}
+              {organizationName}
             </p>
             <h1 className="text-lg font-semibold">Allow {clientName} to act as you?</h1>
           </div>

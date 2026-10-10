@@ -7,8 +7,6 @@
 
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
-import { E2E_SLUG } from './seed';
-
 test.use({
   launchOptions: {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
@@ -17,7 +15,7 @@ test.use({
 });
 
 test('app menu column: open by default, toggles and is remembered', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents`);
+  await page.goto(`/agents`);
   const column = page.getByRole('navigation', { name: 'Application' });
   const mobile = testInfo.project.name === 'mobile';
   const shot = (name: string) =>

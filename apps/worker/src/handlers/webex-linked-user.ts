@@ -32,14 +32,13 @@ import { logger } from '../logger';
  * person ever signed in? A DB error is a caller problem (thrown, so the
  * event's retry budget applies); "no row" is the ordinary unregistered case.
  */
-export async function hasLinkedIdentity(tenantId: string, email: string): Promise<boolean> {
+export async function hasLinkedIdentity(email: string): Promise<boolean> {
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('database unavailable');
 
   const row = await dbResult.val
     .selectFrom('identities')
     .select('subject')
-    .where('tenant_id', '=', tenantId)
     .where('email', '=', email.toLowerCase())
     .executeTakeFirst();
   return Boolean(row);
@@ -56,14 +55,12 @@ export interface LinkedWebexUserAccess {
  * search this feeds is an enrichment, never a reason to fail the event.
  */
 export async function resolveLinkedWebexUserAccess(
-  tenantId: string,
   email: string
 ): Promise<LinkedWebexUserAccess | null> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     logger.warn('database unavailable; skipping cross-space search', {
       component: 'webex/forward-context',
-      tenantId,
     });
     return null;
   }
@@ -76,10 +73,8 @@ export async function resolveLinkedWebexUserAccess(
     .innerJoin('provider_grants', (join) =>
       join
         .onRef('provider_grants.subject', '=', 'identities.subject')
-        .onRef('provider_grants.tenant_id', '=', 'identities.tenant_id')
     )
     .select('provider_grants.provider_account_id')
-    .where('identities.tenant_id', '=', tenantId)
     .where('identities.email', '=', email.toLowerCase())
     .where('provider_grants.provider', '=', WEBEX_USER)
     .limit(1)
@@ -87,18 +82,16 @@ export async function resolveLinkedWebexUserAccess(
   if (!row) {
     logger.debug('no webex-user grant on file for {email}; skipping cross-space search', {
       component: 'webex/forward-context',
-      tenantId,
       email,
     });
     return null;
   }
 
-  const grant: GrantRef = { tenantId, provider: WEBEX_USER, accountId: row.provider_account_id };
+  const grant: GrantRef = { provider: WEBEX_USER, accountId: row.provider_account_id };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) {
     logger.warn('webex-user grant row exists but could not be read: {error}', {
       component: 'webex/forward-context',
-      tenantId,
       email,
       error: described.err.type,
     });
@@ -123,7 +116,7 @@ async function resolveWebexUserAccess(ref: GrantRef): Promise<WebexUserGrantAcce
   const grant = described.val;
   if (!grant.subject) return null;
   return {
-    auth: grantFetch({ tenantId: ref.tenantId, provider: WEBEX_USER, accountId: grant.accountId }),
+    auth: grantFetch({ provider: WEBEX_USER, accountId: grant.accountId }),
     subject: grant.subject,
     personEmail: typeof grant.metadata.personEmail === 'string' ? grant.metadata.personEmail : null,
   };
@@ -134,10 +127,9 @@ async function resolveWebexUserAccess(ref: GrantRef): Promise<WebexUserGrantAcce
  * turns a delivery back into "whose webhook, acting with whose grant".
  */
 export function resolveWebexUserAccessByAccount(
-  tenantId: string,
   accountId: string
 ): Promise<WebexUserGrantAccess | null> {
-  return resolveWebexUserAccess({ tenantId, provider: WEBEX_USER, accountId });
+  return resolveWebexUserAccess({ provider: WEBEX_USER, accountId });
 }
 
 /**
@@ -145,8 +137,7 @@ export function resolveWebexUserAccessByAccount(
  * their account id.
  */
 export function resolveWebexUserAccessBySubject(
-  tenantId: string,
   subject: string
 ): Promise<WebexUserGrantAccess | null> {
-  return resolveWebexUserAccess({ tenantId, provider: WEBEX_USER, subject });
+  return resolveWebexUserAccess({ provider: WEBEX_USER, subject });
 }

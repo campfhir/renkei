@@ -906,7 +906,6 @@ export async function registerMoveTools(
     const displayName = getCachedDisplayName(context.accountId);
     logger.debug(`${TOOL} invoked`, {
       component: 'mcp/tool',
-      tenantId: context.tenantId,
       accountId: context.accountId,
       displayName,
     });

@@ -29,7 +29,6 @@ export interface ImageUsageReport {
 }
 
 export interface RecordImageUsageInput extends ImageUsageReport {
-  tenantId: string;
   subject: string;
 }
 
@@ -41,7 +40,6 @@ export async function recordImageUsage(
     await db
       .insertInto('image_usage')
       .values({
-        tenant_id: input.tenantId,
         subject: input.subject,
         surface: input.surface.slice(0, 16),
         provider: input.provider.slice(0, 32),
@@ -55,9 +53,8 @@ export async function recordImageUsage(
       })
       .execute();
   } catch (error) {
-    logger.warn('image usage not recorded for tenant {tenantId}', {
+    logger.warn('image usage not recorded', {
       component: 'web/image-usage',
-      tenantId: input.tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
   }

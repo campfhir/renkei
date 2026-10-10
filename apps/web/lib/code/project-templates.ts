@@ -25,13 +25,11 @@ export interface CodeProjectTemplate {
 }
 
 export async function listCodeProjectTemplates(
-  db: Kysely<DB>,
-  tenantId: string
+  db: Kysely<DB>
 ): Promise<CodeProjectTemplate[]> {
   const rows = await db
     .selectFrom('code_project_templates')
     .select(['id', 'name', 'description', 'instructions'])
-    .where('tenant_id', '=', tenantId)
     .orderBy('name')
     .execute();
   return rows.map((row) => ({
@@ -72,14 +70,12 @@ export function parseTemplatePayload(body: unknown): TemplateInput | { error: st
 
 export async function createCodeProjectTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   input: TemplateInput
 ): Promise<{ ok: true; id: string } | { ok: false; error: 'duplicate' }> {
   try {
     const inserted = await db
       .insertInto('code_project_templates')
       .values({
-        tenant_id: tenantId,
         name: input.name,
         description: input.description,
         instructions: input.instructions,
@@ -90,7 +86,7 @@ export async function createCodeProjectTemplate(
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.includes('idx_code_project_templates_tenant_name')
+      error.message.includes('idx_code_project_templates_name')
     ) {
       return { ok: false, error: 'duplicate' };
     }
@@ -100,7 +96,6 @@ export async function createCodeProjectTemplate(
 
 export async function updateCodeProjectTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   templateId: string,
   input: TemplateInput
 ): Promise<{ ok: true } | { ok: false; error: 'not-found' | 'duplicate' }> {
@@ -114,7 +109,6 @@ export async function updateCodeProjectTemplate(
         instructions: input.instructions,
         updated_at: sql`NOW()`,
       })
-      .where('tenant_id', '=', tenantId)
       .where('id', '=', templateId)
       .executeTakeFirst();
     if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'not-found' };
@@ -122,7 +116,7 @@ export async function updateCodeProjectTemplate(
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.includes('idx_code_project_templates_tenant_name')
+      error.message.includes('idx_code_project_templates_name')
     ) {
       return { ok: false, error: 'duplicate' };
     }
@@ -132,13 +126,11 @@ export async function updateCodeProjectTemplate(
 
 export async function deleteCodeProjectTemplate(
   db: Kysely<DB>,
-  tenantId: string,
   templateId: string
 ): Promise<boolean> {
   if (!isUuid(templateId)) return false;
   const result = await db
     .deleteFrom('code_project_templates')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', templateId)
     .executeTakeFirst();
   return Number(result.numDeletedRows ?? 0) > 0;

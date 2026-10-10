@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import { hashPath, listPhiAccessEvents, recordPhiAccess } from './phi-access';
 import { withRun } from './mcp-tools/run-context';
 
@@ -16,18 +16,14 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('phi_access_events', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const alice = `alice-${tenantId.slice(0, 8)}`;
-  const bob = `bob-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const alice = `alice-${suiteId.slice(0, 8)}`;
+  const bob = `bob-${suiteId.slice(0, 8)}`;
 
   beforeAll(async () => {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
     db = dbResult.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `phi-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   afterAll(async () => {
@@ -36,12 +32,10 @@ maybe('phi_access_events', () => {
     await sql`ALTER TABLE phi_access_events DISABLE TRIGGER phi_access_events_no_update_delete`.execute(
       db
     );
-    await db.deleteFrom('phi_access_events').where('tenant_id', '=', tenantId).execute();
+    await db.deleteFrom('phi_access_events').where('subject', 'in', [alice, bob]).execute();
     await sql`ALTER TABLE phi_access_events ENABLE TRIGGER phi_access_events_no_update_delete`.execute(
       db
     );
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
-    await closeDatabase();
   });
 
   it("records a person's read with ids only, and an agent's with the run it belongs to", async () => {
@@ -50,7 +44,6 @@ maybe('phi_access_events', () => {
     expect(
       await recordPhiAccess(
         {
-          tenantId,
           subject: alice,
           connector: 'mirth',
           instanceId: randomUUID(),
@@ -67,7 +60,6 @@ maybe('phi_access_events', () => {
     await withRun(runId, () =>
       recordPhiAccess(
         {
-          tenantId,
           subject: alice,
           connector: 'onbase',
           action: 'read',
@@ -80,7 +72,6 @@ maybe('phi_access_events', () => {
     await withRun(runId, () =>
       recordPhiAccess(
         {
-          tenantId,
           subject: alice,
           agentId,
           connector: 'fileshare',
@@ -92,7 +83,7 @@ maybe('phi_access_events', () => {
         db
       )
     );
-    const rows = await listPhiAccessEvents(db, tenantId, { subject: alice });
+    const rows = await listPhiAccessEvents(db, { subject: alice });
     expect(rows).toHaveLength(3);
     expect(rows.map((row) => row.toolName)).toEqual([
       'fileshare_download_file',
@@ -113,7 +104,6 @@ maybe('phi_access_events', () => {
   it('is append-only: UPDATE and DELETE are refused by the table itself', async () => {
     await recordPhiAccess(
       {
-        tenantId,
         subject: bob,
         connector: 'onbase',
         action: 'search',
@@ -126,26 +116,23 @@ maybe('phi_access_events', () => {
       db
         .updateTable('phi_access_events')
         .set({ subject: alice })
-        .where('tenant_id', '=', tenantId)
         .execute()
     ).rejects.toThrow(/append-only/);
     await expect(
       db
         .deleteFrom('phi_access_events')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', bob)
         .execute()
     ).rejects.toThrow(/append-only/);
-    const bobs = await listPhiAccessEvents(db, tenantId, { subject: bob });
+    const bobs = await listPhiAccessEvents(db, { subject: bob });
     expect(bobs).toHaveLength(1);
     // The listing is per person: Alice's rows are not Bob's.
-    expect((await listPhiAccessEvents(db, tenantId)).length).toBe(4);
+    expect((await listPhiAccessEvents(db)).length).toBe(4);
   });
 
   it('refuses a connector or action outside the vocabulary', async () => {
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     const bad = {
-      tenantId,
       subject: bob,
       connector: 'jira',
       action: 'read',

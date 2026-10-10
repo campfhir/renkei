@@ -41,7 +41,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`mass-upload-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`mass-upload-e2e-session:${projectName}`),
     chatId: uuidFrom(`mass-upload-e2e-chat:${projectName}`),
     slug: `e2e-mass-upload-${projectName}`,
@@ -53,37 +52,24 @@ async function seed(fixture: ReturnType<typeof fixtureFor>): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM chats WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-      fixture.tenantId,
-      fixture.slug,
-    ]);
+    await client.query('DELETE FROM chats WHERE owner_subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name) VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Tester']
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
+      [fixture.subject]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, title, last_message_at)
-       VALUES ($1, $2, $3, 'Applicant review', NOW())`,
-      [fixture.chatId, fixture.tenantId, fixture.subject]
+      `INSERT INTO chats (id, owner_subject, title, last_message_at)\n       VALUES ($1, $2, 'Applicant review', NOW())`,
+      [fixture.chatId, fixture.subject]
     );
   } finally {
     await client.end();
@@ -93,7 +79,7 @@ async function seed(fixture: ReturnType<typeof fixtureFor>): Promise<void> {
 async function openChat(page: Page, fixture: ReturnType<typeof fixtureFor>) {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -132,7 +118,7 @@ async function openChat(page: Page, fixture: ReturnType<typeof fixtureFor>) {
       body: JSON.stringify({ results: ids.map((id) => ({ id, extractStatus: 'done' })) }),
     });
   });
-  await page.goto(`/${fixture.slug}/chat/${fixture.chatId}`);
+  await page.goto(`/chat/${fixture.chatId}`);
   await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
   return { uploaded, ocrRequests };
 }

@@ -6,14 +6,6 @@ import type { CoachMarkProgressView, CoachMarkTour } from './types';
  * so the provider and the Tutorials page agree and a test can pin them.
  */
 
-/** '/e2e/agents' → '/agents'; '/e2e' → '/'. A pathname outside the slug is returned as is. */
-export function slugRelativePath(pathname: string, slug: string): string {
-  const prefix = `/${slug}`;
-  if (pathname === prefix) return '/';
-  if (pathname.startsWith(`${prefix}/`)) return pathname.slice(prefix.length);
-  return pathname;
-}
-
 /** Every tour this person may see, in registry order. */
 export function toursFor(tours: readonly CoachMarkTour[], isOperator: boolean): CoachMarkTour[] {
   return tours.filter((tour) => tour.audience === 'everyone' || isOperator);

@@ -18,25 +18,23 @@ import { revokeKey, shareKey } from './chat-keys';
 
 export async function listGrantsRoute(
   request: NextRequest,
-  tenantId: string,
   kind: 'chat_project' | 'prompt_library',
   resourceId: string
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   return NextResponse.json({
-    grants: await listResourceGrants(db, tenantId, session.subject, kind, resourceId),
+    grants: await listResourceGrants(db, session.subject, kind, resourceId),
   });
 }
 
 export async function addGrantRoute(
   request: NextRequest,
-  tenantId: string,
   kind: 'chat_project' | 'prompt_library',
   resourceId: string
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const body = await readJsonBody(request);
@@ -45,7 +43,7 @@ export async function addGrantRoute(
   const role = isGrantRole(body.role) ? body.role : 'viewer';
   const expiresAt = parseExpiry(body.expiresAt);
   if (expiresAt === undefined) return jsonError(400, 'invalid', 'Invalid expiry');
-  const outcome = await grantResourceAccess(db, tenantId, session.subject, kind, resourceId, {
+  const outcome = await grantResourceAccess(db, session.subject, kind, resourceId, {
     granteeSubject,
     role,
     expiresAt,
@@ -59,7 +57,7 @@ export async function addGrantRoute(
     await shareKey(
       db,
       'chat_project',
-      { id: resourceId, tenantId, ownerSubject: session.subject },
+      { id: resourceId, ownerSubject: session.subject },
       granteeSubject
     );
   }
@@ -68,23 +66,21 @@ export async function addGrantRoute(
 
 export async function revokeGrantRoute(
   request: NextRequest,
-  tenantId: string,
   kind: 'chat_project' | 'prompt_library',
   resourceId: string,
   grantId: string
 ): Promise<Response> {
-  const ready = await chatRequestContext(request, tenantId);
+  const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const revoked = await revokeResourceGrant(
     db,
-    tenantId,
     session.subject,
     kind,
     resourceId,
     grantId
   );
   if (!revoked) return jsonError(404, 'not-found', 'No such share');
-  if (kind === 'chat_project') await revokeKey(db, 'chat_project', tenantId, resourceId, revoked);
+  if (kind === 'chat_project') await revokeKey(db, 'chat_project', resourceId, revoked);
   return NextResponse.json({ ok: true });
 }

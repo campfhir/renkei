@@ -50,13 +50,13 @@ export interface GitHubAccess {
 
 /** The caller's GitHub grant as a fetcher, plus who it is. */
 export async function resolveGitHubAccess(
-  context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
+  context: Pick<MCPToolContext, 'subject' | 'origin'>
 ): Promise<GitHubAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
 
   // By subject: the delegate picks the person's grant on this provider, the
   // way the row lookup here used to (newest wins on a reconnect).
-  const ref = { tenantId: context.tenantId, provider: GITHUB, subject: context.subject };
+  const ref = { provider: GITHUB, subject: context.subject };
   const described = await delegateGrants().describe(ref);
   if (!described.ok) {
     return described.err.type === 'GRANT_UNREADABLE' || described.err.type === 'DELEGATE_ERROR'
@@ -72,7 +72,6 @@ export async function resolveGitHubAccess(
 }
 
 interface GitHubLogScope {
-  tenantId: string;
   subject?: string;
 }
 
@@ -114,7 +113,6 @@ export async function githubRequest(
     const timedOut = isTimeoutError(error);
     logger.warn('GitHub API unreachable', {
       component: 'github/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       path: pathAndQuery,
       method: init?.method ?? 'GET',
@@ -133,7 +131,6 @@ export async function githubRequest(
     // words, not a GitHub status.
     logger.warn('Delegate refused the GitHub call', {
       component: 'github/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       path: pathAndQuery,
       refusal,
@@ -147,7 +144,6 @@ export async function githubRequest(
       .catch(() => '');
     logger.warn('GitHub API non-OK response', {
       component: 'github/fetch',
-      tenantId: scope.tenantId,
       subject: scope.subject,
       path: pathAndQuery,
       method: init?.method ?? 'GET',

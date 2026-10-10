@@ -43,7 +43,6 @@ const { enqueueKnowledgeEvent: mockEnqueueKnowledgeEvent } = jest.requireMock<{
 function event(override: { action: string; category?: string; senderKey?: string }): ClaimedEvent {
   return {
     id: 'evt-1',
-    tenant_id: 'tenant-1',
     source: 'microsoft',
     type: 'message-override',
     payload: {
@@ -74,9 +73,7 @@ describe('createMicrosoftMessageOverrideHandler', () => {
     await handler(event({ action: 'exclude' }));
 
     expect(mockGraphRequest).not.toHaveBeenCalled();
-    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
-      'tenant-1',
-      'delete.object',
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('delete.object',
       { provider: 'microsoft', refId: 'alice@example.com/msg/msg-1' },
       'microsoft/alice@example.com/msg'
     );
@@ -97,9 +94,7 @@ describe('createMicrosoftMessageOverrideHandler', () => {
     await handler(event({ action: 'reclassify', category: 'human' }));
 
     expect(mockGraphRequest).toHaveBeenCalledWith(auth, '/me/messages/msg-1');
-    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
-      'tenant-1',
-      'ingest.email',
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('ingest.email',
       expect.objectContaining({
         provider: 'microsoft',
         refId: 'alice@example.com/msg/msg-1',

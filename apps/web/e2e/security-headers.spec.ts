@@ -11,8 +11,6 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { E2E_SLUG, E2E_TENANT_ID } from './seed';
-
 test.use({
   launchOptions: {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
@@ -21,7 +19,7 @@ test.use({
 });
 
 test('a signed-in page carries the security headers', async ({ page }) => {
-  const response = await page.request.get(`/${E2E_SLUG}/admin/access`);
+  const response = await page.request.get(`/admin/access`);
   expect(response.ok()).toBe(true);
   const headers = response.headers();
 
@@ -40,7 +38,7 @@ test('the widget route may be framed by this origin', async ({ page }) => {
   // Any URI: the frame headers are decided by the path, not by whether the
   // widget exists, so a 404 answers the question as well as a 200.
   const response = await page.request.get(
-    `/api/tenant/${E2E_TENANT_ID}/chat/widgets?uri=ui://nothing`
+    `/api/chat/widgets?uri=ui://nothing`
   );
   const headers = response.headers();
   expect(headers['x-frame-options']).toBe('SAMEORIGIN');

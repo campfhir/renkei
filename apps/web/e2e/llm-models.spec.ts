@@ -58,13 +58,11 @@ function uuidFrom(seed: string): string {
 
 /** This project's own tenant/session/slug — isolated from every other project and spec. */
 function fixtureFor(projectName: string): {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`llm-models-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`llm-models-e2e-session:${projectName}`),
     slug: `e2e-llm-models-${projectName}`,
     subject: `e2e-llm-models-${projectName}@example.com`,
@@ -77,40 +75,26 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
   try {
     // Delete-then-insert, same idempotent shape as e2e/seed.ts, scoped to
     // just this project's own tenant.
-    await client.query('DELETE FROM llm_model_configs WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-      fixture.tenantId,
-      fixture.slug,
-    ]);
+    await client.query('DELETE FROM llm_model_configs');
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name)
-       VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Tester']
     );
     // No coach marks tour stealing focus mid-screenshot.
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
+      [fixture.subject]
     );
     // Enrolled the way e2e/seed.ts enrolls the shared person: with a key
     // and a delegation for the spec's session, the KeyGuard has nothing to
     // ask, so no "write it down" dialog sits over the form.
-    await enrollForE2E(client, fixture.tenantId, fixture.subject);
+    await enrollForE2E(client, fixture.subject);
   } finally {
     await client.end();
   }
@@ -119,7 +103,7 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
 async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -142,7 +126,7 @@ test('admin: the model roster, listing, testing, and saving', async ({ page }, t
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/llm-models`);
+  await page.goto(`/admin/llm-models`);
   await expect(page.getByRole('heading', { name: 'Agent models' })).toBeVisible();
   await expect(page.getByText('No models configured yet')).toBeVisible();
   await shot(page, testInfo, 'llm-models-01-empty');
@@ -240,7 +224,7 @@ test('admin: reasoning effort is free text — no fixed value list — and round
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/llm-models`);
+  await page.goto(`/admin/llm-models`);
   await page.getByRole('button', { name: '+ Add a model' }).click();
   await page.getByLabel('Display name').fill('Astra Reasoning');
   await page.getByLabel('Provider').selectOption('openai');
@@ -274,7 +258,7 @@ test('admin: reasoning effort is offered for a Claude row too, with its own hint
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/llm-models`);
+  await page.goto(`/admin/llm-models`);
   await page.getByRole('button', { name: '+ Add a model' }).click();
   // Anthropic is the default provider: the field is there without switching.
   await expect(page.getByLabel('Provider')).toHaveValue('anthropic');
@@ -314,7 +298,7 @@ test('admin: API surface can opt an OpenAI-compatible model into the Responses A
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/llm-models`);
+  await page.goto(`/admin/llm-models`);
 
   // Anthropic (the default provider) never shows the toggle — it's
   // meaningless outside the OpenAI-compatible dialect family.
@@ -350,7 +334,7 @@ test('admin: the Images API surface makes an image generation model — never th
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/llm-models`);
+  await page.goto(`/admin/llm-models`);
   await page.getByRole('button', { name: '+ Add a model' }).click();
 
   // The Images API is OpenAI's: Anthropic (the default provider) has no such surface to pick.
@@ -416,7 +400,7 @@ test('admin: data handling — residency, retention and the BAA flag round-trip 
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/admin/llm-models`);
+  await page.goto(`/admin/llm-models`);
   await page.getByRole('button', { name: '+ Add a model' }).click();
   await page.getByLabel('Display name').fill('Covered Claude');
   await page.getByLabel('Model id').fill('claude-sonnet-5');

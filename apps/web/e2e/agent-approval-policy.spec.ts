@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -37,7 +38,6 @@ function uuidFrom(seed: string): string {
 
 function fixtureFor(projectName: string) {
   return {
-    tenantId: uuidFrom(`approval-policy-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`approval-policy-e2e-session:${projectName}`),
     slug: `e2e-approval-policy-${projectName}`,
     subject: `e2e-approval-policy-${projectName}@example.com`,
@@ -57,38 +57,31 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 
 async function seed(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    const t = fixture.tenantId;
-    await client.query('DELETE FROM tenant_settings WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [t]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [t]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [t, fixture.slug]);
+    await client.query(`DELETE FROM settings WHERE key = 'agent_act_steps_require_approval'`);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        t,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name) VALUES ($1, $2, $3, 'E2E Tester')`,
-      [t, fixture.subject, fixture.subject]
+      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, 'E2E Tester')`,
+      [fixture.subject, fixture.subject]
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [t, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
+      [fixture.subject]
     );
+    // Enrolled already, so the first-sign-in "your encryption key is ready"
+    // dialog does not sit over the settings this spec saves.
+    await enrollForE2E(client, fixture.subject);
   });
 }
 
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -111,7 +104,7 @@ test('act-step approval policy: default, change, save, API clamp', async ({ page
   const fixture = fixtureFor(testInfo.project.name);
   await seed(fixture);
   await signIn(page, fixture);
-  const settingsUrl = `/${fixture.slug}/admin/settings`;
+  const settingsUrl = `/admin/settings`;
   const select = page.getByLabel('agentActStepsRequireApproval');
 
   // ── The default: runs an event or webhook started ──
@@ -128,12 +121,11 @@ test('act-step approval policy: default, change, save, API clamp', async ({ page
   await expect(page.getByText('Saved.')).toBeVisible();
   const stored = await withDb((client) =>
     client.query<{ value: string }>(
-      `SELECT value FROM tenant_settings WHERE tenant_id = $1 AND key = 'agent_act_steps_require_approval'`,
-      [fixture.tenantId]
+      `SELECT value FROM settings WHERE key = 'agent_act_steps_require_approval'`
     )
   );
   expect(stored.rows[0]?.value).toBe('all');
-  const read = await page.request.get(`/api/admin/${fixture.slug}/org-settings`);
+  const read = await page.request.get(`/api/admin/org-settings`);
   expect((await read.json()).settings.agentActStepsRequireApproval).toBe('all');
   await shot(page, testInfo, '02-saved-all');
 
@@ -144,15 +136,15 @@ test('act-step approval policy: default, change, save, API clamp', async ({ page
   await expect(select).toHaveValue('all');
 
   // ── The API refuses a value outside the set, and takes a known one ──
-  const refused = await page.request.put(`/api/admin/${fixture.slug}/org-settings`, {
+  const refused = await page.request.put(`/api/admin/org-settings`, {
     data: { agentActStepsRequireApproval: 'sometimes' },
   });
   expect(refused.status()).toBe(400);
-  const off = await page.request.put(`/api/admin/${fixture.slug}/org-settings`, {
+  const off = await page.request.put(`/api/admin/org-settings`, {
     data: { agentActStepsRequireApproval: 'off' },
   });
   expect((await off.json()).settings.agentActStepsRequireApproval).toBe('off');
-  const readOff = await page.request.get(`/api/admin/${fixture.slug}/org-settings`);
+  const readOff = await page.request.get(`/api/admin/org-settings`);
   expect((await readOff.json()).settings.agentActStepsRequireApproval).toBe('off');
 
   // ── Phone width: the row holds its layout ──

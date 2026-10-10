@@ -15,9 +15,15 @@ import { createOnBaseServer } from './server';
 import type { OnBaseTenantConfig } from './config';
 
 const API_KEY = 'test-worker-key';
-const TENANT = '11111111-1111-1111-1111-111111111111';
+/**
+ * Which connectors the one organization has configured. The Administration
+ * connector is a separately connected Hyland OAuth client, and a deployment
+ * that set up the Document API alone is the common real-world case — so a
+ * test may turn either off and the resolver answers as the store would.
+ */
+let documentConfigured = true;
+let adminConfigured = true;
 /** Has the Document connector configured, but never connected onbase-admin. */
-const TENANT_NO_ADMIN = '33333333-3333-3333-3333-333333333333';
 
 function listen(server: Server): Promise<string> {
   return new Promise((resolve) => {
@@ -184,7 +190,7 @@ describe('worker-onbase server', () => {
     encryptionKey: Buffer.alloc(32),
     apiKeys: [API_KEY],
     maxTransferBytes: () => Promise.resolve(64),
-    resolveConfig: (tenantId, connector) => {
+    resolveConfig: (connector) => {
       const documentConfig: OnBaseTenantConfig = {
         apiBaseUrl: `${onbaseUrl}/onbase/core`,
         idpIssuer: `${idpUrl}/identity`,
@@ -201,18 +207,12 @@ describe('worker-onbase server', () => {
         idpScopeName: 'onbase-admin-api',
         allowInsecureHttp: true,
       };
-      if (tenantId === TENANT) {
-        return Promise.resolve(ok(connector === 'onbase-admin' ? adminConfig : documentConfig));
+      if (connector === 'onbase-admin') {
+        return Promise.resolve(adminConfigured ? ok(adminConfig) : err('not_configured' as const));
       }
-      // TENANT_NO_ADMIN has the Document connector configured, but never
-      // set up the Administration one — the common real-world case, since
-      // they are separately connected Hyland OAuth clients.
-      if (tenantId === TENANT_NO_ADMIN) {
-        return Promise.resolve(
-          connector === 'onbase-admin' ? err('not_configured' as const) : ok(documentConfig)
-        );
-      }
-      return Promise.resolve(err('not_configured' as const));
+      return Promise.resolve(
+        documentConfigured ? ok(documentConfig) : err('not_configured' as const)
+      );
     },
   });
 
@@ -230,6 +230,11 @@ describe('worker-onbase server', () => {
     await Promise.all([close(idp), close(onbase), close(worker)]);
   });
 
+  afterEach(() => {
+    documentConfigured = true;
+    adminConfigured = true;
+  });
+
   function post(op: string, body: unknown, key: string | null = API_KEY): Promise<Response> {
     return fetch(`${workerUrl}/v1/${op}`, {
       method: 'POST',
@@ -245,22 +250,23 @@ describe('worker-onbase server', () => {
     const health = await fetch(`${workerUrl}/health`);
     expect(health.status).toBe(200);
 
-    const denied = await post('discover', { tenantId: TENANT }, null);
+    const denied = await post('discover', { }, null);
     expect(denied.status).toBe(401);
-    const wrongKey = await post('discover', { tenantId: TENANT }, 'not-the-key');
+    const wrongKey = await post('discover', { }, 'not-the-key');
     expect(wrongKey.status).toBe(401);
   });
 
   it('discovers the tenant IdP endpoints from stored config', async () => {
-    const response = await post('discover', { tenantId: TENANT });
+    const response = await post('discover', { });
     expect(response.status).toBe(200);
     const endpoints = (await response.json()) as Record<string, string>;
     expect(endpoints.authorizationEndpoint).toBe(`${idpUrl}/identity/connect/authorize`);
     expect(endpoints.tokenEndpoint).toBe(`${idpUrl}/identity/connect/token`);
   });
 
-  it('refuses discovery for an unconfigured tenant', async () => {
-    const response = await post('discover', { tenantId: '22222222-2222-2222-2222-222222222222' });
+  it('refuses discovery while the connector is unconfigured', async () => {
+    documentConfigured = false;
+    const response = await post('discover', { });
     expect(response.status).toBe(503);
     const body = (await response.json()) as { error: { type: string } };
     expect(body.error.type).toBe('not_configured');
@@ -269,7 +275,6 @@ describe('worker-onbase server', () => {
   it('exchanges an authorization code with PKCE and client auth on the form', async () => {
     idpTokenMode = 'ok';
     const response = await post('token', {
-      tenantId: TENANT,
       grant: {
         type: 'authorization_code',
         code: 'code-1',
@@ -289,7 +294,6 @@ describe('worker-onbase server', () => {
   it('refreshes with a refresh token', async () => {
     idpTokenMode = 'ok';
     const response = await post('token', {
-      tenantId: TENANT,
       grant: { type: 'refresh_token', refreshToken: 'rt-0' },
     });
     expect(response.status).toBe(200);
@@ -300,7 +304,6 @@ describe('worker-onbase server', () => {
   it('maps an explicit invalid_grant, and only that, onto invalid_grant', async () => {
     idpTokenMode = 'invalid_grant';
     const revoked = await post('token', {
-      tenantId: TENANT,
       grant: { type: 'refresh_token', refreshToken: 'rt-dead' },
     });
     expect(revoked.status).toBe(400);
@@ -310,7 +313,6 @@ describe('worker-onbase server', () => {
 
     idpTokenMode = 'server_error';
     const flaky = await post('token', {
-      tenantId: TENANT,
       grant: { type: 'refresh_token', refreshToken: 'rt-0' },
     });
     expect(flaky.status).toBe(502);
@@ -319,14 +321,13 @@ describe('worker-onbase server', () => {
   });
 
   it('reports revocation as best-effort success', async () => {
-    const response = await post('revoke', { tenantId: TENANT, token: 'rt-1' });
+    const response = await post('revoke', { token: 'rt-1' });
     expect(response.status).toBe(200);
     expect(((await response.json()) as { revoked: boolean }).revoked).toBe(true);
   });
 
   it('proxies an api call and envelopes the upstream status', async () => {
     const good = await post('api', {
-      tenantId: TENANT,
       accessToken: 'good-token',
       method: 'GET',
       path: '/document-types',
@@ -337,7 +338,6 @@ describe('worker-onbase server', () => {
     expect(JSON.parse(envelope.body)).toEqual({ items: [{ id: '7', name: 'Invoices' }] });
 
     const unauthorized = await post('api', {
-      tenantId: TENANT,
       accessToken: 'stale-token',
       method: 'GET',
       path: '/document-types',
@@ -349,7 +349,6 @@ describe('worker-onbase server', () => {
   it('refuses paths that climb or smuggle a second URL', async () => {
     for (const path of ['document-types', '/a/../b', '/x/https://evil', '//evil/path']) {
       const response = await post('api', {
-        tenantId: TENANT,
         accessToken: 'good-token',
         method: 'GET',
         path,
@@ -363,7 +362,6 @@ describe('worker-onbase server', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${API_KEY}` },
       body: JSON.stringify({
-        tenantId: TENANT,
         accessToken: 'good-token',
         path: '/documents/1/revisions/latest/renditions/default/content',
       }),
@@ -374,7 +372,6 @@ describe('worker-onbase server', () => {
     expect(await content.text()).toBe('document body bytes');
 
     const stale = await post('content', {
-      tenantId: TENANT,
       accessToken: 'stale-token',
       path: '/documents/1/revisions/latest/renditions/default/content',
     });
@@ -384,7 +381,7 @@ describe('worker-onbase server', () => {
 
   it('puts upload bytes through to the staging slot', async () => {
     const response = await fetch(
-      `${workerUrl}/v1/put-bytes?tenantId=${TENANT}&uploadId=u-9&filePart=1`,
+      `${workerUrl}/v1/put-bytes?uploadId=u-9&filePart=1`,
       {
         method: 'POST',
         headers: {
@@ -401,7 +398,7 @@ describe('worker-onbase server', () => {
 
   it('rejects an oversized upload part with too_large', async () => {
     const response = await fetch(
-      `${workerUrl}/v1/put-bytes?tenantId=${TENANT}&uploadId=u-9&filePart=1`,
+      `${workerUrl}/v1/put-bytes?uploadId=u-9&filePart=1`,
       {
         method: 'POST',
         headers: {
@@ -417,7 +414,6 @@ describe('worker-onbase server', () => {
 
   it('tests the unsaved payload and treats an API 401 as reachable', async () => {
     const response = await post('test-connection', {
-      tenantId: TENANT,
       unsaved: {
         apiBaseUrl: `${onbaseUrl}/onbase/core`,
         idpIssuer: `${idpUrl}/identity`,
@@ -435,7 +431,6 @@ describe('worker-onbase server', () => {
 
   it('reports an unreachable API server without failing the request', async () => {
     const response = await post('test-connection', {
-      tenantId: TENANT,
       unsaved: {
         apiBaseUrl: 'http://127.0.0.1:1/onbase/core',
         idpIssuer: `${idpUrl}/identity`,
@@ -454,7 +449,6 @@ describe('worker-onbase server', () => {
     cookiesSeen.length = 0;
     const call = () =>
       post('api', {
-        tenantId: TENANT,
         subject: 'subject-1',
         accessToken: 'good-token',
         method: 'GET',
@@ -471,14 +465,12 @@ describe('worker-onbase server', () => {
   it('keeps one caller off another caller’s session', async () => {
     cookiesSeen.length = 0;
     await post('api', {
-      tenantId: TENANT,
       subject: 'subject-a',
       accessToken: 'good-token',
       method: 'GET',
       path: '/document-types',
     });
     await post('api', {
-      tenantId: TENANT,
       subject: 'subject-b',
       accessToken: 'good-token',
       method: 'GET',
@@ -491,7 +483,6 @@ describe('worker-onbase server', () => {
 
   it('ends a session on disconnect so the licence comes back early', async () => {
     await post('api', {
-      tenantId: TENANT,
       subject: 'subject-d',
       accessToken: 'good-token',
       method: 'GET',
@@ -499,7 +490,6 @@ describe('worker-onbase server', () => {
     });
 
     const first = await post('disconnect', {
-      tenantId: TENANT,
       subject: 'subject-d',
       accessToken: 'good-token',
     });
@@ -508,7 +498,6 @@ describe('worker-onbase server', () => {
     // Nothing left to disconnect: the API is not called just to be told to
     // close a session it would have had to open first.
     const second = await post('disconnect', {
-      tenantId: TENANT,
       subject: 'subject-d',
       accessToken: 'good-token',
     });
@@ -517,7 +506,6 @@ describe('worker-onbase server', () => {
 
   it('proxies an api call for the onbase-admin connector against its own base, not the Document API', async () => {
     const response = await post('api', {
-      tenantId: TENANT,
       connector: 'onbase-admin',
       accessToken: 'good-token',
       method: 'POST',
@@ -533,7 +521,6 @@ describe('worker-onbase server', () => {
   it('sends no OnBase session cookie for onbase-admin, even for a subject with a live Document session', async () => {
     // Prime a Document API session for this subject first.
     await post('api', {
-      tenantId: TENANT,
       subject: 'subject-admin',
       accessToken: 'good-token',
       method: 'GET',
@@ -541,7 +528,6 @@ describe('worker-onbase server', () => {
     });
     cookiesSeen.length = 0;
     await post('api', {
-      tenantId: TENANT,
       connector: 'onbase-admin',
       subject: 'subject-admin',
       accessToken: 'good-token',
@@ -555,7 +541,6 @@ describe('worker-onbase server', () => {
   it('sends PATCH bodies as application/json-patch+json, not plain JSON', async () => {
     lastContentType = null;
     const response = await post('api', {
-      tenantId: TENANT,
       connector: 'onbase-admin',
       accessToken: 'good-token',
       method: 'PATCH',
@@ -566,9 +551,9 @@ describe('worker-onbase server', () => {
     expect(lastContentType).toBe('application/json-patch+json');
   });
 
-  it('refuses onbase-admin calls for a tenant that never connected it', async () => {
+  it('refuses onbase-admin calls when only the Document connector is connected', async () => {
+    adminConfigured = false;
     const response = await post('api', {
-      tenantId: TENANT_NO_ADMIN,
       connector: 'onbase-admin',
       accessToken: 'good-token',
       method: 'GET',
@@ -582,7 +567,6 @@ describe('worker-onbase server', () => {
 
   it('tests the onbase-admin connection against its own /api/document-types probe path', async () => {
     const response = await post('test-connection', {
-      tenantId: TENANT,
       connector: 'onbase-admin',
       unsaved: {
         apiBaseUrl: `${onbaseUrl}/onbase/administration`,

@@ -161,7 +161,6 @@ function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | n
 
 async function triggersOf(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<StoredTrigger[]> {
   const rows = await db
@@ -177,7 +176,6 @@ async function triggersOf(
       'last_fired_at',
       'last_error',
     ])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .orderBy('created_at')
     .execute();
@@ -223,7 +221,6 @@ function blockedToolsOf(value: Json | null): string[] {
 
 async function toStored(
   db: Kysely<DB>,
-  tenantId: string,
   row: AgentRow
 ): Promise<StoredAgent | null> {
   if (!isAgentStepsDoc(row.steps)) return null;
@@ -242,7 +239,7 @@ async function toStored(
     canAskQuestions: row.can_ask_questions,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
-    triggers: await triggersOf(db, tenantId, row.id),
+    triggers: await triggersOf(db, row.id),
   };
 }
 
@@ -265,19 +262,17 @@ const AGENT_COLUMNS = [
 
 export async function listAgents(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string
 ): Promise<StoredAgent[]> {
   const rows = await db
     .selectFrom('agents')
     .select(AGENT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .orderBy('created_at', 'desc')
     .execute();
   const agents: StoredAgent[] = [];
   for (const row of rows) {
-    const stored = await toStored(db, tenantId, row);
+    const stored = await toStored(db, row);
     if (stored) agents.push(stored);
   }
   return agents;
@@ -285,7 +280,6 @@ export async function listAgents(
 
 export async function getAgent(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string
 ): Promise<StoredAgent | null> {
@@ -295,11 +289,10 @@ export async function getAgent(
   const row = await db
     .selectFrom('agents')
     .select(AGENT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', agentId)
     .executeTakeFirst();
-  return row ? toStored(db, tenantId, row) : null;
+  return row ? toStored(db, row) : null;
 }
 
 /**
@@ -311,18 +304,16 @@ export async function getAgent(
  */
 export async function getAgentWithOwner(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<{ agent: StoredAgent; ownerSubject: string } | null> {
   if (!isUuid(agentId)) return null;
   const row = await db
     .selectFrom('agents')
     .select([...AGENT_COLUMNS, 'owner_subject'])
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', agentId)
     .executeTakeFirst();
   if (!row) return null;
-  const agent = await toStored(db, tenantId, row);
+  const agent = await toStored(db, row);
   return agent ? { agent, ownerSubject: row.owner_subject } : null;
 }
 
@@ -420,14 +411,12 @@ function rowFieldsOf(
  */
 async function reconcileTriggers(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   payloads: TriggerPayload[]
 ): Promise<MintedApiKey[]> {
   const existingRows = await db
     .selectFrom('agent_triggers')
     .select(['id', 'kind', 'config', 'next_run_at'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .execute();
   const existingById = new Map(existingRows.map((row) => [row.id, row]));
@@ -443,7 +432,6 @@ async function reconcileTriggers(
     const rows = await db
       .selectFrom('schedule_calendars')
       .select(['id', 'dates'])
-      .where('tenant_id', '=', tenantId)
       .execute();
     for (const row of rows) {
       calendars.set(row.id, Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : []);
@@ -498,7 +486,6 @@ async function reconcileTriggers(
           updated_at: sql`NOW()`,
         })
         .where('id', '=', match.id)
-        .where('tenant_id', '=', tenantId)
         .execute();
     } else {
       const id = randomUUID();
@@ -507,7 +494,6 @@ async function reconcileTriggers(
         .insertInto('agent_triggers')
         .values({
           id,
-          tenant_id: tenantId,
           agent_id: agentId,
           kind: payload.draft.kind,
           event_source: fields.event_source,
@@ -525,7 +511,6 @@ async function reconcileTriggers(
   if (removed.length > 0) {
     await db
       .deleteFrom('agent_triggers')
-      .where('tenant_id', '=', tenantId)
       .where('id', 'in', removed)
       .execute();
   }
@@ -546,7 +531,6 @@ export interface SaveAgentInput {
 
 export async function createAgent(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   input: SaveAgentInput
 ): Promise<{ agentId: string; apiKeys: MintedApiKey[] } | 'NAME_TAKEN'> {
@@ -556,7 +540,6 @@ export async function createAgent(
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: ownerSubject,
         name: input.name,
         steps: JSON.stringify(input.steps),
@@ -569,18 +552,17 @@ export async function createAgent(
       })
       .execute();
   } catch (error) {
-    if (error instanceof Error && error.message.includes('agents_tenant_name')) {
+    if (error instanceof Error && error.message.includes('agents_name')) {
       return 'NAME_TAKEN';
     }
     throw error;
   }
-  const apiKeys = await reconcileTriggers(db, tenantId, agentId, input.triggers);
+  const apiKeys = await reconcileTriggers(db, agentId, input.triggers);
   return { agentId, apiKeys };
 }
 
 export async function updateAgent(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string,
   input: SaveAgentInput,
@@ -608,31 +590,28 @@ export async function updateAgent(
         ...(options.markDescriptionStale === false ? {} : { description_status: 'stale' }),
         updated_at: sql`NOW()`,
       })
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', ownerSubject)
       .where('id', '=', agentId)
       .executeTakeFirst();
     if (Number(updated.numUpdatedRows ?? 0) === 0) return 'NOT_FOUND';
   } catch (error) {
-    if (error instanceof Error && error.message.includes('agents_tenant_name')) {
+    if (error instanceof Error && error.message.includes('agents_name')) {
       return 'NAME_TAKEN';
     }
     throw error;
   }
-  const apiKeys = await reconcileTriggers(db, tenantId, agentId, input.triggers);
+  const apiKeys = await reconcileTriggers(db, agentId, input.triggers);
   return { apiKeys };
 }
 
 export async function deleteAgent(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string
 ): Promise<boolean> {
   // Runs and steps cascade; triggers cascade. The FK graph is the delete.
   const result = await db
     .deleteFrom('agents')
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', agentId)
     .executeTakeFirst();
@@ -642,7 +621,6 @@ export async function deleteAgent(
 /** Persist a generated description; advisory, so failures are the caller's to log. */
 export async function saveDescription(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   outcome:
     | { status: 'ok'; description: string; reviewNotes: { issue: string; fix?: string }[] }
@@ -657,14 +635,12 @@ export async function saveDescription(
         description_status: 'ok',
         updated_at: sql`NOW()`,
       })
-      .where('tenant_id', '=', tenantId)
       .where('id', '=', agentId)
       .execute();
   } else {
     await db
       .updateTable('agents')
       .set({ description_status: 'failed', updated_at: sql`NOW()` })
-      .where('tenant_id', '=', tenantId)
       .where('id', '=', agentId)
       .execute();
   }

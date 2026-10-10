@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import { CURRENT_STEPS_VERSION, splitDetailForSealing } from '@renkei/agents';
 import { delegateClient } from '@renkei/delegate-client';
 import { useTestDelegate } from '@/lib/test-support/delegate';
@@ -22,9 +22,9 @@ maybe('run detail with sealed attempt content', () => {
   jest.setTimeout(30_000);
   const delegate = useTestDelegate();
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const owner = `owner-${tenantId.slice(0, 8)}`;
-  const stranger = `stranger-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const owner = `owner-${suiteId.slice(0, 8)}`;
+  const stranger = `stranger-${suiteId.slice(0, 8)}`;
   const stepId = randomUUID();
   const steps = {
     version: CURRENT_STEPS_VERSION,
@@ -69,7 +69,6 @@ maybe('run detail with sealed attempt content', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: ownerSubject,
         name: `agent-${agentId.slice(0, 8)}`,
         steps: JSON.stringify(steps),
@@ -80,7 +79,6 @@ maybe('run detail with sealed attempt content', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: ownerSubject,
         trigger_kind: 'manual',
@@ -94,7 +92,6 @@ maybe('run detail with sealed attempt content', () => {
       .insertInto('agent_run_steps')
       .values({
         id: randomUUID(),
-        tenant_id: tenantId,
         run_id: runId,
         step_id: stepId,
         step_index: 0,
@@ -110,25 +107,18 @@ maybe('run detail with sealed attempt content', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `rv-${tenantId.slice(0, 8)}` })
-      .execute();
-    await delegate.enroll(tenantId, owner);
+    await delegate.enroll(owner);
   });
 
   afterAll(async () => {
-    await db.deleteFrom('agent_runs').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('agents').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('user_encryption_keys').where('tenant_id', '=', tenantId).execute();
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
-    await closeDatabase();
+    await db.deleteFrom('agent_runs').where('owner_subject', 'in', [owner, stranger]).execute();
+    await db.deleteFrom('agents').where('owner_subject', 'in', [owner, stranger]).execute();
+    await db.deleteFrom('user_encryption_keys').where('subject', 'in', [owner, stranger]).execute();
   });
 
   it('round-trips: the owner reads the attempt as the engine wrote it, and the row holds no content', async () => {
     const { clear, plaintext } = splitDetailForSealing(detail);
     const sealed = await delegateClient().sealForSubject(
-      tenantId,
       owner,
       [plaintext!],
       'automation'
@@ -139,7 +129,7 @@ maybe('run detail with sealed attempt content', () => {
     expect(JSON.stringify(stored)).not.toContain('Jane Doe');
 
     const { agentId, runId } = await seedRun(owner, 'succeeded', stored);
-    const run = await getRunForOwner(db, tenantId, owner, agentId, runId);
+    const run = await getRunForOwner(db, owner, agentId, runId);
     expect(run?.attempts[0]?.detail).toEqual(detail);
   });
 
@@ -150,7 +140,7 @@ maybe('run detail with sealed attempt content', () => {
       ...clear,
       sealed: 'uenc1:not-openable',
     });
-    const run = await getRunForAdmin(db, tenantId, agentId, runId);
+    const run = await getRunForAdmin(db, agentId, runId);
     const shown = run?.attempts[0]?.detail;
     expect(shown).toMatchObject({
       declaredOutcome: 'success',
@@ -165,7 +155,7 @@ maybe('run detail with sealed attempt content', () => {
 
   it('passes a pre-sealing plaintext row through as it is', async () => {
     const { agentId, runId } = await seedRun(owner, 'succeeded', detail);
-    const run = await getRunForOwner(db, tenantId, owner, agentId, runId);
+    const run = await getRunForOwner(db, owner, agentId, runId);
     expect(run?.attempts[0]?.detail).toEqual(detail);
   });
 });

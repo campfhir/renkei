@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_TENANT_ID, AGENT_RICH_ID } from './seed';
+import { AGENT_RICH_ID } from './seed';
 
 // Knowledge notes are not seeded (they normally need an embedding provider),
 // so this writes chunks directly — enough for the panel, which only reads
@@ -19,26 +19,18 @@ test('knowledge panel: selection, purge, and no overflow', async ({ page }, test
       `Identifiers the model needs but nobody reads: ${LONG}`,
     ].entries()) {
       await client.query(
-        `INSERT INTO knowledge_chunks (id, tenant_id, provider, ref_id, metadata, content, embedding, source_at)
-         VALUES (gen_random_uuid(), $1, 'note', $2, $3::jsonb, $4, $5::vector, NOW())
-         ON CONFLICT (tenant_id, provider, ref_id) DO NOTHING`,
-        [
-          E2E_TENANT_ID,
-          `e2e@example.com/note-${i}`,
-          JSON.stringify({
-            kind: 'note',
-            title: i === 0 ? 'Short note' : `Long identifiers ${LONG}`,
-            authoredBy: i === 0 ? 'user' : 'agent',
-            agentId: AGENT_RICH_ID,
-            scope: 'agent',
-          }),
-          body,
-          zero,
-        ]
+        `INSERT INTO knowledge_chunks (id, provider, ref_id, metadata, content, embedding, source_at)\n         VALUES (gen_random_uuid(), 'note', $1, $2::jsonb, $3, $4::vector, NOW())\n         ON CONFLICT (provider, ref_id) DO NOTHING`,
+        [`e2e@example.com/note-${i}`, JSON.stringify({
+                      kind: 'note',
+                      title: i === 0 ? 'Short note' : `Long identifiers ${LONG}`,
+                      authoredBy: i === 0 ? 'user' : 'agent',
+                      agentId: AGENT_RICH_ID,
+                      scope: 'agent',
+                    }), body, zero]
       );
     }
 
-    await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}`);
+    await page.goto(`/agents/${AGENT_RICH_ID}`);
     // CollapsibleSection is a native <details> on desktop, shut by default.
     await page.locator('summary', { hasText: 'Knowledge' }).click();
     await expect(page.getByText('Short note')).toBeVisible();
@@ -68,9 +60,7 @@ test('knowledge panel: selection, purge, and no overflow', async ({ page }, test
       fullPage: true,
     });
   } finally {
-    await client.query(`DELETE FROM knowledge_chunks WHERE tenant_id = $1 AND provider = 'note'`, [
-      E2E_TENANT_ID,
-    ]);
+    await client.query(`DELETE FROM knowledge_chunks WHERE provider = 'note'`);
     await client.end();
   }
 });

@@ -79,14 +79,12 @@ function post(path: string, body: unknown, key: string | null = API_KEY): Promis
 // The credential the delegate attaches rides on the target; these tests
 // mock the service, so none is needed and the parsed field reads null.
 const TARGET = {
-  tenantId: 'tenant-1',
   shareId: 'share-1',
   subject: 'auth0|alice',
   credentials: null,
 };
 /** The write route addresses its target by query string; the credential rides a header, not the query. */
 const TARGET_QUERY = {
-  tenantId: TARGET.tenantId,
   shareId: TARGET.shareId,
   subject: TARGET.subject,
 };
@@ -190,7 +188,7 @@ describe('dispatch and serialization', () => {
   });
 
   it('rejects a body missing the subject before touching the service', async () => {
-    const response = await post('/v1/stat', { tenantId: 't', shareId: 's', path: '/x' });
+    const response = await post('/v1/stat', { shareId: 's', path: '/x' });
     expect(response.status).toBe(400);
     expect(mocked.serviceStatEntry).not.toHaveBeenCalled();
   });
@@ -276,7 +274,6 @@ describe('test-connection payload validation', () => {
   it('dispatches a valid credential against the stored share', async () => {
     mocked.serviceTestConnection.mockResolvedValue({ ok: true, val: { entries: 3 } });
     const response = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
       shareId: 'share-1',
       credentials: { protocol: 'sftp', username: 'alice', password: 'pw' },
     });
@@ -284,7 +281,6 @@ describe('test-connection payload validation', () => {
     expect(await response.json()).toEqual({ entries: 3 });
     expect(mocked.serviceTestConnection).toHaveBeenCalledWith(
       expect.anything(),
-      'tenant-1',
       'share-1',
       { protocol: 'sftp', username: 'alice', password: 'pw' }
     );
@@ -297,7 +293,6 @@ describe('test-connection payload validation', () => {
       { protocol: 'ftp', username: 'x' },
     ]) {
       const response = await post('/v1/test-connection', {
-        tenantId: 'tenant-1',
         shareId: 'share-1',
         credentials,
       });

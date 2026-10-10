@@ -343,44 +343,83 @@ function attemptDetail(input: {
   return JSON.stringify(input);
 }
 
+/**
+ * The column that names a person on each table a spec seeds for itself.
+ * Specs run concurrently against one database, so a spec clears only ITS
+ * person's rows before seeding; a table missing here holds organization-wide
+ * rows (settings, connector configs, model configs, OAuth clients) that no
+ * subject owns, and is cleared whole — a spec that writes one of those
+ * shares it with every other spec in the run.
+ */
+const SUBJECT_COLUMN: Record<string, string> = {
+  agent_notifications: 'subject',
+  agent_runs: 'owner_subject',
+  agents: 'owner_subject',
+  audit_events: 'actor_subject',
+  chat_attachments: 'owner_subject',
+  chat_projects: 'owner_subject',
+  chats: 'owner_subject',
+  identities: 'subject',
+  image_usage: 'subject',
+  jira_admin_change_requests: 'subject',
+  jira_admin_space_templates: 'created_by',
+  oauth_access_tokens: 'subject',
+  oauth_authorization_codes: 'subject',
+  oauth_consent_requests: 'subject',
+  oauth_refresh_tokens: 'subject',
+  provider_grants: 'subject',
+  sandbox_size_requests: 'subject',
+  sessions: 'subject',
+  user_encryption_keys: 'subject',
+  user_preferences: 'subject',
+};
+
+/** Clear a spec's own rows (the subjects it seeds) from `tables`, in the order given. */
+export async function deleteRowsOf(
+  client: Client,
+  subjects: string | readonly string[],
+  tables: readonly string[]
+): Promise<void> {
+  const owners = typeof subjects === 'string' ? [subjects] : [...subjects];
+  for (const table of tables) {
+    const column = SUBJECT_COLUMN[table];
+    if (column) await client.query(`DELETE FROM ${table} WHERE ${column} = ANY($1)`, [owners]);
+    else await client.query(`DELETE FROM ${table}`);
+  }
+}
+
 export async function seed(client: Client): Promise<void> {
   // Delete in FK-dependency order, then insert fresh.
-  await client.query('DELETE FROM events WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM events_dead_letters WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM agent_run_steps WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM agent_runs WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM agent_memories WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM agent_triggers WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM agents WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM tool_calls WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM events');
+  await client.query('DELETE FROM events_dead_letters');
+  await client.query('DELETE FROM agent_run_steps');
+  await client.query('DELETE FROM agent_runs');
+  await client.query('DELETE FROM agent_memories');
+  await client.query('DELETE FROM agent_triggers');
+  await client.query('DELETE FROM agents');
+  await client.query('DELETE FROM tool_calls');
+  await client.query('DELETE FROM connector_configs');
   // Chats pin a model, and a model row does not cascade from its tenant:
   // a chat spec's fixtures from an earlier run would otherwise block the
   // tenant's re-creation here.
-  await client.query('DELETE FROM chats WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM llm_model_configs WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM sessions WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM identities WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM chats');
+  await client.query('DELETE FROM llm_model_configs');
+  await client.query('DELETE FROM provider_grants');
+  await client.query('DELETE FROM sessions');
+  await client.query('DELETE FROM identities');
   // A chat turn that actually ran (widget-card.spec.ts) minted a run
   // token, and that registers one synthetic OAuth client per tenant
   // (packages/mcp-client/src/token.ts) — a row that does not cascade from
   // the tenant, so an earlier run's would block the re-creation here.
-  await client.query('DELETE FROM oauth_access_tokens WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM oauth_clients WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM oauth_access_tokens');
+  await client.query('DELETE FROM oauth_clients');
   // Org settings do not cascade from the tenant: migration 151 writes one row
   // (the registration default) for every tenant that exists when it runs,
   // and the rows below put more there.
-  await client.query('DELETE FROM tenant_settings WHERE tenant_id = $1', [E2E_TENANT_ID]);
-  await client.query('DELETE FROM tenants WHERE id = $1', [E2E_TENANT_ID]);
-
+  await client.query('DELETE FROM settings');
   // Verified at creation: the sign-in page routes a domain only to a tenant
   // whose domain_verified_at is set (migration 146), and nothing in e2e
   // publishes DNS records.
-  await client.query('INSERT INTO tenants (id, slug, domain_verified_at) VALUES ($1, $2, NOW())', [
-    E2E_TENANT_ID,
-    E2E_SLUG,
-  ]);
   // The sandbox features the Code pages, charts and browser specs drive,
   // as the organization's own settings (migration 152 moved them out of
   // SANDBOX_*_ENABLED): workspaces and services for the code specs, the
@@ -392,42 +431,33 @@ export async function seed(client: Client): Promise<void> {
     'sandbox_services_enabled',
   ]) {
     await client.query(
-      `INSERT INTO tenant_settings (tenant_id, key, value) VALUES ($1, $2, 'true'::jsonb)`,
-      [E2E_TENANT_ID, key]
+      `INSERT INTO settings (key, value) VALUES ($1, 'true'::jsonb)`,
+      [key]
     );
   }
 
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [
-      E2E_SESSION_ID,
-      E2E_TENANT_ID,
-      E2E_SUBJECT,
-      ['renkei-user', 'renkei-operator'],
-      new Date(Date.now() + 365 * 24 * 3_600_000),
-    ]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, $4)`,
+    [E2E_SESSION_ID, E2E_SUBJECT, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 365 * 24 * 3_600_000)]
   );
 
   await client.query(
-    `INSERT INTO identities (tenant_id, subject, email, display_name)
-     VALUES ($1, $2, $3, $4)`,
-    [E2E_TENANT_ID, E2E_SUBJECT, E2E_SUBJECT, 'E2E Tester']
+    `INSERT INTO identities (subject, email, display_name)\n     VALUES ($1, $2, $3)`,
+    [E2E_SUBJECT, E2E_SUBJECT, 'E2E Tester']
   );
 
   // The person holds their own encryption key (docs/delegate-key-design.md):
   // enrolled here the way their browser would be, with a session delegation
   // to the running delegate, so every page opens their chats without the
   // KeyGuard having to enroll them first.
-  await enrollForE2E(client, E2E_TENANT_ID, E2E_SUBJECT);
+  await enrollForE2E(client, E2E_SUBJECT);
 
   // The coach marks stay out of every other spec's way: this person has
   // tours switched off, so no card lands on a page a screenshot is about
   // to capture. coach-marks.spec.ts signs in as a subject of its own.
   await client.query(
-    `INSERT INTO user_preferences (tenant_id, subject, key, value)
-     VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-    [E2E_TENANT_ID, E2E_SUBJECT]
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n     ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
+    [E2E_SUBJECT]
   );
 
   // A Jira grant row so the tool catalog enumerates Jira tools for this user
@@ -435,72 +465,33 @@ export async function seed(client: Client): Promise<void> {
   // tokens, so dummies are fine — nothing in e2e ever calls Jira). Granular
   // scopes, not the classic pair: the tools gate on the granular catalog.
   await client.query(
-    `INSERT INTO provider_grants
-       (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-        encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes)
-     VALUES ($1, 'atlassian', 'e2e-jira-account', $2, 'e2e-client', 'E2E Jira',
-             'not-a-real-token', 'not-a-real-token', $3, $4)
-     ON CONFLICT DO NOTHING`,
-    [
-      E2E_TENANT_ID,
-      E2E_SUBJECT,
-      new Date(Date.now() + 365 * 24 * 3_600_000),
-      [
-        'read:issue:jira',
-        'write:issue:jira',
-        'read:user:jira',
-        'read:project:jira',
-        'read:jql:jira',
-        'read:field:jira',
-        'read:comment:jira',
-        'write:comment:jira',
-        'read:board-scope:jira-software',
-      ],
-    ]
+    `INSERT INTO provider_grants\n       (provider, provider_account_id, subject, client_id, display_name,\n        encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes)\n     VALUES ('atlassian', 'e2e-jira-account', $1, 'e2e-client', 'E2E Jira',\n             'not-a-real-token', 'not-a-real-token', $2, $3)\n     ON CONFLICT DO NOTHING`,
+    [E2E_SUBJECT, new Date(Date.now() + 365 * 24 * 3_600_000), [
+              'read:issue:jira',
+              'write:issue:jira',
+              'read:user:jira',
+              'read:project:jira',
+              'read:jql:jira',
+              'read:field:jira',
+              'read:comment:jira',
+              'write:comment:jira',
+              'read:board-scope:jira-software',
+            ]]
   );
 
   await client.query(
-    `INSERT INTO agents
-       (id, tenant_id, owner_subject, name, description, description_status,
-        review_notes, steps, enabled)
-     VALUES ($1, $2, $3, $4, $5, 'ready', $6, $7, true)`,
-    [
-      AGENT_RICH_ID,
-      E2E_TENANT_ID,
-      E2E_SUBJECT,
-      'Triage yesterday into tickets',
-      'Every weekday morning this agent reviews yesterday’s Jira activity, picks out what needs follow-up, and files a ticket for each item in the OPS project.',
-      JSON.stringify(REVIEW_NOTES),
-      JSON.stringify(RICH_STEPS),
-    ]
+    `INSERT INTO agents\n       (id, owner_subject, name, description, description_status,\n        review_notes, steps, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, $6, true)`,
+    [AGENT_RICH_ID, E2E_SUBJECT, 'Triage yesterday into tickets', 'Every weekday morning this agent reviews yesterday’s Jira activity, picks out what needs follow-up, and files a ticket for each item in the OPS project.', JSON.stringify(REVIEW_NOTES), JSON.stringify(RICH_STEPS)]
   );
 
   await client.query(
-    `INSERT INTO agents
-       (id, tenant_id, owner_subject, name, description, description_status, steps, enabled)
-     VALUES ($1, $2, $3, $4, $5, 'ready', $6, false)`,
-    [
-      AGENT_PLAIN_ID,
-      E2E_TENANT_ID,
-      E2E_SUBJECT,
-      'Daily activity digest',
-      'Writes a short summary of the previous day.',
-      JSON.stringify(PLAIN_STEPS),
-    ]
+    `INSERT INTO agents\n       (id, owner_subject, name, description, description_status, steps, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, false)`,
+    [AGENT_PLAIN_ID, E2E_SUBJECT, 'Daily activity digest', 'Writes a short summary of the previous day.', JSON.stringify(PLAIN_STEPS)]
   );
 
   await client.query(
-    `INSERT INTO agents
-       (id, tenant_id, owner_subject, name, description, description_status, steps, enabled)
-     VALUES ($1, $2, $3, $4, $5, 'ready', $6, false)`,
-    [
-      AGENT_DEEP_ID,
-      E2E_TENANT_ID,
-      E2E_SUBJECT,
-      'Sweep the request queue',
-      'Goes through every open request, escalates the critical ones, acknowledges the routine ones, and writes a note per request.',
-      JSON.stringify(DEEP_STEPS),
-    ]
+    `INSERT INTO agents\n       (id, owner_subject, name, description, description_status, steps, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, false)`,
+    [AGENT_DEEP_ID, E2E_SUBJECT, 'Sweep the request queue', 'Goes through every open request, escalates the critical ones, acknowledges the routine ones, and writes a note per request.', JSON.stringify(DEEP_STEPS)]
   );
 
   const scheduleConfig = JSON.stringify({
@@ -508,31 +499,17 @@ export async function seed(client: Client): Promise<void> {
     timezone: 'UTC',
   });
   await client.query(
-    `INSERT INTO agent_triggers (id, tenant_id, agent_id, kind, config, enabled, next_run_at)
-     VALUES ($1, $2, $3, 'schedule', $4, true, $5)`,
-    [TRIGGER_RICH, E2E_TENANT_ID, AGENT_RICH_ID, scheduleConfig, hoursAgo(-20)]
+    `INSERT INTO agent_triggers (id, agent_id, kind, config, enabled, next_run_at)\n     VALUES ($1, $2, 'schedule', $3, true, $4)`,
+    [TRIGGER_RICH, AGENT_RICH_ID, scheduleConfig, hoursAgo(-20)]
   );
   await client.query(
-    `INSERT INTO agent_triggers (id, tenant_id, agent_id, kind, config, enabled)
-     VALUES ($1, $2, $3, 'schedule', $4, false)`,
-    [TRIGGER_PLAIN, E2E_TENANT_ID, AGENT_PLAIN_ID, scheduleConfig]
+    `INSERT INTO agent_triggers (id, agent_id, kind, config, enabled)\n     VALUES ($1, $2, 'schedule', $3, false)`,
+    [TRIGGER_PLAIN, AGENT_PLAIN_ID, scheduleConfig]
   );
 
   await client.query(
-    `INSERT INTO agent_memories (id, tenant_id, agent_id, kind, content)
-     VALUES ($1, $2, $3, 'summary', $4),
-            ($5, $2, $3, 'entry', $6),
-            ($7, $2, $3, 'entry', $8)`,
-    [
-      '77777777-7777-4777-8777-777777777771',
-      E2E_TENANT_ID,
-      AGENT_RICH_ID,
-      'The OPS project is the right home for infrastructure requests; HR questions go to the PEOPLE desk instead.',
-      '77777777-7777-4777-8777-777777777772',
-      'Filed OPS-231 for the VPN outage thread; sender confirmed it covered their ask.',
-      '77777777-7777-4777-8777-777777777773',
-      'Skipped the newsletter digest — recurring, never actionable.',
-    ]
+    `INSERT INTO agent_memories (id, agent_id, kind, content)\n     VALUES ($1, $2, 'summary', $3),\n            ($4, $2, 'entry', $5),\n            ($6, $2, 'entry', $7)`,
+    ['77777777-7777-4777-8777-777777777771', AGENT_RICH_ID, 'The OPS project is the right home for infrastructure requests; HR questions go to the PEOPLE desk instead.', '77777777-7777-4777-8777-777777777772', 'Filed OPS-231 for the VPN outage thread; sender confirmed it covered their ask.', '77777777-7777-4777-8777-777777777773', 'Skipped the newsletter digest — recurring, never actionable.']
   );
 
   const snapshot = JSON.stringify(RICH_STEPS);
@@ -581,44 +558,15 @@ export async function seed(client: Client): Promise<void> {
   ];
   for (const [id, status, errorKind, error, currentStep, startedAt, finishedAt] of runRows) {
     await client.query(
-      `INSERT INTO agent_runs
-         (id, tenant_id, agent_id, owner_subject, trigger_kind, trigger_id,
-          steps_snapshot, status, error_kind, error, current_step_id,
-          started_at, finished_at, created_at)
-       VALUES ($1, $2, $3, $4, 'schedule', $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-      [
-        id,
-        E2E_TENANT_ID,
-        AGENT_RICH_ID,
-        E2E_SUBJECT,
-        TRIGGER_RICH,
-        snapshot,
-        status,
-        errorKind,
-        error,
-        currentStep,
-        startedAt,
-        finishedAt,
-        startedAt ?? new Date(),
-      ]
+      `INSERT INTO agent_runs\n         (id, agent_id, owner_subject, trigger_kind, trigger_id,\n          steps_snapshot, status, error_kind, error, current_step_id,\n          started_at, finished_at, created_at)\n       VALUES ($1, $2, $3, 'schedule', $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [id, AGENT_RICH_ID, E2E_SUBJECT, TRIGGER_RICH, snapshot, status, errorKind, error, currentStep, startedAt, finishedAt, startedAt ?? new Date()]
     );
   }
 
   // The deep agent's iterated run — the timeline's per-iteration rendering.
   await client.query(
-    `INSERT INTO agent_runs
-       (id, tenant_id, agent_id, owner_subject, trigger_kind, steps_snapshot,
-        status, started_at, finished_at, created_at)
-     VALUES ($1, $2, $3, $4, 'manual', $5, 'succeeded', $6, $7, $6)`,
-    [
-      RUN_ITERATIONS_ID,
-      E2E_TENANT_ID,
-      AGENT_DEEP_ID,
-      E2E_SUBJECT,
-      JSON.stringify(DEEP_STEPS),
-      hoursAgo(5),
-      hoursAgo(4.9),
-    ]
+    `INSERT INTO agent_runs\n       (id, agent_id, owner_subject, trigger_kind, steps_snapshot,\n        status, started_at, finished_at, created_at)\n     VALUES ($1, $2, $3, 'manual', $4, 'succeeded', $5, $6, $5)`,
+    [RUN_ITERATIONS_ID, AGENT_DEEP_ID, E2E_SUBJECT, JSON.stringify(DEEP_STEPS), hoursAgo(5), hoursAgo(4.9)]
   );
 
   // Attempt rows. UNIQUE (run_id, step_id, iteration, attempt) — one insert
@@ -1091,26 +1039,8 @@ export async function seed(client: Client): Promise<void> {
 
   for (const row of stepRows) {
     await client.query(
-      `INSERT INTO agent_run_steps
-         (id, tenant_id, run_id, step_id, step_index, attempt, iteration, status,
-          outcome, outcome_code, tool_call_count, detail, started_at, finished_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-      [
-        row.id,
-        E2E_TENANT_ID,
-        row.runId,
-        row.stepId,
-        row.stepIndex,
-        row.attempt,
-        row.iteration ?? 0,
-        row.status,
-        row.outcome,
-        row.outcomeCode,
-        row.toolCallCount,
-        row.detail,
-        row.at,
-        row.status === 'running' ? null : new Date(row.at.getTime() + 30_000),
-      ]
+      `INSERT INTO agent_run_steps\n         (id, run_id, step_id, step_index, attempt, iteration, status,\n          outcome, outcome_code, tool_call_count, detail, started_at, finished_at)\n       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [row.id, row.runId, row.stepId, row.stepIndex, row.attempt, row.iteration ?? 0, row.status, row.outcome, row.outcomeCode, row.toolCallCount, row.detail, row.at, row.status === 'running' ? null : new Date(row.at.getTime() + 30_000)]
     );
   }
 
@@ -1163,25 +1093,13 @@ export async function seed(client: Client): Promise<void> {
   ];
   for (const row of eventRows) {
     await client.query(
-      `INSERT INTO events (id, tenant_id, source, type, payload, status, attempts, created_at, updated_at)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $7)`,
-      [
-        E2E_TENANT_ID,
-        row.source,
-        row.type,
-        JSON.stringify(row.payload),
-        row.status,
-        row.attempts,
-        row.at,
-      ]
+      `INSERT INTO events (id, source, type, payload, status, attempts, created_at, updated_at)\n       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $6)`,
+      [row.source, row.type, JSON.stringify(row.payload), row.status, row.attempts, row.at]
     );
   }
   await client.query(
-    `INSERT INTO events_dead_letters
-       (id, tenant_id, source, type, payload, attempts, last_error, created_at)
-     VALUES (gen_random_uuid(), $1, 'microsoft', 'change-notification', $2, 5,
-             'Graph answered 503 on every attempt', $3)`,
-    [E2E_TENANT_ID, JSON.stringify({ accountId: 'e2e-jira-account' }), hoursAgo(3)]
+    `INSERT INTO events_dead_letters\n       (id, source, type, payload, attempts, last_error, created_at)\n     VALUES (gen_random_uuid(), 'microsoft', 'change-notification', $1, 5,\n             'Graph answered 503 on every attempt', $2)`,
+    [JSON.stringify({ accountId: 'e2e-jira-account' }), hoursAgo(3)]
   );
 
   // Run-log rows for the overview's Invocations panel: today, earlier this
@@ -1190,15 +1108,8 @@ export async function seed(client: Client): Promise<void> {
   // `failures` of each day's runs are failed. (Cleanup rides the tenant
   // delete's cascade.)
   await client.query(
-    `INSERT INTO agent_run_log (run_id, tenant_id, agent_id, owner_subject, trigger_kind, status, created_at, finished_at)
-     SELECT gen_random_uuid(), $1, $2, (SELECT owner_subject FROM agents WHERE id = $2), 'schedule',
-            CASE WHEN n <= spread.failures THEN 'failed' ELSE 'succeeded' END,
-            NOW() - make_interval(days => spread.days_ago, mins => n),
-            NOW() - make_interval(days => spread.days_ago, mins => n - 1)
-     FROM (VALUES (0, 3, 1), (1, 2, 1), (2, 4, 0), (12, 6, 2), (70, 9, 0), (320, 20, 5))
-       AS spread(days_ago, runs, failures)
-     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n`,
-    [E2E_TENANT_ID, AGENT_RICH_ID]
+    `INSERT INTO agent_run_log (run_id, agent_id, owner_subject, trigger_kind, status, created_at, finished_at)\n     SELECT gen_random_uuid(), $1, (SELECT owner_subject FROM agents WHERE id = $1), 'schedule',\n            CASE WHEN n <= spread.failures THEN 'failed' ELSE 'succeeded' END,\n            NOW() - make_interval(days => spread.days_ago, mins => n),\n            NOW() - make_interval(days => spread.days_ago, mins => n - 1)\n     FROM (VALUES (0, 3, 1), (1, 2, 1), (2, 4, 0), (12, 6, 2), (70, 9, 0), (320, 20, 5))\n       AS spread(days_ago, runs, failures)\n     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n`,
+    [AGENT_RICH_ID]
   );
 
   // Token-ledger rows behind the oversight columns and the agent page's
@@ -1207,29 +1118,12 @@ export async function seed(client: Client): Promise<void> {
   // before the model was recorded, and a little on the plain agent so the
   // oversight sort has something to order. Same day spread as the run log.
   await client.query(
-    `INSERT INTO llm_calls
-       (tenant_id, subject, agent_id, run_id, step_id, purpose, provider, model,
-        input_tokens, output_tokens, cache_read_input_tokens, cache_write_input_tokens, created_at)
-     SELECT $1, $3, $2, gen_random_uuid(), step.id::uuid, 'run', step.provider, step.model,
-            step.input_tokens, step.output_tokens, step.cache_read, step.cache_write,
-            NOW() - make_interval(days => spread.days_ago, mins => n)
-     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)
-     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n
-     CROSS JOIN (VALUES
-       ($4, 'anthropic', 'claude-sonnet-5', 3580, 210, 2400, 0),
-       ($5, 'anthropic', 'claude-opus-5', 3650, 640, 0, 0),
-       ($6, 'openai', 'gpt-5-mini', 1200, 95, 480, 0),
-       ($7, NULL, NULL, 310, 40, 0, 0)
-     ) AS step(id, provider, model, input_tokens, output_tokens, cache_read, cache_write)`,
-    [E2E_TENANT_ID, AGENT_RICH_ID, E2E_SUBJECT, STEP_COLLECT, STEP_RANK, STEP_FILE, STEP_WRAP]
+    `INSERT INTO llm_calls\n       (subject, agent_id, run_id, step_id, purpose, provider, model,\n        input_tokens, output_tokens, cache_read_input_tokens, cache_write_input_tokens, created_at)\n     SELECT $2, $1, gen_random_uuid(), step.id::uuid, 'run', step.provider, step.model,\n            step.input_tokens, step.output_tokens, step.cache_read, step.cache_write,\n            NOW() - make_interval(days => spread.days_ago, mins => n)\n     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)\n     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n\n     CROSS JOIN (VALUES\n       ($3, 'anthropic', 'claude-sonnet-5', 3580, 210, 2400, 0),\n       ($4, 'anthropic', 'claude-opus-5', 3650, 640, 0, 0),\n       ($5, 'openai', 'gpt-5-mini', 1200, 95, 480, 0),\n       ($6, NULL, NULL, 310, 40, 0, 0)\n     ) AS step(id, provider, model, input_tokens, output_tokens, cache_read, cache_write)`,
+    [AGENT_RICH_ID, E2E_SUBJECT, STEP_COLLECT, STEP_RANK, STEP_FILE, STEP_WRAP]
   );
   await client.query(
-    `INSERT INTO llm_calls
-       (tenant_id, subject, agent_id, purpose, provider, model, input_tokens, output_tokens, cache_write_input_tokens, created_at)
-     VALUES ($1, $3, $2, 'optimize', 'anthropic', 'claude-opus-5', 18400, 1900, 6200, NOW() - interval '3 hours'),
-            ($1, $3, $4, 'run', 'anthropic', 'claude-sonnet-5', 950, 120, 0, NOW() - interval '1 day'),
-            ($1, $3, NULL, 'chat', 'anthropic', 'claude-sonnet-5', 4100, 800, 900, NOW() - interval '2 hours')`,
-    [E2E_TENANT_ID, AGENT_RICH_ID, E2E_SUBJECT, AGENT_PLAIN_ID]
+    `INSERT INTO llm_calls\n       (subject, agent_id, purpose, provider, model, input_tokens, output_tokens, cache_write_input_tokens, created_at)\n     VALUES ($2, $1, 'optimize', 'anthropic', 'claude-opus-5', 18400, 1900, 6200, NOW() - interval '3 hours'),\n            ($2, $3, 'run', 'anthropic', 'claude-sonnet-5', 950, 120, 0, NOW() - interval '1 day'),\n            ($2, NULL, 'chat', 'anthropic', 'claude-sonnet-5', 4100, 800, 900, NOW() - interval '2 hours')`,
+    [AGENT_RICH_ID, E2E_SUBJECT, AGENT_PLAIN_ID]
   );
 
   // Voice-ledger rows behind the Voice card and the listener/speaker
@@ -1237,18 +1131,8 @@ export async function seed(client: Client): Promise<void> {
   // subject the reverse, so the two boards rank them differently. Same
   // day spread as the run log. (Cleanup rides the tenant delete's cascade.)
   await client.query(
-    `INSERT INTO voice_usage (tenant_id, subject, kind, characters, audio_ms, provider, voice, locale, created_at)
-     SELECT $1, person.subject, piece.kind,
-            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen ELSE 0 END,
-            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen * 65
-                 ELSE piece.amount * person.talk END,
-            'azure-speech', CASE WHEN piece.kind = 'speech' THEN 'en-GB-SoniaNeural' END, 'en-GB',
-            NOW() - make_interval(days => spread.days_ago, mins => n)
-     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)
-     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n
-     CROSS JOIN (VALUES ('speech', 420), ('transcription', 6500)) AS piece(kind, amount)
-     CROSS JOIN (VALUES ($2, 3, 1), ($3, 1, 4)) AS person(subject, listen, talk)`,
-    [E2E_TENANT_ID, E2E_SUBJECT, 'e2e-colleague@example.com']
+    `INSERT INTO voice_usage (subject, kind, characters, audio_ms, provider, voice, locale, created_at)\n     SELECT person.subject, piece.kind,\n            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen ELSE 0 END,\n            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen * 65\n                 ELSE piece.amount * person.talk END,\n            'azure-speech', CASE WHEN piece.kind = 'speech' THEN 'en-GB-SoniaNeural' END, 'en-GB',\n            NOW() - make_interval(days => spread.days_ago, mins => n)\n     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)\n     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n\n     CROSS JOIN (VALUES ('speech', 420), ('transcription', 6500)) AS piece(kind, amount)\n     CROSS JOIN (VALUES ($1, 3, 1), ($2, 1, 4)) AS person(subject, listen, talk)`,
+    [E2E_SUBJECT, 'e2e-colleague@example.com']
   );
 
   // Connectors the org has switched on. Without these the connectors page
@@ -1263,10 +1147,8 @@ export async function seed(client: Client): Promise<void> {
     'zoom',
   ]) {
     await client.query(
-      `INSERT INTO connector_configs (tenant_id, connector, enabled, encrypted_secrets, settings)
-       VALUES ($1, $2, true, 'not-a-real-secret', '{}'::jsonb)
-       ON CONFLICT (tenant_id, connector) DO UPDATE SET enabled = true`,
-      [E2E_TENANT_ID, connector]
+      `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)\n       VALUES ($1, true, 'not-a-real-secret', '{}'::jsonb)\n       ON CONFLICT (connector) DO UPDATE SET enabled = true`,
+      [connector]
     );
   }
 
@@ -1375,21 +1257,8 @@ export async function seed(client: Client): Promise<void> {
       // one bar and the 24-hour period is not empty.
       const startedAt = hoursAgo(1 + (index % 60));
       await client.query(
-        `INSERT INTO tool_calls
-           (id, tenant_id, subject, tool, connector, status, duration_ms,
-            started_at, ended_at, error_summary)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [
-          E2E_TENANT_ID,
-          row.subject,
-          row.tool,
-          row.connector,
-          failed ? 'error' : 'ok',
-          row.ms + index,
-          startedAt,
-          new Date(startedAt.getTime() + row.ms + index),
-          failed ? 'The upstream API answered 500' : null,
-        ]
+        `INSERT INTO tool_calls\n           (id, subject, tool, connector, status, duration_ms,\n            started_at, ended_at, error_summary)\n         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)`,
+        [row.subject, row.tool, row.connector, failed ? 'error' : 'ok', row.ms + index, startedAt, new Date(startedAt.getTime() + row.ms + index), failed ? 'The upstream API answered 500' : null]
       );
     }
   }

@@ -58,7 +58,7 @@ let availability: { at: number; languages: string[] } | null = null;
 
 /** Which servers the worker can start, remembered for a minute; none when workspaces are off. */
 async function availableServers(target: SandboxTarget): Promise<string[]> {
-  if (!(await sandboxWorkspacesEnabled(target.tenantId))) return [];
+  if (!(await sandboxWorkspacesEnabled())) return [];
   const now = Date.now();
   if (availability && now - availability.at < AVAILABILITY_TTL_MS) return availability.languages;
   const listed = await sbLspLanguages(target);
@@ -75,7 +75,7 @@ export function resetLanguageAvailabilityForTests(): void {
 
 export function noteLanguageGap(
   db: Kysely<DB>,
-  input: { tenantId: string; target: SandboxTarget; path: string; language: string }
+  input: { target: SandboxTarget; path: string; language: string }
 ): void {
   void (async () => {
     const available = await availableServers(input.target);
@@ -84,14 +84,13 @@ export function noteLanguageGap(
     await db
       .insertInto('code_language_gaps')
       .values({
-        tenant_id: input.tenantId,
         extension: extensionOf(input.path),
         language: input.language.slice(0, 64),
         reason,
         sample_path: input.path.slice(0, 1_000),
       })
       .onConflict((conflict) =>
-        conflict.columns(['tenant_id', 'extension', 'language', 'reason']).doUpdateSet({
+        conflict.columns(['extension', 'language', 'reason']).doUpdateSet({
           open_count: sql`code_language_gaps.open_count + 1`,
           last_seen_at: sql`now()`,
           sample_path: input.path.slice(0, 1_000),
@@ -101,7 +100,6 @@ export function noteLanguageGap(
   })().catch((error: unknown) => {
     logger.warn('language gap not recorded for {path}: {error}', {
       component: 'code/language-gaps',
-      tenantId: input.tenantId,
       path: input.path,
       error: error instanceof Error ? error.message : String(error),
     });

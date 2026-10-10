@@ -32,20 +32,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Same calendar overlay the agent schedule sweep applies — see its own comment. */
 async function calendarDatesOf(
   db: Kysely<DB>,
-  tenantId: string,
   calendarId: string
 ): Promise<BlackoutEntry[]> {
   const row = await db
     .selectFrom('schedule_calendars')
     .select(['dates'])
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', calendarId)
     .executeTakeFirst();
   if (!row) {
     logger.warn('schedule calendar {calendarId} not found; firing without blackouts', {
       component: 'worker/batch-jobs-schedule',
       calendarId,
-      tenantId,
     });
     return [];
   }
@@ -56,7 +53,7 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
   return async function sweep(): Promise<void> {
     const due = await db
       .selectFrom('batch_job_schedules')
-      .select(['id', 'tenant_id', 'subject', 'name', 'kind', 'config', 'schedule_config', 'next_run_at'])
+      .select(['id', 'subject', 'name', 'kind', 'config', 'schedule_config', 'next_run_at'])
       .where('enabled', '=', true)
       .where('next_run_at', 'is not', null)
       .where('next_run_at', '<=', sql<Date>`NOW()`)
@@ -74,7 +71,7 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
       const observed = row.next_run_at;
       if (!observed) continue;
       const calendarDates = config.calendarId
-        ? await calendarDatesOf(db, row.tenant_id, config.calendarId)
+        ? await calendarDatesOf(db, config.calendarId)
         : [];
       let next: Date;
       try {
@@ -100,14 +97,13 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
 
       try {
         const batch = await createBatch(db, {
-          tenantId: row.tenant_id,
           subject: row.subject,
           name: row.name,
           kind: row.kind,
           config: isRecord(row.config) ? row.config : {},
           scheduleId: row.id,
         });
-        await enqueueDiscover(producer, row.tenant_id, batch.id);
+        await enqueueDiscover(producer, batch.id);
         await db
           .updateTable('batch_job_schedules')
           .set({ last_error: null, updated_at: sql`NOW()` })
@@ -117,7 +113,6 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
           component: 'worker/batch-jobs-schedule',
           batchId: batch.id,
           scheduleId: row.id,
-          tenantId: row.tenant_id,
           subject: row.subject,
         });
       } catch (error) {

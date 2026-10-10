@@ -116,14 +116,12 @@ export function codeProjectAccessOf(
  */
 export async function grantScopes(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   provider: string = ATLASSIAN_BITBUCKET
 ): Promise<string[] | null> {
   const row = await db
     .selectFrom('provider_grants')
     .select(['requested_scopes', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', provider)
     .where('subject', '=', subject)
     .orderBy('updated_at', 'desc')
@@ -134,14 +132,12 @@ export async function grantScopes(
 
 export async function codeProjectAccess(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   provider: string = ATLASSIAN_BITBUCKET
 ): Promise<CodeProjectAccess> {
   const row = await db
     .selectFrom('provider_grants')
     .select(['requested_scopes', 'granted_scopes'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', provider)
     .where('subject', '=', subject)
     .limit(1)
@@ -152,12 +148,11 @@ export async function codeProjectAccess(
 /** Access on every git host a code project can use, keyed by provider — for the Code page. */
 export async function codeProjectProviderAccess(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Record<string, CodeProjectAccess>> {
   const [bitbucket, github] = await Promise.all([
-    codeProjectAccess(db, tenantId, subject, ATLASSIAN_BITBUCKET),
-    codeProjectAccess(db, tenantId, subject, GITHUB),
+    codeProjectAccess(db, subject, ATLASSIAN_BITBUCKET),
+    codeProjectAccess(db, subject, GITHUB),
   ]);
   return { [ATLASSIAN_BITBUCKET]: bitbucket, [GITHUB]: github };
 }

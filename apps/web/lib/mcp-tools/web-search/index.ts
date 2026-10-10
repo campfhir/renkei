@@ -41,7 +41,7 @@ const MAX_CALLER_DOMAINS = 20;
 
 /** Swappable for tests; production uses the real resolver and client. */
 export interface WebSearchDeps {
-  resolveConfig: (tenantId: string) => Promise<WebSearchConfig | null>;
+  resolveConfig: () => Promise<WebSearchConfig | null>;
   search: (config: WebSearchConfig, request: WebSearchRequest) => Promise<WebSearchOutcome>;
 }
 
@@ -155,7 +155,7 @@ export function registerWebSearchTools(
       // Resolved per call, not captured at registration: an admin's key
       // rotation or disable must bite within the config cache TTL, not
       // whenever this caller's handler happens to be rebuilt.
-      const config = await deps.resolveConfig(context.tenantId);
+      const config = await deps.resolveConfig();
       if (!config) {
         return errText(
           'Web search is not configured for this organization — an admin sets the Azure ' +
@@ -203,7 +203,6 @@ export function registerWebSearchTools(
         // the caller — say so rather than echoing a bare 401.
         logger.warn('web_search failed: {message}', {
           component: 'mcp/web-search',
-          tenantId: context.tenantId,
           subject: context.subject,
           kind: outcome.error.kind,
           message: outcome.error.message,
@@ -271,6 +270,6 @@ export function registerWebSearchTools(
 }
 
 /** Whether the org has provisioned web search — the registry's availability probe. */
-export async function webSearchConfigured(tenantId: string): Promise<boolean> {
-  return (await resolveWebSearchConfig(tenantId)) !== null;
+export async function webSearchConfigured(): Promise<boolean> {
+  return (await resolveWebSearchConfig()) !== null;
 }

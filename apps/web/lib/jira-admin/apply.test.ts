@@ -52,7 +52,7 @@ beforeEach(() => {
   jest.mocked(resolveConnectorAvailability).mockImplementation(async () => availability as never);
 });
 
-const gate = () => applyGate(db, 'tenant-1', 'owner', [], { kind: 'field_options', payload: {} });
+const gate = () => applyGate(db, 'owner', [], { kind: 'field_options', payload: {} });
 
 /** A new space, with or without components. */
 function newSpace(components: string[]): { kind: string; payload: CreateSpacePayload } {
@@ -132,7 +132,7 @@ it('refuses without a connection, or without the scope the writes need', async (
 
 it('names every box a new space needs that the connection lacks', async () => {
   availability = { jiraAdminAvailable: true, jiraAdminScopes: ['read:jira-user'] };
-  expect(await applyGate(db, 'tenant-1', 'owner', [], newSpace([]))).toEqual({
+  expect(await applyGate(db, 'owner', [], newSpace([]))).toEqual({
     ok: false,
     reason:
       'Your Jira Administration connection does not include read:jira-work, ' +
@@ -143,8 +143,8 @@ it('names every box a new space needs that the connection lacks', async () => {
 });
 
 it('asks for the components permission only when the new space has components', async () => {
-  expect(await applyGate(db, 'tenant-1', 'owner', [], newSpace([]))).toEqual({ ok: true });
-  expect(await applyGate(db, 'tenant-1', 'owner', [], newSpace(['Backend']))).toEqual({
+  expect(await applyGate(db, 'owner', [], newSpace([]))).toEqual({ ok: true });
+  expect(await applyGate(db, 'owner', [], newSpace(['Backend']))).toEqual({
     ok: false,
     reason:
       'Your Jira Administration connection does not include manage:jira-project. Reconnect ' +

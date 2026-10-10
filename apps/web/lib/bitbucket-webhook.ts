@@ -1,6 +1,6 @@
 /**
  * Bitbucket webhook delivery verification
- * (app/api/webhooks/bitbucket/[tenantId]/route.ts): Bitbucket Cloud
+ * (app/api/webhooks/bitbucket/route.ts): Bitbucket Cloud
  * does not sign deliveries, so a repository webhook is registered by
  * hand carrying a shared secret, checked here against the same value
  * stored on the Bitbucket connector.

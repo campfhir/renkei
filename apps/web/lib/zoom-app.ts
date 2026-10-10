@@ -34,21 +34,19 @@ export interface ZoomApp {
 }
 
 /** The tenant's Zoom app, or null when not (fully) configured. */
-export async function getZoomApp(tenantId: string, origin: string): Promise<ZoomApp | null> {
+export async function getZoomApp(origin: string): Promise<ZoomApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
       component: 'connectors/zoom',
-      tenantId,
     });
     return null;
   }
 
-  const configResult = await readConnectorConfigCached(tenantId, ZOOM_CONNECTOR, keyResult.val);
+  const configResult = await readConnectorConfigCached(ZOOM_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     logger.error('Could not read zoom connector config', {
       component: 'connectors/zoom',
-      tenantId,
     });
     return null;
   }
@@ -60,7 +58,6 @@ export async function getZoomApp(tenantId: string, origin: string): Promise<Zoom
   if (typeof clientId !== 'string' || !clientId || !clientSecret) {
     logger.warn('zoom connector config missing clientId or clientSecret', {
       component: 'connectors/zoom',
-      tenantId,
     });
     return null;
   }

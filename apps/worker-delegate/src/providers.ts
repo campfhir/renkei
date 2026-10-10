@@ -195,11 +195,10 @@ export function hostAllowed(spec: ProviderSpec, url: URL, provider?: string): bo
 
 /** The app registration for a provider, from connector config; null when none is saved. */
 export async function providerConfig(
-  tenantId: string,
   spec: ProviderSpec,
   encryptionKey: Buffer
 ): Promise<ConnectorConfig | null> {
-  const result = await readConnectorConfigCached(tenantId, spec.connector, encryptionKey);
+  const result = await readConnectorConfigCached(spec.connector, encryptionKey);
   return result.ok ? result.val : null;
 }
 
@@ -230,14 +229,12 @@ export function clientSecretOf(config: ConnectorConfig | null): string {
 /** The grant row for a person on a provider, or by account id when the caller already knows it. */
 export async function grantRow(
   db: Kysely<DB>,
-  tenantId: string,
   provider: string,
   by: { subject?: string; accountId?: string }
 ): Promise<{ provider_account_id: string; subject: string | null } | null> {
   let query = db
     .selectFrom('provider_grants')
     .select(['provider_account_id', 'subject'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', provider);
   if (by.accountId) query = query.where('provider_account_id', '=', by.accountId);
   else if (by.subject) query = query.where('subject', '=', by.subject);

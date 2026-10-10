@@ -41,7 +41,6 @@ function clip(text: string, max: number): string {
 
 export async function readUserMemory(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   options: { maxEntries?: number } = {}
 ): Promise<UserMemory> {
@@ -51,13 +50,11 @@ export async function readUserMemory(
   const rows = await db
     .selectFrom('chat_user_memories')
     .select(['id', 'kind', 'content', 'chat_id', 'created_at'])
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .orderBy('created_at', 'desc')
     .limit((options.maxEntries ?? USER_MEMORY_INJECT_MAX_ENTRIES) + 1)
     .execute();
   const opened = await delegateClient().openForSubject(
-    tenantId,
     ownerSubject,
     rows.map((row) => row.content)
   );
@@ -103,7 +100,6 @@ export function renderUserMemory(memory: UserMemory): string | null {
 export async function appendUserMemory(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     ownerSubject: string;
     content: string;
     chatId: string | null;
@@ -114,7 +110,6 @@ export async function appendUserMemory(
   // Memory is the person's alone: under their user key, never the
   // automation key, so nothing unattended reads it.
   const sealed = await delegateClient().sealForSubject(
-    input.tenantId,
     input.ownerSubject,
     [content],
     'session'
@@ -123,7 +118,6 @@ export async function appendUserMemory(
   const inserted = await db
     .insertInto('chat_user_memories')
     .values({
-      tenant_id: input.tenantId,
       owner_subject: input.ownerSubject,
       kind: 'entry',
       content: sealed.val[0],
@@ -135,10 +129,10 @@ export async function appendUserMemory(
   // oldest entries go first.
   await sql`
     DELETE FROM chat_user_memories
-     WHERE tenant_id = ${input.tenantId} AND owner_subject = ${input.ownerSubject} AND kind = 'entry'
+     WHERE owner_subject = ${input.ownerSubject} AND kind = 'entry'
        AND id IN (
          SELECT id FROM chat_user_memories
-          WHERE tenant_id = ${input.tenantId} AND owner_subject = ${input.ownerSubject} AND kind = 'entry'
+          WHERE owner_subject = ${input.ownerSubject} AND kind = 'entry'
           ORDER BY created_at DESC OFFSET ${USER_MEMORY_HARD_CAP}
        )
   `.execute(db);
@@ -147,7 +141,6 @@ export async function appendUserMemory(
 
 export async function editUserMemory(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   id: string,
   content: string
@@ -155,7 +148,6 @@ export async function editUserMemory(
   const clipped = clip(content.trim(), USER_MEMORY_ENTRY_MAX_CHARS);
   if (!clipped) return false;
   const sealed = await delegateClient().sealForSubject(
-    tenantId,
     ownerSubject,
     [clipped],
     'session'
@@ -164,7 +156,6 @@ export async function editUserMemory(
   const result = await db
     .updateTable('chat_user_memories')
     .set({ content: sealed.val[0], updated_at: sql<Date>`NOW()` })
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', id)
     .where('kind', '=', 'entry')
@@ -174,13 +165,11 @@ export async function editUserMemory(
 
 export async function forgetUserMemory(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   target: { kind: 'all' } | { kind: 'entries'; ids: string[] }
 ): Promise<number> {
   let query = db
     .deleteFrom('chat_user_memories')
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject);
   if (target.kind === 'entries') {
     const ids = target.ids.filter((id) => /^[0-9a-f-]{36}$/i.test(id));

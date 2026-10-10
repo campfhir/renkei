@@ -13,7 +13,6 @@ const testCipher = resourceCipher({
 
 const context: LocalToolContext = {
   db: null as unknown as LocalToolContext['db'],
-  tenantId: 't1',
   subject: 'u1',
   chatId: 'c1',
   cipher: testCipher,

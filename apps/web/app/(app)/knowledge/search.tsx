@@ -1,0 +1,620 @@
+'use client';
+
+import StructuredContent from './structured-content';
+import { detailRows } from './detail-rows';
+import { SOURCE_OPTIONS } from './source-options';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { searchMyKnowledge, type KnowledgeSearchHit, type KnowledgeSearchResult } from './actions';
+import { signInUrl } from '@/lib/sign-in-url';
+import { LoadingLine } from '@/components/skeleton';
+import { Icon, ICONS } from '@/components/icons';
+import { useDismiss } from '@/lib/use-dismiss';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import ExternalLink from '@/components/external-link';
+
+const K_OPTIONS = [10, 20, 30];
+
+/**
+ * The sources a person can narrow to, in their own vocabulary. The mapping
+ * onto storage (provider + metadata.kind) lives server-side in
+ * sourceFiltersFor, so this list only has to be nameable, not accurate
+ * about the schema.
+ */
+
+const DATE_PRESETS: { id: string; label: string; days: number | null }[] = [
+  { id: 'any', label: 'Any time', days: null },
+  { id: '7', label: 'Last 7 days', days: 7 },
+  { id: '30', label: 'Last 30 days', days: 30 },
+  { id: '90', label: 'Last 90 days', days: 90 },
+  { id: '365', label: 'Last year', days: 365 },
+];
+
+/** Display name per connector — matches the labels used elsewhere in the UI. */
+function providerLabel(provider: string): string {
+  switch (provider) {
+    case 'webex':
+      return 'WebEx';
+    case 'microsoft':
+      return 'Outlook';
+    case 'zoom':
+      return 'Zoom';
+    case 'confluence':
+      return 'Confluence';
+    case 'jira':
+      return 'Jira';
+    case 'sharepoint':
+      // Capitalised by hand: the generic path renders "Sharepoint", which
+      // is not how the product spells itself.
+      return 'SharePoint';
+    case 'note':
+      return 'Note';
+    default:
+      return provider.charAt(0).toUpperCase() + provider.slice(1);
+  }
+}
+
+/** What a result IS, in the same words the filter chips use. */
+function sourceLabel(hit: KnowledgeSearchHit): string {
+  return providerLabel(hit.provider);
+}
+
+function providerBadgeClass(provider: string): string {
+  switch (provider) {
+    case 'webex':
+      return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300';
+    case 'microsoft':
+      return 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300';
+    case 'zoom':
+      return 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300';
+    case 'confluence':
+      return 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300';
+    case 'jira':
+      return 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300';
+    case 'sharepoint':
+      return 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300';
+    default:
+      return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300';
+  }
+}
+
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/** A human title for a chunk, from whichever metadata field the connector set. */
+function titleFor(hit: KnowledgeSearchHit): string {
+  const metaTitle = str(hit.metadata.subject) || str(hit.metadata.topic) || str(hit.metadata.title);
+  if (metaTitle) return metaTitle;
+  const firstLine = hit.content.split('\n', 1)[0]?.trim() ?? '';
+  return firstLine.length > 100 ? `${firstLine.slice(0, 99)}…` : firstLine || '(untitled)';
+}
+
+/** The document's own date. Prefers the real column; metadata is the fallback for pre-backfill rows. */
+function whenFor(hit: KnowledgeSearchHit): string | null {
+  const raw =
+    hit.sourceAt ||
+    str(hit.metadata.when) ||
+    str(hit.metadata.created) ||
+    str(hit.metadata.startTime);
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toLocaleString();
+}
+
+/**
+ * The relevance grade as a label. The grade itself is computed server-side
+ * (actions.ts) against the org's configured cutoff, so the same distance
+ * reads the same whichever embedding model the org runs; the raw number
+ * stays available under "Show details" for debugging.
+ */
+function relevanceLabel(hit: KnowledgeSearchHit): { label: string; className: string } {
+  switch (hit.relevance) {
+    case 'strong':
+      return { label: 'Strong match', className: 'text-emerald-700 dark:text-emerald-400' };
+    case 'good':
+      return { label: 'Good match', className: 'text-blue-700 dark:text-blue-400' };
+    case 'possible':
+      return { label: 'Possible match', className: 'text-amber-700 dark:text-amber-400' };
+    default:
+      return { label: 'Weak match', className: 'text-gray-500 dark:text-gray-400' };
+  }
+}
+
+/** A hit the lexical arm found — its words matched, whatever its distance says. */
+function isKeywordMatch(hit: KnowledgeSearchHit): boolean {
+  return hit.matched === 'lexical' || hit.matched === 'both';
+}
+
+/** The document a chunk belongs to — chunk refIds are `${refId}#0001`. */
+function documentRefOf(hit: KnowledgeSearchHit): string {
+  const hash = hit.refId.lastIndexOf('#');
+  return hash > 0 ? hit.refId.slice(0, hash) : hit.refId;
+}
+
+/** Query words worth highlighting — short filler words would light up everything. */
+function highlightTerms(query: string): string[] {
+  return [
+    ...new Set(
+      query
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter((term) => term.length > 2)
+    ),
+  ];
+}
+
+/**
+ * Excerpt with query terms marked. Terms are escaped before they reach a
+ * RegExp — the query is user input and must never be able to compile as a
+ * pattern.
+ */
+function Highlighted({ text, terms }: { text: string; terms: string[] }): React.ReactNode {
+  if (terms.length === 0) return text;
+  const escaped = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(`(${escaped.join('|')})`, 'gi');
+  // split() with ONE capture group puts the captured separators at odd
+  // indices — that parity is the match test. Re-testing each part with the
+  // same /g regex would be wrong: `test` advances `lastIndex`, so identical
+  // parts would match or miss depending on where the previous call stopped.
+  const parts = text.split(pattern);
+  return parts.map((part, index) =>
+    index % 2 === 1 ? (
+      <mark key={index} className="rounded bg-yellow-200 px-0.5 dark:bg-yellow-500/40">
+        {part}
+      </mark>
+    ) : (
+      <React.Fragment key={index}>{part}</React.Fragment>
+    )
+  );
+}
+
+const EXCERPT_CHARS = 400;
+
+/** One document, with every chunk of it that matched. */
+interface DocumentGroup {
+  key: string;
+  best: KnowledgeSearchHit;
+  others: KnowledgeSearchHit[];
+}
+
+/**
+ * Collapse chunk-level hits into documents. A long page split across five
+ * chunks used to occupy five cards and crowd out everything else; now it is
+ * one card showing its best-ranked passage, with the rest available on
+ * demand.
+ *
+ * The server's order is kept: it is a fusion of meaning and exact words,
+ * and a keyword-found chunk may sit far in vector space and still be the
+ * answer. Re-sorting by distance here would undo exactly that.
+ */
+function groupByDocument(hits: KnowledgeSearchHit[]): DocumentGroup[] {
+  const groups = new Map<string, DocumentGroup>();
+  for (const hit of hits) {
+    const key = `${hit.provider}:${documentRefOf(hit)}`;
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, { key, best: hit, others: [] });
+      continue;
+    }
+    if (hit.score > existing.best.score) {
+      existing.others.push(existing.best);
+      existing.best = hit;
+    } else {
+      existing.others.push(hit);
+    }
+  }
+  return [...groups.values()];
+}
+
+/**
+ * The query-syntax help, as an (i) button rather than a permanent paragraph
+ * under the search bar — that prose is long, most searches never need it,
+ * and on a phone it used to push the actual results below the fold.
+ *
+ * Two ways in on purpose: a real mouse can just hover (`group-hover`, pure
+ * CSS, no state) the way a desktop tooltip is expected to behave; a touch
+ * screen has no hover, so tapping toggles `open` and pins the panel — the
+ * same click also lets a desktop user pin it open instead of holding still.
+ */
+function QueryHelpButton() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(open, ref, () => setOpen(false));
+
+  return (
+    <div ref={ref} className="group relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-label="Search syntax help"
+        title="How to search"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-gray-300 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-900"
+      >
+        <Icon path={ICONS.info} className="h-4 w-4" />
+      </button>
+      <div
+        // Anchored to the button's RIGHT edge, extending leftward: the button
+        // sits mid-row (input, then this, then the submit button), so a
+        // panel opening rightward from it would run off a narrow phone
+        // screen. `max-w-[calc(100vw-2rem)]` keeps a margin on either side
+        // even on the narrowest phones.
+        className={`absolute right-0 z-40 mt-1 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-gray-200 bg-white p-3 text-xs text-gray-600 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400 ${
+          open ? 'block' : 'hidden group-hover:block'
+        }`}
+      >
+        <p>
+          Words search meaning; <code>key:value</code> narrows by detail — try{' '}
+          <code>reporter:&quot;Evan Jeing&quot;</code>, <code>ticket:ENG-787</code>,{' '}
+          <code>from:evan</code>, <code>space:Engineering</code>. Combine filters with{' '}
+          <code>&amp;&amp;</code>, <code>||</code> and parentheses —{' '}
+          <code>(space:Eng || space:Ops) &amp;&amp; reporter:Evan</code> — and put words alongside
+          them: <code>printers not working ticket:ENG-787</code>.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+    >
+      {copied ? 'Copied' : 'Copy text'}
+    </button>
+  );
+}
+
+function HitCard({ group, terms }: { group: DocumentGroup; terms: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [showOthers, setShowOthers] = useState(false);
+  const hit = group.best;
+  const when = whenFor(hit);
+  const relevance = relevanceLabel(hit);
+  // `url` is what the connectors now record for Jira issues, Confluence
+  // pages, SharePoint files and mail alike; the older per-provider keys stay
+  // ahead of nothing, so chunks indexed before this keep their link.
+  const webLink =
+    str(hit.metadata.url) ||
+    str(hit.metadata.webLink) ||
+    str(hit.metadata.note_link) ||
+    str(hit.metadata.join_url);
+  const needsTruncation = hit.content.length > EXCERPT_CHARS;
+  const shown =
+    expanded || !needsTruncation ? hit.content : `${hit.content.slice(0, EXCERPT_CHARS)}…`;
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-medium ${providerBadgeClass(hit.provider)}`}
+        >
+          {sourceLabel(hit)}
+        </span>
+        {when && <span className="text-xs text-gray-500 dark:text-gray-400">{when}</span>}
+        {group.others.length > 0 && (
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            {group.others.length + 1} matching sections
+          </span>
+        )}
+        {isKeywordMatch(hit) && (
+          <span
+            className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300"
+            title="The query's words appear in this item"
+          >
+            Keyword match
+          </span>
+        )}
+        <span className={`ml-auto text-xs font-medium ${relevance.className}`}>
+          {relevance.label}
+        </span>
+      </div>
+
+      <p className="mt-2 break-words font-medium">{titleFor(hit)}</p>
+      <StructuredContent
+        text={shown}
+        title={titleFor(hit)}
+        renderText={(value) => <Highlighted text={value} terms={terms} />}
+      />
+
+      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+        {needsTruncation && (
+          <button
+            type="button"
+            onClick={() => setExpanded((e) => !e)}
+            className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+          >
+            {expanded ? 'Show less' : 'Show full content'}
+          </button>
+        )}
+        {group.others.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowOthers((o) => !o)}
+            className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+          >
+            {showOthers
+              ? 'Hide other sections'
+              : `Show ${group.others.length} other matching section${group.others.length === 1 ? '' : 's'}`}
+          </button>
+        )}
+        <CopyButton text={hit.content} />
+        <button
+          type="button"
+          onClick={() => setShowDetails((d) => !d)}
+          className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+        >
+          {showDetails ? 'Hide details' : 'Show details'}
+        </button>
+        {webLink && (
+          <ExternalLink
+            href={webLink}
+            className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+          >
+            Open source
+          </ExternalLink>
+        )}
+      </div>
+
+      {showOthers && (
+        <div className="mt-2 space-y-2 border-l-2 border-gray-200 pl-3 dark:border-gray-800">
+          {group.others.map((other) => (
+            <p
+              key={other.refId}
+              className="whitespace-pre-wrap break-words text-sm text-gray-600 dark:text-gray-400"
+            >
+              <Highlighted
+                text={
+                  other.content.length > EXCERPT_CHARS
+                    ? `${other.content.slice(0, EXCERPT_CHARS)}…`
+                    : other.content
+                }
+                terms={terms}
+              />
+            </p>
+          ))}
+        </div>
+      )}
+
+      {showDetails && (
+        <div className="mt-2 rounded-md bg-gray-100 p-2 text-xs dark:bg-gray-900">
+          {/*
+            Was a JSON.stringify of the whole metadata bag. That is a debug
+            dump: it repeated the title already at the top of the card, showed
+            keys nobody outside this codebase can read, and quoted every value.
+            The same facts, labelled, minus the ones the card already states.
+          */}
+          <dl className="grid grid-cols-[auto,minmax(0,1fr)] gap-x-3 gap-y-1">
+            {detailRows(hit).map((row) => (
+              <React.Fragment key={row.label}>
+                <dt className="text-gray-500 dark:text-gray-400">{row.label}</dt>
+                <dd className="min-w-0 break-words text-gray-700 dark:text-gray-300">
+                  {row.value}
+                </dd>
+              </React.Fragment>
+            ))}
+          </dl>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function KnowledgeSearch() {
+  const [query, setQuery] = useState('');
+  const [k, setK] = useState(10);
+  const [sources, setSources] = useState<Set<string>>(new Set());
+  const [datePreset, setDatePreset] = useState('any');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<KnowledgeSearchResult | null>(null);
+  const [searchedQuery, setSearchedQuery] = useState('');
+  const [hasSearched, setHasSearched] = useState(false);
+
+  const groups = useMemo(() => groupByDocument(result?.hits ?? []), [result]);
+  const terms = useMemo(() => highlightTerms(searchedQuery), [searchedQuery]);
+
+  function toggleSource(id: string) {
+    setSources((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /**
+   * An empty query is a valid request, not a no-op: the server answers it
+   * with the newest indexed items, so the filters double as a browser.
+   */
+  const run = useCallback(
+    async (currentQuery: string) => {
+      setBusy(true);
+      try {
+        const days = DATE_PRESETS.find((preset) => preset.id === datePreset)?.days ?? null;
+        const after =
+          days === null ? undefined : new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+        const res = await searchMyKnowledge(currentQuery, k, {
+          sources: [...sources],
+          ...(after ? { after } : {}),
+        });
+        if (res.signedOut) {
+          window.location.href = signInUrl(window.location.pathname);
+          return;
+        }
+        setResult(res);
+        setSearchedQuery(currentQuery);
+        setHasSearched(true);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [k, sources, datePreset]
+  );
+
+  async function runSearch(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    if (busy) return;
+    await run(query);
+  }
+
+  // Land on content rather than an empty box, and re-browse whenever the
+  // filters change while there is no query — that is what makes the source
+  // chips usable as "show me the newest mail / WebEx / Confluence".
+  useEffect(() => {
+    if (query.trim()) return;
+    void run('');
+    // `run` already closes over the filter state it depends on.
+  }, [run, query]);
+
+  /** "12 results across Email and Confluence" — the shape of the answer, before scrolling. */
+  const summary = useMemo(() => {
+    if (!result || groups.length === 0) return null;
+    // Browsing returns the newest few from EACH selected source, so a
+    // per-source count is the honest summary: "4 from Jira" tells you Jira
+    // has four indexed items, where a merged total tells you nothing about
+    // whether a source is quiet or simply absent.
+    const counts = new Map<string, number>();
+    for (const group of groups) {
+      const label = sourceLabel(group.best);
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    const labels = [...counts.keys()];
+    if (result.browsing) {
+      const parts = [...counts.entries()].map(([label, count]) => `${count} from ${label}`);
+      return `Most recent — ${parts.join(', ')}`;
+    }
+    const list =
+      labels.length === 1
+        ? labels[0]
+        : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+    return `${groups.length} result${groups.length === 1 ? '' : 's'} from ${list}`;
+  }, [result, groups]);
+
+  const searchAnchor = useCoachAnchor('knowledge-search');
+  const sourcesAnchor = useCoachAnchor('knowledge-sources');
+  return (
+    <div>
+      <form onSubmit={(e) => void runSearch(e)} className="mb-4 space-y-2">
+        <div className="flex gap-2" {...searchAnchor}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search, or filter with reporter:… from:… space:…"
+            className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+          />
+          <QueryHelpButton />
+          <button
+            type="submit"
+            disabled={busy || !query.trim()}
+            aria-label={busy ? 'Searching…' : 'Search'}
+            title={busy ? 'Searching…' : 'Search'}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Icon path={ICONS.search} className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <select
+            value={datePreset}
+            onChange={(e) => setDatePreset(e.target.value)}
+            className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+          >
+            {DATE_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={k}
+            onChange={(e) => setK(Number(e.target.value))}
+            className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+          >
+            {K_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                Show {option}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2" {...sourcesAnchor}>
+          <span className="text-xs text-gray-500 dark:text-gray-400">Sources:</span>
+          {SOURCE_OPTIONS.map((option) => {
+            const active = sources.has(option.id);
+            return (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => toggleSource(option.id)}
+                className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                  active
+                    ? 'border-blue-600 bg-blue-600 text-white'
+                    : 'border-gray-300 text-gray-600 hover:border-gray-400 dark:border-gray-700 dark:text-gray-400'
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+          {sources.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setSources(new Set())}
+              className="text-xs text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Clear
+            </button>
+          )}
+          {sources.size === 0 && (
+            <span className="text-xs text-gray-400 dark:text-gray-500">all sources</span>
+          )}
+        </div>
+      </form>
+
+      {!hasSearched && busy && <LoadingLine label="Searching…" />}
+
+      {result?.error && (
+        <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">
+          {result.error}
+        </p>
+      )}
+
+      {hasSearched && !result?.error && (
+        <div className="space-y-4">
+          {summary && <p className="text-sm text-gray-600 dark:text-gray-400">{summary}</p>}
+          {groups.length === 0 && (
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              {result?.browsing
+                ? sources.size > 0 || datePreset !== 'any'
+                  ? 'Nothing indexed yet for those filters.'
+                  : 'Nothing indexed for you yet — connect a source on the Connectors page.'
+                : `No accessible results${sources.size > 0 || datePreset !== 'any' ? ' for those filters.' : '.'}`}
+            </p>
+          )}
+          {groups.map((group) => (
+            <HitCard key={group.key} group={group} terms={terms} />
+          ))}
+          {(result?.weak ?? 0) > 0 && (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {result?.weak} weaker match{result?.weak === 1 ? '' : 'es'} hidden — beyond the
+              relevance cutoff your organization configured. Try different words, or an exact name
+              or identifier.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

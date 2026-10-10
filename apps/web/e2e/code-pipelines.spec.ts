@@ -14,7 +14,7 @@
 import path from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { sealForSubject } from './keys';
 
 test.use({
@@ -71,59 +71,34 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   try {
     for (const template of SEED_PIPELINE_TEMPLATES) {
       await client.query(
-        `INSERT INTO pipeline_templates (tenant_id, provider, name, description, body)
-         VALUES ($1, 'atlassian-bitbucket', $2, $3, $4)
-         ON CONFLICT (tenant_id, provider, name) DO NOTHING`,
-        [E2E_TENANT_ID, template.name, template.description, template.body]
+        `INSERT INTO pipeline_templates (provider, name, description, body)\n         VALUES ('atlassian-bitbucket', $1, $2, $3)\n         ON CONFLICT (provider, name) DO NOTHING`,
+        [template.name, template.description, template.body]
       );
     }
-    await client.query(`DELETE FROM pipeline_templates WHERE tenant_id = $1 AND name = $2`, [
-      E2E_TENANT_ID,
-      customTemplateNameFor(ids.digit),
-    ]);
+    await client.query(`DELETE FROM pipeline_templates WHERE name = $1`, [customTemplateNameFor(ids.digit)]);
     // The person's Bitbucket grant, carrying the two checkboxes the
     // page stands on beyond a code project's own three: the admin
     // bundle (the switch) and the pipeline-variable one. code.spec.ts
     // seeds the same row without them, so this upsert sets the scopes too.
     await client.query(
-      `INSERT INTO provider_grants
-         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)
-       VALUES ($1, 'atlassian-bitbucket', 'e2e-bitbucket-account', $2, 'e2e-client', 'E2E Bitbucket',
-               $3, $4, $5, $6, $7)
-       ON CONFLICT (tenant_id, provider, provider_account_id) DO UPDATE
-         SET subject = EXCLUDED.subject,
-             encrypted_access_token = EXCLUDED.encrypted_access_token,
-             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
-             expires_at = EXCLUDED.expires_at,
-             requested_scopes = EXCLUDED.requested_scopes`,
-      [
-        E2E_TENANT_ID,
-        E2E_SUBJECT,
-        await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-access-token'),
-        await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-refresh-token'),
-        new Date(Date.now() + 365 * 86_400_000),
-        [
-          'account',
-          'repository',
-          'repository:write',
-          'pullrequest',
-          'pullrequest:write',
-          'project:admin',
-          'repository:admin',
-          'pipeline',
-          'pipeline:write',
-          'pipeline:variable',
-        ],
-        JSON.stringify({ username: 'e2e-dev' }),
-      ]
+      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)\n       VALUES ('atlassian-bitbucket', 'e2e-bitbucket-account', $1, 'e2e-client', 'E2E Bitbucket',\n               $2, $3, $4, $5, $6)\n       ON CONFLICT (provider, provider_account_id) DO UPDATE\n         SET subject = EXCLUDED.subject,\n             encrypted_access_token = EXCLUDED.encrypted_access_token,\n             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,\n             expires_at = EXCLUDED.expires_at,\n             requested_scopes = EXCLUDED.requested_scopes`,
+      [E2E_SUBJECT, await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'), await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'), new Date(Date.now() + 365 * 86_400_000), [
+                  'account',
+                  'repository',
+                  'repository:write',
+                  'pullrequest',
+                  'pullrequest:write',
+                  'project:admin',
+                  'repository:admin',
+                  'pipeline',
+                  'pipeline:write',
+                  'pipeline:variable',
+                ], JSON.stringify({ username: 'e2e-dev' })]
     );
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'Where the pipeline gets set up.', 'code', 'atlassian-bitbucket', $5, 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.name, ids.repo]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Where the pipeline gets set up.', 'code', 'atlassian-bitbucket', $4, 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.name, ids.repo]
     );
   } finally {
     await client.end();
@@ -183,12 +158,12 @@ test.describe('Code project pipelines', () => {
         fullPage: false,
       });
     const main = page.getByRole('main');
-    const pagePath = `/${E2E_SLUG}/code/${ids.projectId}/pipelines`;
+    const pagePath = `/code/${ids.projectId}/pipelines`;
 
     // ── The project page: a card in the rail after the chats, before the
     //    environment, summarizing what Bitbucket says — off, no file, no
     //    variables, the last run — and nothing to edit inline ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
     });
@@ -408,7 +383,7 @@ test.describe('Code project pipelines', () => {
   }, testInfo) => {
     const ids = idsFor(testInfo.project.name);
     const name = customTemplateNameFor(ids.digit);
-    await page.goto(`/${E2E_SLUG}/admin/pipeline-templates`);
+    await page.goto(`/admin/pipeline-templates`);
     await expect(page.getByRole('heading', { level: 1, name: 'Pipeline templates' })).toBeVisible({
       timeout: 30_000,
     });

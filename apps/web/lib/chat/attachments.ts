@@ -13,7 +13,7 @@ import type { LlmContentBlock } from '@renkei/agent-llm';
 import { chatAttachmentKey, resolveTenantBlobStore } from '@renkei/blob-store';
 import { extractText, isExtractableCandidate } from '@renkei/document-text';
 import { callMistralOcr, resolveMistralOcrConfig } from '@renkei/connector-mistral-ocr';
-import { getOrgSettings } from '@renkei/settings';
+import { getOrgSettings, getKeyDomain } from '@renkei/settings';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
 import { openText, sealText, type ContentCipher } from './content-crypto';
@@ -174,14 +174,13 @@ async function extract(
  */
 async function ocrOne(
   db: Kysely<DB>,
-  tenantId: string,
   row: AttachmentRow,
   redactor: OutboundRedactor | null,
   cipher: ContentCipher
 ): Promise<string> {
-  const config = await resolveMistralOcrConfig(tenantId);
+  const config = await resolveMistralOcrConfig();
   if (!config.ok) return NEEDS_OCR;
-  const store = await resolveTenantBlobStore(tenantId);
+  const store = await resolveTenantBlobStore();
   if (!store.ok) return NEEDS_OCR;
   const object = await store.val.getObject(row.blobKey);
   if (!object.ok) return 'ocr_failed';
@@ -205,7 +204,6 @@ async function ocrOne(
   await db
     .updateTable('chat_attachments')
     .set({ extracted_text: sealed.val, extract_status: 'done' })
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', row.id)
     .execute();
   return 'done';
@@ -220,7 +218,6 @@ async function ocrOne(
 export async function ocrChatAttachments(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     ownerSubject: string;
     chatId: string;
     attachmentIds: string[];
@@ -235,7 +232,6 @@ export async function ocrChatAttachments(
     await db
       .selectFrom('chat_attachments')
       .select(COLUMNS)
-      .where('tenant_id', '=', input.tenantId)
       .where('owner_subject', '=', input.ownerSubject)
       .where('chat_id', '=', input.chatId)
       .where('extract_status', '=', NEEDS_OCR)
@@ -249,7 +245,7 @@ export async function ocrChatAttachments(
       const row = rows[next++];
       results.push({
         id: row.id,
-        extractStatus: await ocrOne(db, input.tenantId, row, input.redactor, input.cipher),
+        extractStatus: await ocrOne(db, row, input.redactor, input.cipher),
       });
     }
   };
@@ -260,7 +256,6 @@ export async function ocrChatAttachments(
 export async function createAttachment(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     ownerSubject: string;
     chatId: string | null;
     projectId: string | null;
@@ -277,10 +272,10 @@ export async function createAttachment(
   }
 ): Promise<Result<AttachmentRow, AttachmentError>> {
   if (input.bytes.byteLength > input.maxBytes) return err('TOO_LARGE' as const);
-  const store = await resolveTenantBlobStore(input.tenantId);
+  const store = await resolveTenantBlobStore();
   if (!store.ok) return err('UNCONFIGURED' as const);
   const id = randomUUID();
-  const key = chatAttachmentKey(input.tenantId, id);
+  const key = chatAttachmentKey(await getKeyDomain(), id);
   if (!key.ok) return err('STORE' as const);
 
   const filename = cleanFilename(input.filename);
@@ -301,7 +296,6 @@ export async function createAttachment(
       .insertInto('chat_attachments')
       .values({
         id,
-        tenant_id: input.tenantId,
         owner_subject: input.ownerSubject,
         chat_id: input.chatId,
         project_id: input.projectId,
@@ -329,14 +323,12 @@ export async function createAttachment(
 /** The files tools produced in this chat — what the Artifacts button lists. */
 export async function listArtifacts(
   db: Kysely<DB>,
-  tenantId: string,
   chatId: string
 ): Promise<AttachmentRow[]> {
   if (!isUuid(chatId)) return [];
   const rows = await db
     .selectFrom('chat_attachments')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', '=', chatId)
     .where('origin', '=', 'model')
     .orderBy('created_at', 'asc')
@@ -346,14 +338,12 @@ export async function listArtifacts(
 
 export async function getAttachment(
   db: Kysely<DB>,
-  tenantId: string,
   attachmentId: string
 ): Promise<AttachmentRow | null> {
   if (!isUuid(attachmentId)) return null;
   const raw = await db
     .selectFrom('chat_attachments')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', attachmentId)
     .executeTakeFirst();
   return raw ? rowOf(raw) : null;
@@ -362,7 +352,6 @@ export async function getAttachment(
 /** The text extracted at upload (redacted as the model saw it), or null when there is none. */
 export async function getAttachmentText(
   db: Kysely<DB>,
-  tenantId: string,
   attachmentId: string,
   cipher: ContentCipher
 ): Promise<string | null> {
@@ -370,7 +359,6 @@ export async function getAttachmentText(
   const raw = await db
     .selectFrom('chat_attachments')
     .select('extracted_text')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', attachmentId)
     .executeTakeFirst();
   return raw?.extracted_text ? openText(raw.extracted_text, cipher) : null;
@@ -378,10 +366,9 @@ export async function getAttachmentText(
 
 export async function listAttachments(
   db: Kysely<DB>,
-  tenantId: string,
   home: { chatId: string } | { projectId: string }
 ): Promise<AttachmentRow[]> {
-  let query = db.selectFrom('chat_attachments').select(COLUMNS).where('tenant_id', '=', tenantId);
+  let query = db.selectFrom('chat_attachments').select(COLUMNS);
   query =
     'chatId' in home
       ? query.where('chat_id', '=', home.chatId)
@@ -393,16 +380,14 @@ export async function listAttachments(
 /** Deletes the row and then the bytes; a missing object is not a failure. */
 export async function deleteAttachment(
   db: Kysely<DB>,
-  tenantId: string,
   row: AttachmentRow
 ): Promise<boolean> {
   const result = await db
     .deleteFrom('chat_attachments')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', row.id)
     .executeTakeFirst();
   if (Number(result.numDeletedRows) === 0) return false;
-  const store = await resolveTenantBlobStore(tenantId);
+  const store = await resolveTenantBlobStore();
   if (store.ok) await store.val.deleteObject(row.blobKey);
   return true;
 }
@@ -415,7 +400,6 @@ export async function deleteAttachment(
  */
 export async function attachmentPromptBlocks(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   chatId: string,
   attachmentIds: string[],
@@ -426,18 +410,17 @@ export async function attachmentPromptBlocks(
   const rows = await db
     .selectFrom('chat_attachments')
     .select([...COLUMNS, 'extracted_text'])
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('chat_id', '=', chatId)
     .where('message_id', 'is', null)
     .where('id', 'in', ids)
     .orderBy('created_at', 'asc')
     .execute();
-  const settings = await getOrgSettings(tenantId);
+  const settings = await getOrgSettings();
   const threshold = settings.ok ? settings.val.massUploadThreshold : 10;
   if (rows.length > threshold) return [massUploadManifest(rows.map(rowOf))];
   const blocks: LlmContentBlock[] = [];
-  const store = await resolveTenantBlobStore(tenantId);
+  const store = await resolveTenantBlobStore();
   for (const raw of rows) {
     const row = rowOf(raw);
     const text = raw.extracted_text ? openText(raw.extracted_text, cipher) : null;

@@ -14,9 +14,9 @@ import { LABEL_MRN, LABEL_SSN } from './detect';
 import type { DisclosurePolicy } from '@renkei/gates';
 
 const key = deriveRedactionKey(Buffer.from('a'.repeat(32)));
-const opts = (tenant = 'tenant-1', policy: DisclosurePolicy = DEFAULT_MCP_POLICY) => ({
+const opts = (policy: DisclosurePolicy = DEFAULT_MCP_POLICY, redactionKey = key) => ({
   policy,
-  pseudonymizer: createPseudonymizer(key, tenant),
+  pseudonymizer: createPseudonymizer(redactionKey),
 });
 
 describe('redactText', () => {
@@ -48,10 +48,11 @@ describe('redactText', () => {
     expect(tokens[0]).not.toBe(tokens[1]);
   });
 
-  it('does not produce the same token in two tenants', () => {
-    // One org's tokens must not be a lookup table for another's.
-    const a = redactText('MRN: 4417732', opts('tenant-a')).text;
-    const b = redactText('MRN: 4417732', opts('tenant-b')).text;
+  it('does not produce the same token under two redaction keys', () => {
+    // One deployment's tokens must not be a lookup table for another's.
+    const other = deriveRedactionKey(Buffer.from('b'.repeat(32)));
+    const a = redactText('MRN: 4417732', opts()).text;
+    const b = redactText('MRN: 4417732', opts(DEFAULT_MCP_POLICY, other)).text;
     expect(a).not.toBe(b);
   });
 
@@ -87,19 +88,19 @@ describe('policy decisions', () => {
   });
 
   it('allow leaves the value untouched', () => {
-    const result = redactText('SSN 123-45-6789', opts('t', policyFor('allow')));
+    const result = redactText('SSN 123-45-6789', opts(policyFor('allow')));
     expect(result.text).toBe('SSN 123-45-6789');
     expect(result.counts).toEqual({});
   });
 
   it('redact masks but keeps a tail to reconcile against', () => {
-    const result = redactText('SSN 123-45-6789', opts('t', policyFor('redact')));
+    const result = redactText('SSN 123-45-6789', opts(policyFor('redact')));
     expect(result.text).toContain('6789');
     expect(result.text).not.toContain('123-45');
   });
 
   it('anonymize keeps linkage and drops the value', () => {
-    const result = redactText('SSN 123-45-6789', opts('t', policyFor('anonymize')));
+    const result = redactText('SSN 123-45-6789', opts(policyFor('anonymize')));
     expect(result.text).toMatch(/\[SSN-[0-9a-f]{8}\]/);
     expect(result.text).not.toContain('6789');
   });
@@ -108,7 +109,7 @@ describe('policy decisions', () => {
     // There is no way to halt a tool call here, so block becomes the
     // strongest edit available to a span: nothing left, not even a token to
     // correlate on. Stricter than anonymize, so nothing is weakened.
-    const result = redactText('SSN 123-45-6789', opts('t', policyFor('block')));
+    const result = redactText('SSN 123-45-6789', opts(policyFor('block')));
     expect(result.text).toBe('SSN [SSN]');
   });
 
@@ -116,7 +117,7 @@ describe('policy decisions', () => {
     // The gate's own rule (Decision #16): a classification nobody wrote a
     // rule for is the case that must not slip out.
     const empty: DisclosurePolicy = { rules: [], unlabeled: 'allow' };
-    expect(redactText('SSN 123-45-6789', opts('t', empty)).text).toBe('SSN [SSN]');
+    expect(redactText('SSN 123-45-6789', opts(empty)).text).toBe('SSN [SSN]');
   });
 });
 
@@ -136,7 +137,7 @@ describe('deriveRedactionKey', () => {
     // Failing open would leak exactly what the module exists to hide, so an
     // unconfigured deployment gets a per-process key: tokens stop being
     // stable across restarts, and redaction still happens.
-    const first = createPseudonymizer(deriveRedactionKey(null), 't');
+    const first = createPseudonymizer(deriveRedactionKey(null));
     expect(first.anonymize(LABEL_MRN, '4417732')).toMatch(/\[MRN-[0-9a-f]{8}\]/);
   });
 });

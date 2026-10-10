@@ -67,7 +67,7 @@ const secretsStore = jest.requireMock<{
 const vault = new SecretVault({ sweepIntervalMs: 60 * 60_000 });
 
 const API_KEY = 'test-worker-key';
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice' };
+const TARGET = { subject: 'auth0|alice' };
 const PAGE = {
   url: 'https://example.com/',
   title: 'Example',
@@ -229,7 +229,7 @@ describe('dispatch', () => {
   });
 
   it('refuses a request without a caller target', async () => {
-    const response = await post('/v1/browser/snapshot', { subject: 'auth0|alice' });
+    const response = await post('/v1/browser/snapshot', {});
     expect(response.status).toBe(400);
     expect(browser.snapshot).not.toHaveBeenCalled();
   });

@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import type { McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext } from './local-tools';
 import { insertMessage } from './messages';
@@ -29,9 +29,9 @@ function textOf(result: McpToolResult): string {
 maybe('chat_recall_chats', () => {
   const delegate = useTestDelegate();
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const me = `me-${tenantId.slice(0, 8)}`;
-  const colleague = `colleague-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const me = `me-${suiteId.slice(0, 8)}`;
+  const colleague = `colleague-${suiteId.slice(0, 8)}`;
   const projectId = randomUUID();
   const otherProjectId = randomUUID();
   /** This conversation, in the project. */
@@ -48,7 +48,6 @@ maybe('chat_recall_chats', () => {
   const tool = recallTools()[0]!;
   const contextFor = (chatId: string, inProject: string | null): LocalToolContext => ({
     db,
-    tenantId,
     subject: me,
     chatId,
     // The tool reads other chats as their owners; this chat's own cipher is unused here.
@@ -63,19 +62,17 @@ maybe('chat_recall_chats', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
-    await delegate.enroll(tenantId, me);
-    await delegate.enroll(tenantId, colleague);
+    await delegate.enroll(me);
+    await delegate.enroll(colleague);
     await db
       .insertInto('chat_projects')
       .values([
-        { id: projectId, tenant_id: tenantId, owner_subject: me, name: 'Ledger', kind: 'code' },
-        { id: otherProjectId, tenant_id: tenantId, owner_subject: me, name: 'Billing' },
+        { id: projectId, owner_subject: me, name: 'Ledger', kind: 'code' },
+        { id: otherProjectId, owner_subject: me, name: 'Billing' },
       ])
       .execute();
     const chat = (id: string, owner: string, project: string | null, title: string) => ({
       id,
-      tenant_id: tenantId,
       owner_subject: owner,
       project_id: project,
       title,
@@ -92,13 +89,12 @@ maybe('chat_recall_chats', () => {
       .execute();
     const say = async (chatId: string, text: string) => {
       const row = await insertMessage(db, {
-        tenantId,
         chatId,
         turnId: null,
         role: 'user',
         kind: 'prompt',
         status: 'complete',
-        cipher: await chatCipherById(db, tenantId, chatId),
+        cipher: await chatCipherById(db, chatId),
         blocks: [{ type: 'text', text }],
       });
       if (!row) throw new Error('message not sealed — is TOKEN_ENCRYPTION_KEY set?');
@@ -115,8 +111,6 @@ maybe('chat_recall_chats', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
-    await closeDatabase();
   });
 
   it('in a project, lists only the project’s other started chats', async () => {

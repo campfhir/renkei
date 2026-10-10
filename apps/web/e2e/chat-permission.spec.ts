@@ -17,7 +17,7 @@ import { createCipheriv, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { keyFor } from './keys';
 
 test.use({
@@ -71,21 +71,18 @@ async function seedParkedChat(client: Client, ids: Ids): Promise<void> {
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
   await client.query('DELETE FROM agent_notifications WHERE id = $1', [ids.notificationId]);
   await client.query(
-    `DELETE FROM user_preferences WHERE tenant_id = $1 AND subject = $2 AND key = 'chatToolPermissions'`,
-    [E2E_TENANT_ID, E2E_SUBJECT]
+    `DELETE FROM user_preferences WHERE subject = $1 AND key = 'chatToolPermissions'`,
+    [E2E_SUBJECT]
   );
   await client.query(
-    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, $3, 'anthropic', 'e2e-model', $4, true, false)`,
-    [ids.modelId, E2E_TENANT_ID, ids.modelLabel, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
+    `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, true, false)`,
+    [ids.modelId, ids.modelLabel, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
   );
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
+    `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n     VALUES ($1, $2, $3, $4, NOW())`,
+    [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
-    tenantId: E2E_TENANT_ID,
     kind: 'chat',
     resourceId: ids.chatId,
     ownerSubject: E2E_SUBJECT,
@@ -99,9 +96,8 @@ async function seedParkedChat(client: Client, ids: Ids): Promise<void> {
     decidedAt: null,
   };
   await client.query(
-    `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, stage, stage_at, tool_permission)
-     VALUES ($1, $2, $3, 'running', $4, 2, 'permission:jira_create_issue', NOW(), $5::jsonb)`,
-    [ids.turnId, E2E_TENANT_ID, ids.chatId, ids.modelId, JSON.stringify(ask)]
+    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, stage, stage_at, tool_permission)\n     VALUES ($1, $2, 'running', $3, 2, 'permission:jira_create_issue', NOW(), $4::jsonb)`,
+    [ids.turnId, ids.chatId, ids.modelId, JSON.stringify(ask)]
   );
   const rows: { seq: number; role: string; kind: string; status: string; blocks: unknown[] }[] = [
     {
@@ -125,22 +121,8 @@ async function seedParkedChat(client: Client, ids: Ids): Promise<void> {
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     const inserted = await client.query(
-      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
-      [
-        E2E_TENANT_ID,
-        ids.chatId,
-        ids.turnId,
-        row.seq,
-        row.role,
-        row.kind,
-        row.status,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? ids.modelId : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'e2e-model' : null,
-        assistant ? 'tool_use' : null,
-      ]
+      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)\n       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+      [ids.chatId, ids.turnId, row.seq, row.role, row.kind, row.status, chatKey.seal(JSON.stringify(row.blocks)), assistant ? ids.modelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null, assistant ? 'tool_use' : null]
     );
     if (assistant) {
       // The ask names the row the tool_use block sits in.
@@ -152,16 +134,8 @@ async function seedParkedChat(client: Client, ids: Ids): Promise<void> {
   }
   // The notification the ask raised (lib/chat/permission-notification.ts).
   await client.query(
-    `INSERT INTO agent_notifications (id, tenant_id, subject, kind, tool, headline, ref_id, ref_url)
-     VALUES ($1, $2, $3, 'chat_permission', 'jira_create_issue', $4, $5, $6)`,
-    [
-      ids.notificationId,
-      E2E_TENANT_ID,
-      E2E_SUBJECT,
-      `“${ids.title}” is waiting for your permission to create issue`,
-      ids.toolUseId,
-      `/${E2E_SLUG}/chat/${ids.chatId}`,
-    ]
+    `INSERT INTO agent_notifications (id, subject, kind, tool, headline, ref_id, ref_url)\n     VALUES ($1, $2, 'chat_permission', 'jira_create_issue', $3, $4, $5)`,
+    [ids.notificationId, E2E_SUBJECT, `“${ids.title}” is waiting for your permission to create issue`, ids.toolUseId, `/chat/${ids.chatId}`]
   );
 }
 
@@ -195,7 +169,7 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
   try {
     await seedParkedChat(client, ids);
 
-    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
     // The fold says what the turn is waiting on, and the card carries the
@@ -222,8 +196,8 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
       .poll(
         async () => {
           const { rows } = await client.query(
-            `SELECT value FROM user_preferences WHERE tenant_id = $1 AND subject = $2 AND key = 'chatToolPermissions'`,
-            [E2E_TENANT_ID, E2E_SUBJECT]
+            `SELECT value FROM user_preferences WHERE subject = $1 AND key = 'chatToolPermissions'`,
+            [E2E_SUBJECT]
           );
           return rows[0]?.value ?? null;
         },
@@ -243,7 +217,7 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
 
     // A second answer is refused: the turn is no longer waiting on it.
     const again = await page.request.post(
-      `/api/tenant/${E2E_TENANT_ID}/chat/chats/${ids.chatId}/turns/${ids.turnId}/permission`,
+      `/api/chat/chats/${ids.chatId}/turns/${ids.turnId}/permission`,
       { data: { toolUseId: ids.toolUseId, decision: 'deny' } }
     );
     expect(again.status()).toBe(409);
@@ -252,7 +226,7 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
     // Preferences shows the decision in Jira's fold — Allow for the tool
     // just allowed — with Ask and Block beside it, and the system-
     // notification click preference sits with the other switches.
-    await page.goto(`/${E2E_SLUG}/preferences`);
+    await page.goto(`/preferences`);
     const section = page.getByRole('region', { name: 'What a chat may do' });
     await expect(section).toBeVisible();
     await expect(
@@ -281,8 +255,8 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
     await expect
       .poll(async () => {
         const { rows } = await client.query(
-          `SELECT value FROM user_preferences WHERE tenant_id = $1 AND subject = $2 AND key = 'chatToolPermissions'`,
-          [E2E_TENANT_ID, E2E_SUBJECT]
+          `SELECT value FROM user_preferences WHERE subject = $1 AND key = 'chatToolPermissions'`,
+          [E2E_SUBJECT]
         );
         return rows[0]?.value ?? null;
       })
@@ -298,21 +272,21 @@ test('the permission notification opens the chat in the same tab', async ({ page
   const ids = idsFor(testInfo.project.name);
   try {
     await seedParkedChat(client, ids);
-    await page.goto(`/${E2E_SLUG}/notifications`);
+    await page.goto(`/notifications`);
     const link = page.getByRole('link', { name: `“${ids.title}” is waiting for your permission` });
     await expect(link.first()).toBeVisible();
-    await expect(link.first()).toHaveAttribute('href', `/${E2E_SLUG}/chat/${ids.chatId}`);
+    await expect(link.first()).toHaveAttribute('href', `/chat/${ids.chatId}`);
     await expect(link.first()).not.toHaveAttribute('target', '_blank');
     await shot(page, testInfo, 'notifications-chat-permission.png');
 
     // The banner's click path: the open route marks the row read and lands
     // in the chat (an in-app link, whatever the source-app preference says).
     const opened = await page.request.get(
-      `/api/tenant/${E2E_TENANT_ID}/notifications/${ids.notificationId}/open`,
+      `/api/notifications/${ids.notificationId}/open`,
       { maxRedirects: 0 }
     );
     expect(opened.status()).toBe(302);
-    expect(opened.headers()['location']).toContain(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    expect(opened.headers()['location']).toContain(`/chat/${ids.chatId}`);
     const { rows } = await client.query('SELECT read_at FROM agent_notifications WHERE id = $1', [
       ids.notificationId,
     ]);

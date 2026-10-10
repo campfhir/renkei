@@ -44,15 +44,24 @@ export const USER_SPACES_WEBHOOKS: readonly RequiredWebhook[] = [
   { resource: 'messages', event: 'created', name: 'Renkei all spaces' },
 ];
 
+/**
+ * Strip trailing slashes by scanning from the end: the one-line regex
+ * (`/\/+$/`) backtracks quadratically on a run of slashes that is not at
+ * the very end, and this value comes from configuration.
+ */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 /** The per-user receipt endpoint an all-spaces webhook must target. */
 export function webexUserWebhookTargetUrl(
   publicBaseUrl: string,
-  tenantId: string,
   accountId: string
 ): string {
   return (
-    `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/webex/` +
-    `${encodeURIComponent(tenantId)}/user/${encodeURIComponent(accountId)}`
+    `${stripTrailingSlashes(publicBaseUrl)}/api/webhooks/webex/user/${encodeURIComponent(accountId)}`
   );
 }
 

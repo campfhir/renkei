@@ -40,13 +40,11 @@ function payloadOf(value: unknown): OptimizeJobPayload | null {
  */
 async function ownerOf(
   db: Kysely<DB>,
-  tenantId: string,
   optimizationId: string
 ): Promise<{ subject: string; agentId: string } | null> {
   const row = await db
     .selectFrom('agent_optimizations')
     .select(['owner_subject', 'agent_id'])
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', optimizationId)
     .executeTakeFirst();
   if (!row) return null;
@@ -66,24 +64,21 @@ export function createOptimizeHandler(deps: {
   const doFetch: PostJson = deps.fetchImpl ?? fetch;
 
   return async function handleOptimize(event: {
-    tenant_id: string;
     payload: unknown;
   }): Promise<'skipped' | undefined> {
     const payload = payloadOf(event.payload);
     if (!payload) throw new Error('optimize job payload missing optimizationId');
 
-    const owner = await ownerOf(deps.db, event.tenant_id, payload.optimizationId);
+    const owner = await ownerOf(deps.db, payload.optimizationId);
     if (!owner) {
       logger.debug('optimization {optimizationId} no longer exists; dropping the job', {
         component: 'worker-agents/optimize',
-        tenantId: event.tenant_id,
         optimizationId: payload.optimizationId,
       });
       return 'skipped';
     }
 
     const token = await mintRunToken(deps.db, {
-      tenantId: event.tenant_id,
       subject: owner.subject,
       // The analysis acts as the PERSON: it reads their agent's history and
       // may start a revision draft on their behalf, exactly as they could.
@@ -93,7 +88,7 @@ export function createOptimizeHandler(deps: {
 
     try {
       const url =
-        `${deps.webBaseUrl}/api/tenant/${encodeURIComponent(event.tenant_id)}` +
+        `${deps.webBaseUrl}/api` +
         `/agents/optimize/${encodeURIComponent(payload.optimizationId)}/run`;
       const response = await doFetch(url, {
         method: 'POST',
@@ -111,7 +106,6 @@ export function createOptimizeHandler(deps: {
       }
       logger.debug('optimization {optimizationId} completed', {
         component: 'worker-agents/optimize',
-        tenantId: event.tenant_id,
         optimizationId: payload.optimizationId,
       });
       return undefined;

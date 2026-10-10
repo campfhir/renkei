@@ -29,8 +29,8 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('chat_subagent_runs model', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const chatId = randomUUID();
   const turnId = randomUUID();
   const fastModelId = randomUUID();
@@ -40,22 +40,17 @@ maybe('chat_subagent_runs model', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `subagent-${tenantId.slice(0, 8)}` })
-      .execute();
-    await db
       .insertInto('chats')
-      .values({ id: chatId, tenant_id: tenantId, owner_subject: subject })
+      .values({ id: chatId, owner_subject: subject })
       .execute();
     await db
       .insertInto('chat_turns')
-      .values({ id: turnId, tenant_id: tenantId, chat_id: chatId, status: 'running' })
+      .values({ id: turnId, chat_id: chatId, status: 'running' })
       .execute();
     await db
       .insertInto('llm_model_configs')
       .values({
         id: fastModelId,
-        tenant_id: tenantId,
         label: 'Fast model',
         provider: 'anthropic',
         model: 'claude-haiku-4-5',
@@ -67,17 +62,15 @@ maybe('chat_subagent_runs model', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_subagent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chat_turns WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM llm_model_configs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_subagent_runs WHERE chat_id = ${chatId}`.execute(db);
+    await sql`DELETE FROM chat_turns WHERE chat_id = ${chatId}`.execute(db);
+    await sql`DELETE FROM chats WHERE id = ${chatId}`.execute(db);
+    await sql`DELETE FROM llm_model_configs WHERE id = ${fastModelId}`.execute(db);
     await closeDatabase();
   });
 
   it('keeps the model a run started on and reads it back with its label, then without', async () => {
     const runId = await createSubagentRun(db, {
-      tenantId,
       chatId,
       turnId,
       toolUseId: 'toolu_fast',
@@ -102,7 +95,7 @@ maybe('chat_subagent_runs model', () => {
       },
       testCipher
     );
-    const run = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_fast', testCipher);
+    const run = await getSubagentRunByCall(db, chatId, 'toolu_fast', testCipher);
     expect(run?.model).toEqual({
       provider: 'anthropic',
       model: 'claude-haiku-4-5',
@@ -111,13 +104,12 @@ maybe('chat_subagent_runs model', () => {
 
     // The config removed: the run still says what answered, by name.
     await sql`DELETE FROM llm_model_configs WHERE id = ${fastModelId}`.execute(db);
-    const later = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_fast', testCipher);
+    const later = await getSubagentRunByCall(db, chatId, 'toolu_fast', testCipher);
     expect(later?.model).toEqual({ provider: 'anthropic', model: 'claude-haiku-4-5', label: null });
   });
 
   it('records no model for a run started without one, as before the column existed', async () => {
     const runId = await createSubagentRun(db, {
-      tenantId,
       chatId,
       turnId,
       toolUseId: 'toolu_plain',
@@ -129,7 +121,7 @@ maybe('chat_subagent_runs model', () => {
       cipher: testCipher,
     });
     expect(runId).not.toBeNull();
-    const run = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_plain', testCipher);
+    const run = await getSubagentRunByCall(db, chatId, 'toolu_plain', testCipher);
     expect(run?.model).toBeNull();
   });
 });

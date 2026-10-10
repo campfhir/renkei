@@ -70,13 +70,11 @@ export interface AgentMemory {
 /** The agent's owner — whose automation key the memory is sealed under. */
 async function ownerSubjectOf(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<string | null> {
   const row = await db
     .selectFrom('agents')
     .select('owner_subject')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', agentId)
     .executeTakeFirst();
   return row?.owner_subject ?? null;
@@ -89,14 +87,12 @@ async function ownerSubjectOf(
  * read would be a memory the run acts on without knowing it is partial.
  */
 async function openContents(
-  tenantId: string,
   ownerSubject: string,
   stored: string[]
 ): Promise<{ ok: true; contents: string[] } | { ok: false; reason: KeyOpError }> {
   const sealedIndexes = stored.flatMap((value, index) => (isUserSealed(value) ? [index] : []));
   if (sealedIndexes.length === 0) return { ok: true, contents: stored };
   const opened = await delegateClient().openForSubject(
-    tenantId,
     ownerSubject,
     sealedIndexes.map((index) => stored[index])
   );
@@ -115,12 +111,10 @@ async function openContents(
 
 /** One value sealed under the owner's automation key, or the delegate's verdict. */
 async function sealContent(
-  tenantId: string,
   ownerSubject: string,
   content: string
 ): Promise<{ ok: true; sealed: string } | { ok: false; reason: KeyOpError }> {
   const sealed = await delegateClient().sealForSubject(
-    tenantId,
     ownerSubject,
     [content],
     'automation'
@@ -146,7 +140,6 @@ function clip(text: string, max: number): string {
 /** The newest slice of an agent's memory, bounded for injection. */
 export async function readAgentMemory(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   limits: { maxEntries?: number } = {}
 ): Promise<AgentMemory> {
@@ -154,7 +147,6 @@ export async function readAgentMemory(
   const rows = await db
     .selectFrom('agent_memories')
     .select(['id', 'kind', 'content', 'created_at', 'updated_at'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .orderBy('created_at', 'desc')
     .orderBy('id', 'desc')
@@ -169,7 +161,6 @@ export async function readAgentMemory(
       (await db
         .selectFrom('agent_memories')
         .select(['id', 'kind', 'content', 'created_at', 'updated_at'])
-        .where('tenant_id', '=', tenantId)
         .where('agent_id', '=', agentId)
         .where('kind', '=', 'summary')
         .executeTakeFirst()) ?? null;
@@ -177,9 +168,9 @@ export async function readAgentMemory(
   const entryRows = rows.filter((row) => row.kind === 'entry').slice(0, maxEntries);
   if (summaryRow === null && entryRows.length === 0) return { ...NO_MEMORY };
 
-  const owner = await ownerSubjectOf(db, tenantId, agentId);
+  const owner = await ownerSubjectOf(db, agentId);
   if (owner === null) return { ...NO_MEMORY, unavailable: 'NO_USER_KEY' };
-  const opened = await openContents(tenantId, owner, [
+  const opened = await openContents(owner, [
     ...(summaryRow ? [summaryRow.content] : []),
     ...entryRows.map((row) => row.content),
   ]);
@@ -211,27 +202,26 @@ export async function readAgentMemory(
  */
 export async function appendAgentMemory(
   db: Kysely<DB>,
-  input: { tenantId: string; agentId: string; content: string; runId?: string }
+  input: { agentId: string; content: string; runId?: string }
 ): Promise<{ inserted: boolean }> {
   const content = clip(input.content.trim(), MEMORY_ENTRY_MAX_CHARS);
   if (!content) return { inserted: false };
-  const owner = await ownerSubjectOf(db, input.tenantId, input.agentId);
+  const owner = await ownerSubjectOf(db, input.agentId);
   if (owner === null) return { inserted: false };
   // The duplicate check reads the agent's entries back through the owner's
   // key: two seals of one text differ byte for byte, so equality has to be
   // judged on the plaintext. Bounded by MEMORY_HARD_CAP, one delegate call.
-  const existing = await readAgentMemory(db, input.tenantId, input.agentId, {
+  const existing = await readAgentMemory(db, input.agentId, {
     maxEntries: MEMORY_HARD_CAP,
   });
   if (existing.unavailable !== null) return { inserted: false };
   if (existing.entries.some((entry) => entry.content === content)) return { inserted: false };
-  const sealed = await sealContent(input.tenantId, owner, content);
+  const sealed = await sealContent(owner, content);
   if (!sealed.ok) return { inserted: false };
   await db
     .insertInto('agent_memories')
     .values({
       id: randomUUID(),
-      tenant_id: input.tenantId,
       agent_id: input.agentId,
       kind: 'entry',
       content: sealed.sealed,
@@ -244,20 +234,18 @@ export async function appendAgentMemory(
 /** Replace (or create) the agent's one rolling summary. */
 export async function writeAgentMemorySummary(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   content: string
 ): Promise<void> {
   const clipped = clip(content.trim(), MEMORY_SUMMARY_MAX_CHARS);
-  const owner = await ownerSubjectOf(db, tenantId, agentId);
+  const owner = await ownerSubjectOf(db, agentId);
   if (owner === null) throw new Error('agent not found: no owner to seal the summary for');
-  const sealed = await sealContent(tenantId, owner, clipped);
+  const sealed = await sealContent(owner, clipped);
   if (!sealed.ok) throw new Error(`memory summary could not be sealed: ${sealed.reason}`);
   await db
     .insertInto('agent_memories')
     .values({
       id: randomUUID(),
-      tenant_id: tenantId,
       agent_id: agentId,
       kind: 'summary',
       content: sealed.sealed,
@@ -279,11 +267,10 @@ export async function writeAgentMemorySummary(
  * again next pass).
  */
 export async function openAgentMemoryContents(
-  tenantId: string,
   ownerSubject: string,
   stored: string[]
 ): Promise<{ ok: true; contents: string[] } | { ok: false; reason: KeyOpError }> {
-  return openContents(tenantId, ownerSubject, stored);
+  return openContents(ownerSubject, stored);
 }
 
 /** What a run's prompt may carry of the agent's knowledge notes. */
@@ -335,7 +322,6 @@ export const AGENT_NOTES_INJECT_MAX_NOTES = 50;
  */
 export async function renderAgentKnowledgeNotes(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<string> {
   const keyResult = contentEncryptionKey();
@@ -343,7 +329,6 @@ export async function renderAgentKnowledgeNotes(
   const rows = await db
     .selectFrom('knowledge_chunks')
     .select(['ref_id', 'metadata', 'content', 'source_at'])
-    .where('tenant_id', '=', tenantId)
     .where('provider', '=', 'note')
     .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
     .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
@@ -421,13 +406,11 @@ export function renderAgentMemory(memory: AgentMemory): string {
  */
 export async function countAgentMemory(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string
 ): Promise<{ entries: number; hasSummary: boolean }> {
   const rows = await db
     .selectFrom('agent_memories')
     .select(['kind', ({ fn }) => fn.countAll<string>().as('count')])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .groupBy('kind')
     .execute();
@@ -472,15 +455,13 @@ export interface AgentMemoryForgetResult {
  */
 export async function forgetAgentMemory(
   db: Kysely<DB>,
-  tenantId: string,
   agentId: string,
   target: AgentMemoryTarget
 ): Promise<AgentMemoryForgetResult> {
   if (target.kind === 'all') {
-    const before = await countAgentMemory(db, tenantId, agentId);
+    const before = await countAgentMemory(db, agentId);
     await db
       .deleteFrom('agent_memories')
-      .where('tenant_id', '=', tenantId)
       .where('agent_id', '=', agentId)
       .execute();
     return {
@@ -493,7 +474,6 @@ export async function forgetAgentMemory(
   if (target.kind === 'summary') {
     const deleted = await db
       .deleteFrom('agent_memories')
-      .where('tenant_id', '=', tenantId)
       .where('agent_id', '=', agentId)
       .where('kind', '=', 'summary')
       .executeTakeFirst();
@@ -522,7 +502,6 @@ export async function forgetAgentMemory(
   const found = await db
     .selectFrom('agent_memories')
     .select(['id'])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('kind', '=', 'entry')
     .where('id', 'in', wellFormed)
@@ -531,7 +510,6 @@ export async function forgetAgentMemory(
   if (foundIds.length > 0) {
     await db
       .deleteFrom('agent_memories')
-      .where('tenant_id', '=', tenantId)
       .where('agent_id', '=', agentId)
       .where('kind', '=', 'entry')
       .where('id', 'in', foundIds)

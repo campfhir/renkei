@@ -45,7 +45,7 @@ import {
   topLocation,
   updateNode,
   type InsertLocation,
-} from '@/app/[slug]/agents/builder/flow-tree';
+} from '@/app/(app)/agents/builder/flow-tree';
 
 /** Where a node should land. Exactly one anchor, checked by the caller. */
 export interface LocationSpec {

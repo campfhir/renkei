@@ -65,7 +65,7 @@ const FAKE_DB = {};
 const DEST_SHARE = '5d1f1a0e-6c7b-4e2a-9f3c-1b2d3e4f5a6b';
 
 function context(): MCPToolContext {
-  return { tenantId: 'tenant-1', subject: 'auth0|alice' } as unknown as MCPToolContext;
+  return { subject: 'auth0|alice' } as unknown as MCPToolContext;
 }
 
 function registerAll(): Map<string, Handler> {
@@ -99,7 +99,6 @@ describe('batch_start_document_pipeline', () => {
     });
 
     expect(createBatchMock).toHaveBeenCalledWith(FAKE_DB, {
-      tenantId: 'tenant-1',
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       kind: 'document-ocr-pipeline',
@@ -112,7 +111,7 @@ describe('batch_start_document_pipeline', () => {
       },
       scheduleId: undefined,
     });
-    expect(enqueueDiscoverMock).toHaveBeenCalledWith('the-producer', 'tenant-1', 'batch-1');
+    expect(enqueueDiscoverMock).toHaveBeenCalledWith('the-producer', 'batch-1');
     expect(result.content[0]?.text).toContain('batch-1');
   });
 

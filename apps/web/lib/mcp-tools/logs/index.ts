@@ -1,22 +1,22 @@
 /**
  * The `log_search` tool — access to Renkei's own activity log, the same
- * store `apps/web/app/[slug]/logs` reads for the web Logs page.
+ * store `apps/web/app/(app)/logs` reads for the web Logs page.
  *
  * An MCP bearer token now carries the caller's renkei roles (migration 091,
  * `context.roles`), captured from their browser session when the token was
- * issued — same source `apps/web/app/api/tenant/[tenantId]/logs/route.ts`
+ * issued — same source `apps/web/app/api/logs/route.ts`
  * reads for the web page's own role branch. A caller with no roles on the
  * token (undefined/empty — a token issued before migration 091, or one that
  * never went through the browser authorize step, e.g. an 'agent' token) is
  * treated as holding none, the same fail-closed default `hasRole`
  * (`lib/session.ts`) uses: no ROLE_OPERATOR means the self-scoped branch,
- * never tenant-wide.
+ * never organization-wide.
  *
- * `renkei-operator` gets the same tenant-wide search the web page's operator
+ * `renkei-operator` gets the same organization-wide search the web page's operator
  * branch does — every account's activity, not just their own, and no Jira
  * grant of their own is required to ask for it. Everyone else gets exactly
  * the web page's non-operator branch: their own Jira-linked account's
- * activity (`apps/web/app/[slug]/logs/actions.ts`). That remains the safer
+ * activity (`apps/web/app/(app)/logs/actions.ts`). That remains the safer
  * default for a surface whose output can reach a third-party model: log
  * rows can carry secure()-marked request/response bodies (failed-call
  * payloads), and this tool never renders those back for either branch, even
@@ -63,7 +63,7 @@ import type { MCPToolContext } from '../common';
 export const LOGS_CONNECTOR = 'logs';
 
 const LOG_LEVEL_VALUES = ['debug', 'info', 'warn', 'error', 'critical'] as const;
-/** Mirrors the web Logs page's own default (apps/web/app/[slug]/logs/window.ts). */
+/** Mirrors the web Logs page's own default (apps/web/app/(app)/logs/window.ts). */
 const DEFAULT_LEVELS = ['warn', 'error', 'critical'];
 const DEFAULT_WINDOW_DAYS = 7;
 const MAX_LIMIT = 100;
@@ -81,9 +81,9 @@ const DEFAULT_LIMIT = 20;
 const ALLOWED_META = ['component', 'tool', 'url', 'method', 'status', 'reason', 'action'];
 
 /**
- * Added on top of ALLOWED_META for the operator (tenant-wide) branch only.
+ * Added on top of ALLOWED_META for the operator (organization-wide) branch only.
  * The exclusion reasoning above stops applying once a result can span every
- * account in the tenant — without these, an operator could not tell whose
+ * account in the organization — without these, an operator could not tell whose
  * activity a given row was.
  */
 const OPERATOR_EXTRA_META = ['subject', 'accountId', 'displayName'];
@@ -239,7 +239,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
         "Search Renkei's own activity log for entries about API calls, request failures, and " +
         'the like. Self-scoped to YOUR OWN Jira-linked account by default, the same view a ' +
         'non-admin gets on the web Logs page. Callers holding the renkei-operator role get ' +
-        "the web page's operator view instead — every account's activity across the tenant, " +
+        "the web page's operator view instead — every account's activity across the organization, " +
         'no Jira grant of your own required.\n\n' +
         'Filter with "filter" (structured, recommended for AND/OR), "query" (a short string ' +
         'grammar), or both — they combine with AND. ' +
@@ -284,7 +284,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
       // the module comment above for what can leave roles unset.
       const isOperator = (context.roles ?? []).includes(ROLE_OPERATOR);
 
-      // Operators search the whole tenant, so they need no Jira account of
+      // Operators search the whole organization, so they need no Jira account of
       // their own; everyone else stays scoped to the account backing their
       // own Jira grant, same as the web page's non-admin branch.
       let accountId: string | undefined;
@@ -347,7 +347,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
         ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
       });
       const result = await adapter.query(
-        buildLogQueryOptions(combineExprs(filterExpr, queryExpr), context.tenantId, accountId, {
+        buildLogQueryOptions(combineExprs(filterExpr, queryExpr), accountId, {
           levels,
           start,
           end,
@@ -360,7 +360,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
       }
 
       const rows = result.val;
-      const scopeLabel = isOperator ? 'tenant-wide' : 'your own activity only';
+      const scopeLabel = isOperator ? 'organization-wide' : 'your own activity only';
       if (rows.length === 0) {
         return textResult(`No log entries match (${scopeLabel}).`);
       }

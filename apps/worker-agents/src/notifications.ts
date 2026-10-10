@@ -162,7 +162,6 @@ export function notificationDeliverer(mcp: McpClient, toolsByName: Map<string, M
 }
 
 export interface NotifierContext {
-  tenantId: string;
   /** Who reads this: the run's owner. */
   subject: string;
   agentId: string;
@@ -198,10 +197,7 @@ export interface Notifier {
  * `NotifierContext` (prefs, an MCP session): a card raised while pausing a
  * run, for instance, has the run's identity but no reason to carry those.
  */
-type NotificationRowContext = Pick<
-  NotifierContext,
-  'tenantId' | 'subject' | 'agentId' | 'agentName' | 'runId'
->;
+type NotificationRowContext = Pick<NotifierContext, 'subject' | 'agentId' | 'agentName' | 'runId'>;
 
 /**
  * The whole reason this never throws — one place, one swallow. Resolves
@@ -229,7 +225,6 @@ async function write(
       .insertInto('agent_notifications')
       .values({
         id,
-        tenant_id: context.tenantId,
         subject: context.subject,
         kind: row.kind,
         category: row.category ?? null,
@@ -248,7 +243,6 @@ async function write(
   } catch (error) {
     logger.warn('could not record a notification for run {runId}', {
       component: 'worker-agents/notifications',
-      tenantId: context.tenantId,
       runId: context.runId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -268,7 +262,6 @@ async function write(
     const quiet = row.kind === 'question' || row.kind === 'approval';
     void sendPush(
       db,
-      context.tenantId,
       context.subject,
       keyResult.val,
       {
@@ -323,12 +316,10 @@ async function retally(
       .updateTable('agent_notifications')
       .set({ headline })
       .where('id', '=', id)
-      .where('tenant_id', '=', context.tenantId)
       .execute();
   } catch (error) {
     logger.warn('could not tally a notification for run {runId}', {
       component: 'worker-agents/notifications',
-      tenantId: context.tenantId,
       runId: context.runId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -459,6 +450,6 @@ export async function notifierFor(
   db: Kysely<DB>,
   context: Omit<NotifierContext, 'prefs'>
 ): Promise<Notifier> {
-  const prefs = await getNotificationPrefs(context.tenantId, context.subject);
+  const prefs = await getNotificationPrefs(context.subject);
   return createNotifier(db, { ...context, prefs });
 }

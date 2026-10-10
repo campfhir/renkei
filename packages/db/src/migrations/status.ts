@@ -176,6 +176,7 @@ export const EXPECTED_MIGRATIONS = [
   '150-file-share-host-key',
   '151-oauth-consent-requests',
   '152-sandbox-feature-settings',
+  '153-single-organization',
 ];
 
 export interface MigrationStatus {

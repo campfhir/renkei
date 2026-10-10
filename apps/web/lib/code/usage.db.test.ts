@@ -14,8 +14,8 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('loadCodeProjectUsage', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const projectId = randomUUID();
   const otherProjectId = randomUUID();
   const chatA = randomUUID();
@@ -26,7 +26,6 @@ maybe('loadCodeProjectUsage', () => {
     db
       .insertInto('chat_turns')
       .values({
-        tenant_id: tenantId,
         chat_id: chatId,
         status: 'completed',
         input_tokens: inputTokens,
@@ -38,14 +37,10 @@ maybe('loadCodeProjectUsage', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `code-usage-${tenantId.slice(0, 8)}` })
-      .execute();
     for (const id of [projectId, otherProjectId]) {
       await db
         .insertInto('chat_projects')
-        .values({ id, tenant_id: tenantId, owner_subject: subject, name: 'p', kind: 'code' })
+        .values({ id, owner_subject: subject, name: 'p', kind: 'code' })
         .execute();
     }
     for (const [id, projectFk] of [
@@ -55,7 +50,7 @@ maybe('loadCodeProjectUsage', () => {
     ] as const) {
       await db
         .insertInto('chats')
-        .values({ id, tenant_id: tenantId, owner_subject: subject, project_id: projectFk })
+        .values({ id, owner_subject: subject, project_id: projectFk })
         .execute();
     }
     // Chat A: two turns — an orchestrator's own call, then a turn whose
@@ -70,15 +65,14 @@ maybe('loadCodeProjectUsage', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_turns WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chat_projects WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_turns WHERE chat_id IN (SELECT id FROM chats WHERE owner_subject = ${subject})`.execute(db);
+    await sql`DELETE FROM chats WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM chat_projects WHERE owner_subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
   it('sums every turn per chat, and the project total across every chat', async () => {
-    const usage = await loadCodeProjectUsage(db, tenantId, projectId);
+    const usage = await loadCodeProjectUsage(db, projectId);
     expect(usage.byChat[chatA]).toEqual({ inputTokens: 6_000, outputTokens: 1_100 });
     expect(usage.byChat[chatB]).toEqual({ inputTokens: 300, outputTokens: 50 });
     expect(usage.byChat[chatOutside]).toBeUndefined();
@@ -86,7 +80,7 @@ maybe('loadCodeProjectUsage', () => {
   });
 
   it('answers empty for a project with no turns', async () => {
-    const empty = await loadCodeProjectUsage(db, tenantId, randomUUID());
+    const empty = await loadCodeProjectUsage(db, randomUUID());
     expect(empty).toEqual({ total: { inputTokens: 0, outputTokens: 0 }, byChat: {} });
   });
 });

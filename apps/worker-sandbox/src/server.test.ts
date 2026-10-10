@@ -97,7 +97,7 @@ function post(path: string, body: unknown, key: string | null = API_KEY): Promis
   });
 }
 
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice' };
+const TARGET = { subject: 'auth0|alice' };
 
 describe('authentication', () => {
   it('serves /health without a key', async () => {
@@ -189,7 +189,7 @@ describe('batch quota pool', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(store.countFilesForBatch).toHaveBeenCalledWith(expect.anything(), 'tenant-1', BATCH_ID);
+    expect(store.countFilesForBatch).toHaveBeenCalledWith(expect.anything(), BATCH_ID);
     expect(store.countFiles).not.toHaveBeenCalled();
     const inserted = store.insertFile.mock.calls[0]?.[1] as { batchId: string | null };
     expect(inserted.batchId).toBe(BATCH_ID);

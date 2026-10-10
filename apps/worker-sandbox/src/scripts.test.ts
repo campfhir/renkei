@@ -52,8 +52,8 @@ const PYTHON_AVAILABLE =
   existsSync(DEFAULT_PYTHON) || spawnSync('python3', ['--version']).status === 0;
 const itWithPython = PYTHON_AVAILABLE ? it : it.skip;
 
-const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice' };
-const OTHER = { tenantId: 'tenant-1', subject: 'auth0|bob' };
+const TARGET = { subject: 'auth0|alice' };
+const OTHER = { subject: 'auth0|bob' };
 const REPORT_ID = '11111111-1111-4111-8111-111111111111';
 const LOOKUP_ID = '22222222-2222-4222-8222-222222222222';
 
@@ -70,7 +70,7 @@ const staged = new Map<
 >();
 
 async function stage(id: string, filename: string, content: string): Promise<void> {
-  const storageKey = disk.newStorageKey(TARGET.tenantId, TARGET.subject);
+  const storageKey = disk.newStorageKey(TARGET.subject);
   await disk.writeStream(storageKey, Readable.from([Buffer.from(content)]), 1_048_576);
   staged.set(id, { id, filename, contentType: null, storageKey });
 }

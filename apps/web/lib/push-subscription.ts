@@ -23,41 +23,6 @@ function supportsPush(): boolean {
   );
 }
 
-const PUSH_DB_NAME = 'renkei-push';
-const PUSH_DB_STORE = 'config';
-
-/**
- * Remembers which tenant this browser last subscribed for, in the same
- * origin storage the service worker can reach — not a message to the
- * worker, since a worker that has been asleep for a while (the case this
- * matters for) has no page around to send one. sw.js's
- * `pushsubscriptionchange` handler reads this back: a browser can silently
- * rotate or drop a push subscription (iOS in particular), and without this
- * the worker would have no way to know which tenant to re-subscribe under
- * and re-POST to.
- */
-async function rememberTenantForPush(tenantId: string): Promise<void> {
-  try {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open(PUSH_DB_NAME, 1);
-      req.onupgradeneeded = () => req.result.createObjectStore(PUSH_DB_STORE);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(PUSH_DB_STORE, 'readwrite');
-      tx.objectStore(PUSH_DB_STORE).put(tenantId, 'tenantId');
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-    db.close();
-  } catch {
-    // Best-effort — the mount-time re-subscription in
-    // desktop-notifications.tsx still recovers a stale subscription the
-    // next time the app is opened, even without this.
-  }
-}
-
 /** VAPID keys travel base64url; `applicationServerKey` wants raw bytes. */
 function urlBase64ToUint8Array(base64url: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64url.length % 4)) % 4);
@@ -78,15 +43,14 @@ function urlBase64ToUint8Array(base64url: string): Uint8Array<ArrayBuffer> {
  * already-subscribed device returns the existing subscription rather than
  * minting a new one, and the server upserts by endpoint either way.
  */
-export async function ensurePushSubscription(tenantId: string): Promise<boolean> {
+export async function ensurePushSubscription(): Promise<boolean> {
   if (!supportsPush() || Notification.permission !== 'granted') return false;
-  void rememberTenantForPush(tenantId);
 
   try {
     const registration = await navigator.serviceWorker.ready;
     let subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
-      const keyResponse = await fetch(`/api/tenant/${tenantId}/push/public-key`);
+      const keyResponse = await fetch(`/api/push/public-key`);
       if (!keyResponse.ok) return false;
       const body: unknown = await keyResponse.json();
       const publicKey =
@@ -104,7 +68,7 @@ export async function ensurePushSubscription(tenantId: string): Promise<boolean>
     const json = subscription.toJSON();
     if (typeof json.endpoint !== 'string' || !json.keys) return false;
 
-    const saveResponse = await fetch(`/api/tenant/${tenantId}/push/subscribe`, {
+    const saveResponse = await fetch(`/api/push/subscribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
@@ -121,7 +85,7 @@ export async function ensurePushSubscription(tenantId: string): Promise<boolean>
  * `ensurePushSubscription` for the "already granted" half rather than
  * duplicating it.
  */
-export async function enableDesktopNotifications(tenantId: string): Promise<EnableOutcome> {
+export async function enableDesktopNotifications(): Promise<EnableOutcome> {
   if (!supportsPush()) return 'unsupported';
 
   let permission = Notification.permission;
@@ -134,13 +98,13 @@ export async function enableDesktopNotifications(tenantId: string): Promise<Enab
   }
   if (permission !== 'granted') return permission === 'denied' ? 'denied' : 'unsupported';
 
-  const subscribed = await ensurePushSubscription(tenantId);
+  const subscribed = await ensurePushSubscription();
   return subscribed ? 'granted' : 'subscribe-failed';
 }
 
 /** Best-effort: unsubscribes this browser's device and tells the server,
  *  even if one half fails — a stale row just gets pruned on its next 404. */
-export async function disableDesktopNotifications(tenantId: string): Promise<void> {
+export async function disableDesktopNotifications(): Promise<void> {
   if (!supportsPush()) return;
   try {
     const registration = await navigator.serviceWorker.getRegistration();
@@ -149,7 +113,7 @@ export async function disableDesktopNotifications(tenantId: string): Promise<voi
 
     const endpoint = subscription.endpoint;
     await subscription.unsubscribe().catch(() => undefined);
-    await fetch(`/api/tenant/${tenantId}/push/unsubscribe`, {
+    await fetch(`/api/push/unsubscribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint }),

@@ -100,7 +100,6 @@ export function identityClaimsFromIdToken(
 
 /** Record (or refresh) who a subject is. Upserted on every sign-in. */
 export async function upsertIdentity(
-  tenantId: string,
   subject: string,
   claims: IdentityClaims
 ): Promise<Result<void, 'DB_ERROR'>> {
@@ -112,14 +111,13 @@ export async function upsertIdentity(
       dbResult.val
         .insertInto('identities')
         .values({
-          tenant_id: tenantId,
           subject,
           email: claims.email,
           display_name: claims.displayName,
           idp_groups: claims.idpGroups,
         })
         .onConflict((oc) =>
-          oc.columns(['tenant_id', 'subject']).doUpdateSet({
+          oc.columns(['subject']).doUpdateSet({
             email: claims.email,
             display_name: claims.displayName,
             idp_groups: claims.idpGroups,
@@ -135,7 +133,6 @@ export async function upsertIdentity(
 
 /** The recorded email for a subject, or null when none is on record. */
 export async function getIdentityEmail(
-  tenantId: string,
   subject: string
 ): Promise<Result<string | null, 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -146,7 +143,6 @@ export async function getIdentityEmail(
       dbResult.val
         .selectFrom('identities')
         .select('email')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -163,7 +159,6 @@ export async function getIdentityEmail(
  */
 export async function idpGroupsFor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<Result<string[], 'DB_ERROR'>> {
   const rowResult = await wrapAsync(
@@ -171,7 +166,6 @@ export async function idpGroupsFor(
       db
         .selectFrom('identities')
         .select('idp_groups')
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -187,7 +181,6 @@ export async function idpGroupsFor(
  */
 export async function observedIdpGroups(
   db: Kysely<DB>,
-  tenantId: string,
   query = '',
   limit = 50
 ): Promise<string[]> {
@@ -197,7 +190,6 @@ export async function observedIdpGroups(
       sql<{ value: string }>`
         SELECT DISTINCT unnest(idp_groups) AS value
         FROM identities
-        WHERE tenant_id = ${tenantId}
         ORDER BY value
       `.execute(db),
     'DB_ERROR' as const
@@ -222,7 +214,7 @@ export interface TenantPerson {
  * signed in has no subject yet and cannot be picked, which is correct: a
  * grant is addressed to a subject.
  */
-export async function listIdentities(tenantId: string): Promise<TenantPerson[]> {
+export async function listIdentities(): Promise<TenantPerson[]> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return [];
 
@@ -231,7 +223,6 @@ export async function listIdentities(tenantId: string): Promise<TenantPerson[]> 
       dbResult.val
         .selectFrom('identities')
         .select(['subject', 'email', 'display_name'])
-        .where('tenant_id', '=', tenantId)
         .orderBy('display_name', 'asc')
         .orderBy('email', 'asc')
         .execute(),
@@ -250,7 +241,6 @@ export async function listIdentities(tenantId: string): Promise<TenantPerson[]> 
  * Null when the subject has never signed in with claims we could record.
  */
 export async function getIdentityDisplay(
-  tenantId: string,
   subject: string
 ): Promise<IdentityClaims | null> {
   const dbResult = getDatabase();
@@ -261,7 +251,6 @@ export async function getIdentityDisplay(
       dbResult.val
         .selectFrom('identities')
         .select(['email', 'display_name', 'idp_groups'])
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
         .executeTakeFirst(),
     'DB_ERROR' as const

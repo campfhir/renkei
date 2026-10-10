@@ -25,7 +25,6 @@ export interface StoredPushSubscription {
  */
 export async function saveSubscription(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   subscription: PushSubscriptionInput
 ): Promise<void> {
@@ -33,14 +32,13 @@ export async function saveSubscription(
     .insertInto('push_subscriptions')
     .values({
       id: randomUUID(),
-      tenant_id: tenantId,
       subject,
       endpoint: subscription.endpoint,
       p256dh: subscription.keys.p256dh,
       auth: subscription.keys.auth,
     })
     .onConflict((oc) =>
-      oc.columns(['tenant_id', 'endpoint']).doUpdateSet({
+      oc.columns(['endpoint']).doUpdateSet({
         subject,
         p256dh: subscription.keys.p256dh,
         auth: subscription.keys.auth,
@@ -53,13 +51,11 @@ export async function saveSubscription(
  *  belonging to somebody else. */
 export async function deleteSubscription(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   endpoint: string
 ): Promise<void> {
   await db
     .deleteFrom('push_subscriptions')
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('endpoint', '=', endpoint)
     .execute();
@@ -68,13 +64,11 @@ export async function deleteSubscription(
 /** Every device one person has opted in from, for fanning a send out. */
 export async function listSubscriptions(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<StoredPushSubscription[]> {
   const rows = await db
     .selectFrom('push_subscriptions')
     .select(['endpoint', 'p256dh', 'auth'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .execute();
   return rows.map((row) => ({
@@ -87,12 +81,10 @@ export async function listSubscriptions(
  *  browser revoked it, and no retry will ever land. */
 export async function deleteSubscriptionByEndpoint(
   db: Kysely<DB>,
-  tenantId: string,
   endpoint: string
 ): Promise<void> {
   await db
     .deleteFrom('push_subscriptions')
-    .where('tenant_id', '=', tenantId)
     .where('endpoint', '=', endpoint)
     .execute();
 }

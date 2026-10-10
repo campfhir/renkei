@@ -12,19 +12,17 @@ import { readConnectorConfigCached } from '@renkei/connector-config';
 import { WebexClient, WEBEX_BOT_CONNECTOR } from '@renkei/connector-webex';
 import { logger } from '../logger';
 
-export async function webexBotClient(tenantId: string): Promise<WebexClient | null> {
+export async function webexBotClient(): Promise<WebexClient | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
   try {
     const configResult = await readConnectorConfigCached(
-      tenantId,
       WEBEX_BOT_CONNECTOR,
       keyResult.val
     );
     if (!configResult.ok) {
       logger.warn('could not read the webex-bot connector config', {
         component: 'webex/bot',
-        tenantId,
       });
       return null;
     }
@@ -34,7 +32,6 @@ export async function webexBotClient(tenantId: string): Promise<WebexClient | nu
   } catch (error) {
     logger.warn('webex-bot lookup errored: {error}', {
       component: 'webex/bot',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return null;

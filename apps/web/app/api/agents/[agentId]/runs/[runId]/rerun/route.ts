@@ -1,0 +1,157 @@
+/**
+ * Run this agent again on the SAME input, with its CURRENT steps.
+ *
+ * The point of the button is the second half: you read a failed run, saw
+ * what the agent got wrong, fixed the steps — and now want the same
+ * triggering message put back through the corrected agent. So this reads
+ * the old run's initial_state (its trigger.* variables) and starts a fresh
+ * run from the agent as it stands NOW. It deliberately does not resume the
+ * old run: that run's snapshot is the version you just decided was wrong,
+ * and half its attempt rows describe a plan that no longer exists.
+ *
+ * A new run, not a mutation of the old one, also keeps the history honest —
+ * the failure stays on the record next to the retry.
+ *
+ * Same concurrency guard as the invoke route, minus its event carve-out's
+ * mirror image: here the carve-out is for the run BEING re-run, not the
+ * one about to start — see the trigger_kind check below.
+ *
+ * Owner or grantee, like the invoke route's session path: an unexpired
+ * access grant (access-grants.ts) exists precisely for this loop — read
+ * the failed run, fix the steps, put the same message back through. The
+ * run still executes on the OWNER's grants; triggered_by_subject records
+ * who pressed the button. Anyone else — an admin reading someone else's
+ * run included — gets a 404 here, not a 403.
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { getDatabase } from '@renkei/db';
+import { agentJobsQueue } from '@renkei/queue';
+import { isCurrentStepsDoc } from '@renkei/agents';
+import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
+import { getSessionFromRequest } from '@/lib/session';
+import { resolveAgentAccess } from '@/lib/agents/access-grants';
+import { isUuid } from '@/lib/uuid';
+import { logger } from '@/lib/logger';
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ agentId: string; runId: string }> }
+): Promise<NextResponse> {
+  const { agentId, runId } = await params;
+  if (!isUuid(agentId) || !isUuid(runId)) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  const session = await getSessionFromRequest(request);
+  if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  const db = dbResult.val;
+
+  // Access is structural on both halves: the caller must resolve to the
+  // agent (owner, or grantee through an unexpired grant), and the run must
+  // be that agent's, in this tenant.
+  const access = await resolveAgentAccess(db, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const run = await db
+    .selectFrom('agent_runs')
+    .select(['id', 'status', 'initial_state', 'trigger_id', 'trigger_kind'])
+    .where('agent_id', '=', agentId)
+    .where('id', '=', runId)
+    .where('owner_subject', '=', access.ownerSubject)
+    .executeTakeFirst();
+  if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  // A run still in flight would be racing itself; let it finish or be
+  // stopped first, so two runs never act on one message at once.
+  if (run.status === 'queued' || run.status === 'running' || run.status === 'waiting') {
+    return NextResponse.json({ error: 'This run has not finished yet.' }, { status: 409 });
+  }
+
+  const agent = await db
+    .selectFrom('agents')
+    .select(['id', 'owner_subject', 'steps', 'llm_model_id'])
+    .where('id', '=', agentId)
+    .where('owner_subject', '=', access.ownerSubject)
+    .executeTakeFirst();
+  if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!isCurrentStepsDoc(agent.steps)) {
+    return NextResponse.json(
+      { error: 'This agent is saved in an older format — open it in the builder and save to update it.' },
+      { status: 409 }
+    );
+  }
+
+  const raw = await request.text();
+  let confirmed = false;
+  if (raw.trim().length > 0) {
+    try {
+      const body: { confirm?: unknown } = JSON.parse(raw);
+      confirmed = body.confirm === true;
+    } catch {
+      return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 });
+    }
+  }
+
+  // Same guard as the invoke route, and the same carve-out: an event
+  // agent already tolerates several runs going at once — that's the
+  // normal shape of "a burst of messages each started one" — so
+  // re-running one of its finished runs asks nothing extra. A scheduled
+  // (or manual, api, chained) run is the case someone reruns expecting
+  // ONE thing to happen, so a second one already going is worth a beat.
+  if (run.trigger_kind !== 'event' && !confirmed) {
+    const inProgress = await findInProgressRun(db, agentId);
+    if (inProgress) {
+      return NextResponse.json(
+        {
+          error: `A run of this agent is already ${inProgress.status}.`,
+          code: 'already-in-progress',
+          runId: inProgress.id,
+          status: inProgress.status,
+        },
+        { status: 409 }
+      );
+    }
+  }
+
+  const initialState =
+    typeof run.initial_state === 'object' &&
+    run.initial_state !== null &&
+    !Array.isArray(run.initial_state)
+      ? { ...run.initial_state }
+      : undefined;
+
+  const created = await createAgentRun(db, agentJobsQueue().producer, {
+    agentId,
+    ownerSubject: agent.owner_subject,
+    steps: agent.steps,
+    llmModelId: agent.llm_model_id,
+    // Not the original trigger row: this run was started by a person
+    // pressing a button, and the history should say so. The trigger's DATA
+    // rides along in initialState, which is what the steps actually read.
+    triggerId: null,
+    triggerKind: 'manual',
+    triggeredBySubject: session.subject,
+    ...(initialState ? { initialState } : {}),
+  });
+  if (!created.ok) {
+    const message =
+      created.err.type === 'DAILY_RUN_CAP'
+        ? 'This organization has reached its daily run limit.'
+        : created.err.type === 'QUEUE_ERROR'
+          ? 'The run could not be queued — try again shortly.'
+          : 'The run could not be started.';
+    return NextResponse.json({ error: message }, { status: 409 });
+  }
+
+  logger.info('run {runId} re-run as {newRunId} by {subject}', {
+    component: 'web/agents',
+    runId,
+    newRunId: created.val.runId,
+    subject: session.subject,
+  });
+  return NextResponse.json({ runId: created.val.runId });
+}

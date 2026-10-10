@@ -15,7 +15,7 @@
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
@@ -49,15 +49,12 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'code', 'github', 'acme/site', 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'github', 'acme/site', 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.projectName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.chatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
     );
     await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
       ids.chatId,
@@ -119,7 +116,7 @@ test.describe('issue cards', () => {
       }
     );
 
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     const main = page.getByRole('main');
     await expect(main.getByRole('link', { name: /PROJ-9/ })).toBeVisible();
@@ -148,7 +145,7 @@ test.describe('issue cards', () => {
       }
     );
 
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     const main = page.getByRole('main');
     await expect(main.getByRole('link', { name: /PROJ-9/ })).toHaveCount(0);
@@ -167,7 +164,7 @@ test.describe('issue cards', () => {
       }
     );
 
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     const main = page.getByRole('main');
     await expect(main.getByRole('link', { name: /PROJ-9/ })).toHaveCount(0);

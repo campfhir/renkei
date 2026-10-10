@@ -22,7 +22,7 @@
  * is the no-flash fast path, and theme-sync.tsx (which applies the mode in
  * force on mount, unconditionally) is what guarantees the attribute exists.
  */
-export default function ThemeScript({ tenantId }: { tenantId: string }) {
-  const script = `(function(){try{var k="renkei:theme:${tenantId}";var m=localStorage.getItem(k);if(m!=="light"&&m!=="dark"&&m!=="auto")m="auto";var resolved=m==="auto"?(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):m;document.documentElement.setAttribute("data-theme",resolved);}catch(e){}})();`;
+export default function ThemeScript() {
+  const script = `(function(){try{var k="renkei:theme";var m=localStorage.getItem(k);if(m!=="light"&&m!=="dark"&&m!=="auto")m="auto";var resolved=m==="auto"?(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):m;document.documentElement.setAttribute("data-theme",resolved);}catch(e){}})();`;
   return <script dangerouslySetInnerHTML={{ __html: script }} />;
 }

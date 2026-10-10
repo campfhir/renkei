@@ -91,7 +91,6 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
         .insertInto('actionable_items')
         .values({
           id: cardId,
-          tenant_id: context.tenantId,
           source: context.agent ? 'agent' : 'mcp',
           kind: 'info',
           title,
@@ -108,7 +107,6 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
 
       logger.info('card_create put a card on the feed', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         cardId,
         byAgent: Boolean(context.agent),
       });
@@ -160,7 +158,6 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
           updated_at: sql`NOW()`,
         })
         .where('id', '=', cardId)
-        .where('tenant_id', '=', context.tenantId)
         .where('owner_subject', '=', subject)
         .where('created_by', 'is not', null)
         .where('status', '=', 'suggested')
@@ -210,7 +207,6 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
           updated_at: sql`NOW()`,
         })
         .where('id', '=', cardId)
-        .where('tenant_id', '=', context.tenantId)
         .where('owner_subject', '=', subject)
         .where('status', '=', 'suggested')
         .executeTakeFirst();
@@ -249,7 +245,6 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
         .updateTable('actionable_items')
         .set({ archived_at: sql`NOW()`, archived_by: subject, updated_at: sql`NOW()` })
         .where('id', '=', cardId)
-        .where('tenant_id', '=', context.tenantId)
         .where('owner_subject', '=', subject)
         .where('status', '!=', 'suggested')
         .where('archived_at', 'is', null)
@@ -312,7 +307,6 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
           'a.id as agentId',
           'a.name as agentName',
         ])
-        .where('c.tenant_id', '=', context.tenantId)
         // The same visibility rule as the web feed: mine, or tenant-wide.
         .where((eb) =>
           eb.or([eb('c.owner_subject', 'is', null), eb('c.owner_subject', '=', subject)])

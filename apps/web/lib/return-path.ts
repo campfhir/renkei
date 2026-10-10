@@ -1,7 +1,7 @@
 /**
  * Where a signed-out visitor comes back to after signing in.
  *
- * The tenant layout is the one place that sees every `/[slug]/*` request and
+ * The tenant layout is the one place that sees every `/*` request and
  * can turn a signed-out one into a redirect BEFORE any HTML streams — but a
  * layout is never told which page it is wrapping. The proxy fills that gap:
  * it copies the request's path and query into this header, and the layout

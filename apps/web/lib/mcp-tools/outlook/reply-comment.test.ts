@@ -156,7 +156,6 @@ async function outlookTool(name: string, args: Record<string, unknown>): Promise
   } as unknown as McpServer;
 
   const context = {
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
     siteUrl: '',

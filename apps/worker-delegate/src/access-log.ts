@@ -20,7 +20,6 @@ export type AccessOutcome = 'ok' | 'refused' | 'failed';
 export interface AccessEvent {
   caller: string;
   op: string;
-  tenantId: string;
   subject: string;
   /** An id the op was about (a resource id, a grant's account id, a provider), never content. */
   target?: string;
@@ -60,7 +59,6 @@ export class AccessLog {
       component: 'worker-delegate/access',
       caller: event.caller,
       op: event.op,
-      tenantId: event.tenantId || '-',
       subjectHash: hashed,
       target: event.target ?? '-',
       outcome: event.outcome,
@@ -73,7 +71,6 @@ export class AccessLog {
         .values({
           caller: event.caller.slice(0, 32),
           op: event.op.slice(0, 64),
-          tenant_id: /^[0-9a-f-]{36}$/i.test(event.tenantId) ? event.tenantId : null,
           subject_hash: event.subject ? hashed : null,
           target: event.target ? event.target.slice(0, 200) : null,
           outcome: event.outcome,

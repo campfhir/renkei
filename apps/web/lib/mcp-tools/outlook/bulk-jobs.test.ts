@@ -79,7 +79,7 @@ function fakeDb() {
 function stubAuth(): GraphAuth {
   return {
     resolve: async () => ({
-      auth: authedFetch(async () => new Response('{}'), 'microsoft:tenant-1:acct-1'),
+      auth: authedFetch(async () => new Response('{}'), 'microsoft:acct-1'),
       upn: 'user@example.com',
       accountId: 'acct-1',
     }),
@@ -94,7 +94,6 @@ function tools(): Map<string, ToolHandler> {
     },
   } as unknown as McpServer;
   const context = {
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'user-1',
     siteUrl: '',
@@ -141,7 +140,6 @@ describe('outlook_start_bulk_mail_job', () => {
     expect(result.isError).toBeUndefined();
     expect(inserted).toHaveLength(1);
     expect(inserted[0]).toMatchObject({
-      tenant_id: 'tenant-1',
       subject: 'user-1',
       account_id: 'acct-1',
       action: 'archive',
@@ -149,11 +147,10 @@ describe('outlook_start_bulk_mail_job', () => {
     const jobId = String(inserted[0].id);
     expect(textOf(result)).toContain(jobId);
     expect(enqueueMock).toHaveBeenCalledWith({
-      tenantId: 'tenant-1',
       source: 'mailjobs',
       type: 'bulk-action',
       payload: { jobId },
-      orderingKey: 'mailjob:tenant-1:acct-1',
+      orderingKey: 'mailjob:acct-1',
     });
   });
 
@@ -219,7 +216,6 @@ describe('outlook_get_bulk_mail_job', () => {
   it('scopes the lookup by tenant AND subject — a foreign job reads as nonexistent', async () => {
     statusRow = {
       id: JOB_ID,
-      tenant_id: 'tenant-1',
       subject: 'someone-else',
       action: 'markRead',
       status: 'succeeded',
@@ -236,13 +232,12 @@ describe('outlook_get_bulk_mail_job', () => {
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toBe('No such job.');
-    expect(statusWheres.map(([column]) => column).sort()).toEqual(['id', 'subject', 'tenant_id']);
+    expect(statusWheres.map(([column]) => column).sort()).toEqual(['id', 'subject']);
   });
 
   it('renders progress, failures, and a poll hint while running', async () => {
     statusRow = {
       id: JOB_ID,
-      tenant_id: 'tenant-1',
       subject: 'user-1',
       action: 'archive',
       status: 'running',

@@ -50,34 +50,33 @@ export interface CodeProjectView extends ProjectView {
 
 export async function loadCodeProjectView(
   db: Kysely<DB>,
-  tenantId: string,
   viewerSubject: string,
   projectId: string,
   access: ProjectAccess
 ): Promise<CodeProjectView | null> {
-  const project = await getProjectRow(db, tenantId, projectId);
+  const project = await getProjectRow(db, projectId);
   if (!project || project.kind !== 'code' || !project.repo) return null;
   const origin = getPublicBaseUrl() ?? '';
   const readme =
     project.repo.provider === GITHUB
       ? readGitHubReadme(
-          githubAuthOf({ tenantId, subject: viewerSubject, origin }),
+          githubAuthOf({ subject: viewerSubject, origin }),
           project.repo.fullName,
           project.repo.branch
         )
       : readBitbucketReadme(
-          bitbucketAuthOf({ tenantId, subject: viewerSubject, origin }),
+          bitbucketAuthOf({ subject: viewerSubject, origin }),
           project.repo.fullName,
           project.repo.branch
         );
   const [view, workspace, env, readmeResult, usage, limit, sizeRequest] = await Promise.all([
-    loadProjectView(db, tenantId, viewerSubject, projectId, access),
+    loadProjectView(db, viewerSubject, projectId, access),
     projectWorkspace(project),
     projectEnv(project),
     readme,
-    loadCodeProjectUsage(db, tenantId, projectId),
-    getWorkspaceLimitBytes(tenantId, codeProjectTarget(tenantId, projectId).subject),
-    latestSizeRequest(db, tenantId, projectId),
+    loadCodeProjectUsage(db, projectId),
+    getWorkspaceLimitBytes(codeProjectTarget(projectId).subject),
+    latestSizeRequest(db, projectId),
   ]);
   if (!view) return null;
   return {
@@ -101,7 +100,7 @@ export async function loadCodeProjectView(
         updatedAt: variable.updatedAt,
         lastUsedAt: variable.lastUsedAt,
       })),
-      enabled: await sandboxWorkspacesEnabled(tenantId),
+      enabled: await sandboxWorkspacesEnabled(),
       readme: readmeResult,
       usage,
       sizeLimitBytes: limit.ok ? limit.val : WORKSPACE_DEFAULT_MAX_BYTES,

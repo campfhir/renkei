@@ -121,7 +121,6 @@ async function findMeetingTimes(args: Record<string, unknown>): Promise<ToolResu
   } as unknown as McpServer;
 
   const context = {
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
     siteUrl: '',

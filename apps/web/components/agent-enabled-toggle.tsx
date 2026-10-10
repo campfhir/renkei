@@ -8,7 +8,7 @@
  *
  * There is no dedicated "toggle" endpoint: it PUTs the same full payload
  * the builder saves, with only `enabled` flipped, through
- * `/api/tenant/{tenantId}/agents/{agentId}`. Every field that route persists
+ * `/api/agents/{agentId}`. Every field that route persists
  * has to ride along — omitting one here would make the switch silently wipe
  * it, so this takes a `StoredAgent` and rebuilds the whole payload from it.
  */
@@ -35,11 +35,9 @@ function savePayloadOf(agent: StoredAgent, enabled: boolean) {
 }
 
 export default function AgentEnabledToggle({
-  tenantId,
   agent,
   onError,
 }: {
-  tenantId: string;
   agent: StoredAgent;
   onError?: (message: string) => void;
 }): React.ReactNode {
@@ -49,7 +47,7 @@ export default function AgentEnabledToggle({
   const toggle = async () => {
     setBusy(true);
     const result = await sendJsonFull(
-      `/api/tenant/${tenantId}/agents/${agent.id}`,
+      `/api/agents/${agent.id}`,
       'PUT',
       savePayloadOf(agent, !agent.enabled)
     );

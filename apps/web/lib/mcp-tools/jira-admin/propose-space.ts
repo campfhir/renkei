@@ -211,7 +211,7 @@ export async function registerProposeSpaceTools(
       let source: CreateSpacePayload['source'];
       const notes: string[] = [];
       if (templateRef) {
-        const template = await findSpaceTemplate(db, context.tenantId, access.cloudId, templateRef);
+        const template = await findSpaceTemplate(db, access.cloudId, templateRef);
         if (!template) {
           return errText(
             `No template is named “${templateRef}”. jira_admin_list_space_templates lists them.`
@@ -351,7 +351,6 @@ export async function registerProposeSpaceTools(
       }
       const reason = text(args.reason);
       const change = await createChangeRequest(db, {
-        tenantId: context.tenantId,
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId: access.cloudId,
@@ -366,7 +365,6 @@ export async function registerProposeSpaceTools(
       if (replaces) {
         const cancelled = await cancelChangeRequest(
           db,
-          context.tenantId,
           context.subject,
           replaces
         );
@@ -377,7 +375,7 @@ export async function registerProposeSpaceTools(
         );
       }
 
-      const link = `${await reviewPrefix(context)}${change.id}`;
+      const link = `${reviewPrefix(context)}${change.id}`;
       const { operations, reach } = describeChange(change);
       const lines = [
         'Proposed — nothing has been created in Jira yet.',

@@ -27,7 +27,6 @@ import { webexBotClient } from './webex-bot';
 import { logger } from '../logger';
 
 export interface OwnerChannelMessage {
-  tenantId: string;
   ownerSubject: string;
   /** Which channels the owner asked for — already resolved against Preferences. */
   email: boolean;
@@ -45,7 +44,7 @@ export async function deliverToOwnerChannels(
   message: OwnerChannelMessage
 ): Promise<void> {
   if (!message.email && !message.webex) return;
-  const { tenantId, ownerSubject } = message;
+  const { ownerSubject } = message;
 
   // Channel 1: email from the owner's own Outlook grant, to themselves.
   if (message.email) {
@@ -53,19 +52,17 @@ export async function deliverToOwnerChannels(
       const identity = await db
         .selectFrom('identities')
         .select(['email'])
-        .where('tenant_id', '=', tenantId)
         .where('subject', '=', ownerSubject)
         .executeTakeFirst();
       if (identity?.email) {
         const grant = await db
           .selectFrom('provider_grants')
           .select('provider_account_id')
-          .where('tenant_id', '=', tenantId)
           .where('provider', '=', 'microsoft')
           .where('subject', '=', ownerSubject)
           .executeTakeFirst();
         if (grant) {
-          const access = await resolveMicrosoftAccess(tenantId, grant.provider_account_id);
+          const access = await resolveMicrosoftAccess(grant.provider_account_id);
           const sent = await graphRequest(access.auth, '/me/sendMail', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -93,10 +90,10 @@ export async function deliverToOwnerChannels(
   // Channel 2: a WebEx note — from the org's bot, else the owner's own grant.
   if (message.webex) {
     try {
-      const access = await resolveWebexUserAccessBySubject(tenantId, ownerSubject);
+      const access = await resolveWebexUserAccessBySubject(ownerSubject);
       if (access) {
         const sent = await sendNoteToPerson({
-          bot: await webexBotClient(tenantId),
+          bot: await webexBotClient(),
           user: new WebexClient(access.auth),
           personEmail: access.personEmail,
           markdown: `**${message.heading}**\n\n${message.body}`,

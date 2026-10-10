@@ -48,13 +48,11 @@ function uuidFrom(seed: string): string {
 
 /** This project's own tenant/session/slug — isolated from every other project and spec. */
 function fixtureFor(projectName: string): {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`connectors-e2e-tenant:${projectName}`),
     sessionId: uuidFrom(`connectors-e2e-session:${projectName}`),
     slug: `e2e-connectors-${projectName}`,
     subject: `e2e-connectors-${projectName}@example.com`,
@@ -67,37 +65,23 @@ async function seedTenant(fixture: Fixture): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-      fixture.tenantId,
-      fixture.slug,
-    ]);
+    await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM connector_configs');
+    await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name)
-       VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Tester']
     );
     // No coach marks tour stealing focus mid-screenshot.
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+      [fixture.subject]
     );
     // Zoom and WebEx: the two single-catalog OAuth cards, the shape most
     // connectors share. Both enabled org-wide, both added by this person,
@@ -105,15 +89,13 @@ async function seedTenant(fixture: Fixture): Promise<void> {
     // "Needs setup".
     for (const connector of ['zoom', 'webex-user']) {
       await client.query(
-        `INSERT INTO connector_configs (tenant_id, connector, enabled, encrypted_secrets, settings)
-         VALUES ($1, $2, true, 'not-a-real-secret', '{}'::jsonb)`,
-        [fixture.tenantId, connector]
+        `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)\n         VALUES ($1, true, 'not-a-real-secret', '{}'::jsonb)`,
+        [connector]
       );
     }
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'connectors', '{"added": ["zoom", "webex"]}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{"added": ["zoom", "webex"]}'::jsonb)`,
+      [fixture.subject]
     );
   } finally {
     await client.end();
@@ -126,12 +108,8 @@ async function connectZoom(fixture: Fixture): Promise<void> {
   await client.connect();
   try {
     await client.query(
-      `INSERT INTO provider_grants
-         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes)
-       VALUES ($1, 'zoom', 'e2e-zoom-account', $2, 'e2e-client', 'E2E Zoom',
-               'not-a-real-token', 'not-a-real-token', $3, $4)`,
-      [fixture.tenantId, fixture.subject, new Date(Date.now() + 365 * 24 * 3_600_000), []]
+      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes)\n       VALUES ('zoom', 'e2e-zoom-account', $1, 'e2e-client', 'E2E Zoom',\n               'not-a-real-token', 'not-a-real-token', $2, $3)`,
+      [fixture.subject, new Date(Date.now() + 365 * 24 * 3_600_000), []]
     );
   } finally {
     await client.end();
@@ -141,7 +119,7 @@ async function connectZoom(fixture: Fixture): Promise<void> {
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -166,7 +144,7 @@ test('connectors page: needs-setup ordering, live scope picker, real disconnect'
   await seedTenant(fixture);
   await signIn(page, fixture);
 
-  await page.goto(`/${fixture.slug}/connectors`);
+  await page.goto(`/connectors`);
   await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
 
   // Both cards start unconnected: one "Needs setup" section, no "Connected"

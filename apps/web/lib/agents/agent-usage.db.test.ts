@@ -22,11 +22,11 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('token usage by model and by step', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
+  const suiteId = randomUUID();
   const agentId = randomUUID();
   const stepId = randomUUID();
   const runId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const steps = {
     version: CURRENT_STEPS_VERSION,
     steps: [
@@ -46,14 +46,9 @@ maybe('token usage by model and by step', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `usage-${tenantId.slice(0, 8)}` })
-      .execute();
-    await db
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: subject,
         name: 'Usage agent',
         steps: JSON.stringify(steps),
@@ -63,7 +58,7 @@ maybe('token usage by model and by step', () => {
 
     const big = { provider: 'anthropic', model: 'claude-big', llmModelId: null };
     const small = { provider: 'openai', model: 'gpt-small', llmModelId: null };
-    const base = { tenantId, subject, agentId, runId, stepId };
+    const base = { subject, agentId, runId, stepId };
     await recordLlmCall(db, {
       ...base,
       purpose: 'run',
@@ -82,7 +77,6 @@ maybe('token usage by model and by step', () => {
       model: big,
     });
     await recordLlmCall(db, {
-      tenantId,
       subject,
       agentId,
       purpose: 'optimize',
@@ -92,7 +86,6 @@ maybe('token usage by model and by step', () => {
     });
     // A chat turn: the person's own spend, no agent.
     await recordLlmCall(db, {
-      tenantId,
       subject,
       agentId: null,
       purpose: 'chat',
@@ -105,42 +98,46 @@ maybe('token usage by model and by step', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM llm_calls WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM llm_calls WHERE subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
   it('splits the whole org by model, chat and optimizer spend included', async () => {
-    const rows = await getTokenUsageByModel(db, tenantId, null);
-    expect(
-      rows.map((row) => [
-        row.provider,
-        row.model,
-        row.input.today,
-        row.output.today,
-        row.cacheRead.today,
-        row.cacheWrite.today,
-      ])
-    ).toEqual([
-      ['anthropic', 'claude-big', 6_200, 530, 900, 40],
-      ['openai', 'gpt-small', 1_000, 50, 0, 0],
-      [null, null, 7, 3, 0, 0],
+    // Organization-wide, so other suites' rows in a shared database sit
+    // beside these; the two models only this suite records are exact.
+    const rows = await getTokenUsageByModel(db, null);
+    const shaped = rows.map((row) => [
+      row.provider,
+      row.model,
+      row.input.today,
+      row.output.today,
+      row.cacheRead.today,
+      row.cacheWrite.today,
     ]);
+    expect(shaped).toEqual(
+      expect.arrayContaining([
+        ['anthropic', 'claude-big', 6_200, 530, 900, 40],
+        ['openai', 'gpt-small', 1_000, 50, 0, 0],
+      ])
+    );
+    const unrecorded = rows.find((row) => row.model === null);
+    expect(unrecorded?.input.today).toBeGreaterThanOrEqual(7);
+    expect(unrecorded?.output.today).toBeGreaterThanOrEqual(3);
   });
 
   it('narrows to one agent, leaving the chat out', async () => {
-    const rows = await getTokenUsageByModel(db, tenantId, agentId);
+    const rows = await getTokenUsageByModel(db, agentId);
     expect(rows.map((row) => [row.model, row.input.allTime])).toEqual([
       ['claude-big', 1_200],
       ['gpt-small', 1_000],
       [null, 7],
     ]);
-    expect(await getTokenUsageByModel(db, tenantId, [])).toEqual([]);
+    expect(await getTokenUsageByModel(db, [])).toEqual([]);
   });
 
   it('splits one agent by step and model, named from its definition', async () => {
-    const rows = labelStepUsage(steps, await getAgentTokenUsageByStep(db, tenantId, agentId));
+    const rows = labelStepUsage(steps, await getAgentTokenUsageByStep(db, agentId));
     expect(
       rows.map((row) => [
         row.stepName,
@@ -159,7 +156,7 @@ maybe('token usage by model and by step', () => {
   });
   it('totals one run at a time for a listing, absent when the ledger has nothing', async () => {
     const other = randomUUID();
-    const byRun = await getTokenUsageByRun(db, tenantId, [runId, other]);
+    const byRun = await getTokenUsageByRun(db, [runId, other]);
     expect(byRun[runId]).toEqual({
       input: 1_207,
       output: 33,
@@ -168,11 +165,11 @@ maybe('token usage by model and by step', () => {
       calls: 3,
     });
     expect(byRun[other]).toBeUndefined();
-    expect(await getTokenUsageByRun(db, tenantId, [])).toEqual({});
+    expect(await getTokenUsageByRun(db, [])).toEqual({});
   });
 
   it('splits one run by step and model, named from the steps it ran with', async () => {
-    const rows = labelStepUsage(steps, await getRunTokenUsage(db, tenantId, runId));
+    const rows = labelStepUsage(steps, await getRunTokenUsage(db, runId));
     expect(
       rows.map((row) => [
         row.stepNumber,
@@ -188,6 +185,6 @@ maybe('token usage by model and by step', () => {
       [1, 'Read the inbox', 'claude-big', 1_200, 30, 900, 40, 2],
       [1, 'Read the inbox', null, 7, 3, 0, 0, 1],
     ]);
-    expect(await getRunTokenUsage(db, tenantId, randomUUID())).toEqual([]);
+    expect(await getRunTokenUsage(db, randomUUID())).toEqual([]);
   });
 });

@@ -31,7 +31,6 @@ import { oauthGraphAuth, deniedGraphAuth } from './graph-auth';
 import type { GraphCallContext } from './client';
 
 const context = (overrides: Partial<GraphCallContext> = {}): GraphCallContext => ({
-  tenantId: 'tenant-1',
   subject: 'subject-1',
   origin: 'https://renkei.example.com',
   ...overrides,
@@ -56,9 +55,8 @@ describe('oauthGraphAuth', () => {
     expect(access.accountId).toBe('acct-1');
     expect(typeof access.auth).toBe('function');
     // The grant is named by subject; the delegate maps it to the row itself.
-    expect(access.auth.grantKey).toBe('microsoft:tenant-1:subject-1');
+    expect(access.auth.grantKey).toBe('microsoft:subject-1');
     expect(mockDescribe).toHaveBeenCalledWith({
-      tenantId: 'tenant-1',
       provider: 'microsoft',
       subject: 'subject-1',
     });

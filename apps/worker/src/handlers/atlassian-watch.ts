@@ -46,7 +46,6 @@ const MAX_PAGES = 10;
 
 export interface WatchRow {
   id: string;
-  tenant_id: string;
   provider: string;
   account_id: string;
   scope_type: string;
@@ -88,7 +87,6 @@ function jqlTimestamp(iso: string): string {
 }
 
 async function syncJira(
-  tenantId: string,
   access: AtlassianAccess,
   row: WatchRow
 ): Promise<WatchSyncResult> {
@@ -137,7 +135,7 @@ async function syncJira(
     });
     if (!response.ok) {
       throw new Error(
-        `jira search failed for ${row.scope_key} (tenant ${tenantId}): ${response.status} ${response.error}`
+        `jira search failed for ${row.scope_key}: ${response.status} ${response.error}`
       );
     }
 
@@ -161,7 +159,6 @@ async function syncJira(
       if (!content.trim()) continue;
 
       await enqueueKnowledgeEvent(
-        tenantId,
         'ingest.object',
         {
           provider: 'jira',
@@ -186,7 +183,6 @@ async function syncJira(
 }
 
 async function syncConfluence(
-  tenantId: string,
   access: AtlassianAccess,
   row: WatchRow
 ): Promise<WatchSyncResult> {
@@ -210,7 +206,7 @@ async function syncConfluence(
     });
     if (!response.ok) {
       throw new Error(
-        `confluence page list failed for space ${row.scope_key} (tenant ${tenantId}): ` +
+        `confluence page list failed for space ${row.scope_key}: ` +
           `${response.status} ${response.error}`
       );
     }
@@ -234,7 +230,6 @@ async function syncConfluence(
       if (!content.trim()) continue;
 
       await enqueueKnowledgeEvent(
-        tenantId,
         'ingest.object',
         {
           provider: 'confluence',
@@ -354,7 +349,6 @@ function confluenceMetadata(
 }
 
 export async function runWatchSync(
-  tenantId: string,
   access: AtlassianAccess,
   row: WatchRow
 ): Promise<WatchSyncResult> {
@@ -362,7 +356,7 @@ export async function runWatchSync(
   if (!dbResult.ok) throw new Error('database unavailable');
   const db = dbResult.val;
 
-  const embedder = await resolveEmbeddingProvider(tenantId);
+  const embedder = await resolveEmbeddingProvider();
   if (!embedder) {
     // No embedding provider means the knowledge layer is off for this org.
     // Nothing to do, and not an error worth retrying.
@@ -371,8 +365,8 @@ export async function runWatchSync(
 
   const result =
     row.provider === 'jira'
-      ? await syncJira(tenantId, access, row)
-      : await syncConfluence(tenantId, access, row);
+      ? await syncJira(access, row)
+      : await syncConfluence(access, row);
 
   // Cursor and counters written LAST and together: a crash before this
   // point replays the round into idempotent upserts, which is the safe

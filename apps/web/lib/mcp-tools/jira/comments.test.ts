@@ -82,7 +82,6 @@ async function tools(): Promise<Map<string, ToolHandler>> {
   await registerCommentTools(
     server,
     {
-      tenantId: 'tenant-1',
       accountId: 'acct-1',
       siteUrl: 'https://example.atlassian.net',
       apiBaseUrl,

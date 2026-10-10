@@ -178,7 +178,6 @@ export function createMailBulkJobHandler(): EventHandler {
   return async (event) => {
     const payload: unknown = event.payload;
     const jobId = isRecord(payload) ? str(payload.jobId) : '';
-    const tenantId = event.tenant_id;
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable for mail bulk job');
     const db = dbResult.val;
@@ -188,13 +187,11 @@ export function createMailBulkJobHandler(): EventHandler {
           .selectFrom('mail_bulk_jobs')
           .selectAll()
           .where('id', '=', jobId)
-          .where('tenant_id', '=', tenantId)
           .executeTakeFirst()
       : undefined;
     if (!job) {
       logger.warn('mail bulk job {jobId} not found; dropping', {
         component: COMPONENT,
-        tenantId,
         jobId: jobId || '(missing)',
       });
       return;
@@ -243,7 +240,7 @@ export function createMailBulkJobHandler(): EventHandler {
     };
 
     try {
-      const access = await resolveMicrosoftAccess(tenantId, job.account_id);
+      const access = await resolveMicrosoftAccess(job.account_id);
 
       const selection = isRecord(job.selection) ? job.selection : {};
       const expanded = await expandSelection(access.auth, selection);
@@ -367,7 +364,6 @@ export function createMailBulkJobHandler(): EventHandler {
         .execute();
       logger.info('mail bulk job {jobId} finished: {succeeded} ok, {failed} failed', {
         component: COMPONENT,
-        tenantId,
         jobId: job.id,
         action,
         succeeded,

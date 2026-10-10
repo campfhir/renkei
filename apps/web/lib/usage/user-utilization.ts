@@ -156,7 +156,6 @@ export function localBucketOf(
 
 export async function getUtilizationTotals(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   span: UsageSpan,
   timeZone: string
@@ -174,7 +173,6 @@ export async function getUtilizationTotals(
           'chat_output_tokens'
         ),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where(inSpan('created_at', span, timeZone))
       .executeTakeFirst(),
@@ -184,7 +182,6 @@ export async function getUtilizationTotals(
         sql<string>`count(*)`.as('runs'),
         sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
       .where(inSpan('created_at', span, timeZone))
       .executeTakeFirst(),
@@ -194,7 +191,6 @@ export async function getUtilizationTotals(
         sql<string>`count(*)`.as('calls'),
         sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where(inSpan('started_at', span, timeZone))
       .executeTakeFirst(),
@@ -218,7 +214,6 @@ export async function getUtilizationTotals(
  */
 export async function getUtilizationSeries(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   span: UsageSpan,
   timeZone: string,
@@ -232,7 +227,6 @@ export async function getUtilizationSeries(
         fn.sum<string>('input_tokens').as('input_tokens'),
         fn.sum<string>('output_tokens').as('output_tokens'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where(inSpan('created_at', span, timeZone))
       .groupBy(sql`day`)
@@ -244,7 +238,6 @@ export async function getUtilizationSeries(
         sql<string>`count(*)`.as('runs'),
         sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
       .where(inSpan('created_at', span, timeZone))
       .groupBy(sql`day`)
@@ -256,7 +249,6 @@ export async function getUtilizationSeries(
         sql<string>`count(*)`.as('calls'),
         sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where(inSpan('started_at', span, timeZone))
       .groupBy(sql`day`)
@@ -300,7 +292,6 @@ export async function getUtilizationSeries(
 /** Every agent this person owns, with its share of the window's usage. */
 export async function getAgentUtilization(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   span: UsageSpan,
   timeZone: string
@@ -308,7 +299,6 @@ export async function getAgentUtilization(
   const agents = await db
     .selectFrom('agents')
     .select(['id', 'name', 'enabled'])
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', subject)
     .orderBy('name')
     .execute();
@@ -325,7 +315,6 @@ export async function getAgentUtilization(
         sql<string>`count(*)`.as('runs'),
         sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
       .where('agent_id', 'in', ids)
       .where(inSpan('created_at', span, timeZone))
@@ -338,7 +327,6 @@ export async function getAgentUtilization(
         fn.sum<string>('input_tokens').as('input_tokens'),
         fn.sum<string>('output_tokens').as('output_tokens'),
       ])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where('agent_id', 'in', ids)
       .where(inSpan('created_at', span, timeZone))
@@ -347,7 +335,6 @@ export async function getAgentUtilization(
     db
       .selectFrom('tool_calls')
       .select(['agent_id', sql<string>`count(*)`.as('calls')])
-      .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where('agent_id', 'in', ids)
       .where(inSpan('started_at', span, timeZone))
@@ -364,8 +351,7 @@ export async function getAgentUtilization(
         }>`
       SELECT DISTINCT ON (agent_id) agent_id, created_at, step_name, error_kind
       FROM agent_run_log
-      WHERE tenant_id = ${tenantId}
-        AND owner_subject = ${subject}
+      WHERE owner_subject = ${subject}
         AND agent_id IN (${sql.join(ids)})
         AND status = 'failed'
         AND created_at >= ${since}
@@ -379,8 +365,7 @@ export async function getAgentUtilization(
         }>`
       SELECT DISTINCT ON (agent_id) agent_id, created_at, step_name, error_kind
       FROM agent_run_log
-      WHERE tenant_id = ${tenantId}
-        AND owner_subject = ${subject}
+      WHERE owner_subject = ${subject}
         AND agent_id IN (${sql.join(ids)})
         AND status = 'failed'
         AND created_at >= ${since}
@@ -429,7 +414,6 @@ export async function getAgentUtilization(
  */
 export async function getFailureSignatures(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   span: UsageSpan,
   timeZone: string,
@@ -455,9 +439,8 @@ export async function getFailureSignatures(
       MAX(f.created_at) AS last_at,
       (ARRAY_AGG(f.error ORDER BY f.created_at DESC))[1] AS last_error
     FROM agent_run_log f
-    JOIN agents a ON a.id = f.agent_id AND a.tenant_id = f.tenant_id
-    WHERE f.tenant_id = ${tenantId}
-      AND f.owner_subject = ${subject}
+    JOIN agents a ON a.id = f.agent_id
+    WHERE f.owner_subject = ${subject}
       AND f.status = 'failed'
       AND a.enabled
       AND ${inSpan('f.created_at', span, timeZone)}

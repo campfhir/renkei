@@ -17,12 +17,11 @@ export function personEmailOf(access: Pick<WebexUserAccess, 'metadata'>): string
 }
 
 export async function sendWebexNote(
-  tenantId: string,
   access: WebexUserAccess,
   markdown: string
 ): Promise<Result<NoteDelivery, 'WEBEX_API_ERROR'>> {
   return sendNoteToPerson({
-    bot: await webexBotClient(tenantId),
+    bot: await webexBotClient(),
     user: new WebexClient(access.auth),
     personEmail: personEmailOf(access),
     markdown,

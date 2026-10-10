@@ -36,27 +36,24 @@ export interface BuilderData {
 
 export async function loadBuilderData(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   excludeAgentId?: string
 ): Promise<BuilderData> {
   const [tools, agents, modelRows, settings, calendarRows] = await Promise.all([
-    listAvailableTools(tenantId, subject),
-    listAgents(db, tenantId, subject),
+    listAvailableTools(subject),
+    listAgents(db, subject),
     db
       .selectFrom('llm_model_configs')
       .select(['id', 'label', 'is_default'])
-      .where('tenant_id', '=', tenantId)
       .where('enabled', '=', true)
       // An agent runs on a chat model; an image generation model cannot answer.
       .where(chatModelsOnly)
       .orderBy('label')
       .execute(),
-    getOrgSettings(tenantId),
+    getOrgSettings(),
     db
       .selectFrom('schedule_calendars')
       .select(['id', 'name', 'dates'])
-      .where('tenant_id', '=', tenantId)
       .orderBy('name')
       .execute(),
   ]);

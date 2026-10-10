@@ -68,7 +68,6 @@ export const KNOWLEDGE_CONNECTOR = 'knowledge';
  * sets built separately would drift the moment a connector is added.
  */
 export async function buildKnowledgeVerifiers(
-  tenantId: string
 ): Promise<ReadonlyMap<string, AccessVerifier>> {
   const verifiers = new Map<string, AccessVerifier>();
 
@@ -80,7 +79,7 @@ export async function buildKnowledgeVerifiers(
     WEBEX_CONNECTOR,
     createWebexUserAccessVerifier(async (userEmail) => {
       const { resolveWebexUserAccessByEmail } = await import('@/lib/webex-user-access');
-      const access = await resolveWebexUserAccessByEmail(tenantId, userEmail);
+      const access = await resolveWebexUserAccessByEmail(userEmail);
       // Interactive: this client exists to answer a live search.
       return access ? new WebexClient(access.auth, { lane: 'interactive' }) : null;
     })
@@ -104,12 +103,12 @@ export async function buildKnowledgeVerifiers(
   // silently withheld, which looks identical to "nothing is indexed".
   verifiers.set(
     JIRA_KNOWLEDGE_PROVIDER,
-    createJiraAccessVerifier((userEmail) => atlassianCredentialFor(tenantId, userEmail, ATLASSIAN))
+    createJiraAccessVerifier((userEmail) => atlassianCredentialFor(userEmail, ATLASSIAN))
   );
   verifiers.set(
     CONFLUENCE_KNOWLEDGE_PROVIDER,
     createConfluenceAccessVerifier((userEmail) =>
-      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN_CONFLUENCE)
+      atlassianCredentialFor(userEmail, ATLASSIAN_CONFLUENCE)
     )
   );
 
@@ -119,7 +118,7 @@ export async function buildKnowledgeVerifiers(
   // unconditionally for the same reason as the pair above.
   verifiers.set(
     SHAREPOINT_KNOWLEDGE_PROVIDER,
-    createSharepointAccessVerifier((userEmail) => microsoftCredentialFor(tenantId, userEmail))
+    createSharepointAccessVerifier((userEmail) => microsoftCredentialFor(userEmail))
   );
 
   return verifiers;
@@ -130,13 +129,12 @@ export async function buildKnowledgeVerifiers(
  * EMAIL (the identity spine's key), while grants are keyed by subject — so
  * every credential lookup below hops identities → the delegate's grant.
  */
-async function subjectOf(tenantId: string, userEmail: string): Promise<string | null> {
+async function subjectOf(userEmail: string): Promise<string | null> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
   const row = await dbResult.val
     .selectFrom('identities')
     .select('subject')
-    .where('tenant_id', '=', tenantId)
     .where('email', '=', userEmail)
     .limit(1)
     .executeTakeFirst();
@@ -152,19 +150,18 @@ async function subjectOf(tenantId: string, userEmail: string): Promise<string | 
  * fetcher itself.
  */
 async function atlassianCredentialFor(
-  tenantId: string,
   userEmail: string,
   provider: string
 ): Promise<{ auth: AuthedFetch; cloudId: string } | null> {
-  const subject = await subjectOf(tenantId, userEmail);
+  const subject = await subjectOf(userEmail);
   if (!subject) return null;
 
-  const described = await delegateGrants().describe({ tenantId, provider, subject });
+  const described = await delegateGrants().describe({ provider, subject });
   if (!described.ok) return null;
   const site = readAtlassianMetadata(described.val.metadata);
   if (!site.cloudId) return null;
   return {
-    auth: grantFetch({ tenantId, provider, accountId: described.val.accountId }),
+    auth: grantFetch({ provider, accountId: described.val.accountId }),
     cloudId: site.cloudId,
   };
 }
@@ -180,13 +177,12 @@ async function atlassianCredentialFor(
  * 403s and gives one place to see why a user's SharePoint results are empty.
  */
 async function microsoftCredentialFor(
-  tenantId: string,
   userEmail: string
 ): Promise<{ auth: AuthedFetch } | null> {
-  const subject = await subjectOf(tenantId, userEmail);
+  const subject = await subjectOf(userEmail);
   if (!subject) return null;
 
-  const described = await delegateGrants().describe({ tenantId, provider: MICROSOFT, subject });
+  const described = await delegateGrants().describe({ provider: MICROSOFT, subject });
   if (!described.ok) return null;
   const { accountId, grantedScopes, requestedScopes } = described.val;
 
@@ -194,13 +190,12 @@ async function microsoftCredentialFor(
   if (!scopes.includes('Files.Read.All')) {
     logger.info('microsoft grant lacks Files.Read.All; withholding drive results', {
       component: 'knowledge/verify',
-      tenantId,
       accountId,
     });
     return null;
   }
 
-  return { auth: grantFetch({ tenantId, provider: MICROSOFT, accountId }) };
+  return { auth: grantFetch({ provider: MICROSOFT, accountId }) };
 }
 
 function formatDistance(distance: number): string {
@@ -392,7 +387,6 @@ export async function registerKnowledgeTools(
     async (args: Record<string, unknown>) => {
       logger.debug('search_knowledge invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
       });
 
@@ -419,14 +413,13 @@ export async function registerKnowledgeTools(
         ? args.sources.filter((source): source is string => typeof source === 'string')
         : [];
       const sourceFilters = sourceFiltersFor(sources);
-      const verifiers = await buildKnowledgeVerifiers(context.tenantId);
+      const verifiers = await buildKnowledgeVerifiers();
 
       // No query: answer with the newest indexed items rather than an
       // error. Needs no embedder, so "what's in here?" works even before an
       // org configures one.
       if (!query.trim()) {
         const recent = await listRecentKnowledge({
-          tenantId: context.tenantId,
           userEmail,
           k,
           verifiers,
@@ -443,7 +436,7 @@ export async function registerKnowledgeTools(
         return { content: [{ type: 'text' as const, text: renderHits(recent.val, true, null) }] };
       }
 
-      const knowledge = await resolveKnowledge(context.tenantId);
+      const knowledge = await resolveKnowledge();
       if (!knowledge) {
         return {
           content: [
@@ -457,7 +450,6 @@ export async function registerKnowledgeTools(
       }
 
       const searched = await searchKnowledge({
-        tenantId: context.tenantId,
         userEmail,
         query,
         k,
@@ -484,7 +476,6 @@ export async function registerKnowledgeTools(
       // only the split says which; the tool_calls row keeps the total.
       logger.info('search_knowledge timings', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         k,
         hits: searched.val.hits.length,
         elided: searched.val.elided,

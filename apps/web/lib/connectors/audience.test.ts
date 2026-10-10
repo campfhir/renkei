@@ -40,7 +40,7 @@ describe('pure pieces', () => {
 describe('resolveAudience', () => {
   it('restricts nothing when no rule names a group', async () => {
     rules({ zoom: [] });
-    const resolution = await resolveAudience(db, 't', 's');
+    const resolution = await resolveAudience(db, 's');
     expect(resolution).toEqual({ restrictedConnectors: [], allowedConnectors: [] });
     // No rules, so the identity is not even read.
     expect(idpGroupsFor).not.toHaveBeenCalled();
@@ -49,7 +49,7 @@ describe('resolveAudience', () => {
   it('admits a person whose recorded groups match', async () => {
     rules({ zoom: ['svc-desk'], 'atlassian-bitbucket': ['eng'] });
     idpGroupsFor.mockResolvedValue({ ok: true, val: ['svc-desk'] });
-    const resolution = await resolveAudience(db, 't', 's');
+    const resolution = await resolveAudience(db, 's');
     expect(resolution.restrictedConnectors.sort()).toEqual(['atlassian-bitbucket', 'zoom']);
     expect(resolution.allowedConnectors).toEqual(['zoom']);
   });
@@ -57,7 +57,7 @@ describe('resolveAudience', () => {
   it('closes every restricted connector when the identity cannot be read', async () => {
     rules({ zoom: ['svc-desk'] });
     idpGroupsFor.mockResolvedValue({ ok: false, err: 'DB_ERROR' });
-    const resolution = await resolveAudience(db, 't', 's');
+    const resolution = await resolveAudience(db, 's');
     expect(resolution).toEqual({ restrictedConnectors: ['zoom'], allowedConnectors: [] });
   });
 
@@ -65,7 +65,7 @@ describe('resolveAudience', () => {
     // Fail closed all the way: with the rules unknown, no connector can be
     // assumed unrestricted.
     getOrgSettings.mockResolvedValue({ ok: false, err: 'DB_ERROR' });
-    const resolution = await resolveAudience(db, 't', 's');
+    const resolution = await resolveAudience(db, 's');
     expect(resolution.allowedConnectors).toEqual([]);
     expect(resolution.restrictedConnectors).toContain('zoom');
     expect(resolution.restrictedConnectors).toContain('jira');
@@ -74,7 +74,7 @@ describe('resolveAudience', () => {
   it('answers the page the same way it answers the projection', async () => {
     rules({ zoom: ['svc-desk'] });
     idpGroupsFor.mockResolvedValue({ ok: true, val: ['other'] });
-    const allows = await resolveAudienceAllows(db, 't', 's');
+    const allows = await resolveAudienceAllows(db, 's');
     expect(allows('zoom')).toBe(false);
     expect(allows('jira')).toBe(true);
   });

@@ -3,7 +3,7 @@
  * of workspace and environment verbs the Code pages drive, answered from
  * memory with the worker's own wire shapes. No git, no disk, no Bitbucket
  * — a clone "runs" for a moment and then reads ready, which is enough to
- * exercise the page that follows it. State is per (tenantId, subject),
+ * exercise the page that follows it. State is per subject,
  * exactly as the real worker scopes it, so the three Playwright projects
  * running side by side never see each other's checkouts.
  *
@@ -198,7 +198,7 @@ let commitCounter = 0;
 const scopes = new Map();
 
 function scopeOf(body) {
-  const key = `${body.tenantId}\n${body.subject}`;
+  const key = body.subject;
   if (!scopes.has(key)) scopes.set(key, { workspaces: new Map(), env: new Map() });
   return scopes.get(key);
 }
@@ -259,7 +259,7 @@ function setVariable(scope, name, value) {
 
 /**
  * Code project services, stood in for: the organization's image rules
- * (per tenant, seeded like migration 122 does) and the services a
+ * (seeded like migration 122 does) and the services a
  * project "runs" — no engine, a start just reads running at a made-up
  * address, which is enough to exercise the admin page and the tools'
  * plumbing.
@@ -277,8 +277,8 @@ const RULE_SEED = [
   ['mcr.microsoft.com/azure-storage/azurite', 'Azurite, the Azure Storage emulator'],
 ];
 const rulesByTenant = new Map();
-function rulesOf(tenantId) {
-  let rules = rulesByTenant.get(tenantId);
+function rulesOf() {
+  let rules = rulesByTenant.get();
   if (!rules) {
     rules = new Map();
     for (const [pattern, note] of RULE_SEED) {
@@ -286,7 +286,7 @@ function rulesOf(tenantId) {
       const now = new Date().toISOString();
       rules.set(id, { id, pattern, note, registryUsername: null, createdAt: now, updatedAt: now });
     }
-    rulesByTenant.set(tenantId, rules);
+    rulesByTenant.set(rules);
   }
   return rules;
 }
@@ -344,7 +344,7 @@ function normalizeRule(raw) {
 }
 
 function handleRules(op, body, response) {
-  const rules = rulesOf(body.tenantId);
+  const rules = rulesOf();
   switch (op) {
     case 'list':
       return json(response, 200, {
@@ -442,7 +442,7 @@ function handleServices(op, body, response) {
         return error(response, 409, 'exists', `A service named ${name} is already running.`);
       const normalized = normalizeRule(String(body.image ?? ''));
       if (normalized.error) return error(response, 400, 'bad_request', normalized.error);
-      const allowed = [...rulesOf(body.tenantId).values()].some((rule) =>
+      const allowed = [...rulesOf().values()].some((rule) =>
         rule.pattern.endsWith('/*')
           ? normalized.pattern.startsWith(rule.pattern.slice(0, -1))
           : rule.pattern.includes('/')
@@ -1848,7 +1848,7 @@ const server = createServer((request, response) => {
   // The one verb whose body is the file: it lands in memory, by path.
   if (url.pathname === '/v1/workspaces/upload') {
     const query = Object.fromEntries(url.searchParams);
-    if (!query.tenantId || !query.subject) return error(response, 400, 'bad_request');
+    if (!query.subject) return error(response, 400, 'bad_request');
     const scope = scopeOf(query);
     const workspace = scope.workspaces.get(query.id ?? '');
     if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
@@ -1875,12 +1875,11 @@ const server = createServer((request, response) => {
   }
   const op = url.pathname.startsWith('/v1/') ? url.pathname.slice(4) : '';
   void readBody(request).then((body) => {
-    // The rule verbs are the organization's: a tenant, no subject.
+    // The rule verbs are the organization's: no subject.
     if (op.startsWith('services/rules/')) {
-      if (!body.tenantId) return error(response, 400, 'bad_request');
       return handleServices(op.slice('services/'.length), body, response);
     }
-    if (!body.tenantId || !body.subject) return error(response, 400, 'bad_request');
+    if (!body.subject) return error(response, 400, 'bad_request');
     if (op.startsWith('services/'))
       return handleServices(op.slice('services/'.length), body, response);
     if (op.startsWith('workspaces/'))

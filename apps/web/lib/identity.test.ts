@@ -105,7 +105,7 @@ describe('upsertIdentity / getIdentityEmail', () => {
       val: { insertInto: () => insertChain, selectFrom: () => selectChain },
     });
 
-    const wrote = await upsertIdentity('tenant-1', 'subject-1', {
+    const wrote = await upsertIdentity('subject-1', {
       email: 'sam@example.com',
       displayName: 'Sam',
       idpGroups: ['eng'],
@@ -114,7 +114,7 @@ describe('upsertIdentity / getIdentityEmail', () => {
     expect(inserted[0]?.email).toBe('sam@example.com');
     expect(inserted[0]?.subject).toBe('subject-1');
 
-    const read = await getIdentityEmail('tenant-1', 'subject-1');
+    const read = await getIdentityEmail('subject-1');
     expect(read.ok && read.val).toBe('sam@example.com');
   });
 
@@ -126,13 +126,13 @@ describe('upsertIdentity / getIdentityEmail', () => {
     };
     mockGetDatabase.mockReturnValue({ ok: true, val: { selectFrom: () => selectChain } });
 
-    const read = await getIdentityEmail('tenant-1', 'stranger');
+    const read = await getIdentityEmail('stranger');
     expect(read.ok && read.val === null).toBe(true);
   });
 
   it('fails with DB_ERROR when the database is unavailable', async () => {
     mockGetDatabase.mockReturnValue({ ok: false, err: { type: 'DB_ERROR' } });
-    const read = await getIdentityEmail('tenant-1', 'subject-1');
+    const read = await getIdentityEmail('subject-1');
     expect(read.ok).toBe(false);
   });
 });

@@ -137,10 +137,9 @@ export interface ConnectorOption {
 
 /** The picker's data: connectors the person can offer, with tool counts. */
 export async function listChatConnectors(
-  tenantId: string,
   subject: string
 ): Promise<ConnectorOption[]> {
-  const catalog = await listAvailableTools(tenantId, subject);
+  const catalog = await listAvailableTools(subject);
   const counts = new Map<string, number>();
   for (const descriptor of catalog) {
     if (descriptor.appOnly || descriptor.name.endsWith(PREVIEW_SUFFIX)) continue;
@@ -176,7 +175,6 @@ export interface ChatToolSurface {
 export async function resolveChatToolSurface(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     subject: string;
     roles: string[];
     config: ChatToolConfig;
@@ -191,7 +189,7 @@ export async function resolveChatToolSurface(
     eager?: EagerExtras;
   }
 ): Promise<ChatToolSurface> {
-  const catalog = await listAvailableTools(input.tenantId, input.subject, { roles: input.roles });
+  const catalog = await listAvailableTools(input.subject, { roles: input.roles });
   const excluded = input.excluded ?? new Set<string>();
   const candidates = catalog.filter(
     (descriptor) =>
@@ -212,7 +210,6 @@ export async function resolveChatToolSurface(
   }
 
   const token = await mintRunToken(db, {
-    tenantId: input.tenantId,
     subject: input.subject,
     agentId: null,
     ttlSeconds: input.ttlSeconds,
@@ -224,7 +221,7 @@ export async function resolveChatToolSurface(
     released = true;
     await revokeRunToken(db, token);
   };
-  const mcp = new HttpMcpClient(internalMcpEndpoint(input.tenantId), token, {
+  const mcp = new HttpMcpClient(internalMcpEndpoint(), token, {
     clientName: 'renkei-chat',
   });
   try {
@@ -258,7 +255,6 @@ export async function resolveChatToolSurface(
     // person's: the turn proceeds without tools and says so in the log.
     logger.warn('chat tool surface unavailable: {error}', {
       component: 'chat/tools',
-      tenantId: input.tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     await release();

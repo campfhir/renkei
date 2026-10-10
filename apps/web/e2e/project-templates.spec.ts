@@ -11,7 +11,7 @@
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { sealForSubject } from './keys';
 
 test.use({
@@ -75,38 +75,16 @@ test.describe('code project templates', () => {
       // project at all — the picker itself does not need this, but the
       // full page context (no "Connect Bitbucket first" banner) does.
       await client.query(
-        `INSERT INTO provider_grants
-           (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-            encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)
-         VALUES ($1, 'atlassian-bitbucket', 'e2e-bitbucket-account', $2, 'e2e-client', 'E2E Bitbucket',
-                 $3, $4, $5, $6, $7)
-         ON CONFLICT (tenant_id, provider, provider_account_id) DO UPDATE
-           SET subject = EXCLUDED.subject,
-               encrypted_access_token = EXCLUDED.encrypted_access_token,
-               encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
-               expires_at = EXCLUDED.expires_at`,
-        [
-          E2E_TENANT_ID,
-          E2E_SUBJECT,
-          await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-access-token'),
-          await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-refresh-token'),
-          new Date(Date.now() + 365 * 86_400_000),
-          ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'],
-          JSON.stringify({ username: 'e2e-dev' }),
-        ]
+        `INSERT INTO provider_grants\n           (provider, provider_account_id, subject, client_id, display_name,\n            encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)\n         VALUES ('atlassian-bitbucket', 'e2e-bitbucket-account', $1, 'e2e-client', 'E2E Bitbucket',\n                 $2, $3, $4, $5, $6)\n         ON CONFLICT (provider, provider_account_id) DO UPDATE\n           SET subject = EXCLUDED.subject,\n               encrypted_access_token = EXCLUDED.encrypted_access_token,\n               encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,\n               expires_at = EXCLUDED.expires_at`,
+        [E2E_SUBJECT, await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'), await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'), new Date(Date.now() + 365 * 86_400_000), ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'], JSON.stringify({ username: 'e2e-dev' })]
       );
       for (const template of SEED_TEMPLATES) {
         await client.query(
-          `INSERT INTO code_project_templates (tenant_id, name, description, instructions)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (tenant_id, name) DO NOTHING`,
-          [E2E_TENANT_ID, template.name, template.description, template.instructions]
+          `INSERT INTO code_project_templates (name, description, instructions)\n           VALUES ($1, $2, $3)\n           ON CONFLICT (name) DO NOTHING`,
+          [template.name, template.description, template.instructions]
         );
       }
-      await client.query(`DELETE FROM code_project_templates WHERE tenant_id = $1 AND name = $2`, [
-        E2E_TENANT_ID,
-        customTemplateName,
-      ]);
+      await client.query(`DELETE FROM code_project_templates WHERE name = $1`, [customTemplateName]);
     } finally {
       await client.end();
     }
@@ -129,7 +107,7 @@ test.describe('code project templates', () => {
 
     // ── The new-project form: the seeded templates offered, nothing
     //    selected yet, the standing developer's brief already filled in ──
-    await page.goto(`/${E2E_SLUG}/code/new`);
+    await page.goto(`/code/new`);
     await expect(page.getByRole('heading', { level: 1, name: 'New code project' })).toBeVisible();
     const templatePicker = page.getByRole('combobox', { name: 'Start from a template' });
     await expect(templatePicker).toBeVisible();
@@ -145,7 +123,7 @@ test.describe('code project templates', () => {
 
     // ── The admin catalog: the seeded rows, no special "built-in" marker —
     //    they are ordinary rows an operator can rename, rewrite or delete ──
-    await page.goto(`/${E2E_SLUG}/admin/project-templates`);
+    await page.goto(`/admin/project-templates`);
     await expect(page.getByRole('heading', { level: 1, name: 'Project templates' })).toBeVisible();
     await expect(page.getByText('Generic developer brief')).toBeVisible();
     await expect(page.getByText('Microservice / API service')).toBeVisible();
@@ -175,7 +153,7 @@ test.describe('code project templates', () => {
     await shot('project-templates-admin-list-with-custom.png');
 
     // ── The org's own template now shows up in the new-project picker too ──
-    await page.goto(`/${E2E_SLUG}/code/new`);
+    await page.goto(`/code/new`);
     await expect(page.getByRole('combobox', { name: 'Start from a template' })).toContainText(
       customTemplateName
     );

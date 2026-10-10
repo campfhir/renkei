@@ -25,7 +25,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export interface BatchJobScheduleRow {
   id: string;
-  tenant_id: string;
   subject: string;
   name: string;
   kind: string;
@@ -40,7 +39,6 @@ export interface BatchJobScheduleRow {
 
 const SCHEDULE_COLUMNS = [
   'id',
-  'tenant_id',
   'subject',
   'name',
   'kind',
@@ -55,7 +53,6 @@ const SCHEDULE_COLUMNS = [
 
 function scheduleOf(row: {
   id: string;
-  tenant_id: string;
   subject: string;
   name: string;
   kind: string;
@@ -75,7 +72,6 @@ function scheduleOf(row: {
 }
 
 export interface CreateScheduleInput {
-  tenantId: string;
   subject: string;
   name: string;
   kind: string;
@@ -93,7 +89,6 @@ export async function createSchedule(
     .insertInto('batch_job_schedules')
     .values({
       id: randomUUID(),
-      tenant_id: input.tenantId,
       subject: input.subject,
       name: input.name,
       kind: input.kind,
@@ -108,27 +103,23 @@ export async function createSchedule(
 
 export async function getSchedule(
   db: Kysely<DB>,
-  scheduleId: string,
-  tenantId: string
+  scheduleId: string
 ): Promise<BatchJobScheduleRow | undefined> {
   const row = await db
     .selectFrom('batch_job_schedules')
     .select(SCHEDULE_COLUMNS)
     .where('id', '=', scheduleId)
-    .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
   return row ? scheduleOf(row) : undefined;
 }
 
 export async function listSchedules(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<BatchJobScheduleRow[]> {
   const rows = await db
     .selectFrom('batch_job_schedules')
     .select(SCHEDULE_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .orderBy('name')
     .execute();
@@ -147,7 +138,6 @@ export interface UpdateScheduleInput {
 export async function updateSchedule(
   db: Kysely<DB>,
   scheduleId: string,
-  tenantId: string,
   input: UpdateScheduleInput
 ): Promise<BatchJobScheduleRow | undefined> {
   const row = await db
@@ -163,7 +153,6 @@ export async function updateSchedule(
       updated_at: sql`NOW()`,
     })
     .where('id', '=', scheduleId)
-    .where('tenant_id', '=', tenantId)
     .returning(SCHEDULE_COLUMNS)
     .executeTakeFirst();
   return row ? scheduleOf(row) : undefined;
@@ -171,13 +160,11 @@ export async function updateSchedule(
 
 export async function deleteSchedule(
   db: Kysely<DB>,
-  scheduleId: string,
-  tenantId: string
+  scheduleId: string
 ): Promise<boolean> {
   const result = await db
     .deleteFrom('batch_job_schedules')
     .where('id', '=', scheduleId)
-    .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
   return Number(result.numDeletedRows ?? 0) > 0;
 }

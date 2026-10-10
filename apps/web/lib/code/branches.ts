@@ -15,7 +15,6 @@ import { isUuid } from '@/lib/uuid';
 /** The branch per workspace id, for the ready ones among those asked about. */
 export async function workspaceBranches(
   db: Kysely<DB>,
-  tenantId: string,
   workspaceIds: (string | null)[]
 ): Promise<Map<string, string>> {
   const ids = [...new Set(workspaceIds.filter((id): id is string => !!id && isUuid(id)))];
@@ -23,7 +22,6 @@ export async function workspaceBranches(
   const rows = await db
     .selectFrom('sandbox_workspaces')
     .select(['id', 'branch'])
-    .where('tenant_id', '=', tenantId)
     .where('id', 'in', ids)
     .where('status', '=', 'ready')
     .execute();

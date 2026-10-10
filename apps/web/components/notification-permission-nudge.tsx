@@ -29,11 +29,11 @@ import { ensurePushSubscription } from '@/lib/push-subscription';
  * `enable()` also has to subscribe this device and tell the server, or
  * the switch would read "fixed" while nothing can actually reach it.
  */
-function dismissKey(tenantId: string): string {
-  return `renkei:notification-nudge-dismissed:${tenantId}`;
+function dismissKey(): string {
+  return `renkei:notification-nudge-dismissed`;
 }
 
-export default function NotificationPermissionNudge({ tenantId }: { tenantId: string }) {
+export default function NotificationPermissionNudge() {
   // Server-rendered first, where `Notification` does not exist — null until
   // the effect below reads the real answer, same reasoning as the switch
   // in preferences-form.tsx.
@@ -42,24 +42,24 @@ export default function NotificationPermissionNudge({ tenantId }: { tenantId: st
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    setEnabled(getDesktopNotificationsEnabled(tenantId));
+    setEnabled(getDesktopNotificationsEnabled());
     if (!('Notification' in window)) {
       setPermission('unsupported');
       return;
     }
     setPermission(Notification.permission);
     try {
-      setDismissed(window.localStorage.getItem(dismissKey(tenantId)) === '1');
+      setDismissed(window.localStorage.getItem(dismissKey()) === '1');
     } catch {
       // No storage, no memory of a prior dismissal — it shows again, which
       // is the safe direction to fail in.
     }
-  }, [tenantId]);
+  }, []);
 
   function dismiss() {
     setDismissed(true);
     try {
-      window.localStorage.setItem(dismissKey(tenantId), '1');
+      window.localStorage.setItem(dismissKey(), '1');
     } catch {
       // Nothing to persist; it will just show again on the next page.
     }
@@ -78,7 +78,7 @@ export default function NotificationPermissionNudge({ tenantId }: { tenantId: st
     if (current !== 'granted') return;
     // Permission alone isn't the finish line — a subscription is what lets
     // the server actually reach this device (see push-subscription.ts).
-    if (await ensurePushSubscription(tenantId)) dismiss();
+    if (await ensurePushSubscription()) dismiss();
   }
 
   if (

@@ -102,7 +102,6 @@ export class BrowserOpError extends Error {
 }
 
 export interface BrowserTarget {
-  tenantId: string;
   subject: string;
 }
 
@@ -229,7 +228,7 @@ function firstLine(error: unknown): string {
 }
 
 function sessionKey(target: BrowserTarget): string {
-  return `${target.tenantId}\n${target.subject}`;
+  return target.subject;
 }
 
 /** Chromium's own executable resolution, unless the image pins one (SANDBOX_BROWSER_EXECUTABLE). */

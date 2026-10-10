@@ -36,7 +36,7 @@ function stubDb(): FakeStore {
       },
       executeTakeFirst: async () => {
         store.selects += 1;
-        return store.rows.get(`${String(filters.tenant_id)}:${String(filters.connector)}`);
+        return store.rows.get(String(filters.connector));
       },
     };
     return chain;
@@ -50,7 +50,7 @@ function stubDb(): FakeStore {
         values: (row: Record<string, unknown>) => ({
           onConflict: () => ({
             execute: async () => {
-              store.rows.set(`${String(row.tenant_id)}:${String(row.connector)}`, {
+              store.rows.set(String(row.connector), {
                 enabled: row.enabled,
                 settings: JSON.parse(String(row.settings)),
                 encrypted_secrets: row.encrypted_secrets,
@@ -75,7 +75,6 @@ describe('connector config store', () => {
     stubDb();
 
     const write = await setConnectorConfig(
-      'tenant-1',
       'webex',
       {
         enabled: true,
@@ -86,7 +85,7 @@ describe('connector config store', () => {
     );
     expect(write.ok).toBe(true);
 
-    const read = await getConnectorConfig('tenant-1', 'webex', KEY);
+    const read = await getConnectorConfig('webex', KEY);
     expect(read.ok).toBe(true);
     if (read.ok) {
       expect(read.val).not.toBeNull();
@@ -103,20 +102,19 @@ describe('connector config store', () => {
     const store = stubDb();
 
     await setConnectorConfig(
-      'tenant-1',
       'webex',
       { enabled: true, settings: {}, secrets: { botToken: 'super-secret-token' } },
       KEY
     );
 
-    const stored = String(store.rows.get('tenant-1:webex')?.encrypted_secrets);
+    const stored = String(store.rows.get('webex')?.encrypted_secrets);
     expect(stored).not.toContain('super-secret-token');
     expect(stored.startsWith('v1.')).toBe(true);
   });
 
   it('returns null for an unconfigured connector', async () => {
     stubDb();
-    const read = await getConnectorConfig('tenant-1', 'webex', KEY);
+    const read = await getConnectorConfig('webex', KEY);
     expect(read.ok).toBe(true);
     if (read.ok) expect(read.val).toBeNull();
   });
@@ -124,28 +122,26 @@ describe('connector config store', () => {
   it('reports DECRYPTION_ERROR under the wrong key instead of leaking', async () => {
     stubDb();
     await setConnectorConfig(
-      'tenant-1',
       'webex',
       { enabled: true, settings: {}, secrets: { botToken: 't' } },
       KEY
     );
 
-    const read = await getConnectorConfig('tenant-1', 'webex', randomBytes(32));
+    const read = await getConnectorConfig('webex', randomBytes(32));
     expect(read.ok).toBe(false);
   });
 
   it('serves cached reads within the TTL without re-querying', async () => {
     const store = stubDb();
     await setConnectorConfig(
-      'tenant-1',
       'webex',
       { enabled: true, settings: {}, secrets: { botToken: 't' } },
       KEY
     );
 
-    await readConnectorConfigCached('tenant-1', 'webex', KEY);
+    await readConnectorConfigCached('webex', KEY);
     const selectsAfterFirst = store.selects;
-    await readConnectorConfigCached('tenant-1', 'webex', KEY);
+    await readConnectorConfigCached('webex', KEY);
 
     expect(store.selects).toBe(selectsAfterFirst);
   });

@@ -27,7 +27,6 @@ import { keyVault } from './vault';
 export type KeyScope = 'session' | 'automation';
 
 export interface KeyRing {
-  tenantId: string;
   subject: string;
   /** `user_encryption_keys.version`: which key the wrappings are stamped with. */
   version: number;
@@ -69,7 +68,6 @@ export interface HeldRow {
 
 export async function readKeyRow(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<HeldRow | null> {
   const row = await db
@@ -83,7 +81,6 @@ export async function readKeyRow(
       'enrolled_at',
       'verifier',
     ])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .executeTakeFirst();
   return row ?? null;
@@ -97,14 +94,12 @@ interface DelegationRow {
 
 async function liveDelegationsFor(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   instanceId: string
 ): Promise<DelegationRow[]> {
   return db
     .selectFrom('key_delegations')
     .select(['scope', 'session_id', 'sealed_key'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('instance_id', '=', instanceId)
     .where('expires_at', '>', new Date())
@@ -130,7 +125,6 @@ function usableDelegations(rows: DelegationRow[]): DelegationRow[] {
 
 /** The ring a held row and an opened user key make. */
 export function ringFromUserKey(
-  tenantId: string,
   subject: string,
   row: HeldRow,
   userKey: Buffer
@@ -141,7 +135,6 @@ export function ringFromUserKey(
   const wrappedPrivate = row.wrapped_private_key;
   let privateKey: Buffer | null | undefined;
   return ok({
-    tenantId,
     subject,
     version: row.version,
     scope: 'session',
@@ -158,14 +151,12 @@ export function ringFromUserKey(
 }
 
 function ringFromAutomationKey(
-  tenantId: string,
   subject: string,
   row: HeldRow,
   automationKey: Buffer
 ): Result<KeyRing, 'DECRYPTION_ERROR'> {
   if (!row.public_key) return err('DECRYPTION_ERROR' as const);
   return ok({
-    tenantId,
     subject,
     version: row.version,
     scope: 'automation',
@@ -183,24 +174,23 @@ function ringFromAutomationKey(
  */
 export async function getKeyRing(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   need: 'any' | 'session' = 'any'
 ): Promise<Result<KeyRing, KeyError>> {
   const vault = keyVault();
   if (!vault) return err('NO_VAULT' as const);
-  const row = await readKeyRow(db, tenantId, subject);
+  const row = await readKeyRow(db, subject);
   if (!row) return err('NO_USER_KEY' as const);
   if (row.mode !== 'held') return err('NOT_ENROLLED' as const);
   const delegations = usableDelegations(
-    await liveDelegationsFor(db, tenantId, subject, vault.instanceId)
+    await liveDelegationsFor(db, subject, vault.instanceId)
   );
   let sawAutomation: Buffer | null = null;
   for (const delegation of delegations) {
     const opened = vault.open(delegation.sealed_key);
     if (!opened || opened.byteLength !== 32) continue;
     if (delegation.scope === 'session') {
-      const ring = ringFromUserKey(tenantId, subject, row, opened);
+      const ring = ringFromUserKey(subject, row, opened);
       if (ring.ok) return ring;
       continue;
     }
@@ -208,7 +198,7 @@ export async function getKeyRing(
   }
   if (sawAutomation) {
     if (need === 'session') return err('NEEDS_SESSION' as const);
-    return ringFromAutomationKey(tenantId, subject, row, sawAutomation);
+    return ringFromAutomationKey(subject, row, sawAutomation);
   }
   return err('NEEDS_DELEGATION' as const);
 }
@@ -254,7 +244,6 @@ export interface DelegationStatus {
 /** What is delegated for a person, across the live instances — for the browser and the agents worker. */
 export async function delegationStatus(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   sessionId?: string
 ): Promise<DelegationStatus> {
@@ -269,14 +258,12 @@ export async function delegationStatus(
       'enrolled_at',
       'verifier',
     ])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .executeTakeFirst();
   const live = new Set((await liveInstances(db)).map((instance) => instance.id));
   const delegations = await db
     .selectFrom('key_delegations')
     .select(['instance_id', 'scope', 'session_id', 'expires_at'])
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('expires_at', '>', new Date())
     .execute();

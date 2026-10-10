@@ -43,8 +43,8 @@ maybe('agent notifications', () => {
   jest.setTimeout(20_000);
 
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const subject = `owner-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const subject = `owner-${suiteId.slice(0, 8)}`;
   const agentId = randomUUID();
   const runId = randomUUID();
 
@@ -52,10 +52,6 @@ maybe('agent notifications', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `notif-test-${tenantId.slice(0, 8)}` })
-      .execute();
     // The agent and the run have to exist: a notification points at both by
     // foreign key, so that a deleted agent nulls the reference and a pruned
     // run takes its notifications with it.
@@ -63,7 +59,6 @@ maybe('agent notifications', () => {
       .insertInto('agents')
       .values({
         id: agentId,
-        tenant_id: tenantId,
         owner_subject: subject,
         name: 'Triage bot',
         steps: JSON.stringify({ version: 1, steps: [] }),
@@ -74,7 +69,6 @@ maybe('agent notifications', () => {
       .insertInto('agent_runs')
       .values({
         id: runId,
-        tenant_id: tenantId,
         agent_id: agentId,
         owner_subject: subject,
         trigger_kind: 'manual',
@@ -84,20 +78,18 @@ maybe('agent notifications', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_notifications WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_notifications WHERE subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE owner_subject = ${subject}`.execute(db);
+    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
   beforeEach(async () => {
-    await sql`DELETE FROM agent_notifications WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_notifications WHERE subject = ${subject}`.execute(db);
   });
 
   const notifier = (prefs: Partial<NotificationPrefs> = {}) =>
     createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       // Denormalized: the row keeps the name even after the agent is gone.
@@ -113,7 +105,7 @@ maybe('agent notifications', () => {
     db
       .selectFrom('agent_notifications')
       .selectAll()
-      .where('tenant_id', '=', tenantId)
+      .where('subject', '=', subject)
       .orderBy('created_at')
       .execute();
 
@@ -177,7 +169,6 @@ maybe('agent notifications', () => {
   it('emails a batch act once per run, not once per call', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -231,7 +222,6 @@ maybe('agent notifications', () => {
   it('fires email/WebEx for a category wanted on those channels, independent of App', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -258,7 +248,6 @@ maybe('agent notifications', () => {
   it('skips email silently when the tool is not connected, and does not throw', async () => {
     const { mcp, toolsByName, calls } = fakeMcp([]); // Neither tool registered.
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -281,7 +270,6 @@ maybe('agent notifications', () => {
   it('never calls outlook_send_mail or webex_note_to_self when email/WebEx are off, even though both tools are connected and ready', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -323,7 +311,6 @@ maybe('agent notifications', () => {
   it('fires email/WebEx for a run starting and a successful finish, independent of App', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -354,7 +341,6 @@ maybe('agent notifications', () => {
   it('never sends email/WebEx for a failed run from here — that goes through the run.failed queue handler', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -377,7 +363,6 @@ maybe('agent notifications', () => {
   it('lets an agent override reach email/WebEx even when the general preference is off', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
     const notifierWithMcp = createNotifier(db, {
-      tenantId,
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -405,7 +390,6 @@ maybe('agent notifications', () => {
     // happened, so this must be a warning and not an exception climbing
     // back into the run loop.
     const orphan = createNotifier(db, {
-      tenantId: randomUUID(),
       subject,
       agentId,
       agentName: 'Ghost',

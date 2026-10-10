@@ -99,7 +99,6 @@ const DRAFT_COLUMNS = [
 export async function createDraft(
   db: Kysely<DB>,
   params: {
-    tenantId: string;
     ownerSubject: string;
     agentId: string | null;
     request: DraftRequest;
@@ -108,7 +107,6 @@ export async function createDraft(
   const row = await db
     .insertInto('agent_drafts')
     .values({
-      tenant_id: params.tenantId,
       owner_subject: params.ownerSubject,
       agent_id: params.agentId,
       status: 'queued',
@@ -123,7 +121,6 @@ export async function createDraft(
 /** One draft, for its owner. Null for anyone else, which is the same answer. */
 export async function getDraft(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   draftId: string
 ): Promise<AgentDraft | null> {
@@ -131,7 +128,6 @@ export async function getDraft(
   const row = await db
     .selectFrom('agent_drafts')
     .select(DRAFT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', draftId)
     .executeTakeFirst();
@@ -149,14 +145,12 @@ export async function getDraft(
  */
 export async function latestReadyDraft(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   agentId: string | null
 ): Promise<AgentDraft | null> {
   let query = db
     .selectFrom('agent_drafts')
     .select(DRAFT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('status', '=', 'succeeded')
     // Not yet picked up. Without this the same result is offered on every
@@ -177,7 +171,6 @@ export async function latestReadyDraft(
  */
 export async function consumeDraft(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   draftId: string
 ): Promise<void> {
@@ -185,7 +178,6 @@ export async function consumeDraft(
   await db
     .updateTable('agent_drafts')
     .set({ consumed_at: new Date(), updated_at: new Date() })
-    .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', draftId)
     .execute();

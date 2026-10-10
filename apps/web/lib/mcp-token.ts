@@ -1,7 +1,7 @@
 /**
  * Bearer tokens for the MCP transport endpoint.
  *
- * Access tokens issued by /api/mcp/{tenantId}/oauth/token were previously
+ * Access tokens issued by /api/mcp/oauth/token were previously
  * generated and discarded, leaving the transport with no way to identify its
  * caller — it fell back to "first grant for the tenant", so every user of a
  * tenant acted as the same Atlassian account. Tokens are now persisted as a
@@ -125,7 +125,6 @@ export interface AccessTokenRecord {
 
 export async function storeAccessToken(params: {
   token: string;
-  tenantId: string;
   clientId: string;
   subject: string;
   scope: string | null;
@@ -149,7 +148,6 @@ export async function storeAccessToken(params: {
     .insertInto('oauth_access_tokens')
     .values({
       token_hash: hashToken(params.token),
-      tenant_id: params.tenantId,
       client_id: params.clientId,
       subject: params.subject,
       application: params.application ?? 'jira',
@@ -166,7 +164,6 @@ export async function storeAccessToken(params: {
  */
 export async function resolveAccessToken(
   token: string,
-  tenantId: string,
   application: Application = 'jira'
 ): Promise<AccessTokenRecord | null> {
   const dbResult = getDatabase();
@@ -183,14 +180,12 @@ export async function resolveAccessToken(
       'client_id',
       'scope',
       'expires_at',
-      'tenant_id',
       'application',
       'agent_id',
       'roles',
       'tool_names',
     ])
     .where('token_hash', '=', tokenHash)
-    .where('tenant_id', '=', tenantId)
     .where('application', '=', application)
     .executeTakeFirst();
 
@@ -202,7 +197,7 @@ export async function resolveAccessToken(
 
   if (new Date(row.expires_at) < new Date()) {
     await db.deleteFrom('oauth_access_tokens').where('token_hash', '=', tokenHash).execute();
-    logger.debug('Expired access token discarded', { component: 'mcp/token', tenantId });
+    logger.debug('Expired access token discarded', { component: 'mcp/token' });
     return null;
   }
 
@@ -218,7 +213,7 @@ export async function resolveAccessToken(
 }
 
 /** RFC 6750 challenge for a missing or rejected bearer token. */
-export function unauthorizedResponse(tenantId: string, origin: string, detail: string): Response {
+export function unauthorizedResponse(origin: string, detail: string): Response {
   return new Response(
     JSON.stringify({
       jsonrpc: '2.0',
@@ -233,7 +228,7 @@ export function unauthorizedResponse(tenantId: string, origin: string, detail: s
         // It pointed at the authorization server metadata, so a client followed
         // it, looked for `authorization_servers`, found none, and never reached
         // the registration endpoint.
-        'WWW-Authenticate': `Bearer realm="renkei", error="invalid_token", resource_metadata="${origin}/api/mcp/${tenantId}/.well-known/oauth-protected-resource"`,
+        'WWW-Authenticate': `Bearer realm="renkei", error="invalid_token", resource_metadata="${origin}/api/mcp/.well-known/oauth-protected-resource"`,
       },
     }
   );

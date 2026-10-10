@@ -1,8 +1,8 @@
 /**
- * getEffectiveLogLevel's contract: the most verbose level any tenant has
- * configured wins (never the average, never the first), null when there is
- * nothing to apply; watchLogLevel applies that level to every adapter with
- * a `level` property and leaves the rest alone.
+ * getEffectiveLogLevel's contract: the organization's configured level,
+ * info until one is configured, null when there is nothing to apply (the
+ * database is unreachable); watchLogLevel applies that level to every
+ * adapter with a `level` property and leaves the rest alone.
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
@@ -12,33 +12,18 @@ import { invalidateSettingsCache } from './index';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 
-/** Stubs both `tenants` (a plain id list) and `tenant_settings` (log_level per tenant). */
-function stubDb(tenantIds: string[], levels: Record<string, string> = {}): void {
-  const settingsRows = new Map<string, unknown>();
-  for (const [tenantId, level] of Object.entries(levels)) {
-    settingsRows.set(`${tenantId}:log_level`, level);
-  }
+/** Stubs the `settings` table: the one organization's rows by key. */
+function stubDb(level?: string): void {
+  const settingsRows = level === undefined ? [] : [{ key: 'log_level', value: level }];
 
   mockGetDatabase.mockReturnValue({
     ok: true,
     val: {
-      selectFrom: (table: string) => {
-        if (table === 'tenants') {
-          return { select: () => ({ execute: async () => tenantIds.map((id) => ({ id })) }) };
-        }
-        const filters: Record<string, unknown> = {};
+      selectFrom: () => {
         const chain = {
           select: () => chain,
-          where: (column: string, _op: string, value: unknown) => {
-            filters[column] = value;
-            return chain;
-          },
-          execute: async () => {
-            const tenantId = String(filters.tenant_id);
-            return [...settingsRows.entries()]
-              .filter(([key]) => key.startsWith(`${tenantId}:`))
-              .map(([key, value]) => ({ key: key.split(':')[1], value }));
-          },
+          where: () => chain,
+          execute: async () => settingsRows,
         };
         return chain;
       },
@@ -57,24 +42,19 @@ describe('getEffectiveLogLevel', () => {
     expect(await getEffectiveLogLevel()).toBeNull();
   });
 
-  it('returns null when there are no tenants yet', async () => {
-    stubDb([]);
-    expect(await getEffectiveLogLevel()).toBeNull();
-  });
-
-  it('defaults to info when no tenant has configured a level', async () => {
-    stubDb(['t1', 't2']);
+  it('defaults to info when no level has been configured', async () => {
+    stubDb();
     expect(await getEffectiveLogLevel()).toBe('info');
   });
 
-  it('picks the most verbose level across tenants, not the first or the average', async () => {
-    stubDb(['t1', 't2', 't3'], { t1: 'error', t2: 'debug', t3: 'warn' });
+  it('returns the configured level', async () => {
+    stubDb('debug');
     expect(await getEffectiveLogLevel()).toBe('debug');
   });
 
-  it('a stricter tenant never suppresses a more verbose one', async () => {
-    stubDb(['t1', 't2'], { t1: 'critical', t2: 'warn' });
-    expect(await getEffectiveLogLevel()).toBe('warn');
+  it('ignores a value that is not a level', async () => {
+    stubDb('loud');
+    expect(await getEffectiveLogLevel()).toBe('info');
   });
 });
 
@@ -88,7 +68,7 @@ describe('watchLogLevel', () => {
   });
 
   it('applies the effective level immediately to every adapter with a level property', async () => {
-    stubDb(['t1'], { t1: 'debug' });
+    stubDb('debug');
     const consoleAdapter = { level: 'info' };
     const noLevelAdapter = {};
     const logger = { adapters: [consoleAdapter, noLevelAdapter] };
@@ -113,7 +93,7 @@ describe('watchLogLevel', () => {
   });
 
   it('re-applies on every poll, picking up an adapter registered after the first tick', async () => {
-    stubDb(['t1'], { t1: 'warn' });
+    stubDb('warn');
     const logger: { adapters: unknown[] } = { adapters: [] };
 
     const stop = watchLogLevel(logger, 1_000);

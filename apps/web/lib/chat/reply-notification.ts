@@ -36,7 +36,6 @@ import { sendPush, wasRecentlyWatchingChat } from '@renkei/notifications';
 import { logger } from '@/lib/logger';
 
 export function notifyChatReplyDesktop(input: {
-  tenantId: string;
   /** The chat's owner — the only one who can send it a message. */
   ownerSubject: string;
   chatId: string;
@@ -45,20 +44,19 @@ export function notifyChatReplyDesktop(input: {
   void (async () => {
     // fresh: a person who just turned this on (or off) expects the very
     // next reply to reflect it, not whatever the last minute cached.
-    const prefs = await getNotificationPrefs(input.tenantId, input.ownerSubject, { fresh: true });
+    const prefs = await getNotificationPrefs(input.ownerSubject, { fresh: true });
     if (!prefs.chatReplyDesktop) return;
 
     const dbResult = getDatabase();
     if (!dbResult.ok) return;
 
-    const settingsResult = await getOrgSettings(input.tenantId);
+    const settingsResult = await getOrgSettings();
     const presenceWindowSeconds = settingsResult.ok
       ? settingsResult.val.chatReplyPresenceWindowSeconds
       : 0;
     if (presenceWindowSeconds > 0) {
       const watchedLive = await wasRecentlyWatchingChat(
         dbResult.val,
-        input.tenantId,
         input.ownerSubject,
         input.chatId,
         presenceWindowSeconds
@@ -66,22 +64,14 @@ export function notifyChatReplyDesktop(input: {
       if (watchedLive) return;
     }
 
-    const tenant = await dbResult.val
-      .selectFrom('tenants')
-      .select('slug')
-      .where('id', '=', input.tenantId)
-      .executeTakeFirst();
-    if (!tenant) return;
-
     const title = input.chatTitle || 'New chat';
     const headline = `“${title}” has a new reply`;
-    const refUrl = `/${tenant.slug}/chat/${input.chatId}`;
+    const refUrl = `/chat/${input.chatId}`;
     const id = randomUUID();
     await dbResult.val
       .insertInto('agent_notifications')
       .values({
         id,
-        tenant_id: input.tenantId,
         subject: input.ownerSubject,
         kind: 'chat_reply',
         headline,
@@ -95,7 +85,6 @@ export function notifyChatReplyDesktop(input: {
     if (keyResult.ok) {
       void sendPush(
         dbResult.val,
-        input.tenantId,
         input.ownerSubject,
         keyResult.val,
         {
@@ -116,7 +105,6 @@ export function notifyChatReplyDesktop(input: {
   })().catch((error: unknown) => {
     logger.warn('chat-reply desktop notification not recorded', {
       component: 'chat/reply-notification',
-      tenantId: input.tenantId,
       chatId: input.chatId,
       error: error instanceof Error ? error.message : String(error),
     });

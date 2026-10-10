@@ -29,8 +29,8 @@ const maybe =
 
 maybe('chat_widget_resolve', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const me = `me-${tenantId.slice(0, 8)}`;
+  const suiteId = randomUUID();
+  const me = `me-${suiteId.slice(0, 8)}`;
   const chatId = randomUUID();
   const otherChatId = randomUUID();
   const turnId = randomUUID();
@@ -50,7 +50,6 @@ maybe('chat_widget_resolve', () => {
     db = result.val;
     context = {
       db,
-      tenantId,
       subject: me,
       chatId,
       projectId: null,
@@ -60,19 +59,17 @@ maybe('chat_widget_resolve', () => {
         emitted.push(decision);
       },
     };
-    await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
     await db
       .insertInto('chats')
       .values([
-        { id: chatId, tenant_id: tenantId, owner_subject: me, title: 'Vesta troubleshooting' },
-        { id: otherChatId, tenant_id: tenantId, owner_subject: me, title: 'Another chat' },
+        { id: chatId, owner_subject: me, title: 'Vesta troubleshooting' },
+        { id: otherChatId, owner_subject: me, title: 'Another chat' },
       ])
       .execute();
     await db
       .insertInto('chat_turns')
       .values({
         id: turnId,
-        tenant_id: tenantId,
         chat_id: chatId,
         status: 'completed',
         llm_model_id: null,
@@ -81,7 +78,6 @@ maybe('chat_widget_resolve', () => {
       })
       .execute();
     await insertMessage(db, {
-      tenantId,
       chatId,
       turnId,
       role: 'assistant',
@@ -95,7 +91,6 @@ maybe('chat_widget_resolve', () => {
       ],
     });
     await insertMessage(db, {
-      tenantId,
       chatId,
       turnId,
       role: 'user',
@@ -131,7 +126,6 @@ maybe('chat_widget_resolve', () => {
     });
     // A card in a different chat of the same tenant: never reachable from here.
     await insertMessage(db, {
-      tenantId,
       chatId: otherChatId,
       turnId: null,
       role: 'user',
@@ -151,11 +145,10 @@ maybe('chat_widget_resolve', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_widget_decisions WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chat_messages WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chat_turns WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
-    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_widget_decisions WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
+    await sql`DELETE FROM chat_messages WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
+    await sql`DELETE FROM chat_turns WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
+    await sql`DELETE FROM chats WHERE id IN (${chatId}, ${otherChatId})`.execute(db);
     await closeDatabase();
   });
 
@@ -192,7 +185,7 @@ maybe('chat_widget_resolve', () => {
 
     // Keyed exactly as the email card keys itself (ui.ts's rememberDone),
     // so chat-view.ts joins it back onto the card as `resolved`.
-    expect(await getWidgetDecision(db, tenantId, `renkei-email:${draftId}`)).toEqual({
+    expect(await getWidgetDecision(db, `renkei-email:${draftId}`)).toEqual({
       icon: 'sent',
       headline: 'Sent manually from Outlook',
       detail: 'To michael@example.org',
@@ -200,7 +193,6 @@ maybe('chat_widget_resolve', () => {
     const row = await db
       .selectFrom('chat_widget_decisions')
       .select(['chat_id', 'decision', 'decided_by'])
-      .where('tenant_id', '=', tenantId)
       .where('state_key', '=', `renkei-email:${draftId}`)
       .executeTakeFirst();
     expect(row).toEqual({ chat_id: chatId, decision: 'confirmed', decided_by: me });
@@ -228,7 +220,7 @@ maybe('chat_widget_resolve', () => {
     );
     expect(again.isError).toBe(true);
     expect(text(again)).toContain('already decided: Sent manually from Outlook');
-    expect(await getWidgetDecision(db, tenantId, `renkei-email:${draftId}`)).toMatchObject({
+    expect(await getWidgetDecision(db, `renkei-email:${draftId}`)).toMatchObject({
       icon: 'sent',
       headline: 'Sent manually from Outlook',
     });
@@ -241,7 +233,7 @@ maybe('chat_widget_resolve', () => {
       expect(missing.isError).toBe(true);
       expect(text(missing)).toContain(`No preview card "${widget}" in this chat`);
     }
-    expect(await getWidgetDecision(db, tenantId, `renkei-preview:${otherPreviewId}`)).toBeNull();
+    expect(await getWidgetDecision(db, `renkei-preview:${otherPreviewId}`)).toBeNull();
   });
 
   it('loses to a button click that lands first, and says so', async () => {
@@ -250,7 +242,6 @@ maybe('chat_widget_resolve', () => {
     // wrote nothing, and reports the receipt the card actually shows.
     const raced = createLocalToolSet(widgetStateTools());
     const clicked = await recordWidgetDecision(db, {
-      tenantId,
       chatId,
       subject: me,
       stateKey: `renkei-preview:${previewId}`,
@@ -266,7 +257,7 @@ maybe('chat_widget_resolve', () => {
     );
     expect(late.isError).toBe(true);
     expect(text(late)).toContain('already decided: Created issue OPS-7.');
-    expect(await getWidgetDecision(db, tenantId, `renkei-preview:${previewId}`)).toEqual({
+    expect(await getWidgetDecision(db, `renkei-preview:${previewId}`)).toEqual({
       icon: 'sent',
       headline: 'Created issue OPS-7.',
     });
@@ -276,7 +267,6 @@ maybe('chat_widget_resolve', () => {
   it('defaults the receipt’s wording by outcome', async () => {
     const freshPreviewId = randomUUID();
     await insertMessage(db, {
-      tenantId,
       chatId,
       turnId: null,
       role: 'user',
@@ -300,14 +290,13 @@ maybe('chat_widget_resolve', () => {
     );
     expect(cancelled.isError).toBe(false);
     expect(text(cancelled)).toContain('Marked "Vesta sync" as cancelled: Cancelled.');
-    expect(await getWidgetDecision(db, tenantId, `renkei-preview:${freshPreviewId}`)).toEqual({
+    expect(await getWidgetDecision(db, `renkei-preview:${freshPreviewId}`)).toEqual({
       icon: 'cancelled',
       headline: 'Cancelled',
     });
     const row = await db
       .selectFrom('chat_widget_decisions')
       .select(['decision'])
-      .where('tenant_id', '=', tenantId)
       .where('state_key', '=', `renkei-preview:${freshPreviewId}`)
       .executeTakeFirst();
     expect(row).toEqual({ decision: 'cancelled' });

@@ -117,7 +117,7 @@ function stringsOf(value: unknown): string[] {
 }
 
 function refBody(ref: ResourceRef): Record<string, unknown> {
-  return { tenantId: ref.tenantId, kind: ref.kind, resourceId: ref.resourceId };
+  return { kind: ref.kind, resourceId: ref.resourceId };
 }
 
 /** The live instances as signed by the deployment's delegate signing key. */
@@ -156,7 +156,6 @@ function statusOf(json: Record<string, unknown>): KeyStatus {
 /** The delegation half of an enroll, delegate or rotate request, as the wire carries it. */
 function delegationBody(input: DelegationInput): Record<string, unknown> {
   return {
-    tenantId: input.tenantId,
     subject: input.subject,
     sessionId: input.sessionId,
     session: input.session,
@@ -244,11 +243,10 @@ export class DelegateClient {
 
   /** A person's enrollment and what is delegated for them, as of this session when given. */
   async keyStatus(
-    tenantId: string,
     subject: string,
     sessionId?: string
   ): Promise<Result<KeyStatus, KeysOpError>> {
-    const answer = await this.keys('keys/status', { tenantId, subject, sessionId });
+    const answer = await this.keys('keys/status', { subject, sessionId });
     return answer.ok ? ok(statusOf(answer.val)) : answer;
   }
 
@@ -280,8 +278,8 @@ export class DelegateClient {
     return answer.ok ? ok(undefined) : answer;
   }
 
-  async revokeAutomation(tenantId: string, subject: string): Promise<Result<number, KeysOpError>> {
-    const answer = await this.keys('keys/revoke-automation', { tenantId, subject });
+  async revokeAutomation(subject: string): Promise<Result<number, KeysOpError>> {
+    const answer = await this.keys('keys/revoke-automation', { subject });
     if (!answer.ok) return answer;
     return ok(typeof answer.val.revoked === 'number' ? answer.val.revoked : 0);
   }
@@ -301,15 +299,14 @@ export class DelegateClient {
     });
   }
 
-  async shredUserKey(tenantId: string, subject: string): Promise<Result<boolean, KeysOpError>> {
-    const answer = await this.keys('keys/shred', { tenantId, subject });
+  async shredUserKey(subject: string): Promise<Result<boolean, KeysOpError>> {
+    const answer = await this.keys('keys/shred', { subject });
     return answer.ok ? ok(answer.val.shredded === true) : answer;
   }
 
   async enrollmentCensus(
-    tenantId?: string
-  ): Promise<Result<{ held: number; managed: number; own: number }, KeysOpError>> {
-    const answer = await this.keys('keys/census', { tenantId });
+): Promise<Result<{ held: number; managed: number; own: number }, KeysOpError>> {
+    const answer = await this.keys('keys/census', { });
     if (!answer.ok) return answer;
     const count = (value: unknown): number => (typeof value === 'number' ? value : 0);
     return ok({
@@ -353,12 +350,11 @@ export class DelegateClient {
 
   /** Many at once (the sidebar's search): a resource missing from the map could not be opened. */
   async openResourceKeys(
-    tenantId: string,
     kind: ResourceKeyKind,
     entries: { resourceId: string; subject: string }[]
   ): Promise<Result<Map<string, ResourceKey>, KeyOpError>> {
     if (entries.length === 0) return ok(new Map());
-    const answer = await this.transport.call('resource-key/open-many', { tenantId, kind, entries });
+    const answer = await this.transport.call('resource-key/open-many', { kind, entries });
     if (!answer.ok) return err(keyOpError(answer.err));
     const out = new Map<string, ResourceKey>();
     if (isRecord(answer.val.keys)) {
@@ -449,14 +445,12 @@ export class DelegateClient {
 
   /** Envelopes under this person's key for the scope, one per value, in order. */
   async sealForSubject(
-    tenantId: string,
     subject: string,
     values: string[],
     scope: SealScope = 'automation'
   ): Promise<Result<string[], KeyOpError>> {
     if (values.length === 0) return ok([]);
     const answer = await this.transport.call('user-sealed/seal', {
-      tenantId,
       subject,
       values,
       scope,
@@ -474,12 +468,11 @@ export class DelegateClient {
 
   /** The values opened, in order; null where one would not open. A key that is missing or not delegated fails the batch. */
   async openForSubject(
-    tenantId: string,
     subject: string,
     stored: string[]
   ): Promise<Result<(string | null)[], KeyOpError>> {
     if (stored.length === 0) return ok([]);
-    const answer = await this.transport.call('user-sealed/open', { tenantId, subject, stored });
+    const answer = await this.transport.call('user-sealed/open', { subject, stored });
     if (!answer.ok) return err(keyOpError(answer.err));
     const opened = Array.isArray(answer.val.opened) ? answer.val.opened : [];
     const out: (string | null)[] = [];

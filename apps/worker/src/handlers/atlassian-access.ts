@@ -36,11 +36,10 @@ export interface AtlassianAccess {
  *   ATLASSIAN_CONFLUENCE for Confluence. Each app has its own grant rows.
  */
 export async function resolveAtlassianAccess(
-  tenantId: string,
   accountId: string,
   provider: string
 ): Promise<AtlassianAccess> {
-  const grant = { tenantId, provider, accountId };
+  const grant = { provider, accountId };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) {
     throw new Error(

@@ -73,11 +73,11 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
   }
   const db = dbResult.val;
 
-  let grantRows: Array<{ tenant_id: string; provider_account_id: string; metadata: unknown }>;
+  let grantRows: Array<{ provider_account_id: string; metadata: unknown }>;
   try {
     grantRows = await db
       .selectFrom('provider_grants')
-      .select(['tenant_id', 'provider_account_id', 'metadata'])
+      .select(['provider_account_id', 'metadata'])
       .where('provider', '=', 'webex')
       .where(sql<boolean>`metadata->>'allSpaces' = 'true'`)
       .execute();
@@ -89,20 +89,18 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     return;
   }
 
-  // The org dial: each tenant's webexWebhookHealthMinutes decides how long a
-  // grant may go unchecked. Settings are cached (60s) per tenant, so this
-  // costs one read per tenant per pass, not per grant.
-  const dueMsByTenant = new Map<string, number>();
-  const dueMsFor = async (tenantId: string): Promise<number> => {
-    const cached = dueMsByTenant.get(tenantId);
-    if (cached !== undefined) return cached;
+  // The org dial: webexWebhookHealthMinutes decides how long a grant may go
+  // unchecked. Read once per pass, not per grant.
+  let dueMsCached: number | undefined;
+  const dueMsFor = async (): Promise<number> => {
+    if (dueMsCached !== undefined) return dueMsCached;
     const floorMinutes = MIN_CHECK_DUE_MS / 60_000;
-    const settings = await getOrgSettings(tenantId);
+    const settings = await getOrgSettings();
     const minutes = settings.ok
       ? Math.max(floorMinutes, settings.val.webexWebhookHealthMinutes)
       : floorMinutes;
     const ms = minutes * 60_000;
-    dueMsByTenant.set(tenantId, ms);
+    dueMsCached = ms;
     return ms;
   };
 
@@ -118,7 +116,7 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       typeof metadata.webhookHealthCheckedAt === 'string'
         ? new Date(metadata.webhookHealthCheckedAt)
         : null;
-    const dueMs = await dueMsFor(row.tenant_id);
+    const dueMs = await dueMsFor();
     if (
       checkedAt &&
       !Number.isNaN(checkedAt.getTime()) &&
@@ -127,17 +125,16 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       continue; // checked recently enough; leave this grant's token quota alone
     }
 
-    const access = await resolveAccess(row.tenant_id, row.provider_account_id);
+    const access = await resolveAccess(row.provider_account_id);
     if (!access) {
       logger.warn('opted-in grant has no usable token; webhook may rot', {
         component: 'webex/webhook-health',
-        tenantId: row.tenant_id,
       });
       continue;
     }
 
     const reconciled = await ensureWebexWebhooks(makeClient(access.auth), {
-      targetUrl: webexUserWebhookTargetUrl(baseUrl, row.tenant_id, row.provider_account_id),
+      targetUrl: webexUserWebhookTargetUrl(baseUrl, row.provider_account_id),
       secret,
     });
     // Recorded regardless of outcome — including a 429 — so a failing check
@@ -150,7 +147,6 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
           webhookHealthCheckedAt: now.toISOString(),
         })}::jsonb`,
       })
-      .where('tenant_id', '=', row.tenant_id)
       .where('provider', '=', 'webex')
       .where('provider_account_id', '=', row.provider_account_id)
       .execute();
@@ -158,7 +154,6 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     if (!reconciled.ok) {
       logger.error('WebEx API error; will retry in {minutes}m: {kind} {message}', {
         component: 'webex/webhook-health',
-        tenantId: row.tenant_id,
         minutes: Math.round(dueMs / 60_000),
         kind: reconciled.err.type,
         message:
@@ -175,7 +170,6 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
         .join(', ');
       logger.warn('repaired all-spaces webhook: {repairs} — events were being lost', {
         component: 'webex/webhook-health',
-        tenantId: row.tenant_id,
         repairs,
       });
     }

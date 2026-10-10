@@ -16,7 +16,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { logger } from '@/lib/logger';
 
-const COOKIE_PREFIX = 'renkei_session_';
+const COOKIE_NAME = 'renkei_session';
 
 /**
  * How long a signed-in browser stays signed in. Deliberately independent of
@@ -37,22 +37,21 @@ export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
  * cached there; falls back to the default when the settings read fails so
  * a settings outage never lengthens anyone's session.
  */
-async function idleTimeoutMs(tenantId: string): Promise<number> {
-  const settings = await getOrgSettings(tenantId);
+async function idleTimeoutMs(): Promise<number> {
+  const settings = await getOrgSettings();
   const minutes = settings.ok
     ? settings.val.sessionIdleTimeoutMinutes
     : DEFAULT_ORG_SETTINGS.sessionIdleTimeoutMinutes;
   return minutes * 60 * 1000;
 }
 
-/** Sessions are per-tenant so one browser can hold several without collision. */
-export function sessionCookieName(tenantId: string): string {
-  return `${COOKIE_PREFIX}${tenantId}`;
+/** The one session cookie this deployment sets. */
+export function sessionCookieName(): string {
+  return COOKIE_NAME;
 }
 
 export interface Session {
   id: string;
-  tenantId: string;
   subject: string;
   roles: string[];
   expiresAt: Date;
@@ -69,7 +68,6 @@ export function sessionCookieOptions(maxAgeSeconds: number) {
 }
 
 export async function createSession(
-  tenantId: string,
   subject: string,
   roles: string[],
   ttlSeconds: number
@@ -84,12 +82,11 @@ export async function createSession(
   try {
     await db
       .insertInto('sessions')
-      .values({ id, tenant_id: tenantId, subject, roles, expires_at: expiresAt })
+      .values({ id, subject, roles, expires_at: expiresAt })
       .execute();
   } catch (error) {
     logger.error('Failed to create session', {
       component: 'auth/session',
-      tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return err('SESSION_ERROR' as const);
@@ -97,12 +94,11 @@ export async function createSession(
 
   logger.info('Created', {
     component: 'auth/session',
-    tenantId,
     subject,
     roles,
     expiresAt: expiresAt.toISOString(),
   });
-  return ok({ id, tenantId, subject, roles, expiresAt });
+  return ok({ id, subject, roles, expiresAt });
 }
 
 /**
@@ -111,16 +107,15 @@ export async function createSession(
  * callers must fail closed on null. An expired or idle row is deleted rather
  * than left to accumulate.
  */
-export async function getSessionById(sessionId: string, tenantId: string): Promise<Session | null> {
+export async function getSessionById(sessionId: string): Promise<Session | null> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
   const db = dbResult.val;
 
   const row = await db
     .selectFrom('sessions')
-    .select(['id', 'tenant_id', 'subject', 'roles', 'expires_at', 'last_used_at'])
+    .select(['id', 'subject', 'roles', 'expires_at', 'last_used_at'])
     .where('id', '=', sessionId)
-    .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
 
   if (!row) return null;
@@ -128,7 +123,7 @@ export async function getSessionById(sessionId: string, tenantId: string): Promi
   const now = new Date();
   if (new Date(row.expires_at) < now) {
     await db.deleteFrom('sessions').where('id', '=', sessionId).execute();
-    logger.debug('Expired session discarded', { component: 'auth/session', tenantId, sessionId });
+    logger.debug('Expired session discarded', { component: 'auth/session', sessionId });
     return null;
   }
 
@@ -137,11 +132,10 @@ export async function getSessionById(sessionId: string, tenantId: string): Promi
   // the same way as an expired one — the row goes, the next request has no
   // session, and sign-in is the only way back.
   const idleFor = now.getTime() - new Date(row.last_used_at).getTime();
-  if (idleFor > (await idleTimeoutMs(tenantId))) {
+  if (idleFor > (await idleTimeoutMs())) {
     await db.deleteFrom('sessions').where('id', '=', sessionId).execute();
     logger.info('Idle session ended', {
       component: 'auth/session',
-      tenantId,
       sessionId,
       idleMinutes: Math.round(idleFor / 60_000),
     });
@@ -152,7 +146,6 @@ export async function getSessionById(sessionId: string, tenantId: string): Promi
 
   return {
     id: row.id,
-    tenantId: row.tenant_id,
     subject: row.subject,
     roles: row.roles,
     expiresAt: new Date(row.expires_at),
@@ -161,20 +154,19 @@ export async function getSessionById(sessionId: string, tenantId: string): Promi
 
 /** For route handlers, which receive the request directly. */
 export async function getSessionFromRequest(
-  request: NextRequest,
-  tenantId: string
+  request: NextRequest
 ): Promise<Session | null> {
-  const sessionId = request.cookies.get(sessionCookieName(tenantId))?.value;
+  const sessionId = request.cookies.get(sessionCookieName())?.value;
   if (!sessionId) return null;
-  return getSessionById(sessionId, tenantId);
+  return getSessionById(sessionId);
 }
 
 /** For server components, which read cookies from the async store. */
-export async function getSessionFromCookies(tenantId: string): Promise<Session | null> {
+export async function getSessionFromCookies(): Promise<Session | null> {
   const cookieStore = await cookies();
-  const sessionId = cookieStore.get(sessionCookieName(tenantId))?.value;
+  const sessionId = cookieStore.get(sessionCookieName())?.value;
   if (!sessionId) return null;
-  return getSessionById(sessionId, tenantId);
+  return getSessionById(sessionId);
 }
 
 export async function destroySession(sessionId: string): Promise<void> {

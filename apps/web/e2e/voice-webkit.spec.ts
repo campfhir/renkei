@@ -8,7 +8,6 @@
 
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG } from './seed';
 import {
   CHAT_ID,
   CHAT_TITLE,
@@ -31,7 +30,7 @@ test.beforeAll(async () => {
 
 test('webkit: the composer holds still while a reply is read aloud', async ({ page }) => {
   await mockVendor(page);
-  await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${CHAT_ID}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
   await expectComposerStillWhileReading(page);
 });

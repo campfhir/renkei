@@ -5,7 +5,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
 import { sweepExpiredGrants, GRANT_STALE_DAYS } from './expired-grants';
 
@@ -13,13 +13,11 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('sweepExpiredGrants', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
   const staleAccount = `stale-${randomUUID().slice(0, 8)}`;
   const freshAccount = `fresh-${randomUUID().slice(0, 8)}`;
 
   function grantRow(accountId: string, expiresAt: Date) {
     return {
-      tenant_id: tenantId,
       provider: 'atlassian',
       provider_account_id: accountId,
       client_id: 'client-1',
@@ -34,10 +32,6 @@ maybe('sweepExpiredGrants', () => {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('no database');
     db = dbResult.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `gs-${tenantId.slice(0, 8)}` })
-      .execute();
     const staleMs = (GRANT_STALE_DAYS + 1) * 24 * 60 * 60_000;
     await db
       .insertInto('provider_grants')
@@ -51,8 +45,6 @@ maybe('sweepExpiredGrants', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=', tenantId).execute();
-    await closeDatabase();
   });
 
   it('deletes abandoned grants and spares recently-expired ones', async () => {
@@ -61,7 +53,6 @@ maybe('sweepExpiredGrants', () => {
     const remaining = await db
       .selectFrom('provider_grants')
       .select('provider_account_id')
-      .where('tenant_id', '=', tenantId)
       .execute();
     const accounts = remaining.map((row) => row.provider_account_id);
     expect(accounts).not.toContain(staleAccount);

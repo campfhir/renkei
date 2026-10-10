@@ -8,8 +8,6 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { E2E_SLUG } from './seed';
-
 test.use({
   launchOptions: {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
@@ -18,7 +16,7 @@ test.use({
 });
 
 test('the Bitbucket form tells admins to send the webhook secret as a header', async ({ page }) => {
-  await page.goto(`/${E2E_SLUG}/admin/connectors/atlassian-bitbucket`);
+  await page.goto(`/admin/connectors/atlassian-bitbucket`);
   const secretField = page.getByLabel(/Webhook secret/);
   await expect(secretField).toBeVisible();
   // The paragraph, not the <code> inside it: the header name is rendered as

@@ -93,48 +93,40 @@ export function createChatTurnJanitor(db: Kysely<DB>) {
 
 export function createChatRetentionSweep(
   db: Kysely<DB>,
-  store: (tenantId: string) => Promise<BlobStore | null> = blobStore
+  store: () => Promise<BlobStore | null> = blobStore
 ) {
   return async function sweep(): Promise<void> {
     await deleteAbandonedChats(db);
-    const tenants = await db.selectFrom('tenants').select('id').execute();
-    for (const tenant of tenants) {
-      const settings = await getOrgSettings(tenant.id);
-      if (!settings.ok || settings.val.chatRetentionDays <= 0) continue;
+    const settings = await getOrgSettings();
+    if (settings.ok && settings.val.chatRetentionDays > 0) {
       const days = settings.val.chatRetentionDays;
       const expired = await db
         .selectFrom('chats')
         .select('id')
-        .where('tenant_id', '=', tenant.id)
         .where('updated_at', '<', sql<Date>`NOW() - make_interval(days => ${days})`)
         .limit(RETENTION_BATCH)
         .execute();
-      if (expired.length === 0) continue;
       const chatIds = expired.map((row) => row.id);
-      const deletable = await deleteAttachmentBlobs(db, tenant.id, chatIds, await store(tenant.id));
-      if (deletable.length === 0) continue;
-      await db
-        .deleteFrom('chats')
-        .where('tenant_id', '=', tenant.id)
-        .where('id', 'in', deletable)
-        .execute();
-      await db
-        .deleteFrom('resource_access_grants')
-        .where('tenant_id', '=', tenant.id)
-        .where('resource_kind', '=', 'chat')
-        .where('resource_id', 'in', deletable)
-        .execute();
-      logger.info('chat retention removed {count} chat(s)', {
-        component: 'worker-agents/chat-retention',
-        tenantId: tenant.id,
-        count: deletable.length,
-      });
+      const deletable =
+        chatIds.length > 0 ? await deleteAttachmentBlobs(db, chatIds, await store()) : [];
+      if (deletable.length > 0) {
+        await db.deleteFrom('chats').where('id', 'in', deletable).execute();
+        await db
+          .deleteFrom('resource_access_grants')
+          .where('resource_kind', '=', 'chat')
+          .where('resource_id', 'in', deletable)
+          .execute();
+        logger.info('chat retention removed {count} chat(s)', {
+          component: 'worker-agents/chat-retention',
+          count: deletable.length,
+        });
+      }
     }
     await pruneOrphanGrants(db);
   };
 }
 
-/** Empty chats past the grace period, every org alike; their grants go with the orphan prune. */
+/** Empty chats past the grace period; their grants go with the orphan prune. */
 async function deleteAbandonedChats(db: Kysely<DB>): Promise<void> {
   const deleted = await sql<{ id: string }>`
     DELETE FROM chats c
@@ -154,14 +146,12 @@ async function deleteAbandonedChats(db: Kysely<DB>): Promise<void> {
 /** Chats whose attachment bytes are gone (or never existed); the rest wait. */
 async function deleteAttachmentBlobs(
   db: Kysely<DB>,
-  tenantId: string,
   chatIds: string[],
   store: BlobStore | null
 ): Promise<string[]> {
   const attachments = await db
     .selectFrom('chat_attachments')
     .select(['id', 'chat_id', 'blob_key'])
-    .where('tenant_id', '=', tenantId)
     .where('chat_id', 'in', chatIds)
     .execute();
   const blocked = new Set<string>();
@@ -178,7 +168,6 @@ async function deleteAttachmentBlobs(
       blocked.add(attachment.chat_id);
       logger.warn('chat retention could not delete a blob: {error}', {
         component: 'worker-agents/chat-retention',
-        tenantId,
         error: deleted.err.message ?? deleted.err.type,
       });
     }
@@ -196,7 +185,7 @@ async function pruneOrphanGrants(db: Kysely<DB>): Promise<void> {
   await delegateClient().pruneOrphanResourceKeys();
 }
 
-async function blobStore(tenantId: string): Promise<BlobStore | null> {
-  const store = await resolveTenantBlobStore(tenantId);
+async function blobStore(): Promise<BlobStore | null> {
+  const store = await resolveTenantBlobStore();
   return store.ok ? store.val : null;
 }

@@ -51,7 +51,7 @@ fi
 
 # Load environment variables safely
 if [ ! -f .env.development ]; then
-  echo -e "${YELLOW}⚠ .env.development not found, skipping tenant setup${NC}"
+  echo -e "${YELLOW}⚠ .env.development not found, skipping identity provider setup${NC}"
   exit 0
 fi
 
@@ -60,48 +60,38 @@ export PLATFORM_OIDC_DISCOVERY_ENDPOINT=$(grep '^PLATFORM_OIDC_DISCOVERY_ENDPOIN
 export PLATFORM_OIDC_CLIENT_ID=$(grep '^PLATFORM_OIDC_CLIENT_ID=' .env.development | cut -d'=' -f2- | sed 's/^"//;s/"$//')
 export PLATFORM_OIDC_CLIENT_SECRET=$(grep '^PLATFORM_OIDC_CLIENT_SECRET=' .env.development | cut -d'=' -f2- | sed 's/^"//;s/"$//')
 
-# Extract domain from email
 OPERATOR_EMAIL="scott.eremia-roden@nems.org"
-DOMAIN=$(echo "$OPERATOR_EMAIL" | sed 's/.*@//')
 
-echo -e "${BLUE}Setting up first tenant for domain: $DOMAIN${NC}\n"
-
-# Create tenant
-echo -e "${BLUE}Creating tenant...${NC}"
-TENANT_RESPONSE=$(curl -s -X POST http://localhost:3000/api/home-realm/create \
-  -H "Content-Type: application/json" \
-  -d "{\"domain\": \"$DOMAIN\"}")
-
-TENANT_ID=$(echo "$TENANT_RESPONSE" | grep -o '"tenantId":"[^"]*"' | cut -d'"' -f4)
-
-if [ -z "$TENANT_ID" ]; then
-  echo -e "${YELLOW}⚠ Failed to create tenant, response: $TENANT_RESPONSE${NC}"
-  echo -e "\nTo manually create, run:"
-  echo -e "  curl -X POST http://localhost:3000/api/home-realm/create \\\\"
-  echo -e "    -H 'Content-Type: application/json' \\\\"
-  echo -e "    -d '{\"domain\": \"$DOMAIN\"}'"
-  exit 0
-fi
-
-echo -e "${GREEN}✓ Tenant created: $TENANT_ID${NC}\n"
-
-# Configure OIDC
-echo -e "${BLUE}Configuring OIDC...${NC}"
-OIDC_RESPONSE=$(curl -s -X POST http://localhost:3000/api/tenant/$TENANT_ID/oidc \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"discoveryEndpoint\": \"$PLATFORM_OIDC_DISCOVERY_ENDPOINT\",
-    \"clientId\": \"$PLATFORM_OIDC_CLIENT_ID\",
-    \"clientSecret\": \"$PLATFORM_OIDC_CLIENT_SECRET\",
-    \"roleClaim\": \"roles\",
-    \"operatorIdpValue\": \"renkei-operator\",
-    \"userIdpValue\": \"renkei-user\"
-  }")
-
-if echo "$OIDC_RESPONSE" | grep -q "success"; then
-  echo -e "${GREEN}✓ OIDC configured${NC}\n"
+# First-run setup: opening /setup mints the one-time setup secret into the
+# app's log; the identity provider save presents it. Nothing to do once a
+# provider exists (the page redirects home).
+echo -e "${BLUE}Configuring the identity provider...${NC}"
+SETUP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/setup)
+if [ "$SETUP_STATUS" != "200" ]; then
+  echo -e "${GREEN}✓ Identity provider already configured (setup page answered $SETUP_STATUS)${NC}\n"
 else
-  echo -e "${YELLOW}⚠ OIDC configuration response: $OIDC_RESPONSE${NC}\n"
+  SETUP_SECRET=$(docker logs renkei-app 2>&1 | grep -o 'enter the setup secret [^ ]*' | tail -1 | awk '{print $NF}')
+  if [ -z "$SETUP_SECRET" ]; then
+    echo -e "${YELLOW}⚠ Could not read the setup secret from the app log; open http://localhost:3000/setup and finish by hand${NC}"
+    exit 0
+  fi
+  OIDC_RESPONSE=$(curl -s -X POST http://localhost:3000/api/oidc \
+    -H "Content-Type: application/json" \
+    -H "X-Renkei-Setup-Secret: $SETUP_SECRET" \
+    -d "{
+      \"discoveryEndpoint\": \"$PLATFORM_OIDC_DISCOVERY_ENDPOINT\",
+      \"clientId\": \"$PLATFORM_OIDC_CLIENT_ID\",
+      \"clientSecret\": \"$PLATFORM_OIDC_CLIENT_SECRET\",
+      \"roleClaim\": \"roles\",
+      \"operatorIdpValue\": \"renkei-operator\",
+      \"userIdpValue\": \"renkei-user\"
+    }")
+
+  if echo "$OIDC_RESPONSE" | grep -q "success"; then
+    echo -e "${GREEN}✓ OIDC configured${NC}\n"
+  else
+    echo -e "${YELLOW}⚠ OIDC configuration response: $OIDC_RESPONSE${NC}\n"
+  fi
 fi
 
 # Print summary
@@ -111,8 +101,7 @@ echo -e "${GREEN}═════════════════════
 
 echo -e "${BLUE}Quick Start:${NC}"
 echo -e "  🌐 Open: ${BLUE}http://localhost:3000${NC}"
-echo -e "  📧 Email: ${BLUE}$OPERATOR_EMAIL${NC}"
-echo -e "  🔑 Tenant ID: ${BLUE}$TENANT_ID${NC}\n"
+echo -e "  📧 Email: ${BLUE}$OPERATOR_EMAIL${NC}\n"
 
 echo -e "${BLUE}OIDC Configuration:${NC}"
 echo -e "  Discovery Endpoint: ${BLUE}$PLATFORM_OIDC_DISCOVERY_ENDPOINT${NC}"
@@ -123,8 +112,6 @@ echo -e "  User Role: ${BLUE}renkei-user${NC}\n"
 
 echo -e "${BLUE}Next Steps:${NC}"
 echo -e "  1. Go to http://localhost:3000"
-echo -e "  2. Enter email: $OPERATOR_EMAIL"
-echo -e "  3. Configuration should be pre-loaded"
-echo -e "  4. Authenticate with Azure AD\n"
+echo -e "  2. Sign in as $OPERATOR_EMAIL with Azure AD\n"
 
 echo -e "${YELLOW}Tip: Use ${BLUE}./scripts/docker-dev-start.sh --reset${YELLOW} to drop volumes and start fresh${NC}\n"

@@ -42,7 +42,6 @@ import { applyCoachMarkEvent, type CoachMarkRecord } from '@/lib/coach-marks/pro
 import {
   isEligible,
   pickAutoStartTour,
-  slugRelativePath,
   toursFor,
 } from '@/lib/coach-marks/select';
 import { COACH_MARK_TOURS, tourById } from '@/lib/coach-marks/tours';
@@ -106,17 +105,7 @@ function writePending(id: string): boolean {
   }
 }
 
-export default function CoachMarkProvider({
-  slug,
-  tenantId,
-  isOperator,
-  enabled,
-  autoStart: initialAutoStart,
-  progress: initialProgress,
-  children,
-}: {
-  slug: string;
-  tenantId: string;
+export default function CoachMarkProvider({ isOperator, enabled, autoStart: initialAutoStart, progress: initialProgress, children }: {
   isOperator: boolean;
   /** The org's switch. Off, nothing starts — unasked or by hand — and nothing draws. */
   enabled: boolean;
@@ -201,7 +190,7 @@ export default function CoachMarkProvider({
         return next;
       });
       // keepalive: a Finish followed at once by a navigation still lands.
-      void fetch(`/api/tenant/${tenantId}/coach-marks`, {
+      void fetch(`/api/coach-marks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -210,7 +199,7 @@ export default function CoachMarkProvider({
         // A lost report is a lost data point, never a lost tour.
       });
     },
-    [tenantId]
+    []
   );
 
   const begin = useCallback(
@@ -230,7 +219,7 @@ export default function CoachMarkProvider({
   // first, else one that starts unasked.
   useEffect(() => {
     if (!enabled || activeRef.current) return;
-    const path = slugRelativePath(pathname, slug);
+    const path = pathname;
 
     const pending = readPending();
     if (pending) {
@@ -271,7 +260,7 @@ export default function CoachMarkProvider({
     // `progress` and `autoStart` are read when the page or its anchors
     // change, not re-run as they move — a tour just finished here must not
     // restart.
-  }, [pathname, mounted, slug, isOperator, enabled, begin, router]);
+  }, [pathname, mounted, isOperator, enabled, begin, router]);
 
   const next = useCallback(() => {
     const current = activeRef.current;
@@ -283,12 +272,12 @@ export default function CoachMarkProvider({
       return;
     }
     const target = tour.steps[index + 1];
-    if (target.path && slugRelativePath(pathname, slug) !== target.path) {
-      router.push(`/${slug}${target.path}`);
+    if (target.path && pathname !== target.path) {
+      router.push(`${target.path}`);
     }
     setActive({ ...current, index: index + 1 });
     record(tour, 'step', index + 1);
-  }, [record, end, pathname, slug, router]);
+  }, [record, end, pathname, router]);
 
   const back = useCallback(() => {
     const current = activeRef.current;
@@ -307,7 +296,7 @@ export default function CoachMarkProvider({
     async (value: boolean): Promise<boolean> => {
       setAutoStartState(value);
       try {
-        const response = await fetch(`/api/tenant/${tenantId}/preferences`, {
+        const response = await fetch(`/api/preferences`, {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ coachMarks: { autoStart: value } }),
@@ -317,7 +306,7 @@ export default function CoachMarkProvider({
         return false;
       }
     },
-    [tenantId]
+    []
   );
 
   const mute = useCallback(() => {
@@ -329,18 +318,18 @@ export default function CoachMarkProvider({
     (tourId: string) => {
       const tour = tourById(tourId);
       if (!tour || !enabled) return;
-      if (isEligible(tour, slugRelativePath(pathname, slug), mounted)) {
+      if (isEligible(tour, pathname, mounted)) {
         begin(tour, true);
         return;
       }
       if (!writePending(tour.id)) {
         // No storage: fall back to the query, which the start page reads too.
-        router.push(`/${slug}${tour.startPath}?tour=${encodeURIComponent(tour.id)}`);
+        router.push(`${tour.startPath}?tour=${encodeURIComponent(tour.id)}`);
         return;
       }
-      router.push(`/${slug}${tour.startPath}`);
+      router.push(`${tour.startPath}`);
     },
-    [pathname, slug, mounted, enabled, begin, router]
+    [pathname, mounted, enabled, begin, router]
   );
 
   const value = useMemo<CoachMarkContextValue>(

@@ -35,7 +35,7 @@ import {
   type ProviderGrant,
 } from '@renkei/provider-grants';
 import { isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
-import { onbaseWorkerCall, refreshedOf, withTenant } from './onbase-worker';
+import { onbaseWorkerCall, refreshedOf } from './onbase-worker';
 import {
   clientIdOf,
   clientSecretOf,
@@ -153,7 +153,6 @@ export function statusForGrantError(type: GrantError): number {
 }
 
 interface Pending {
-  tenantId: string;
   provider: string;
   accessToken: string;
   refreshToken: string;
@@ -195,7 +194,6 @@ export class Grants {
    * had. Internal — tokens do not leave this module.
    */
   private async access(
-    tenantId: string,
     provider: string,
     by: { subject?: string; accountId?: string },
     force = false
@@ -204,9 +202,9 @@ export class Grants {
   > {
     const spec = providerSpec(provider);
     if (!spec) return { ok: false, error: 'unknown_provider' };
-    const row = await grantRow(this.db, tenantId, provider, by);
+    const row = await grantRow(this.db, provider, by);
     if (!row) return { ok: false, error: 'NO_GRANT' };
-    const read = await getGrant(provider, tenantId, row.provider_account_id);
+    const read = await getGrant(provider, row.provider_account_id);
     if (!read.ok) {
       // The store names the key verdict in its message; the one a caller
       // can act on is "the owner must sign in", which travels as its own tag.
@@ -222,12 +220,10 @@ export class Grants {
     let grant = read.val;
     const due = new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS;
     if ((due || force) && grant.refreshToken) {
-      const config = await providerConfig(tenantId, spec, this.encryptionKey);
+      const config = await providerConfig(spec, this.encryptionKey);
       const adapter = spec.adapter(config, grant);
       if (!adapter) return { ok: false, error: 'NOT_CONFIGURED' };
-      const refreshed = await withTenant(tenantId, () =>
-        refreshGrantTokens(adapter, tenantId, grant.accountId, this.logger)
-      );
+      const refreshed = await refreshGrantTokens(adapter, grant.accountId, this.logger);
       if (!refreshed.ok) {
         return {
           ok: false,
@@ -250,11 +246,10 @@ export class Grants {
    * process only. Never answered over the wire.
    */
   async accessFor(
-    tenantId: string,
     provider: string,
     by: { subject?: string; accountId?: string }
   ): Promise<{ ok: true; token: string } | { ok: false; error: GrantError; status: number }> {
-    const access = await this.access(tenantId, provider, by);
+    const access = await this.access(provider, by);
     if (!access.ok)
       return { ok: false, error: access.error, status: statusForGrantError(access.error) };
     return { ok: true, token: access.grant.accessToken };
@@ -282,15 +277,14 @@ export class Grants {
     );
     if (!grantHeader || !target)
       return fail('bad_request', 'x-delegate-grant and x-delegate-url are required');
-    const tenantId = str(grantHeader.tenantId);
     const provider = str(grantHeader.provider);
     const subject = str(grantHeader.subject) || undefined;
     const accountId = str(grantHeader.accountId) || undefined;
     const pendingHandle = str(grantHeader.pending) || undefined;
-    if (!tenantId || !provider || (!subject && !accountId && !pendingHandle)) {
+    if (!provider || (!subject && !accountId && !pendingHandle)) {
       return fail(
         'bad_request',
-        'the grant needs tenantId, provider and a subject, accountId or pending handle'
+        'the grant needs a provider and a subject, accountId or pending handle'
       );
     }
     const spec = providerSpec(provider);
@@ -311,11 +305,11 @@ export class Grants {
     let token: string;
     let retryWithRefresh = false;
     if (pendingHandle) {
-      const pending = this.takePending(pendingHandle, tenantId, provider, false);
+      const pending = this.takePending(pendingHandle, provider, false);
       if (!pending) return fail('NO_PENDING');
       token = pending.accessToken;
     } else {
-      const access = await this.access(tenantId, provider, { subject, accountId });
+      const access = await this.access(provider, { subject, accountId });
       if (!access.ok) return fail(access.error);
       token = access.grant.accessToken;
       retryWithRefresh = Boolean(access.grant.refreshToken);
@@ -353,7 +347,7 @@ export class Grants {
       for (let hop = 0; ; hop += 1) {
         upstream = await send(token, current, hopMethod, hopBody);
         if (hop === 0 && upstream.status === 401 && retryWithRefresh) {
-          const again = await this.access(tenantId, provider, { subject, accountId }, true);
+          const again = await this.access(provider, { subject, accountId }, true);
           if (!again.ok) return fail(again.error);
           token = again.grant.accessToken;
           upstream = await send(token, current, hopMethod, hopBody);
@@ -418,10 +412,9 @@ export class Grants {
   async exchange(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
     const fail = (type: GrantError, message?: string): void =>
       sendJson(response, statusForGrantError(type), { error: { type, message } });
-    const tenantId = str(body.tenantId);
     const provider = str(body.provider);
     const spec = providerSpec(provider);
-    if (!tenantId || !spec || !isRecord(body.form))
+    if (!spec || !isRecord(body.form))
       return fail(spec ? 'bad_request' : 'unknown_provider');
     const form = new URLSearchParams();
     for (const [key, value] of Object.entries(body.form)) {
@@ -431,7 +424,6 @@ export class Grants {
     let tokens: Record<string, unknown>;
     if (provider === ONBASE || provider === ONBASE_ADMIN) {
       const answer = await onbaseWorkerCall('token', {
-        tenantId,
         connector: provider,
         grant: {
           type: 'authorization_code',
@@ -447,7 +439,7 @@ export class Grants {
         );
       tokens = answer.val;
     } else {
-      const config = await providerConfig(tenantId, spec, this.encryptionKey);
+      const config = await providerConfig(spec, this.encryptionKey);
       const clientId = clientIdOf(config);
       const clientSecret = clientSecretOf(config);
       const endpoint = tokenEndpointFor(spec, config, str(body.directoryTenantId) || undefined);
@@ -491,7 +483,6 @@ export class Grants {
     const handle = randomUUID();
     this.sweepPending();
     this.pending.set(handle, {
-      tenantId,
       provider,
       accessToken: refreshed.accessToken,
       refreshToken: refreshed.refreshToken,
@@ -521,22 +512,21 @@ export class Grants {
   async commit(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
     const fail = (type: GrantError, message?: string): void =>
       sendJson(response, statusForGrantError(type), { error: { type, message } });
-    const tenantId = str(body.tenantId);
     const provider = str(body.provider);
     const handle = str(body.handle);
     const subject = str(body.subject);
     const accountId = str(body.accountId);
     const displayName = str(body.displayName);
-    if (!tenantId || !provider || !handle || !subject || !accountId) return fail('bad_request');
+    if (!provider || !handle || !subject || !accountId) return fail('bad_request');
     const spec = providerSpec(provider);
     if (!spec) return fail('unknown_provider');
-    const pending = this.takePending(handle, tenantId, provider, true);
+    const pending = this.takePending(handle, provider, true);
     if (!pending) return fail('NO_PENDING');
-    const config = await providerConfig(tenantId, spec, this.encryptionKey);
+    const config = await providerConfig(spec, this.encryptionKey);
     const requestedScopes = Array.isArray(body.requestedScopes)
       ? body.requestedScopes.filter((scope): scope is string => typeof scope === 'string')
       : [];
-    const saved = await setGrant(provider, tenantId, {
+    const saved = await setGrant(provider, {
       accountId,
       clientId: str(body.clientId) || clientIdOf(config),
       displayName,
@@ -561,26 +551,24 @@ export class Grants {
   // ── grant/describe, grant/revoke, grant/delete ─────────────────────────
 
   async describeOp(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
-    const tenantId = str(body.tenantId);
     const provider = str(body.provider);
     const subject = str(body.subject) || undefined;
     const accountId = str(body.accountId) || undefined;
-    if (!tenantId || !provider || (!subject && !accountId)) {
+    if (!provider || (!subject && !accountId)) {
       return sendJson(response, 400, { error: { type: 'bad_request' } });
     }
-    const row = await grantRow(this.db, tenantId, provider, { subject, accountId });
+    const row = await grantRow(this.db, provider, { subject, accountId });
     if (!row) return sendJson(response, 404, { error: { type: 'NO_GRANT' } });
-    const read = await getGrant(provider, tenantId, row.provider_account_id);
+    const read = await getGrant(provider, row.provider_account_id);
     if (!read.ok || !read.val)
       return sendJson(response, 502, { error: { type: 'GRANT_UNREADABLE' } });
     sendJson(response, 200, describe(read.val));
   }
 
   async revoke(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
-    const tenantId = str(body.tenantId);
     const provider = str(body.provider);
     const accountId = str(body.accountId);
-    if (!tenantId || !provider || !accountId)
+    if (!provider || !accountId)
       return sendJson(response, 400, { error: { type: 'bad_request' } });
     const spec = providerSpec(provider);
     if (!spec) return sendJson(response, 404, { error: { type: 'unknown_provider' } });
@@ -588,12 +576,12 @@ export class Grants {
     // Best effort at the provider while we still hold the token; deleting
     // our copy is what matters.
     let revokedAtProvider = false;
-    const read = await getGrant(provider, tenantId, accountId);
+    const read = await getGrant(provider, accountId);
     if (read.ok && read.val) {
       const grant = read.val;
       try {
         if (provider === ZOOM) {
-          const config = await providerConfig(tenantId, spec, this.encryptionKey);
+          const config = await providerConfig(spec, this.encryptionKey);
           const clientId = clientIdOf(config);
           const clientSecret = clientSecretOf(config);
           if (clientId && clientSecret) {
@@ -611,7 +599,6 @@ export class Grants {
         } else if (provider === ONBASE || provider === ONBASE_ADMIN) {
           const token = grant.refreshToken || grant.accessToken;
           const answer = await onbaseWorkerCall('revoke', {
-            tenantId,
             connector: provider,
             token,
             tokenTypeHint: grant.refreshToken ? 'refresh_token' : 'access_token',
@@ -621,24 +608,22 @@ export class Grants {
       } catch (error) {
         this.logger.warn('provider revocation failed; deleting the grant regardless', {
           component: 'worker-delegate/grants',
-          tenantId,
           provider,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
-    const deleted = await deleteGrant(provider, tenantId, accountId);
+    const deleted = await deleteGrant(provider, accountId);
     if (!deleted.ok) return sendJson(response, 500, { error: { type: 'internal' } });
     sendJson(response, 200, { ok: true, revokedAtProvider });
   }
 
   async deleteOp(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
-    const tenantId = str(body.tenantId);
     const provider = str(body.provider);
     const accountId = str(body.accountId);
-    if (!tenantId || !provider || !accountId)
+    if (!provider || !accountId)
       return sendJson(response, 400, { error: { type: 'bad_request' } });
-    const deleted = await deleteGrant(provider, tenantId, accountId);
+    const deleted = await deleteGrant(provider, accountId);
     if (!deleted.ok) return sendJson(response, 500, { error: { type: 'internal' } });
     sendJson(response, 200, { ok: true });
   }
@@ -647,13 +632,12 @@ export class Grants {
 
   private takePending(
     handle: string,
-    tenantId: string,
     provider: string,
     consume: boolean
   ): Pending | null {
     this.sweepPending();
     const pending = this.pending.get(handle);
-    if (!pending || pending.tenantId !== tenantId || pending.provider !== provider) return null;
+    if (!pending || pending.provider !== provider) return null;
     if (consume) this.pending.delete(handle);
     return pending;
   }

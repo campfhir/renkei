@@ -96,7 +96,6 @@ export function chunkRefId(refId: string, index: number, total: number): string 
  * skip the exact-match arm and treat refId purely as a prefix.
  */
 export async function deleteObjectChunks(
-  tenantId: string,
   provider: string,
   refId: string,
   options: { prefixOnly?: boolean } = {}
@@ -109,7 +108,6 @@ export async function deleteObjectChunks(
     () =>
       dbResult.val
         .deleteFrom('knowledge_chunks')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where((eb) =>
           options.prefixOnly
@@ -133,7 +131,6 @@ export async function deleteObjectChunks(
  * without re-listing the whole project from the provider.
  */
 export async function deleteChunksByMetadata(
-  tenantId: string,
   provider: string,
   key: string,
   value: string
@@ -145,7 +142,6 @@ export async function deleteChunksByMetadata(
     () =>
       dbResult.val
         .deleteFrom('knowledge_chunks')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where(sql<boolean>`metadata ->> ${key} = ${value}`)
         .executeTakeFirst(),
@@ -165,7 +161,6 @@ export async function deleteChunksByMetadata(
  * per object is kept and the rest discarded — all a cTag comparison needs.
  */
 export async function readObjectMetadataBatch(
-  tenantId: string,
   provider: string,
   refIds: readonly string[]
 ): Promise<Result<Map<string, Record<string, unknown>>, 'DB_ERROR'>> {
@@ -179,7 +174,6 @@ export async function readObjectMetadataBatch(
       dbResult.val
         .selectFrom('knowledge_chunks')
         .select(['ref_id', 'metadata'])
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where((eb) =>
           eb.or([eb('ref_id', 'in', [...refIds]), sql<boolean>`ref_id LIKE ANY(${patterns})`])
@@ -213,7 +207,6 @@ export async function readObjectMetadataBatch(
  * whatever still bears an older epoch is genuinely gone from the source.
  */
 export async function deleteStaleScopeChunks(
-  tenantId: string,
   provider: string,
   scope: { key: string; value: string },
   epoch: { key: string; value: string }
@@ -225,7 +218,6 @@ export async function deleteStaleScopeChunks(
     () =>
       dbResult.val
         .deleteFrom('knowledge_chunks')
-        .where('tenant_id', '=', tenantId)
         .where('provider', '=', provider)
         .where(sql<boolean>`metadata ->> ${scope.key} = ${scope.value}`)
         .where(sql<boolean>`metadata ->> ${epoch.key} IS DISTINCT FROM ${epoch.value}`)
@@ -270,7 +262,6 @@ function isKeywordExtractor(
  * the object they came from.
  */
 export async function ingestObjectChunks(
-  tenantId: string,
   embedder: EmbeddingProvider,
   object: KnowledgeChunkInput,
   options: ChunkTextOptions & {
@@ -304,7 +295,7 @@ export async function ingestObjectChunks(
 > {
   const pieces = chunkText(object.content, options);
 
-  const cleared = await deleteObjectChunks(tenantId, object.provider, object.refId);
+  const cleared = await deleteObjectChunks(object.provider, object.refId);
   if (!cleared.ok) return cleared;
   if (pieces.length === 0) return ok({ chunks: 0, keywords: 0 });
 
@@ -317,7 +308,7 @@ export async function ingestObjectChunks(
   if (supplied !== undefined && supplied !== null && !isKeywordExtractor(supplied)) {
     keywords = normalizeKeywords(supplied);
   } else {
-    const extractor = supplied === undefined ? await resolveKeywordExtractor(tenantId) : supplied;
+    const extractor = supplied === undefined ? await resolveKeywordExtractor() : supplied;
     if (extractor) {
       const extracted = await extractor.extract({
         title: titleOf(object.metadata),
@@ -343,7 +334,6 @@ export async function ingestObjectChunks(
 
   for (const [index, content] of pieces.entries()) {
     const upserted = await upsertChunkRow(
-      tenantId,
       {
         provider: object.provider,
         refId: chunkRefId(object.refId, index + 1, pieces.length),

@@ -66,13 +66,12 @@ const CARD_ROW = {
 
 describe('listPendingApprovals', () => {
   it('reads the proposed call the engine recorded on the card', async () => {
-    const [approval] = await listPendingApprovals(stubDb({ rows: [CARD_ROW] }), 't', 'alice');
+    const [approval] = await listPendingApprovals(stubDb({ rows: [CARD_ROW] }), 'alice');
     expect(approval?.proposedTool).toBe('jira_refund_payment');
     expect(approval?.proposedArgs).toEqual({ amount: 240, customer: 'Dana Lin' });
 
     const [empty] = await listPendingApprovals(
       stubDb({ rows: [{ ...CARD_ROW, suggestedAction: {} }] }),
-      't',
       'alice'
     );
     expect(empty?.proposedTool).toBeNull();
@@ -81,7 +80,7 @@ describe('listPendingApprovals', () => {
 
   it('scopes to the caller and to undecided cards', async () => {
     const wheres: [string, unknown][] = [];
-    await listPendingApprovals(stubDb({ rows: [], wheres }), 'tenant-1', 'alice');
+    await listPendingApprovals(stubDb({ rows: [], wheres }), 'alice');
 
     // Owner-scoped by construction: someone else's approval must not be
     // listed, because it must not be decidable either.
@@ -93,7 +92,6 @@ describe('listPendingApprovals', () => {
   it('drops a card whose run is gone rather than offering an undecidable one', async () => {
     const rows = await listPendingApprovals(
       stubDb({ rows: [{ ...CARD_ROW, runId: null }] }),
-      't',
       'alice'
     );
     expect(rows).toEqual([]);
@@ -102,7 +100,7 @@ describe('listPendingApprovals', () => {
 
 describe('decideApproval', () => {
   it('refuses a card that is not this caller’s', async () => {
-    const result = await decideApproval(stubDb({ row: undefined }), producer(true), 't', 'alice', {
+    const result = await decideApproval(stubDb({ row: undefined }), producer(true), 'alice', {
       cardId: 'card-1',
       decision: 'approve',
     });
@@ -113,7 +111,6 @@ describe('decideApproval', () => {
     const info = await decideApproval(
       stubDb({ row: { id: 'c', kind: 'info', status: 'suggested', run_id: null } }),
       producer(true),
-      't',
       'alice',
       { cardId: 'c', decision: 'approve' }
     );
@@ -122,7 +119,6 @@ describe('decideApproval', () => {
     const done = await decideApproval(
       stubDb({ row: { id: 'c', kind: 'approval', status: 'expired', run_id: 'run-1' } }),
       producer(true),
-      't',
       'alice',
       { cardId: 'c', decision: 'approve' }
     );
@@ -138,7 +134,6 @@ describe('decideApproval', () => {
         updated: 0,
       }),
       producer(true),
-      't',
       'alice',
       { cardId: 'c', decision: 'approve' }
     );
@@ -154,7 +149,6 @@ describe('decideApproval', () => {
         updated: 1,
       }),
       producer(false),
-      't',
       'alice',
       { cardId: 'c', decision: 'decline' }
     );
@@ -175,7 +169,6 @@ describe('decideApproval', () => {
         sets,
       }),
       producer(true),
-      't',
       'alice',
       { cardId: 'c', decision: 'decline', comment: 'wrong ticket' }
     );
@@ -192,7 +185,6 @@ describe('decideApproval', () => {
         sets,
       }),
       producer(true),
-      't',
       'alice',
       {
         cardId: 'c',
@@ -233,7 +225,6 @@ describe('decideApproval', () => {
         sets,
       }),
       producer(true),
-      't',
       'alice',
       { cardId: 'c', decision: 'decline', argsOverride: { summary: 'Edited summary' } }
     );
@@ -243,7 +234,7 @@ describe('decideApproval', () => {
 
   it('refuses a comment past the cap before claiming anything', async () => {
     const wheres: [string, unknown][] = [];
-    const result = await decideApproval(stubDb({ wheres }), producer(true), 't', 'alice', {
+    const result = await decideApproval(stubDb({ wheres }), producer(true), 'alice', {
       cardId: 'c',
       decision: 'approve',
       comment: 'x'.repeat(10_001),
@@ -272,14 +263,14 @@ const QUESTION_ROW = {
 
 describe('listPendingQuestions', () => {
   it('reads the message and form the engine recorded on the card', async () => {
-    const [question] = await listPendingQuestions(stubDb({ rows: [QUESTION_ROW] }), 't', 'alice');
+    const [question] = await listPendingQuestions(stubDb({ rows: [QUESTION_ROW] }), 'alice');
     expect(question?.message).toBe('Which issue tracks this?');
     expect(question?.form).toEqual(QUESTION_ROW.suggestedAction.form);
   });
 
   it('scopes to the caller and to undecided cards', async () => {
     const wheres: [string, unknown][] = [];
-    await listPendingQuestions(stubDb({ rows: [], wheres }), 'tenant-1', 'alice');
+    await listPendingQuestions(stubDb({ rows: [], wheres }), 'alice');
     expect(wheres).toContainEqual(['c.owner_subject', 'alice']);
     expect(wheres).toContainEqual(['c.kind', 'question']);
     expect(wheres).toContainEqual(['c.status', 'suggested']);
@@ -288,7 +279,6 @@ describe('listPendingQuestions', () => {
   it('drops a card whose run is gone rather than offering an undecidable one', async () => {
     const rows = await listPendingQuestions(
       stubDb({ rows: [{ ...QUESTION_ROW, runId: null }] }),
-      't',
       'alice'
     );
     expect(rows).toEqual([]);
@@ -338,7 +328,7 @@ describe('answerQuestion', () => {
   });
 
   it('refuses a card that is not this caller’s', async () => {
-    const result = await answerQuestion(stubDb({ row: undefined }), producer(true), 't', 'alice', {
+    const result = await answerQuestion(stubDb({ row: undefined }), producer(true), 'alice', {
       cardId: 'card-2',
       answers: {},
     });
@@ -349,7 +339,6 @@ describe('answerQuestion', () => {
     const info = await answerQuestion(
       stubDb({ row: { id: 'c', kind: 'info', status: 'suggested', run_id: null } }),
       producer(true),
-      't',
       'alice',
       { cardId: 'c', answers: {} }
     );
@@ -358,7 +347,6 @@ describe('answerQuestion', () => {
     const done = await answerQuestion(
       stubDb({ row: { id: 'c', kind: 'question', status: 'expired', run_id: 'run-1' } }),
       producer(true),
-      't',
       'alice',
       { cardId: 'c', answers: {} }
     );
@@ -370,7 +358,6 @@ describe('answerQuestion', () => {
     const result = await answerQuestion(
       stubDb({ row: questionCard(), updated: 1, sets }),
       producer(true),
-      't',
       'alice',
       {
         cardId: 'card-2',
@@ -395,7 +382,6 @@ describe('answerQuestion', () => {
     const result = await answerQuestion(
       stubDb({ row: questionCard(), updated: 1, sets }),
       producer(true),
-      't',
       'alice',
       {
         cardId: 'card-2',
@@ -418,7 +404,6 @@ describe('answerQuestion', () => {
     const result = await answerQuestion(
       stubDb({ row: questionCard(), updated: 0 }),
       producer(true),
-      't',
       'alice',
       { cardId: 'card-2', answers: { 'the issue key': 'CIO-12' } }
     );

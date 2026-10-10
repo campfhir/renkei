@@ -205,7 +205,6 @@ function fakeMcp(calls: string[]): McpClient {
 const localContext: LocalToolContext = {
   // The fakes never touch it.
   db: null as unknown as LocalToolContext['db'],
-  tenantId: 't',
   subject: 'u',
   chatId: 'c',
   cipher: testCipher,

@@ -5,7 +5,7 @@
  *
  * A `jira_admin_propose_*` tool writes a row here and changes nothing in
  * Jira. The owner applies it from a signed-in browser session
- * (app/api/tenant/[tenantId]/jira-admin/changes/[changeId]/apply), and only
+ * (app/api/jira-admin/changes/[changeId]/apply), and only
  * the owner: every read and write below is scoped by (tenant, subject), so
  * someone else's request is "not found" rather than refused — an id alone
  * is not an existence oracle.
@@ -180,7 +180,6 @@ export function stateOf(
 export async function createChangeRequest(
   db: Kysely<DB>,
   input: {
-    tenantId: string;
     subject: string;
     agentId?: string;
     cloudId: string;
@@ -194,7 +193,6 @@ export async function createChangeRequest(
   const row = await db
     .insertInto('jira_admin_change_requests')
     .values({
-      tenant_id: input.tenantId,
       subject: input.subject,
       agent_id: input.agentId && isUuid(input.agentId) ? input.agentId : null,
       cloud_id: input.cloudId,
@@ -213,7 +211,6 @@ export async function createChangeRequest(
 /** One of this person's requests, or null — someone else's reads the same as none. */
 export async function getChangeRequest(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   id: string
 ): Promise<ChangeRequest | null> {
@@ -222,7 +219,6 @@ export async function getChangeRequest(
     .selectFrom('jira_admin_change_requests')
     .select(COLUMNS)
     .where('id', '=', id)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .executeTakeFirst();
   return row ? fromRow(row) : null;
@@ -231,14 +227,12 @@ export async function getChangeRequest(
 /** This person's requests, newest first; `pendingOnly` leaves out expired ones too. */
 export async function listChangeRequests(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   options: { limit?: number; pendingOnly?: boolean } = {}
 ): Promise<ChangeRequest[]> {
   let query = db
     .selectFrom('jira_admin_change_requests')
     .select(COLUMNS)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject);
   if (options.pendingOnly) {
     query = query.where('status', '=', 'pending').where('expires_at', '>', sql<Date>`NOW()`);
@@ -253,13 +247,11 @@ export async function listChangeRequests(
 /** How many of this person's requests are waiting for them, for the connector card. */
 export async function countPendingChangeRequests(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string
 ): Promise<number> {
   const row = await db
     .selectFrom('jira_admin_change_requests')
     .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('status', '=', 'pending')
     .where('expires_at', '>', sql<Date>`NOW()`)
@@ -274,7 +266,6 @@ export async function countPendingChangeRequests(
  */
 export async function claimChangeRequest(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   id: string
 ): Promise<boolean> {
@@ -283,7 +274,6 @@ export async function claimChangeRequest(
     .updateTable('jira_admin_change_requests')
     .set({ status: 'applying', updated_at: sql<Date>`NOW()` })
     .where('id', '=', id)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('status', '=', 'pending')
     .where('expires_at', '>', sql<Date>`NOW()`)
@@ -318,7 +308,6 @@ export async function finishChangeRequest(
 /** Withdraw a pending request. False when it is not this person's, or no longer pending. */
 export async function cancelChangeRequest(
   db: Kysely<DB>,
-  tenantId: string,
   subject: string,
   id: string
 ): Promise<boolean> {
@@ -331,7 +320,6 @@ export async function cancelChangeRequest(
       updated_at: sql<Date>`NOW()`,
     })
     .where('id', '=', id)
-    .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('status', '=', 'pending')
     .executeTakeFirst();

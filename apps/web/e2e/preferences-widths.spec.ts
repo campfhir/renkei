@@ -10,8 +10,6 @@
 
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
-import { E2E_SLUG } from './seed';
-
 test.use({
   launchOptions: {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
@@ -29,7 +27,7 @@ const WIDTHS = [
 for (const size of WIDTHS) {
   test(`preferences at ${size.name} (${size.width}px)`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: size.width, height: size.height });
-    await page.goto(`/${E2E_SLUG}/preferences`);
+    await page.goto(`/preferences`);
     await expect(page.getByRole('heading', { name: 'Preferences' })).toBeVisible();
 
     // Everything sits under one Notifications heading now.

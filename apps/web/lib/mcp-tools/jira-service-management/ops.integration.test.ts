@@ -172,7 +172,6 @@ describeOrSkip(SUITE_NAME, () => {
     // tenantId/accountId are log context only — auth carries everything
     // HTTP-related, so this context never needs an accessToken or cloudId.
     const context = {
-      tenantId: 'integration-test',
       accountId: 'integration-test',
       siteUrl: '',
       apiBaseUrl: '',

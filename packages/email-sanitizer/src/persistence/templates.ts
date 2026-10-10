@@ -43,7 +43,6 @@ function toTemplate(row: TemplateRow): ExtractionTemplate {
 
 /** Every active template, keyed by senderKey — what the pipeline matches against. */
 export async function listActiveTemplates(
-  tenantId: string
 ): Promise<Result<Map<string, ExtractionTemplate>, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -53,7 +52,6 @@ export async function listActiveTemplates(
       dbResult.val
         .selectFrom('email_extraction_templates')
         .select(['id', 'sender_key', 'version', 'status', 'spec', 'match_threshold'])
-        .where('tenant_id', '=', tenantId)
         .where('status', '=', 'active')
         .execute(),
     'DB_ERROR' as const
@@ -78,7 +76,6 @@ export interface TemplateHealth {
  * neither query ever selects message content.
  */
 export async function listTemplateHealth(
-  tenantId: string,
   lookbackDays = 7
 ): Promise<Result<TemplateHealth[], 'DB_ERROR'>> {
   const dbResult = getDatabase();
@@ -89,7 +86,6 @@ export async function listTemplateHealth(
     const templates = await db
       .selectFrom('email_extraction_templates')
       .select(['sender_key', 'version', 'status', 'match_threshold'])
-      .where('tenant_id', '=', tenantId)
       .where('status', '=', 'active')
       .execute();
 
@@ -97,7 +93,6 @@ export async function listTemplateHealth(
       .selectFrom('email_classification_log')
       .select('sender_key')
       .select(({ fn }) => fn.countAll<number>().as('needs_review_count'))
-      .where('tenant_id', '=', tenantId)
       .where('needs_review', '=', true)
       .where('sender_key', 'is not', null)
       .where('created_at', '>=', sql<Date>`NOW() - ${lookbackDays} * INTERVAL '1 day'`)
@@ -131,7 +126,6 @@ export interface SaveTemplateOptions {
  * auto-replayed against already-indexed mail.
  */
 export async function saveTemplateVersion(
-  tenantId: string,
   senderKey: string,
   segments: TemplateSegment[],
   options: SaveTemplateOptions
@@ -144,7 +138,6 @@ export async function saveTemplateVersion(
     const previous = await db
       .selectFrom('email_extraction_templates')
       .select(['id', 'version'])
-      .where('tenant_id', '=', tenantId)
       .where('sender_key', '=', senderKey)
       .where('status', '=', 'active')
       .executeTakeFirst();
@@ -164,7 +157,6 @@ export async function saveTemplateVersion(
       .insertInto('email_extraction_templates')
       .values({
         id,
-        tenant_id: tenantId,
         sender_key: senderKey,
         version,
         status: 'active',

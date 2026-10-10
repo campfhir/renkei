@@ -1,6 +1,6 @@
 /**
  * GitHub webhook delivery verification
- * (app/api/webhooks/github/[tenantId]/route.ts): every delivery carries
+ * (app/api/webhooks/github/route.ts): every delivery carries
  * `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the raw body under
  * the App's Webhook secret>`. Verified over the RAW body string —
  * re-serializing parsed JSON would change byte order and break the

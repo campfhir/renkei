@@ -123,7 +123,6 @@ function ownedBy(column: string, ownerSubject: string | null) {
  */
 export async function getSurfaceTokenTotals(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null
@@ -137,7 +136,7 @@ export async function getSurfaceTokenTotals(
       FROM chat_turns ct
       JOIN chats c ON c.id = ct.chat_id
       LEFT JOIN chat_projects cp ON cp.id = c.project_id
-      WHERE ct.tenant_id = ${tenantId} AND ${inSpan('ct.started_at', span, timeZone)}
+      WHERE ${inSpan('ct.started_at', span, timeZone)}
         ${ownedBy('c.owner_subject', ownerSubject)}
       GROUP BY bucket
     `.execute(db),
@@ -145,7 +144,7 @@ export async function getSurfaceTokenTotals(
       SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
              COALESCE(SUM(output_tokens), 0) AS output_tokens
       FROM llm_calls
-      WHERE tenant_id = ${tenantId} AND agent_id IS NOT NULL
+      WHERE agent_id IS NOT NULL
         AND ${inSpan('created_at', span, timeZone)}
         ${ownedBy('subject', ownerSubject)}
     `.execute(db),
@@ -153,8 +152,7 @@ export async function getSurfaceTokenTotals(
       SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
              COALESCE(SUM(output_tokens), 0) AS output_tokens
       FROM image_usage
-      WHERE tenant_id = ${tenantId}
-        AND ${inSpan('created_at', span, timeZone)}
+      WHERE ${inSpan('created_at', span, timeZone)}
         ${ownedBy('subject', ownerSubject)}
     `.execute(db),
   ]);
@@ -181,7 +179,6 @@ export async function getSurfaceTokenTotals(
  */
 export async function getOrgActivityTotals(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null
@@ -192,7 +189,6 @@ export async function getOrgActivityTotals(
       sql<string>`count(*)`.as('runs'),
       sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
     ])
-    .where('tenant_id', '=', tenantId)
     .where(inSpan('created_at', span, timeZone));
   if (ownerSubject !== null) runsQuery = runsQuery.where('owner_subject', '=', ownerSubject);
   let callsQuery = db
@@ -201,7 +197,6 @@ export async function getOrgActivityTotals(
       sql<string>`count(*)`.as('calls'),
       sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
     ])
-    .where('tenant_id', '=', tenantId)
     .where(inSpan('started_at', span, timeZone));
   if (ownerSubject !== null) callsQuery = callsQuery.where('subject', '=', ownerSubject);
 
@@ -212,7 +207,6 @@ export async function getOrgActivityTotals(
       ? db
           .selectFrom('llm_calls')
           .select(sql<string>`count(DISTINCT subject)`.as('n'))
-          .where('tenant_id', '=', tenantId)
           .where(inSpan('created_at', span, timeZone))
           .executeTakeFirst()
       : Promise.resolve(undefined),
@@ -220,7 +214,6 @@ export async function getOrgActivityTotals(
       ? db
           .selectFrom('identities')
           .select(sql<string>`count(DISTINCT subject)`.as('n'))
-          .where('tenant_id', '=', tenantId)
           .executeTakeFirst()
       : Promise.resolve(undefined),
   ]);
@@ -246,7 +239,6 @@ export async function getOrgActivityTotals(
  */
 export async function getOrgDailySeries(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
@@ -260,7 +252,6 @@ export async function getOrgDailySeries(
       sql<string>`count(*)`.as('runs'),
       sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
     ])
-    .where('tenant_id', '=', tenantId)
     .where(inSpan('created_at', span, timeZone))
     .groupBy(sql`day`);
   if (ownerSubject !== null) runsQuery = runsQuery.where('owner_subject', '=', ownerSubject);
@@ -271,7 +262,6 @@ export async function getOrgDailySeries(
       sql<string>`count(*)`.as('calls'),
       sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
     ])
-    .where('tenant_id', '=', tenantId)
     .where(inSpan('started_at', span, timeZone))
     .groupBy(sql`day`);
   if (ownerSubject !== null) callsQuery = callsQuery.where('subject', '=', ownerSubject);
@@ -286,7 +276,7 @@ export async function getOrgDailySeries(
       FROM chat_turns ct
       JOIN chats c ON c.id = ct.chat_id
       LEFT JOIN chat_projects cp ON cp.id = c.project_id
-      WHERE ct.tenant_id = ${tenantId} AND ${inSpan('ct.started_at', span, timeZone)}
+      WHERE ${inSpan('ct.started_at', span, timeZone)}
         ${ownedBy('c.owner_subject', ownerSubject)}
       GROUP BY day, bucket
     `.execute(db),
@@ -295,7 +285,7 @@ export async function getOrgDailySeries(
              COALESCE(SUM(input_tokens), 0) AS input_tokens,
              COALESCE(SUM(output_tokens), 0) AS output_tokens
       FROM llm_calls
-      WHERE tenant_id = ${tenantId} AND agent_id IS NOT NULL
+      WHERE agent_id IS NOT NULL
         AND ${inSpan('created_at', span, timeZone)}
         ${ownedBy('subject', ownerSubject)}
       GROUP BY day
@@ -315,7 +305,7 @@ export async function getOrgDailySeries(
              COALESCE(SUM(input_tokens), 0) AS input_tokens,
              COALESCE(SUM(output_tokens), 0) AS output_tokens
       FROM image_usage
-      WHERE tenant_id = ${tenantId} AND ${inSpan('created_at', span, timeZone)}
+      WHERE ${inSpan('created_at', span, timeZone)}
         ${ownedBy('subject', ownerSubject)}
       GROUP BY day
     `.execute(db),
@@ -408,7 +398,6 @@ export interface TopUserRow {
  */
 export async function getTopUsers(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   includeAgents: boolean,
@@ -423,7 +412,6 @@ export async function getTopUsers(
         fn.sum<string>('chat_turns.input_tokens').as('input_tokens'),
         fn.sum<string>('chat_turns.output_tokens').as('output_tokens'),
       ])
-      .where('chat_turns.tenant_id', '=', tenantId)
       .where(inSpan('chat_turns.started_at', span, timeZone))
       .groupBy('chats.owner_subject')
       .execute(),
@@ -431,14 +419,13 @@ export async function getTopUsers(
       SELECT subject, COALESCE(SUM(input_tokens), 0) AS input_tokens,
              COALESCE(SUM(output_tokens), 0) AS output_tokens
       FROM llm_calls
-      WHERE tenant_id = ${tenantId} AND agent_id IS NOT NULL
+      WHERE agent_id IS NOT NULL
         AND ${inSpan('created_at', span, timeZone)}
       GROUP BY subject
     `.execute(db),
     db
       .selectFrom('identities')
       .select(['subject', 'display_name', 'email'])
-      .where('tenant_id', '=', tenantId)
       .execute(),
   ]);
 
@@ -474,11 +461,10 @@ export interface PersonOption {
 }
 
 /** Everyone who has signed in, for the person picker — names only. */
-export async function listPeople(db: Kysely<DB>, tenantId: string): Promise<PersonOption[]> {
+export async function listPeople(db: Kysely<DB>): Promise<PersonOption[]> {
   const rows = await db
     .selectFrom('identities')
     .select(['subject', 'display_name', 'email'])
-    .where('tenant_id', '=', tenantId)
     .execute();
   return rows
     .map((row) => ({ subject: row.subject, label: row.display_name || row.email || row.subject }))
@@ -501,7 +487,6 @@ export interface TopAgentRow {
  */
 export async function getTopAgentsByTokens(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
@@ -518,7 +503,7 @@ export async function getTopAgentsByTokens(
            SUM(l.input_tokens) AS input_tokens, SUM(l.output_tokens) AS output_tokens
     FROM llm_calls l
     JOIN agents a ON a.id = l.agent_id
-    WHERE l.tenant_id = ${tenantId} AND l.agent_id IS NOT NULL
+    WHERE l.agent_id IS NOT NULL
       AND ${inSpan('l.created_at', span, timeZone)}
       ${ownedBy('l.subject', ownerSubject)}
     GROUP BY a.id, a.name, a.enabled
@@ -531,7 +516,6 @@ export async function getTopAgentsByTokens(
   let runsQuery = db
     .selectFrom('agent_run_log')
     .select(['agent_id', sql<string>`count(*)`.as('runs')])
-    .where('tenant_id', '=', tenantId)
     .where('agent_id', 'in', ids)
     .where(inSpan('created_at', span, timeZone))
     .groupBy('agent_id');
@@ -579,7 +563,6 @@ export interface EfficientAgentRow {
  */
 export async function getMostEfficientAgents(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   limit = 10,
@@ -599,7 +582,7 @@ export async function getMostEfficientAgents(
            SUM(f.tool_calls) AS tool_calls
     FROM agent_run_log f
     JOIN agents a ON a.id = f.agent_id
-    WHERE f.tenant_id = ${tenantId} AND f.status = 'succeeded'
+    WHERE f.status = 'succeeded'
       AND ${inSpan('f.created_at', span, timeZone)}
       ${ownedBy('f.owner_subject', ownerSubject)}
     GROUP BY a.id, a.name
@@ -640,7 +623,6 @@ export interface OrgToolRow {
  */
 export async function getTopToolsOrg(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
@@ -654,7 +636,6 @@ export async function getTopToolsOrg(
       sql<string>`count(*)`.as('calls'),
       sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
     ])
-    .where('tenant_id', '=', tenantId)
     .where(inSpan('started_at', span, timeZone))
     .groupBy(['tool', 'connector'])
     .orderBy(sql`count(*)`, 'desc')
@@ -692,7 +673,6 @@ export interface ModelTokenRow {
  */
 export async function getTokensByModel(
   db: Kysely<DB>,
-  tenantId: string,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
@@ -712,7 +692,7 @@ export async function getTokensByModel(
            COALESCE(SUM(cache_read_input_tokens), 0) AS cached_input_tokens,
            COUNT(*) AS calls
     FROM llm_calls
-    WHERE tenant_id = ${tenantId} AND ${inSpan('created_at', span, timeZone)}
+    WHERE ${inSpan('created_at', span, timeZone)}
       ${ownedBy('subject', ownerSubject)}
     GROUP BY provider, model
     ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC

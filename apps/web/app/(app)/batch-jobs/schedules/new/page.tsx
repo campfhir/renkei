@@ -1,0 +1,28 @@
+import React from 'react';
+import BackLink from '@/components/back-link';
+import { redirect } from 'next/navigation';
+import { getDatabase } from '@renkei/db';
+import { getSessionFromCookies } from '@/lib/session';
+import { signInUrl } from '@/lib/sign-in-url';
+import { loadCalendarOptions } from '@/lib/schedule-calendars';
+import NewScheduleForm from './new-schedule-form';
+
+export default async function NewBatchJobSchedulePage(): Promise<React.ReactNode> {
+  const session = await getSessionFromCookies();
+  if (!session) {
+    redirect(signInUrl(`/batch-jobs/schedules/new`));
+  }
+
+  const dbResult = getDatabase();
+  const calendars = dbResult.ok ? await loadCalendarOptions(dbResult.val) : [];
+
+  return (
+    <div className="mx-auto max-w-3xl">
+      <div className="mb-4 flex items-center gap-2">
+        <BackLink href={`/batch-jobs/schedules`} label="Schedules" />
+        <h1 className="text-xl font-bold">New schedule</h1>
+      </div>
+      <NewScheduleForm calendars={calendars} />
+    </div>
+  );
+}

@@ -29,10 +29,9 @@ export interface MicrosoftAccess {
 }
 
 export async function resolveMicrosoftAccess(
-  tenantId: string,
   accountId: string
 ): Promise<MicrosoftAccess> {
-  const grant = { tenantId, provider: MICROSOFT, accountId };
+  const grant = { provider: MICROSOFT, accountId };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) {
     throw new Error(

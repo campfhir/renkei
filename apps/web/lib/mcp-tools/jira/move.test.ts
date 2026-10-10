@@ -77,7 +77,6 @@ function fakeServer(registered: Map<string, ToolHandler>): McpServer {
 
 function testContext(): MCPToolContext {
   return {
-    tenantId: 'tenant-1',
     accountId: 'acct-1',
     siteUrl: 'https://example.atlassian.net',
     apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',

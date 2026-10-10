@@ -86,7 +86,6 @@ function access(): AtlassianAccess {
 function jiraRow(cursor: string | null): WatchRow {
   return {
     id: 'watch-1',
-    tenant_id: 'tenant-1',
     provider: 'jira',
     account_id: 'acct-1',
     scope_type: 'project',
@@ -99,7 +98,6 @@ function jiraRow(cursor: string | null): WatchRow {
 function confluenceRow(cursor: string | null): WatchRow {
   return {
     id: 'watch-2',
-    tenant_id: 'tenant-1',
     provider: 'confluence',
     account_id: 'acct-1',
     scope_type: 'space',
@@ -112,7 +110,7 @@ function confluenceRow(cursor: string | null): WatchRow {
 describe('runWatchSync — jira', () => {
   it('asks for the whole project on a first run, with no updated clause', async () => {
     responses = [{ issues: [] }];
-    await runWatchSync('tenant-1', access(), jiraRow(null));
+    await runWatchSync(access(), jiraRow(null));
     const jql = String((calls[0]?.body ?? {}).jql);
     expect(jql).toContain('project = "ENG"');
     expect(jql).not.toContain('updated >=');
@@ -125,7 +123,7 @@ describe('runWatchSync — jira', () => {
     // map, and every custom field in the indexed document degrades to its
     // raw id. It shipped that way once.
     responses = [{ issues: [] }];
-    await runWatchSync('tenant-1', access(), jiraRow(null));
+    await runWatchSync(access(), jiraRow(null));
     const body = calls[0]?.body ?? {};
     expect(typeof body.expand).toBe('string');
     expect(body.expand).toBe('names');
@@ -154,15 +152,15 @@ describe('runWatchSync — jira', () => {
         ],
       },
     ];
-    await runWatchSync('tenant-1', access(), jiraRow(null));
-    const [, , input] = mockEnqueueKnowledgeEvent.mock.calls[0] ?? [];
+    await runWatchSync(access(), jiraRow(null));
+    const [, input] = mockEnqueueKnowledgeEvent.mock.calls[0] ?? [];
     expect(input.content).toContain('Request participants: Sam Okafor');
     expect(input.content).not.toContain('customfield_10101');
   });
 
   it('rewinds the window behind the cursor so eventually-consistent writes are not lost', async () => {
     responses = [{ issues: [] }];
-    await runWatchSync('tenant-1', access(), jiraRow('2026-08-10T12:00:00.000Z'));
+    await runWatchSync(access(), jiraRow('2026-08-10T12:00:00.000Z'));
     const jql = String((calls[0]?.body ?? {}).jql);
     // Two minutes before the cursor, in Jira's own JQL timestamp format.
     expect(jql).toContain('updated >= "2026/08/10 11:58"');
@@ -185,12 +183,10 @@ describe('runWatchSync — jira', () => {
         ],
       },
     ];
-    const result = await runWatchSync('tenant-1', access(), jiraRow(null));
+    const result = await runWatchSync(access(), jiraRow(null));
     expect(result.items).toBe(2);
     expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledTimes(2);
-    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
-      'tenant-1',
-      'ingest.object',
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('ingest.object',
       expect.objectContaining({ provider: 'jira', refId: 'ENG-1' }),
       'jira/ENG-1'
     );
@@ -201,7 +197,7 @@ describe('runWatchSync — jira', () => {
 
   it('throws on a provider failure rather than writing a cursor', async () => {
     responses = [null];
-    await expect(runWatchSync('tenant-1', access(), jiraRow(null))).rejects.toThrow(
+    await expect(runWatchSync(access(), jiraRow(null))).rejects.toThrow(
       /jira search failed/
     );
     expect(written).toBeNull();
@@ -209,7 +205,7 @@ describe('runWatchSync — jira', () => {
 
   it('does nothing when the org has no embedding provider configured', async () => {
     mockResolveEmbeddingProvider.mockResolvedValue(null);
-    const result = await runWatchSync('tenant-1', access(), jiraRow('2026-08-10T12:00:00.000Z'));
+    const result = await runWatchSync(access(), jiraRow('2026-08-10T12:00:00.000Z'));
     expect(calls).toHaveLength(0);
     expect(result.items).toBe(0);
     // The cursor is handed back untouched, not reset.
@@ -220,7 +216,7 @@ describe('runWatchSync — jira', () => {
 describe('runWatchSync — confluence', () => {
   it('scopes to the space and asks newest-modified-first', async () => {
     responses = [{ results: [] }];
-    await runWatchSync('tenant-1', access(), confluenceRow(null));
+    await runWatchSync(access(), confluenceRow(null));
     expect(calls[0]?.url).toContain('/wiki/api/v2/pages?space-id=55001');
     expect(calls[0]?.url).toContain('sort=-modified-date');
   });
@@ -246,7 +242,7 @@ describe('runWatchSync — confluence', () => {
       },
       { results: [] },
     ];
-    const result = await runWatchSync('tenant-1', access(), confluenceRow('2026-08-09T00:00:00Z'));
+    const result = await runWatchSync(access(), confluenceRow('2026-08-09T00:00:00Z'));
     expect(result.items).toBe(1);
     // The `next` link is never followed — everything past the watermark is
     // older by construction of the sort.
@@ -282,9 +278,8 @@ describe('runWatchSync — confluence', () => {
         ],
       },
     ];
-    await runWatchSync('tenant-1', access(), confluenceRow(null));
-    const [tenantId, type, input] = mockEnqueueKnowledgeEvent.mock.calls[0] ?? [];
-    expect(tenantId).toBe('tenant-1');
+    await runWatchSync(access(), confluenceRow(null));
+    const [type, input] = mockEnqueueKnowledgeEvent.mock.calls[0] ?? [];
     expect(type).toBe('ingest.object');
     expect(input.provider).toBe('confluence');
     expect(input.refId).toBe('9');

@@ -9,7 +9,6 @@
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import {
-  E2E_SLUG,
   E2E_SUBJECT,
   AGENT_RICH_ID,
   AGENT_PLAIN_ID,
@@ -43,7 +42,7 @@ async function shot(
 }
 
 test('admin — agent oversight totals', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/admin/agents`);
+  await page.goto(`/admin/agents`);
   await expect(page.getByRole('heading', { name: 'Agent oversight' })).toBeVisible();
   // One period at a time: the toggle drives the org card AND every agent
   // card. Flip to a non-default bucket before the shot.
@@ -55,7 +54,7 @@ test('admin — agent oversight totals', async ({ page }, testInfo) => {
 });
 
 test('admin — agent oversight sorted by tokens', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/admin/agents`);
+  await page.goto(`/admin/agents`);
   await expect(page.getByRole('heading', { name: 'Agent oversight' })).toBeVisible();
   await page.getByRole('button', { name: 'This year' }).click();
   await page.getByLabel('Sort by').selectOption('tokensIn');
@@ -66,7 +65,7 @@ test('admin — agent oversight sorted by tokens', async ({ page }, testInfo) =>
 });
 
 test('admin — agent detail with usage by model and step', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/admin/agents/${AGENT_RICH_ID}`);
+  await page.goto(`/admin/agents/${AGENT_RICH_ID}`);
   await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
   await expect(page.getByText('By step · this month')).toBeVisible();
   // Steps carry the outline's numbers; the model filter narrows them.
@@ -78,7 +77,7 @@ test('admin — agent detail with usage by model and step', async ({ page }, tes
 });
 
 test('admin — event monitor', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/admin/events`);
+  await page.goto(`/admin/events`);
   await expect(page.getByRole('heading', { name: 'Events' })).toBeVisible();
   // One seeded row per renderable status, failed (dead-lettered) included.
   await expect(page.getByText('Failed · 1')).toBeVisible();
@@ -86,7 +85,7 @@ test('admin — event monitor', async ({ page }, testInfo) => {
 });
 
 test('admin — cleaner script reach', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/admin/email-sanitizer`);
+  await page.goto(`/admin/email-sanitizer`);
   await expect(page.getByRole('heading', { name: 'Cleaner scripts' })).toBeVisible();
   // The reach control is the point of the shot: a script says which content
   // kinds it may touch, and widening it past mail is a deliberate act.
@@ -100,20 +99,20 @@ test('admin — cleaner script reach', async ({ page }, testInfo) => {
 });
 
 test('agents list', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents`);
+  await page.goto(`/agents`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await expect(page.getByText('Triage yesterday into tickets')).toBeVisible();
   await shot(page, testInfo, 'agents-list');
 });
 
 test('agent overview', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}`);
+  await page.goto(`/agents/${AGENT_RICH_ID}`);
   await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
   await shot(page, testInfo, 'agent-overview');
 });
 
 test('agent overview — memory section open', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}`);
+  await page.goto(`/agents/${AGENT_RICH_ID}`);
   await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
   const isMobile = testInfo.project.name === 'mobile';
   if (isMobile) {
@@ -128,7 +127,7 @@ test('agent overview — memory section open', async ({ page }, testInfo) => {
 });
 
 test('agent overview — usage open', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}`);
+  await page.goto(`/agents/${AGENT_RICH_ID}`);
   await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
   if (testInfo.project.name === 'mobile') {
     await page.getByRole('button', { name: 'Usage' }).click();
@@ -144,7 +143,7 @@ test('agent overview — usage open', async ({ page }, testInfo) => {
 });
 
 test('agent overview — invocations open', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}`);
+  await page.goto(`/agents/${AGENT_RICH_ID}`);
   await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
   if (testInfo.project.name === 'mobile') {
     await page.getByRole('button', { name: 'Invocations' }).click();
@@ -159,7 +158,7 @@ test('agent overview — invocations open', async ({ page }, testInfo) => {
 });
 
 test('runs list', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/runs`);
+  await page.goto(`/agents/${AGENT_RICH_ID}/runs`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   // The run parked for the owner's key reads as paused-for-sign-in, not
   // as waiting on an approval.
@@ -168,7 +167,7 @@ test('runs list', async ({ page }, testInfo) => {
 });
 
 test('failed run detail', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/runs/${RUN_STEP_FAILED_ID}`);
+  await page.goto(`/agents/${AGENT_RICH_ID}/runs/${RUN_STEP_FAILED_ID}`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   // Failed runs carry a copy-to-clipboard of the full debug context, for
   // pasting into Claude Code or another dev tool.
@@ -177,19 +176,19 @@ test('failed run detail', async ({ page }, testInfo) => {
 });
 
 test('builder — new agent', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/new`);
+  await page.goto(`/agents/new`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await shot(page, testInfo, 'builder-new');
 });
 
 test('builder — edit rich agent', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
+  await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await shot(page, testInfo, 'builder-edit');
 });
 
 test('builder — step editor open', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
+  await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.getByRole('button', { name: /File follow-up tickets/ }).click();
   // Desktop: docked sidebar; mobile: modal — either way the step name field
@@ -204,7 +203,7 @@ test('builder — step editor open', async ({ page }, testInfo) => {
 });
 
 test('builder — insert menu, details section', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
+  await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.getByRole('button', { name: /File follow-up tickets/ }).click();
   await expect(page.getByLabel('Step name')).toBeVisible();
@@ -237,7 +236,7 @@ test('builder — insert menu, details section', async ({ page }, testInfo) => {
 });
 
 test('builder — branch editor open', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
+  await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.getByRole('button', { name: /Edit branch: Anything actionable/ }).click();
   await expect(page.getByLabel('Branch name')).toBeVisible();
@@ -247,7 +246,7 @@ test('builder — branch editor open', async ({ page }, testInfo) => {
 });
 
 test('builder — schedule editor open (wide panel)', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
+  await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.getByRole('button', { name: /Every weekday/ }).click();
   await expect(page.getByText('Blackout dates', { exact: false })).toBeVisible();
@@ -255,7 +254,7 @@ test('builder — schedule editor open (wide panel)', async ({ page }, testInfo)
 });
 
 test('builder — edit plain agent', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_PLAIN_ID}/edit`);
+  await page.goto(`/agents/${AGENT_PLAIN_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await shot(page, testInfo, 'builder-edit-plain');
 });
@@ -263,7 +262,7 @@ test('builder — edit plain agent', async ({ page }, testInfo) => {
 /* ------------------------- v3 deep agent shots ---------------------- */
 
 test('builder — edit deep agent (loop container)', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await page.goto(`/agents/${AGENT_DEEP_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   // The loop container is expanded by default at depth 1 — its body and
   // the decorative back-edge are on screen.
@@ -273,7 +272,7 @@ test('builder — edit deep agent (loop container)', async ({ page }, testInfo) 
 });
 
 test('builder — loop editor open', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await page.goto(`/agents/${AGENT_DEEP_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.getByRole('button', { name: `Edit loop: ${DEEP_LOOP_NAME}` }).click();
   await expect(page.getByLabel('The list to go through')).toBeVisible();
@@ -282,7 +281,7 @@ test('builder — loop editor open', async ({ page }, testInfo) => {
 });
 
 test('builder — three-way router expanded', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await page.goto(`/agents/${AGENT_DEEP_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   // The branch sits at display depth 2 (inside the loop), so it folds by
   // default — expand it for the shot of the vertical route rows.
@@ -294,7 +293,7 @@ test('builder — three-way router expanded', async ({ page }, testInfo) => {
 });
 
 test('builder — drill into the loop', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await page.goto(`/agents/${AGENT_DEEP_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.getByRole('button', { name: `Open loop: ${DEEP_LOOP_NAME}` }).click();
   await expect(page.getByRole('navigation', { name: 'Flow breadcrumb' })).toBeVisible();
@@ -303,7 +302,7 @@ test('builder — drill into the loop', async ({ page }, testInfo) => {
 });
 
 test('builder — move-to menu', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await page.goto(`/agents/${AGENT_DEEP_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.getByRole('button', { name: /Edit step 1: Collect the queue/ }).click();
   if (testInfo.project.name === 'mobile') {
@@ -318,7 +317,7 @@ test('builder — move-to menu', async ({ page }, testInfo) => {
 });
 
 test('run timeline with iterations', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/runs/${RUN_ITERATIONS_ID}`);
+  await page.goto(`/agents/${AGENT_DEEP_ID}/runs/${RUN_ITERATIONS_ID}`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   // Looped steps group their rounds under amber iteration sub-headers.
   // Exact: the collapsed "What it did" panel above lists "… · iteration 1"
@@ -329,7 +328,7 @@ test('run timeline with iterations', async ({ page }, testInfo) => {
 });
 
 test('admin — cleaner script editor with types', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/admin/email-sanitizer`);
+  await page.goto(`/admin/email-sanitizer`);
   await expect(page.getByRole('heading', { name: 'Cleaner scripts' })).toBeVisible();
 
   // Monaco is client-only and lazily imported, so it arrives after hydration.
@@ -395,14 +394,14 @@ test('admin — cleaner script editor with types', async ({ page }, testInfo) =>
 });
 
 test('connectors — grid', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/connectors`);
+  await page.goto(`/connectors`);
   await expect(page.getByRole('heading', { name: 'Connectors', level: 1 })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'MCP endpoint' })).toBeVisible();
   await shot(page, testInfo, 'connectors-grid');
 });
 
 test('tools — headline cards', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/usage`);
+  await page.goto(`/usage`);
   // The seeded session is an operator, so all three cards render.
   await expect(page.getByRole('heading', { name: 'Most used across the org' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Most used by you' })).toBeVisible();
@@ -411,7 +410,7 @@ test('tools — headline cards', async ({ page }, testInfo) => {
 });
 
 test('my usage — surface breakdown and efficiency', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/utilization`);
+  await page.goto(`/utilization`);
   await expect(page.getByRole('heading', { name: 'My usage' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Tokens by surface' })).toBeVisible();
   // The seeded llm_calls rows all belong to this same subject, so the
@@ -426,7 +425,7 @@ test('my usage — surface breakdown and efficiency', async ({ page }, testInfo)
 });
 
 test('my usage — voice card', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/utilization`);
+  await page.goto(`/utilization`);
   await expect(page.getByRole('heading', { name: 'My usage' })).toBeVisible();
   const voice = page.getByRole('heading', { name: 'Voice', exact: true });
   await expect(voice).toBeVisible();
@@ -438,7 +437,7 @@ test('my usage — voice card', async ({ page }, testInfo) => {
 
 test.describe('admin — organization usage', () => {
   test('voice card and boards', async ({ page }, testInfo) => {
-    await page.goto(`/${E2E_SLUG}/admin/usage`);
+    await page.goto(`/admin/usage`);
     await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();
     const listeners = page.getByRole('heading', { name: 'Top listeners' });
     await expect(listeners).toBeVisible();
@@ -453,7 +452,7 @@ test.describe('admin — organization usage', () => {
   });
 
   test('overview', async ({ page }, testInfo) => {
-    await page.goto(`/${E2E_SLUG}/admin/usage`);
+    await page.goto(`/admin/usage`);
     await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Tokens by surface' })).toBeVisible();
     // Only one identity is seeded, and every seeded token is spent under it —
@@ -477,7 +476,7 @@ test.describe('admin — organization usage', () => {
   });
 
   test('top users toggle', async ({ page }, testInfo) => {
-    await page.goto(`/${E2E_SLUG}/admin/usage`);
+    await page.goto(`/admin/usage`);
     await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();
     const chatsOnly = page.getByRole('button', { name: 'Chats only' });
     const withAgents = page.getByRole('button', { name: '+ agents' });
@@ -489,7 +488,7 @@ test.describe('admin — organization usage', () => {
   });
 
   test('tokens by model', async ({ page }) => {
-    await page.goto(`/${E2E_SLUG}/admin/usage`);
+    await page.goto(`/admin/usage`);
     await expect(page.getByRole('heading', { name: 'Tokens by model' })).toBeVisible();
     // The seeded ledger names three models plus rows written before the
     // model was recorded, which surface as one labelled row.
@@ -498,7 +497,7 @@ test.describe('admin — organization usage', () => {
   });
 
   test('today, by the hour', async ({ page }, testInfo) => {
-    await page.goto(`/${E2E_SLUG}/admin/usage?period=today`);
+    await page.goto(`/admin/usage?period=today`);
     await expect(page.getByRole('button', { name: 'Today' })).toHaveAttribute(
       'aria-pressed',
       'true'
@@ -513,7 +512,7 @@ test.describe('admin — organization usage', () => {
     // Reached by link, the way Sites points here: the picker lands on the
     // person and the whole page is theirs — identity card, active days in
     // place of active users, and their own rank in Top users.
-    await page.goto(`/${E2E_SLUG}/admin/usage?user=${encodeURIComponent(E2E_SUBJECT)}&period=1m`);
+    await page.goto(`/admin/usage?user=${encodeURIComponent(E2E_SUBJECT)}&period=1m`);
     await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();
     await expect(page.getByRole('combobox')).toHaveValue(E2E_SUBJECT);
     await expect(page.getByRole('heading', { name: 'E2E Tester' })).toBeVisible();
@@ -547,7 +546,7 @@ test.describe('admin — organization usage', () => {
 });
 
 test('admin — access table', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/admin/access`);
+  await page.goto(`/admin/access`);
   await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
   // One seeded person with one seeded grant: a row naming both, with the
   // disconnect on it, and the name linking to their usage.
@@ -559,14 +558,14 @@ test('admin — access table', async ({ page }, testInfo) => {
 });
 
 test('about — changelog', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/about`);
+  await page.goto(`/about`);
   // The heading uses a typographic apostrophe, so match on the stable words.
   await expect(page.getByRole('heading', { name: /changed/ })).toBeVisible();
   await shot(page, testInfo, 'about-changelog');
 });
 
 test('builder — trigger editor with header remove', async ({ page }, testInfo) => {
-  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
+  await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
   // Trigger cards are named by their own summary text, so anchor on the
   // "gives:" line every one of them carries and let the click bubble.
   await page.getByText('gives:').first().click();

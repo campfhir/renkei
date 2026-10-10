@@ -33,7 +33,6 @@ import { envSecretsKey } from './env-secrets';
 import { logger } from './logger';
 
 export interface BrowserStateTarget {
-  tenantId: string;
   subject: string;
 }
 
@@ -69,15 +68,17 @@ const PREFIX = 'bstate1.';
 const DIRECTORY = 'browser-state';
 const HKDF_SALT = 'renkei-browser-state';
 
-function fileNameFor(target: BrowserStateTarget): string {
-  return `${createHash('sha256').update(`${target.tenantId}\n${target.subject}`).digest('hex')}.state`;
+function fileNameFor(domain: string, target: BrowserStateTarget): string {
+  return `${createHash('sha256').update(`${domain}\n${target.subject}`).digest('hex')}.state`;
 }
 
-/** The caller's own sealing key: the deployment's key narrowed to this caller by HKDF. */
-export function browserStateKey(rootKey: Buffer, target: BrowserStateTarget): Buffer {
-  return Buffer.from(
-    hkdfSync('sha256', rootKey, HKDF_SALT, `${target.tenantId}\n${target.subject}`, 32)
-  );
+/**
+ * The caller's own sealing key: the deployment's key narrowed to this caller
+ * by HKDF. `domain` is the key domain (@renkei/settings getKeyDomain) the
+ * saved sessions were first sealed under.
+ */
+export function browserStateKey(rootKey: Buffer, domain: string, target: BrowserStateTarget): Buffer {
+  return Buffer.from(hkdfSync('sha256', rootKey, HKDF_SALT, `${domain}\n${target.subject}`, 32));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -105,12 +106,13 @@ function isSavedState(value: unknown): value is SavedBrowserState {
  */
 export function createBrowserStateStore(
   dataRoot: string,
+  domain: string,
   rootKey: Buffer | null = envSecretsKey(),
   ttlMs = BROWSER_STATE_TTL_MS
 ): BrowserStateStore | null {
   if (!rootKey) return null;
   const directory = join(dataRoot, DIRECTORY);
-  const pathFor = (target: BrowserStateTarget) => join(directory, fileNameFor(target));
+  const pathFor = (target: BrowserStateTarget) => join(directory, fileNameFor(domain, target));
   return {
     async load(target) {
       let sealed: string;
@@ -120,7 +122,7 @@ export function createBrowserStateStore(
         return null;
       }
       if (!sealed.startsWith(PREFIX)) return null;
-      const opened = decrypt(sealed.slice(PREFIX.length), browserStateKey(rootKey, target));
+      const opened = decrypt(sealed.slice(PREFIX.length), browserStateKey(rootKey, domain, target));
       if (!opened.ok) {
         logger.warn('a saved browser session did not open under its caller’s key; dropping it', {
           component: 'worker-sandbox/browser-state',
@@ -144,7 +146,7 @@ export function createBrowserStateStore(
     async save(target, state) {
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const path = pathFor(target);
-      const sealed = `${PREFIX}${encrypt(JSON.stringify(state), browserStateKey(rootKey, target))}`;
+      const sealed = `${PREFIX}${encrypt(JSON.stringify(state), browserStateKey(rootKey, domain, target))}`;
       // Written whole, then renamed into place: a reader on another
       // replica sees the old state or the new, never half of one.
       const staging = `${path}.${process.pid}.tmp`;

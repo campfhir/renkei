@@ -47,7 +47,6 @@ function uuidFrom(seed: string): string {
 }
 
 function fixtureFor(name: string): {
-  tenantId: string;
   sessionId: string;
   agentId: string;
   runId: string;
@@ -56,7 +55,6 @@ function fixtureFor(name: string): {
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`approval-widget-e2e-tenant:${name}`),
     sessionId: uuidFrom(`approval-widget-e2e-session:${name}`),
     agentId: uuidFrom(`approval-widget-e2e-agent:${name}`),
     runId: uuidFrom(`approval-widget-e2e-run:${name}`),
@@ -70,45 +68,28 @@ async function seedTenant(client: Client, fixture: ReturnType<typeof fixtureFor>
   // A prior run's decision really did enqueue a resume job (decideApproval
   // is the real thing, not mocked) — clean it up before the tenant, or the
   // FK on agent_jobs blocks the delete.
-  await client.query('DELETE FROM agent_jobs WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-  await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-    fixture.tenantId,
-    fixture.slug,
-  ]);
+  await client.query('DELETE FROM agent_jobs');
+  await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [
-      fixture.sessionId,
-      fixture.tenantId,
-      fixture.subject,
-      ['renkei-user', 'renkei-operator'],
-      new Date(Date.now() + 24 * 3_600_000),
-    ]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, $4)`,
+    [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
   );
   await client.query(
-    `INSERT INTO identities (tenant_id, subject, email, display_name)
-     VALUES ($1, $2, $3, $4)`,
-    [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+    `INSERT INTO identities (subject, email, display_name)\n     VALUES ($1, $2, $3)`,
+    [fixture.subject, fixture.subject, 'E2E Tester']
   );
   await client.query(
-    `INSERT INTO user_preferences (tenant_id, subject, key, value)
-     VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-    [fixture.tenantId, fixture.subject]
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
+    [fixture.subject]
   );
   await client.query(
-    `INSERT INTO agents (id, tenant_id, owner_subject, name, description_status, steps, enabled)
-     VALUES ($1, $2, $3, 'Portfolio Updater', 'ready', '{"version":1,"steps":[]}'::jsonb, true)`,
-    [fixture.agentId, fixture.tenantId, fixture.subject]
+    `INSERT INTO agents (id, owner_subject, name, description_status, steps, enabled)\n     VALUES ($1, $2, 'Portfolio Updater', 'ready', '{"version":1,"steps":[]}'::jsonb, true)`,
+    [fixture.agentId, fixture.subject]
   );
   await client.query(
-    `INSERT INTO agent_runs
-       (id, tenant_id, agent_id, owner_subject, trigger_kind, steps_snapshot, status, started_at, created_at)
-     VALUES ($1, $2, $3, $4, 'manual', '{"version":1,"steps":[]}'::jsonb, 'waiting', NOW(), NOW())`,
-    [fixture.runId, fixture.tenantId, fixture.agentId, fixture.subject]
+    `INSERT INTO agent_runs\n       (id, agent_id, owner_subject, trigger_kind, steps_snapshot, status, started_at, created_at)\n     VALUES ($1, $2, $3, 'manual', '{"version":1,"steps":[]}'::jsonb, 'waiting', NOW(), NOW())`,
+    [fixture.runId, fixture.agentId, fixture.subject]
   );
 }
 
@@ -119,27 +100,15 @@ async function seedCard(
 ): Promise<void> {
   await client.query('DELETE FROM actionable_items WHERE id = $1', [fixture.itemId]);
   await client.query(
-    `INSERT INTO actionable_items
-       (id, tenant_id, source, kind, status, title, summary, evidence, suggested_action,
-        owner_subject, created_by, created_by_agent_id, run_id)
-     VALUES ($1, $2, 'agents', 'approval', 'suggested', $3, 'Wants to call Create issue.',
-             '{}'::jsonb, $4::jsonb, $5, $5, $6, $7)`,
-    [
-      fixture.itemId,
-      fixture.tenantId,
-      'Portfolio Updater — Create the approved issue',
-      JSON.stringify(suggestedAction),
-      fixture.subject,
-      fixture.agentId,
-      fixture.runId,
-    ]
+    `INSERT INTO actionable_items\n       (id, source, kind, status, title, summary, evidence, suggested_action,\n        owner_subject, created_by, created_by_agent_id, run_id)\n     VALUES ($1, 'agents', 'approval', 'suggested', $2, 'Wants to call Create issue.',\n             '{}'::jsonb, $3::jsonb, $4, $4, $5, $6)`,
+    [fixture.itemId, 'Portfolio Updater — Create the approved issue', JSON.stringify(suggestedAction), fixture.subject, fixture.agentId, fixture.runId]
   );
 }
 
 async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -176,7 +145,7 @@ test('confirming an edit on the widget approves the card with that edit as an ar
     });
     await signIn(page, fixture);
 
-    await page.goto(`/${fixture.slug}`);
+    await page.goto(`/`);
     const widgetFrame = page.frameLocator('iframe[title="Approval preview"]');
     await expect(widgetFrame.getByText('Create Jira issue')).toBeVisible();
     await expect(widgetFrame.getByText('CIO · Project')).toBeVisible();
@@ -203,7 +172,7 @@ test('confirming an edit on the widget approves the card with that edit as an ar
     await expect(page.getByText('Nothing suggested yet.')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('iframe[title="Approval preview"]')).toHaveCount(0);
 
-    await page.goto(`/${fixture.slug}?archived=1`);
+    await page.goto(`/?archived=1`);
     await expect(page.getByText('You approved')).toBeVisible();
     await shot(page, testInfo, 'approval-widget-card-approved');
 
@@ -219,7 +188,7 @@ test('confirming an edit on the widget approves the card with that edit as an ar
       fields: { 'Anti-Kickback Review': 'Required' },
     });
   } finally {
-    await client.query('DELETE FROM agent_jobs WHERE tenant_id = $1', [fixture.tenantId]);
+    await client.query('DELETE FROM agent_jobs');
     await client.query('DELETE FROM actionable_items WHERE id = $1', [fixture.itemId]);
     await client.query('DELETE FROM agent_runs WHERE id = $1', [fixture.runId]);
     await client.query('DELETE FROM agents WHERE id = $1', [fixture.agentId]);
@@ -241,7 +210,7 @@ test("the widget's own Cancel button is the decline — no separate control outs
     });
     await signIn(page, fixture);
 
-    await page.goto(`/${fixture.slug}`);
+    await page.goto(`/`);
     const widgetFrame = page.frameLocator('iframe[title="Approval preview"]');
     await expect(widgetFrame.getByText('Create Jira issue')).toBeVisible();
 
@@ -256,7 +225,7 @@ test("the widget's own Cancel button is the decline — no separate control outs
     await expect(page.getByText('Nothing suggested yet.')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('iframe[title="Approval preview"]')).toHaveCount(0);
 
-    await page.goto(`/${fixture.slug}?archived=1`);
+    await page.goto(`/?archived=1`);
     await expect(page.getByText('You declined')).toBeVisible();
 
     const row = await client.query('SELECT status FROM actionable_items WHERE id = $1', [
@@ -264,7 +233,7 @@ test("the widget's own Cancel button is the decline — no separate control outs
     ]);
     expect(row.rows[0].status).toBe('declined');
   } finally {
-    await client.query('DELETE FROM agent_jobs WHERE tenant_id = $1', [fixture.tenantId]);
+    await client.query('DELETE FROM agent_jobs');
     await client.query('DELETE FROM actionable_items WHERE id = $1', [fixture.itemId]);
     await client.query('DELETE FROM agent_runs WHERE id = $1', [fixture.runId]);
     await client.query('DELETE FROM agents WHERE id = $1', [fixture.agentId]);

@@ -85,7 +85,6 @@ const iso = (value: Date | null): string | null => (value ? value.toISOString() 
 
 async function ownerOf(
   db: Kysely<DB>,
-  tenantId: string,
   kind: ResourceKind,
   resourceId: string
 ): Promise<{ ownerSubject: string } | null> {
@@ -95,7 +94,6 @@ async function ownerOf(
   const row = await db
     .selectFrom(table)
     .select('owner_subject')
-    .where('tenant_id', '=', tenantId)
     .where('id', '=', resourceId)
     .executeTakeFirst();
   return row ? { ownerSubject: row.owner_subject } : null;
@@ -103,7 +101,6 @@ async function ownerOf(
 
 async function activeGrant(
   db: Kysely<DB>,
-  tenantId: string,
   kind: ResourceKind,
   resourceId: string,
   granteeSubject: string
@@ -111,7 +108,6 @@ async function activeGrant(
   const row = await db
     .selectFrom('resource_access_grants')
     .select('role')
-    .where('tenant_id', '=', tenantId)
     .where('resource_kind', '=', kind)
     .where('resource_id', '=', resourceId)
     .where('grantee_subject', '=', granteeSubject)
@@ -124,17 +120,16 @@ async function activeGrant(
 /** Projects and libraries: owner or grantee; nobody else. */
 export async function resolveResourceAccess(
   db: Kysely<DB>,
-  tenantId: string,
   viewerSubject: string,
   kind: 'chat_project' | 'prompt_library',
   resourceId: string
 ): Promise<ResourceAccess | null> {
-  const found = await ownerOf(db, tenantId, kind, resourceId);
+  const found = await ownerOf(db, kind, resourceId);
   if (!found) return null;
   if (found.ownerSubject === viewerSubject) {
     return { role: 'owner', ownerSubject: found.ownerSubject, via: 'owner' };
   }
-  const granted = await activeGrant(db, tenantId, kind, resourceId, viewerSubject);
+  const granted = await activeGrant(db, kind, resourceId, viewerSubject);
   if (granted) return { role: granted, ownerSubject: found.ownerSubject, via: 'grant' };
   return null;
 }
@@ -142,13 +137,11 @@ export async function resolveResourceAccess(
 /** A project, with the cipher its content opens under (chat-keys.ts). */
 export async function resolveProjectAccess(
   db: Kysely<DB>,
-  tenantId: string,
   viewerSubject: string,
   projectId: string
 ): Promise<ProjectAccess | null> {
   const access = await resolveResourceAccess(
     db,
-    tenantId,
     viewerSubject,
     'chat_project',
     projectId
@@ -159,7 +152,7 @@ export async function resolveProjectAccess(
     cipher: await cipherFor(
       db,
       'chat_project',
-      { id: projectId, tenantId, ownerSubject: access.ownerSubject },
+      { id: projectId, ownerSubject: access.ownerSubject },
       viewerSubject,
       access.via
     ),
@@ -169,11 +162,10 @@ export async function resolveProjectAccess(
 /** Chats: owner, named viewer, or a fellow member of the chat's project. */
 export async function resolveChatAccess(
   db: Kysely<DB>,
-  tenantId: string,
   viewerSubject: string,
   chatId: string
 ): Promise<ChatAccess | null> {
-  const chat = await getChatRow(db, tenantId, chatId);
+  const chat = await getChatRow(db, chatId);
   if (!chat) return null;
   const grant = async (
     role: 'owner' | 'viewer',
@@ -186,12 +178,11 @@ export async function resolveChatAccess(
     cipher: await cipherFor(db, 'chat', chat, viewerSubject, via),
   });
   if (chat.ownerSubject === viewerSubject) return grant('owner', 'owner');
-  const granted = await activeGrant(db, tenantId, 'chat', chatId, viewerSubject);
+  const granted = await activeGrant(db, 'chat', chatId, viewerSubject);
   if (granted) return grant('viewer', 'grant');
   if (chat.projectId) {
     const project = await resolveResourceAccess(
       db,
-      tenantId,
       viewerSubject,
       'chat_project',
       chat.projectId
@@ -204,17 +195,15 @@ export async function resolveChatAccess(
 /** The project ids this viewer may open, for listing "chats in my projects". */
 export async function listAccessibleProjectIds(
   db: Kysely<DB>,
-  tenantId: string,
   viewerSubject: string
 ): Promise<string[]> {
   const [owned, granted] = await Promise.all([
     db
       .selectFrom('chat_projects')
       .select('id')
-      .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', viewerSubject)
       .execute(),
-    listGrantedResources(db, tenantId, viewerSubject, 'chat_project'),
+    listGrantedResources(db, viewerSubject, 'chat_project'),
   ]);
   return [...new Set([...owned.map((row) => row.id), ...granted.map((row) => row.resourceId)])];
 }
@@ -225,7 +214,6 @@ export async function listAccessibleProjectIds(
  */
 export async function grantResourceAccess(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   kind: ResourceKind,
   resourceId: string,
@@ -233,12 +221,11 @@ export async function grantResourceAccess(
 ): Promise<'OK' | 'NOT_FOUND' | 'SELF' | 'INVALID_ROLE'> {
   if (input.granteeSubject === ownerSubject) return 'SELF';
   if (kind === 'chat' && input.role !== 'viewer') return 'INVALID_ROLE';
-  const found = await ownerOf(db, tenantId, kind, resourceId);
+  const found = await ownerOf(db, kind, resourceId);
   if (!found || found.ownerSubject !== ownerSubject) return 'NOT_FOUND';
   await db
     .insertInto('resource_access_grants')
     .values({
-      tenant_id: tenantId,
       resource_kind: kind,
       resource_id: resourceId,
       owner_subject: ownerSubject,
@@ -258,7 +245,6 @@ export async function grantResourceAccess(
 /** The owner's "who has access" list; lapsed rows stay until deleted. */
 export async function listResourceGrants(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   kind: ResourceKind,
   resourceId: string
@@ -267,7 +253,7 @@ export async function listResourceGrants(
   const rows = await db
     .selectFrom('resource_access_grants as g')
     .leftJoin('identities as i', (join) =>
-      join.onRef('i.tenant_id', '=', 'g.tenant_id').onRef('i.subject', '=', 'g.grantee_subject')
+      join.onRef('i.subject', '=', 'g.grantee_subject')
     )
     .select([
       'g.id',
@@ -278,7 +264,6 @@ export async function listResourceGrants(
       'i.display_name',
       'i.email',
     ])
-    .where('g.tenant_id', '=', tenantId)
     .where('g.resource_kind', '=', kind)
     .where('g.resource_id', '=', resourceId)
     .where('g.owner_subject', '=', ownerSubject)
@@ -300,7 +285,6 @@ export async function listResourceGrants(
 /** Returns the revoked grantee's subject (so a chat's key wrapping can follow), or null when nothing matched. */
 export async function revokeResourceGrant(
   db: Kysely<DB>,
-  tenantId: string,
   ownerSubject: string,
   kind: ResourceKind,
   resourceId: string,
@@ -309,7 +293,6 @@ export async function revokeResourceGrant(
   if (!isUuid(resourceId) || !isUuid(grantId)) return null;
   const deleted = await db
     .deleteFrom('resource_access_grants')
-    .where('tenant_id', '=', tenantId)
     .where('resource_kind', '=', kind)
     .where('resource_id', '=', resourceId)
     .where('owner_subject', '=', ownerSubject)
@@ -322,14 +305,12 @@ export async function revokeResourceGrant(
 /** Everything of one kind shared with this person, unexpired. */
 export async function listGrantedResources(
   db: Kysely<DB>,
-  tenantId: string,
   granteeSubject: string,
   kind: ResourceKind
 ): Promise<GrantedResource[]> {
   const rows = await db
     .selectFrom('resource_access_grants')
     .select(['resource_id', 'owner_subject', 'role', 'expires_at'])
-    .where('tenant_id', '=', tenantId)
     .where('resource_kind', '=', kind)
     .where('grantee_subject', '=', granteeSubject)
     .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`NOW()`)]))

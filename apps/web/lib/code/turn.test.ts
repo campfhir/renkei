@@ -66,7 +66,6 @@ const db = {} as Kysely<DB>;
 function project(workspaceId: string | null): ProjectRow {
   return {
     id: 'p1',
-    tenantId: 't1',
     ownerSubject: 'alice',
     name: 'Billing',
     description: null,

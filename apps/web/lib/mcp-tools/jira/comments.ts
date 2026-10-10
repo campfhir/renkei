@@ -84,7 +84,6 @@ export async function registerCommentTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_comments invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -245,7 +244,6 @@ export async function registerCommentTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_bulk_get_comments invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

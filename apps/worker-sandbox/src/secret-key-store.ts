@@ -24,7 +24,6 @@ import { envSecretsKey } from './env-secrets';
 import { logger } from './logger';
 
 export interface SecretOwner {
-  tenantId: string;
   subject: string;
 }
 
@@ -63,15 +62,25 @@ function fileNameFor(secretId: string): string {
   return `${createHash('sha256').update(secretId).digest('hex')}.key`;
 }
 
-/** The sealing key for one secret's held key: the deployment's key narrowed to this owner and secret. */
-export function secretKeySealingKey(rootKey: Buffer, owner: SecretOwner, secretId: string): Buffer {
+/**
+ * The sealing key for one secret's held key: the deployment's key narrowed
+ * to this owner and secret. `domain` is the key domain (@renkei/settings
+ * getKeyDomain) the held keys were first sealed under.
+ */
+export function secretKeySealingKey(
+  rootKey: Buffer,
+  domain: string,
+  owner: SecretOwner,
+  secretId: string
+): Buffer {
   return Buffer.from(
-    hkdfSync('sha256', rootKey, HKDF_SALT, `${owner.tenantId}\n${owner.subject}\n${secretId}`, 32)
+    hkdfSync('sha256', rootKey, HKDF_SALT, `${domain}\n${owner.subject}\n${secretId}`, 32)
   );
 }
 
 export function createSecretKeyStore(
   dataRoot: string,
+  domain: string,
   rootKey: Buffer | null = envSecretsKey()
 ): SecretKeyStore | null {
   if (!rootKey) return null;
@@ -88,7 +97,7 @@ export function createSecretKeyStore(
       if (!sealed.startsWith(PREFIX)) return null;
       const opened = decrypt(
         sealed.slice(PREFIX.length),
-        secretKeySealingKey(rootKey, owner, secretId)
+        secretKeySealingKey(rootKey, domain, owner, secretId)
       );
       if (!opened.ok) {
         logger.warn('a held secret key did not open under its owner’s key; dropping it', {
@@ -115,7 +124,7 @@ export function createSecretKeyStore(
       const path = pathFor(secretId);
       const sealed = `${PREFIX}${encrypt(
         JSON.stringify({ key: held.key.toString('base64'), until: held.until }),
-        secretKeySealingKey(rootKey, owner, secretId)
+        secretKeySealingKey(rootKey, domain, owner, secretId)
       )}`;
       const staging = `${path}.${process.pid}.tmp`;
       await writeFile(staging, sealed, { mode: 0o600 });

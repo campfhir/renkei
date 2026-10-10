@@ -50,13 +50,11 @@ function uuidFrom(seed: string): string {
 
 /** This test's own tenant/session/slug — isolated from every other test and project. */
 function fixtureFor(name: string): {
-  tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`actionable-cards-e2e-tenant:${name}`),
     sessionId: uuidFrom(`actionable-cards-e2e-session:${name}`),
     slug: `e2e-actionable-cards-${name}`,
     subject: `e2e-actionable-cards-${name}@example.com`,
@@ -64,42 +62,28 @@ function fixtureFor(name: string): {
 }
 
 async function seedTenant(client: Client, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
-  await client.query('DELETE FROM actionable_items WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
-  await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-  await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-    fixture.tenantId,
-    fixture.slug,
-  ]);
+  await client.query('DELETE FROM actionable_items WHERE owner_subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [
-      fixture.sessionId,
-      fixture.tenantId,
-      fixture.subject,
-      ['renkei-user', 'renkei-operator'],
-      new Date(Date.now() + 24 * 3_600_000),
-    ]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, $4)`,
+    [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
   );
   await client.query(
-    `INSERT INTO identities (tenant_id, subject, email, display_name)
-     VALUES ($1, $2, $3, $4)`,
-    [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+    `INSERT INTO identities (subject, email, display_name)\n     VALUES ($1, $2, $3)`,
+    [fixture.subject, fixture.subject, 'E2E Tester']
   );
   // No welcome-tour overlay stealing focus mid-screenshot (coach-marks.spec.ts).
   await client.query(
-    `INSERT INTO user_preferences (tenant_id, subject, key, value)
-     VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-    [fixture.tenantId, fixture.subject]
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
+    [fixture.subject]
   );
 }
 
 async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
   await page.context().addCookies([
     {
-      name: `renkei_session_${fixture.tenantId}`,
+      name: `renkei_session`,
       value: fixture.sessionId,
       domain: '127.0.0.1',
       path: '/',
@@ -112,32 +96,26 @@ async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promi
 
 async function seedCard(
   client: Client,
-  tenantId: string,
   itemId: string,
   title: string,
   suggestedAction: unknown
 ): Promise<void> {
   await client.query(
-    `INSERT INTO actionable_items
-       (id, tenant_id, source, kind, status, title, summary, evidence, suggested_action)
-     VALUES ($1, $2, 'jira', 'approval', 'suggested', $3, 'Wants to call a tool.', '{}'::jsonb, $4::jsonb)`,
-    [itemId, tenantId, title, JSON.stringify(suggestedAction)]
+    `INSERT INTO actionable_items\n       (id, source, kind, status, title, summary, evidence, suggested_action)\n     VALUES ($1, 'jira', 'approval', 'suggested', $2, 'Wants to call a tool.', '{}'::jsonb, $3::jsonb)`,
+    [itemId, title, JSON.stringify(suggestedAction)]
   );
 }
 
 /** An already-executed card (cards.tsx's ExecutionResult), result-only — no suggested_action. */
 async function seedExecutedCard(
   client: Client,
-  tenantId: string,
   itemId: string,
   title: string,
   result: unknown
 ): Promise<void> {
   await client.query(
-    `INSERT INTO actionable_items
-       (id, tenant_id, source, kind, status, title, summary, evidence, result)
-     VALUES ($1, $2, 'jira', 'info', 'executed', $3, 'Created a tool.', '{}'::jsonb, $4::jsonb)`,
-    [itemId, tenantId, title, JSON.stringify(result)]
+    `INSERT INTO actionable_items\n       (id, source, kind, status, title, summary, evidence, result)\n     VALUES ($1, 'jira', 'info', 'executed', $2, 'Created a tool.', '{}'::jsonb, $3::jsonb)`,
+    [itemId, title, JSON.stringify(result)]
   );
 }
 
@@ -163,7 +141,6 @@ test('a Jira issue call renders as a structured issue card', async ({ page }, te
     // tool still gets, and _confirm shares the exact same args contract.
     await seedCard(
       client,
-      fixture.tenantId,
       itemId,
       'Portfolio Updater — Create the approved issue',
       {
@@ -181,7 +158,7 @@ test('a Jira issue call renders as a structured issue card', async ({ page }, te
       }
     );
 
-    await page.goto(`/${fixture.slug}`);
+    await page.goto(`/`);
     await expect(page.getByText('Wants to call Create issue confirm')).toBeVisible();
 
     // Project/type header instead of raw "projectKey: CIO" / "issueType:
@@ -216,7 +193,7 @@ test('an Outlook send-mail call renders as a structured email card', async ({ pa
     await seedTenant(client, fixture);
     await signIn(page, fixture);
     const itemId = uuidFrom(`actionable-cards-e2e-email-item:${testInfo.project.name}`);
-    await seedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — Send the weekly digest', {
+    await seedCard(client, itemId, 'Portfolio Updater — Send the weekly digest', {
       tool: 'outlook_send_mail',
       args: {
         to: ['scott@example.com', 'dr.jew@example.com'],
@@ -226,7 +203,7 @@ test('an Outlook send-mail call renders as a structured email card', async ({ pa
       },
     });
 
-    await page.goto(`/${fixture.slug}`);
+    await page.goto(`/`);
     await expect(page.getByText('Wants to call Send mail')).toBeVisible();
 
     await expect(page.getByText('To:')).toBeVisible();
@@ -253,7 +230,7 @@ test('a tool outside the dedicated cards still falls back to a JSON-safe arg lis
     await seedTenant(client, fixture);
     await signIn(page, fixture);
     const itemId = uuidFrom(`actionable-cards-e2e-generic-item:${testInfo.project.name}`);
-    await seedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — Deploy the channel', {
+    await seedCard(client, itemId, 'Portfolio Updater — Deploy the channel', {
       tool: 'mirth_deploy_channels',
       args: {
         channelIds: ['channel-a', 'channel-b'],
@@ -261,7 +238,7 @@ test('a tool outside the dedicated cards still falls back to a JSON-safe arg lis
       },
     });
 
-    await page.goto(`/${fixture.slug}`);
+    await page.goto(`/`);
     await expect(page.getByText('Wants to call Deploy channels')).toBeVisible();
 
     await expect(page.getByText('[object Object]')).toHaveCount(0);
@@ -290,12 +267,12 @@ test('an executed Jira issue card links out through a new tab, not the PWA webvi
     await seedTenant(client, fixture);
     await signIn(page, fixture);
     const itemId = uuidFrom(`actionable-cards-e2e-executed-item:${testInfo.project.name}`);
-    await seedExecutedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — File the task', {
+    await seedExecutedCard(client, itemId, 'Portfolio Updater — File the task', {
       issueKey: 'OPS-42',
       url: 'https://example.atlassian.net/browse/OPS-42',
     });
 
-    await page.goto(`/${fixture.slug}`);
+    await page.goto(`/`);
     const link = page.getByRole('link', { name: 'OPS-42' });
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute('href', 'https://example.atlassian.net/browse/OPS-42');

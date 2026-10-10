@@ -35,7 +35,6 @@ export async function registerFilterTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_list_filters invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -102,7 +101,6 @@ export async function registerFilterTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_get_filter invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -163,7 +161,6 @@ export async function registerFilterTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_create_filter invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
@@ -231,7 +228,6 @@ export async function registerFilterTools(
       const displayName = getCachedDisplayName(context.accountId);
       logger.debug('jira_delete_filter invoked', {
         component: 'mcp/tool',
-        tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });

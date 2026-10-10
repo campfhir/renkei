@@ -43,7 +43,6 @@ const models = [
 function context(extra: Partial<LocalToolContext> = {}): LocalToolContext {
   return {
     db: null as unknown as LocalToolContext['db'],
-    tenantId: 't',
     subject: 'u',
     chatId: 'c',
     cipher: testCipher,
@@ -172,7 +171,7 @@ describe('chat_generate_image — which model', () => {
       { filename: 'a.png' },
       context()
     );
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 't', 'img-2');
+    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-2');
   });
 
   it('falls back to the first when the saved one is gone, or none is saved', async () => {
@@ -180,9 +179,9 @@ describe('chat_generate_image — which model', () => {
       { filename: 'a.png' },
       context()
     );
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 't', 'img-1');
+    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-1');
     await tool(returning()).execute({ filename: 'a.png' }, context());
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 't', 'img-1');
+    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-1');
   });
 
   it('says so when the chosen model cannot be used right now', async () => {
@@ -380,7 +379,7 @@ describe('chat_generate_image — building on an earlier picture', () => {
     );
     expect(result.isError).toBe(false);
     // Looked up in this chat, by what the chat model named.
-    expect(loadSource).toHaveBeenCalledWith({ db: null, tenantId: 't', chatId: 'c' }, 'last');
+    expect(loadSource).toHaveBeenCalledWith({ db: null, chatId: 'c' }, 'last');
     expect(generate).toHaveBeenCalledWith(expect.anything(), {
       prompt: 'make it bluer',
       outputFormat: 'png',

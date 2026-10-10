@@ -55,15 +55,15 @@ export interface FileshareServerDeps {
    * The per-tenant transfer ceiling (the org's attachment limit). Injected
    * so tests need no settings store; production uses orgTransferLimit.
    */
-  maxTransferBytes?: (tenantId: string) => Promise<number>;
+  maxTransferBytes?: () => Promise<number>;
 }
 
 const DEFAULT_TRANSFER_BYTES = 20_971_520;
 /** Operation requests are small JSON; anything bigger is not one of ours. */
 const MAX_JSON_BYTES = 1_048_576;
 
-export async function orgTransferLimit(tenantId: string): Promise<number> {
-  const settings = await getOrgSettings(tenantId);
+export async function orgTransferLimit(): Promise<number> {
+  const settings = await getOrgSettings();
   return settings.ok ? settings.val.maxAttachmentBytes : DEFAULT_TRANSFER_BYTES;
 }
 
@@ -110,11 +110,10 @@ function sendServiceError(
  * credential itself.
  */
 function targetOf(body: Record<string, unknown>): SubjectTarget | null {
-  const tenantId = str(body.tenantId);
   const shareId = str(body.shareId);
   const subject = str(body.subject);
-  if (!tenantId || !shareId || !subject) return null;
-  return { tenantId, shareId, subject, credentials: parseShareCredentials(body.credentials) };
+  if (!shareId || !subject) return null;
+  return { shareId, subject, credentials: parseShareCredentials(body.credentials) };
 }
 
 /** For the raw `write` op, whose body is the file: the credential rides in a header. */
@@ -140,7 +139,7 @@ type JsonHandler = (
 ) => Promise<void>;
 
 function makeJsonHandlers(
-  transferLimit: (tenantId: string) => Promise<number>
+  transferLimit: () => Promise<number>
 ): Record<string, JsonHandler> {
   return {
     async list(deps, body, response) {
@@ -181,7 +180,7 @@ function makeJsonHandlers(
     async read(deps, body, response) {
       const target = targetOf(body);
       if (!target) return sendJson(response, 400, { error: { type: 'bad_request' } });
-      const limit = await transferLimit(target.tenantId);
+      const limit = await transferLimit();
       const requested =
         typeof body.maxBytes === 'number' && body.maxBytes > 0 ? body.maxBytes : limit;
       const content = await serviceReadFile(
@@ -258,13 +257,12 @@ function makeJsonHandlers(
       // crosses the authenticated seam once, is re-validated here at the
       // trust boundary, and is tried against the STORED share before the
       // web app seals and saves it.
-      const tenantId = str(body.tenantId);
       const shareId = str(body.shareId);
       const credentials = parseShareCredentials(body.credentials);
-      if (!tenantId || !shareId || !credentials) {
+      if (!shareId || !credentials) {
         return sendJson(response, 400, { error: { type: 'bad_request' } });
       }
-      const tested = await serviceTestConnection(deps, tenantId, shareId, credentials);
+      const tested = await serviceTestConnection(deps, shareId, credentials);
       if (!tested.ok) return sendServiceError(response, tested.err);
       sendJson(response, 200, {
         entries: tested.val.entries,
@@ -296,16 +294,15 @@ export function createFileshareServer(deps: FileshareServerDeps): Server {
     // query string so the payload needs no envelope (and no base64 tax).
     if (url.pathname === '/v1/write') {
       const target: SubjectTarget = {
-        tenantId: url.searchParams.get('tenantId') ?? '',
         shareId: url.searchParams.get('shareId') ?? '',
         subject: url.searchParams.get('subject') ?? '',
         credentials: credentialsFromHeader(request.headers['x-fileshare-credentials']),
       };
       const path = url.searchParams.get('path') ?? '';
-      if (!target.tenantId || !target.shareId || !target.subject || !path) {
+      if (!target.shareId || !target.subject || !path) {
         return sendJson(response, 400, { error: { type: 'bad_request' } });
       }
-      const limit = await transferLimit(target.tenantId);
+      const limit = await transferLimit();
       const body = await readBody(request, limit);
       if (body === null) {
         return sendJson(response, 413, {

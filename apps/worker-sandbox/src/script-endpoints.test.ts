@@ -15,7 +15,7 @@ import { ALL_ORG_FEATURES } from './features';
 import { ScriptRunError, type ScriptRunner } from './scripts';
 
 const API_KEY = 'test-worker-key';
-const TARGET = { tenantId: 'tenant-1', subject: 'alice' };
+const TARGET = { subject: 'alice' };
 const FILE_ID = '11111111-1111-4111-8111-111111111111';
 
 const run = jest.fn();

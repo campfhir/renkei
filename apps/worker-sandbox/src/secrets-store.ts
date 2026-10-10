@@ -12,7 +12,6 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 
 export interface SecretTarget {
-  tenantId: string;
   subject: string;
 }
 
@@ -29,7 +28,6 @@ export interface StoredSecret extends SecretTarget {
 
 const COLUMNS = [
   'id',
-  'tenant_id',
   'subject',
   'name',
   'field_names',
@@ -48,7 +46,6 @@ function strings(value: unknown): string[] {
 
 function toStored(row: {
   id: string;
-  tenant_id: string;
   subject: string;
   name: string;
   field_names: unknown;
@@ -60,7 +57,6 @@ function toStored(row: {
 }): StoredSecret {
   return {
     id: row.id,
-    tenantId: row.tenant_id,
     subject: row.subject,
     name: row.name,
     fields: strings(row.field_names),
@@ -86,7 +82,6 @@ export async function insertSecret(
     .insertInto('sandbox_secrets')
     .values({
       id: randomUUID(),
-      tenant_id: input.tenantId,
       subject: input.subject,
       name: input.name,
       field_names: JSON.stringify(input.fields),
@@ -103,7 +98,6 @@ export async function listSecrets(db: Kysely<DB>, target: SecretTarget): Promise
   const rows = await db
     .selectFrom('sandbox_secrets')
     .select(COLUMNS)
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .orderBy('name')
     .execute();
@@ -114,7 +108,6 @@ export async function countSecrets(db: Kysely<DB>, target: SecretTarget): Promis
   const row = await db
     .selectFrom('sandbox_secrets')
     .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .executeTakeFirst();
   return row?.count ? Number(row.count) : 0;
@@ -128,7 +121,6 @@ export async function getSecret(
   const row = await db
     .selectFrom('sandbox_secrets')
     .select(COLUMNS)
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .where('id', '=', id)
     .executeTakeFirst();
@@ -143,7 +135,6 @@ export async function getSecretByName(
   const row = await db
     .selectFrom('sandbox_secrets')
     .select(COLUMNS)
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .where('name', '=', name)
     .executeTakeFirst();
@@ -166,7 +157,6 @@ export async function deleteSecret(
 ): Promise<{ id: string; name: string } | undefined> {
   const row = await db
     .deleteFrom('sandbox_secrets')
-    .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
     .where('id', '=', id)
     .returning(['id', 'name'])

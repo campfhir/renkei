@@ -15,8 +15,19 @@ import type { Result } from '@campfhir/safe-functions/types';
 import { DelegateTransport, delegateConfigFromEnv, isRecord, type FetchLike } from './transport';
 
 /** Whose grant a request rides on. One of subject, accountId or pending is required. */
+
+/**
+ * Strip trailing slashes by scanning from the end: the one-line regex
+ * (`/\/+$/`) backtracks quadratically on a run of slashes that is not at
+ * the very end, and this value comes from configuration.
+ */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 export interface GrantRef {
-  tenantId: string;
   provider: string;
   /** The person, when the caller knows them by OIDC subject. */
   subject?: string;
@@ -28,7 +39,7 @@ export interface GrantRef {
 
 /**
  * `fetch` with the credential supplied by whoever built it, plus a stable
- * name for the grant behind it (`provider:tenant:account-or-subject`),
+ * name for the grant behind it (`provider:account-or-subject`),
  * for the per-grant gates and caches that used to key on the token.
  */
 export interface AuthedFetch {
@@ -38,7 +49,7 @@ export interface AuthedFetch {
 
 /** The stable name of a grant: what the fetch layers gate and cache by. */
 export function grantKeyOf(grant: GrantRef): string {
-  return `${grant.provider}:${grant.tenantId}:${grant.accountId ?? grant.subject ?? grant.pending ?? ''}`;
+  return `${grant.provider}:${grant.accountId ?? grant.subject ?? grant.pending ?? ''}`;
 }
 
 /** An `AuthedFetch` from any fetch-shaped function and a grant name. */
@@ -216,7 +227,6 @@ export class DelegateGrants {
   }
 
   async exchange(input: {
-    tenantId: string;
     provider: string;
     form: Record<string, string>;
     directoryTenantId?: string;
@@ -237,7 +247,6 @@ export class DelegateGrants {
   }
 
   async commit(input: {
-    tenantId: string;
     provider: string;
     handle: string;
     subject: string;
@@ -275,7 +284,6 @@ export class DelegateGrants {
 
   /** Revoke at the provider where one can (Zoom, OnBase), then delete our copy. */
   async revoke(input: {
-    tenantId: string;
     provider: string;
     accountId: string;
   }): Promise<Result<{ revokedAtProvider: boolean }, GrantOpError>> {
@@ -285,7 +293,6 @@ export class DelegateGrants {
   }
 
   async delete(input: {
-    tenantId: string;
     provider: string;
     accountId: string;
   }): Promise<Result<void, GrantOpError>> {
@@ -302,7 +309,6 @@ export class DelegateGrants {
    * it), else DELEGATE_WORKER_URL.
    */
   async gitTicket(input: {
-    tenantId: string;
     provider: string;
     subject: string;
     write: boolean;
@@ -321,7 +327,7 @@ export class DelegateGrants {
     ) {
       return err('DELEGATE_ERROR');
     }
-    const origin = (process.env.DELEGATE_GIT_URL?.trim() || this.url || '').replace(/\/+$/, '');
+    const origin = stripTrailingSlashes(process.env.DELEGATE_GIT_URL?.trim() || this.url || '');
     if (!origin) return err('DELEGATE_UNCONFIGURED');
     return ok({ base: `${origin}/git/${ticket}/${host}/`, insteadOf, expiresAt });
   }

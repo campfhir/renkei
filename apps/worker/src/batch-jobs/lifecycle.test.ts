@@ -51,7 +51,6 @@ const { logger } = jest.requireMock<{ logger: { warn: jest.Mock } }>('../logger'
 function batch(over: Partial<BatchJobRow> = {}): BatchJobRow {
   return {
     id: 'batch-1',
-    tenant_id: 'tenant-1',
     subject: 'auth0|alice',
     name: 'Nightly scans',
     kind: 'document-ocr-pipeline',
@@ -149,7 +148,6 @@ describe('announceBatchFinished', () => {
     await announceBatchFinished(db, batch());
     expect(publishDomainEvent).toHaveBeenCalledTimes(1);
     expect(publishDomainEvent.mock.calls[0][0]).toMatchObject({
-      tenantId: 'tenant-1',
       provider: 'batch',
       type: 'job.completed',
       ownerSubject: 'auth0|alice',
@@ -178,7 +176,6 @@ describe('announceBatchFinished', () => {
     const row = inserts[0]!.values;
     expect(inserts[0]!.table).toBe('agent_notifications');
     expect(row).toMatchObject({
-      tenant_id: 'tenant-1',
       subject: 'auth0|alice',
       kind: 'batch_finished',
       connector: 'batch-jobs',
@@ -190,7 +187,7 @@ describe('announceBatchFinished', () => {
       batchNotificationMeta(batch({ status: 'partial', succeeded: 40, failed: 2 }))
     );
     expect(sendPush).toHaveBeenCalledTimes(1);
-    expect(sendPush.mock.calls[0][4]).toMatchObject({
+    expect(sendPush.mock.calls[0][3]).toMatchObject({
       title: expect.stringContaining('Nightly scans'),
       body: 'Document OCR pipeline',
       tag: 'batch:batch-1',
@@ -225,7 +222,6 @@ describe('announceBatchFinished', () => {
     expect(inserts).toHaveLength(0);
     expect(deliverToOwnerChannels).toHaveBeenCalledTimes(1);
     expect(deliverToOwnerChannels.mock.calls[0][1]).toMatchObject({
-      tenantId: 'tenant-1',
       ownerSubject: 'auth0|alice',
       email: true,
       webex: true,

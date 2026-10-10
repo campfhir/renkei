@@ -157,11 +157,10 @@ export function widgetStateTools(): LocalTool[] {
       async execute(_input, context) {
         const messages = await listMessages(
           context.db,
-          context.tenantId,
           context.chatId,
           context.cipher
         );
-        const decisions = await listWidgetDecisions(context.db, context.tenantId, context.chatId);
+        const decisions = await listWidgetDecisions(context.db, context.chatId);
         const cards = widgetCardsOf(messages, decisions);
         if (cards.length === 0) return textResult('No preview cards in this chat.');
         const pending = cards.filter((card) => !card.resolved).length;
@@ -231,11 +230,10 @@ export function widgetStateTools(): LocalTool[] {
 
         const messages = await listMessages(
           context.db,
-          context.tenantId,
           context.chatId,
           context.cipher
         );
-        const decisions = await listWidgetDecisions(context.db, context.tenantId, context.chatId);
+        const decisions = await listWidgetDecisions(context.db, context.chatId);
         const card = findWidgetCard(widgetCardsOf(messages, decisions), widget);
         if (!card) {
           return errorResult(
@@ -254,7 +252,6 @@ export function widgetStateTools(): LocalTool[] {
           ...(detail ? { detail } : {}),
         };
         const recorded = await recordWidgetDecision(context.db, {
-          tenantId: context.tenantId,
           chatId: context.chatId,
           subject: context.subject,
           stateKey: card.stateKey,
@@ -266,7 +263,7 @@ export function widgetStateTools(): LocalTool[] {
         // a button click on another device that landed between the read
         // above and this write is the receipt now, and the model should
         // say so rather than report its own wording as what the card shows.
-        const now = await getWidgetDecision(context.db, context.tenantId, card.stateKey);
+        const now = await getWidgetDecision(context.db, card.stateKey);
         if (!now) return errorResult('The card could not be marked.');
         if (now.icon !== state.icon || now.headline !== state.headline) {
           return errorResult(
