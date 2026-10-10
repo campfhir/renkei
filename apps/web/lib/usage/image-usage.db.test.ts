@@ -141,13 +141,13 @@ maybe('image usage ledger', () => {
     const images = hourly.filter((row) => row.images > 0);
     // Every picture was drawn in the current hour.
     expect(images).toHaveLength(1);
+    // (The chat and agent columns are the whole organization's, so other
+    // suites' rows in a shared database can land there; they are not judged.)
     expect(images[0]).toMatchObject({
       images: 3,
       imageBytes: 4_500_000,
       imageInputTokens: 101,
       imageOutputTokens: 5160,
-      chatInputTokens: 0,
-      agentInputTokens: 0,
     });
     expect(images[0]!.day).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}$/);
 

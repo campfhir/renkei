@@ -33,12 +33,7 @@ minimumReleaseAgeExclude:
 # baseline, by CVE id, is in .trivyignore for the image scan. Keep the two
 # in step.
 auditConfig:
-  ignoreGhsas:
-    # image-size 1.2.1 under pptxgenjs (DoS on crafted JXL/HEIF/ICNS; the
-    # renderer only sizes images the model generated). Lift with a pptxgenjs
-    # bump or a pnpm override to 2.0.3. Review by 2026-11-30.
-    - GHSA-5p2g-fcmc-qvqq
-    - GHSA-w3rx-r6r6-pgpr
+  ignoreGhsas: []
 patchedDependencies:
   '@tryjsky/v9u-smb2': patches/@tryjsky__v9u-smb2.patch
 # next 16.3.8 still pins postcss 8.4.31, whose own pins of nanoid and
@@ -52,5 +47,25 @@ overrides:
   # minimatch, and lodash-es under mermaid → chevrotain: both patched
   # versions stay in the same major, so the override is a safe lift until
   # the dependents move their own pins.
-  'brace-expansion@>=2.0.0 <2.1.6': '2.1.6'
+  'brace-expansion@>=2.0.0 <2.1.7': '2.1.7'
   'lodash-es@<4.18.0': '4.18.0'
+  # dompurify under monaco-editor (pinned exactly by monaco, one patch
+  # behind the advisories' fixed version) and mermaid: patch releases of
+  # the same minor, API-compatible.
+  'dompurify@<3.4.16': '3.4.16'
+  # uuid 8 under exceljs and 10 under pptx-preview: both call v4() only,
+  # which 11 exports the same way for require and import. mermaid's own
+  # range (`^11.1.0 || … || ^14`) admits 11.1.1 as well, which is what it
+  # now shares.
+  'uuid@<11.1.0': '11.1.1'
+  # echarts 5 under pptx-preview (XSS fixed in 6.1.0): the previewer uses
+  # init/setOption/dispose, unchanged across the major; verified by the
+  # artifact-inline spec's PPTX preview.
+  'echarts@<6.1.0': '6.1.0'
+  # katex 0.16 under mermaid (prototype-pollution bypass fixed in 0.18.2):
+  # mermaid calls renderToString, unchanged.
+  'katex@<0.18.2': '0.18.2'
+  # image-size 1.2 under pptxgenjs: declared but never called (the sizing
+  # helper that used it is commented out in pptxgenjs 4.0.1), so the lift
+  # to 2.x changes nothing at run time and retires the audit baseline.
+  'image-size@<2.0.4': '2.0.4'

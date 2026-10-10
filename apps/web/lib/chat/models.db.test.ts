@@ -62,6 +62,12 @@ maybe('image generation models', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
+    // Labels are unique organization-wide, and a run that died before its
+    // afterAll leaves this suite's rows behind under fresh ids: clear them
+    // by label (these names are this suite's alone) before inserting.
+    await sql`DELETE FROM llm_model_configs WHERE label IN ('Chatty', 'Painter', 'Fox', 'Retired painter', 'Claude')`.execute(
+      db
+    );
     await addModel({
       id: chatId,
       label: 'Chatty',
