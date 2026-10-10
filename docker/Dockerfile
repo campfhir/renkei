@@ -40,7 +40,7 @@ ARG APP_VERSION=dev
 # the pinned pnpm stays on its PATH; npm goes there too.
 
 # Build stage
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS builder
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS builder
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -84,7 +84,7 @@ RUN node packages/db/scripts/build-migrations.js
 RUN pnpm --filter renkei build
 
 # Web runtime stage
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS runtime
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS runtime
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -201,7 +201,7 @@ CMD ["node", "node_modules/next/dist/bin/next", "start"]
 # file-share worker is NOT here: it ships as its own image (the
 # `fileshares` stage below), so this image never carries the SMB/SSH
 # protocol stack and the fileshare container never carries the agents' deps.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS worker
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS worker
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -252,7 +252,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # credentials, so its container carries exactly the protocol stack (the
 # patched @tryjsky/v9u-smb2 among it) and nothing of the queue workers' LLM
 # and connector dependencies — and it rolls out independently of them.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS fileshares
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS fileshares
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -299,7 +299,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # is the only process that dials a customer's on-prem OnBase API Server or
 # Hyland IdP (the web app's SSRF guard refuses private hosts by design),
 # and it rolls out independently of the queue workers.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS onbase
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS onbase
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -347,7 +347,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # (typically on a private network the web app's SSRF guard refuses by
 # design) or decrypts a person's stored Mirth credential, and it rolls out
 # independently of the queue workers.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS mirth
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS mirth
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -396,7 +396,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # chat's or project's data key, or opens a person's sealed values. Its own
 # image so that key is set on exactly one service and it rolls out
 # independently of the queue workers.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS delegate
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS delegate
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -438,7 +438,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # ADManager Plus servers (typically on a private network the web app's SSRF
 # guard refuses by design) or decrypts a person's stored authtoken, and it
 # rolls out independently of the queue workers.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS admanager
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS admanager
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -505,7 +505,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # the entrypoint drops itself when workspaces are off); the build checks
 # it is there, because a missing one would show up only as a failed spawn
 # on every command a caller runs.
-FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS sandbox
+FROM node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS sandbox
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -763,7 +763,7 @@ WORKDIR /app/apps/worker-sandbox
 CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 
 # Migration stage - runs migrations only
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS migrate
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS migrate
 ARG PNPM_VERSION
 
 WORKDIR /app
