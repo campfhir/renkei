@@ -876,6 +876,19 @@ describeDb('worker-delegate', () => {
     expect(probe.status).toBe(200);
     expect(upstreamCalls.at(-1)?.url).toBe('http://mirth.test/v1/probe');
 
+    // test-connection tries an UNSAVED credential: it must reach the worker.
+    const tried = await op('forward/mirth/test-connection', {
+      instanceId: instance.val,
+      credentials: { username: 'bob', password: 'typed-pw' },
+    });
+    expect(tried.status).toBe(200);
+    expect(upstreamCalls.at(-1)?.url).toBe('http://mirth.test/v1/test-connection');
+    const triedBody: unknown = JSON.parse(upstreamCalls.at(-1)?.body ?? '{}');
+    expect(isRecord(triedBody) ? triedBody.credentials : null).toEqual({
+      username: 'bob',
+      password: 'typed-pw',
+    });
+
     expect((await op('forward/mirth/nope', {})).status).toBe(404);
     expect((await op('forward/elsewhere/api', {})).status).toBe(404);
 

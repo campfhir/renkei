@@ -195,10 +195,12 @@ export class Forwarder {
       fail(response, 400, 'bad_request');
       return true;
     }
-    // Whatever a caller put there, the credential is this process's to supply.
-    delete body.credentials;
-
+    // A credentialed op's credential is this process's to supply, whatever a
+    // caller put there. A pass-through op (test-connection) is the opposite:
+    // the person's UNSAVED credential is the very thing being tried, so it
+    // reaches the worker as sent — there is no stored one to prefer.
     if (spec.credentialed.includes(workerOp)) {
+      delete body.credentials;
       const attached = await this.attach(connector, body);
       if (!attached.ok) {
         fail(response, attached.status, attached.type, attached.message);
