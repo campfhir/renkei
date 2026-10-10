@@ -26,14 +26,19 @@
 import { loader } from '@monaco-editor/react';
 import * as monacoEditor from 'monaco-editor';
 import { PANE_LANGUAGE_ALIASES } from './pane-languages';
+// monaco-editor 0.56 reorganized its ESM entry points behind an exports
+// map: `monaco-editor/<path>` resolves to `esm/vs/<path>`, and the deep
+// `monaco-editor/esm/vs/…` form no longer does. Language definitions live
+// under languages/definitions, the language workers under
+// languages/features.
 import {
   conf as typescriptConf,
   language as typescriptLanguage,
-} from 'monaco-editor/esm/vs/basic-languages/typescript/typescript.js';
+} from 'monaco-editor/languages/definitions/typescript/typescript.js';
 import {
   conf as javascriptConf,
   language as javascriptLanguage,
-} from 'monaco-editor/esm/vs/basic-languages/javascript/javascript.js';
+} from 'monaco-editor/languages/definitions/javascript/javascript.js';
 
 export const MONACO_THEME = { light: 'renkei-light', dark: 'renkei-dark' } as const;
 
@@ -172,11 +177,11 @@ export function configureMonacoOnce(): void {
     getWorker(_workerId: string, label: string): Worker {
       if (label === 'typescript' || label === 'javascript') {
         return new Worker(
-          new URL('monaco-editor/esm/vs/language/typescript/ts.worker.js', import.meta.url),
+          new URL('monaco-editor/languages/features/typescript/ts.worker.js', import.meta.url),
           { type: 'module' }
         );
       }
-      return new Worker(new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url), {
+      return new Worker(new URL('monaco-editor/editor/editor.worker.js', import.meta.url), {
         type: 'module',
       });
     },
