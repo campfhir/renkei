@@ -141,6 +141,12 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY --chown=nextjs:nodejs --from=builder /app/apps/web/.next ./apps/web/.next
 COPY --chown=nextjs:nodejs --from=builder /app/apps/web/public ./apps/web/public
 COPY --chown=nextjs:nodejs --from=builder /app/apps/web/next.config.ts /app/apps/web/tsconfig.json /app/apps/web/proxy.ts ./apps/web/
+# `next start` transpiles next.config.ts at boot and resolves its imports
+# from disk, so every module the config pulls in has to be here too. Today
+# that is the security-header rules (one file, no imports of its own); a
+# config import that is missing here fails the container at start with
+# "Failed to load next.config.ts … Cannot find module".
+COPY --chown=nextjs:nodejs --from=builder /app/apps/web/lib/security-headers.ts ./apps/web/lib/
 
 # The log-shipping key generator, runnable as a one-off container on a target
 # machine (no repo checkout there):
