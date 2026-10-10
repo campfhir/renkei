@@ -69,7 +69,7 @@
     "lowlight": "^3.3.0",
     "marked": "14.0.0",
     "mcp-handler": "^2.3.0",
-    "monaco-editor": "^0.55.1",
+    "monaco-editor": "^0.57.0",
     "next": "16.4.0",
     "pdfjs-dist": "catalog:",
     "pg": "^8.23.1",
