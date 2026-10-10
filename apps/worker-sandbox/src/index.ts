@@ -54,8 +54,6 @@
  *     network; defaults to the hostname, which Docker sets to the
  *     container id. Unset and not a container (a developer's checkout),
  *     services are reached at their bridge address directly.
- *   SANDBOX_SERVICE_MEMORY — each service container's memory ceiling,
- *     default 1g; SANDBOX_SERVICE_PIDS its process ceiling, default 512.
  *   SANDBOX_PYTHON — the interpreter for scripts over staged files
  *     (scripts.ts, sandbox_run_python); by default the image's own
  *     environment with the data libraries (/opt/sandbox-python), else the
@@ -69,7 +67,6 @@
  *     model there is no network.
  *   SANDBOX_RUNS_DIR — where a run's throwaway directory is made,
  *     default /runs (no volume: nothing here outlives its run).
- *   SANDBOX_SCRIPT_MEMORY — a run's address-space ceiling, default 2g.
  *   SANDBOX_RUN_AS_WORKER — read by the image's entrypoint, not here:
  *     `true` starts this process as the unprivileged `worker` account
  *     (no uid isolation for anyone's commands) for a deployment where no
@@ -86,12 +83,13 @@ import {
   ensureWorkspacesRoot,
   verifyNetworkIsolation,
   verifyUidIsolation,
+  setDebugEnabled
 } from './workspaces';
 import { envSecretsEnabled } from './env-secrets';
-import { ScriptRunner, probePython, resolvePython, scriptMemoryBytes } from './scripts';
+import { ScriptRunner, probePython, resolvePython } from './scripts';
 import { probeLanguageServers } from './lsp-sessions';
 import { createSandboxServer, orgMaxFileBytes } from './server';
-import { DockerClient, parseDockerHost, parseMemoryBytes } from './docker';
+import { DockerClient, parseDockerHost } from './docker';
 import { ServiceManager } from './services';
 import { BrowserSessions } from './browser';
 import { ChartRenderer } from './charts';
@@ -100,7 +98,7 @@ import { createSecretResolver } from './secrets';
 import { logger, attachPersistentLogging } from './logger';
 import { configuredDirectory } from './configured-path';
 import type { SandboxCapabilities } from './features';
-import { getKeyDomain, watchLogLevel } from '@renkei/settings';
+import { DEFAULT_ORG_SETTINGS, getKeyDomain, getOrgSettings, watchLogLevel } from '@renkei/settings';
 
 /**
  * The most a shutdown may take end to end. Inside the 30s stop grace
@@ -138,13 +136,34 @@ async function ownContainer(engine: DockerClient): Promise<string | null> {
   return null;
 }
 
+/** The least address space a Python run can start in; a smaller setting is raised to this. */
+const SCRIPT_MIN_MEMORY_BYTES = 64 * 1_048_576;
+/** How often the organization's sandbox diagnostics switch is re-read. */
+const SETTINGS_POLL_MS = 30_000;
+
+/**
+ * Keep workspaces.ts's debug switch at the organization's setting: read
+ * now and every SETTINGS_POLL_MS, the way watchLogLevel keeps the log
+ * level. A database blip skips a tick rather than flipping the switch.
+ */
+function watchWorkspaceDebug(): void {
+  const apply = async () => {
+    const settings = await getOrgSettings();
+    if (settings.ok) setDebugEnabled(settings.val.sandboxWorkspacesDebug);
+  };
+  void apply().catch(() => undefined);
+  const timer = setInterval(() => void apply().catch(() => undefined), SETTINGS_POLL_MS);
+  timer.unref?.();
+}
+
 async function main(): Promise<void> {
   await attachPersistentLogging();
-  // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
+  // Every adapter starts at info, which holds only for the few seconds
   // before the database is reachable; once it is, the org `logLevel` dial
   // (packages/settings) governs, polled and reapplied here so a saved
   // change takes effect without restarting this process.
   watchLogLevel(logger);
+  watchWorkspaceDebug();
 
   // A rejection nobody awaited must not take the whole worker — and every
   // browser session and unlocked secret — down with it; log it and carry
@@ -242,16 +261,10 @@ async function main(): Promise<void> {
     problems.services = 'commands cannot be run for a caller here (see workspaces)';
   } else {
     let engine: DockerClient;
-    let memoryBytes: number;
     try {
       engine = new DockerClient(parseDockerHost(process.env.SANDBOX_DOCKER_HOST));
-      memoryBytes = parseMemoryBytes(process.env.SANDBOX_SERVICE_MEMORY, 1_073_741_824);
     } catch (error) {
       fatal(error instanceof Error ? error.message : String(error));
-    }
-    const pidsLimit = Number(process.env.SANDBOX_SERVICE_PIDS ?? '512');
-    if (!Number.isInteger(pidsLimit) || pidsLimit <= 0) {
-      fatal(`SANDBOX_SERVICE_PIDS is not a usable count: ${process.env.SANDBOX_SERVICE_PIDS}`);
     }
     try {
       const selfContainer = await ownContainer(engine);
@@ -260,8 +273,13 @@ async function main(): Promise<void> {
         engine,
         network: (process.env.SANDBOX_SERVICES_NETWORK ?? '').trim() || 'renkei-sandbox-services',
         selfContainer,
-        memoryBytes,
-        pidsLimit,
+        // Each service container's ceilings are the organization's settings
+        // (admin → Settings → Sandbox), read as the container is created.
+        limits: async () => {
+          const settings = await getOrgSettings();
+          const org = settings.ok ? settings.val : DEFAULT_ORG_SETTINGS;
+          return { memoryBytes: org.sandboxServiceMemoryBytes, pidsLimit: org.sandboxServicePids };
+        },
       });
       const version = await manager.prepare();
       logger.info(
@@ -313,18 +331,19 @@ async function main(): Promise<void> {
         problem: problems.scripts,
       });
     } else {
-      let memoryBytes: number;
-      try {
-        memoryBytes = scriptMemoryBytes(process.env.SANDBOX_SCRIPT_MEMORY);
-      } catch (error) {
-        fatal(error instanceof Error ? error.message : String(error));
-      }
+      // A run's address space is the organization's setting, read as the
+      // run starts; never below what Python needs to start.
+      const scriptMemory = async () => {
+        const settings = await getOrgSettings();
+        const org = settings.ok ? settings.val : DEFAULT_ORG_SETTINGS;
+        return Math.max(SCRIPT_MIN_MEMORY_BYTES, org.sandboxScriptMemoryBytes);
+      };
       const runner = new ScriptRunner({
         db: dbResult.val,
         runsRoot: configuredDirectory('SANDBOX_RUNS_DIR', '/runs'),
         python,
         networkIsolation: isolation.mode,
-        memoryBytes,
+        memoryBytes: scriptMemory,
         maxFileBytes: orgMaxFileBytes,
       });
       const removed = await runner.prepare();
@@ -353,7 +372,7 @@ async function main(): Promise<void> {
               : isolation.mode === 'userns'
                 ? 'none per run (user namespace, as the caller)'
                 : 'the container’s, for organizations that allow it (NOT ISOLATED)',
-          memory: memoryBytes,
+          memory: await scriptMemory(),
           removed: removed
             ? `; ${removed} stale run director${removed === 1 ? 'y' : 'ies'} removed`
             : '',

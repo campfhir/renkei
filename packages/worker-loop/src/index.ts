@@ -253,9 +253,8 @@ export function schedulePeriodicSweep(
     if (!stopped) timer = setTimeout(tick, intervalMs);
   }
 
-  // CONSOLE_LOG_LEVEL (and LOG_DB_LEVEL for the persisted copy) must be set
-  // to 'debug' for the two lines above to actually show — both default to
-  // 'info', same as the web app's.
+  // The organization's log level (admin → Settings → Data & logs) must be
+  // debug for the two lines above to actually show; it defaults to info.
   logger.debug(`${label} sweep scheduled every ${intervalMs}ms`, { component });
   void tick(); // first pass at boot, concurrent with event processing starting up
   return () => {

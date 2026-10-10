@@ -102,12 +102,14 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-async function storedName(): Promise<unknown> {
+async function storedSetting(key: string): Promise<unknown> {
   const stored = await withDb((client) =>
-    client.query<{ value: unknown }>(`SELECT value FROM settings WHERE key = 'organization_name'`)
+    client.query<{ value: unknown }>(`SELECT value FROM settings WHERE key = $1`, [key])
   );
   return stored.rows[0]?.value;
 }
+
+const storedName = () => storedSetting('organization_name');
 
 test('an operator names the organization', async ({ page }, testInfo) => {
   test.setTimeout(240_000);
@@ -138,6 +140,16 @@ test('an operator names the organization', async ({ page }, testInfo) => {
     expect(refused.status()).toBe(400);
     expect(await storedName()).toBe(fixture.name);
 
+    // ── The AD Manager product name, the other name the organization owns ──
+    const product = page.getByRole('textbox', { name: 'AD Manager product name' });
+    await expect(product).toHaveValue('Renkei');
+    await product.fill('Renkei E2E');
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.getByText('Saved.')).toBeVisible();
+    expect(await storedSetting('admanager_product_name')).toBe('Renkei E2E');
+    const settings = (await (await page.request.get('/api/admin/org-settings')).json()).settings;
+    expect(settings.admanagerProductName).toBe('Renkei E2E');
+
     // ── Phone width: the field still sits in its section. (The page reads
     //    settings through its own one-minute cache, so what it shows after a
     //    save through the API is not asserted — the store and the API were.) ──
@@ -150,9 +162,10 @@ test('an operator names the organization', async ({ page }, testInfo) => {
   } finally {
     // The default back for everyone else in the run.
     const restored = await page.request.put('/api/admin/org-settings', {
-      data: { organizationName: DEFAULT_NAME },
+      data: { organizationName: DEFAULT_NAME, admanagerProductName: DEFAULT_NAME },
     });
     expect(restored.ok()).toBe(true);
   }
   expect(await storedName()).toBe(DEFAULT_NAME);
+  expect(await storedSetting('admanager_product_name')).toBe(DEFAULT_NAME);
 });

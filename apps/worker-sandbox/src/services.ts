@@ -75,6 +75,11 @@ export interface ServiceManagerOptions {
   network: string;
   /** This worker's own container, attached to the network at boot; null when not in one. */
   selfContainer: string | null;
+  /** The ceilings for a service container, read as one is created: the organization's settings. */
+  limits: () => Promise<ServiceLimits>;
+}
+
+export interface ServiceLimits {
   memoryBytes: number;
   pidsLimit: number;
 }
@@ -107,16 +112,14 @@ export class ServiceManager {
   private readonly engine: DockerEngine;
   private readonly network: string;
   private readonly selfContainer: string | null;
-  private readonly memoryBytes: number;
-  private readonly pidsLimit: number;
+  private readonly limits: () => Promise<ServiceLimits>;
 
   constructor(options: ServiceManagerOptions) {
     this.db = options.db;
     this.engine = options.engine;
     this.network = options.network;
     this.selfContainer = options.selfContainer;
-    this.memoryBytes = options.memoryBytes;
-    this.pidsLimit = options.pidsLimit;
+    this.limits = options.limits;
   }
 
   /** At boot: the engine answers, the network exists, this worker is on it. Throws with why otherwise. */
@@ -237,6 +240,7 @@ export class ServiceManager {
       });
     }
     let containerId: string;
+    const limits = await this.limits();
     try {
       containerId = await this.engine.createContainer({
         name: `renkei-svc-${short(row.id)}`,
@@ -249,8 +253,8 @@ export class ServiceManager {
           [LABEL_NAME]: input.name,
         },
         network: this.network,
-        memoryBytes: this.memoryBytes,
-        pidsLimit: this.pidsLimit,
+        memoryBytes: limits.memoryBytes,
+        pidsLimit: limits.pidsLimit,
       });
     } catch (error) {
       return fail(`The container could not be created: ${engineMessage(error)}`);

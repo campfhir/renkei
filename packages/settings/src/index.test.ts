@@ -80,7 +80,7 @@ beforeEach(() => {
 });
 
 describe('org settings', () => {
-  it('returns defaults for a tenant with nothing stored', async () => {
+  it('returns defaults for an organization with nothing stored', async () => {
     stubDb();
     const result = await getOrgSettings();
     expect(result.ok).toBe(true);
@@ -106,6 +106,35 @@ describe('org settings', () => {
       expect(result.val.readOnly).toBe(true);
       expect(result.val.maxAttachmentBytes).toBe(1024);
       expect(result.val.accessTokenTtlMinutes).toBe(DEFAULT_ORG_SETTINGS.accessTokenTtlMinutes);
+    }
+  });
+
+  it('carries the sandbox ceilings and the AD Manager product name, with code defaults', async () => {
+    // Formerly SANDBOX_SCRIPT_MEMORY, SANDBOX_SERVICE_MEMORY,
+    // SANDBOX_SERVICE_PIDS, SANDBOX_WORKSPACES_DEBUG and
+    // ADMANAGER_PRODUCT_NAME: nothing stored means the defaults in code, and
+    // what is stored is read per key.
+    stubDb();
+    expect(DEFAULT_ORG_SETTINGS.sandboxScriptMemoryBytes).toBe(2 * 1_073_741_824);
+    expect(DEFAULT_ORG_SETTINGS.sandboxServiceMemoryBytes).toBe(1_073_741_824);
+    expect(DEFAULT_ORG_SETTINGS.sandboxServicePids).toBe(512);
+    expect(DEFAULT_ORG_SETTINGS.sandboxWorkspacesDebug).toBe(false);
+    expect(DEFAULT_ORG_SETTINGS.admanagerProductName).toBe('Renkei');
+
+    await setOrgSettings({
+      sandboxServiceMemoryBytes: 1536 * 1_048_576,
+      sandboxServicePids: 128,
+      sandboxWorkspacesDebug: true,
+      admanagerProductName: 'Acme Renkei',
+    });
+    const result = await getOrgSettings();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.val.sandboxServiceMemoryBytes).toBe(1536 * 1_048_576);
+      expect(result.val.sandboxServicePids).toBe(128);
+      expect(result.val.sandboxWorkspacesDebug).toBe(true);
+      expect(result.val.admanagerProductName).toBe('Acme Renkei');
+      expect(result.val.sandboxScriptMemoryBytes).toBe(DEFAULT_ORG_SETTINGS.sandboxScriptMemoryBytes);
     }
   });
 

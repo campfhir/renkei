@@ -465,9 +465,10 @@ services:
   # worker's network" setting instead accepts scripts on the container's
   # network for that organization, with the tool's description and every
   # result saying so.
-  # SANDBOX_SCRIPT_MEMORY (default 2g) caps a run's address space; several
-  # people running large joins at once share SANDBOX_WORKER_MEMORY below
-  # with the browser, so raise both together.
+  # The organization's "Script memory" setting (admin → Settings → Sandbox,
+  # default 2 GB) caps a run's address space; several people running large
+  # joins at once share SANDBOX_WORKER_MEMORY below with the browser, so
+  # raise it with that setting.
   #
   # STATEFUL, unlike the queue workers above: checkouts on /workspaces and
   # staged bytes on /data, with only the rows in the database. Replicas

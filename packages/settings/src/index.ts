@@ -346,6 +346,20 @@ export interface OrgSettings {
    * for that project only, never for the org.
    */
   sandboxWorkspaceMaxBytes: number;
+  /** RLIMIT_AS for one sandbox_run_python run, in bytes. */
+  sandboxScriptMemoryBytes: number;
+  /** Each code-project service container's memory ceiling, in bytes. */
+  sandboxServiceMemoryBytes: number;
+  /** Each code-project service container's process ceiling. */
+  sandboxServicePids: number;
+  /** Verbose per-operation logging from the sandbox worker's workspace code: a diagnostic. */
+  sandboxWorkspacesDebug: boolean;
+  /**
+   * The PRODUCT_NAME the AD Manager worker identifies this deployment as on
+   * the legacy /RestAPI/* endpoints (unlock, reset-password, create, group
+   * membership), which authenticate by AuthToken + PRODUCT_NAME.
+   */
+  admanagerProductName: string;
 }
 
 /** The defaults formerly hardcoded in the environment schema. */
@@ -397,6 +411,11 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   knowledgeKeywordMinChars: 500,
   chatReplyPresenceWindowSeconds: 30,
   sandboxWorkspaceMaxBytes: 8 * 1_073_741_824, // 8GB
+  sandboxScriptMemoryBytes: 2 * 1_073_741_824, // 2GB
+  sandboxServiceMemoryBytes: 1_073_741_824, // 1GB
+  sandboxServicePids: 512,
+  sandboxWorkspacesDebug: false,
+  admanagerProductName: 'Renkei',
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -576,6 +595,20 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
     sandboxWorkspaceMaxBytes: Number(
       coerce(stored.get('sandbox_workspace_max_bytes'), d.sandboxWorkspaceMaxBytes)
     ),
+    sandboxScriptMemoryBytes: Number(
+      coerce(stored.get('sandbox_script_memory_bytes'), d.sandboxScriptMemoryBytes)
+    ),
+    sandboxServiceMemoryBytes: Number(
+      coerce(stored.get('sandbox_service_memory_bytes'), d.sandboxServiceMemoryBytes)
+    ),
+    sandboxServicePids: Number(coerce(stored.get('sandbox_service_pids'), d.sandboxServicePids)),
+    sandboxWorkspacesDebug: Boolean(
+      coerce(stored.get('sandbox_workspaces_debug'), d.sandboxWorkspacesDebug)
+    ),
+    admanagerProductName: coerceString(
+      stored.get('admanager_product_name'),
+      d.admanagerProductName
+    ),
   };
 
   orgCache = { value: settings, expiresAt: Date.now() + CACHE_TTL_MS };
@@ -665,6 +698,11 @@ export async function setOrgSettings(
     ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
     ['chat_reply_presence_window_seconds', updates.chatReplyPresenceWindowSeconds],
     ['sandbox_workspace_max_bytes', updates.sandboxWorkspaceMaxBytes],
+    ['sandbox_script_memory_bytes', updates.sandboxScriptMemoryBytes],
+    ['sandbox_service_memory_bytes', updates.sandboxServiceMemoryBytes],
+    ['sandbox_service_pids', updates.sandboxServicePids],
+    ['sandbox_workspaces_debug', updates.sandboxWorkspacesDebug],
+    ['admanager_product_name', updates.admanagerProductName],
   ];
 
   for (const [key, value] of pairs) {

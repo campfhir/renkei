@@ -165,15 +165,6 @@ export function pullStreamError(body: string): string | null {
   return null;
 }
 
-export function parseMemoryBytes(raw: string | undefined, fallback: number): number {
-  const value = (raw ?? '').trim().toLowerCase();
-  if (!value) return fallback;
-  const match = /^(\d+(?:\.\d+)?)\s*([kmg]?)b?$/.exec(value);
-  if (!match) throw new Error(`not a memory size: ${raw}`);
-  const scale = { '': 1, k: 1_024, m: 1_048_576, g: 1_073_741_824 }[match[2]!] ?? 1;
-  return Math.floor(Number(match[1]) * scale);
-}
-
 interface EngineResponse {
   status: number;
   body: Buffer;

@@ -293,8 +293,7 @@ beforeAll(async () => {
     engine,
     network: NETWORK,
     selfContainer: 'self-1',
-    memoryBytes: 1_073_741_824,
-    pidsLimit: 512,
+    limits: async () => ({ memoryBytes: 1_073_741_824, pidsLimit: 512 }),
   });
   enabledServer = createSandboxServer({
     db: {} as Kysely<DB>,

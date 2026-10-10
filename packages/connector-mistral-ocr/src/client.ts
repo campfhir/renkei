@@ -78,8 +78,8 @@ export interface MistralOcrCallOptions {
    * would mask it identically to `secure()` under the same maskSecure rule,
    * hiding it from exactly the console output this option exists to show).
    * Document bytes themselves are never logged either way. Off by default;
-   * pass the caller's own app logger and set CONSOLE_LOG_LEVEL=debug (or
-   * LOG_DB_LEVEL=debug for the persisted copy) to see it.
+   * pass the caller's own app logger and set the organization's log level
+   * to debug (admin → Settings → Data & logs) to see it.
    */
   logger?: MistralOcrLogger;
 }

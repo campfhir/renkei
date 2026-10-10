@@ -15,11 +15,6 @@ This guide covers deploying the Jira MCP Gateway to production.
 Create a `.env.local` file with production values:
 
 ```bash
-# OAuth / OIDC Configuration
-ATLASSIAN_CLIENT_ID=<your-client-id>
-ATLASSIAN_CLIENT_SECRET=<your-client-secret>
-ATLASSIAN_REDIRECT_URI=https://yourdomain.com/api/oauth/callback
-
 # Encryption
 # Generate each with: openssl rand -base64 32
 TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
@@ -492,8 +487,10 @@ joins at boot so a project's commands reach a service by address —
 `SANDBOX_CONTAINER_ID` names this container for that join (compose sets
 it to `renkei-worker-sandbox`; the hostname works when compose is left
 to set it). Each service is a plain container: no privileges,
-`no-new-privileges`, a memory ceiling (`SANDBOX_SERVICE_MEMORY`, default
-`1g`) and a process ceiling (`SANDBOX_SERVICE_PIDS`, default 512), no
+`no-new-privileges`, a memory ceiling and a process ceiling (the
+organization's "Service memory" and "Service process limit" settings
+under admin → Settings → Sandbox, default 1 GB and 512, read as each
+container is created), no
 restart policy, no published ports; it is stopped and removed with its
 data a day after the project last ran a command, or when the chat
 stops it. **The allow-list** is the organization's, at Organization →
@@ -549,8 +546,9 @@ The image carries the interpreter at `/opt/sandbox-python` (pandas,
 numpy, openpyxl, XlsxWriter, pinned in `docker/Dockerfile`);
 `SANDBOX_PYTHON` points at another. A run's directory is made under
 `SANDBOX_RUNS_DIR` (default `/runs`, no volume: nothing outlives its
-run) and its address space is capped at `SANDBOX_SCRIPT_MEMORY` (default
-`2g`) — raise `SANDBOX_WORKER_MEMORY` with it if several people run
+run) and its address space is capped at the organization's "Script
+memory" setting (admin → Settings → Sandbox, default 2 GB, read as each
+run starts) — raise `SANDBOX_WORKER_MEMORY` with it if several people run
 large joins at once, since runs share the container's limit with the
 browser and the language servers. Bounds that are not settings: one run
 per person at a time and four per worker, ten minutes at most, 64
@@ -662,8 +660,6 @@ npm install -g vercel
 vercel --prod
 
 # Set environment variables in Vercel UI or via CLI
-vercel env add ATLASSIAN_CLIENT_ID
-vercel env add ATLASSIAN_CLIENT_SECRET
 vercel env add TOKEN_ENCRYPTION_KEY
 vercel env add DATABASE_URL
 vercel env add PUBLIC_BASE_URL
@@ -695,8 +691,6 @@ CMD ["npm", "start"]
 docker build -t jira-mcp-gateway .
 
 docker run \
-  -e ATLASSIAN_CLIENT_ID="<value>" \
-  -e ATLASSIAN_CLIENT_SECRET="<value>" \
   -e TOKEN_ENCRYPTION_KEY="<value>" \
   -e DATABASE_URL="postgresql://..." \
   -e PUBLIC_BASE_URL="https://yourdomain.com" \
@@ -724,8 +718,6 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql://jira_mcp:${DB_PASSWORD}@postgres:5432/jira_mcp_db
-      ATLASSIAN_CLIENT_ID: ${ATLASSIAN_CLIENT_ID}
-      ATLASSIAN_CLIENT_SECRET: ${ATLASSIAN_CLIENT_SECRET}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
       PUBLIC_BASE_URL: https://yourdomain.com
       NODE_ENV: production
@@ -1146,7 +1138,7 @@ Error: "Redirect URI mismatch"
 **Solution:** Ensure `PUBLIC_BASE_URL` matches OAuth app configuration exactly:
 
 - App setting: `https://yourdomain.com`
-- `ATLASSIAN_REDIRECT_URI`: `https://yourdomain.com/api/oauth/callback`
+- The connector's redirect URI (admin → Connectors): `https://yourdomain.com/api/oauth/callback`
 - `PUBLIC_BASE_URL`: `https://yourdomain.com`
 
 ### Token Encryption Errors

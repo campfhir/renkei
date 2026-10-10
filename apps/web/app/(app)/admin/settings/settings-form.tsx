@@ -59,9 +59,15 @@ export interface EditableSettings {
   knowledgeKeywordMinChars: number;
   chatReplyPresenceWindowSeconds: number;
   sandboxWorkspaceMaxBytes: number;
+  sandboxScriptMemoryBytes: number;
+  sandboxServiceMemoryBytes: number;
+  sandboxServicePids: number;
+  sandboxWorkspacesDebug: boolean;
+  admanagerProductName: string;
 }
 
 const GB = 1_073_741_824;
+const MB = 1_048_576;
 
 const inputClass =
   'w-28 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm tabular-nums dark:border-gray-700 dark:bg-gray-900';
@@ -566,6 +572,86 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
             />
             <span className="w-20 text-xs text-gray-400 dark:text-gray-600">1GB–64GB</span>
           </span>
+        </Row>
+        <Row
+          label="Script memory (MB)"
+          hint="The address space one Python run over staged files may use before it fails with a MemoryError. Runs share the worker container's own memory limit with the browser and the language servers."
+        >
+          <span className="flex items-center gap-2">
+            <input
+              type="number"
+              aria-label="sandboxScriptMemoryMb"
+              min={64}
+              max={65536}
+              step={64}
+              value={Math.round(values.sandboxScriptMemoryBytes / MB)}
+              onChange={(event) => set('sandboxScriptMemoryBytes', Number(event.target.value) * MB)}
+              className={inputClass}
+            />
+            <span className="w-20 text-xs text-gray-400 dark:text-gray-600">64MB–64GB</span>
+          </span>
+        </Row>
+        <Row
+          label="Service memory (MB)"
+          hint="The memory ceiling of each container a code project starts beside its checkout. Applies to containers started after the save."
+        >
+          <span className="flex items-center gap-2">
+            <input
+              type="number"
+              aria-label="sandboxServiceMemoryMb"
+              min={64}
+              max={65536}
+              step={64}
+              value={Math.round(values.sandboxServiceMemoryBytes / MB)}
+              onChange={(event) => set('sandboxServiceMemoryBytes', Number(event.target.value) * MB)}
+              className={inputClass}
+            />
+            <span className="w-20 text-xs text-gray-400 dark:text-gray-600">64MB–64GB</span>
+          </span>
+        </Row>
+        <Row
+          label="Service process limit"
+          hint="How many processes each code project service container may run at once."
+        >
+          <span className="flex items-center gap-2">
+            <input
+              type="number"
+              aria-label="sandboxServicePids"
+              min={16}
+              max={65536}
+              step={1}
+              value={values.sandboxServicePids}
+              onChange={(event) => set('sandboxServicePids', Number(event.target.value))}
+              className={inputClass}
+            />
+            <span className="w-20 text-xs text-gray-400 dark:text-gray-600">16–65536</span>
+          </span>
+        </Row>
+        <Row
+          label="Workspace debug logging"
+          hint="Log every workspace operation on the sandbox worker in detail. A diagnostic for a checkout that misbehaves; leave off otherwise, since it is noisy."
+        >
+          <Toggle
+            on={values.sandboxWorkspacesDebug}
+            onChange={(next) => set('sandboxWorkspacesDebug', next)}
+            label="Workspace debug logging"
+          />
+        </Row>
+      </Section>
+
+      <Section title="AD Manager">
+        <Row
+          label="Product name"
+          hint="What the AD Manager worker calls this deployment on the legacy /RestAPI/* endpoints (unlock, reset password, create, group membership), which authenticate by token and product name. Must match the product the authtoken was issued to."
+        >
+          <input
+            type="text"
+            aria-label="AD Manager product name"
+            maxLength={80}
+            value={values.admanagerProductName}
+            onChange={(event) => set('admanagerProductName', event.target.value)}
+            className="w-56 rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+          />
         </Row>
       </Section>
 

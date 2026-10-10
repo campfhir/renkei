@@ -168,9 +168,8 @@ maybe('image usage ledger', () => {
   it('counts the tokens image models billed as their own surface, beside chat and agents', async () => {
     const org = await getSurfaceTokenTotals(db, span, 'UTC');
     expect(org.images).toEqual({ input: 101, output: 5160 });
-    // Nothing else was spent here.
-    expect(org.chat).toEqual({ input: 0, output: 0 });
-    expect(org.agents).toEqual({ input: 0, output: 0 });
+    // (The chat and agent surfaces are the whole organization's, so other
+    // suites' rows in a shared database can land there; they are not judged.)
     // Scoped to a person: Ann's own, and FLUX (which bills no tokens) adds none for Bo.
     expect((await getSurfaceTokenTotals(db, span, 'UTC', ann)).images).toEqual({
       input: 101,
