@@ -79,7 +79,7 @@ export async function PUT(
     actorSubject: session.subject,
     action: 'settings.updated',
     targetKind: 'oidc-claims',
-    targetLabel: claims.groupsClaim ?? 'groups',
+    targetLabel: claims.groupsClaim ?? '(no groups claim)',
   });
   return NextResponse.json({ configured: true, ...claims });
 }

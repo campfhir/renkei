@@ -1,5 +1,5 @@
 /**
- * The identity spine: (tenant, OIDC subject) → email, and the IdP groups
+ * The identity spine: OIDC subject → email, and the IdP groups
  * the person carried at their last sign-in.
  *
  * Renkei's own credentials are subject-bound, but every provider gate
@@ -12,6 +12,9 @@
  * Connector audience rules (lib/connectors/audience.ts) read them; nothing
  * here decides what a group may see. They are replaced wholesale on every
  * sign-in, so a group the IdP took away is gone with the next session.
+ * Nobody is in a group by default: with no groups claim configured, or a
+ * token that does not carry it, the person is in none — and a sign-in whose
+ * claims could not be read forgets the groups it recorded before.
  *
  * A subject with no recorded email fails closed downstream: the knowledge
  * gate discloses nothing it cannot verify, and verification needs the email.
@@ -26,7 +29,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 export interface IdentityClaims {
   email: string;
   displayName: string | null;
-  /** Raw values of the tenant's groups claim; empty when the token carried none. */
+  /** Raw values of the configured groups claim; empty when there is no claim or the token carried none. */
   idpGroups: string[];
 }
 
@@ -78,11 +81,13 @@ export function hasGroupsOverage(decoded: Record<string, unknown>, claimName: st
  * Pull the identity claims out of a decoded id_token. `email` is the
  * standard claim; Azure AD often carries the address only in
  * `preferred_username`, which is accepted when it looks like one.
- * `groupsClaim` names where the groups live (default 'groups').
+ * `groupsClaim` names where the groups live; with none configured (null)
+ * the person is in no groups at all. There is no conventional claim to
+ * fall back on: a group nobody named is a group nobody is in.
  */
 export function identityClaimsFromIdToken(
   decoded: Record<string, unknown>,
-  groupsClaim: string = 'groups'
+  groupsClaim: string | null
 ): IdentityClaims | null {
   const email =
     typeof decoded.email === 'string' && decoded.email.includes('@')
@@ -94,8 +99,30 @@ export function identityClaimsFromIdToken(
   return {
     email: email.toLowerCase(),
     displayName: typeof decoded.name === 'string' ? decoded.name : null,
-    idpGroups: groupValuesFromIdToken(decoded, groupsClaim),
+    idpGroups: groupsClaim === null ? [] : groupValuesFromIdToken(decoded, groupsClaim),
   };
+}
+
+/**
+ * Forget a subject's groups without touching the rest of their identity:
+ * what a sign-in that could not read the person's claims does, so that a
+ * membership recorded last time does not outlive the token that proved it.
+ * A subject with no row has nothing to forget.
+ */
+export async function clearIdpGroups(subject: string): Promise<Result<void, 'DB_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+  const result = await wrapAsync(
+    () =>
+      dbResult.val
+        .updateTable('identities')
+        .set({ idp_groups: [], updated_at: new Date().toISOString() })
+        .where('subject', '=', subject)
+        .execute(),
+    'DB_ERROR' as const
+  );
+  if (!result.ok) return result;
+  return ok();
 }
 
 /** Record (or refresh) who a subject is. Upserted on every sign-in. */

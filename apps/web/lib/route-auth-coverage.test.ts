@@ -87,7 +87,7 @@ const PUBLIC: Record<string, string> = {
   // Sign-in entry points: there is by definition no session yet.
   'setup/page.tsx':
     'first-run setup — the identity provider does not exist yet, so no session can; the form ' +
-    'posts with the one-time setup secret the page mints into the server log (lib/setup-secret.ts), ' +
+    "posts with the SETUP_SECRET from the app's environment (lib/setup-secret.ts), " +
     'and the page redirects home once a provider exists',
   'api/auth/oidc/login/route.ts': 'starts the OIDC redirect — the thing that creates sessions',
   // Protocol discovery documents. Public by specification.

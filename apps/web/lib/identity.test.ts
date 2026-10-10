@@ -13,6 +13,7 @@ import {
   hasGroupsOverage,
   upsertIdentity,
   getIdentityEmail,
+  clearIdpGroups,
 } from './identity';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
@@ -23,11 +24,14 @@ beforeEach(() => {
 
 describe('identityClaimsFromIdToken', () => {
   it('prefers the standard email claim, lowercased', () => {
-    const claims = identityClaimsFromIdToken({
-      email: 'Sam.Lee@Example.COM',
-      preferred_username: 'sam.other@example.com',
-      name: 'Sam Lee',
-    });
+    const claims = identityClaimsFromIdToken(
+      {
+        email: 'Sam.Lee@Example.COM',
+        preferred_username: 'sam.other@example.com',
+        name: 'Sam Lee',
+      },
+      'groups'
+    );
     expect(claims).toEqual({
       email: 'sam.lee@example.com',
       displayName: 'Sam Lee',
@@ -36,16 +40,16 @@ describe('identityClaimsFromIdToken', () => {
   });
 
   it('falls back to preferred_username when it looks like an address', () => {
-    const claims = identityClaimsFromIdToken({ preferred_username: 'sam@example.com' });
+    const claims = identityClaimsFromIdToken({ preferred_username: 'sam@example.com' }, 'groups');
     expect(claims?.email).toBe('sam@example.com');
     expect(claims?.displayName).toBeNull();
   });
 
   it('yields nothing for a token with no address anywhere', () => {
     expect(
-      identityClaimsFromIdToken({ preferred_username: 'DOMAIN\\sam', name: 'Sam' })
+      identityClaimsFromIdToken({ preferred_username: 'DOMAIN\\sam', name: 'Sam' }, 'groups')
     ).toBeNull();
-    expect(identityClaimsFromIdToken({})).toBeNull();
+    expect(identityClaimsFromIdToken({}, 'groups')).toBeNull();
   });
 });
 
@@ -73,6 +77,22 @@ describe('groupValuesFromIdToken', () => {
       'groups'
     );
     expect(claims?.idpGroups).toEqual(['eng']);
+  });
+
+  it('records no groups when no groups claim is configured, whatever the token carries', () => {
+    const claims = identityClaimsFromIdToken(
+      { email: 'sam@example.com', groups: ['eng'], memberOf: ['ops'] },
+      null
+    );
+    expect(claims?.idpGroups).toEqual([]);
+  });
+
+  it('records no groups when the token omits the configured claim', () => {
+    const claims = identityClaimsFromIdToken(
+      { email: 'sam@example.com', groups: ['eng'] },
+      'memberOf'
+    );
+    expect(claims?.idpGroups).toEqual([]);
   });
 });
 
@@ -116,6 +136,29 @@ describe('upsertIdentity / getIdentityEmail', () => {
 
     const read = await getIdentityEmail('subject-1');
     expect(read.ok && read.val).toBe('sam@example.com');
+  });
+
+  it('clears only the groups of the named subject', async () => {
+    const sets: Array<Record<string, unknown>> = [];
+    const wheres: unknown[][] = [];
+    const updateChain = {
+      set: (values: Record<string, unknown>) => {
+        sets.push(values);
+        return updateChain;
+      },
+      where: (...args: unknown[]) => {
+        wheres.push(args);
+        return updateChain;
+      },
+      execute: async () => [],
+    };
+    mockGetDatabase.mockReturnValue({ ok: true, val: { updateTable: () => updateChain } });
+
+    const cleared = await clearIdpGroups('subject-1');
+    expect(cleared.ok).toBe(true);
+    expect(sets[0]?.idp_groups).toEqual([]);
+    expect(sets[0]?.email).toBeUndefined();
+    expect(wheres).toEqual([['subject', '=', 'subject-1']]);
   });
 
   it('reports null for a subject with no recorded identity', async () => {

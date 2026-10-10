@@ -17,13 +17,12 @@ export interface TenantOidc {
   userIdpValue?: string | null;
   /**
    * The id_token claim carrying a person's groups, read at sign-in for
-   * connector audience rules. Absent means the conventional 'groups'.
+   * connector audience rules. Absent means groups are not read at all:
+   * nobody is in any group, and a connector scoped to an audience is open
+   * to nobody. There is no conventional claim to assume.
    */
   groupsClaim?: string | null;
 }
-
-/** What sign-in reads for groups when the organization has not said otherwise. */
-export const DEFAULT_GROUPS_CLAIM = 'groups';
 
 /** The claim-mapping half of the OIDC config: editable without the client secret. */
 export interface TenantOidcClaims {
@@ -66,6 +65,10 @@ export async function createTenantOidcIfAbsent(
           role_claim: oidc.roleClaim,
           operator_idp_value: oidc.operatorIdpValue || null,
           user_idp_value: oidc.userIdpValue || null,
+          // Persisted here too: the first-run form collects it, and with the
+          // column left NULL nobody would be in any group until an operator
+          // re-saved the mapping.
+          groups_claim: oidc.groupsClaim || null,
           created_at: new Date().toISOString(),
         })
         .onConflict((oc) => oc.expression(sql`(true)`).doNothing())

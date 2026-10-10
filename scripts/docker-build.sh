@@ -117,6 +117,9 @@ VERSION="${ARG_VERSION:-$PKG_VERSION}"
 # Baked into the images so every log row names the exact build. A dirty tree
 # is marked, because "which version is running" questions usually start there.
 GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# The version the web app shows beside the commit (docker/Dockerfile's
+# APP_VERSION build argument; the image sets no npm lifecycle variables).
+APP_VERSION="$(node -p "require('$ROOT_DIR/apps/web/package.json').version" 2>/dev/null || echo dev)"
 if ! git -C "$ROOT_DIR" diff --quiet 2>/dev/null; then
   GIT_COMMIT="${GIT_COMMIT}-dirty"
 fi
@@ -308,8 +311,8 @@ build_target() {
         --target "$target" \
         --platform "$BUILD_PLATFORM" \
         --build-arg BUILD_ENV="$BUILD_ENV" \
-      --build-arg GIT_COMMIT="$GIT_COMMIT" \
         --build-arg GIT_COMMIT="$GIT_COMMIT" \
+        --build-arg APP_VERSION="$APP_VERSION" \
         "${tag_args[@]}" \
         --push \
         "$ROOT_DIR"
@@ -319,8 +322,8 @@ build_target() {
         --target "$target" \
         --platform "$BUILD_PLATFORM" \
         --build-arg BUILD_ENV="$BUILD_ENV" \
-      --build-arg GIT_COMMIT="$GIT_COMMIT" \
         --build-arg GIT_COMMIT="$GIT_COMMIT" \
+        --build-arg APP_VERSION="$APP_VERSION" \
         "${tag_args[@]}" \
         --load \
         "$ROOT_DIR"
@@ -331,6 +334,7 @@ build_target() {
       --target "$target" \
       --build-arg BUILD_ENV="$BUILD_ENV" \
       --build-arg GIT_COMMIT="$GIT_COMMIT" \
+      --build-arg APP_VERSION="$APP_VERSION" \
       "${tag_args[@]}" \
       "$ROOT_DIR"
   fi

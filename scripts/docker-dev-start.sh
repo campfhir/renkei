@@ -62,17 +62,18 @@ export PLATFORM_OIDC_CLIENT_SECRET=$(grep '^PLATFORM_OIDC_CLIENT_SECRET=' .env.d
 
 OPERATOR_EMAIL="scott.eremia-roden@nems.org"
 
-# First-run setup: opening /setup mints the one-time setup secret into the
-# app's log; the identity provider save presents it. Nothing to do once a
-# provider exists (the page redirects home).
+# First-run setup: the identity provider save presents the SETUP_SECRET the
+# app container runs with (compose reads it from .env, the same file the
+# app's other secrets come from). Nothing to do once a provider exists (the
+# page redirects home).
 echo -e "${BLUE}Configuring the identity provider...${NC}"
 SETUP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/setup)
 if [ "$SETUP_STATUS" != "200" ]; then
   echo -e "${GREEN}✓ Identity provider already configured (setup page answered $SETUP_STATUS)${NC}\n"
 else
-  SETUP_SECRET=$(docker logs renkei-app 2>&1 | grep -o 'enter the setup secret [^ ]*' | tail -1 | awk '{print $NF}')
+  SETUP_SECRET=$(grep '^SETUP_SECRET=' .env 2>/dev/null | cut -d'=' -f2- | sed 's/^"//;s/"$//')
   if [ -z "$SETUP_SECRET" ]; then
-    echo -e "${YELLOW}⚠ Could not read the setup secret from the app log; open http://localhost:3000/setup and finish by hand${NC}"
+    echo -e "${YELLOW}⚠ SETUP_SECRET is not set in .env; set one (openssl rand -base64 32), restart, and open http://localhost:3000/setup${NC}"
     exit 0
   fi
   OIDC_RESPONSE=$(curl -s -X POST http://localhost:3000/api/oidc \

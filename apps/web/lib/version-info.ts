@@ -4,7 +4,13 @@
  */
 export function getVersionInfo(): string {
   const commit = process.env.NEXT_PUBLIC_GIT_COMMIT || process.env.GIT_COMMIT || 'unknown';
-  const version = process.env.NEXT_PUBLIC_APP_VERSION || process.env.npm_package_version || 'dev';
+  // APP_VERSION is what the image sets (docker/Dockerfile); npm_package_version
+  // is what a `pnpm start` in a checkout surrounds the process with.
+  const version =
+    process.env.NEXT_PUBLIC_APP_VERSION ||
+    process.env.APP_VERSION ||
+    process.env.npm_package_version ||
+    'dev';
 
   if (version === 'dev' && commit !== 'unknown') {
     return commit.substring(0, 7);

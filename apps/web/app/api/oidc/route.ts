@@ -5,8 +5,9 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
 import { safeFetch, assertSafeHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
 import {
+  SETUP_SECRET_ENV,
   SETUP_SECRET_HEADER,
-  clearSetupSecret,
+  SETUP_SECRET_MIN_CHARS,
   identityProviderConfigured,
   verifySetupSecret,
 } from '@/lib/setup-secret';
@@ -51,17 +52,16 @@ export async function POST(
   const db = dbResult.val;
 
   try {
-    // First configuration needs the one-time setup secret; every change
-    // after it is operator-only.
+    // First configuration needs the setup secret; every change after it is
+    // operator-only.
     //
     // The first write cannot require a session because operator identity is
     // itself derived from OIDC: until the deployment has an identity
-    // provider, nobody can hold an operator session. The secret the setup
-    // page mints into the server log (lib/setup-secret.ts) is what stands in
-    // for a session here. Once a provider is set an operator can exist, and
-    // from then on only they may change it -- which is the part that
-    // matters, since whoever controls this record controls who becomes an
-    // operator.
+    // provider, nobody can hold an operator session. The SETUP_SECRET in
+    // the app's environment (lib/setup-secret.ts) is what stands in for a
+    // session here. Once a provider is set an operator can exist, and from
+    // then on only they may change it -- which is the part that matters,
+    // since whoever controls this record controls who becomes an operator.
     const configured = await identityProviderConfigured(db);
     if (configured) {
       const denied = await requireOperator();
@@ -73,7 +73,7 @@ export async function POST(
         return denied;
       }
     } else {
-      const verdict = await verifySetupSecret(db, request.headers.get(SETUP_SECRET_HEADER));
+      const verdict = verifySetupSecret(request.headers.get(SETUP_SECRET_HEADER));
       if (verdict !== 'ok') {
         logger.warn('Rejected identity-provider setup without a valid secret ({verdict})', {
           component: 'auth/oidc',
@@ -82,11 +82,11 @@ export async function POST(
         return NextResponse.json(
           {
             error:
-              verdict === 'none-issued'
-                ? 'No setup secret has been issued. Open the setup page first; it writes one to the server log.'
-                : verdict === 'expired'
-                  ? 'The setup secret has expired. Reload the setup page for a fresh one in the server log.'
-                  : 'The setup secret is missing or wrong. Use the one in the server log.',
+              verdict === 'unset'
+                ? `No setup secret is configured. Set ${SETUP_SECRET_ENV} in the app's environment and restart it.`
+                : verdict === 'short'
+                  ? `${SETUP_SECRET_ENV} is too short to be a secret (at least ${SETUP_SECRET_MIN_CHARS} characters).`
+                  : `The setup secret is missing or wrong. Use the ${SETUP_SECRET_ENV} from the app's environment.`,
           },
           { status: 401 }
         );
@@ -223,12 +223,13 @@ export async function POST(
       );
     }
 
-    // Spent: the secret was for exactly this write.
-    await clearSetupSecret(db);
-
+    // From here on SETUP_SECRET is ignored: a provider exists, so only an
+    // operator session changes it. The variable can be removed from the
+    // environment.
+    //
     // Worth a record of its own: this is the one write to this table that
-    // no session authenticated — only the one-time setup secret — and it
-    // decides who can become an operator.
+    // no session authenticated — only the setup secret — and it decides
+    // who can become an operator.
     logger.warn('Identity provider configured for a previously unconfigured deployment', {
       component: 'auth/oidc',
       issuer,

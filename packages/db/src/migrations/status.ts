@@ -177,6 +177,7 @@ export const EXPECTED_MIGRATIONS = [
   '151-oauth-consent-requests',
   '152-sandbox-feature-settings',
   '153-single-organization',
+  '154-explicit-groups-claim',
 ];
 
 export interface MigrationStatus {

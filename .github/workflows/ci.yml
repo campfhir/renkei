@@ -141,16 +141,22 @@ jobs:
   # Optional variable:
   #   DOCKERHUB_NAMESPACE the namespace images are pushed under; defaults
   #                       to DOCKERHUB_USERNAME (an org namespace differs).
+  # Every image is built and scanned on every pull request, so a dependency
+  # or base-image advisory fails the PR that would ship it rather than the
+  # push to main that publishes it; the publish itself (login and push)
+  # happens only on main.
   docker:
     name: docker (${{ matrix.image }})
     needs: [checks, security]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     # Serialize pushes of the same image so a fast build from an older
-    # commit can never overwrite `latest` after a newer one already has.
+    # commit can never overwrite `latest` after a newer one already has. A
+    # pull request's scan builds are their own group, per branch, and never
+    # wait behind a publish.
     concurrency:
-      group: docker-publish-${{ matrix.image }}
-      cancel-in-progress: false
+      group: docker-${{ github.event_name == 'push' && 'publish' || github.head_ref }}-${{ matrix.image }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     permissions:
       contents: read
     strategy:
@@ -182,20 +188,25 @@ jobs:
         id: meta
         env:
           NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKERHUB_USERNAME }}
+          PUBLISH: ${{ github.event_name == 'push' }}
         run: |
-          if [[ -z "$NAMESPACE" ]]; then
+          if [[ "$PUBLISH" == "true" && -z "$NAMESPACE" ]]; then
             echo "::error::Set the DOCKERHUB_USERNAME secret (and DOCKERHUB_TOKEN) to publish images." >&2
             exit 1
           fi
           version="$(node -p "require('./apps/web/package.json').version")"
-          repo="${NAMESPACE}/${{ matrix.image }}"
+          repo="${NAMESPACE:-renkei-ci}/${{ matrix.image }}"
           {
             echo "version=${version}"
             echo "tags=${repo}:${version},${repo}:latest,${repo}:${GITHUB_SHA}"
             echo "scan_tag=${repo}:scan-${GITHUB_SHA}"
             echo "commit=$(git rev-parse --short HEAD)"
           } >> "$GITHUB_OUTPUT"
-          echo "Publishing ${repo}:${version}, ${repo}:latest and ${repo}:${GITHUB_SHA}"
+          if [[ "$PUBLISH" == "true" ]]; then
+            echo "Publishing ${repo}:${version}, ${repo}:latest and ${repo}:${GITHUB_SHA}"
+          else
+            echo "Scanning ${repo}:scan-${GITHUB_SHA} (not published: ${GITHUB_EVENT_NAME})"
+          fi
 
       # The docker-container driver is what lets the Dockerfile's
       # `# syntax=docker/dockerfile:1-labs` frontend and the GitHub Actions
@@ -203,6 +214,7 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: github.event_name == 'push'
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -219,6 +231,7 @@ jobs:
           tags: ${{ steps.meta.outputs.scan_tag }}
           build-args: |
             GIT_COMMIT=${{ steps.meta.outputs.commit }}
+            APP_VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,scope=${{ matrix.target }},mode=max
 
@@ -234,6 +247,7 @@ jobs:
           trivyignores: .trivyignore
 
       - name: Push
+        if: github.event_name == 'push'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -246,6 +260,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             GIT_COMMIT=${{ steps.meta.outputs.commit }}
+            APP_VERSION=${{ steps.meta.outputs.version }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
