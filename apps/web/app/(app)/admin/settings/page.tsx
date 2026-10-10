@@ -92,6 +92,11 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
     chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
     sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
+    sandboxScriptMemoryBytes: settings.sandboxScriptMemoryBytes,
+    sandboxServiceMemoryBytes: settings.sandboxServiceMemoryBytes,
+    sandboxServicePids: settings.sandboxServicePids,
+    sandboxWorkspacesDebug: settings.sandboxWorkspacesDebug,
+    admanagerProductName: settings.admanagerProductName,
   };
 
   return (

@@ -81,7 +81,7 @@ async function build(): Promise<LogShippingHandlers | null> {
   sink.addAdapter(
     new PostgresAdapter({
       db: dbResult.val,
-      level: process.env.LOG_DB_LEVEL ?? 'info',
+      level: 'info',
       encrypt: cipher.encrypt,
       decrypt: cipher.decrypt,
     })

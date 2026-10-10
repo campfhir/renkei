@@ -27,7 +27,7 @@ export const logger = createLogger({
 
 logger.addAdapter(
   new ConsoleAdapter({
-    level: process.env.CONSOLE_LOG_LEVEL ?? 'info',
+    level: 'info',
     showTimestamp: true,
     showLevel: true,
     maskSecure: process.env.NODE_ENV === 'production',
@@ -64,7 +64,7 @@ export async function attachPersistentLogging(): Promise<void> {
   }
   const adapter = new PostgresAdapter({
     db: dbResult.val,
-    level: process.env.LOG_DB_LEVEL ?? 'info',
+    level: 'info',
     encrypt: cipher.encrypt,
     decrypt: cipher.decrypt,
   });
@@ -95,7 +95,7 @@ function attachHttpShipping(endpoint: string): void {
   const adapter = new HttpAdapter({
     endpoint,
     headers: { authorization: `Bearer ${apiKey}` },
-    level: process.env.LOG_DB_LEVEL ?? 'info',
+    level: 'info',
     useBeaconOnUnload: false,
     encryption: signingKeys
       ? { clientId: process.env.LOG_SHIP_CLIENT_ID ?? 'renkei-worker-sandbox', signingKeys }

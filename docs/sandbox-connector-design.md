@@ -596,7 +596,7 @@ over a person's data needs nothing a repository's test suite needs:
   has the worker's network, and every result carries `networkIsolated`
   so each one says so too (`DEPLOYMENT.md`).
 - **How much.** A process ceiling (64, per uid), an address-space
-  ceiling (`SANDBOX_SCRIPT_MEMORY`, default 2 GB — a `MemoryError`, not
+  ceiling (the organization's "Script memory" setting, default 2 GB — a `MemoryError`, not
   a dead container), a file-size ceiling, no core dumps, a wall clock
   (60 s by default, 10 min at most) that kills the whole process group,
   output bounded in memory and clipped head-and-tail for the model, one

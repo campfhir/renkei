@@ -1166,8 +1166,15 @@ export function relativeTo(dir: string, path: string): string {
   return relative(dir, path);
 }
 
+let debugEnabled = false;
+
+/** The organization's "workspace debug logging" setting, as index.ts last read it. */
+export function setDebugEnabled(enabled: boolean): void {
+  debugEnabled = enabled;
+}
+
 export function isDebugEnabled(): boolean {
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_WORKSPACES_DEBUG ?? '').trim());
+  return debugEnabled;
 }
 
 export function logWorkspace(message: string, fields: Record<string, unknown>): void {

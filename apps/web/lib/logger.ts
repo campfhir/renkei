@@ -42,7 +42,7 @@ function buildLogger() {
 
   built.addAdapter(
     new ConsoleAdapter({
-      level: process.env.CONSOLE_LOG_LEVEL ?? 'info',
+      level: 'info',
       showTimestamp: true,
       showLevel: true,
       maskSecure: process.env.NODE_ENV === 'production',

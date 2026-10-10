@@ -81,6 +81,11 @@ const NUMERIC_BOUNDS = {
   // Per-checkout size limit on the sandbox: 1GB floor (a monorepo will not
   // fit below it), 64GB the typo guard and the most a request may ask for.
   sandboxWorkspaceMaxBytes: [1_073_741_824, 68_719_476_736],
+  // A Python run's address space and a service container's memory: 64MB
+  // is the least that runs anything, 64GB the typo guard.
+  sandboxScriptMemoryBytes: [67_108_864, 68_719_476_736],
+  sandboxServiceMemoryBytes: [67_108_864, 68_719_476_736],
+  sandboxServicePids: [16, 65_536],
 } as const;
 
 const NUMERIC_KEYS = [
@@ -108,6 +113,9 @@ const NUMERIC_KEYS = [
   'knowledgeKeywordMinChars',
   'chatReplyPresenceWindowSeconds',
   'sandboxWorkspaceMaxBytes',
+  'sandboxScriptMemoryBytes',
+  'sandboxServiceMemoryBytes',
+  'sandboxServicePids',
 ] as const;
 
 const BOOLEAN_KEYS = [
@@ -122,6 +130,7 @@ const BOOLEAN_KEYS = [
   'sandboxServicesEnabled',
   'sandboxScriptsEnabled',
   'sandboxScriptsAllowNetwork',
+  'sandboxWorkspacesDebug',
 ] as const;
 
 /** The organization's name: one line, long enough for any registered name. */
@@ -132,7 +141,8 @@ type EditableKey =
   | (typeof BOOLEAN_KEYS)[number]
   | 'logLevel'
   | 'agentActStepsRequireApproval'
-  | 'organizationName';
+  | 'organizationName'
+  | 'admanagerProductName';
 type EditableValue = boolean | number | string | LogLevel | ActApprovalPolicy;
 
 function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
@@ -175,6 +185,11 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
     sandboxServicesEnabled: settings.sandboxServicesEnabled,
     sandboxScriptsEnabled: settings.sandboxScriptsEnabled,
     sandboxScriptsAllowNetwork: settings.sandboxScriptsAllowNetwork,
+    sandboxScriptMemoryBytes: settings.sandboxScriptMemoryBytes,
+    sandboxServiceMemoryBytes: settings.sandboxServiceMemoryBytes,
+    sandboxServicePids: settings.sandboxServicePids,
+    sandboxWorkspacesDebug: settings.sandboxWorkspacesDebug,
+    admanagerProductName: settings.admanagerProductName,
   };
 }
 
@@ -249,6 +264,18 @@ export async function PUT(
     if (trimmed !== before.organizationName) {
       updates.organizationName = trimmed;
       changed.organizationName = { from: before.organizationName, to: trimmed };
+    }
+  }
+
+  if ('admanagerProductName' in submitted) {
+    const value = submitted.admanagerProductName;
+    if (typeof value !== 'string' || !value.trim()) {
+      return NextResponse.json({ error: 'admanagerProductName must be a name' }, { status: 400 });
+    }
+    const trimmed = value.trim().slice(0, ORGANIZATION_NAME_MAX_CHARS);
+    if (trimmed !== before.admanagerProductName) {
+      updates.admanagerProductName = trimmed;
+      changed.admanagerProductName = { from: before.admanagerProductName, to: trimmed };
     }
   }
 

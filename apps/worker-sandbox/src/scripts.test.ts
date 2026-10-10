@@ -98,7 +98,7 @@ beforeAll(async () => {
     runsRoot,
     python: python ?? 'python3',
     networkIsolation,
-    memoryBytes: 512 * 1_048_576,
+    memoryBytes: async () => 512 * 1_048_576,
     maxFileBytes: async () => 1_048_576,
   });
   await runner.prepare();
@@ -111,7 +111,7 @@ function runnerIn(mode: NetworkIsolation | null): ScriptRunner {
     runsRoot,
     python: python ?? 'python3',
     networkIsolation: mode,
-    memoryBytes: 512 * 1_048_576,
+    memoryBytes: async () => 512 * 1_048_576,
     maxFileBytes: async () => 1_048_576,
   });
 }

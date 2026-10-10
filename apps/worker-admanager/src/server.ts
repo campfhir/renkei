@@ -74,7 +74,7 @@ export interface AdManagerServerDeps {
    * ADManager Plus deployment expects a specific registered name can
    * override it.
    */
-  legacyProductName?: string;
+  legacyProductName?: () => Promise<string | undefined>;
   /** Injected in tests; production dials the real server. */
   dial?: UpstreamDialer;
   /** Injected in tests; production reads the store. */
@@ -235,7 +235,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
    * from an endpoint that was expected to be small can't fail a call
    * that was never going to look past the status line.
    */
-  function forward(
+  async function forward(
     instance: InstanceRow,
     authToken: string,
     body: Record<string, unknown>,
@@ -248,7 +248,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       ? Buffer.from(typeof body.body === 'string' ? body.body : JSON.stringify(body.body))
       : undefined;
     const legacy = isLegacyRestPath(path);
-    const productName = deps.legacyProductName?.trim() || 'Renkei';
+    const productName = (await deps.legacyProductName?.())?.trim() || 'Renkei';
     const authHeaders: Record<string, string> = {};
     const authQuery: Record<string, string> = {};
     if (authToken) {

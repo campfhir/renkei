@@ -7,7 +7,6 @@
 import {
   demultiplexLogs,
   parseDockerHost,
-  parseMemoryBytes,
   pullStreamError,
   registryAuthHeader,
 } from './docker';
@@ -82,17 +81,5 @@ describe('demultiplexLogs', () => {
   it('tolerates a truncated last frame', () => {
     const raw = Buffer.concat([frame(1, 'ok\n'), frame(1, 'cut off here').subarray(0, 12)]);
     expect(demultiplexLogs(raw)).toBe('ok\ncut ');
-  });
-});
-
-describe('parseMemoryBytes', () => {
-  it('reads docker-style sizes and falls back when unset', () => {
-    expect(parseMemoryBytes(undefined, 5)).toBe(5);
-    expect(parseMemoryBytes('', 5)).toBe(5);
-    expect(parseMemoryBytes('512m', 0)).toBe(512 * 1_048_576);
-    expect(parseMemoryBytes('2G', 0)).toBe(2 * 1_073_741_824);
-    expect(parseMemoryBytes('1.5g', 0)).toBe(Math.floor(1.5 * 1_073_741_824));
-    expect(parseMemoryBytes('4096', 0)).toBe(4096);
-    expect(() => parseMemoryBytes('lots', 0)).toThrow(/memory size/);
   });
 });

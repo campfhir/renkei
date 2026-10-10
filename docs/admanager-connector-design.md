@@ -208,8 +208,8 @@ the real server exposes two distinct, older generations —
   PATCH endpoints, these answer HTTP 200 even on a logical rejection.
 
 `/RestAPI/*` authenticates differently, too: `AuthToken` and
-`PRODUCT_NAME` (default `'Renkei'`, `ADMANAGER_PRODUCT_NAME` overrides
-it) sent as BOTH request headers and query parameters — never the
+`PRODUCT_NAME` (the organization's "AD Manager product name" setting,
+default `'Renkei'`) sent as BOTH request headers and query parameters — never the
 `Authorization` header `/api/v2/*` uses. `apps/worker-admanager/src/server.ts`'s
 `forward()` branches on the path (`isLegacyRestPath`, `/RestAPI/`
 prefix) to inject the right shape; the web/tool layer never sees the

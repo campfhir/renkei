@@ -29,7 +29,7 @@ export async function register() {
       process.exit(1);
     }
 
-    // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
+    // Every adapter starts at info, which holds only for the few seconds
     // before the database is reachable; once it is, the org `logLevel` dial
     // (packages/settings) governs, polled and reapplied here so a saved
     // change takes effect without a restart. Started here (real server
@@ -66,7 +66,7 @@ export async function register() {
 
     const adapter = new PostgresAdapter({
       db: dbResult.val,
-      level: process.env.LOG_DB_LEVEL ?? 'info',
+      level: 'info',
       encrypt: cipher.encrypt,
       decrypt: cipher.decrypt,
       onWarning(w) {
@@ -84,10 +84,7 @@ export async function register() {
     logger.addAdapter(adapter);
 
     globalMarks.__renkeiPgLogAdapterAttached = true;
-    logger.info('PostgresAdapter registered', {
-      component: 'web/instrumentation',
-      level: process.env.LOG_DB_LEVEL ?? 'info',
-    });
+    logger.info('PostgresAdapter registered', { component: 'web/instrumentation' });
 
     await reportSchemaDrift();
 

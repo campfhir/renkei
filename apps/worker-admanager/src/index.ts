@@ -18,12 +18,14 @@
  *     stored instance credentials.
  *   DATABASE_URL             — the shared Postgres, for the instance
  *     registry and connections.
- *   ADMANAGER_PRODUCT_NAME   — optional; the PRODUCT_NAME the legacy
- *     /RestAPI/* endpoints (unlock, reset-password, create, group
- *     membership) identify this caller as. Defaults to 'Renkei'.
+ *
+ * The PRODUCT_NAME the legacy /RestAPI/* endpoints (unlock, reset-password,
+ * create, group membership) identify this caller as is the organization's
+ * setting (admin → Settings → AD Manager), default 'Renkei'.
  */
 
 import { runWorker } from '@renkei/worker-kit';
+import { getOrgSettings } from '@renkei/settings';
 import { createAdManagerServer } from './server';
 import { logger, attachPersistentLogging } from './logger';
 
@@ -37,6 +39,9 @@ void runWorker({
     createAdManagerServer({
       db,
       apiKeys,
-      legacyProductName: process.env.ADMANAGER_PRODUCT_NAME,
+      legacyProductName: async () => {
+        const settings = await getOrgSettings();
+        return settings.ok ? settings.val.admanagerProductName : undefined;
+      },
     }),
 });

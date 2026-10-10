@@ -63,7 +63,7 @@ export async function runWorker(options: RunWorkerOptions): Promise<void> {
   }
 
   await options.attachPersistentLogging();
-  // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
+  // Every adapter starts at info, which holds only for the few seconds
   // before the database is reachable; once it is, the org `logLevel` dial
   // (packages/settings) governs, polled and reapplied here so a saved
   // change takes effect without restarting this process.

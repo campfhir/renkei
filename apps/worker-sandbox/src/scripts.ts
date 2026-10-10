@@ -59,7 +59,6 @@ import {
   SCRIPT_MAX_CONCURRENT_RUNS,
   SCRIPT_MAX_INPUT_BYTES,
   SCRIPT_MAX_INPUT_FILES,
-  SCRIPT_MAX_MEMORY_BYTES,
   SCRIPT_MAX_OUTPUT_FILES,
   SCRIPT_MAX_PROCESSES,
   SCRIPT_OUTPUT_DIR,
@@ -91,8 +90,8 @@ export interface ScriptRunnerDeps {
   python: string;
   /** How a run is started with no network (verifyNetworkIsolation's finding at boot); null runs it on the container's network. */
   networkIsolation: NetworkIsolation | null;
-  /** RLIMIT_AS for a run, in bytes. */
-  memoryBytes: number;
+  /** RLIMIT_AS for a run, in bytes, read as the run starts: the organization's setting. */
+  memoryBytes: () => Promise<number>;
   /** The per-tenant per-file ceiling for what a run stages back. */
   maxFileBytes: () => Promise<number>;
 }
@@ -437,7 +436,7 @@ export class ScriptRunner {
         networkIsolation,
       },
       'bash',
-      ['-c', scriptCommand(this.deps.python, this.deps.memoryBytes)]
+      ['-c', scriptCommand(this.deps.python, await this.deps.memoryBytes())]
     );
 
     const staged = await this.stageOutputs(target, outDir);
@@ -527,15 +526,3 @@ export class ScriptRunner {
   }
 }
 
-/** The memory ceiling for a run from SANDBOX_SCRIPT_MEMORY, else the default. */
-export function scriptMemoryBytes(raw: string | undefined): number {
-  const value = (raw ?? '').trim().toLowerCase();
-  if (!value) return SCRIPT_MAX_MEMORY_BYTES;
-  const match = /^(\d+(?:\.\d+)?)\s*([kmg]?)b?$/.exec(value);
-  if (!match) throw new Error(`SANDBOX_SCRIPT_MEMORY is not a memory size: ${raw}`);
-  const scale = { '': 1, k: 1_024, m: 1_048_576, g: 1_073_741_824 }[match[2]!] ?? 1;
-  const bytes = Math.floor(Number(match[1]) * scale);
-  if (bytes < 64 * 1_048_576)
-    throw new Error(`SANDBOX_SCRIPT_MEMORY is too small to run Python: ${raw}`);
-  return bytes;
-}
