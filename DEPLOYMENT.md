@@ -180,8 +180,13 @@ Images are built for `linux/amd64`, with the short commit baked in as
 `GIT_COMMIT` so log rows name the exact build and the version as
 `APP_VERSION` so the web app can show it. Pull requests never publish.
 
-Every image is also built and scanned by Trivy on every pull request, and
-again before the push from `main`: a fixable `HIGH` or `CRITICAL` in the OS
+Every image is also built, smoke-started and scanned by Trivy on every pull
+request, and again before the push from `main`. The smoke start
+(`scripts/smoke-image.sh`) boots each image against a throwaway Postgres at
+that build's schema and waits for its health endpoint (the queue worker's
+boot line; the migrate image's clean exit), so an image that cannot start —
+a file the runtime stage forgot to copy, say — fails the PR rather than the
+first production pull. The scan: a fixable `HIGH` or `CRITICAL` in the OS
 packages, in `node_modules`, or in anything else the image carries (the
 sandbox's toolchains and language servers included) fails that image's job
 and nothing of it is pushed (the dated baseline is `.trivyignore`; the
