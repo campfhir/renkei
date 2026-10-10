@@ -95,9 +95,11 @@ The earlier design recommended Renkei-local groups because the OIDC config
 read one claim and mapped it to two values. The org chose IdP claims: groups
 already exist at the IdP, and a second membership list in Renkei would drift.
 
-**Recording.** `oidc_config.groups_claim` names the id_token claim (NULL is
-the conventional `groups`; separate from `role_claim` because Entra puts app
-roles and directory groups in different claims). `identities.idp_groups`
+**Recording.** `oidc_config.groups_claim` names the id_token claim (NULL
+means no claim is read and nobody is in any group — there is no conventional
+claim to assume, so a restricted audience is open to nobody until the
+operator names one; separate from `role_claim` because Entra puts app roles
+and directory groups in different claims). `identities.idp_groups`
 holds the raw values the claim carried at the person's LAST sign-in,
 replaced wholesale each time, so a group the IdP took away is gone with the
 next session. On `identities` rather than in its own table because the

@@ -9,8 +9,12 @@ import {
   sessionCookieOptions,
   SESSION_TTL_SECONDS,
 } from '@/lib/session';
-import { identityClaimsFromIdToken, hasGroupsOverage, upsertIdentity } from '@/lib/identity';
-import { DEFAULT_GROUPS_CLAIM } from '@/lib/tenant-operations';
+import {
+  identityClaimsFromIdToken,
+  hasGroupsOverage,
+  upsertIdentity,
+  clearIdpGroups,
+} from '@/lib/identity';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 import { safeFetch, assertPublicHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
@@ -256,9 +260,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // email fails closed without it. No extra scope is requested for
     // groups: it is not a standard OIDC scope, and IdPs emit the claim per
     // app registration (Entra) or claim mapping (Okta, Keycloak).
-    const groupsClaim = oidc.groupsClaim || DEFAULT_GROUPS_CLAIM;
+    //
+    // Groups are never assumed. With no groups claim configured the person
+    // is in no groups; a token that omits the configured claim puts them
+    // in none; and a token whose claims cannot be read forgets the groups
+    // recorded at their last sign-in. An audience-scoped connector is open
+    // only to someone whose current token names one of its groups.
+    const groupsClaim = oidc.groupsClaim || null;
     const identityClaims = decoded ? identityClaimsFromIdToken(decoded, groupsClaim) : null;
-    if (decoded && hasGroupsOverage(decoded, groupsClaim)) {
+    if (decoded && groupsClaim && hasGroupsOverage(decoded, groupsClaim)) {
       // Entra omits the claim past ~200 groups and points at Graph instead.
       // Renkei does not follow the pointer, so this person has no groups on
       // record and every audience-scoped connector is closed to them.
@@ -278,6 +288,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       console.warn(
         `[OIDC] id_token carries no email claim; gates will fail closed for this user`
       );
+      const forgotten = await clearIdpGroups(subject);
+      if (!forgotten.ok) {
+        logger.warn('could not clear recorded groups for a subject whose claims were unreadable', {
+          component: 'auth/oidc',
+          subject,
+        });
+      }
     }
 
     // Decode and mint standardized renkei roles from IDP claims

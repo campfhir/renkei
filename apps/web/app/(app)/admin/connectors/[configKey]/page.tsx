@@ -11,7 +11,7 @@ import AvailabilityToggles from '../availability-toggles';
 import AudienceControl from './audience-control';
 import { getDatabase } from '@renkei/db';
 import { observedIdpGroups } from '@/lib/identity';
-import { getTenantOidcClaims, DEFAULT_GROUPS_CLAIM } from '@/lib/tenant-operations';
+import { getTenantOidcClaims } from '@/lib/tenant-operations';
 import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
@@ -42,7 +42,9 @@ export default async function AdminConnectorPage({
     dbResult.ok ? observedIdpGroups(dbResult.val, '', 10_000) : Promise.resolve([]),
     getTenantOidcClaims(),
   ]);
-  const groupsClaim = (oidcClaims.ok ? oidcClaims.val?.groupsClaim : null) || DEFAULT_GROUPS_CLAIM;
+  // null: no groups claim is configured, so nobody is in any group and a
+  // restricted audience closes the connector to everyone. The control says so.
+  const groupsClaim = (oidcClaims.ok ? oidcClaims.val?.groupsClaim : null) || null;
   const Form = definition.adminForm;
   const togglable = definition.entries.filter((entry) => entry.togglable);
   // Jira and JSM share one capability key; one switch, listed once.

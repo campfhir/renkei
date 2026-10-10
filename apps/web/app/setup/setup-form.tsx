@@ -189,7 +189,10 @@ export default function SetupForm() {
         </div>
         <div>
           <label htmlFor="groupsClaim" className={labelClass}>
-            Groups claim <span className="font-normal text-gray-500">(optional, default “groups”)</span>
+            Groups claim{' '}
+            <span className="font-normal text-gray-500">
+              (optional; empty means nobody is in any group)
+            </span>
           </label>
           <input
             id="groupsClaim"
@@ -202,7 +205,8 @@ export default function SetupForm() {
 
       <div>
         <label htmlFor="setupSecret" className={labelClass}>
-          Setup secret <span className="font-normal text-gray-500">(from the server log)</span>
+          Setup secret{' '}
+          <span className="font-normal text-gray-500">(SETUP_SECRET in the app&apos;s environment)</span>
         </label>
         <input
           id="setupSecret"

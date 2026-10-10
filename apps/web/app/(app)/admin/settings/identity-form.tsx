@@ -92,8 +92,9 @@ export default function IdentityForm({ initial, observedGroups }: {
           />
           <p className={hintClass}>
             Recorded at sign-in for connector audiences. {observedGroups} distinct value
-            {observedGroups === 1 ? '' : 's'} seen so far. Entra omits the claim for people in more
-            than ~200 groups; they then count as in no group.
+            {observedGroups === 1 ? '' : 's'} seen so far. Leave it empty and nobody is in any
+            group, so a connector restricted to an audience is open to nobody. Entra omits the
+            claim for people in more than ~200 groups; they then count as in no group.
           </p>
         </div>
         <div>

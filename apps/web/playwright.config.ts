@@ -11,6 +11,7 @@
 
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+import { E2E_SETUP_SECRET } from './e2e/setup-secret';
 
 // Env (DATABASE_URL, TOKEN_ENCRYPTION_KEY) lives in the repo-root
 // .env.development; absent file is fine when the vars are already exported.
@@ -108,6 +109,10 @@ export default defineConfig({
         ...(process.env.TOKEN_ENCRYPTION_KEY
           ? { TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY }
           : {}),
+        // First-run setup's credential (setup.spec.ts presents it); the
+        // app ignores it while an identity provider exists, which is every
+        // other spec's situation.
+        SETUP_SECRET: E2E_SETUP_SECRET,
         // Every key the app needs it gets from the delegate above.
         DELEGATE_WORKER_URL: 'http://127.0.0.1:8096',
         DELEGATE_WORKER_API_KEY: 'e2e-delegate-key',

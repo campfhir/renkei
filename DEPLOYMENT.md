@@ -15,6 +15,11 @@ This guide covers deploying the Jira MCP Gateway to production.
 Create a `.env.local` file with production values:
 
 ```bash
+# First-run setup only (see "First-run setup" below): gates the first save of
+# the identity provider while no operator can exist yet. At least 16
+# characters; remove it once the provider is configured.
+SETUP_SECRET=<openssl rand -base64 32>
+
 # Encryption
 # Generate each with: openssl rand -base64 32
 TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
@@ -172,13 +177,19 @@ SHA, so a deployment can pin exactly the build it tested
 has become. Bump the version when a release should keep its own tag;
 until then a new push to `main` overwrites `latest` and the version tag.
 Images are built for `linux/amd64`, with the short commit baked in as
-`GIT_COMMIT` so log rows name the exact build. Pull requests never
-publish.
+`GIT_COMMIT` so log rows name the exact build and the version as
+`APP_VERSION` so the web app can show it. Pull requests never publish.
 
-Before the push, every image is scanned by Trivy: a fixable `HIGH` or
-`CRITICAL` in the OS packages or in `node_modules` fails that image's job
+Every image is also built and scanned by Trivy on every pull request, and
+again before the push from `main`: a fixable `HIGH` or `CRITICAL` in the OS
+packages, in `node_modules`, or in anything else the image carries (the
+sandbox's toolchains and language servers included) fails that image's job
 and nothing of it is pushed (the dated baseline is `.trivyignore`; the
-same list by GHSA id gates `pnpm audit` in `pnpm-workspace.yaml`). Each
+same list by GHSA id gates `pnpm audit` in `pnpm-workspace.yaml`). The
+images ship no package manager: npm and pnpm are build-time tools removed
+from every final stage, and each process is started with `node` from its
+app's directory (the sandbox keeps pnpm on the PATH for a code workspace's
+own commands, and no npm). Each
 pushed image carries a SLSA provenance attestation (`mode=max`: the
 workflow, commit and build arguments that produced it) and an SBOM,
 attached to its manifest; read them with
@@ -210,11 +221,14 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
 
 - `worker` — consumes the `events` queue: WebEx replies, webhook
   orchestration, Graph/Zoom fetches, periodic sweeps. Entrypoint:
-  `pnpm --filter @renkei/worker start`.
+  `node node_modules/tsx/dist/cli.mjs src/index.ts` in `apps/worker` (the
+  images carry no package manager; every process is started with `node`
+  from its app's directory).
 - `embeddings-worker` — consumes the `embedding_jobs` queue: every
   ingest-time call to the org-configured embeddings endpoint (chunk
   ingestion, index deletes and purges, related-items back-fill).
-  Entrypoint: `pnpm --filter @renkei/worker start:embeddings`.
+  Entrypoint: `node node_modules/tsx/dist/cli.mjs src/embeddings-worker.ts`
+  in `apps/worker`.
 - `worker-batch-jobs` — consumes the `batch_job_messages` queue: one
   message per unit of work in a batch job (document-ocr-pipeline's OCR
   calls today; a future batch kind is a new handler, not a new queue). Item
@@ -225,7 +239,8 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   person's own share credential is attached there) and stages OCR results
   on `worker-sandbox` directly (`SANDBOX_WORKER_URL` and its bearer key,
   same as the web app uses). Entrypoint:
-  `pnpm --filter @renkei/worker start:batch-jobs`.
+  `node node_modules/tsx/dist/cli.mjs src/batch-jobs-worker.ts` in
+  `apps/worker`.
 - `worker-fileshares` — not a queue consumer but an internal HTTP service,
   and not on the shared worker image: it ships as its **own image**
   (`renkei-fileshares`, the `fileshares` target in `docker/Dockerfile`,
@@ -239,7 +254,8 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   (`openssl rand -base64 32` makes a good key; the worker also honors
   `FILESHARES_WORKER_PORT`, default 8090). Without them the file-share
   connector answers "service not configured" everywhere — closed, never
-  open. Entrypoint: `pnpm --filter @renkei/worker-fileshares start`.
+  open. Entrypoint: `node node_modules/tsx/dist/cli.mjs src/index.ts` in
+  `apps/worker-fileshares`.
 - `worker-onbase` — the same shape for Hyland OnBase: an internal HTTP
   service on its **own image** (`renkei-onbase`, the `onbase` target in
   `docker/Dockerfile`, opt-in prompts in the build/push scripts). It is
@@ -251,7 +267,8 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `ONBASE_WORKER_API_KEY` — set the key in `.env` (the worker also honors
   `ONBASE_WORKER_PORT`, default 8091). Without them the OnBase connector
   answers "worker not configured" everywhere — closed, never open.
-  Entrypoint: `pnpm --filter @renkei/worker-onbase start`.
+  Entrypoint: `node node_modules/tsx/dist/cli.mjs src/index.ts` in
+  `apps/worker-onbase`.
 - `worker-delegate` — the one process that holds a key
   (docs/delegate-key-design.md). It derives nothing: at boot it generates
   an X25519 keypair and registers itself in `delegate_instances`; a
@@ -291,7 +308,8 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `USER_KEY_ENCRYPTION_KEY` (above). Without it, no chat opens and no
   connector acts: fail closed, never open. A restart is a new instance:
   browsers seal again on their next page load, and runs in flight resume
-  then. Entrypoint: `pnpm --filter @renkei/worker-delegate start`; image
+  then. Entrypoint: `node node_modules/tsx/dist/cli.mjs src/index.ts` in
+  `apps/worker-delegate`; image
   target `delegate`.
 - `worker-admanager` — the same shape for ManageEngine ADManager Plus: an
   internal HTTP service on its **own image** (`renkei-admanager`, the
@@ -303,7 +321,8 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   (`openssl rand -base64 32`; the worker also honors
   `ADMANAGER_WORKER_PORT`, default 8095). Without it the ADManager
   connector answers "service not configured" everywhere — closed, never
-  open. Entrypoint: `pnpm --filter @renkei/worker-admanager start`.
+  open. Entrypoint: `node node_modules/tsx/dist/cli.mjs src/index.ts` in
+  `apps/worker-admanager`.
 - `worker-mirth` — the same shape for Mirth Connect (NextGen Connect
   4.5.2): an internal HTTP service on its **own image** (`renkei-mirth`, the
   `mirth` target in `docker/Dockerfile`, opt-in prompts in the build/push
@@ -318,7 +337,8 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `.env` (`openssl rand -base64 32` makes a good key; the worker also honors
   `MIRTH_WORKER_PORT`, default 8093). Without them the Mirth connector
   answers "service not configured" everywhere — closed, never open.
-  Entrypoint: `pnpm --filter @renkei/worker-mirth start`.
+  Entrypoint: `node node_modules/tsx/dist/cli.mjs src/index.ts` in
+  `apps/worker-mirth`.
 - `worker-sandbox` — the same shape again, for the agent scratch space: an
   internal HTTP service on its **own image** (`renkei-sandbox`, the
   `sandbox` target in `docker/Dockerfile`, opt-in prompts in the build/push
@@ -451,7 +471,8 @@ DESC` says which server to add next.
   are on its own disk and in its own memory, with only the rows in the
   database. Replicas on one host share those disks and work; replicas
   on separate disks do not — see "More than one sandbox replica" below.
-  Entrypoint: `pnpm --filter @renkei/worker-sandbox start`. The image's
+  Entrypoint: `node node_modules/tsx/dist/cli.mjs src/index.ts` in
+  `apps/worker-sandbox`. The image's
   entrypoint keeps the process root so every caller's command can be
   dropped to that caller's own uid, whichever organization turns
   workspaces or scripts on later; `SANDBOX_RUN_AS_WORKER=true` in `.env`
@@ -960,23 +981,29 @@ find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
 A Renkei deployment serves exactly one organization. Until its identity
 provider is configured nobody can sign in, and operator identity is itself
 derived from OIDC — so the first configuration cannot be gated by a session.
-It is gated by a **one-time setup secret** instead:
+It is gated by a **setup secret in the app's environment** instead:
 
-1. Start the web app with the database migrated and open `/setup` (a
-   signed-out visit to any page redirects there while no provider exists).
-   Opening the page mints the secret and writes it to the **server log**
-   (`First-run setup: … enter the setup secret …`) — the one place it ever
-   appears in the clear. Only the digest is stored (`settings`), and the
-   secret dies on use or after 24 hours; reloading the page after it expired
-   mints a fresh one.
-2. Enter the OpenID Connect discovery URL, client id and secret, the claim
-   mapping that decides who is an operator (role claim and the values that
-   mean operator and user), and the secret from the log. The form posts to
-   `POST /api/oidc` with the `X-Renkei-Setup-Secret` header; the secret is
-   spent on success.
+1. Set `SETUP_SECRET` on the web app (in `.env` for compose; at least 16
+   characters, `openssl rand -base64 32` makes a good one) and start it with
+   the database migrated. The secret is never stored or logged: the server
+   compares what the form presents against the variable, nothing more. (Why
+   not the server log, where an earlier build minted one: the log store is
+   readable through the app's own log viewer, so a secret written there
+   outlives its purpose. Why not "from localhost": behind a reverse proxy
+   the peer address is the proxy's, so that means either nobody or
+   everybody.)
+2. Open `/setup` (a signed-out visit to any page redirects there while no
+   provider exists). Without a usable `SETUP_SECRET` the page says so and
+   offers no form. Enter the OpenID Connect discovery URL, client id and
+   secret, the claim mapping that decides who is an operator (role claim and
+   the values that mean operator and user), the groups claim if connector
+   audiences will be used (leave it empty and nobody is in any group), and
+   the setup secret. The form posts to `POST /api/oidc` with the
+   `X-Renkei-Setup-Secret` header.
 3. Sign in with an account that carries the operator value. Every later
-   change to the provider is operator-only (Settings → Identity), and `/setup`
-   redirects home once a provider exists.
+   change to the provider is operator-only (Settings → Identity), `/setup`
+   redirects home once a provider exists, and `SETUP_SECRET` is ignored from
+   then on — remove it from the environment.
 
 The organization's name, shown on the consent page, is the `organizationName`
 org setting (default "Renkei").

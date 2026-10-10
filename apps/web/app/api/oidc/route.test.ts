@@ -4,10 +4,10 @@
  * This record decides who becomes an operator, so an unauthorised write to it
  * is full takeover: point the deployment at an attacker-controlled IdP,
  * nominate the claim value that confers renkei-operator, sign in. The rule
- * these tests pin is that the first configuration needs the one-time setup
- * secret — operator identity comes from OIDC, so no operator can exist before
- * a provider is configured — while every change after that requires an
- * operator session.
+ * these tests pin is that the first configuration needs the setup secret from
+ * the app's environment — operator identity comes from OIDC, so no operator can
+ * exist before a provider is configured — while every change after that
+ * requires an operator session.
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
@@ -40,9 +40,10 @@ jest.mock('@/lib/tenant-operations', () => ({
 }));
 jest.mock('@/lib/setup-secret', () => ({
   SETUP_SECRET_HEADER: 'x-renkei-setup-secret',
+  SETUP_SECRET_ENV: 'SETUP_SECRET',
+  SETUP_SECRET_MIN_CHARS: 16,
   identityProviderConfigured: jest.fn(),
   verifySetupSecret: jest.fn(),
-  clearSetupSecret: jest.fn(),
 }));
 
 import { NextRequest } from 'next/server';
@@ -55,15 +56,11 @@ const { setTenantOidc: mockSetTenantOidc, createTenantOidcIfAbsent: mockCreateTe
   jest.requireMock<{ setTenantOidc: jest.Mock; createTenantOidcIfAbsent: jest.Mock }>(
     '@/lib/tenant-operations'
   );
-const {
-  identityProviderConfigured: mockConfigured,
-  verifySetupSecret: mockVerify,
-  clearSetupSecret: mockClear,
-} = jest.requireMock<{
-  identityProviderConfigured: jest.Mock;
-  verifySetupSecret: jest.Mock;
-  clearSetupSecret: jest.Mock;
-}>('@/lib/setup-secret');
+const { identityProviderConfigured: mockConfigured, verifySetupSecret: mockVerify } =
+  jest.requireMock<{
+    identityProviderConfigured: jest.Mock;
+    verifySetupSecret: jest.Mock;
+  }>('@/lib/setup-secret');
 
 const SECRET = 'the-setup-secret';
 
@@ -84,9 +81,9 @@ function stubDb(options: { existingOidc?: boolean } = {}) {
   mockConfigured.mockResolvedValue(existingOidc);
 }
 
-/** The setup secret as the verifier sees it: live and matching unless told otherwise. */
-function stubSecret(verdict: 'ok' | 'missing' | 'expired' | 'mismatch' | 'none-issued' = 'ok') {
-  mockVerify.mockImplementation(async (_db: unknown, presented: string | null) =>
+/** The setup secret as the verifier sees it: configured and matching unless told otherwise. */
+function stubSecret(verdict: 'ok' | 'missing' | 'mismatch' | 'unset' | 'short' = 'ok') {
+  mockVerify.mockImplementation((presented: string | null) =>
     verdict === 'ok' ? (presented === SECRET ? 'ok' : presented ? 'mismatch' : 'missing') : verdict
   );
 }
@@ -137,10 +134,8 @@ describe('OIDC configuration', () => {
     mockCreateTenantOidc.mockReset();
     mockConfigured.mockReset();
     mockVerify.mockReset();
-    mockClear.mockReset();
     mockSetTenantOidc.mockResolvedValue({ ok: true, val: undefined });
     mockCreateTenantOidc.mockResolvedValue({ ok: true, val: true });
-    mockClear.mockResolvedValue(undefined);
     stubSecret();
     stubDiscovery();
   });
@@ -155,14 +150,12 @@ describe('OIDC configuration', () => {
       expect(mockCreateTenantOidc).toHaveBeenCalledTimes(1);
       // Never the upserting writer on this path.
       expect(mockSetTenantOidc).not.toHaveBeenCalled();
-      // The secret was for exactly this write: spent.
-      expect(mockClear).toHaveBeenCalledTimes(1);
     });
 
     it('refuses a caller with no setup secret before fetching discovery', async () => {
       // The squat: whoever reaches the deployment first posting their own
-      // IdP. Without the secret only the server log holds, reaching it buys
-      // nothing.
+      // IdP. Without the secret only the deployment's environment holds,
+      // reaching it buys nothing.
       stubDb({ existingOidc: false });
 
       const response = await POST(post(VALID_BODY, { setupSecret: null }));
@@ -181,24 +174,29 @@ describe('OIDC configuration', () => {
       expect(mockCreateTenantOidc).not.toHaveBeenCalled();
     });
 
-    it('refuses an expired setup secret even when it matches', async () => {
+    it('refuses everyone while the environment holds no setup secret', async () => {
+      // No secret set means nobody can configure the provider, not that
+      // anybody can: the page says how to set one, the API says the same.
       stubDb({ existingOidc: false });
-      stubSecret('expired');
+      stubSecret('unset');
 
       const response = await POST(post(VALID_BODY));
 
       expect(response.status).toBe(401);
-      expect(await response.json()).toMatchObject({ error: expect.stringContaining('expired') });
+      expect(await response.json()).toMatchObject({
+        error: expect.stringContaining('SETUP_SECRET'),
+      });
       expect(mockCreateTenantOidc).not.toHaveBeenCalled();
     });
 
-    it('refuses when no secret was ever issued (the setup page was never opened)', async () => {
+    it('refuses everyone while the configured secret is too short to count', async () => {
       stubDb({ existingOidc: false });
-      stubSecret('none-issued');
+      stubSecret('short');
 
       const response = await POST(post(VALID_BODY));
 
       expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: expect.stringContaining('too short') });
       expect(mockCreateTenantOidc).not.toHaveBeenCalled();
     });
 
@@ -211,7 +209,6 @@ describe('OIDC configuration', () => {
       const response = await POST(post(VALID_BODY));
 
       expect(response.status).toBe(409);
-      expect(mockClear).not.toHaveBeenCalled();
     });
 
     it('still rejects a body missing required fields', async () => {

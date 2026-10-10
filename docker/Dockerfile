@@ -6,10 +6,15 @@
 # installs the latest major, which then tries to self-manage down to the pinned
 # version by fetching a @pnpm/exe.<platform> binary it cannot verify against
 # this lockfile — so the version is pinned here instead.
-ARG PNPM_VERSION=10.33.0
+ARG PNPM_VERSION=10.34.6
 # The build's git commit, baked into every stage's environment so the loggers
-# can stamp each row with the exact code that produced it (version 0.1.0+sha).
+# can stamp each row with the exact code that produced it (version 0.1.0+sha),
+# and the app's version (apps/web/package.json), which the web app shows
+# beside it — read from the environment now that no package manager's
+# lifecycle variables surround the process (scripts/docker-build.sh and the
+# CI workflow pass both).
 ARG GIT_COMMIT=unknown
+ARG APP_VERSION=dev
 
 # Base images are pinned by digest as well as tag: the tag says what the
 # image is, the digest says exactly which build of it, so an upstream
@@ -23,6 +28,16 @@ ARG GIT_COMMIT=unknown
 #   docker.io/library/node:24-alpine         (every Node-only stage)
 #   docker.io/library/node:24-bookworm-slim  (the sandbox: Chromium and the
 #                                             toolchains need glibc)
+#
+# The images ship no package manager. npm (bundled with Node, with its own
+# vendored tar, undici and brace-expansion) and the pnpm that installs the
+# dependencies are build-time tools: every final stage removes them once
+# the install is done and starts its process with `node` directly, from
+# the app's own directory (the working directory pnpm would have given
+# it). The scan then sees the application's dependencies and the runtime,
+# nothing a running service never calls. The sandbox is the one exception
+# for pnpm: a code workspace's own commands may want a package manager, so
+# the pinned pnpm stays on its PATH; npm goes there too.
 
 # Build stage
 FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS builder
@@ -103,7 +118,8 @@ RUN pnpm install --frozen-lockfile --prod --filter renkei... && \
     rm -rf node_modules/.pnpm/playwright@* node_modules/.pnpm/playwright-core@* \
       node_modules/.pnpm/@playwright+test@* \
       node_modules/.pnpm/node_modules/playwright node_modules/.pnpm/node_modules/playwright-core \
-      node_modules/.pnpm/node_modules/@playwright
+      node_modules/.pnpm/node_modules/@playwright && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 # The workspace packages ship TypeScript source (compiled into the build via
 # transpilePackages); the workspace links still need the packages present, and
@@ -129,7 +145,7 @@ COPY --chown=nextjs:nodejs --from=builder /app/apps/web/next.config.ts /app/apps
 # The log-shipping key generator, runnable as a one-off container on a target
 # machine (no repo checkout there):
 #   docker compose -f docker-compose.yaml run --rm --no-deps renkei \
-#     pnpm --filter renkei generate:log-ship-keys
+#     node scripts/generate-log-ship-keys.mjs
 COPY --chown=nextjs:nodejs --from=builder /app/apps/web/scripts/generate-log-ship-keys.mjs ./apps/web/scripts/
 
 # node_modules and the workspace sources stay root-owned and world-readable.
@@ -147,10 +163,12 @@ EXPOSE 3000
 
 # Set environment variables
 ARG GIT_COMMIT
+ARG APP_VERSION
 ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \
-    GIT_COMMIT=${GIT_COMMIT}
+    GIT_COMMIT=${GIT_COMMIT} \
+    APP_VERSION=${APP_VERSION}
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
@@ -159,8 +177,11 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
 
-# Start the application
-CMD ["pnpm", "--filter", "renkei", "start"]
+# Start the application from its own directory, as `pnpm --filter renkei
+# start` would have: `next start` reads the project from the working
+# directory, and lib/mockups resolves from it.
+WORKDIR /app/apps/web
+CMD ["node", "node_modules/next/dist/bin/next", "start"]
 
 # Worker stage - every long-running queue consumer, one image. The
 # queue-consuming processes (interactive events, embeddings, agent runs,
@@ -192,7 +213,8 @@ COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional \
       --filter @renkei/worker... --filter @renkei/worker-agents... && \
-    rm -rf /root/.pnpm-store /root/.npm
+    rm -rf /root/.pnpm-store /root/.npm && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 # The workers run TypeScript directly through tsx, so they ship source —
 # their own and that of every workspace package they import. Owned by the
@@ -211,7 +233,13 @@ ENV NODE_ENV=production \
     GIT_COMMIT=${GIT_COMMIT}
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["pnpm", "--filter", "@renkei/worker", "start"]
+# tsx runs the TypeScript source directly, from the app's own directory as
+# `pnpm --filter @renkei/worker start` did. The other processes off this
+# image are compose commands over the same shape: another entry file for
+# the embeddings and batch-jobs workers, and apps/worker-agents as the
+# working directory for the agents worker (docker-compose.yaml).
+WORKDIR /app/apps/worker
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 
 # Fileshares stage - the file-share I/O service, its own image on purpose:
 # it is the only process that opens SMB/SFTP sessions or decrypts share
@@ -235,7 +263,8 @@ COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional \
       --filter @renkei/worker-fileshares... && \
-    rm -rf /root/.pnpm-store /root/.npm
+    rm -rf /root/.pnpm-store /root/.npm && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 # tsx runs TypeScript source directly; workspace links need the package
 # sources present (only the filtered deps' node_modules were installed).
@@ -257,7 +286,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.FILESHARES_WORKER_PORT || 8090) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["pnpm", "--filter", "@renkei/worker-fileshares", "start"]
+WORKDIR /app/apps/worker-fileshares
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 
 # OnBase stage - the OnBase egress service, its own image on purpose: it
 # is the only process that dials a customer's on-prem OnBase API Server or
@@ -280,7 +310,8 @@ COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional \
       --filter @renkei/worker-onbase... && \
-    rm -rf /root/.pnpm-store /root/.npm
+    rm -rf /root/.pnpm-store /root/.npm && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 # tsx runs TypeScript source directly; workspace links need the package
 # sources present (only the filtered deps' node_modules were installed).
@@ -302,7 +333,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.ONBASE_WORKER_PORT || 8091) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["pnpm", "--filter", "@renkei/worker-onbase", "start"]
+WORKDIR /app/apps/worker-onbase
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 
 # Mirth stage - the Mirth Connect egress service, its own image on purpose:
 # it is the only process that dials an organization's Mirth Connect servers
@@ -326,7 +358,8 @@ COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional \
       --filter @renkei/worker-mirth... && \
-    rm -rf /root/.pnpm-store /root/.npm
+    rm -rf /root/.pnpm-store /root/.npm && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 # tsx runs TypeScript source directly; workspace links need the package
 # sources present (only the filtered deps' node_modules were installed).
@@ -348,7 +381,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.MIRTH_WORKER_PORT || 8093) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["pnpm", "--filter", "@renkei/worker-mirth", "start"]
+WORKDIR /app/apps/worker-mirth
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 
 # Delegate stage - the one process that holds a key
 # (docs/delegate-key-design.md): the only container that reads
@@ -371,7 +405,8 @@ COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional \
       --filter @renkei/worker-delegate... && \
-    rm -rf /root/.pnpm-store /root/.npm
+    rm -rf /root/.pnpm-store /root/.npm && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 COPY --chown=worker:nodejs --parents packages/*/src ./
 COPY --chown=worker:nodejs apps/worker-delegate/src ./apps/worker-delegate/src
@@ -389,7 +424,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.DELEGATE_WORKER_PORT || 8096) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["pnpm", "--filter", "@renkei/worker-delegate", "start"]
+WORKDIR /app/apps/worker-delegate
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 
 # ADManager stage - the ManageEngine ADManager Plus egress service, its own
 # image on purpose: it is the only process that dials an organization's
@@ -413,7 +449,8 @@ COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional \
       --filter @renkei/worker-admanager... && \
-    rm -rf /root/.pnpm-store /root/.npm
+    rm -rf /root/.pnpm-store /root/.npm && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 # tsx runs TypeScript source directly; workspace links need the package
 # sources present (only the filtered deps' node_modules were installed).
@@ -435,7 +472,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.ADMANAGER_WORKER_PORT || 8095) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["pnpm", "--filter", "@renkei/worker-admanager", "start"]
+WORKDIR /app/apps/worker-admanager
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 
 # Sandbox stage - the agent scratch-space worker, its own image on purpose:
 # it is the first process that holds staged file bytes at rest, so it gets
@@ -486,7 +524,9 @@ RUN apt-get update && \
 # for a richer write. Pinned, readable and executable by every caller's
 # uid (a run is dropped to one), and never written to at run time: a
 # script cannot pip install into it — it has no network to install from
-# in any case — so what runs is the script and exactly these libraries.
+# in any case, and pip itself goes, with the setuptools the venv seeded,
+# once the libraries are in — so what runs is the script and exactly
+# these libraries.
 # SANDBOX_PYTHON overrides the path; the worker checks the interpreter
 # and lists what it found at boot. pandas 2.3 and numpy 2.3 are the last
 # lines with wheels for bookworm's Python 3.11 (pandas 3 and numpy 2.5
@@ -504,6 +544,7 @@ RUN python3 -m venv /opt/sandbox-python && \
       "openpyxl==${OPENPYXL_VERSION}" \
       "XlsxWriter==${XLSXWRITER_VERSION}" \
       "python-dateutil==${PYTHON_DATEUTIL_VERSION}" && \
+    /opt/sandbox-python/bin/python3 -m pip uninstall -y pip setuptools && \
     chmod -R a+rX /opt/sandbox-python && \
     /opt/sandbox-python/bin/python3 -I -c "import pandas, numpy, openpyxl, xlsxwriter; print(pandas.__version__)"
 
@@ -524,10 +565,17 @@ RUN python3 -m venv /opt/sandbox-python && \
 ARG TS_LANGUAGE_SERVER_VERSION=6.0.0
 ARG TYPESCRIPT_VERSION=5.9.3
 ARG PYRIGHT_VERSION=1.1.414
-ARG SQL_LANGUAGE_SERVER_VERSION=1.7.1
 ARG BASH_LANGUAGE_SERVER_VERSION=5.8.1
-ARG GO_VERSION=1.27.1
+ARG GO_VERSION=1.27.2
 ARG GOPLS_VERSION=v0.23.0
+# gopls is built here rather than installed as released: its release pins
+# golang.org/x/mod and golang.org/x/text at versions with open advisories
+# (sumdb verification bypass, UTF-8 denial of service), so the build lifts
+# those two to the versions below and lets Go's version selection take the
+# higher one. Bump them with the advisories; drop them once a gopls release
+# requires fixed versions itself.
+ARG GO_X_MOD_VERSION=v0.42.0
+ARG GO_X_TEXT_VERSION=v0.43.0
 # Exact versions, never `stable`/`latest`, and every download below is
 # checked against the checksum its vendor publishes before anything is
 # extracted or run — go.dev's .sha256 beside each tarball, rustup's
@@ -537,16 +585,20 @@ ARG GOPLS_VERSION=v0.23.0
 ARG RUSTUP_VERSION=1.29.1
 ARG RUST_TOOLCHAIN=1.99.0
 ARG TEMURIN_RELEASE=jdk-21.0.12.1+1
-ARG JDTLS_VERSION=1.50.0
+ARG JDTLS_VERSION=1.61.0
 
-# TypeScript/JavaScript, Python, SQL and shell: Node-based, beside the
+# TypeScript/JavaScript, Python and shell: Node-based, beside the
 # worker's own Node. The shell server lints through shellcheck when it
-# finds one, so Debian's is installed with clangd below.
+# finds one, so Debian's is installed with clangd below. No SQL server:
+# the one the registry names (sql-language-server, packages/connector-
+# sandbox/src/lsp.ts) has no release without critical advisories in its
+# dependencies (mysql2 2.x, ssh2 0.8, tar 6), so SQL gets the tokenizer
+# alone until it ships one; an installation that wants it anyway can add
+# the package here.
 RUN npm install -g \
       typescript-language-server@${TS_LANGUAGE_SERVER_VERSION} \
       typescript@${TYPESCRIPT_VERSION} \
       pyright@${PYRIGHT_VERSION} \
-      sql-language-server@${SQL_LANGUAGE_SERVER_VERSION} \
       bash-language-server@${BASH_LANGUAGE_SERVER_VERSION} && \
     rm -rf /root/.npm && \
     typescript-language-server --version && pyright --version
@@ -575,9 +627,13 @@ RUN ARCH="$(dpkg --print-architecture)" && \
     curl -fsSL -o /tmp/go.sha256 "https://dl.google.com/go/${GO_TGZ}.sha256" && \
     echo "$(cat /tmp/go.sha256)  /tmp/${GO_TGZ}" | sha256sum -c - && \
     tar -C /usr/local -xzf "/tmp/${GO_TGZ}" && rm -f "/tmp/${GO_TGZ}" /tmp/go.sha256 && \
-    GOPATH=/tmp/gopath GOCACHE=/tmp/gocache GOBIN=/usr/local/bin \
-      /usr/local/go/bin/go install golang.org/x/tools/gopls@${GOPLS_VERSION} && \
-    rm -rf /tmp/gopath /tmp/gocache && \
+    mkdir -p /tmp/gopls-build && cd /tmp/gopls-build && \
+    export GOPATH=/tmp/gopath GOCACHE=/tmp/gocache && \
+    /usr/local/go/bin/go mod init renkei/gopls-build && \
+    /usr/local/go/bin/go get golang.org/x/tools/gopls@${GOPLS_VERSION} \
+      golang.org/x/mod@${GO_X_MOD_VERSION} golang.org/x/text@${GO_X_TEXT_VERSION} && \
+    /usr/local/go/bin/go build -trimpath -o /usr/local/bin/gopls golang.org/x/tools/gopls && \
+    cd / && rm -rf /tmp/gopls-build /tmp/gopath /tmp/gocache && \
     /usr/local/go/bin/go version && gopls version
 
 # Rust and rust-analyzer: rustup's toolchain under /usr/local/rustup, shared
@@ -656,7 +712,9 @@ COPY --chown=worker:nodejs apps/worker-sandbox/tsconfig.json ./apps/worker-sandb
 # /runs is a third place, with no volume: a script run's throwaway
 # directory (src/scripts.ts) lives there for the run and is removed with
 # it, and whatever a crash leaves is removed at the next boot.
-RUN mkdir -p /data /workspaces /runs && chown worker:nodejs /data && chmod 711 /workspaces /runs
+RUN mkdir -p /data /workspaces /runs && chown worker:nodejs /data && chmod 711 /workspaces /runs && \
+    rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+      /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 # No `USER worker` here, unlike every other stage: the entrypoint keeps the
 # worker root so each caller's commands can be dropped to their own uid
@@ -682,7 +740,13 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.SANDBOX_WORKER_PORT || 8092) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 ENTRYPOINT ["dumb-init", "--", "sandbox-entrypoint"]
-CMD ["pnpm", "--filter", "@renkei/worker-sandbox", "start"]
+# From the app's own directory, as pnpm would have run it: charts.ts finds
+# the Mermaid bundle through this package's dependencies from the working
+# directory. npm is gone from this image (its vendored dependencies carry
+# open advisories and the worker never calls it); the pinned pnpm stays for
+# a workspace's own commands.
+WORKDIR /app/apps/worker-sandbox
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 
 # Migration stage - runs migrations only
 FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS migrate
@@ -697,7 +761,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/db... && \
-    rm -rf /root/.pnpm-store /root/.npm
+    rm -rf /root/.pnpm-store /root/.npm && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 # Copy compiled migrations from builder stage
 COPY --from=builder /app/packages/db/dist ./packages/db/dist

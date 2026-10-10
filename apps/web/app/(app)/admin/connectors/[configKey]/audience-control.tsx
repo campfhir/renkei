@@ -23,8 +23,8 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
   capabilityKey: string;
   label: string;
   initialValues: string[];
-  /** The id_token claim the values are read from, for the hint. */
-  groupsClaim: string;
+  /** The id_token claim the values are read from; null when none is configured. */
+  groupsClaim: string | null;
   /** How many distinct values sign-ins have recorded so far. */
   observedGroups: number;
 }) {
@@ -83,10 +83,20 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
     >
       <h2 className="font-semibold">Who {label} is for</h2>
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-        Groups come from the <code className="text-xs">{groupsClaim}</code> claim at sign-in;{' '}
-        {observedGroups} distinct value{observedGroups === 1 ? '' : 's'} seen so far. Outside the
-        audience, the connector is not offered and its tools do not register — for anyone already
-        connected too.
+        {groupsClaim === null ? (
+          <>
+            No groups claim is configured (Settings → Identity), so nobody is in any group: a
+            restricted audience closes the connector to everyone until one is named.{' '}
+          </>
+        ) : (
+          <>
+            Groups come from the <code className="text-xs">{groupsClaim}</code> claim at sign-in;{' '}
+            {observedGroups} distinct value{observedGroups === 1 ? '' : 's'} seen so far.{' '}
+          </>
+        )}
+        Outside the audience, the connector is not offered and its tools do not register — for
+        anyone already connected too. Nobody is in a group by default: a person is in the audience
+        only while their own sign-in carries one of its values.
       </p>
       <fieldset className="mt-3 space-y-2">
         <legend className="sr-only">Audience</legend>

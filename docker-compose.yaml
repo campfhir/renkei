@@ -57,10 +57,10 @@ x-delegate-url: &delegate-url
 # no way to gain one (no setuid binary in the image can escalate), and a
 # root filesystem that cannot be written: the images hold code, not state,
 # and a process that cannot rewrite its own dependencies is the better
-# arrangement. Each service adds the tmpfs mounts for the few paths Node,
-# pnpm and Next do write (a temp dir, the runtime user's home for pnpm's
-# state file, Next's .next/cache). Postgres and the sandbox worker are the
-# two stateful exceptions and carry their own settings below.
+# arrangement. Each service adds the tmpfs mounts for the few paths Node
+# and Next do write (a temp dir, the runtime user's home, Next's
+# .next/cache). Postgres and the sandbox worker are the two stateful
+# exceptions and carry their own settings below.
 x-locked-down: &locked-down
   security_opt:
     - no-new-privileges:true
@@ -138,7 +138,9 @@ services:
       - .env
     # Optional e2e log shipping (worker → renkei over HTTP, encrypted +
     # signed, instead of writing the logs table directly). Generate the whole
-    # .env block with:  pnpm --filter renkei generate:log-ship-keys
+    # .env block with:  pnpm --filter renkei generate:log-ship-keys (from a
+    # checkout; in the image: docker compose run --rm --no-deps renkei
+    # node scripts/generate-log-ship-keys.mjs)
     #   LOG_SHIP_ENDPOINT=http://renkei:3000/api/logs   (turns it on)
     #   LOG_SHIP_API_KEY / LOG_SHIP_SIGNING_KEYS        (auth + identity)
     # The renkei service reads LOG_SHIP_API_KEY and LOG_E2E_SERVER_KEYS from
@@ -173,7 +175,7 @@ services:
   embeddings-worker:
     image: scotteremiaroden/renkei-worker:latest
     container_name: renkei-embeddings-worker
-    command: ['pnpm', '--filter', '@renkei/worker', 'start:embeddings']
+    command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/embeddings-worker.ts']
     env_file:
       - .env
     environment:
@@ -193,7 +195,10 @@ services:
   # per-agent ordering keys, and optimistic sweeps make replicas safe.
   worker-agents:
     image: scotteremiaroden/renkei-worker:latest
-    command: ['pnpm', '--filter', '@renkei/worker-agents', 'start']
+    # The agents worker is the other app on the worker image; its own directory
+    # is the working directory, as the image's default command has for apps/worker.
+    working_dir: /app/apps/worker-agents
+    command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     env_file:
       - .env
     environment:
@@ -225,7 +230,7 @@ services:
   # internal URL the web app uses, with the same bearer key from .env.
   worker-batch-jobs:
     image: scotteremiaroden/renkei-worker:latest
-    command: ['pnpm', '--filter', '@renkei/worker', 'start:batch-jobs']
+    command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/batch-jobs-worker.ts']
     env_file:
       - .env
     environment:
@@ -255,7 +260,7 @@ services:
   worker-fileshares:
     image: scotteremiaroden/renkei-fileshares:latest
     container_name: renkei-worker-fileshares
-    command: ['pnpm', '--filter', '@renkei/worker-fileshares', 'start']
+    command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     env_file:
       - .env
     environment: *database-urls
@@ -278,7 +283,7 @@ services:
   worker-onbase:
     image: scotteremiaroden/renkei-onbase:latest
     container_name: renkei-worker-onbase
-    command: ['pnpm', '--filter', '@renkei/worker-onbase', 'start']
+    command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     env_file:
       - .env
     environment: *database-urls
@@ -302,7 +307,7 @@ services:
   worker-mirth:
     image: scotteremiaroden/renkei-mirth:latest
     container_name: renkei-worker-mirth
-    command: ['pnpm', '--filter', '@renkei/worker-mirth', 'start']
+    command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     env_file:
       - .env
     environment: *database-urls
@@ -326,7 +331,7 @@ services:
   worker-admanager:
     image: scotteremiaroden/renkei-admanager:latest
     container_name: renkei-worker-admanager
-    command: ['pnpm', '--filter', '@renkei/worker-admanager', 'start']
+    command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     env_file:
       - .env
     environment: *database-urls
@@ -358,7 +363,7 @@ services:
   worker-delegate:
     image: scotteremiaroden/renkei-delegate:latest
     container_name: renkei-worker-delegate
-    command: ['pnpm', '--filter', '@renkei/worker-delegate', 'start']
+    command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     env_file:
       - .env
     environment:
@@ -484,7 +489,7 @@ services:
   worker-sandbox:
     image: scotteremiaroden/renkei-sandbox:latest
     container_name: renkei-worker-sandbox
-    command: ['pnpm', '--filter', '@renkei/worker-sandbox', 'start']
+    command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     env_file:
       - .env
     environment:
