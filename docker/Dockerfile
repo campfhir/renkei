@@ -570,10 +570,14 @@ ARG GO_VERSION=1.27.2
 ARG GOPLS_VERSION=v0.23.0
 # gopls is built here rather than installed as released: its release pins
 # golang.org/x/mod and golang.org/x/text at versions with open advisories
-# (sumdb verification bypass, UTF-8 denial of service), so the build lifts
-# those two to the versions below and lets Go's version selection take the
-# higher one. Bump them with the advisories; drop them once a gopls release
-# requires fixed versions itself.
+# (sumdb verification bypass, UTF-8 denial of service), so the build
+# replaces those two with the versions below. The replacement is a
+# `replace`, not a plain upgrade, because the patched x/mod and x/text
+# themselves require a newer golang.org/x/tools than the gopls release
+# compiles against — so x/tools is pinned to exactly the pseudo-version
+# the release's go.mod names. Bump the three together with gopls; drop
+# them once a release requires fixed versions itself.
+ARG GO_X_TOOLS_VERSION=v0.47.1-0.20260707181000-a299dadba899
 ARG GO_X_MOD_VERSION=v0.42.0
 ARG GO_X_TEXT_VERSION=v0.43.0
 # Exact versions, never `stable`/`latest`, and every download below is
@@ -629,9 +633,13 @@ RUN ARCH="$(dpkg --print-architecture)" && \
     tar -C /usr/local -xzf "/tmp/${GO_TGZ}" && rm -f "/tmp/${GO_TGZ}" /tmp/go.sha256 && \
     mkdir -p /tmp/gopls-build && cd /tmp/gopls-build && \
     export GOPATH=/tmp/gopath GOCACHE=/tmp/gocache && \
+    printf '//go:build tools\n\npackage tools\n\nimport _ "golang.org/x/tools/gopls"\n' > tools.go && \
     /usr/local/go/bin/go mod init renkei/gopls-build && \
-    /usr/local/go/bin/go get golang.org/x/tools/gopls@${GOPLS_VERSION} \
-      golang.org/x/mod@${GO_X_MOD_VERSION} golang.org/x/text@${GO_X_TEXT_VERSION} && \
+    /usr/local/go/bin/go mod edit -require "golang.org/x/tools/gopls@${GOPLS_VERSION}" \
+      -replace "golang.org/x/tools=golang.org/x/tools@${GO_X_TOOLS_VERSION}" \
+      -replace "golang.org/x/mod=golang.org/x/mod@${GO_X_MOD_VERSION}" \
+      -replace "golang.org/x/text=golang.org/x/text@${GO_X_TEXT_VERSION}" && \
+    /usr/local/go/bin/go mod tidy && \
     /usr/local/go/bin/go build -trimpath -o /usr/local/bin/gopls golang.org/x/tools/gopls && \
     cd / && rm -rf /tmp/gopls-build /tmp/gopath /tmp/gocache && \
     /usr/local/go/bin/go version && gopls version
