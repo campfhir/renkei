@@ -12,7 +12,7 @@
   "dependencies": {
     "docx": "^9.9.0",
     "exceljs": "^4.4.0",
-    "marked": "14.0.0",
+    "marked": "18.1.0",
     "pdfkit": "^0.20.2",
     "pptxgenjs": "^4.0.1"
   },

@@ -67,7 +67,7 @@
     "jszip": "^3.10.2",
     "kysely": "^0.29.6",
     "lowlight": "^3.3.0",
-    "marked": "14.0.0",
+    "marked": "18.1.0",
     "mcp-handler": "^2.3.0",
     "monaco-editor": "^0.57.0",
     "next": "16.4.0",
