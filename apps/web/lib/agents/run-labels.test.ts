@@ -28,19 +28,15 @@ describe('statusLabel', () => {
 });
 
 describe('errorSummary', () => {
-  it('names the failed step when the name is known', () => {
-    expect(errorSummary('step_failed', 'File Jira tickets')).toBe(
-      'Failed on step: File Jira tickets'
-    );
-  });
-
-  it('still reads as a sentence when the step name is unresolvable', () => {
-    expect(errorSummary('step_failed', null)).toBe('A step failed');
+  it('still reads a run from the step era', () => {
+    expect(errorSummary('step_failed')).toBe('A step failed');
   });
 
   it.each([
+    ['agent_failed', 'The agent could not reach its goal'],
     ['config', 'Setup problem'],
-    ['timeout', 'Ran out of time'],
+    ['timeout', 'Used its active time'],
+    ['budget', 'Used its tool-call budget'],
     ['llm_auth', 'AI model sign-in problem'],
     ['llm_error', 'AI model error'],
   ])('translates %s — every kind the engine writes', (kind, phrase) => {

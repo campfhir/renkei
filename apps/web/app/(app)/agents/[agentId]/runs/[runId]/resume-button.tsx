@@ -1,19 +1,18 @@
 'use client';
 
 /**
- * "Resume from the failed step" on a FAILED run: the same run, its same
- * snapshot and saved results, picked back up at the step that stopped it
- * with that step's attempts set aside — plus a line from the person on
- * what to do differently, which that step's next attempt reads as
- * binding guidance ("the CIO project has no Task issue type — file it as
- * a Project").
+ * "Resume" on a FAILED run: the same run, its same instructions and its
+ * whole conversation so far, picked back up where it stopped with a fresh
+ * budget — plus a line from the person on what to do differently, which
+ * the agent reads as binding guidance ("the CIO project has no Task issue
+ * type — file it as a Project").
  *
- * Sits beside "Run again with current steps", and the two answer
- * different questions: rerun is for when the PLAN was wrong (you edited
- * the steps and want the same input put back through), resume is for
- * when the plan was fine and one step needs another go. The note field
- * is the whole point of offering resume rather than a bare retry — a
- * failure the owner can read is usually a failure they can explain.
+ * Sits beside "Run again with current instructions", and the two answer
+ * different questions: rerun is for when the instructions were wrong (you
+ * edited them and want the same input put back through), resume is for
+ * when they were fine and the run needs another go. The note field is the
+ * whole point of offering resume rather than a bare retry — a failure the
+ * owner can read is usually a failure they can explain.
  *
  * Stays on THIS run's page: the run row is the one that changes, and
  * the page's live stream picks the change up from there.
@@ -30,12 +29,10 @@ export default function ResumeButton({
   agentId,
   runId,
   agentName,
-  failedStepName,
 }: {
   agentId: string;
   runId: string;
   agentName: string;
-  failedStepName: string | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -73,27 +70,17 @@ export default function ResumeButton({
         type="button"
         onClick={() => setOpen((value) => !value)}
         disabled={busy || done}
-        title={
-          failedStepName
-            ? `Pick this run back up at “${failedStepName}” — same run, same saved results, a fresh try for that step`
-            : 'Pick this run back up where it stopped'
-        }
+        title="Pick this run back up where it stopped — same run, same conversation, a fresh budget"
         className="rounded-md border border-gray-300 px-2 py-0.5 text-xs font-medium text-gray-700 hover:border-blue-500 hover:text-blue-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:border-blue-400 dark:hover:text-blue-300"
       >
-        {done ? 'Resuming…' : '↺ Resume from the failed step'}
+        {done ? 'Resuming…' : '↺ Resume this run'}
       </button>
       {error ? <span className="text-xs text-red-600 dark:text-red-400">{error}</span> : null}
       {open && !done ? (
         <div className="basis-full rounded-lg border border-gray-200 bg-gray-50/60 p-3 dark:border-gray-800 dark:bg-gray-900/40">
           <p className="mb-2 text-sm text-gray-700 dark:text-gray-300">
-            {failedStepName ? (
-              <>
-                The run continues at <span className="font-medium">“{failedStepName}”</span> with
-                that step’s failed attempts set aside. Everything earlier steps saved is kept.
-              </>
-            ) : (
-              <>The run continues from where it stopped, keeping what earlier steps saved.</>
-            )}
+            The agent picks up where it stopped, with everything it has found so far and a fresh
+            budget of tool calls and time.
           </p>
           <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
             What should it do differently this time? (optional)

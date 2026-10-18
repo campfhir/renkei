@@ -21,7 +21,8 @@ import { sendJsonFull } from '@/lib/fetch-json';
 function savePayloadOf(agent: StoredAgent, enabled: boolean) {
   return {
     name: agent.name,
-    steps: agent.steps,
+    instructions: agent.instructions,
+    tools: agent.tools,
     triggers: agent.triggers.map((trigger) => ({
       id: trigger.id,
       draft: trigger.draft,
@@ -30,7 +31,8 @@ function savePayloadOf(agent: StoredAgent, enabled: boolean) {
     enabled,
     llmModelId: agent.llmModelId,
     guardrails: agent.guardrails,
-    blockedTools: agent.blockedTools,
+    canAskQuestions: agent.canAskQuestions,
+    autoAcceptActions: agent.autoAcceptActions,
   };
 }
 

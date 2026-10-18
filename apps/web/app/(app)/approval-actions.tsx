@@ -4,24 +4,19 @@ import React, { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
 
 /**
- * The decision controls of an APPROVAL card — a `needsApproval` step's
- * proposed tool call, waiting on a person. Approve fires the recorded
- * call for real, on the engine's own next turn; decline skips it. Either
- * may carry a short comment, bound as `approval.comment` for the run to
- * read (e.g. a recovery path that reads back WHY it was declined).
+ * The decision controls of an APPROVAL card — a batch of actions an agent
+ * staged, waiting on a person. Accept hands the whole batch to the action
+ * executor, which makes the calls in order and reports each outcome back
+ * to the agent; decline makes none of them. Either may carry a short
+ * comment the agent reads with the outcome ("not this project — use OPS").
  *
  * There is deliberately no dismiss: a dismissed card would leave the run
  * waiting on a decision nobody can see anymore — declining is the "no",
- * and doing nothing lets the wait run out onto the timed-out treatment.
+ * and doing nothing lets the wait run out (none of the actions are made).
  *
  * A 502 still refreshes: the decision is durably recorded and the
  * worker's sweep resumes the run on its own — the warning is about
  * latency, not loss.
- *
- * A widget-hosted card (ApprovalWidgetCard) never renders this at all —
- * its own Confirm/Cancel are the decision, Cancel doubling as decline
- * (issue-preview.ts's `cancelTool`) — so there is exactly one place to
- * decide from, not two.
  */
 export default function ApprovalActions({
   itemId,
@@ -71,7 +66,7 @@ export default function ApprovalActions({
         onChange={(event) => setComment(event.target.value)}
         rows={2}
         maxLength={10_000}
-        placeholder="Add a comment (optional)"
+        placeholder="Add a note for the agent (optional)"
         aria-label="Comment"
         className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
       />
@@ -81,7 +76,7 @@ export default function ApprovalActions({
           disabled={busy || pending}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          Approve
+          Accept
         </button>
         <button
           onClick={() => void decide('decline')}

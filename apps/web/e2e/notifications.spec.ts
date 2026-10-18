@@ -19,7 +19,6 @@ import pg from 'pg';
 import {
   E2E_SUBJECT,
   AGENT_DEEP_ID,
-  DEEP_LOOP_NAME,
   RUN_ITERATIONS_ID,
 } from './seed';
 
@@ -171,19 +170,6 @@ test('notifications — mark all as read reaches rows past the page, show more l
   await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
   await expect(page.getByText(/\d+ unread/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Mark all as read' })).toHaveCount(0);
-});
-
-test('canvas — the fixed mark in the corner', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_DEEP_ID}/edit`);
-  await expect(page.getByRole('button', { name: `Edit loop: ${DEEP_LOOP_NAME}` })).toBeVisible();
-
-  // The mark is on the trigger cluster, the group, the foreach loop and the
-  // ending — never on a step, and never on a branch.
-  const marks = page.locator('[aria-label="Runs as fixed code — no model call"]');
-  expect(await marks.count()).toBeGreaterThan(0);
-  // Nothing spells the claim out any more.
-  await expect(page.getByText('fixed', { exact: true })).toHaveCount(0);
-  await shot(page, testInfo, 'review-canvas-fixed-mark');
 });
 
 test('notifications — the whole row opens the link', async ({ page }, testInfo) => {

@@ -1,30 +1,23 @@
 import React from 'react';
-import { findNodeById, isAgentStepsDoc } from '@renkei/agents';
 import { friendlyToolName } from '@/lib/tool-name';
 import { activityHeadline, runActivity } from '@/lib/agents/run-actions';
 import type { RunDetail } from '@/lib/agents/runs-view';
 
 /**
- * "What it did" — every tool call the run made, in order, above the timeline.
+ * "What it did" — everything the run touched, in order, above the timeline:
+ * what it READ (its own calls) and what it CHANGED (staged actions the
+ * executor made once they were accepted).
  *
- * The timeline is organised by STEP, which is right for following the
+ * The timeline is organised by TURN, which is right for following the
  * reasoning and wrong for the question people arrive with when an agent
- * misbehaves: what did it actually touch, and in what order? Answering that
- * from the timeline meant expanding each step in turn and keeping the
- * sequence in your head.
+ * misbehaves: what did it actually touch, and in what order?
  *
  * Open by default when something failed, collapsed otherwise: on a healthy
  * run this is reference material, on a broken one it is the first thing to
  * read.
  */
 export default function RunActivitySection({ run }: { run: RunDetail }): React.ReactNode {
-  const activity = runActivity(run, (stepId, stepIndex) => {
-    if (isAgentStepsDoc(run.stepsSnapshot)) {
-      const found = findNodeById(run.stepsSnapshot.steps, stepId);
-      if (found?.node.name) return found.node.name;
-    }
-    return `Step ${stepIndex + 1}`;
-  });
+  const activity = runActivity(run);
 
   // Nothing recorded and nothing withheld: the timeline already says the run
   // did not get far, and an empty panel would just be furniture.
@@ -52,20 +45,37 @@ export default function RunActivitySection({ run }: { run: RunDetail }): React.R
               {action.ordinal}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-sm">
-                <span className={action.failed ? 'text-red-600 dark:text-red-400' : ''}>
-                  {/* The identifier is on the title attribute and the friendly
-                      name on the face, matching the tools page: someone
-                      debugging wants `jira_create_issue`, everyone else wants
-                      "Create a Jira issue". */}
-                  <span title={action.tool}>{friendlyToolName(action.tool, null)}</span>
-                  {action.failed ? ' — failed' : ''}
+              <p className="flex flex-wrap items-center gap-1.5 text-sm">
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                    action.kind === 'change'
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
+                  }`}
+                >
+                  {action.kind === 'change' ? 'change' : 'read'}
                 </span>
+                <span
+                  className={
+                    action.failed
+                      ? 'text-red-600 dark:text-red-400'
+                      : action.notMade
+                        ? 'text-gray-400 line-through dark:text-gray-500'
+                        : ''
+                  }
+                >
+                  {/* The identifier is on the title attribute and the friendly
+                      name on the face, matching the tools page. */}
+                  <span title={action.tool}>{friendlyToolName(action.tool, null)}</span>
+                </span>
+                {action.failed ? (
+                  <span className="text-xs text-red-600 dark:text-red-400">failed</span>
+                ) : action.notMade ? (
+                  <span className="text-xs text-gray-500">not made (declined or skipped)</span>
+                ) : null}
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                {action.stepName}
-                {action.iteration > 0 ? ` · iteration ${action.iteration}` : ''}
-                {action.attempt > 1 ? ` · attempt ${action.attempt}` : ''}
+                Turn {action.turn}
                 {action.durationMs !== null ? ` · ${action.durationMs}ms` : ''}
               </p>
               {action.argsPreview ? (
@@ -78,7 +88,7 @@ export default function RunActivitySection({ run }: { run: RunDetail }): React.R
         ))}
         {activity.hiddenAttempts > 0 ? (
           <li className="pt-2 text-xs text-gray-500 dark:text-gray-400">
-            {activity.hiddenAttempts} attempt
+            {activity.hiddenAttempts} turn
             {activity.hiddenAttempts === 1 ? '' : 's'} had their calls hidden for this audience.
           </li>
         ) : null}

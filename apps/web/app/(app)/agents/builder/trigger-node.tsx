@@ -1,10 +1,10 @@
 'use client';
 
 /**
- * The flow chart's start cluster — "When should it run?" as the first node.
- * Each trigger is one collapsed row; clicking a row opens the editor panel
- * on that trigger, "+ Add a trigger" opens it in chooser mode. The rows
- * also teach the trigger.* chip vocabulary via the violet provides-chips.
+ * "When should it run?" — the builder's trigger list. Each trigger is one
+ * collapsed row; clicking a row opens the editor panel on that trigger,
+ * "+ Add a trigger" opens it in chooser mode. Each row also says what the
+ * trigger hands the agent, which is what its instructions can refer to.
  */
 
 import {
@@ -14,7 +14,6 @@ import {
   type TriggerDraft,
 } from '@renkei/agents';
 import type { TriggerPayload } from '@/lib/agents/store';
-import { FixedMark } from './fixed-marker';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export interface AgentChoice {
@@ -68,7 +67,7 @@ export function summaryOf(draft: TriggerDraft, otherAgents: AgentChoice[]): stri
   }
 }
 
-export function TriggerNode({
+export function TriggerList({
   triggers,
   otherAgents,
   selectedIndex,
@@ -86,17 +85,10 @@ export function TriggerNode({
 }) {
   const triggersAnchor = useCoachAnchor('builder-triggers');
   return (
-    <div className="relative w-80 rounded-xl border border-gray-300 bg-gray-50 p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-      {/*
-        The whole trigger layer is deterministic — a schedule, a webhook, a
-        filter — so the mark belongs on the cluster rather than on each row.
-        It also makes the shape of a run legible down the canvas: a fixed
-        head, a model-calling body, fixed ends.
-      */}
-      <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+    <section className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900">
+      <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold">
         <span aria-hidden="true">⚡</span> When should it run?
-        <FixedMark />
-      </p>
+      </h2>
       {triggers.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">Nothing starts this agent yet.</p>
       ) : (
@@ -162,6 +154,6 @@ export function TriggerNode({
           ))}
         </ul>
       ) : null}
-    </div>
+    </section>
   );
 }

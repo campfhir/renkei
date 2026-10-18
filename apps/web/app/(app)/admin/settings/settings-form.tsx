@@ -16,7 +16,7 @@ type LogLevel = (typeof LOG_LEVELS)[number];
 const ACT_APPROVAL_POLICIES = [
   { value: 'externally_triggered', label: 'Runs started by an event or webhook' },
   { value: 'all', label: 'Every run' },
-  { value: 'off', label: 'Only steps the author gated' },
+  { value: 'off', label: 'No run (auto-accept is always honored)' },
 ] as const;
 type ActApprovalPolicy = (typeof ACT_APPROVAL_POLICIES)[number]['value'];
 
@@ -43,8 +43,7 @@ export interface EditableSettings {
   sessionIdleTimeoutMinutes: number;
   agentMaxChainDepth: number;
   agentRunTimeoutMinutes: number;
-  agentMaxStepAttempts: number;
-  agentMaxSteps: number;
+  agentRunToolCallBudget: number;
   agentMaxRunsPerDay: number;
   agentApprovalMaxWaitDays: number;
   agentActStepsRequireApproval: ActApprovalPolicy;
@@ -319,20 +318,17 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
         >
           {numberInput('agentMaxRunsPerDay', '1–10,000')}
         </Row>
-        <Row label="Run timeout (minutes)" hint="Wall-clock budget for a single agent run.">
+        <Row
+          label="Active minutes per run"
+          hint="The most time one agent run may spend working — with the model and its own tool calls (default 30). Time spent waiting on a person to accept changes or answer a question, and carrying out accepted changes, is not counted. A run that reaches it ends unfinished."
+        >
           {numberInput('agentRunTimeoutMinutes', '1–120')}
         </Row>
         <Row
-          label="Max tries per step"
-          hint="Ceiling on a step's 'give up after N tries' (default 10). Enforced at run time, so lowering it applies to existing agents immediately."
+          label="Tool calls per run"
+          hint="The most tool calls one agent run may make (default 150) — every lookup it makes, and every change it proposes. The agent spends them as it judges best, retries included, and is told what is left."
         >
-          {numberInput('agentMaxStepAttempts', '1–100')}
-        </Row>
-        <Row
-          label="Max steps per agent"
-          hint="How many steps one agent may hold (default 20). Enforced when an agent is saved; agents already over a lowered limit keep running until their next edit."
-        >
-          {numberInput('agentMaxSteps', '1–100')}
+          {numberInput('agentRunToolCallBudget', '1–1000')}
         </Row>
         <Row
           label="Max chain depth"
@@ -341,14 +337,14 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
           {numberInput('agentMaxChainDepth', '1–10')}
         </Row>
         <Row
-          label="Steps that change something need approval on"
-          hint="Which agent runs pause a step whose tool changes an external system (sends, creates, edits) for a person's approval even when the author set none. The default covers runs an event or webhook started — the content they act on came from outside. Sending mail, merging a pull request, deleting or sharing a document and directory writes always pause, whatever this says."
+          label="A person must accept agent changes on"
+          hint="Agents never change anything themselves: they propose changes that are carried out once accepted. An agent can be set to accept its own proposals automatically — this names the runs where a person must accept them anyway. The default covers runs an event or webhook started — the content they act on came from outside. Sending mail, merging a pull request, deleting or sharing a document and directory writes always wait for a person, whatever this says."
         >
           {actApprovalSelect()}
         </Row>
         <Row
           label="Max approval wait (days)"
-          hint="Ceiling on how long an 'Ask for approval' step may wait for its owner before its timeout path runs. Nodes set their own wait; this clamps them, existing agents included."
+          hint="Ceiling on how long proposed changes or a question may wait for the owner before they are treated as declined or unanswered. An agent may ask for a shorter wait; this clamps it, runs already waiting included."
         >
           {numberInput('agentApprovalMaxWaitDays', '1–90')}
         </Row>

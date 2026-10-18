@@ -33,8 +33,7 @@ export default async function EditAgentPage({
   // describe the owner's world even when a grantee is doing the editing.
   const data = await loadBuilderData(dbResult.val, access.ownerSubject, agentId);
 
-  // No width cap here: the builder manages its own — it self-centers while
-  // reading and goes two-column (canvas + editor panel) on selection.
+  // No width cap here: the builder manages its own two-column layout.
   return (
     <div>
       <div className="mx-auto mb-6 lg:max-w-3xl">
@@ -55,7 +54,7 @@ export default async function EditAgentPage({
           )}
         </div>
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Changes apply to future runs — anything already queued keeps the steps it was queued with.
+          Changes apply to future runs — anything already running keeps the instructions it started with.
         </p>
       </div>
       <AgentBuilder
@@ -63,8 +62,8 @@ export default async function EditAgentPage({
         otherAgents={data.otherAgents}
         calendars={data.calendars}
         models={data.models}
-        attemptsCap={data.attemptsCap}
-        maxSteps={data.maxSteps}
+        runLimits={data.runLimits}
+        actApprovalPolicy={data.actApprovalPolicy}
         existing={agent}
       />
     </div>
