@@ -1,5 +1,5 @@
 /**
- * Deciding a `needsApproval` gate's card — the web feed's half of a
+ * Deciding a staged action batch's card — the web feed's half of a
  * paused agent run.
  *
  * The claim semantics live in `lib/agents/approvals.ts`, shared with the
@@ -41,7 +41,6 @@ export async function POST(
     return NextResponse.json({ error: "decision must be 'approve' or 'decline'" }, { status: 400 });
   }
   const comment = typeof body.comment === 'string' ? body.comment : '';
-  const argsOverride = isRecord(body.args) ? body.args : undefined;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -52,7 +51,7 @@ export async function POST(
     dbResult.val,
     agentJobsQueue().producer,
     session.subject,
-    { cardId: itemId, decision: body.decision, comment, argsOverride }
+    { cardId: itemId, decision: body.decision, comment }
   );
 
   switch (result.outcome) {

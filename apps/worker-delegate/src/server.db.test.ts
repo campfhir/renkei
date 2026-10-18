@@ -309,7 +309,7 @@ describeDb('worker-delegate', () => {
     const runId = randomUUID();
     await db
       .insertInto('agents')
-      .values({ id: agentId, owner_subject: owner, name: 'r24', steps: '[]' })
+      .values({ id: agentId, owner_subject: owner, name: 'r24' })
       .execute();
     await db
       .insertInto('agent_runs')
@@ -317,7 +317,7 @@ describeDb('worker-delegate', () => {
         id: runId,
         agent_id: agentId,
         owner_subject: owner,
-        steps_snapshot: '[]',
+        definition_snapshot: JSON.stringify({ instructions: 'Go.', tools: [] }),
         trigger_kind: 'manual',
       })
       .execute();

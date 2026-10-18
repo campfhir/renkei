@@ -1,5 +1,5 @@
 /**
- * Prose → drafted steps, started as a JOB.
+ * Prose → drafted instructions, started as a JOB.
  *
  * This used to do the whole thing synchronously: the builder POSTed a
  * description and held a spinner open for up to 150 seconds of model time.
@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
-import { isAgentStepsDoc } from '@renkei/agents';
+import { parseAgentDefinition } from '@renkei/agents';
 import { getSessionFromRequest } from '@/lib/session';
 import { createDraft, latestReadyDraft } from '@/lib/agents/draft-store';
 import { isUuid } from '@/lib/uuid';
@@ -35,7 +35,7 @@ export async function POST(
   const body: unknown = await request.json().catch(() => null);
   const payload: {
     text?: unknown;
-    steps?: unknown;
+    current?: unknown;
     triggerVars?: unknown;
     suggestTriggers?: unknown;
     guardrails?: unknown;
@@ -43,15 +43,16 @@ export async function POST(
   } = typeof body === 'object' && body !== null ? body : {};
   if (typeof payload.text !== 'string' || payload.text.trim().length < 10) {
     return NextResponse.json(
-      { error: 'Describe the automation in a sentence or two first.' },
+      { error: 'Describe the agent in a sentence or two first.' },
       { status: 400 }
     );
   }
 
-  // Revision context: the builder's CURRENT (possibly unsaved) steps — the
-  // model revises what the user is looking at, not what was last saved. Kept
-  // on the row rather than re-read at run time for exactly that reason.
-  const steps = isAgentStepsDoc(payload.steps) ? payload.steps : null;
+  // Revision context: the builder's CURRENT (possibly unsaved) instructions
+  // and tools — the model revises what the user is looking at, not what was
+  // last saved. Kept on the row rather than re-read at run time for exactly
+  // that reason.
+  const current = parseAgentDefinition(payload.current);
   // An agent id is accepted only when it is one of THIS caller's agents: it
   // becomes the draft's scope, and the builder later offers the draft on
   // opening that agent.
@@ -72,7 +73,7 @@ export async function POST(
     agentId,
     request: {
       text: payload.text.trim(),
-      steps: steps ? JSON.parse(JSON.stringify(steps)) : null,
+      current: current ? { instructions: current.instructions, tools: current.tools } : null,
       triggerVars: Array.isArray(payload.triggerVars)
         ? JSON.parse(JSON.stringify(payload.triggerVars))
         : [],

@@ -58,7 +58,7 @@ export async function POST(
   }
 
   const text = [
-    `Revise this automation to fix the problems below. Keep every step the edits do not mention exactly as it is — same name, same instruction, same tool, same outcome lines.`,
+    `Revise this agent to fix the problems below. Keep every part of the instructions the edits do not mention exactly as it is.`,
     '',
     brief,
   ].join('\n');
@@ -68,9 +68,9 @@ export async function POST(
     agentId,
     request: {
       text,
-      // The SAVED steps: the optimizer analyzed the saved agent, so its
-      // edits are against that, not against an unsaved builder session.
-      steps: JSON.parse(JSON.stringify(agent.steps)),
+      // The SAVED definition: the optimizer analyzed the saved agent, so
+      // its edits are against that, not against an unsaved builder session.
+      current: { instructions: agent.instructions, tools: agent.tools },
       triggerVars: triggerVariableDescriptors(agent.triggers.map((trigger) => trigger.draft)).map(
         ({ name, description }) => ({ name, description })
       ),

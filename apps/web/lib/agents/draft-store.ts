@@ -17,8 +17,11 @@ export type DraftStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 export interface DraftRequest {
   /** The prose the person wrote. */
   text: string;
-  /** The builder's steps at the moment they asked — revision context. */
-  steps: Json;
+  /**
+   * The builder's instructions and tools at the moment they asked —
+   * revision context ({instructions, tools}), or null for a new agent.
+   */
+  current: Json;
   triggerVars: Json;
   suggestTriggers: boolean;
   guardrails: string | null;
@@ -46,11 +49,11 @@ function requestOf(value: Json): DraftRequest {
   // annotation rather than assertion keeps that true without claiming it.
   const record: { [key: string]: Json | undefined } =
     typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {};
-  const steps = record.steps;
+  const current = record.current;
   const triggerVars = record.triggerVars;
   return {
     text: typeof record.text === 'string' ? record.text : '',
-    steps: steps === undefined ? null : steps,
+    current: current === undefined ? null : current,
     triggerVars: triggerVars === undefined ? null : triggerVars,
     suggestTriggers: record.suggestTriggers === true,
     guardrails: typeof record.guardrails === 'string' ? record.guardrails : null,

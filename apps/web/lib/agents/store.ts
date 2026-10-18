@@ -22,13 +22,12 @@ import type { DB, Json } from '@renkei/db';
 import {
   blackoutPredicate,
   computeNextRunForSchedule,
-  isAgentStepsDoc,
+  agentDefinitionOf,
   isBlackoutEntry,
   parseScheduleConfig,
   serializeScheduleConfig,
   normalizeMatchForEvent,
   triggerEventById,
-  type AgentStepsDoc,
   type BlackoutEntry,
   type TriggerDraft,
 } from '@renkei/agents';
@@ -59,16 +58,20 @@ export interface StoredAgent {
   description: string | null;
   descriptionStatus: string;
   reviewNotes: Json | null;
-  steps: AgentStepsDoc;
-  stepsVersion: number;
+  /** The structured instruction prompt the agent works from. */
+  instructions: string;
+  /** The tools it may use — reads called directly, acts staged for acceptance. */
+  tools: string[];
+  /** Counts saves, so run records can say which revision they ran. */
+  revision: number;
   llmModelId: string | null;
   enabled: boolean;
-  /** Standing instructions injected into every run's model calls. */
+  /** The owner's standing rules, injected into every run's model calls. */
   guardrails: string | null;
-  /** Act tools the engine refuses for this agent's model-driven calls. */
-  blockedTools: string[];
-  /** Whether any step's turn may pause and ask the owner a question (ask_person). */
+  /** Whether a run may pause and ask the owner a question (ask_person). */
   canAskQuestions: boolean;
+  /** Whether staged actions are accepted without a person, where the org allows it. */
+  autoAcceptActions: boolean;
   createdAt: string;
   updatedAt: string;
   triggers: StoredTrigger[];
@@ -202,41 +205,37 @@ interface AgentRow {
   description: string | null;
   description_status: string;
   review_notes: Json | null;
-  steps: Json;
+  instructions: string;
+  tools: Json;
   steps_version: number;
   llm_model_id: string | null;
   enabled: boolean;
   guardrails: string | null;
-  blocked_tools: Json | null;
   can_ask_questions: boolean;
+  auto_accept_actions: boolean;
   created_at: Date;
   updated_at: Date;
-}
-
-/** blocked_tools jsonb → string[], defensively (it round-trips through jsonb). */
-function blockedToolsOf(value: Json | null): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
 }
 
 async function toStored(
   db: Kysely<DB>,
   row: AgentRow
 ): Promise<StoredAgent | null> {
-  if (!isAgentStepsDoc(row.steps)) return null;
+  const definition = agentDefinitionOf(row);
   return {
     id: row.id,
     name: row.name,
     description: row.description,
     descriptionStatus: row.description_status,
     reviewNotes: row.review_notes,
-    steps: row.steps,
-    stepsVersion: row.steps_version,
+    instructions: definition.instructions,
+    tools: definition.tools,
+    revision: row.steps_version,
     llmModelId: row.llm_model_id,
     enabled: row.enabled,
     guardrails: row.guardrails,
-    blockedTools: blockedToolsOf(row.blocked_tools),
     canAskQuestions: row.can_ask_questions,
+    autoAcceptActions: row.auto_accept_actions,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     triggers: await triggersOf(db, row.id),
@@ -249,13 +248,14 @@ const AGENT_COLUMNS = [
   'description',
   'description_status',
   'review_notes',
-  'steps',
+  'instructions',
+  'tools',
   'steps_version',
   'llm_model_id',
   'enabled',
   'guardrails',
-  'blocked_tools',
   'can_ask_questions',
+  'auto_accept_actions',
   'created_at',
   'updated_at',
 ] as const;
@@ -520,13 +520,14 @@ async function reconcileTriggers(
 
 export interface SaveAgentInput {
   name: string;
-  steps: AgentStepsDoc;
+  instructions: string;
+  tools: string[];
   triggers: TriggerPayload[];
   enabled: boolean;
   llmModelId: string | null;
   guardrails: string | null;
-  blockedTools: string[];
   canAskQuestions: boolean;
+  autoAcceptActions: boolean;
 }
 
 export async function createAgent(
@@ -542,12 +543,13 @@ export async function createAgent(
         id: agentId,
         owner_subject: ownerSubject,
         name: input.name,
-        steps: JSON.stringify(input.steps),
+        instructions: input.instructions,
+        tools: JSON.stringify(input.tools),
         llm_model_id: input.llmModelId,
         enabled: input.enabled,
         guardrails: input.guardrails,
-        blocked_tools: JSON.stringify(input.blockedTools),
         can_ask_questions: input.canAskQuestions,
+        auto_accept_actions: input.autoAcceptActions,
         description_status: 'stale',
       })
       .execute();
@@ -580,13 +582,14 @@ export async function updateAgent(
       .updateTable('agents')
       .set({
         name: input.name,
-        steps: JSON.stringify(input.steps),
+        instructions: input.instructions,
+        tools: JSON.stringify(input.tools),
         steps_version: sql`steps_version + 1`,
         llm_model_id: input.llmModelId,
         enabled: input.enabled,
         guardrails: input.guardrails,
-        blocked_tools: JSON.stringify(input.blockedTools),
         can_ask_questions: input.canAskQuestions,
+        auto_accept_actions: input.autoAcceptActions,
         ...(options.markDescriptionStale === false ? {} : { description_status: 'stale' }),
         updated_at: sql`NOW()`,
       })
