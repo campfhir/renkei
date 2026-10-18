@@ -73,9 +73,7 @@ export function createDraftHandler(deps: {
 }) {
   const doFetch: PostJson = deps.fetchImpl ?? fetch;
 
-  return async function handleDraft(event: {
-    payload: unknown;
-  }): Promise<'skipped' | undefined> {
+  return async function handleDraft(event: { payload: unknown }): Promise<'skipped' | undefined> {
     const payload = payloadOf(event.payload);
     if (!payload) throw new Error('draft job payload missing draftId');
 
@@ -100,8 +98,7 @@ export function createDraftHandler(deps: {
 
     try {
       const url =
-        `${deps.webBaseUrl}/api` +
-        `/agents/draft/${encodeURIComponent(payload.draftId)}/run`;
+        `${deps.webBaseUrl}/api` + `/agents/draft/${encodeURIComponent(payload.draftId)}/run`;
       const response = await doFetch(url, {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },

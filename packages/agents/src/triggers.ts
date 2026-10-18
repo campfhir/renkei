@@ -23,7 +23,7 @@ import {
 } from './recurrence';
 import { TRIGGER_EVENT_CATALOG, triggerEventById, validateMatchForEvent } from './trigger-catalog';
 import { isTriggerMatch, type TriggerMatch } from './trigger-filters';
-import { VARIABLE_NAME_PATTERN } from './steps';
+import { VARIABLE_NAME_PATTERN } from './definition';
 import type { VariableDescriptor } from './variables';
 
 export interface ApiTriggerInput {

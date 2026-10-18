@@ -1,13 +1,11 @@
 import React from 'react';
 import Link from 'next/link';
-import { friendlyToolName, parseFormNodes, type FormNode } from '@renkei/agents';
-import { jiraIssueApprovalPreview } from '@/lib/mcp-tools/jira/approval-preview';
+import { friendlyToolName, parseFormNodes, parseStoredActions, type FormNode } from '@renkei/agents';
 import { jiraIssueFieldRows } from '@/lib/mcp-tools/jira/fields';
 import { Icon, ICONS } from '@/components/icons';
 import ExternalLink from '@/components/external-link';
 import CardActions from './card-actions';
 import ApprovalActions from './approval-actions';
-import ApprovalWidgetCard from './approval-widget-card';
 import QuestionActions from './question-actions';
 import ArchiveAction from './archive-action';
 
@@ -49,14 +47,13 @@ export interface ActionableItemRow {
  * alongside the pager, which needs the same "is there another page?"
  * answer the query produces.
  */
-export default async function ActionableCards({ items, subject, showArchived = false }: {
+export default function ActionableCards({ items, showArchived = false }: {
   items: ActionableItemRow[];
-  /** Whose feed this is — the approval widget resolves ITS OWN Jira
-   * grant by this subject, same as any decision on these cards already
-   * requires the card's owner_subject to match it. */
+  /** Whose feed this is — every decision on these cards requires the
+   * card's owner_subject to match it (server-side). */
   subject: string;
   showArchived?: boolean;
-}): Promise<React.ReactNode> {
+}): React.ReactNode {
   if (items.length === 0) {
     return (
       <p className="text-sm text-gray-600 dark:text-gray-400">
@@ -68,13 +65,11 @@ export default async function ActionableCards({ items, subject, showArchived = f
   const cards: React.ReactNode[] = [];
   for (const item of items) {
     const isPause = item.kind === 'approval' || item.kind === 'question';
-    const widgetPreview =
-      item.kind === 'approval'
-        ? await widgetPreviewFor(item.suggested_action, item.status, subject)
-        : null;
     cards.push(
       <div
         key={item.id}
+        role="article"
+        aria-label={item.title}
         className={`rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950 ${
           item.archived_at !== null ? 'opacity-70' : ''
         }`}
@@ -95,16 +90,7 @@ export default async function ActionableCards({ items, subject, showArchived = f
 
         <RelatedEvidence evidence={item.evidence} />
 
-        {item.kind === 'approval' &&
-          (widgetPreview ? (
-            <ApprovalWidgetCard
-              itemId={item.id}
-              resourceUri={widgetPreview.resourceUri}
-              structuredContent={widgetPreview.structuredContent}
-            />
-          ) : (
-            <ProposedCall suggestedAction={item.suggested_action} result={item.result} />
-          ))}
+        {item.kind === 'approval' && <ProposedBatch suggestedAction={item.suggested_action} />}
 
         {isPause && item.run_id && item.agent_id ? (
           <p className="mb-2 text-sm">
@@ -120,12 +106,8 @@ export default async function ActionableCards({ items, subject, showArchived = f
         {item.status === 'suggested' &&
           (item.kind === 'approval' ? (
             // No dismiss here: declining is the "no", and doing nothing
-            // lets the wait treat it as not approved. A widget-hosted card
-            // has its own Confirm/Cancel for that (ApprovalWidgetCard,
-            // above) — nothing left for this to add.
-            widgetPreview ? null : (
-              <ApprovalActions itemId={item.id} />
-            )
+            // lets the wait treat it as not accepted.
+            <ApprovalActions itemId={item.id} />
           ) : item.kind === 'question' ? (
             <QuestionActions
               itemId={item.id}
@@ -191,95 +173,59 @@ const EMAIL_ARG_TOOLS = new Set([
   'outlook_forward_confirm',
 ]);
 
-/** The `{tool, args}` a `needsApproval` gate snapshotted onto a card, or
- * null for anything that does not even look like a proposed call. */
-function proposedCallOf(
-  suggestedAction: unknown
-): { tool: string; args: Record<string, unknown> } | null {
-  if (typeof suggestedAction !== 'object' || suggestedAction === null) return null;
-  const record: { tool?: unknown; args?: unknown } = { ...suggestedAction };
-  if (typeof record.tool !== 'string') return null;
-  const args =
-    typeof record.args === 'object' && record.args !== null && !Array.isArray(record.args)
-      ? { ...record.args }
-      : {};
-  return { tool: record.tool, args };
-}
-
 /**
- * The real MCP Apps widget for this proposed call, when one exists — the
- * same issue-preview card the chat-side `jira_create_issue_preview`/
- * `jira_update_issue_preview` tools use, hosted outside chat
- * (ApprovalWidgetCard). Only while the card is still undecided: an
- * already-decided card keeps the plain historical rendering below rather
- * than a still-interactive-looking Confirm button (decideApproval's own
- * status check makes a stray click harmless, but showing one at all on a
- * resolved card is just confusing).
- *
- * Awaits a live, best-effort Jira field-schema fetch (jiraIssueApprovalPreview
- * → approval-field-schema.ts) so the card's fields render as typed controls
- * — this is the one place a page render in this app calls out to a
- * provider; a failed or slow fetch degrades to plain-text fields rather
- * than failing the render.
+ * The batch of staged actions an agent proposed — the card's whole point.
+ * Accepting (ApprovalActions, below it) accepts every action, in this
+ * order; nothing runs from here: a separate executor makes the calls and
+ * reports each outcome back to the agent. Each action reads as what it
+ * would do and why, with its arguments behind a disclosure — the tool
+ * families common enough to be worth it render the way their chat-side
+ * preview cards do, everything else as a plain arg list.
  */
-async function widgetPreviewFor(
-  suggestedAction: unknown,
-  status: string,
-  subject: string
-): Promise<{ resourceUri: string; structuredContent: Record<string, unknown> } | null> {
-  if (status !== 'suggested') return null;
-  const call = proposedCallOf(suggestedAction);
-  if (!call) return null;
-  return jiraIssueApprovalPreview(call.tool, call.args, subject);
+function ProposedBatch({ suggestedAction }: { suggestedAction: unknown }): React.ReactNode {
+  const record: { actions?: unknown } =
+    typeof suggestedAction === 'object' && suggestedAction !== null ? { ...suggestedAction } : {};
+  const actions = parseStoredActions(record.actions);
+  if (actions.length === 0) return null;
+  return (
+    <ol aria-label="Proposed actions" className="my-2 space-y-2">
+      {actions.map((action, index) => (
+        <li
+          key={`${index}-${action.tool}`}
+          className="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-800 dark:bg-gray-900"
+        >
+          <p className="font-medium">
+            <span className="mr-1.5 text-gray-500">{index + 1}.</span>
+            {friendlyToolName(action.tool, null)}
+          </p>
+          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-400">
+            {action.reason}
+          </p>
+          <details className="mt-1">
+            <summary className="cursor-pointer text-xs text-blue-600 hover:underline dark:text-blue-400">
+              Details
+            </summary>
+            <ProposedCall tool={action.tool} args={action.args} />
+          </details>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
-/** A decided card's own edit, if it has one (ApprovalWidgetCard's Confirm,
- * via `decideApproval`'s `argsOverride`) — already stripped server-side of
- * anything the call's identity depends on (approvals.ts's
- * `APPROVAL_IDENTITY_KEYS`), so trusted here as-is. */
-function argsOverrideOf(result: unknown): Record<string, unknown> {
-  if (typeof result !== 'object' || result === null) return {};
-  const record: { argsOverride?: unknown } = { ...result };
-  if (typeof record.argsOverride !== 'object' || record.argsOverride === null) return {};
-  return { ...record.argsOverride };
-}
-
-/**
- * The proposed call a `needsApproval` gate's card shows — never an
- * authored message, since there is nothing to author: the point of the
- * flag is "gate whatever this step is about to do." Shown only while the
- * card is still undecided; a decided one's outcome line below covers it.
- *
- * Rendered the way the chat-side MCP Apps preview cards render the same
- * calls (issue-preview.ts, email-compose.ts) for the tool families common
- * enough to be worth it — everything else falls back to a plain arg list.
- * The Jira-issue case actually hosts that same widget bundle instead
- * (ApprovalWidgetCard, above this in the parent) while the card is
- * decidable; this is what a decided one keeps showing, and what any other
- * Jira-issue-shaped call falls back to before this file grows a widget for
- * every family (email included, for now).
- *
- * `result` is only ever read for its `argsOverride` — a decided card whose
- * widget edited the summary/description should keep showing what was
- * actually approved, not the pre-edit snapshot everything else here still
- * reads from `suggested_action`.
- */
+/** One action's arguments, rendered for its tool family. */
 function ProposedCall({
-  suggestedAction,
-  result,
+  tool,
+  args,
 }: {
-  suggestedAction: unknown;
-  result?: unknown;
+  tool: string;
+  args: Record<string, unknown>;
 }): React.ReactNode {
-  const call = proposedCallOf(suggestedAction);
-  if (!call) return null;
-  const toolLabel = friendlyToolName(call.tool, null);
-  const args = { ...call.args, ...argsOverrideOf(result) };
-
-  if (ISSUE_ARG_TOOLS.has(call.tool)) {
+  const toolLabel = friendlyToolName(tool, null);
+  if (ISSUE_ARG_TOOLS.has(tool)) {
     return <IssueProposedCall toolLabel={toolLabel} args={args} />;
   }
-  if (EMAIL_ARG_TOOLS.has(call.tool)) {
+  if (EMAIL_ARG_TOOLS.has(tool)) {
     return <EmailProposedCall toolLabel={toolLabel} args={args} />;
   }
   return <GenericProposedCall toolLabel={toolLabel} args={args} />;
@@ -294,8 +240,7 @@ function ProposedCallShell({
   children: React.ReactNode;
 }): React.ReactNode {
   return (
-    <div className="my-2 rounded-md border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-800 dark:bg-gray-900">
-      <strong>Wants to call {toolLabel}</strong>
+    <div className="mt-1 text-sm" aria-label={`${toolLabel} arguments`}>
       {children}
     </div>
   );
@@ -452,7 +397,7 @@ function PauseKindChip({ kind }: { kind: 'approval' | 'question' }): React.React
       }`}
     >
       <Icon path={asking ? ICONS.question : ICONS.approval} className="h-3.5 w-3.5" />
-      {asking ? 'Answer needed' : 'Approval needed'}
+      {asking ? 'Answer needed' : 'Go-ahead needed'}
     </span>
   );
 }
@@ -478,15 +423,15 @@ function PauseOutcome({
           : 'Nobody answered in time — the run treated it as unanswered.'
       : status === 'approved'
         ? typeof record.comment === 'string' && record.comment
-          ? `You approved: ${record.comment}`
-          : 'You approved — the run continued.'
+          ? `You accepted: ${record.comment}`
+          : 'You accepted — the actions were carried out and the run continued.'
         : status === 'declined'
           ? typeof record.comment === 'string' && record.comment
             ? `You declined: ${record.comment}`
             : 'You declined.'
           : record.reason === 'run-ended' || record.reason === 'agent-disabled'
             ? 'The run ended before anyone decided.'
-            : 'Nobody decided in time — the run treated it as not approved.';
+            : 'Nobody decided in time — none of the actions were made.';
   return (
     <p className="whitespace-pre-wrap break-words text-sm text-gray-600 dark:text-gray-400">
       {wording}

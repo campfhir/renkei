@@ -37,7 +37,7 @@ export default function RecentRuns({ agentId, runs }: {
                   }
                 >
                   {failed && run.errorKind
-                    ? errorSummary(run.errorKind, run.failedStepName)
+                    ? errorSummary(run.errorKind)
                     : statusLabel(run.status, run.errorKind)}
                 </span>
               </li>

@@ -19,18 +19,16 @@ import AgentEnabledToggle from '@/components/agent-enabled-toggle';
 import AgentUsagePanel from '@/components/agent-usage-panel';
 import {
   getAgentTokenUsage,
-  getAgentTokenUsageByStep,
   getAgentToolUsage,
   getTokenUsageByModel,
 } from '@/lib/agents/agent-usage';
-import { labelStepUsage } from '@/lib/agents/step-usage-labels';
 import MemoryPanel from './memory-panel';
 import KnowledgePanel from './knowledge-panel';
 import ShareAgentButton from './share-agent';
 import CopyMarkdownButton from './copy-markdown-button';
 import RunNowButton from './run-now-button';
 import RecentRuns from './recent-runs';
-import StepsOutline from './steps-outline';
+import InstructionsView from './instructions-view';
 import SharedWithPanel from './shared-with-panel';
 import ImprovePanel from './improve-panel';
 import { latestOptimization } from '@/lib/agents/optimization-store';
@@ -96,11 +94,12 @@ async function invocationCountsOf(
 }
 
 /**
- * The readable overview of one agent. Steps are the main column — the
- * recipe people came to read; everything contextual (review notes,
- * knowledge, memory, recent runs) sits in a right rail of collapsible
- * sections. On phones the rail stacks first (it's short; the steps are
- * long) and the sections open as modals instead of accordions.
+ * The readable overview of one agent. Its instructions and tools are the
+ * main column — what people came to read; everything contextual (review
+ * notes, knowledge, memory, recent runs) sits in a right rail of
+ * collapsible sections. On phones the rail stacks first (it's short; the
+ * instructions are long) and the sections open as modals instead of
+ * accordions.
  */
 export default async function AgentOverviewPage({
   params,
@@ -130,7 +129,6 @@ export default async function AgentOverviewPage({
     ownerDisplay,
     tokenUsage,
     tokensByModel,
-    tokenStepRows,
     toolUsage,
     optimization,
   ] = await Promise.all([
@@ -142,7 +140,6 @@ export default async function AgentOverviewPage({
       : getIdentityDisplay(access.ownerSubject),
     getAgentTokenUsage(dbResult.val, agentId),
     getTokenUsageByModel(dbResult.val, agentId),
-    getAgentTokenUsageByStep(dbResult.val, agentId),
     getAgentToolUsage(dbResult.val, agentId, TOOL_USAGE_WINDOW_DAYS),
     // The optimizer's latest report — the owner's only; a grantee gets
     // null from the read itself and no panel below.
@@ -176,10 +173,16 @@ export default async function AgentOverviewPage({
           name: agent.name,
           description: agent.description,
           enabled: agent.enabled,
-          steps: agent.steps,
+          instructions: agent.instructions,
+          tools: agent.tools,
           triggers: agent.triggers,
           guardrails: agent.guardrails,
-          blockedTools: agent.blockedTools,
+          canAskQuestions: agent.canAskQuestions,
+          autoAcceptActions: agent.autoAcceptActions,
+          limits: {
+            minutes: settingsResult.ok ? settingsResult.val.agentRunTimeoutMinutes : 30,
+            toolCalls: settingsResult.ok ? settingsResult.val.agentRunToolCallBudget : 150,
+          },
         })}
       />
       {access.viewerIsOwner ? (
@@ -249,7 +252,7 @@ export default async function AgentOverviewPage({
       ) : null}
 
       <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-8">
-        {/* The rail is FIRST in the DOM so it stacks above the steps on
+        {/* The rail is FIRST in the DOM so it stacks above the instructions on
             phones; on lg the explicit grid placement puts it right. */}
         <aside className="mb-6 lg:col-start-2 lg:row-start-1 lg:mb-0">
           {/* The controls, wherever the header cannot hold them (see the
@@ -341,14 +344,29 @@ export default async function AgentOverviewPage({
             </div>
           ) : null}
 
-          {agent.guardrails || agent.blockedTools.length > 0 ? (
-            <CollapsibleSection title="Guardrails & context">
-              {agent.blockedTools.length > 0 ? (
-                <p className="mb-2 text-xs text-gray-600 dark:text-gray-400">
-                  <span className="font-medium">Blocked skills:</span>{' '}
-                  {agent.blockedTools.join(', ')}
-                </p>
+          <CollapsibleSection title="How it acts">
+            <ul className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+              <li>
+                {agent.autoAcceptActions
+                  ? 'Proposed changes are accepted automatically where your organization allows it; high-risk ones still wait for you.'
+                  : 'Every change it proposes waits for your go-ahead.'}
+              </li>
+              <li>
+                {agent.canAskQuestions
+                  ? 'It may pause to ask you a question.'
+                  : 'It does not ask you questions mid-run.'}
+              </li>
+              {settingsResult.ok ? (
+                <li>
+                  Each run: up to {settingsResult.val.agentRunToolCallBudget} tool calls and{' '}
+                  {settingsResult.val.agentRunTimeoutMinutes} minutes of active time.
+                </li>
               ) : null}
+            </ul>
+          </CollapsibleSection>
+
+          {agent.guardrails ? (
+            <CollapsibleSection title="Guardrails">
               {agent.guardrails ? (
                 <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-800 dark:bg-gray-900 dark:text-gray-200">
                   {agent.guardrails}
@@ -397,7 +415,6 @@ export default async function AgentOverviewPage({
             <AgentUsagePanel
               tokens={tokenUsage}
               byModel={tokensByModel}
-              bySteps={labelStepUsage(agent.steps, tokenStepRows)}
               tools={toolUsage}
               toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
             />
@@ -409,8 +426,8 @@ export default async function AgentOverviewPage({
         </aside>
 
         <div className="lg:col-start-1 lg:row-start-1">
-          <h2 className="mb-2 text-sm font-semibold">Steps</h2>
-          <StepsOutline doc={agent.steps} />
+          <h2 className="mb-2 text-sm font-semibold">Instructions</h2>
+          <InstructionsView instructions={agent.instructions} tools={agent.tools} />
         </div>
       </div>
     </div>

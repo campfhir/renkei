@@ -20,6 +20,7 @@ import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
 import { agentJobsQueue, webhookEventsQueue } from '@renkei/queue';
 import { createEventLoop, schedulePeriodicSweep } from '@renkei/worker-loop';
 import { createAgentRunHandler } from './engine';
+import { createActionsHandler } from './actions';
 import { createDraftHandler } from './draft';
 import { createDraftSweep, DRAFT_SWEEP_INTERVAL_MS } from './draft-sweep';
 import {
@@ -37,7 +38,6 @@ import {
   createUsageRetentionSweep,
   createNotificationRetentionSweep,
   createRetentionSweep,
-  createStaleVersionSweep,
   createStuckRunJanitor,
   createChatPresenceSweep,
 } from './maintenance';
@@ -95,10 +95,19 @@ async function main(): Promise<void> {
   const handleRun = createAgentRunHandler({
     db,
     webBaseUrl: webBaseUrl(),
+    // Accepted batches go onto our own queue, for the action executor.
+    actionsProducer: queue.producer,
     // Chained agents go back onto OUR queue; failure notifications go to
     // the interactive worker's, which owns the connector delivery paths.
     onFinalized: createFinalizeHook(db, queue.producer, webhookEventsQueue().producer),
     stopRequested: () => stopRequested,
+  });
+  // The only path an agent's changes are made by: accepted batches, under
+  // a token of their own, the run handed back when they are done.
+  const handleActions = createActionsHandler({
+    db,
+    webBaseUrl: webBaseUrl(),
+    runProducer: queue.producer,
   });
 
   // Every sweep is replica-safe: the schedule advance is optimistically
@@ -193,16 +202,6 @@ async function main(): Promise<void> {
       OPTIMIZATION_SWEEP_INTERVAL_MS,
       createOptimizationSweep(db)
     ),
-    // Turns "saved in an older format" from silent never-firing into a
-    // disabled agent plus a notification naming the fix. Idempotent by
-    // its WHERE clause.
-    schedulePeriodicSweep(
-      logger,
-      'stale-version agents',
-      'worker-agents/stale-version',
-      JANITOR_SWEEP_MS,
-      createStaleVersionSweep(db)
-    ),
     // Replica-safe by construction (equivalent summaries, idempotent
     // deletes) — see memory-compaction.ts.
     schedulePeriodicSweep(
@@ -228,6 +227,8 @@ async function main(): Promise<void> {
       const ours = event.source === 'agents' || event.source.startsWith('agents:');
       if (!ours) return undefined;
       if (event.type === 'run') return handleRun;
+      // An accepted action batch — executed apart from the run that staged it.
+      if (event.type === 'actions') return handleActions;
       // Drafting from prose: durable so the browser tab need not survive it.
       if (event.type === 'draft') return handleDraft;
       // Failure analysis + revision brief: durable for the same reason.

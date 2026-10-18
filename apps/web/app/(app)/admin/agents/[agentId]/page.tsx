@@ -4,13 +4,7 @@ import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getAgentForAdmin } from '@/lib/agents/runs-view';
-import {
-  getAgentTokenUsage,
-  getAgentTokenUsageByStep,
-  getAgentToolUsage,
-  getTokenUsageByModel,
-} from '@/lib/agents/agent-usage';
-import { labelStepUsage } from '@/lib/agents/step-usage-labels';
+import { getAgentTokenUsage, getAgentToolUsage, getTokenUsageByModel } from '@/lib/agents/agent-usage';
 import BackLink from '@/components/back-link';
 import LocalTime from '@/components/local-time';
 import AgentUsagePanel from '@/components/agent-usage-panel';
@@ -22,8 +16,8 @@ const TOOL_USAGE_WINDOW_DAYS = 30;
  * One agent, from the operator's side: identity (name, owner, description)
  * and the same on/off control the oversight table's "Turn off" button
  * offers, plus the usage this agent has actually run up — token spend
- * (durable, content-free), split by model and by step so the expensive
- * step is findable from here, and its tool calls by connector.
+ * (durable, content-free), split by model, and its tool calls by
+ * connector.
  */
 export default async function AdminAgentDetailPage({
   params,
@@ -42,20 +36,11 @@ export default async function AdminAgentDetailPage({
   const agent = await getAgentForAdmin(db, agentId);
   if (!agent) notFound();
 
-  const [tokenUsage, byModel, stepRows, stepsDoc, toolUsage] = await Promise.all([
+  const [tokenUsage, byModel, toolUsage] = await Promise.all([
     getAgentTokenUsage(db, agentId),
     getTokenUsageByModel(db, agentId),
-    getAgentTokenUsageByStep(db, agentId),
-    // Step NAMES only, to label the per-step rows; the definition itself
-    // stays the owner's to read.
-    db
-      .selectFrom('agents')
-      .select('steps')
-      .where('id', '=', agentId)
-      .executeTakeFirst(),
     getAgentToolUsage(db, agentId, TOOL_USAGE_WINDOW_DAYS),
   ]);
-  const bySteps = labelStepUsage(stepsDoc?.steps, stepRows);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -88,7 +73,6 @@ export default async function AdminAgentDetailPage({
       <AgentUsagePanel
         tokens={tokenUsage}
         byModel={byModel}
-        bySteps={bySteps}
         tools={toolUsage}
         toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
       />

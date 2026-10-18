@@ -2,9 +2,10 @@
  * Run history reads, with the visibility rule applied AT THE QUERY SEAM.
  *
  * Two audiences, one schema: status/outcome/timing columns are content-free
- * and safe for any org operator; the `detail` jsonb is CONTENT. The owner
- * gets it always; an admin gets it only for FAILED attempts — enough to
- * troubleshoot a broken agent, nothing of a working one's inner life. The
+ * and safe for any org operator; the turns' `detail` jsonb and the staged
+ * batches' actions are CONTENT. The owner gets it always; an admin gets it
+ * only on a FAILED run — enough to troubleshoot a broken agent, nothing of
+ * a working one's inner life. The
  * projection happens here, in the functions pages call, so no page can
  * forget to redact: the admin functions never even SELECT what they must
  * not show.
@@ -12,7 +13,16 @@
 
 import { sql, type Kysely } from 'kysely';
 import type { DB, Json } from '@renkei/db';
-import { findNodeById, isAgentStepsDoc, mergeOpenedDetail, sealedDetailOf } from '@renkei/agents';
+import {
+  mergeOpenedDetail,
+  parseAgentDefinition,
+  parseStoredActions,
+  parseStoredResults,
+  sealedDetailOf,
+  type ActionResult,
+  type AgentDefinition,
+  type StagedAction,
+} from '@renkei/agents';
 import { delegateClient } from '@renkei/delegate-client';
 import { isUuid } from '@/lib/uuid';
 import { unavailableMarker } from '@/lib/chat/content-crypto';
@@ -24,8 +34,6 @@ export interface RunSummary {
   triggerKind: string;
   errorKind: string | null;
   error: string | null;
-  /** Resolved from the snapshot when errorKind is 'step_failed', else null. */
-  failedStepName: string | null;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -37,11 +45,15 @@ export interface RunSummary {
   resumedAt: string | null;
 }
 
+/**
+ * One model turn of a run (an agent_run_steps row with step_id 'turn'):
+ * what the agent said and called, and what came back.
+ */
 export interface AttemptView {
   stepId: string;
   stepIndex: number;
+  /** The turn number, from 1. */
   attempt: number;
-  /** 0 = not inside a loop; 1-based loop round otherwise. */
   iteration: number;
   status: string;
   outcome: string | null;
@@ -54,9 +66,35 @@ export interface AttemptView {
   redacted: boolean;
 }
 
+/** A batch of staged actions, as the run page shows it. */
+export interface ActionBatchView {
+  id: string;
+  /** The turn that staged it. */
+  turn: number;
+  status: string;
+  /** Why a person had to accept it ('owner' | 'high-risk' | 'policy'); null = auto-accepted. */
+  reviewReason: string | null;
+  acceptedBy: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  /** Content — absent when redacted, by the same rule as the turns'. */
+  summary?: string;
+  actions?: StagedAction[];
+  results?: ActionResult[];
+  comment?: string | null;
+  /** How many actions it held — visible even when the content is not. */
+  actionCount: number;
+}
+
 export interface RunDetail extends RunSummary {
-  stepsSnapshot: Json;
+  /** What the run executed: its instructions and tools, frozen at start. */
+  definition: AgentDefinition | null;
+  /** The run's model turns, in order. */
   attempts: AttemptView[];
+  /** The action batches it staged, in order. */
+  batches: ActionBatchView[];
+  /** The run's active-time clock, in ms (waits on a person excluded). */
+  activeMs: number;
   /**
    * What the trigger handed the run — the `trigger.*` variables it started
    * with. Absent when redacted, which follows the SAME rule the per-attempt
@@ -67,13 +105,11 @@ export interface RunDetail extends RunSummary {
   initialState?: Json;
   initialStateRedacted: boolean;
   /**
-   * What the owner said to do differently when they last resumed the run,
-   * and the step it was resumed at (resolved from the snapshot). Content
-   * the owner wrote, so it follows the owner-always / admin-on-failure
-   * rule the attempt detail does.
+   * What the owner said to do differently when they last resumed the run.
+   * Content the owner wrote, so it follows the owner-always /
+   * admin-on-failure rule the turn detail does.
    */
   resumeGuidance: string | null;
-  resumeStepName: string | null;
 }
 
 function iso(value: Date | null): string | null {
@@ -86,34 +122,20 @@ interface RunRow {
   trigger_kind: string;
   error_kind: string | null;
   error: string | null;
-  current_step_id: string | null;
   created_at: Date;
   started_at: Date | null;
   finished_at: Date | null;
   resume_count: number;
   resumed_at: Date | null;
-  resume_step_id: string | null;
 }
 
-/** The failed step's name, from wherever the caller has a snapshot. */
-function failedStepNameOf(
-  row: Pick<RunRow, 'error_kind' | 'current_step_id'>,
-  snapshot: Json | null | undefined
-): string | null {
-  if (row.error_kind !== 'step_failed' || !row.current_step_id) return null;
-  if (!isAgentStepsDoc(snapshot)) return null;
-  const found = findNodeById(snapshot.steps, row.current_step_id);
-  return found?.node.name || null;
-}
-
-function summaryOf(row: RunRow, snapshot?: Json | null): RunSummary {
+function summaryOf(row: RunRow): RunSummary {
   return {
     id: row.id,
     status: row.status,
     triggerKind: row.trigger_kind,
     errorKind: row.error_kind,
     error: row.error,
-    failedStepName: failedStepNameOf(row, snapshot),
     createdAt: row.created_at.toISOString(),
     startedAt: iso(row.started_at),
     finishedAt: iso(row.finished_at),
@@ -126,35 +148,18 @@ function summaryOf(row: RunRow, snapshot?: Json | null): RunSummary {
   };
 }
 
-/** The resumed step's name, when the run was resumed and the snapshot still names it. */
-function resumeStepNameOf(row: Pick<RunRow, 'resume_step_id'>, snapshot: Json): string | null {
-  if (!row.resume_step_id || !isAgentStepsDoc(snapshot)) return null;
-  return findNodeById(snapshot.steps, row.resume_step_id)?.node.name || null;
-}
-
 const RUN_COLUMNS = [
   'id',
   'status',
   'trigger_kind',
   'error_kind',
   'error',
-  'current_step_id',
   'created_at',
   'started_at',
   'finished_at',
   'resume_count',
   'resumed_at',
-  'resume_step_id',
 ] as const;
-
-/**
- * The snapshot ONLY for rows that need it for a name lookup — a list of
- * healthy runs transfers zero jsonb, and `RunSummary` never exposes the
- * snapshot itself.
- */
-const FAILED_SNAPSHOT = sql<Json | null>`
-  case when error_kind = 'step_failed' then steps_snapshot end
-`.as('failed_snapshot');
 
 /**
  * The trigger payload, for the admin path only — and only on a failed run.
@@ -208,7 +213,7 @@ export async function listRunsForOwner(
   if (!isUuid(agentId)) return [];
   let query = db
     .selectFrom('agent_runs')
-    .select([...RUN_COLUMNS, FAILED_SNAPSHOT])
+    .select([...RUN_COLUMNS])
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId);
   if (options.status) query = query.where('status', '=', options.status);
@@ -234,7 +239,7 @@ export async function listRunsForOwner(
     .orderBy('created_at', 'desc')
     .limit(options.limit ?? 50)
     .execute();
-  return rows.map((row) => summaryOf(row, row.failed_snapshot));
+  return rows.map((row) => summaryOf(row));
 }
 
 /**
@@ -283,9 +288,10 @@ async function runDetail(
   db: Kysely<DB>,
   runRow: RunRow & {
     owner_subject: string;
-    steps_snapshot: Json;
+    definition_snapshot: Json | null;
     initial_state: Json | null;
     resume_guidance: string | null;
+    active_ms: string | number;
   },
   audience: 'owner' | 'admin'
 ): Promise<RunDetail> {
@@ -312,10 +318,13 @@ async function runDetail(
     .orderBy('iteration')
     .orderBy('attempt')
     .execute();
-  // Only what this audience may see is opened: an admin's view of a
-  // working run never asks the delegate for its content.
-  const contentRows =
-    audience === 'owner' ? storedRows : storedRows.filter((row) => row.status === 'failed');
+  // THE visibility rule: content for the owner always; for an admin only
+  // when the RUN failed (troubleshooting is their job, reading a working
+  // agent's content is not). A run's turns are one conversation, so the
+  // rule is the run's, not the turn's. Only what this audience may see is
+  // opened: an admin's view of a working run never asks the delegate.
+  const contentVisible = audience === 'owner' || runRow.status === 'failed';
+  const contentRows = contentVisible ? storedRows : [];
   const openedById = new Map(
     (await openAttemptDetails(runRow.owner_subject, contentRows)).map(
       (row) => [`${row.step_id}:${row.iteration}:${row.attempt}`, row.detail] as const
@@ -326,25 +335,56 @@ async function runDetail(
     detail: openedById.get(`${row.step_id}:${row.iteration}:${row.attempt}`) ?? row.detail,
   }));
 
-  // The run-level equivalent of the per-attempt rule below: an admin sees
-  // what a run started with only when it failed. A working agent's inbound
-  // mail is not theirs to read.
-  const initialVisible = audience === 'owner' || runRow.status === 'failed';
+  const batchRows = await db
+    .selectFrom('agent_action_batches')
+    .select([
+      'id',
+      'turn',
+      'status',
+      'review_reason',
+      'accepted_by',
+      'summary',
+      'actions',
+      'results',
+      'comment',
+      'created_at',
+      'finished_at',
+    ])
+    .where('run_id', '=', runRow.id)
+    .orderBy('turn')
+    .execute();
 
   return {
-    ...summaryOf(runRow, runRow.steps_snapshot),
-    stepsSnapshot: runRow.steps_snapshot,
-    ...(initialVisible && runRow.initial_state !== null
+    ...summaryOf(runRow),
+    definition: parseAgentDefinition(runRow.definition_snapshot),
+    activeMs: Number(runRow.active_ms ?? 0),
+    ...(contentVisible && runRow.initial_state !== null
       ? { initialState: runRow.initial_state }
       : {}),
-    initialStateRedacted: !initialVisible,
-    resumeGuidance: initialVisible ? runRow.resume_guidance : null,
-    resumeStepName: resumeStepNameOf(runRow, runRow.steps_snapshot),
+    initialStateRedacted: !contentVisible,
+    resumeGuidance: contentVisible ? runRow.resume_guidance : null,
+    batches: batchRows.map((row) => {
+      const actions = parseStoredActions(row.actions);
+      return {
+        id: row.id,
+        turn: row.turn,
+        status: row.status,
+        reviewReason: row.review_reason,
+        acceptedBy: row.accepted_by,
+        createdAt: row.created_at.toISOString(),
+        finishedAt: iso(row.finished_at),
+        actionCount: actions.length,
+        ...(contentVisible
+          ? {
+              summary: row.summary,
+              actions,
+              results: parseStoredResults(row.results),
+              comment: row.comment,
+            }
+          : {}),
+      };
+    }),
     attempts: attemptRows.map((row) => {
-      // THE visibility rule: content for the owner always; for an admin
-      // only when the attempt failed (troubleshooting is their job,
-      // reading a working agent's content is not).
-      const contentVisible = audience === 'owner' || row.status === 'failed';
       return {
         stepId: row.step_id,
         stepIndex: row.step_index,
@@ -375,9 +415,10 @@ export async function getRunForOwner(
     .select([
       ...RUN_COLUMNS,
       'owner_subject',
-      'steps_snapshot',
+      'definition_snapshot',
       'initial_state',
       'resume_guidance',
+      'active_ms',
     ])
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId)
@@ -396,7 +437,7 @@ export async function listRunsForAdmin(
   if (!isUuid(agentId)) return [];
   let query = db
     .selectFrom('agent_runs')
-    .select([...RUN_COLUMNS, FAILED_SNAPSHOT])
+    .select([...RUN_COLUMNS])
     .where('agent_id', '=', agentId);
   if (options.status) query = query.where('status', '=', options.status);
   const q = options.q?.trim();
@@ -419,7 +460,7 @@ export async function listRunsForAdmin(
     .orderBy('created_at', 'desc')
     .limit(options.limit ?? 50)
     .execute();
-  return rows.map((row) => summaryOf(row, row.failed_snapshot));
+  return rows.map((row) => summaryOf(row));
 }
 
 export async function getRunForAdmin(
@@ -433,9 +474,10 @@ export async function getRunForAdmin(
     .select([
       ...RUN_COLUMNS,
       'owner_subject',
-      'steps_snapshot',
+      'definition_snapshot',
       FAILED_INITIAL_STATE,
       FAILED_RESUME_GUIDANCE,
+      'active_ms',
     ])
     .where('agent_id', '=', agentId)
     .where('id', '=', runId)

@@ -1,27 +1,27 @@
 /**
- * The variables a step can reference as chips.
+ * The named values a run starts from.
  *
- * Three provenances, one namespace rule each:
+ * Two provenances:
  *   - builtins: `user.name`, `user.email`, `today` — resolved at run time
- *     from the identity spine and the clock.
+ *     from the identity spine and the clock, listed under "Facts" in the
+ *     run's opening message;
  *   - trigger inputs: `trigger.<key>` — what the attached triggers provide
- *     (an email trigger provides subject/body/from; an API trigger provides
- *     whatever inputs its author named).
- *   - step results: bare names bound by an earlier step's `saveAs`.
+ *     (an email trigger provides subject/body/from; an API trigger
+ *     provides whatever inputs its author named), listed fenced as
+ *     untrusted under "What triggered this run".
  *
- * The builder unions these into the autocomplete; the validator rejects a
- * chip naming none of them.
+ * The builder lists both beside the instructions so an author knows what
+ * the agent will be handed, and the drafting prompt names them so the
+ * instructions it writes refer to them.
  */
 
-import { untrustedBlock } from './untrusted';
-
 export interface VariableDescriptor {
-  /** The name a var chip carries, e.g. 'user.email' or 'trigger.subject'. */
+  /** The value's name, e.g. 'user.email' or 'trigger.subject'. */
   name: string;
-  /** Human label for the chip and autocomplete row, e.g. "Your email". */
+  /** Human label, e.g. "Your email". */
   label: string;
   description: string;
-  source: 'builtin' | 'trigger' | 'step';
+  source: 'builtin' | 'trigger';
 }
 
 export const BUILTIN_VARIABLES: VariableDescriptor[] = [
@@ -43,106 +43,13 @@ export const BUILTIN_VARIABLES: VariableDescriptor[] = [
     description: 'The date the agent runs, e.g. 2026-08-16.',
     source: 'builtin',
   },
-  {
-    name: 'attempt',
-    label: 'This try',
-    description: 'Which try of this step is running, counting from 1.',
-    source: 'builtin',
-  },
-  {
-    name: 'attempt.max',
-    label: 'Total tries',
-    description: "How many tries this step is allowed, from the step's own setting.",
-    source: 'builtin',
-  },
 ];
 
 /**
- * The attempt chips, bound for one try of one step.
- *
- * Kept here rather than in the run's variable map because they are the only
- * builtins that change WITHIN a run: `today` and the identity are fixed for
- * the whole thing, while these two differ on every retry of every step. The
- * engine and the prompt builder both layer this over the run's variables at
- * the point they know which try they are on.
- *
- * `attempt` counts from 1, so an instruction reading "try [attempt] of
- * [attempt.max]" says "try 1 of 3" on the first pass — the wording an
- * author expects, and the reason this is not zero-based.
- */
-export function attemptVariables(attempt: number, maxAttempts: number): Record<string, string> {
-  return { attempt: String(attempt), 'attempt.max': String(maxAttempts) };
-}
-
-/**
- * What a step's prompt lists under "Known information".
- *
- * Every var bound so far used to be listed on every step — a run's prompts
- * grew with each saved result and re-sent a trigger's whole message dump
- * to steps that never asked for it. A step now sees what it REFERENCES: a
- * var its chips name (listed when the value was rendered by reference,
- * omitted when it is already inline in the sentence), the builtins that
- * frame every step, the answers the engine bound for this step, and the
- * live loop item vars a caller names as inputs. A saved result, a trigger
- * input or a collected list that no chip names is not sent.
- */
-export const ALWAYS_KNOWN_NAMES: readonly string[] = ['today'];
-export const ALWAYS_KNOWN_PREFIXES: readonly string[] = ['user.', 'approval.', 'question.'];
-
-export function isAlwaysKnown(name: string): boolean {
-  return (
-    ALWAYS_KNOWN_NAMES.includes(name) ||
-    ALWAYS_KNOWN_PREFIXES.some((prefix) => name.startsWith(prefix))
-  );
-}
-
-export interface KnownVariablesInput {
-  variables: Record<string, string>;
-  /** Every var chip in the step's segment lists (instruction, guidance, condition). */
-  referenced: Iterable<string>;
-  /** The chips whose values the prompt already carries inline — not repeated. */
-  inlined: Iterable<string>;
-  /** Names this step must see without a chip: the enclosing foreach loops' item vars. */
-  inputs?: Iterable<string>;
-}
-
-/** The subset of `variables` to list, in the variables' own order. */
-export function knownVariables(input: KnownVariablesInput): Record<string, string> {
-  const referenced = new Set(input.referenced);
-  const inlined = new Set(input.inlined);
-  const inputs = new Set(input.inputs ?? []);
-  const known: Record<string, string> = {};
-  for (const [name, value] of Object.entries(input.variables)) {
-    if (name === 'attempt' || name === 'attempt.max') continue;
-    if (inlined.has(name)) continue;
-    if (isAlwaysKnown(name) || inputs.has(name) || referenced.has(name)) known[name] = value;
-  }
-  return known;
-}
-
-/**
  * The vars whose values came from OUTSIDE the author's hand — the trigger's
- * payload (a mail, a message, an API caller's state). A step result is the
- * model's own saved summary; a builtin is the platform's. Only the trigger's
- * values carry a stranger's words into the prompt as they were written.
+ * payload (a mail, a message, an API caller's state). Only these carry a
+ * stranger's words into the prompt as they were written.
  */
 export function isUntrustedVariable(name: string): boolean {
   return name.startsWith('trigger.');
-}
-
-/**
- * The variables with every untrusted value fenced (untrusted.ts), ready to
- * render — inline in a sentence or listed under "Known information", the
- * fence travels with the value, so both readings of the prompt carry it
- * exactly once per value. Applied by every prompt builder; the engine's
- * own renders of guidance go through it too.
- */
-export function delimitUntrustedVariables(
-  variables: Record<string, string>
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [name, value] of Object.entries(variables)) {
-    out[name] = isUntrustedVariable(name) ? untrustedBlock(name, value) : value;
-  }
-  return out;
 }

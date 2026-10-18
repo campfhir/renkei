@@ -8,7 +8,8 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { chatModelsOnly } from '@renkei/agent-llm';
-import { isBlackoutEntry, MAX_STEP_ATTEMPTS, MAX_STEPS, type BlackoutEntry } from '@renkei/agents';
+import { isBlackoutEntry, type BlackoutEntry } from '@renkei/agents';
+import { DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getOrgSettings } from '@renkei/settings';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { listAgents } from '@/lib/agents/store';
@@ -17,15 +18,13 @@ export interface BuilderData {
   tools: ToolDescriptor[];
   otherAgents: { id: string; name: string }[];
   models: { id: string; label: string; isDefault: boolean }[];
-  /** The org's per-step attempt ceiling — the builder offers no more. */
-  attemptsCap: number;
   /**
-   * The org's `agentMaxSteps` ceiling. The builder validates against it for
-   * the same reason it takes attemptsCap: without it the client falls back to
-   * the MAX_STEPS default and refuses to save an agent the SERVER would have
-   * accepted, which reads as a bug in the product rather than a limit.
+   * The org's hard limits on every run — shown beside the instructions so
+   * an author writes for the budget the agent will actually have.
    */
-  maxSteps: number;
+  runLimits: { minutes: number; toolCalls: number };
+  /** The org's policy on when a person must accept staged actions anyway. */
+  actApprovalPolicy: 'externally_triggered' | 'all' | 'off';
   /**
    * The org's holiday calendars, DATES INCLUDED: the schedule editor's
    * live next-run preview computes client-side with the same function the
@@ -67,9 +66,12 @@ export async function loadBuilderData(
       label: model.label,
       isDefault: model.is_default,
     })),
-    // The org cap may exceed the 10 default — it is the real ceiling.
-    attemptsCap: Math.max(1, settings.ok ? settings.val.agentMaxStepAttempts : MAX_STEP_ATTEMPTS),
-    maxSteps: Math.max(1, settings.ok ? settings.val.agentMaxSteps : MAX_STEPS),
+    runLimits: {
+      minutes: (settings.ok ? settings.val : DEFAULT_ORG_SETTINGS).agentRunTimeoutMinutes,
+      toolCalls: (settings.ok ? settings.val : DEFAULT_ORG_SETTINGS).agentRunToolCallBudget,
+    },
+    actApprovalPolicy: (settings.ok ? settings.val : DEFAULT_ORG_SETTINGS)
+      .agentActStepsRequireApproval,
     calendars: calendarRows.map((row) => ({
       id: row.id,
       name: row.name,

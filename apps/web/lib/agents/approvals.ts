@@ -1,7 +1,7 @@
 /**
  * The human half of a paused run: reading what is waiting on someone, and
- * deciding one — a `needsApproval` gate's proposed call, or an
- * `ask_person` question.
+ * deciding one — a staged action batch (accept or decline it, whole), or
+ * an `ask_person` question.
  *
  * A pause parks its run as 'waiting' and puts a card on the owner's feed.
  * Until now the only way to answer that card was the web feed's buttons —
@@ -34,8 +34,10 @@ import {
   checkQuestionAnswers,
   flattenFormFields,
   parseFormNodes,
+  parseStoredActions,
   type FormNode,
   type QuestionAnswerIssue,
+  type StagedAction,
 } from '@renkei/agents';
 
 export interface PendingApproval {
@@ -44,13 +46,12 @@ export interface PendingApproval {
   runId: string;
   agentId: string;
   agentName: string;
-  /** The card headline, e.g. "Sunday Deep Sweep — needs your approval". */
+  /** The card headline, e.g. "Sunday Deep Sweep — wants to make 2 changes". */
   title: string;
-  /** The one-line summary the engine wrote, e.g. "Wants to call Add comment." */
+  /** What the agent says the batch does and why. */
   summary: string;
-  /** The proposed tool call, as the engine snapshotted it. */
-  proposedTool: string | null;
-  proposedArgs: Record<string, unknown> | null;
+  /** The staged actions, in the order the executor would run them. */
+  actions: StagedAction[];
   raisedAt: string;
   /**
    * When the wait runs out and the run treats it as denied. Null only for
@@ -59,23 +60,11 @@ export interface PendingApproval {
   waitingUntil: string | null;
 }
 
-/** The proposed call the engine snapshotted onto the card. */
-function proposalOf(suggestedAction: unknown): {
-  tool: string | null;
-  args: Record<string, unknown> | null;
-} {
-  if (typeof suggestedAction !== 'object' || suggestedAction === null) {
-    return { tool: null, args: null };
-  }
-  const action: { tool?: unknown; args?: unknown } = suggestedAction;
-  return {
-    tool: typeof action.tool === 'string' ? action.tool : null,
-    args:
-      typeof action.args === 'object' && action.args !== null && !Array.isArray(action.args)
-        ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
-          (action.args as Record<string, unknown>)
-        : null,
-  };
+/** The staged batch the engine snapshotted onto the card. */
+export function batchProposalOf(suggestedAction: unknown): StagedAction[] {
+  if (typeof suggestedAction !== 'object' || suggestedAction === null) return [];
+  const proposal: { actions?: unknown } = suggestedAction;
+  return parseStoredActions(proposal.actions);
 }
 
 /**
@@ -118,7 +107,6 @@ export async function listPendingApprovals(
   const rows = await query.execute();
   return rows.flatMap((row) => {
     if (!row.runId) return [];
-    const { tool, args } = proposalOf(row.suggestedAction);
     return [
       {
         cardId: row.cardId,
@@ -127,8 +115,7 @@ export async function listPendingApprovals(
         agentName: row.agentName,
         title: row.title,
         summary: row.summary ?? '',
-        proposedTool: tool,
-        proposedArgs: args,
+        actions: batchProposalOf(row.suggestedAction),
         raisedAt: new Date(row.createdAt).toISOString(),
         waitingUntil: row.waitingUntil ? new Date(row.waitingUntil).toISOString() : null,
       },
@@ -137,39 +124,6 @@ export async function listPendingApprovals(
 }
 
 export type ApprovalDecision = 'approve' | 'decline';
-
-/**
- * The proposed-call keys an approval's own edit may NEVER touch — the
- * call's identity, not its content. A preview card's editable fields
- * (issue-preview.ts) cover everything else — summary, description,
- * priority, custom fields inside `fields`, whatever the call actually
- * proposes doing — because the person approving is trusted to review and
- * adjust what the call DOES. What they are not trusted to do from an edit
- * box is redirect it: approve one issue and have a different one updated,
- * or a different project's issue created, than what was actually shown
- * and reviewed. Enforced here — the one function both the HTTP route and
- * any MCP caller go through — rather than trusted to whatever sent
- * `argsOverride`.
- */
-export const APPROVAL_IDENTITY_KEYS = new Set(['projectKey', 'issueType', 'issueKey']);
-
-/** A generous cap on an edit's size — room for a form's worth of fields,
- * not for smuggling an unrelated payload through the decision route. */
-const MAX_ARGS_OVERRIDE_CHARS = 20_000;
-
-/** `argsOverride`, stripped of any key the call's identity depends on. */
-function sanitizeArgsOverride(value: unknown): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
-  if (JSON.stringify(value).length > MAX_ARGS_OVERRIDE_CHARS) return {};
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
-  const record = value as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(record)) {
-    if (APPROVAL_IDENTITY_KEYS.has(key)) continue;
-    out[key] = entry;
-  }
-  return out;
-}
 
 export type DecideApprovalResult =
   | { outcome: 'not-found' }
@@ -180,8 +134,9 @@ export type DecideApprovalResult =
   | { outcome: 'decided'; decision: ApprovalDecision; runId: string; resumed: boolean };
 
 /**
- * Decide one `needsApproval` gate's card and wake its run. Approve fires
- * the recorded call for real, on the engine's own next turn — never here;
+ * Decide one staged batch's card — the whole batch, accepted or declined —
+ * and wake its run. Accepting never runs anything here: the engine reads
+ * the card on its next turn and hands the batch to the action executor;
  * this only claims the card and enqueues the resume.
  *
  * The producer is a parameter rather than an import so this stays testable
@@ -195,23 +150,14 @@ export async function decideApproval(
   input: {
     cardId: string;
     decision: ApprovalDecision;
-    /** What the person typed alongside their decision, if anything. */
+    /** What the person typed alongside their decision, if anything — the agent reads it. */
     comment?: string | undefined;
-    /**
-     * An edit to the proposed call's summary/description, from a preview
-     * card's editable fields — ignored on a decline (nothing runs to edit)
-     * and narrowed to `APPROVAL_ARG_OVERRIDE_KEYS` regardless of what this
-     * carries, so a tampered or over-eager caller cannot smuggle in any
-     * other field.
-     */
-    argsOverride?: Record<string, unknown> | undefined;
   }
 ): Promise<DecideApprovalResult> {
   const comment = typeof input.comment === 'string' ? input.comment.trim() : '';
   if (comment.length > MAX_QUESTION_ANSWER_CHARS) {
     return { outcome: 'comment-too-long', max: MAX_QUESTION_ANSWER_CHARS };
   }
-  const argsOverride = input.decision === 'approve' ? sanitizeArgsOverride(input.argsOverride) : {};
 
   // Owner-scoped: someone else's card reads as not-found, never as
   // forbidden — the same rule every agents read follows.
@@ -232,7 +178,6 @@ export async function decideApproval(
       status: input.decision === 'approve' ? 'approved' : 'declined',
       result: JSON.stringify({
         ...(comment ? { comment } : {}),
-        ...(Object.keys(argsOverride).length > 0 ? { argsOverride } : {}),
         decidedBy: subject,
       }),
       decided_by: subject,

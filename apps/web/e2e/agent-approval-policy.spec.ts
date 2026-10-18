@@ -111,7 +111,7 @@ test('act-step approval policy: default, change, save, API clamp', async ({ page
   await page.goto(settingsUrl);
   await expect(select).toBeVisible();
   await expect(select).toHaveValue('externally_triggered');
-  await expect(page.getByText('Steps that change something need approval on')).toBeVisible();
+  await expect(page.getByText('A person must accept agent changes on')).toBeVisible();
   await select.scrollIntoViewIfNeeded();
   await shot(page, testInfo, '01-default');
 

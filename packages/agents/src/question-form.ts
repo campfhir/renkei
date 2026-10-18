@@ -16,7 +16,7 @@
  * approvals (see docs/approval-and-questions-design.md).
  */
 
-import { isQuestionField, MAX_QUESTION_FIELDS, type QuestionField } from './steps';
+import { isQuestionField, MAX_QUESTION_FIELDS, type QuestionField } from './question-field';
 
 export type FormNode =
   | ({ kind: 'field' } & QuestionField)

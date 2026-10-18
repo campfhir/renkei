@@ -21,7 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { isAgentStepsDoc } from '@renkei/agents';
+import { parseAgentDefinition } from '@renkei/agents';
 import { getBearerToken, resolveAccessToken } from '@/lib/mcp-token';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { claimDraft, finishDraft, getDraft } from '@/lib/agents/draft-store';
@@ -86,7 +86,7 @@ export async function POST(
   }
 
   try {
-    const currentSteps = isAgentStepsDoc(draft.request.steps) ? draft.request.steps.steps : [];
+    const current = parseAgentDefinition(draft.request.current);
     const suggestTriggers = draft.request.suggestTriggers;
 
     // Agent-finished trigger targets come from the database, not the stored
@@ -103,16 +103,11 @@ export async function POST(
 
     const tools = await listAvailableTools(record.subject);
     const drafted = await draftAgentFromProse(db, draft.request.text, tools, {
-      currentSteps,
+      current,
       triggerVars: parseTriggerVars(draft.request.triggerVars),
       suggestTriggers,
       otherAgents,
       guardrails: draft.request.guardrails,
-      // Still NOT refineWithReview. Nobody is watching a spinner any more,
-      // but that loop costs up to five more SEQUENTIAL model calls, each
-      // re-sending the whole tool catalog and regenerating every step
-      // verbatim. The quality pass already happens on save, where it fills
-      // the builder's "Worth checking" panel.
     });
 
     if ('error' in drafted) {

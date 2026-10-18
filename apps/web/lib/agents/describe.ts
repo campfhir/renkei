@@ -1,6 +1,6 @@
 /**
  * The generated agent description: a save-time LLM pass that summarizes
- * the recipe in the owner's language and flags logic smells, so the review
+ * the instructions in the owner's language and flags gaps, so the review
  * panel can say "here's what this agent does — check it".
  *
  * ADVISORY, NEVER BLOCKING. Any failure — no model configured, timeout,
@@ -11,16 +11,7 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import {
-  describeFailureHandling,
-  describeSchedule,
-  instructionPreview,
-  walkSteps,
-  type ActionStep,
-  type AgentStepNode,
-  type AgentStepsDoc,
-  type TriggerDraft,
-} from '@renkei/agents';
+import { describeSchedule, type TriggerDraft } from '@renkei/agents';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import { logger } from '@/lib/logger';
 import { saveDescription } from '@/lib/agents/store';
@@ -52,201 +43,46 @@ function describeTrigger(draft: TriggerDraft): string {
   }
 }
 
-function actionStepLines(step: ActionStep, label: string, indent: string): string {
-  // The shared reading, so the reviewer's outline can never lie about a
-  // handling (the old inline ternary rendered 'continue' and 'stop-quiet'
-  // both as "stop").
-  const failure = step.failureHandling
-    .map((handling) => describeFailureHandling(handling, step.maxAttempts, step.saveAs))
-    .join('; ');
-  return [
-    `${indent}${label} ${step.name}`,
-    `${indent}   does: ${instructionPreview(step.instruction)}`,
-    step.tool ? `${indent}   tool: ${step.tool}` : `${indent}   tool: none (reasoning only)`,
-    step.saveAs ? `${indent}   saves result as: ${step.saveAs}` : null,
-    // Without this line the reviewer flags "nothing ends the run" on
-    // agents that DO end deliberately.
-    step.onSuccess === 'stop'
-      ? `${indent}   on success: the whole automation ends here`
-      : step.onSuccess === 'stop-quiet'
-        ? `${indent}   on success: the automation ends here silently (no reply, no follow-up)`
-        : null,
-    failure
-      ? `${indent}   failure handling: ${failure}`
-      : `${indent}   failure handling: stop on any failure`,
-  ]
-    .filter((line): line is string => line !== null)
-    .join('\n');
-}
-
-/**
- * Labels come from the SAME pre-order ordinals the builder canvas, the
- * outline, and the run timeline render — never a positional `5.1.2.`
- * scheme of this prompt's own. The concerns this prompt produces name
- * steps by number, and a number the owner cannot find on their canvas
- * points the fix at the wrong step.
- */
-function nodeLines(
-  nodes: AgentStepNode[],
-  ordinals: ReadonlyMap<string, number>,
-  indent: string
-): string {
-  return nodes
-    .map((node) => {
-      const label = `Step ${(ordinals.get(node.id) ?? 0) + 1}:`;
-      switch (node.kind) {
-        case 'action':
-        case undefined: {
-          const base = actionStepLines(node, label, indent);
-          if (!node.needsApproval) return base;
-          const recovery = node.onNotApproved;
-          const recoveryBody = recovery
-            ? recovery.steps.length
-              ? nodeLines(recovery.steps, ordinals, `${indent}      `)
-              : `${indent}      (nothing — continues below the step)`
-            : `${indent}      (nothing — continues below the step)`;
-          return [
-            base,
-            `${indent}   needs approval: the run PAUSES before this tool call and waits for the OWNER, up to ${node.approvalTimeoutHours ?? 96} hours`,
-            `${indent}   if not approved (denied or timed out)${recovery ? `, path "${recovery.name}"` : ''}:\n${recoveryBody}`,
-            `${indent}   after the recovery path finishes, the automation continues below the step`,
-          ].join('\n');
-        }
-        case 'branch': {
-          const pathBlock = (path: (typeof node.paths)[number], heading: string) => {
-            const body = path.steps.length
-              ? nodeLines(path.steps, ordinals, `${indent}      `)
-              : `${indent}      (nothing — continues after the branch)`;
-            return `${indent}   ${heading} "${path.name}":\n${body}`;
-          };
-          const twoWay = node.paths.length === 2;
-          return [
-            `${indent}${label} ${node.name} (a branch)`,
-            `${indent}   decides: ${instructionPreview(node.condition)}`,
-            ...node.paths.map((path, index) =>
-              pathBlock(
-                path,
-                twoWay
-                  ? index === 0
-                    ? 'if yes, path'
-                    : 'otherwise, path'
-                  : index === node.paths.length - 1
-                    ? `otherwise (the fallback), path`
-                    : `path ${index + 1} of ${node.paths.length},`
-              )
-            ),
-            ...(node.failurePath
-              ? [
-                  pathBlock(
-                    node.failurePath,
-                    'if the DECISION ITSELF keeps failing (never chosen by the agent), failure route'
-                  ),
-                ]
-              : []),
-            `${indent}   after a path finishes, the automation continues below the branch`,
-          ].join('\n');
-        }
-        case 'loop': {
-          const heading =
-            node.mode === 'foreach'
-              ? `${indent}   repeats its steps once per item of [${node.itemsVar}] (the current item is [${node.itemVar}]), at most ${node.maxIterations} rounds`
-              : `${indent}   repeats its steps until: ${instructionPreview(node.condition)} (checked after each round; at most ${node.maxIterations} rounds — if still untrue then, the run fails)`;
-          return [
-            `${indent}${label} ${node.name} (a loop)`,
-            heading,
-            node.collectVar
-              ? `${indent}   each round, what "${node.collectFrom}" saved is added to the list [${node.collectVar}] — rounds that save nothing add nothing`
-              : null,
-            nodeLines(node.steps, ordinals, `${indent}      `),
-          ]
-            .filter((line): line is string => line !== null)
-            .join('\n');
-        }
-        case 'group':
-          return [
-            `${indent}${label} ${node.name} (a group — organizes the steps below; changes nothing about execution)`,
-            nodeLines(node.steps, ordinals, `${indent}      `),
-          ].join('\n');
-        case 'terminal': {
-          const wording =
-            node.result === 'failure'
-              ? 'the whole run ends here AS A FAILURE (a deliberate failure exit)'
-              : node.result === 'stop'
-                ? 'the whole run ends here gracefully as skipped'
-                : 'the whole run finishes successfully here';
-          return [
-            `${indent}${label} ${node.name} (an end marker) — when reached, ${wording}`,
-            node.message.length > 0
-              ? `${indent}   note: ${instructionPreview(node.message)}`
-              : `${indent}   no note attached`,
-          ].join('\n');
-        }
-        default: {
-          const unhandled: never = node;
-          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
-        }
-      }
-    })
-    .join('\n');
-}
-
-/**
- * The whole steps document as the reviewer's plain-text outline — exported
- * so the agents-over-MCP tools can show a definition without inventing a
- * THIRD renderer. Same pre-order numbering as the canvas and timeline.
- */
-export function renderStepsOutline(steps: AgentStepsDoc): string {
-  const ordinals = new Map(walkSteps(steps.steps).map((entry) => [entry.node.id, entry.ordinal]));
-  return nodeLines(steps.steps, ordinals, '');
-}
-
 /**
  * The reviewer prompt, exported so prose drafting can run the SAME critic
  * against a draft before the user ever sees it — the gap-closing loop and
- * the save-time "Worth checking" panel must judge by one set of rules, or
- * drafting would polish away concerns the panel then re-raises (or miss
- * ones it never checks).
+ * the save-time "Worth checking" panel must judge by one set of rules.
  */
 export function buildAgentReviewPrompt(
   name: string,
-  steps: AgentStepsDoc,
+  definition: { instructions: string; tools: string[] },
   triggers: TriggerDraft[],
   guardrails?: string | null
 ): string {
-  const ordinals = new Map(walkSteps(steps.steps).map((entry) => [entry.node.id, entry.ordinal]));
-  const stepLines = nodeLines(steps.steps, ordinals, '');
   const triggerLines =
     triggers.length > 0
       ? triggers.map(describeTrigger).join('; ')
       : 'not yet triggered by anything';
 
   return [
-    `An end user drafted this automation, named "${name}". It runs ${triggerLines}.`,
+    `An end user drafted this autonomous agent, named "${name}". It runs ${triggerLines}.`,
     '',
     ...(guardrails?.trim()
       ? [
-          'The owner wrote these STANDING GUARDRAILS — every step must obey them at run time, and a step that plainly conflicts with them is a top-priority concern:',
+          'The owner wrote these STANDING GUARDRAILS — the agent must obey them at run time, and instructions that plainly conflict with them are a top-priority concern:',
           guardrails.trim(),
           '',
         ]
       : []),
-    'Steps (variables appear as [name], tools as [tool_name]):',
-    stepLines,
+    'Its instructions:',
+    definition.instructions,
     '',
-    'How the engine behaves — take this as given, and never raise a concern the engine already prevents:',
-    '- Steps run in document order. Inside a branch, exactly ONE path runs (the engine forces a choice; the last path is the fallback). A loop repeats its body up to its stated round limit; a for-each loop over an empty list simply skips. After a branch or loop finishes, execution continues below it.',
-    '- A later step runs ONLY if everything before it on its route succeeded.',
-    '- A failure handled with "stop", an unhandled failure, or exhausted retries STOPS the whole automation immediately — later steps never run, so they can safely assume earlier steps succeeded. The exceptions are explicit: a failure handled with "continue" (or a retry whose after-every-try choice is "continue") records the failure and moves on, binding the step\'s saved result to the failure summary. Missing "fallbacks" for exhausted retries are not a flaw. A branch\'s failure route (when present) already covers the decision itself erroring.',
-    "- The runner checks each step's tool is available before running, and verifies tool errors against the declared success.",
-    "- A step's model sees ONLY the variables that step names as [name] chips (plus today, the owner's name and email, and the current loop item). A step whose words rely on the triggering event, an earlier step's saved result or a collected list WITHOUT the [name] chip does not receive that value — that is a step needing information nothing provides, and the fix is to insert the chip.",
-    '- Loop round limits and the collected-list size are engine-enforced ceilings with truncation notes — do not flag them as missing safeguards.',
-    '- An end marker ends the WHOLE run exactly as configured (success, failure, or a graceful skip) and delivers only its own configured notifications — the editor already prevents steps after it, and a failure ending without notifications is a deliberate choice, not a flaw.',
-    '- A step marked "needs approval" pauses safely before its tool call for the owner (every wait has an engine-enforced ceiling): approved fires the call, denied or timed out takes the recovery path (or, with none, just continues). Do not flag the pause, the wait, or an empty recovery path as problems.',
+    `Tools it may use: ${definition.tools.length > 0 ? definition.tools.join(', ') : 'none'}.`,
+    '',
+    'How the platform behaves — take this as given, and never raise a concern the platform already prevents:',
+    '- The agent works autonomously from these instructions: it chooses which tools to call, in what order, and retries when something fails. It is not a fixed sequence of steps.',
+    '- Every run has hard limits on tool calls and active time; reaching one ends the run. Do not flag missing loop limits or timeouts.',
+    '- The agent can never change anything directly: every write (create, update, send, delete) is staged and accepted by the owner or automatically, then carried out by a separate process. Do not flag the lack of an approval step.',
+    '- The agent is told what triggered the run and the owner’s name, email and today’s date.',
     '',
     'Reply with JSON only, no code fences: {"summary": "...", "concerns": [{"issue": "...", "fix": "..."}]}.',
     'summary: 2-3 plain sentences telling the OWNER what this agent does, no technical terms, no tool identifiers.',
-    'concerns: 0-5 REAL logic problems a reviewer should check: an instruction promising work no step or tool performs, a step needing information nothing provides, contradictory failure handling, a saved result nothing uses, or a step that conflicts with the standing guardrails above (e.g. a sending step under a "draft only" rule). Each carries "issue" (what is wrong, one sentence) and "fix" (the concrete edit the owner should make, one sentence, e.g. which step to add or how to reword an instruction). Empty array if none.',
-    'When naming a step, use its number EXACTLY as labeled above ("Step 7") — the owner sees these same numbers in the editor. Never invent dotted numbering like "Step 5.1.2".',
+    'concerns: 0-5 REAL problems a reviewer should check: a goal with no tool that could reach it (name the missing capability), instructions that never say when the job is done, an action described with too little detail for the agent to fill in (which project, which recipient), contradictory rules, or instructions that conflict with the standing guardrails. Each carries "issue" (what is wrong, one sentence) and "fix" (the concrete edit the owner should make, one sentence — which section to add to or how to reword it). Empty array if none.',
   ].join('\n');
 }
 
@@ -278,7 +114,8 @@ export async function generateAgentDescription(
   agent: {
     id: string;
     name: string;
-    steps: AgentStepsDoc;
+    instructions: string;
+    tools: string[];
     triggers: TriggerDraft[];
     llmModelId: string | null;
     guardrails?: string | null;
@@ -303,7 +140,7 @@ export async function generateAgentDescription(
       () =>
         llm.provider.complete({
           system:
-            'You summarize user-drafted automations for the person who wrote them. You reply with strict JSON.',
+            'You summarize user-drafted agents for the person who wrote them. You reply with strict JSON.',
           messages: [
             {
               role: 'user',
@@ -312,7 +149,7 @@ export async function generateAgentDescription(
                   type: 'text',
                   text: buildAgentReviewPrompt(
                     agent.name,
-                    agent.steps,
+                    { instructions: agent.instructions, tools: agent.tools },
                     agent.triggers,
                     agent.guardrails
                   ),

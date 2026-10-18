@@ -1,13 +1,13 @@
 /**
- * What an attempt's `agent_run_steps.detail` keeps in the clear and what
- * it keeps sealed under the run owner's automation key.
+ * What a turn's `agent_run_steps.detail` keeps in the clear and what it
+ * keeps sealed under the run owner's automation key.
  *
- * The row is the run's memory (docs/agents.md: a re-entry rebuilds the
- * variables from it) and the owner's timeline, so it holds the verbatim
- * prompt, the model's summary, every tool call's argument and result
- * preview, and the saved result — the run's whole content. Until now it
- * sat in a jsonb column in plaintext while the chats and credentials of
- * the same person were sealed under keys of their own. Now the
+ * A run is one conversation, and each model turn is one row: the row is
+ * the run's memory (a re-entry — a crash, a wake after a staged batch or
+ * a question — rebuilds the conversation from the rows, docs/agents.md)
+ * and the owner's timeline. So it holds the opening message, what the
+ * model said and which tools it called, every tool result it was given,
+ * and the run's final summary and result — the run's whole content. The
  * content-bearing fields travel as ONE `uenc1:` envelope (`sealed`),
  * sealed by the delegate under the owner's automation key — the key an
  * agent run already holds, so a crash re-entry and the compaction sweep
@@ -15,8 +15,8 @@
  * the run read or wrote.
  *
  * What stays in the clear is what the timeline and the budget logic read
- * without a key: the declared outcome, token usage, model-call timings,
- * the names of the variables left unbound, and each tool call's NAME,
+ * without a key: the finishing outcome, token usage, model-call timings,
+ * any pause (its kind and the batch or card it waits on), and each tool call's NAME,
  * size, duration and error flag — never its arguments or result. A
  * reader without the owner's delegation sees those plus a marker where
  * the summary would be; a reader with it sees the row as before.
@@ -26,14 +26,18 @@
  * so this package stays free of the key store.
  */
 
-/** The fields of a finished attempt's detail that are content, and so sealed. */
+/** The fields of a turn's detail that are content, and so sealed. */
 export const SEALED_DETAIL_FIELDS = [
-  'promptText',
-  'resolvedInstruction',
+  /** The user message that opened this turn's conversation: the run's input, or a resume note. */
+  'opening',
+  /** The model's reply this turn: its text and tool_use blocks, as the provider returned them. */
+  'assistant',
+  /** The tool_result blocks answering that reply, as the model will read them next turn. */
+  'results',
+  /** The model's own words this turn, or the run's summary on the finishing turn. */
   'llmSummary',
-  'guidanceUsed',
-  'saveValue',
-  'saveItems',
+  /** finish_run's result. */
+  'result',
   'toolCalls',
 ] as const;
 
@@ -69,7 +73,7 @@ export function outlineToolCalls(toolCalls: unknown): ToolCallOutline[] {
 }
 
 /**
- * Split a finished attempt's detail into the half to store in the clear
+ * Split a turn's detail into the half to store in the clear
  * and the JSON to seal. `plaintext` is null when the detail holds no
  * content field at all (nothing to seal; store `clear` as it is).
  */

@@ -1,6 +1,5 @@
 import { buildOptimizationPrompt, renderEvidence, type OptimizationEvidence } from './optimize';
 import { parseOptimizationReply, parseOptimizationReport } from './optimization-report';
-import type { AgentStepsDoc } from '@renkei/agents';
 import type { StoredAgent } from './store';
 
 const EVIDENCE: OptimizationEvidence = {
@@ -11,64 +10,38 @@ const EVIDENCE: OptimizationEvidence = {
     failed: 4,
     avgTokensPerRun: 9_400,
     maxTokensPerRun: 21_000,
-    avgAttemptsPerRun: 3.5,
+    avgTurnsPerRun: 6.5,
+    avgToolCallsPerRun: 11.2,
   },
   failures: [
     {
       at: '2026-09-01T08:00:00.000Z',
       triggerKind: 'schedule',
-      stepName: 'Find the ticket',
-      errorKind: 'step_failed',
-      outcomeCode: 'not_found',
-      error: 'No issue matched the summary.',
+      errorKind: 'budget',
+      outcomeCode: null,
+      error: 'The run used its 150 tool calls without finishing.',
       inputTokens: 3_000,
       outputTokens: 400,
-      toolCalls: 2,
+      toolCalls: 150,
     },
   ],
-  steps: [
-    {
-      stepId: 'a',
-      stepName: 'Find the ticket',
-      attempts: 20,
-      failedAttempts: 4,
-      avgInputTokens: 2_800,
-      avgOutputTokens: 300,
-      avgToolCalls: 1.5,
-      tokenShare: 62,
-    },
-  ],
+  tools: [{ tool: 'jira_search_issues', calls: 140, failedCalls: 30, callShare: 93 }],
   samples: [
     {
       runId: 'r1',
       at: '2026-09-01T08:00:00.000Z',
-      errorKind: 'step_failed',
-      error: 'No issue matched the summary.',
-      attempts: [
+      errorKind: 'budget',
+      error: 'The run used its 150 tool calls without finishing.',
+      turns: [
         {
-          stepName: 'Find the ticket',
-          attempt: 1,
-          outcomeCode: 'not_found',
-          summary: 'Searched by exact title and found nothing.',
+          turn: 12,
+          summary: 'Searching again with a different title.',
           calls: [{ tool: 'jira_search_issues', failed: true, result: 'No issues found.' }],
         },
       ],
     },
   ],
-};
-
-const STEPS: AgentStepsDoc = {
-  version: 3,
-  steps: [
-    {
-      id: 'a',
-      name: 'Find the ticket',
-      instruction: [{ t: 'text', v: 'Find the Jira ticket for the report.' }],
-      tool: 'jira_search_issues',
-      maxAttempts: 3,
-      failureHandling: [],
-    },
-  ],
+  limits: { minutes: 30, toolCalls: 150 },
 };
 
 const AGENT: StoredAgent = {
@@ -77,34 +50,37 @@ const AGENT: StoredAgent = {
   description: null,
   descriptionStatus: 'ok',
   reviewNotes: null,
-  steps: STEPS,
-  stepsVersion: 3,
+  instructions: '## Goal\n\nFind the Jira ticket for the report.',
+  tools: ['jira_search_issues'],
+  revision: 3,
   llmModelId: null,
   enabled: true,
   guardrails: null,
-  blockedTools: [],
   canAskQuestions: false,
+  autoAcceptActions: false,
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z',
   triggers: [],
 };
 
 describe('renderEvidence', () => {
-  it('states the window, the stats, the step profile, and the failures', () => {
+  it('states the window, the limits, the stats, the tool profile, and the failures', () => {
     const text = renderEvidence(EVIDENCE);
     expect(text).toContain('last 30 days');
+    expect(text).toContain('Limits per run: 150 tool calls, 30 minutes');
     expect(text).toContain('12 finished (8 succeeded, 4 failed)');
-    expect(text).toContain('"Find the ticket": 20 attempts, 4 failed');
-    expect(text).toContain('62% of tokens');
-    expect(text).toContain('[not_found]');
+    expect(text).toContain('6.5 model turns and 11.2 tool calls per run');
+    expect(text).toContain('jira_search_issues: 140 calls, 30 failed; 93% of calls');
+    expect(text).toContain('budget — The run used its 150 tool calls');
+    expect(text).toContain('turn 12: Searching again');
     expect(text).toContain('FAILED jira_search_issues → No issues found.');
   });
 
   it('says so when there is nothing', () => {
-    const text = renderEvidence({ ...EVIDENCE, failures: [], steps: [], samples: [] });
+    const text = renderEvidence({ ...EVIDENCE, failures: [], tools: [], samples: [] });
     expect(text).toContain('(none in the window)');
-    expect(text).toContain('(no step attempts recorded in the window)');
-    expect(text).not.toContain('What the failed attempts said');
+    expect(text).toContain('(no tool calls recorded in the window)');
+    expect(text).not.toContain('How recent failed runs ended');
   });
 });
 

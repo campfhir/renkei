@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql, type Kysely } from 'kysely';
 import { getDatabase, type DB } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
-import { isCurrentStepsDoc } from '@renkei/agents';
+import { agentDefinitionOf } from '@renkei/agents';
 import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
 import { sha256Hex } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
@@ -51,7 +51,8 @@ interface AgentRow {
   id: string;
   owner_subject: string;
   name: string;
-  steps: unknown;
+  instructions: string;
+  tools: unknown;
   llm_model_id: string | null;
   enabled: boolean;
 }
@@ -65,7 +66,7 @@ async function agentById(
   if (!isUuid(agentId)) return null;
   const row = await db
     .selectFrom('agents')
-    .select(['id', 'owner_subject', 'name', 'steps', 'llm_model_id', 'enabled'])
+    .select(['id', 'owner_subject', 'name', 'instructions', 'tools', 'llm_model_id', 'enabled'])
     .where('id', '=', agentId)
     .executeTakeFirst();
   return row ?? null;
@@ -140,12 +141,6 @@ export async function POST(
     // "Run now" may (that is how a draft gets tested before enabling).
     return NextResponse.json({ error: 'This agent is turned off.' }, { status: 409 });
   }
-  if (!isCurrentStepsDoc(agent.steps)) {
-    return NextResponse.json(
-      { error: 'This agent is saved in an older format — open it in the builder and save to update it.' },
-      { status: 409 }
-    );
-  }
   if (overBurst()) {
     return NextResponse.json({ error: 'Too many runs started; slow down.' }, { status: 429 });
   }
@@ -193,7 +188,7 @@ export async function POST(
   const result = await createAgentRun(db, agentJobsQueue().producer, {
     agentId,
     ownerSubject: agent.owner_subject,
-    steps: agent.steps,
+    definition: agentDefinitionOf(agent),
     llmModelId: agent.llm_model_id,
     triggerId,
     triggerKind: triggerId ? 'api' : 'manual',

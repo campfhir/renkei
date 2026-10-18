@@ -15,6 +15,11 @@ ARG PNPM_VERSION=10.34.6
 # CI workflow pass both).
 ARG GIT_COMMIT=unknown
 ARG APP_VERSION=dev
+# Changes the upgrade layers' cache key: CI passes the UTC date, so each
+# stage's `apk upgrade` / `apt-get upgrade` (and what follows it) is
+# rebuilt at least daily instead of being restored from the layer cache
+# with whatever packages were current when it was first built.
+ARG DISTRO_REFRESH=unset
 
 # Base images are pinned by digest as well as tag: the tag says what the
 # image is, the digest says exactly which build of it, so an upstream
@@ -24,7 +29,8 @@ ARG APP_VERSION=dev
 # time (`apk upgrade`, `apt-get upgrade`), so a fix the distribution has
 # shipped since the base image was built is in the image — the CI image
 # scan fails on a fixable HIGH/CRITICAL, and the base image lags its
-# distribution by days.
+# distribution by days. Each upgrade sits under `ARG DISTRO_REFRESH`, so a
+# cached upgrade layer is never more than a day old (see the ARG above).
 #   docker.io/library/node:24-alpine         (every Node-only stage)
 #   docker.io/library/node:24-bookworm-slim  (the sandbox: Chromium and the
 #                                             toolchains need glibc)
@@ -46,6 +52,7 @@ ARG PNPM_VERSION
 WORKDIR /app
 
 # Install pnpm
+ARG DISTRO_REFRESH
 RUN apk upgrade --no-cache && npm install -g pnpm@${PNPM_VERSION}
 
 # Manifests first, so the dependency install caches independently of source edits.
@@ -90,6 +97,7 @@ ARG PNPM_VERSION
 WORKDIR /app
 
 # Install dumb-init for proper signal handling and pnpm
+ARG DISTRO_REFRESH
 RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Copy manifests and install only the web app's production dependencies.
@@ -206,6 +214,7 @@ ARG PNPM_VERSION
 
 WORKDIR /app
 
+ARG DISTRO_REFRESH
 RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — a trailing `chown -R /app` rewrites every
@@ -257,6 +266,7 @@ ARG PNPM_VERSION
 
 WORKDIR /app
 
+ARG DISTRO_REFRESH
 RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — see the runtime stage for why a trailing
@@ -304,6 +314,7 @@ ARG PNPM_VERSION
 
 WORKDIR /app
 
+ARG DISTRO_REFRESH
 RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — see the runtime stage for why a trailing
@@ -352,6 +363,7 @@ ARG PNPM_VERSION
 
 WORKDIR /app
 
+ARG DISTRO_REFRESH
 RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — see the runtime stage for why a trailing
@@ -401,6 +413,7 @@ ARG PNPM_VERSION
 
 WORKDIR /app
 
+ARG DISTRO_REFRESH
 RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 RUN addgroup -g 1001 -S nodejs && \
@@ -443,6 +456,7 @@ ARG PNPM_VERSION
 
 WORKDIR /app
 
+ARG DISTRO_REFRESH
 RUN apk upgrade --no-cache && apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — see the runtime stage for why a trailing
@@ -510,6 +524,7 @@ ARG PNPM_VERSION
 
 WORKDIR /app
 
+ARG DISTRO_REFRESH
 RUN apt-get update && \
     apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends \
@@ -769,6 +784,7 @@ ARG PNPM_VERSION
 WORKDIR /app
 
 # Install pnpm
+ARG DISTRO_REFRESH
 RUN apk upgrade --no-cache && npm install -g pnpm@${PNPM_VERSION}
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./

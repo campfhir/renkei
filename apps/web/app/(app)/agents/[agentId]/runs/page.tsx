@@ -103,7 +103,7 @@ export default async function AgentRunsPage({
                   <span className="text-gray-600 dark:text-gray-400">via {run.triggerKind}</span>
                   {run.errorKind ? (
                     <span className="text-xs text-red-600 dark:text-red-400">
-                      {errorSummary(run.errorKind, run.failedStepName)}
+                      {errorSummary(run.errorKind)}
                     </span>
                   ) : null}
                 </span>

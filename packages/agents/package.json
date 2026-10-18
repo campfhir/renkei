@@ -10,7 +10,7 @@
     "./runs": "./src/runs.ts",
     "./event-fanout": "./src/event-fanout.ts",
     "./memory": "./src/memory.ts",
-    "./step-prompts": "./src/step-prompts.ts"
+    "./run-prompts": "./src/run-prompts.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

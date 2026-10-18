@@ -178,6 +178,7 @@ export const EXPECTED_MIGRATIONS = [
   '152-sandbox-feature-settings',
   '153-single-organization',
   '154-explicit-groups-claim',
+  '155-instruction-agents',
 ];
 
 export interface MigrationStatus {

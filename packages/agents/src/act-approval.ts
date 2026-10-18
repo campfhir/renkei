@@ -1,37 +1,40 @@
 /**
- * When an Act step pauses for a person even though its author set no
- * `needsApproval` on it.
+ * Whether a staged action batch needs a PERSON to accept it.
  *
- * An agent run acts on content it did not write: a mail that arrived, a
- * chat message, an API caller's payload. A step whose tool CHANGES a
- * system (an Act tool — readOnlyHint false) is where that content gets to
- * do something, so the org decides (`agentActStepsRequireApproval`,
- * @renkei/settings) which runs may act on it unattended:
+ * An agent never calls a tool that changes something: it stages the calls
+ * (action-batch.ts) and a separate executor runs them once the batch is
+ * accepted. Acceptance is a person clicking Accept on the batch's card —
+ * or, for an agent whose owner turned on "accept proposed actions
+ * automatically", the engine accepting on their behalf. Auto-accept is
+ * honored only where the org lets it be (`agentActStepsRequireApproval`,
+ * @renkei/settings), because an agent run acts on content it did not
+ * write — a mail that arrived, a chat message, an API caller's payload:
  *
  *   - 'externally_triggered' (default): a run an event or a webhook started
- *     pauses before every Act call; a run a person started by hand, or a
- *     schedule, acts as written.
- *   - 'all': every run pauses before every Act call.
- *   - 'off': only the author's own `needsApproval` gates pause.
+ *     always waits for a person; a run a person started by hand, or a
+ *     schedule, honors auto-accept.
+ *   - 'all': every batch waits for a person.
+ *   - 'off': auto-accept is always honored.
  *
  * Beneath the setting sits a fixed list of tools whose effect is hard to
  * take back or reaches other people — sending mail, merging a pull request,
- * deleting or sharing a document, directory writes — which pause in an
- * agent run under every setting. The list names registered tool names and
- * nothing else (apps/web's high-risk-tools test holds it to the catalog).
+ * deleting or sharing a document, directory writes — and a batch holding
+ * one waits for a person under every setting. The list names registered
+ * tool names and nothing else (apps/web's high-risk-tools test holds it to
+ * the catalog).
  *
- * Shared between the engine (which enforces it at the moment a step
- * reaches for a tool) and the web app (which tells authors what will
- * pause), so both answer from the same words.
+ * Shared between the engine (which decides when a batch is staged) and the
+ * web app (which tells owners what auto-accept will and will not cover),
+ * so both answer from the same words.
  */
 
 import type { ActApprovalPolicy } from '@renkei/settings';
 
 /**
- * Tools an agent run ALWAYS pauses before, whatever the org's policy says.
- * Preview (`*_preview`) tools stand in for the directory writes that have
- * no plain Act tool — a card is what the step would call. `*_confirm`
- * tools are not here: they are app-only and never offered to a run at all.
+ * Tools a person must ALWAYS accept, whatever the org's policy or the
+ * agent's auto-accept says. Preview (`*_preview`) tools stand in for the
+ * directory writes that have no plain Act tool. `*_confirm` tools are not
+ * here: they are app-only and never offered to a run at all.
  */
 export const ALWAYS_APPROVAL_TOOLS: readonly string[] = [
   // Mail leaves the org under the owner's name.
@@ -106,28 +109,22 @@ export function isExternallyTriggered(triggerKind: string): boolean {
 
 export type ToolKindHint = 'read' | 'act' | null;
 
-/** Why a call pauses: the author asked, the tool is on the fixed list, or the org's policy applies. */
-export type ActApprovalReason = 'author' | 'high-risk' | 'policy';
+/** Why a batch waits for a person: the owner reviews, a tool is on the fixed list, or the org's policy applies. */
+export type ActApprovalReason = 'owner' | 'high-risk' | 'policy';
 
 export interface ActApprovalInput {
-  tool: string;
-  /**
-   * The tool's read-or-act kind as the gateway declared it (from its
-   * readOnlyHint). Null = not known, which reads as act: the capability
-   * gate makes the same conservative call for an absent hint.
-   */
-  kind: ToolKindHint;
-  /** The author's own `needsApproval` on the step offering the tool. */
-  authorGated: boolean;
+  /** Every tool the batch would call. */
+  tools: readonly string[];
+  /** The agent's own "accept proposed actions automatically". */
+  autoAccept: boolean;
   policy: ActApprovalPolicy;
   externallyTriggered: boolean;
 }
 
-/** Null when the call may fire without a person; otherwise why it waits. */
+/** Null when the batch may be accepted without a person; otherwise why it waits. */
 export function actApprovalReason(input: ActApprovalInput): ActApprovalReason | null {
-  if (input.authorGated) return 'author';
-  if (isAlwaysApprovalTool(input.tool)) return 'high-risk';
-  if (input.kind === 'read') return null;
+  if (input.tools.some(isAlwaysApprovalTool)) return 'high-risk';
+  if (!input.autoAccept) return 'owner';
   if (input.policy === 'all') return 'policy';
   if (input.policy === 'externally_triggered' && input.externallyTriggered) return 'policy';
   return null;

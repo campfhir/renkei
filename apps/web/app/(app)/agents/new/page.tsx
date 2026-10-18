@@ -16,15 +16,14 @@ export default async function NewAgentPage(): Promise<React.ReactNode> {
   if (!dbResult.ok) notFound();
   const data = await loadBuilderData(dbResult.val, session.subject);
 
-  // No width cap here: the builder manages its own — it self-centers while
-  // reading and goes two-column (canvas + editor panel) on selection.
+  // No width cap here: the builder manages its own two-column layout.
   return (
     <div>
       <div className="mx-auto mb-6 lg:max-w-3xl">
         <h1 className="mb-1 text-xl font-bold">New agent</h1>
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Describe each step in plain words. Type <code>/</code> in a step to add a skill or a
-          detail; each step can use one skill.
+          Tell the agent what to achieve and give it the tools it needs — it works out the steps
+          on each run, and every change it wants to make waits for your go-ahead.
         </p>
       </div>
       <AgentBuilder
@@ -32,8 +31,8 @@ export default async function NewAgentPage(): Promise<React.ReactNode> {
         otherAgents={data.otherAgents}
         calendars={data.calendars}
         models={data.models}
-        attemptsCap={data.attemptsCap}
-        maxSteps={data.maxSteps}
+        runLimits={data.runLimits}
+        actApprovalPolicy={data.actApprovalPolicy}
       />
     </div>
   );

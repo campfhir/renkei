@@ -55,9 +55,20 @@ const producer = (ok: boolean): QueueProducer =>
 const CARD_ROW = {
   cardId: 'card-1',
   runId: 'run-1',
-  title: 'Refund triage — needs your approval',
-  summary: 'Wants to call Refund payment.',
-  suggestedAction: { tool: 'jira_refund_payment', args: { amount: 240, customer: 'Dana Lin' } },
+  title: 'Refund triage — wants to make 2 changes',
+  summary: 'Refund Dana and tell her.',
+  suggestedAction: {
+    batchId: 'batch-1',
+    summary: 'Refund Dana and tell her.',
+    actions: [
+      {
+        tool: 'jira_refund_payment',
+        args: { amount: 240, customer: 'Dana Lin' },
+        reason: 'Overcharged',
+      },
+      { tool: 'outlook_send_mail', args: { to: ['dana@example.com'] }, reason: 'Let her know' },
+    ],
+  },
   createdAt: new Date('2026-08-28T09:00:00.000Z'),
   agentId: 'agent-1',
   agentName: 'Refund triage',
@@ -65,17 +76,20 @@ const CARD_ROW = {
 };
 
 describe('listPendingApprovals', () => {
-  it('reads the proposed call the engine recorded on the card', async () => {
+  it('reads the staged batch the engine recorded on the card, in order', async () => {
     const [approval] = await listPendingApprovals(stubDb({ rows: [CARD_ROW] }), 'alice');
-    expect(approval?.proposedTool).toBe('jira_refund_payment');
-    expect(approval?.proposedArgs).toEqual({ amount: 240, customer: 'Dana Lin' });
+    expect(approval?.summary).toBe('Refund Dana and tell her.');
+    expect(approval?.actions.map((action) => action.tool)).toEqual([
+      'jira_refund_payment',
+      'outlook_send_mail',
+    ]);
+    expect(approval?.actions[0]?.args).toEqual({ amount: 240, customer: 'Dana Lin' });
 
     const [empty] = await listPendingApprovals(
       stubDb({ rows: [{ ...CARD_ROW, suggestedAction: {} }] }),
       'alice'
     );
-    expect(empty?.proposedTool).toBeNull();
-    expect(empty?.proposedArgs).toBeNull();
+    expect(empty?.actions).toEqual([]);
   });
 
   it('scopes to the caller and to undecided cards', async () => {
@@ -174,62 +188,6 @@ describe('decideApproval', () => {
     );
     const stored: { comment?: string } = JSON.parse(String(sets[0]?.result));
     expect(stored.comment).toBe('wrong ticket');
-  });
-
-  it('stores an approve-time argsOverride, stripped of the call identity keys only', async () => {
-    const sets: Record<string, unknown>[] = [];
-    await decideApproval(
-      stubDb({
-        row: { id: 'c', kind: 'approval', status: 'suggested', run_id: 'run-1' },
-        updated: 1,
-        sets,
-      }),
-      producer(true),
-      'alice',
-      {
-        cardId: 'c',
-        decision: 'approve',
-        argsOverride: {
-          summary: 'Edited summary',
-          description: 'Edited description',
-          // Not just text fields — a picklist, a number, a custom field
-          // inside `fields`, all pass through too.
-          priority: 'High',
-          storyPoints: 5,
-          fields: { 'Anti-Kickback Review': 'Required' },
-          // The call's identity, though — never stored, whatever sent it:
-          // an approval can reword what the call does, never redirect it
-          // to a different project or a different issue.
-          projectKey: 'HACKED',
-          issueType: 'Bug',
-          issueKey: 'HACKED-1',
-        },
-      }
-    );
-    const stored: { argsOverride?: Record<string, unknown> } = JSON.parse(String(sets[0]?.result));
-    expect(stored.argsOverride).toEqual({
-      summary: 'Edited summary',
-      description: 'Edited description',
-      priority: 'High',
-      storyPoints: 5,
-      fields: { 'Anti-Kickback Review': 'Required' },
-    });
-  });
-
-  it('drops an argsOverride entirely on decline — nothing runs to edit', async () => {
-    const sets: Record<string, unknown>[] = [];
-    await decideApproval(
-      stubDb({
-        row: { id: 'c', kind: 'approval', status: 'suggested', run_id: 'run-1' },
-        updated: 1,
-        sets,
-      }),
-      producer(true),
-      'alice',
-      { cardId: 'c', decision: 'decline', argsOverride: { summary: 'Edited summary' } }
-    );
-    const stored: { argsOverride?: unknown } = JSON.parse(String(sets[0]?.result));
-    expect(stored.argsOverride).toBeUndefined();
   });
 
   it('refuses a comment past the cap before claiming anything', async () => {

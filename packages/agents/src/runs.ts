@@ -3,7 +3,7 @@
  *
  * Schedules, connector events, API calls, agent chains, and the owner's
  * "Run now" button all end here: guards, then an `agent_runs` row with the
- * steps SNAPSHOT frozen in, then a bare `{ runId }` message onto the
+ * definition SNAPSHOT (instructions + tools) frozen in, then a bare `{ runId }` message onto the
  * agent_jobs queue under ordering key `agent:{agentId}` (one agent's runs
  * strictly serial; different agents parallel).
  *
@@ -27,12 +27,12 @@ import type { QueueProducer } from '@renkei/queue';
 import { getOrgSettings } from '@renkei/settings';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { findNodeById, isAgentStepsDoc, type AgentStepsDoc } from './steps';
+import type { AgentDefinition } from './definition';
 
 export interface CreateAgentRunInput {
   agentId: string;
   ownerSubject: string;
-  steps: AgentStepsDoc;
+  definition: AgentDefinition;
   /** Resolved model recorded for history; null = org default at claim time. */
   llmModelId: string | null;
   triggerId: string | null;
@@ -102,7 +102,7 @@ export async function createAgentRun(
           parent_run_id: input.parentRunId ?? null,
           lineage: JSON.stringify(lineage),
           depth: lineage.length,
-          steps_snapshot: JSON.stringify(input.steps),
+          definition_snapshot: JSON.stringify(input.definition),
           llm_model_id: input.llmModelId,
           initial_state: input.initialState ? JSON.stringify(input.initialState) : null,
           status: 'queued',
@@ -186,56 +186,46 @@ export interface ResumeAgentRunInput {
   ownerSubject: string;
   /** Who asked — the owner, or a grantee troubleshooting for them. */
   resumedBySubject: string;
-  /** What to do differently at the resumed step; trimmed, capped, optional. */
+  /** What to do differently; trimmed, capped, optional. */
   guidance?: string;
 }
 
 export type ResumeAgentRunError =
   | 'NOT_FOUND'
-  /** The run is not in 'failed' — only a failed run has a step to pick back up at. */
+  /** The run is not in 'failed' — only a failed run can be picked back up. */
   | 'NOT_FAILED'
-  /** The run ended on a terminal failure node: that is the plan's own verdict, not a fault to retry. */
-  | 'NOT_RESUMABLE'
   | 'DB_ERROR'
   | 'QUEUE_ERROR';
 
 export interface ResumedAgentRun {
   runId: string;
-  /** The step the run picks back up at; null when it failed before reaching one. */
-  stepId: string | null;
-  stepName: string | null;
-  /** The attempts of that step (on the iteration that failed) set aside for the retry. */
-  retiredAttempts: number;
 }
 
 /**
- * Pick a failed run back up at the step it failed on — the same run row,
- * the same snapshot, the same saved variables, with the failed step given
- * a fresh attempt budget and, when the owner adds one, a note on what to
- * do differently.
+ * Pick a failed run back up where it stopped — the same run row, the same
+ * snapshot, the same conversation, with a fresh budget and, when the owner
+ * adds one, a note on what to do differently.
  *
- * Why this is possible without new machinery: the engine persists no
- * cursor beyond `current_step_id` and no variable bag at all — every
- * re-entry (a crash, an approval wake) rebuilds position and bindings
- * from the `agent_run_steps` rows and fast-forwards through the ones that
- * succeeded. A failed run is just a run whose last row failed. So a
- * resume is: set the failed step's spent attempts aside (status
- * 'retired' — kept for the timeline, ignored by the budget count), put
- * the row back to 'queued' with the failure cleared, and enqueue the same
- * bare `{ runId }` message every other start uses. The engine does the
- * rest exactly as it does after a crash.
+ * Why this needs no new machinery: the engine's only memory is the turn
+ * rows — every re-entry (a crash, a wake after a staged batch or a
+ * question) rebuilds the conversation from them. A failed run is a run
+ * whose conversation simply stopped. So a resume puts the row back to
+ * 'queued' with the failure cleared and the resume recorded
+ * (`resumed_at`, `resume_count`, `resume_guidance`), and enqueues the same
+ * bare `{ runId }` message every other start uses. The engine sees
+ * `resumed_at` later than its last turn, tells the agent the run stopped,
+ * passes on the guidance, and the budget it counts starts from the resume
+ * (turns before `resumed_at` are history, not spend).
  *
  * Contrast with "run again" (the rerun route): that starts a NEW run of
- * the agent AS IT STANDS NOW on the old input, for when the plan itself
- * was wrong. This keeps the run and its snapshot, for when the plan was
- * fine and one step needs another go — a transient tool error, a bad
- * value the owner can correct in a sentence, an approval that filed
- * something the target refused.
+ * the agent AS IT STANDS NOW on the old input, for when the instructions
+ * were wrong. This keeps the run, for when they were fine and the run
+ * needs another go — a transient tool error, a value the owner can
+ * correct in a sentence.
  *
  * Cancel-request flags are cleared: a resume is the owner asking for the
  * opposite of a cancel, and a stale flag would stop the run at its first
- * checkpoint. `started_at` is cleared so the engine hands the resumed
- * run a fresh deadline budget (the pause was the owner's time).
+ * checkpoint. `active_ms` is cleared for a fresh time budget.
  */
 export async function resumeAgentRun(
   db: Kysely<DB>,
@@ -246,7 +236,7 @@ export async function resumeAgentRun(
     () =>
       db
         .selectFrom('agent_runs')
-        .select(['id', 'status', 'current_step_id', 'steps_snapshot', 'error', 'error_kind'])
+        .select(['id', 'status', 'error', 'error_kind'])
         .where('id', '=', input.runId)
         .where('agent_id', '=', input.agentId)
         .where('owner_subject', '=', input.ownerSubject)
@@ -262,93 +252,41 @@ export async function resumeAgentRun(
     });
   }
 
-  // Where it stopped. A run that failed before its first step (a model
-  // configuration problem, a snapshot the engine refused) has no step to
-  // point at: resuming it starts from the top, which is still a resume of
-  // THIS run — its id, its history — not a new one.
-  const stepId = run.current_step_id;
-  let stepName: string | null = null;
-  if (stepId && isAgentStepsDoc(run.steps_snapshot)) {
-    const found = findNodeById(run.steps_snapshot.steps, stepId);
-    if (found?.node.kind === 'terminal') {
-      return err('NOT_RESUMABLE' as const, {
-        message:
-          'This run ended on a failure marker the automation reached by design — there is ' +
-          'no failed step to retry. Fix the steps and run it again instead.',
-      });
-    }
-    stepName = found?.node.name ?? null;
-  }
-
   const guidance = (input.guidance ?? '').trim().slice(0, RESUME_GUIDANCE_MAX_CHARS) || null;
 
   const flipped = await wrapAsync(
     () =>
-      db.transaction().execute(async (trx) => {
-        // The failed step's spent attempts, on the round that failed: set
-        // aside, not deleted. The engine numbers new attempts past them
-        // (the unique (run, step, iteration, attempt) constraint needs
-        // that) and counts only live ones against the budget; the
-        // timeline keeps them so the failure story stays readable.
-        let retiredAttempts = 0;
-        if (stepId) {
-          const last = await trx
-            .selectFrom('agent_run_steps')
-            .select(({ fn }) => fn.max<number | null>('iteration').as('iteration'))
-            .where('run_id', '=', input.runId)
-            .where('step_id', '=', stepId)
-            .executeTakeFirst();
-          if (last?.iteration !== null && last?.iteration !== undefined) {
-            const retired = await trx
-              .updateTable('agent_run_steps')
-              .set({ status: 'retired', updated_at: sql`NOW()` })
-              .where('run_id', '=', input.runId)
-              .where('step_id', '=', stepId)
-              .where('iteration', '=', Number(last.iteration))
-              .where('status', 'in', ['failed', 'canceled'])
-              .executeTakeFirst();
-            retiredAttempts = Number(retired.numUpdatedRows ?? 0);
-          }
-        }
-
+      db
+        .updateTable('agent_runs')
+        .set({
+          status: 'queued',
+          error: null,
+          error_kind: null,
+          started_at: null,
+          finished_at: null,
+          waiting_until: null,
+          active_ms: 0,
+          cancel_requested_at: null,
+          cancel_requested_by: null,
+          resumed_at: sql`NOW()`,
+          resumed_by: input.resumedBySubject,
+          resume_count: sql`resume_count + 1`,
+          resume_guidance: guidance,
+          // Recorded for the failure story; the engine re-opens nothing by it.
+          resume_failure: run.error,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', input.runId)
         // Optimistic on the status: a second click, or a janitor racing
         // this, finds the row no longer 'failed' and changes nothing.
-        const updated = await trx
-          .updateTable('agent_runs')
-          .set({
-            status: 'queued',
-            error: null,
-            error_kind: null,
-            started_at: null,
-            finished_at: null,
-            waiting_until: null,
-            cancel_requested_at: null,
-            cancel_requested_by: null,
-            resumed_at: sql`NOW()`,
-            resumed_by: input.resumedBySubject,
-            resume_count: sql`resume_count + 1`,
-            resume_step_id: stepId,
-            resume_guidance: guidance,
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', input.runId)
-          .where('status', '=', 'failed')
-          .executeTakeFirst();
-        if (Number(updated.numUpdatedRows ?? 0) === 0) {
-          throw new Error('run is no longer failed');
-        }
-        return retiredAttempts;
-      }),
+        .where('status', '=', 'failed')
+        .executeTakeFirst(),
     'DB_ERROR' as const
   );
-  if (!flipped.ok) {
-    const cause = flipped.err.cause;
-    if (cause instanceof Error && cause.message === 'run is no longer failed') {
-      return err('NOT_FAILED' as const, { message: 'This run was already resumed.' });
-    }
-    return flipped;
+  if (!flipped.ok) return flipped;
+  if (Number(flipped.val.numUpdatedRows ?? 0) === 0) {
+    return err('NOT_FAILED' as const, { message: 'This run was already resumed.' });
   }
-  const retiredAttempts = flipped.val;
 
   const enqueueResult = await producer.enqueue({
     source: `agents:${input.agentId}`,
@@ -359,9 +297,7 @@ export async function resumeAgentRun(
   if (!enqueueResult.ok) {
     // A 'queued' row with no message would sit until the stuck-run
     // janitor failed it hours later, with the original error gone. Put
-    // the failure back the way it was; the retired rows stay retired —
-    // the next resume attempt retires nothing new and the budget reads
-    // the same either way.
+    // the failure back the way it was.
     await wrapAsync(
       () =>
         db
@@ -395,14 +331,13 @@ export async function resumeAgentRun(
     'DB_ERROR' as const
   );
 
-  return ok({ runId: input.runId, stepId, stepName, retiredAttempts });
+  return ok({ runId: input.runId });
 }
 
 /**
- * Step ids are uuids in every current steps document, but the columns
- * that carry them here are typed uuid and the source (`current_step_id`,
- * `agent_run_steps.step_id`) is text — a malformed id must cost the
- * step attribution, never the whole row.
+ * The ledger columns that carry a step id are typed uuid (a holdover from
+ * the step model); a run's turns are not steps, so anything that is not a
+ * uuid is recorded as no step at all rather than costing the whole row.
  */
 function uuidOrNull(value: string | null | undefined): string | null {
   return value && /^[0-9a-fA-F-]{36}$/.test(value) ? value : null;
@@ -413,17 +348,14 @@ export interface RecordAgentRunOutcomeInput {
   runId: string;
   ownerSubject: string;
   status: 'succeeded' | 'failed' | 'stopped' | 'canceled';
-  /** Where execution was when it stopped, and that step's display name. Failed runs only. */
-  stepId?: string | null;
-  stepName?: string | null;
   errorKind?: string | null;
   error?: string | null;
 }
 
 /**
  * Finalize a run's row in the durable run log (migration 083): its
- * outcome, and — when it failed — the step, the kind, the code and the
- * clipped message; for every status, what the run cost. Written beside
+ * outcome, and — when it failed — the kind, the code and the clipped
+ * message; for every status, what the run cost. Written beside
  * the counter tallies with the same best-effort posture.
  *
  * An upsert rather than an update: the log row is normally inserted at
@@ -442,16 +374,11 @@ export async function recordAgentRunOutcome(
 ): Promise<Result<void, 'DB_ERROR'>> {
   const failed = input.status === 'failed';
   const result = await wrapAsync(async () => {
-    const [run, agent, spend, lastFailed] = await Promise.all([
+    const [run, spend, lastFailed] = await Promise.all([
       db
         .selectFrom('agent_runs')
         .select(['trigger_kind', 'created_at'])
         .where('id', '=', input.runId)
-        .executeTakeFirst(),
-      db
-        .selectFrom('agents')
-        .select('steps_version')
-        .where('id', '=', input.agentId)
         .executeTakeFirst(),
       db
         .selectFrom('agent_run_steps')
@@ -476,8 +403,10 @@ export async function recordAgentRunOutcome(
         : Promise.resolve(undefined),
     ]);
 
-    const stepId = failed ? uuidOrNull(input.stepId) : null;
-    const stepName = failed && input.stepName ? input.stepName.slice(0, 200) : null;
+    // The log's step columns belong to the step model; a run has no
+    // steps, so they stay empty (the kind, code and message say why).
+    const stepId = null;
+    const stepName = null;
     const errorKind = failed && input.errorKind ? input.errorKind.slice(0, 32) : null;
     const outcomeCode = lastFailed?.outcome_code ? lastFailed.outcome_code.slice(0, 64) : null;
     const error = failed && input.error ? input.error.slice(0, 2000) : null;
@@ -485,7 +414,7 @@ export async function recordAgentRunOutcome(
     const outputTokens = Number(spend?.output_tokens ?? 0);
     const toolCalls = Number(spend?.tool_calls ?? 0);
     const attempts = Number(spend?.attempts ?? 0);
-    const stepsVersion = agent?.steps_version ?? null;
+    const stepsVersion = null;
 
     await sql`
       INSERT INTO agent_run_log (
@@ -539,7 +468,7 @@ export interface RecordLlmCallInput {
   model?: LlmCallModel | null;
   /**
    * Wall time of the call(s) this row counts (migration 125): one call for
-   * a chat's or a sub-agent's row, an attempt's turns summed for a run's.
+   * a chat's or a sub-agent's row, one model turn for a run's.
    * Omitted = not measured.
    */
   durationMs?: number | null;

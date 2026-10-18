@@ -1,56 +1,40 @@
 /**
- * The step timeline both audiences read — a pure render of whatever the
- * runs-view projection handed the page. REDACTION IS NOT DONE HERE: an
- * attempt without `detail` renders as hidden, and this component has no
- * way to un-hide anything, which is the point of doing the split at the
- * query seam.
+ * The run timeline both audiences read — a pure render of whatever the
+ * runs-view projection handed the page. A run is one conversation, so the
+ * timeline is its TURNS: what the agent said, which tools it called and
+ * what came back, the batches of changes it staged (shown at the turn that
+ * staged them, with who accepted them and how each action went), and how
+ * it finished.
+ *
+ * REDACTION IS NOT DONE HERE: a turn without `detail` (or a batch without
+ * its actions) renders as hidden, and this component has no way to
+ * un-hide anything, which is the point of doing the split at the query
+ * seam.
  */
 
-import { findNodeById, isAgentStepsDoc } from '@renkei/agents';
-import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
-import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
+import { friendlyToolName } from '@/lib/tool-name';
+import { statusLabel } from '@/lib/agents/run-labels';
+import type { ActionBatchView, AttemptView, RunDetail } from '@/lib/agents/runs-view';
 import { formatDurationMs } from '@/lib/duration';
-
-function stepName(run: RunDetail, stepId: string, stepIndex: number): string {
-  if (isAgentStepsDoc(run.stepsSnapshot)) {
-    const found = findNodeById(run.stepsSnapshot.steps, stepId);
-    if (found?.node.name) {
-      switch (found.node.kind) {
-        case 'branch':
-          return `Branch: ${found.node.name}`;
-        case 'loop':
-          return `Loop: ${found.node.name}`;
-        case 'group':
-          return `Group: ${found.node.name}`;
-        case 'terminal':
-          return `End: ${found.node.name}`;
-        case 'action':
-        case undefined:
-          return found.node.name;
-        default: {
-          const unhandled: never = found.node;
-          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
-        }
-      }
-    }
-  }
-  return `Step ${stepIndex + 1}`;
-}
 
 function statusTone(status: string): string {
   switch (status) {
     case 'succeeded':
+    case 'completed':
+    case 'accepted':
       return 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300';
     case 'failed':
       return 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300';
     case 'running':
+    case 'executing':
       return 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300';
-    // A graceful skip — neutral on purpose: not the green of work done,
-    // and emphatically not the red of a failure.
+    // A graceful "nothing to do" — neutral on purpose: not the green of
+    // work done, and emphatically not the red of a failure.
     case 'stopped':
       return 'bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300';
     // Parked on a human decision — amber says "your move", not "broken".
     case 'waiting':
+    case 'proposed':
       return 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300';
     default:
       return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
@@ -77,7 +61,7 @@ const CLAMP_CHARS = 280;
 function ClampedText({ label, text }: { label: string; text: string }) {
   if (text.length <= CLAMP_CHARS) {
     return (
-      <p className="break-words">
+      <p className="whitespace-pre-wrap break-words">
         {label ? <span className="font-medium">{label}:</span> : null} {text}
       </p>
     );
@@ -99,226 +83,258 @@ function ClampedText({ label, text }: { label: string; text: string }) {
   );
 }
 
-interface DetailShape {
-  resolvedInstruction?: unknown;
-  llmSummary?: unknown;
-  guidanceUsed?: unknown;
-  saveValue?: unknown;
-  toolCalls?: unknown;
-  modelCalls?: unknown;
-  chosenPathName?: unknown;
-  terminalMessage?: unknown;
-  approvalMessage?: unknown;
-  declaredOutcome?: unknown;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * Why an admin is not seeing this attempt's content. The rule is "content
- * only for FAILED attempts", so every other status lands here — and saying
- * "this step succeeded" under a Running pill states something the page
- * itself contradicts two lines above.
- */
-function redactionReason(status: string): string {
-  switch (status) {
-    case 'succeeded':
-      return 'Details hidden — this step succeeded.';
-    case 'running':
-      return 'Details hidden — this step is still running.';
-    case 'waiting':
-      return 'Details hidden — this step is waiting for someone.';
-    case 'stopped':
-      return 'Details hidden — this step ended the run without a failure.';
+/** How a finishing turn said the run ended. */
+function finishWording(finish: unknown): string | null {
+  switch (finish) {
+    case 'done':
+      return 'Finished — the goal was met.';
+    case 'nothing_to_do':
+      return 'Finished — there was nothing to do for this input.';
+    case 'failed':
+      return 'Gave up — the agent could not reach its goal.';
     default:
-      return 'Details are shown only for steps that failed.';
+      return null;
   }
 }
 
-/**
- * True when this is the last attempt the run ever recorded — i.e. nothing
- * ran after it, whatever the run's eventual status (a plain success's own
- * onSuccess: 'stop' ends the run as 'succeeded' too, not only 'stopped'). A
- * declared skip does NOT imply this on its own anymore (see engine.ts's
- * decideOutcome): most of the time later steps ran fine and this flag is
- * false, so the wording below must not claim the run ended here unless it
- * actually did.
- */
-function AttemptDetail({ attempt, endedRunHere }: { attempt: AttemptView; endedRunHere: boolean }) {
-  if (attempt.redacted) {
-    return (
-      <p className="mt-1 text-xs italic text-gray-400 dark:text-gray-500">
-        {redactionReason(attempt.status)}
+/** Who (or what) let a batch through, or why it never ran. */
+function batchVerdict(batch: ActionBatchView): string {
+  switch (batch.status) {
+    case 'proposed':
+      return 'Waiting for your go-ahead.';
+    case 'declined':
+      return 'Declined — none of these were made.';
+    case 'expired':
+      return 'Nobody accepted it in time — none of these were made.';
+    case 'accepted':
+    case 'executing':
+      return batch.acceptedBy === 'auto'
+        ? 'Accepted automatically — being carried out.'
+        : 'Accepted — being carried out.';
+    case 'completed':
+      return batch.acceptedBy === 'auto' ? 'Accepted automatically and carried out.' : 'Accepted and carried out.';
+    default:
+      return batch.status;
+  }
+}
+
+function reviewReasonWording(reason: string | null): string | null {
+  switch (reason) {
+    case 'high-risk':
+      return 'Needed a person: it includes a high-risk action.';
+    case 'policy':
+      return 'Needed a person: your organization requires it for this run.';
+    default:
+      return null;
+  }
+}
+
+function outcomeTone(outcome: string): string {
+  if (outcome === 'succeeded') return 'text-green-700 dark:text-green-400';
+  if (outcome === 'failed') return 'text-red-600 dark:text-red-400';
+  return 'text-gray-500';
+}
+
+export function BatchBlock({ batch }: { batch: ActionBatchView }) {
+  const reason = reviewReasonWording(batch.reviewReason);
+  return (
+    <div
+      data-testid="staged-batch"
+      className="rounded-md border border-amber-200 bg-amber-50/40 p-2 dark:border-amber-900 dark:bg-amber-950/20"
+    >
+      <p className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-gray-800 dark:text-gray-200">
+          Proposed {batch.actionCount} change{batch.actionCount === 1 ? '' : 's'}
+        </span>
+        <StatusPill status={batch.status} />
       </p>
+      {batch.summary !== undefined ? (
+        <>
+          {batch.summary ? <p className="mt-1 whitespace-pre-wrap break-words">{batch.summary}</p> : null}
+          <ol className="mt-1 space-y-1">
+            {(batch.actions ?? []).map((action, index) => {
+              const result = batch.results?.[index];
+              return (
+                <li key={`${index}-${action.tool}`} className="rounded bg-white/70 p-1.5 dark:bg-gray-900/60">
+                  <p>
+                    <span className="mr-1 text-gray-400">{index + 1}.</span>
+                    <span className="font-medium" title={action.tool}>
+                      {friendlyToolName(action.tool, null)}
+                    </span>
+                    {result ? (
+                      <span className={`ml-1.5 ${outcomeTone(result.outcome)}`}>{result.outcome}</span>
+                    ) : null}
+                  </p>
+                  <p className="text-gray-500">{action.reason}</p>
+                  <details>
+                    <summary className="cursor-pointer text-blue-600 dark:text-blue-400">Arguments</summary>
+                    <p className="mt-0.5 break-all font-mono text-[0.65rem]">{JSON.stringify(action.args)}</p>
+                  </details>
+                  {result?.text ? <ClampedText label="Result" text={result.text} /> : null}
+                </li>
+              );
+            })}
+          </ol>
+          {batch.comment ? <p className="mt-1 italic">Note: “{batch.comment}”</p> : null}
+        </>
+      ) : (
+        <p className="mt-1 italic text-gray-400">Details hidden.</p>
+      )}
+      <p className="mt-1 text-gray-600 dark:text-gray-400">{batchVerdict(batch)}</p>
+      {reason ? <p className="text-gray-500">{reason}</p> : null}
+    </div>
+  );
+}
+
+function TurnDetail({ turn, batches }: { turn: AttemptView; batches: ActionBatchView[] }) {
+  if (turn.redacted) {
+    return (
+      <div className="mt-1 space-y-1 text-xs">
+        <p className="italic text-gray-400 dark:text-gray-500">
+          Details are shown only for runs that failed.
+        </p>
+        {batches.map((batch) => (
+          <BatchBlock key={batch.id} batch={batch} />
+        ))}
+      </div>
     );
   }
-  const detail: DetailShape =
-    typeof attempt.detail === 'object' && attempt.detail !== null && !Array.isArray(attempt.detail)
-      ? attempt.detail
-      : {};
-  const toolCalls = Array.isArray(detail.toolCalls) ? detail.toolCalls : [];
-  // The attempt's model calls (engine.ts's ModelCallRecord, kept since
-  // migration 125): how many, and how long the engine waited on them in
-  // all — read against the tool calls' own durations below, a slow step
-  // shows whether the model or a tool was slow.
+  const detail = isRecord(turn.detail) ? turn.detail : {};
+  const toolCalls = (Array.isArray(detail.toolCalls) ? detail.toolCalls : []).flatMap(
+    (call: unknown): Record<string, unknown>[] => (isRecord(call) ? [call] : [])
+  );
   const modelCalls = (Array.isArray(detail.modelCalls) ? detail.modelCalls : []).flatMap(
-    (call: unknown) => {
-      const entry: { durationMs?: unknown } = typeof call === 'object' && call !== null ? call : {};
-      return typeof entry.durationMs === 'number' ? [entry.durationMs] : [];
-    }
+    (call: unknown) =>
+      isRecord(call) && typeof call.durationMs === 'number' ? [call.durationMs] : []
   );
   const modelMs = modelCalls.reduce((sum, ms) => sum + ms, 0);
+  const pause = isRecord(detail.pause) ? detail.pause : null;
+  const finish = finishWording(detail.finish);
   return (
     <div className="mt-1 space-y-1 text-xs text-gray-600 dark:text-gray-400">
-      {attempt.outcome === 'path_chosen' && typeof detail.chosenPathName === 'string' ? (
-        <p className="font-medium text-indigo-700 dark:text-indigo-300">
-          Took path: {detail.chosenPathName}
-        </p>
-      ) : null}
-      {/* A skip is step-local: no tool was called, nothing was saved here,
-          and by itself it does NOT end the run — later steps still ran
-          unless this happens to be the run's very last recorded attempt (a
-          step statically configured to stop on success/skip, or a failure
-          the owner marked benign, reaching the end here). Say which
-          happened, or the wording reads as a contradiction either way.
-          ('nothing-to-do' is the pre-rename stored spelling.) */}
-      {detail.declaredOutcome === 'skipped' || detail.declaredOutcome === 'nothing-to-do' ? (
-        <p className="font-medium text-amber-700 dark:text-amber-300">
-          {endedRunHere
-            ? 'Declared skipped — this action did not apply to this input; the run ended here.'
-            : 'Declared skipped — this action did not apply to this input; no tool was called and the automation moved on to the next step.'}
-        </p>
+      {typeof detail.opening === 'string' && detail.opening ? (
+        <details>
+          <summary className="cursor-pointer font-medium">
+            {turn.attempt === 1 ? 'What the run started with' : 'Note to the agent'}
+          </summary>
+          <p className="mt-0.5 whitespace-pre-wrap break-words">{detail.opening}</p>
+        </details>
       ) : null}
       {typeof detail.llmSummary === 'string' && detail.llmSummary ? (
         <ClampedText label="" text={detail.llmSummary} />
       ) : null}
-      {typeof detail.guidanceUsed === 'string' && detail.guidanceUsed ? (
-        <ClampedText label="Guidance used" text={detail.guidanceUsed} />
+      {toolCalls.length > 0 ? (
+        <ul className="space-y-1">
+          {toolCalls.map((call, index) => {
+            const free = call.free === true;
+            const tool = typeof call.tool === 'string' ? call.tool : 'tool';
+            return (
+              <li
+                key={index}
+                className={`rounded p-2 ${free ? 'bg-gray-50/60 opacity-70 dark:bg-gray-900/40' : 'bg-gray-50 dark:bg-gray-900'}`}
+              >
+                <p className="font-mono">
+                  <span title={tool}>{tool}</span>
+                  {free ? (
+                    <span className="ml-1 rounded bg-gray-200 px-1 font-sans text-[0.65rem] text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                      built-in
+                    </span>
+                  ) : null}
+                  {typeof call.staged === 'number' ? (
+                    <span className="ml-1 font-sans text-gray-500">({call.staged} staged)</span>
+                  ) : null}
+                  {call.isError === true ? (
+                    <span className="ml-1 text-red-600 dark:text-red-400">(error)</span>
+                  ) : null}
+                  {typeof call.durationMs === 'number' && call.durationMs > 0 ? (
+                    <span className="ml-1 text-gray-400">{call.durationMs}ms</span>
+                  ) : null}
+                </p>
+                {typeof call.argsPreview === 'string' && call.argsPreview !== '{}' ? (
+                  <p className="mt-0.5 break-all font-mono text-[0.65rem]">{call.argsPreview}</p>
+                ) : null}
+                {typeof call.resultPreview === 'string' && call.resultPreview ? (
+                  <ClampedText label="" text={call.resultPreview} />
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
       ) : null}
-      {typeof detail.saveValue === 'string' ? (
-        <ClampedText label="Saved result" text={detail.saveValue} />
+      {batches.map((batch) => (
+        <BatchBlock key={batch.id} batch={batch} />
+      ))}
+      {pause?.kind === 'question' && typeof pause.message === 'string' ? (
+        <ClampedText label="Asked you" text={pause.message} />
       ) : null}
-      {typeof detail.terminalMessage === 'string' && detail.terminalMessage ? (
-        <ClampedText label="Message" text={detail.terminalMessage} />
+      {finish ? (
+        <p
+          className={`font-medium ${detail.finish === 'failed' ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}
+        >
+          {finish}
+        </p>
       ) : null}
-      {typeof detail.approvalMessage === 'string' && detail.approvalMessage ? (
-        <ClampedText label="Asked" text={detail.approvalMessage} />
+      {typeof detail.result === 'string' && detail.result ? (
+        <ClampedText label="Result" text={detail.result} />
       ) : null}
       {modelCalls.length > 0 ? (
         <p className="text-gray-500" data-model-calls>
-          {modelCalls.length} model call{modelCalls.length === 1 ? '' : 's'} ·{' '}
           {formatDurationMs(modelMs)} waiting on the model
         </p>
-      ) : null}
-      {toolCalls.length > 0 ? (
-        <details>
-          <summary className="cursor-pointer font-medium">
-            {toolCalls.length} tool call{toolCalls.length === 1 ? '' : 's'}
-          </summary>
-          <ul className="mt-1 space-y-1 pl-3">
-            {toolCalls.map((call: unknown, index) => {
-              const entry: {
-                tool?: unknown;
-                argsPreview?: unknown;
-                resultPreview?: unknown;
-                isError?: unknown;
-                durationMs?: unknown;
-                free?: unknown;
-              } = typeof call === 'object' && call !== null ? call : {};
-              return (
-                <li key={index} className="rounded bg-gray-50 p-2 dark:bg-gray-900">
-                  <p className="font-mono">
-                    {typeof entry.tool === 'string' ? entry.tool : 'tool'}
-                    {/* Marked, because the count above deliberately excludes
-                        these: "1 tool call" over two listed entries is
-                        otherwise just confusing. */}
-                    {entry.free === true ? (
-                      <span className="ml-1 rounded bg-gray-200 px-1 text-[0.65rem] font-sans text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-                        free
-                      </span>
-                    ) : null}
-                    {entry.isError === true ? (
-                      <span className="ml-1 text-red-600 dark:text-red-400">(error)</span>
-                    ) : null}
-                    {typeof entry.durationMs === 'number' ? (
-                      <span className="ml-1 text-gray-400">{entry.durationMs}ms</span>
-                    ) : null}
-                  </p>
-                  {typeof entry.argsPreview === 'string' ? (
-                    <p className="mt-0.5 break-all font-mono text-[0.65rem]">{entry.argsPreview}</p>
-                  ) : null}
-                  {typeof entry.resultPreview === 'string' ? (
-                    <p className="mt-0.5 whitespace-pre-wrap break-words">{entry.resultPreview}</p>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        </details>
       ) : null}
     </div>
   );
 }
 
 export function RunTimeline({ run }: { run: RunDetail }) {
-  const byStep = new Map<string, AttemptView[]>();
-  for (const attempt of run.attempts) {
-    const list = byStep.get(attempt.stepId) ?? [];
-    list.push(attempt);
-    byStep.set(attempt.stepId, list);
+  const wallMs =
+    run.startedAt && run.finishedAt
+      ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()
+      : null;
+  // A batch belongs to the turn that staged it; one whose turn this
+  // audience cannot see still shows (its status is content-free).
+  const batchesByTurn = new Map<number, ActionBatchView[]>();
+  for (const batch of run.batches) {
+    batchesByTurn.set(batch.turn, [...(batchesByTurn.get(batch.turn) ?? []), batch]);
   }
-  // Attempts arrive in execution order (runs-view.ts orders by step_index,
-  // iteration, attempt), so the last one is where the run actually ended —
-  // whatever its eventual status (a plain success's own onSuccess: 'stop'
-  // ends the run as 'succeeded' too, not only 'stopped'). That is the one
-  // case a declared skip's wording may say the run ended here.
-  const lastAttempt = run.attempts[run.attempts.length - 1];
-
   return (
-    <ol className="space-y-3">
-      {[...byStep.entries()].map(([stepId, attempts]) => (
-        <li key={stepId} className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
-          <p className="text-sm font-medium">
-            {stepName(run, stepId, attempts[0]?.stepIndex ?? 0)}
-          </p>
-          <ul className="mt-2 space-y-2">
-            {attempts.map((attempt, position) => (
-              <li
-                key={`${attempt.iteration}-${attempt.attempt}`}
-                className="border-l-2 border-gray-200 pl-3 dark:border-gray-700"
-              >
-                {/* Iteration sub-headers: shown when this attempt starts a
-                    new loop round. Old runs (iteration 0 throughout) render
-                    exactly as before. */}
-                {attempt.iteration > 0 &&
-                attempts[position - 1]?.iteration !== attempt.iteration ? (
-                  <p className="mb-1 text-xs font-medium text-amber-700 dark:text-amber-400">
-                    Iteration {attempt.iteration}
-                  </p>
-                ) : null}
-                <p className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="text-gray-500">Attempt {attempt.attempt}</span>
-                  <StatusPill status={attempt.status} />
-                  {attempt.outcomeCode ? (
-                    <span className="rounded-full border border-gray-300 px-2 py-0.5 text-gray-600 dark:border-gray-700 dark:text-gray-400">
-                      {outcomeCodeLabel(attempt.outcomeCode)}
-                    </span>
-                  ) : null}
-                  {attempt.toolCallCount > 0 ? (
-                    <span className="text-gray-400">
-                      {attempt.toolCallCount} tool call{attempt.toolCallCount === 1 ? '' : 's'}
-                    </span>
-                  ) : null}
-                </p>
-                <AttemptDetail attempt={attempt} endedRunHere={attempt === lastAttempt} />
-              </li>
-            ))}
-          </ul>
-        </li>
-      ))}
-      {run.attempts.length === 0 ? (
-        <li className="text-sm text-gray-500 dark:text-gray-400">
-          No steps ran{run.error ? ` — ${run.error}` : '.'}
-        </li>
-      ) : null}
-    </ol>
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500 dark:text-gray-400" data-testid="run-times">
+        {run.attempts.length} turn{run.attempts.length === 1 ? '' : 's'} · active time{' '}
+        {formatDurationMs(run.activeMs)}
+        {wallMs !== null ? ` · wall time ${formatDurationMs(wallMs)}` : ''}
+        {' — time spent waiting on you is not counted against the run.'}
+      </p>
+      <ol className="space-y-3">
+        {run.attempts.map((turn) => (
+          <li
+            key={`${turn.stepId}-${turn.attempt}`}
+            className="rounded-md border border-gray-200 p-3 dark:border-gray-800"
+          >
+            <p className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-medium" data-testid="turn-heading">
+                Turn {turn.attempt}
+              </span>
+              <StatusPill status={turn.status} />
+              {turn.toolCallCount > 0 ? (
+                <span className="text-xs text-gray-400">
+                  {turn.toolCallCount} tool call{turn.toolCallCount === 1 ? '' : 's'}
+                </span>
+              ) : null}
+            </p>
+            <TurnDetail turn={turn} batches={batchesByTurn.get(turn.attempt) ?? []} />
+          </li>
+        ))}
+        {run.attempts.length === 0 ? (
+          <li className="text-sm text-gray-500 dark:text-gray-400">
+            Nothing ran{run.error ? ` — ${run.error}` : '.'}
+          </li>
+        ) : null}
+      </ol>
+    </div>
   );
 }

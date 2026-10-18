@@ -1,5 +1,7 @@
 # Replacing the approval node with a step-level gate and an agent-level question capability — design
 
+> **Superseded.** This design belongs to the step-document agent model, which was replaced by instruction-based agents (migration 155; see [`agents.md`](./agents.md)). Kept for history; nothing here describes the current code.
+
 No code yet.
 
 ## What exists today

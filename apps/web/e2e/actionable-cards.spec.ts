@@ -1,5 +1,6 @@
 /**
- * The card feed's "Wants to call …" block (cards.tsx's ProposedCall).
+ * The card feed's proposed-batch block (cards.tsx's ProposedBatch and the
+ * per-action ProposedCall it expands into).
  *
  * Started as a fix for one bug — an object-valued arg (`jira_create_issue`'s
  * `fields` escape hatch) rendering as the literal text "[object Object]"
@@ -94,16 +95,33 @@ async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promi
   ]);
 }
 
+/** An approval card holding a one-action staged batch, as the engine raises it. */
 async function seedCard(
   client: Client,
   itemId: string,
   title: string,
-  suggestedAction: unknown
+  call: { tool: string; args: Record<string, unknown> }
 ): Promise<void> {
+  const suggestedAction = {
+    batchId: uuidFrom(`batch:${itemId}`),
+    summary: 'Wants to make a change.',
+    actions: [{ ...call, reason: 'The agent judged this change necessary.' }],
+  };
+  // The card has no owner (a tenant-wide card), so the owner-scoped reset in
+  // seedTenant never reaches it; a rerun must clear its fixed id itself.
+  await client.query('DELETE FROM actionable_items WHERE id = $1', [itemId]);
   await client.query(
-    `INSERT INTO actionable_items\n       (id, source, kind, status, title, summary, evidence, suggested_action)\n     VALUES ($1, 'jira', 'approval', 'suggested', $2, 'Wants to call a tool.', '{}'::jsonb, $3::jsonb)`,
+    `INSERT INTO actionable_items\n       (id, source, kind, status, title, summary, evidence, suggested_action)\n     VALUES ($1, 'jira', 'approval', 'suggested', $2, 'Wants to make a change.', '{}'::jsonb, $3::jsonb)`,
     [itemId, title, JSON.stringify(suggestedAction)]
   );
+}
+
+/** Open the first action's arguments, collapsed behind "Details" by default. */
+async function openDetails(page: Page, toolLabel: string): Promise<void> {
+  const action = page.getByRole('list', { name: 'Proposed actions' }).getByRole('listitem').first();
+  await expect(action).toContainText(toolLabel);
+  await expect(action).toContainText('The agent judged this change necessary.');
+  await action.getByText('Details', { exact: true }).click();
 }
 
 /** An already-executed card (cards.tsx's ExecutionResult), result-only — no suggested_action. */
@@ -113,6 +131,7 @@ async function seedExecutedCard(
   title: string,
   result: unknown
 ): Promise<void> {
+  await client.query('DELETE FROM actionable_items WHERE id = $1', [itemId]);
   await client.query(
     `INSERT INTO actionable_items\n       (id, source, kind, status, title, summary, evidence, result)\n     VALUES ($1, 'jira', 'info', 'executed', $2, 'Created a tool.', '{}'::jsonb, $3::jsonb)`,
     [itemId, title, JSON.stringify(result)]
@@ -134,11 +153,6 @@ test('a Jira issue call renders as a structured issue card', async ({ page }, te
     await seedTenant(client, fixture);
     await signIn(page, fixture);
     const itemId = uuidFrom(`actionable-cards-e2e-issue-item:${testInfo.project.name}`);
-    // jira_create_issue_confirm, not jira_create_issue: the plain tool now
-    // hosts the real issue-preview widget instead of this native card
-    // while suggested (approval-widget-card.spec.ts covers that) — this
-    // spec is about the fallback rendering every OTHER Jira-issue-shaped
-    // tool still gets, and _confirm shares the exact same args contract.
     await seedCard(
       client,
       itemId,
@@ -159,7 +173,7 @@ test('a Jira issue call renders as a structured issue card', async ({ page }, te
     );
 
     await page.goto(`/`);
-    await expect(page.getByText('Wants to call Create issue confirm')).toBeVisible();
+    await openDetails(page, 'Create issue confirm');
 
     // Project/type header instead of raw "projectKey: CIO" / "issueType:
     // Project" rows — the same header shape the chat preview card shows.
@@ -204,7 +218,7 @@ test('an Outlook send-mail call renders as a structured email card', async ({ pa
     });
 
     await page.goto(`/`);
-    await expect(page.getByText('Wants to call Send mail')).toBeVisible();
+    await openDetails(page, 'Send mail');
 
     await expect(page.getByText('To:')).toBeVisible();
     await expect(page.getByText('scott@example.com, dr.jew@example.com')).toBeVisible();
@@ -239,7 +253,7 @@ test('a tool outside the dedicated cards still falls back to a JSON-safe arg lis
     });
 
     await page.goto(`/`);
-    await expect(page.getByText('Wants to call Deploy channels')).toBeVisible();
+    await openDetails(page, 'Deploy channels');
 
     await expect(page.getByText('[object Object]')).toHaveCount(0);
     await expect(page.getByText('channelIds:')).toBeVisible();

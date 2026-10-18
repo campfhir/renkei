@@ -1,30 +1,19 @@
 /**
  * What a run actually DID, as one ordered list.
  *
- * The timeline answers "how did each step go" — you expand a step, then an
- * attempt, then a tool call. That is the right shape for following the
- * reasoning and the wrong shape for the question people arrive with when an
- * agent misbehaves: *what did it touch?* Answering that meant expanding every
- * step in turn and holding the order in your head.
+ * The timeline answers "how did each turn go". The question people arrive
+ * with when an agent misbehaves is *what did it touch?* — so this flattens
+ * the recorded calls into the order they happened in, and counts them.
  *
- * So this flattens the same recorded tool calls into the sequence they
- * happened in, across steps and loop iterations, and counts them.
+ * Reads and changes come from different places, and that is what lets
+ * this say which is which honestly: the agent itself can only READ (its
+ * token carries read tools alone), so every call on a turn row is a read;
+ * every CHANGE was a staged action run by the executor, recorded on its
+ * batch. A change that was declined, expired or skipped did not happen and
+ * is listed as such.
  *
- * ## Why nothing here says "read" or "write"
- *
- * It would be more useful to separate the calls that CHANGED something from
- * the ones that only looked. The honest obstacle is that a run row stores the
- * tool's name and nothing about its nature, and read-vs-act is decided at
- * registration time from `annotations.readOnlyHint` — reachable only by
- * running the whole registration for a specific user against a database.
- * Guessing from the name would mislabel eventually, and a summary that calls
- * a mutation a read is worse than one that declines to say. If this becomes
- * worth having, record the kind on the attempt at write time; do not infer it
- * here.
- *
- * Redaction carries over from the projection untouched: an attempt whose
- * content the audience may not see contributes a hidden marker, never its
- * calls.
+ * Redaction carries over from the projection untouched: content this
+ * audience may not see contributes a hidden marker, never its calls.
  */
 
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
@@ -32,13 +21,14 @@ import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
 export interface RunAction {
   /** Position in the run, 1-based — the number the UI shows. */
   ordinal: number;
-  /** The step this happened under, already resolved to its name. */
-  stepName: string;
-  /** 0 when not inside a loop; the 1-based round otherwise. */
-  iteration: number;
-  attempt: number;
+  /** The model turn it happened in (a change: the turn that staged it). */
+  turn: number;
+  /** 'read' — the agent's own call; 'change' — a staged action the executor made. */
+  kind: 'read' | 'change';
   tool: string;
   failed: boolean;
+  /** A change that never happened (declined, expired, skipped). */
+  notMade: boolean;
   durationMs: number | null;
   argsPreview: string | null;
   resultPreview: string | null;
@@ -46,16 +36,14 @@ export interface RunAction {
 
 export interface RunActivity {
   actions: RunAction[];
-  /** Total calls recorded, including any inside redacted attempts. */
+  /** Total calls recorded, including any inside redacted turns. */
   totalCalls: number;
   failedCalls: number;
+  /** Changes actually made. */
+  changesMade: number;
   /** Distinct tool names, in first-use order — the "what it touched" line. */
   toolsUsed: string[];
-  /**
-   * Attempts whose content this audience may not see. Their calls are
-   * counted (the count is content-free) but not listed, and saying so beats
-   * a list that silently omits them.
-   */
+  /** Turns whose content this audience may not see (their calls are counted, not listed). */
   hiddenAttempts: number;
 }
 
@@ -71,35 +59,30 @@ function callsOf(attempt: AttemptView): Record<string, unknown>[] {
   if (!isRecord(attempt.detail)) return [];
   const calls = attempt.detail.toolCalls;
   if (!Array.isArray(calls)) return [];
-  // Built by push rather than `.filter(isRecord)`: the jsonb element type is
-  // JsonValue, and filter narrows the predicate's argument, not the array.
   const records: Record<string, unknown>[] = [];
   for (const call of calls) {
-    if (isRecord(call)) records.push(call);
+    // Built-ins (finishing, remembering, date arithmetic) and the staging
+    // call itself are not things the run touched.
+    if (isRecord(call) && call.free !== true && call.tool !== 'stage_actions') records.push(call);
   }
   return records;
 }
 
-/**
- * The run's actions in execution order.
- *
- * `nameOf` resolves a step id to its display name — supplied by the caller
- * because the snapshot walk already exists on the page and in the markdown
- * renderer, and duplicating it here would be a third place to keep in step.
- */
-export function runActivity(
-  run: RunDetail,
-  nameOf: (stepId: string, stepIndex: number) => string
-): RunActivity {
+const PREVIEW_CHARS = 2_000;
+
+/** The run's actions in execution order: each turn's reads, then what it staged. */
+export function runActivity(run: RunDetail): RunActivity {
   const actions: RunAction[] = [];
   const toolsUsed: string[] = [];
   let totalCalls = 0;
   let failedCalls = 0;
+  let changesMade = 0;
   let hiddenAttempts = 0;
+  const batchesByTurn = new Map(run.batches.map((batch) => [batch.turn, batch]));
+  const use = (tool: string) => {
+    if (!toolsUsed.includes(tool)) toolsUsed.push(tool);
+  };
 
-  // `run.attempts` is already ordered by (step_index, iteration, attempt) at
-  // the query seam, which IS execution order — so this needs no sort of its
-  // own, and must not impose one.
   for (const attempt of run.attempts) {
     if (attempt.redacted) {
       if (attempt.toolCallCount > 0) {
@@ -113,29 +96,49 @@ export function runActivity(
       const failed = call.isError === true;
       totalCalls += 1;
       if (failed) failedCalls += 1;
-      if (!toolsUsed.includes(tool)) toolsUsed.push(tool);
+      use(tool);
       actions.push({
         ordinal: actions.length + 1,
-        stepName: nameOf(attempt.stepId, attempt.stepIndex),
-        iteration: attempt.iteration,
-        attempt: attempt.attempt,
+        turn: attempt.attempt,
+        kind: 'read',
         tool,
         failed,
+        notMade: false,
         durationMs: typeof call.durationMs === 'number' ? call.durationMs : null,
         argsPreview: str(call.argsPreview),
         resultPreview: str(call.resultPreview),
       });
     }
+    const batch = batchesByTurn.get(attempt.attempt);
+    if (!batch?.actions) continue;
+    batch.actions.forEach((staged, index) => {
+      const result = batch.results?.[index];
+      const made = result?.outcome === 'succeeded';
+      const failed = result?.outcome === 'failed';
+      totalCalls += 1;
+      if (failed) failedCalls += 1;
+      if (made) changesMade += 1;
+      use(staged.tool);
+      actions.push({
+        ordinal: actions.length + 1,
+        turn: attempt.attempt,
+        kind: 'change',
+        tool: staged.tool,
+        failed,
+        notMade: !made && !failed,
+        durationMs: result ? result.durationMs : null,
+        argsPreview: JSON.stringify(staged.args).slice(0, PREVIEW_CHARS),
+        resultPreview: result ? result.text.slice(0, PREVIEW_CHARS) : null,
+      });
+    });
   }
 
-  return { actions, totalCalls, failedCalls, toolsUsed, hiddenAttempts };
+  return { actions, totalCalls, failedCalls, changesMade, toolsUsed, hiddenAttempts };
 }
 
 /**
- * The one-line headline: how much happened, and did any of it fail.
- *
- * Never empty — a run that called nothing says so, because "no actions" and
- * "we did not look" are different answers and the reader deserves the first.
+ * The one-line headline: how much happened, how much of it changed
+ * something, and did any of it fail. Never empty.
  */
 export function activityHeadline(activity: RunActivity): string {
   if (activity.totalCalls === 0) return 'No tools were called.';
@@ -144,6 +147,10 @@ export function activityHeadline(activity: RunActivity): string {
     activity.toolsUsed.length > 0
       ? ` across ${activity.toolsUsed.length} tool${activity.toolsUsed.length === 1 ? '' : 's'}`
       : '';
+  const changes =
+    activity.changesMade > 0
+      ? `, ${activity.changesMade} change${activity.changesMade === 1 ? '' : 's'} made`
+      : ', nothing changed';
   const failed = activity.failedCalls > 0 ? `, ${activity.failedCalls} failed` : '';
-  return `${calls}${tools}${failed}.`;
+  return `${calls}${tools}${changes}${failed}.`;
 }

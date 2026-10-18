@@ -75,7 +75,6 @@ maybe('agent memory', () => {
         id: agentId,
         owner_subject: owner,
         name: `mem-agent-${agentId.slice(0, 8)}`,
-        steps: JSON.stringify({ version: 1, steps: [] }),
         enabled: true,
       })
       .execute();
@@ -85,7 +84,11 @@ maybe('agent memory', () => {
   afterAll(async () => {
     await db
       .deleteFrom('agent_memories')
-      .where('agent_id', 'in', db.selectFrom('agents').select('id').where('owner_subject', '=', owner))
+      .where(
+        'agent_id',
+        'in',
+        db.selectFrom('agents').select('id').where('owner_subject', '=', owner)
+      )
       .execute();
     await db.deleteFrom('agents').where('owner_subject', '=', owner).execute();
   });
@@ -162,9 +165,9 @@ maybe('agent memory', () => {
       'legacy plaintext note',
       'patient 123 was discharged',
     ]);
-    expect(
-      await appendAgentMemory(db, { agentId, content: 'legacy plaintext note' })
-    ).toEqual({ inserted: false });
+    expect(await appendAgentMemory(db, { agentId, content: 'legacy plaintext note' })).toEqual({
+      inserted: false,
+    });
   });
 
   it('renders within the injection budget however much is stored', async () => {
@@ -208,7 +211,6 @@ maybe('agent memory', () => {
         id: otherId,
         owner_subject: owner,
         name: `mem-agent-${otherId.slice(0, 8)}`,
-        steps: JSON.stringify({ version: 1, steps: [] }),
         enabled: true,
       })
       .execute();

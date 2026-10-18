@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { InMemoryQueue } from '@renkei/queue';
-import { CURRENT_STEPS_VERSION, type AgentStepsDoc } from '@renkei/agents';
+import type { AgentDefinition } from '@renkei/agents';
 import { fanOutAgentEvents } from '@renkei/agents/event-fanout';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
@@ -29,21 +29,7 @@ maybe('agent event fan-out', () => {
   const owner = `owner-${suiteId.slice(0, 8)}`;
   const stranger = `stranger-${suiteId.slice(0, 8)}`;
 
-  // The run-creation gate (isCurrentStepsDoc) refuses any other version,
-  // so a hard-coded number here silently seeds an agent nothing will fire.
-  const steps: AgentStepsDoc = {
-    version: CURRENT_STEPS_VERSION,
-    steps: [
-      {
-        id: randomUUID(),
-        name: 'React',
-        instruction: [{ t: 'text', v: 'React to the email' }],
-        tool: null,
-        maxAttempts: 1,
-        failureHandling: [],
-      },
-    ],
-  };
+  const definition: AgentDefinition = { instructions: '## Goal\n\nReact to the email.', tools: [] };
 
   beforeAll(async () => {
     const result = getDatabase();
@@ -53,7 +39,9 @@ maybe('agent event fan-out', () => {
 
   afterAll(async () => {
     await sql`DELETE FROM agent_runs WHERE owner_subject = ${owner}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${owner})`.execute(db);
+    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${owner})`.execute(
+      db
+    );
     await sql`DELETE FROM agents WHERE owner_subject = ${owner}`.execute(db);
     await closeDatabase();
   });
@@ -74,7 +62,8 @@ maybe('agent event fan-out', () => {
         id: agentId,
         owner_subject: ownerSubject,
         name: `fanout-agent-${agentId.slice(0, 8)}`,
-        steps: JSON.stringify(steps),
+        instructions: definition.instructions,
+        tools: JSON.stringify(definition.tools),
         enabled: options.enabled ?? true,
       })
       .execute();

@@ -5,7 +5,7 @@
  * agent_update fed from agent_get) can never chase two dialects.
  */
 
-import type { AgentStepsDoc, TriggerDraft } from '@renkei/agents';
+import type { TriggerDraft } from '@renkei/agents';
 
 /** The fence info string marking a definition block in markdown. */
 export const AGENT_DEFINITION_FENCE = 'json renkei-agent';
@@ -13,11 +13,12 @@ export const AGENT_DEFINITION_FENCE = 'json renkei-agent';
 export interface AgentDefinitionInput {
   name: string;
   description?: string | null;
-  steps: AgentStepsDoc;
+  instructions: string;
+  tools: string[];
   triggers: { draft: TriggerDraft; enabled: boolean }[];
   guardrails?: string | null;
-  blockedTools?: string[];
   canAskQuestions?: boolean;
+  autoAcceptActions?: boolean;
   llmModelId?: string | null;
 }
 
@@ -26,13 +27,12 @@ export function agentDefinition(agent: AgentDefinitionInput): Record<string, unk
   return {
     name: agent.name,
     ...(agent.description ? { description: agent.description } : {}),
-    steps: agent.steps,
+    instructions: agent.instructions,
+    tools: agent.tools,
     triggers: agent.triggers,
     ...(agent.guardrails ? { guardrails: agent.guardrails } : {}),
-    ...(agent.blockedTools && agent.blockedTools.length > 0
-      ? { blockedTools: agent.blockedTools }
-      : {}),
     ...(agent.canAskQuestions ? { canAskQuestions: true } : {}),
+    ...(agent.autoAcceptActions ? { autoAcceptActions: true } : {}),
     ...(agent.llmModelId ? { llmModelId: agent.llmModelId } : {}),
   };
 }

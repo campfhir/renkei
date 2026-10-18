@@ -3,7 +3,7 @@
 /**
  * The run detail page, kept current by the server rather than by us asking
  * for it: one `EventSource` onto the run's stream route replaces the
- * page's initial data whenever the run row, a step attempt, or its pause
+ * page's initial data whenever the run row, a turn, or its pause
  * card changes, and every child here — the status pill, the pause card,
  * the debug text, the Cancel/Rerun swap, the activity feed, the timeline —
  * re-renders off that same state. No polling interval, no page reload.
@@ -17,7 +17,7 @@ import { useEffect, useState } from 'react';
 import BackLink from '@/components/back-link';
 import LocalTime from '@/components/local-time';
 import CopyDebugButton from '@/components/copy-debug-button';
-import { RunTimeline, StatusPill } from '../../../run-timeline';
+import { BatchBlock, RunTimeline, StatusPill } from '../../../run-timeline';
 import RunActivitySection from '../../../run-activity';
 import ApprovalActions from '../../../../approval-actions';
 import QuestionActions from '../../../../question-actions';
@@ -69,6 +69,8 @@ export default function RunLive({ agentId, runId, agentName, initialData }: {
   }, [agentId, runId, initialData.run.status]);
 
   const { run, pauseCard, questionForm } = data;
+  // The batch an approval card waits on is the latest one still proposed.
+  const pendingBatch = [...run.batches].reverse().find((batch) => batch.status === 'proposed');
 
   return (
     <>
@@ -92,16 +94,11 @@ export default function RunLive({ agentId, runId, agentName, initialData }: {
         ) : (
           <>
             {/* A failed run gets a third option beside rerun: pick THIS
-                run back up at the step that failed, keeping what earlier
-                steps saved — for when the plan was fine and one step
-                needs another go, with a word from the owner on how. */}
+                run back up where it stopped, keeping its conversation —
+                for when the instructions were fine and the run needs
+                another go, with a word from the owner on how. */}
             {run.status === 'failed' ? (
-              <ResumeButton
-                agentId={agentId}
-                runId={runId}
-                agentName={agentName}
-                failedStepName={run.failedStepName}
-              />
+              <ResumeButton agentId={agentId} runId={runId} agentName={agentName} />
             ) : null}
             <RerunButton
               agentId={agentId}
@@ -113,13 +110,23 @@ export default function RunLive({ agentId, runId, agentName, initialData }: {
       </div>
       {pauseCard ? (
         <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50/50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
-          <p className="mb-2 whitespace-pre-wrap break-words text-sm font-medium">
-            {pauseCard.summary}
-          </p>
+          {/* A batch states its own summary below; a question's is the question. */}
+          {pauseCard.kind === 'question' || !pendingBatch ? (
+            <p className="mb-2 whitespace-pre-wrap break-words text-sm font-medium">
+              {pauseCard.summary}
+            </p>
+          ) : null}
           {pauseCard.kind === 'question' ? (
             <QuestionActions itemId={pauseCard.id} form={questionForm} />
           ) : (
-            <ApprovalActions itemId={pauseCard.id} />
+            <>
+              {pendingBatch ? (
+                <div className="mb-2 text-xs">
+                  <BatchBlock batch={pendingBatch} />
+                </div>
+              ) : null}
+              <ApprovalActions itemId={pauseCard.id} />
+            </>
           )}
         </div>
       ) : null}
@@ -131,13 +138,12 @@ export default function RunLive({ agentId, runId, agentName, initialData }: {
       {run.resumeCount > 0 ? (
         <p className="mb-4 rounded-md border border-sky-200 bg-sky-50/50 p-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">
           Resumed {run.resumeCount === 1 ? 'once' : `${run.resumeCount} times`}
-          {run.resumeStepName ? <> at “{run.resumeStepName}”</> : null}
           {run.resumedAt ? (
             <>
               , last <LocalTime at={run.resumedAt} />
             </>
           ) : null}
-          . Attempts marked “Set aside” are what a resume retired.
+          .
           {run.resumeGuidance ? (
             <>
               {' '}

@@ -7,12 +7,12 @@
  *  - a tenant (slug `e2e`) and a session row — the ONLY way to be signed in,
  *    since the cookie is an opaque id and there is no dev login route
  *    (lib/session.ts). The cookie itself is written by global-setup.ts.
- *  - two agents: one rich (description, review notes, failure handling, runs
- *    in every interesting state) and one minimal linear agent, so the builder
- *    edit page can be captured both dense and plain.
- *  - runs covering succeeded / step_failed / timeout / running, with attempt
- *    rows shaped exactly like the engine writes them (run-timeline.tsx reads
- *    detail.llmSummary / detail.toolCalls / outcome codes).
+ *  - three agents: one rich (description, review notes, full structured
+ *    instructions, runs in every interesting state), one minimal, and one
+ *    whose run staged a batch of changes the executor carried out.
+ *  - runs covering succeeded / failed / timeout / running / parked, with
+ *    turn rows and a staged batch shaped exactly like the engine writes them
+ *    (run-timeline.tsx reads detail.llmSummary / toolCalls / finish).
  *
  * Knowledge notes are NOT seeded: they live in knowledge_chunks, which needs
  * a pgvector embedding per row — the panel's empty state is what screenshots
@@ -38,286 +38,78 @@ export const RUN_RUNNING_ID = '66666666-6666-4666-8666-666666666664';
 export const RUN_ITERATIONS_ID = '66666666-6666-4666-8666-666666666665';
 export const RUN_PARKED_ID = '66666666-6666-4666-8666-666666666666';
 
-const STEP_COLLECT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
-const STEP_RANK = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
-const STEP_FILE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
-const STEP_BRANCH = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4';
-const STEP_WRAP = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5';
-const PATH_YES = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1';
-const PATH_NO = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2';
-export const BRANCH_YES_NAME = 'File the tickets';
-
 const TRIGGER_RICH = '55555555-5555-4555-8555-555555555551';
 const TRIGGER_PLAIN = '55555555-5555-4555-8555-555555555552';
 
-/**
- * The rich agent's steps — a v2 doc WITH a branch, so screenshots exercise
- * the fan-out canvas, the branch editor, and the timeline's "Took path".
- * Tools are Jira tools on purpose: the Jira connector is provisioned for
- * every caller (unlike grant-gated connectors), so the builder shows this
- * agent fully valid, with the curated failure panel populated.
- *
- * Pre-order ordinals (= step_index): collect 0, rank 1, branch 2, file 3,
- * wrap 4.
- */
-const RICH_STEPS = {
-  version: 2,
-  steps: [
-    {
-      id: STEP_COLLECT,
-      name: 'Find yesterday’s activity',
-      instruction: [
-        { t: 'text', v: 'Search for issues updated yesterday with ' },
-        { t: 'tool', name: 'jira_search_issues' },
-        { t: 'text', v: ' and keep anything that looks like a request or a problem report.' },
-      ],
-      tool: 'jira_search_issues',
-      maxAttempts: 2,
-      saveAs: 'activity',
-      failureHandling: [],
-    },
-    {
-      id: STEP_RANK,
-      name: 'Pick what is actionable',
-      instruction: [
-        { t: 'text', v: 'From ' },
-        { t: 'var', name: 'activity' },
-        { t: 'text', v: ', pick the items that need follow-up and summarize each in one line.' },
-      ],
-      tool: null,
-      maxAttempts: 1,
-      saveAs: 'actionable',
-      failureHandling: [],
-    },
-    {
-      id: STEP_BRANCH,
-      kind: 'branch',
-      name: 'Anything actionable?',
-      condition: [
-        { t: 'text', v: 'Did ' },
-        { t: 'var', name: 'actionable' },
-        { t: 'text', v: ' turn up at least one item that needs follow-up?' },
-      ],
-      paths: [
-        {
-          id: PATH_YES,
-          name: BRANCH_YES_NAME,
-          steps: [
-            {
-              id: STEP_FILE,
-              name: 'File follow-up tickets',
-              instruction: [
-                { t: 'text', v: 'Create one issue per item in ' },
-                { t: 'var', name: 'actionable' },
-                { t: 'text', v: ' using ' },
-                { t: 'tool', name: 'jira_create_issue' },
-                { t: 'text', v: ' in the OPS project.' },
-              ],
-              tool: 'jira_create_issue',
-              maxAttempts: 3,
-              failureHandling: [
-                {
-                  outcome: 'project-not-found',
-                  action: 'retry',
-                  guidance: [{ t: 'text', v: 'List the projects first and use the closest key.' }],
-                },
-              ],
-            },
-          ],
-        },
-        { id: PATH_NO, name: 'Quiet day', steps: [] },
-      ],
-      maxAttempts: 2,
-    },
-    {
-      id: STEP_WRAP,
-      name: 'Note the outcome',
-      instruction: [
-        { t: 'text', v: 'Write one line summarizing what was filed (or that nothing was needed).' },
-      ],
-      tool: null,
-      maxAttempts: 1,
-      failureHandling: [],
-    },
-  ],
-};
-
-/* The deep agent's node ids — referenced by the iterated run's rows. */
-const DEEP_COLLECT = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd1';
-const DEEP_LOOP = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd2';
-const DEEP_ASSESS = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd3';
-const DEEP_BRANCH = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd4';
-const DEEP_GROUP = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd5';
-const DEEP_ESCALATE = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd6';
-const DEEP_ROUTINE = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd7';
-const DEEP_NOTE = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd8';
-const DEEP_SUMMARY = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd9';
-const DEEP_PATH_CRITICAL = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
-const DEEP_PATH_ROUTINE = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2';
-const DEEP_PATH_IGNORE = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3';
-const DEEP_PATH_FAILURE = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4';
-export const DEEP_LOOP_NAME = 'Work the queue';
-export const DEEP_BRANCH_NAME = 'How urgent is it?';
+/** The staged batch the deep agent's run proposed and the executor carried out. */
+export const BATCH_DEEP_ID = '12121212-1212-4121-8121-121212121212';
 
 /**
- * The deep agent's steps — a v3 doc: a for-each loop whose body holds a
- * 3-way branch (with a failure route) with a group inside its first path.
- * Exercises the loop container, the vertical RouterBlock, drill-in, and
- * the iterated run timeline.
- *
- * Pre-order ordinals (= step_index): collect 0, loop 1, assess 2, branch 3,
- * group 4, escalate 5, routine 6, note 7, summary 8.
+ * The rich agent: structured instructions under every section heading, and
+ * Jira tools on purpose — the Jira connector is provisioned for every
+ * caller (unlike grant-gated connectors), so the builder shows this agent
+ * fully valid, reads and changes alike.
  */
-const DEEP_STEPS = {
-  version: 3,
-  steps: [
-    {
-      id: DEEP_COLLECT,
-      name: 'Collect the queue',
-      instruction: [
-        { t: 'text', v: 'Search for open requests with ' },
-        { t: 'tool', name: 'jira_search_issues' },
-        { t: 'text', v: ' and save each request as its own item.' },
-      ],
-      tool: 'jira_search_issues',
-      maxAttempts: 2,
-      saveAs: 'the queue',
-      failureHandling: [],
-    },
-    {
-      id: DEEP_LOOP,
-      kind: 'loop',
-      mode: 'foreach',
-      name: DEEP_LOOP_NAME,
-      itemsVar: 'the queue',
-      itemVar: 'ticket',
-      maxIterations: 10,
-      collectFrom: 'triage note',
-      collectVar: 'triage notes',
-      steps: [
-        {
-          id: DEEP_ASSESS,
-          name: 'Assess the ticket',
-          instruction: [
-            { t: 'text', v: 'Judge how urgent ' },
-            { t: 'var', name: 'ticket' },
-            { t: 'text', v: ' is and say why in one line.' },
-          ],
-          tool: null,
-          maxAttempts: 1,
-          saveAs: 'assessment',
-          failureHandling: [],
-        },
-        {
-          id: DEEP_BRANCH,
-          kind: 'branch',
-          name: DEEP_BRANCH_NAME,
-          condition: [
-            { t: 'text', v: 'Given ' },
-            { t: 'var', name: 'assessment' },
-            { t: 'text', v: ': is this critical, routine, or ignorable?' },
-          ],
-          paths: [
-            {
-              id: DEEP_PATH_CRITICAL,
-              name: 'Critical',
-              steps: [
-                {
-                  id: DEEP_GROUP,
-                  kind: 'group',
-                  name: 'Escalate',
-                  steps: [
-                    {
-                      id: DEEP_ESCALATE,
-                      name: 'Flag it loudly',
-                      instruction: [
-                        { t: 'text', v: 'Comment on ' },
-                        { t: 'var', name: 'ticket' },
-                        { t: 'text', v: ' with ' },
-                        { t: 'tool', name: 'jira_add_comment' },
-                        { t: 'text', v: ' asking for immediate attention.' },
-                      ],
-                      tool: 'jira_add_comment',
-                      maxAttempts: 2,
-                      failureHandling: [],
-                    },
-                  ],
-                },
-              ],
-            },
-            {
-              id: DEEP_PATH_ROUTINE,
-              name: 'Routine',
-              steps: [
-                {
-                  id: DEEP_ROUTINE,
-                  name: 'Acknowledge it',
-                  instruction: [
-                    { t: 'text', v: 'Leave a short acknowledgment on ' },
-                    { t: 'var', name: 'ticket' },
-                    { t: 'text', v: ' with ' },
-                    { t: 'tool', name: 'jira_add_comment' },
-                    { t: 'text', v: '.' },
-                  ],
-                  tool: 'jira_add_comment',
-                  maxAttempts: 2,
-                  failureHandling: [],
-                },
-              ],
-            },
-            { id: DEEP_PATH_IGNORE, name: 'Not worth acting on', steps: [] },
-          ],
-          failurePath: { id: DEEP_PATH_FAILURE, name: 'If triage fails', steps: [] },
-          maxAttempts: 2,
-        },
-        {
-          id: DEEP_NOTE,
-          name: 'Write the triage note',
-          instruction: [
-            { t: 'text', v: 'Write one line on what was done for ' },
-            { t: 'var', name: 'ticket' },
-            { t: 'text', v: '.' },
-          ],
-          tool: null,
-          maxAttempts: 1,
-          saveAs: 'triage note',
-          failureHandling: [],
-        },
-      ],
-    },
-    {
-      id: DEEP_SUMMARY,
-      name: 'Summarize the sweep',
-      instruction: [
-        { t: 'text', v: 'Summarize the sweep from ' },
-        { t: 'var', name: 'triage notes' },
-        { t: 'text', v: ' in three lines.' },
-      ],
-      tool: null,
-      maxAttempts: 1,
-      failureHandling: [],
-    },
-  ],
-};
+const RICH_INSTRUCTIONS = [
+  '## Goal',
+  '',
+  'Every weekday, review yesterday’s Jira activity and file a follow-up ticket in OPS for each item that needs one.',
+  '',
+  '## Context',
+  '',
+  'Runs on a schedule. The OPS project is where infrastructure follow-ups live.',
+  '',
+  '## Approach',
+  '',
+  '1. Search yesterday’s updated issues.',
+  '2. Pick out the ones nobody has followed up on.',
+  '3. Propose one OPS ticket per item, linking the original.',
+  '',
+  '## Tools',
+  '',
+  'Use `jira_search_issues` to find activity and `jira_get_issue` for detail.',
+  '',
+  '## Actions',
+  '',
+  'Create OPS tickets with `jira_create_issue`: a one-line summary and a link to the source issue.',
+  '',
+  '## Done when',
+  '',
+  'Every item that needs a follow-up has a proposed ticket — or there was nothing to follow up.',
+  '',
+  '## Rules',
+  '',
+  '- Never file a duplicate: check for an existing OPS ticket first.',
+].join('\n');
+const RICH_TOOLS = ['jira_search_issues', 'jira_get_issue', 'jira_create_issue'];
 
-const PLAIN_STEPS = {
-  version: 1,
-  steps: [
-    {
-      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1',
-      name: 'Summarize yesterday',
-      instruction: [{ t: 'text', v: 'Write a three-line summary of yesterday’s activity.' }],
-      tool: null,
-      maxAttempts: 1,
-      failureHandling: [],
-    },
-  ],
-};
+const PLAIN_INSTRUCTIONS = [
+  '## Goal',
+  '',
+  'Write a three-line summary of yesterday’s activity.',
+].join('\n');
+
+const DEEP_INSTRUCTIONS = [
+  '## Goal',
+  '',
+  'Work the open request queue: escalate what is critical, acknowledge what is routine.',
+  '',
+  '## Approach',
+  '',
+  '1. Search the open requests.',
+  '2. Judge how urgent each one is.',
+  '3. Propose an escalation comment on critical ones and an acknowledgement on routine ones, all in one batch.',
+  '',
+  '## Done when',
+  '',
+  'Every open request has a proposed comment.',
+].join('\n');
+const DEEP_TOOLS = ['jira_search_issues', 'jira_add_comment'];
 
 const REVIEW_NOTES = [
   {
-    issue: 'Step 3 files tickets without asking which project when OPS is ambiguous.',
-    fix: 'Name the project explicitly in the instruction, or save a project key in an earlier step.',
+    issue: 'The instructions never say what to do when an item already has an OPS ticket in progress.',
+    fix: 'Add a rule under Rules: comment on the existing ticket instead of proposing a new one.',
   },
 ];
 
@@ -325,20 +117,22 @@ function hoursAgo(h: number): Date {
   return new Date(Date.now() - h * 3_600_000);
 }
 
-/** Engine-shaped attempt detail — keys match run-timeline.tsx's reader. */
-function attemptDetail(input: {
-  resolvedInstruction: string;
-  llmSummary: string;
+/** Engine-shaped turn detail — keys match run-timeline.tsx's reader. */
+function turnDetail(input: {
+  opening?: string;
+  llmSummary?: string;
   toolCalls?: {
     tool: string;
     argsPreview: string;
     resultPreview: string;
     durationMs: number;
     isError?: boolean;
+    free?: boolean;
+    staged?: number;
   }[];
-  saveValue?: string;
-  chosenPathId?: string;
-  chosenPathName?: string;
+  finish?: 'done' | 'nothing_to_do' | 'failed';
+  result?: string;
+  modelCalls?: { durationMs: number; stopReason: string; inputTokens: number; outputTokens: number }[];
 }): string {
   return JSON.stringify(input);
 }
@@ -480,18 +274,18 @@ export async function seed(client: Client): Promise<void> {
   );
 
   await client.query(
-    `INSERT INTO agents\n       (id, owner_subject, name, description, description_status,\n        review_notes, steps, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, $6, true)`,
-    [AGENT_RICH_ID, E2E_SUBJECT, 'Triage yesterday into tickets', 'Every weekday morning this agent reviews yesterday’s Jira activity, picks out what needs follow-up, and files a ticket for each item in the OPS project.', JSON.stringify(REVIEW_NOTES), JSON.stringify(RICH_STEPS)]
+    `INSERT INTO agents\n       (id, owner_subject, name, description, description_status,\n        review_notes, instructions, tools, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, true)`,
+    [AGENT_RICH_ID, E2E_SUBJECT, 'Triage yesterday into tickets', 'Every weekday morning this agent reviews yesterday’s Jira activity, picks out what needs follow-up, and files a ticket for each item in the OPS project.', JSON.stringify(REVIEW_NOTES), RICH_INSTRUCTIONS, JSON.stringify(RICH_TOOLS)]
   );
 
   await client.query(
-    `INSERT INTO agents\n       (id, owner_subject, name, description, description_status, steps, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, false)`,
-    [AGENT_PLAIN_ID, E2E_SUBJECT, 'Daily activity digest', 'Writes a short summary of the previous day.', JSON.stringify(PLAIN_STEPS)]
+    `INSERT INTO agents\n       (id, owner_subject, name, description, description_status, instructions, tools, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, '[]'::jsonb, false)`,
+    [AGENT_PLAIN_ID, E2E_SUBJECT, 'Daily activity digest', 'Writes a short summary of the previous day.', PLAIN_INSTRUCTIONS]
   );
 
   await client.query(
-    `INSERT INTO agents\n       (id, owner_subject, name, description, description_status, steps, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, false)`,
-    [AGENT_DEEP_ID, E2E_SUBJECT, 'Sweep the request queue', 'Goes through every open request, escalates the critical ones, acknowledges the routine ones, and writes a note per request.', JSON.stringify(DEEP_STEPS)]
+    `INSERT INTO agents\n       (id, owner_subject, name, description, description_status, instructions, tools, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, $6, false)`,
+    [AGENT_DEEP_ID, E2E_SUBJECT, 'Sweep the request queue', 'Goes through every open request, escalates the critical ones, acknowledges the routine ones, and writes a note per request.', DEEP_INSTRUCTIONS, JSON.stringify(DEEP_TOOLS)]
   );
 
   const scheduleConfig = JSON.stringify({
@@ -512,537 +306,227 @@ export async function seed(client: Client): Promise<void> {
     ['77777777-7777-4777-8777-777777777771', AGENT_RICH_ID, 'The OPS project is the right home for infrastructure requests; HR questions go to the PEOPLE desk instead.', '77777777-7777-4777-8777-777777777772', 'Filed OPS-231 for the VPN outage thread; sender confirmed it covered their ask.', '77777777-7777-4777-8777-777777777773', 'Skipped the newsletter digest — recurring, never actionable.']
   );
 
-  const snapshot = JSON.stringify(RICH_STEPS);
-  const runRows: [
-    string,
-    string,
-    string | null,
-    string | null,
-    string | null,
-    Date | null,
-    Date | null,
-  ][] = [
-    // id, status, error_kind, error, current_step_id, started_at, finished_at
-    [RUN_SUCCEEDED_ID, 'succeeded', null, null, STEP_FILE, hoursAgo(26), hoursAgo(25.9)],
+  const snapshot = JSON.stringify({ instructions: RICH_INSTRUCTIONS, tools: RICH_TOOLS });
+  const runRows: [string, string, string | null, string | null, Date | null, Date | null, number][] =
     [
-      RUN_STEP_FAILED_ID,
-      'failed',
-      'step_failed',
-      'Step "File follow-up tickets" failed after 2 attempt(s) (other).',
-      STEP_FILE,
-      hoursAgo(2),
-      hoursAgo(1.9),
-    ],
-    [
-      RUN_TIMEOUT_ID,
-      'failed',
-      'timeout',
-      'The run exceeded the time limit.',
-      STEP_RANK,
-      hoursAgo(50),
-      hoursAgo(49),
-    ],
-    [RUN_RUNNING_ID, 'running', null, null, STEP_COLLECT, hoursAgo(0.05), null],
-    // Parked by the engine: the owner's key was not delegated when the
-    // schedule fired (docs/delegate-key-design.md, phase 3). Their next
-    // sign-in re-queues it; until then the list says so.
-    [
-      RUN_PARKED_ID,
-      'waiting',
-      'needs-sign-in',
-      'Paused: your encryption key is not available to your agents. Sign in to resume.',
-      null,
-      null,
-      null,
-    ],
-  ];
-  for (const [id, status, errorKind, error, currentStep, startedAt, finishedAt] of runRows) {
+      // id, status, error_kind, error, started_at, finished_at, active_ms
+      [RUN_SUCCEEDED_ID, 'succeeded', null, null, hoursAgo(26), hoursAgo(25.9), 41_000],
+      [
+        RUN_STEP_FAILED_ID,
+        'failed',
+        'agent_failed',
+        'Could not file the follow-up: the OPS project rejected the issue type “Task”.',
+        hoursAgo(2),
+        hoursAgo(1.9),
+        52_000,
+      ],
+      [
+        RUN_TIMEOUT_ID,
+        'failed',
+        'timeout',
+        'The run used its 30 minutes of active time.',
+        hoursAgo(50),
+        hoursAgo(49),
+        1_800_000,
+      ],
+      [RUN_RUNNING_ID, 'running', null, null, hoursAgo(0.05), null, 3_000],
+      // Parked by the engine: the owner's key was not delegated when the
+      // schedule fired (docs/delegate-key-design.md, phase 3). Their next
+      // sign-in re-queues it; until then the list says so.
+      [
+        RUN_PARKED_ID,
+        'waiting',
+        'needs-sign-in',
+        'Paused: your encryption key is not available to your agents. Sign in to resume.',
+        null,
+        null,
+        0,
+      ],
+    ];
+  for (const [id, status, errorKind, error, startedAt, finishedAt, activeMs] of runRows) {
     await client.query(
-      `INSERT INTO agent_runs\n         (id, agent_id, owner_subject, trigger_kind, trigger_id,\n          steps_snapshot, status, error_kind, error, current_step_id,\n          started_at, finished_at, created_at)\n       VALUES ($1, $2, $3, 'schedule', $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-      [id, AGENT_RICH_ID, E2E_SUBJECT, TRIGGER_RICH, snapshot, status, errorKind, error, currentStep, startedAt, finishedAt, startedAt ?? new Date()]
+      `INSERT INTO agent_runs\n         (id, agent_id, owner_subject, trigger_kind, trigger_id,\n          definition_snapshot, status, error_kind, error,\n          started_at, finished_at, created_at, active_ms)\n       VALUES ($1, $2, $3, 'schedule', $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [id, AGENT_RICH_ID, E2E_SUBJECT, TRIGGER_RICH, snapshot, status, errorKind, error, startedAt, finishedAt, startedAt ?? new Date(), activeMs]
     );
   }
 
-  // The deep agent's iterated run — the timeline's per-iteration rendering.
+  // The deep agent's run: reads, then one staged batch the executor
+  // carried out — the timeline's batch rendering.
   await client.query(
-    `INSERT INTO agent_runs\n       (id, agent_id, owner_subject, trigger_kind, steps_snapshot,\n        status, started_at, finished_at, created_at)\n     VALUES ($1, $2, $3, 'manual', $4, 'succeeded', $5, $6, $5)`,
-    [RUN_ITERATIONS_ID, AGENT_DEEP_ID, E2E_SUBJECT, JSON.stringify(DEEP_STEPS), hoursAgo(5), hoursAgo(4.9)]
+    `INSERT INTO agent_runs\n       (id, agent_id, owner_subject, trigger_kind, definition_snapshot,\n        status, started_at, finished_at, created_at, active_ms)\n     VALUES ($1, $2, $3, 'manual', $4, 'succeeded', $5, $6, $5, 38000)`,
+    [RUN_ITERATIONS_ID, AGENT_DEEP_ID, E2E_SUBJECT, JSON.stringify({ instructions: DEEP_INSTRUCTIONS, tools: DEEP_TOOLS }), hoursAgo(5), hoursAgo(4.9)]
   );
 
-  // Attempt rows. UNIQUE (run_id, step_id, iteration, attempt) — one insert
-  // per row; iteration 0 = outside any loop (every pre-v3 run).
-  const stepRows: {
-    id: string;
+  // Turn rows — one per model turn, step_id 'turn', attempt = the turn
+  // number, exactly as the engine writes them (unsealed here: a row
+  // without an envelope reads as it is).
+  const model = (ms: number) => [{ durationMs: ms, stopReason: 'tool_use', inputTokens: 900, outputTokens: 60 }];
+  const turnRows: {
     runId: string;
-    stepId: string;
-    stepIndex: number;
-    attempt: number;
-    iteration?: number;
+    turn: number;
     status: string;
     outcome: string | null;
-    outcomeCode: string | null;
     toolCallCount: number;
     detail: string | null;
     at: Date;
   }[] = [
     {
-      id: '88888888-8888-4888-8888-888888888841',
-      runId: RUN_ITERATIONS_ID,
-      stepId: DEEP_COLLECT,
-      stepIndex: 0,
-      attempt: 1,
-      status: 'succeeded',
-      outcome: 'tool_ok',
-      outcomeCode: null,
-      toolCallCount: 1,
-      detail: attemptDetail({
-        resolvedInstruction: 'Search for open requests…',
-        llmSummary: 'Two open requests: the VPN outage and a laptop request.',
-        toolCalls: [
-          {
-            tool: 'jira_search_issues',
-            argsPreview: '{"jql":"status = Open"}',
-            resultPreview: '2 items',
-            durationMs: 733,
-          },
-        ],
-        saveValue: 'OPS-301 (VPN outage)\nOPS-302 (laptop request)',
-      }),
-      at: hoursAgo(5),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888842',
-      runId: RUN_ITERATIONS_ID,
-      stepId: DEEP_ASSESS,
-      stepIndex: 2,
-      attempt: 1,
-      iteration: 1,
-      status: 'succeeded',
-      outcome: 'llm_declared',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'Judge how urgent OPS-301 is…',
-        llmSummary: 'A building-wide outage — clearly critical.',
-        saveValue: 'critical: VPN down for building B',
-      }),
-      at: hoursAgo(4.98),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888843',
-      runId: RUN_ITERATIONS_ID,
-      stepId: DEEP_BRANCH,
-      stepIndex: 3,
-      attempt: 1,
-      iteration: 1,
-      status: 'succeeded',
-      outcome: 'path_chosen',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'Given (assessment): is this critical, routine, or ignorable?',
-        llmSummary: 'An outage affecting a whole building is critical.',
-        chosenPathId: DEEP_PATH_CRITICAL,
-        chosenPathName: 'Critical',
-      }),
-      at: hoursAgo(4.97),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888844',
-      runId: RUN_ITERATIONS_ID,
-      stepId: DEEP_ESCALATE,
-      stepIndex: 5,
-      attempt: 1,
-      iteration: 1,
-      status: 'succeeded',
-      outcome: 'tool_ok',
-      outcomeCode: null,
-      toolCallCount: 1,
-      detail: attemptDetail({
-        resolvedInstruction: 'Comment on OPS-301 asking for immediate attention…',
-        llmSummary: 'Escalation comment posted on OPS-301.',
-        toolCalls: [
-          {
-            tool: 'jira_add_comment',
-            argsPreview: '{"issue":"OPS-301"}',
-            resultPreview: 'Comment added',
-            durationMs: 512,
-          },
-        ],
-      }),
-      at: hoursAgo(4.96),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888845',
-      runId: RUN_ITERATIONS_ID,
-      stepId: DEEP_NOTE,
-      stepIndex: 7,
-      attempt: 1,
-      iteration: 1,
-      status: 'succeeded',
-      outcome: 'llm_declared',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'Write one line on what was done for OPS-301…',
-        llmSummary: 'Noted the escalation.',
-        saveValue: 'OPS-301 escalated as critical',
-      }),
-      at: hoursAgo(4.95),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888846',
-      runId: RUN_ITERATIONS_ID,
-      stepId: DEEP_ASSESS,
-      stepIndex: 2,
-      attempt: 1,
-      iteration: 2,
-      status: 'succeeded',
-      outcome: 'llm_declared',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'Judge how urgent OPS-302 is…',
-        llmSummary: 'A standard hardware request — routine.',
-        saveValue: 'routine: replacement laptop',
-      }),
-      at: hoursAgo(4.94),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888847',
-      runId: RUN_ITERATIONS_ID,
-      stepId: DEEP_BRANCH,
-      stepIndex: 3,
-      attempt: 1,
-      iteration: 2,
-      status: 'succeeded',
-      outcome: 'path_chosen',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'Given (assessment): is this critical, routine, or ignorable?',
-        llmSummary: 'Hardware requests follow the routine path.',
-        chosenPathId: DEEP_PATH_ROUTINE,
-        chosenPathName: 'Routine',
-      }),
-      at: hoursAgo(4.93),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888848',
-      runId: RUN_ITERATIONS_ID,
-      stepId: DEEP_ROUTINE,
-      stepIndex: 6,
-      attempt: 1,
-      iteration: 2,
-      status: 'succeeded',
-      outcome: 'tool_ok',
-      outcomeCode: null,
-      toolCallCount: 1,
-      detail: attemptDetail({
-        resolvedInstruction: 'Leave a short acknowledgment on OPS-302…',
-        llmSummary: 'Acknowledged OPS-302.',
-        toolCalls: [
-          {
-            tool: 'jira_add_comment',
-            argsPreview: '{"issue":"OPS-302"}',
-            resultPreview: 'Comment added',
-            durationMs: 468,
-          },
-        ],
-      }),
-      at: hoursAgo(4.92),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888849',
-      runId: RUN_ITERATIONS_ID,
-      stepId: DEEP_NOTE,
-      stepIndex: 7,
-      attempt: 1,
-      iteration: 2,
-      status: 'succeeded',
-      outcome: 'llm_declared',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'Write one line on what was done for OPS-302…',
-        llmSummary: 'Noted the acknowledgment.',
-        saveValue: 'OPS-302 acknowledged, routine',
-      }),
-      at: hoursAgo(4.91),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888850',
-      runId: RUN_ITERATIONS_ID,
-      stepId: DEEP_SUMMARY,
-      stepIndex: 8,
-      attempt: 1,
-      status: 'succeeded',
-      outcome: 'llm_declared',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'Summarize the sweep from (triage notes)…',
-        llmSummary: 'Two requests handled: one escalated, one acknowledged.',
-      }),
-      at: hoursAgo(4.9),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888801',
       runId: RUN_SUCCEEDED_ID,
-      stepId: STEP_COLLECT,
-      stepIndex: 0,
-      attempt: 1,
+      turn: 1,
       status: 'succeeded',
-      outcome: 'tool_ok',
-      outcomeCode: null,
+      outcome: null,
       toolCallCount: 1,
-      detail: attemptDetail({
-        resolvedInstruction: 'Search for issues updated yesterday…',
-        llmSummary: 'Found 6 activity items; 3 look actionable.',
+      detail: turnDetail({
+        opening: 'Your schedule started this run. Work toward your goal now.',
+        llmSummary: 'Looking up yesterday’s updated issues.',
         toolCalls: [
-          {
-            tool: 'jira_search_issues',
-            argsPreview: '{"jql":"updated >= -1d order by updated"}',
-            resultPreview: '6 items (VPN outage, printer, onboarding…)',
-            durationMs: 812,
-          },
+          { tool: 'jira_search_issues', argsPreview: '{"jql":"updated >= -1d"}', resultPreview: 'OPS-231: VPN outage (no follow-up)', durationMs: 640 },
         ],
-        saveValue: '6 messages, 3 actionable',
+        modelCalls: model(2100),
       }),
       at: hoursAgo(26),
     },
     {
-      id: '88888888-8888-4888-8888-888888888802',
       runId: RUN_SUCCEEDED_ID,
-      stepId: STEP_RANK,
-      stepIndex: 1,
-      attempt: 1,
+      turn: 2,
       status: 'succeeded',
-      outcome: 'llm_declared',
-      outcomeCode: null,
+      outcome: 'done',
       toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'From (activity), pick the items that need follow-up…',
-        llmSummary: 'Kept the VPN outage and the two access requests.',
-        saveValue: '3 items',
+      detail: turnDetail({
+        llmSummary: 'OPS-231 already has a follow-up — nothing new to file.',
+        toolCalls: [{ tool: 'finish_run', argsPreview: '{"outcome":"done"}', resultPreview: '', durationMs: 0, free: true }],
+        finish: 'done',
+        modelCalls: model(1400),
       }),
       at: hoursAgo(25.95),
     },
     {
-      id: '88888888-8888-4888-8888-888888888806',
-      runId: RUN_SUCCEEDED_ID,
-      stepId: STEP_BRANCH,
-      stepIndex: 2,
-      attempt: 1,
-      status: 'succeeded',
-      outcome: 'path_chosen',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'Did (actionable) turn up at least one item that needs follow-up?',
-        llmSummary: 'Three actionable items were listed, so the filing path applies.',
-        chosenPathId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
-        chosenPathName: BRANCH_YES_NAME,
-      }),
-      at: hoursAgo(25.94),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888803',
-      runId: RUN_SUCCEEDED_ID,
-      stepId: STEP_FILE,
-      stepIndex: 3,
-      attempt: 1,
-      status: 'succeeded',
-      outcome: 'tool_ok',
-      outcomeCode: null,
-      toolCallCount: 3,
-      detail: attemptDetail({
-        resolvedInstruction: 'Create one issue per item…',
-        llmSummary: 'Filed OPS-231, OPS-232, OPS-233.',
-        toolCalls: [
-          {
-            tool: 'jira_create_issue',
-            argsPreview: '{"project":"OPS","summary":"VPN outage — building B"}',
-            resultPreview: 'Note saved',
-            durationMs: 640,
-          },
-          {
-            tool: 'jira_create_issue',
-            argsPreview: '{"project":"OPS","summary":"Access request: analytics DB"}',
-            resultPreview: 'Note saved',
-            durationMs: 587,
-          },
-          {
-            tool: 'jira_create_issue',
-            argsPreview: '{"project":"OPS","summary":"Access request: staging VPN"}',
-            resultPreview: 'Note saved',
-            durationMs: 559,
-          },
-        ],
-      }),
-      at: hoursAgo(25.92),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888807',
-      runId: RUN_SUCCEEDED_ID,
-      stepId: STEP_WRAP,
-      stepIndex: 4,
-      attempt: 1,
-      status: 'succeeded',
-      outcome: 'llm_declared',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'Write one line summarizing what was filed…',
-        llmSummary: 'Filed OPS-231, OPS-232, OPS-233 for yesterday’s three requests.',
-      }),
-      at: hoursAgo(25.9),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888811',
       runId: RUN_STEP_FAILED_ID,
-      stepId: STEP_COLLECT,
-      stepIndex: 0,
-      attempt: 1,
+      turn: 1,
       status: 'succeeded',
-      outcome: 'tool_ok',
-      outcomeCode: null,
+      outcome: null,
       toolCallCount: 1,
-      detail: attemptDetail({
-        resolvedInstruction: 'Search for issues updated yesterday…',
-        llmSummary: 'Found 2 activity items; 1 looks actionable.',
+      detail: turnDetail({
+        opening: 'Your schedule started this run. Work toward your goal now.',
+        llmSummary: 'Searching yesterday’s activity.',
         toolCalls: [
-          {
-            tool: 'jira_search_issues',
-            argsPreview: '{"jql":"updated >= -1d order by updated"}',
-            resultPreview: '2 items',
-            durationMs: 700,
-          },
+          { tool: 'jira_search_issues', argsPreview: '{"jql":"updated >= -1d"}', resultPreview: 'OPS-240: printer queue stuck', durationMs: 590 },
         ],
+        modelCalls: model(1900),
       }),
       at: hoursAgo(2),
     },
     {
-      id: '88888888-8888-4888-8888-888888888812',
       runId: RUN_STEP_FAILED_ID,
-      stepId: STEP_RANK,
-      stepIndex: 1,
-      attempt: 1,
+      turn: 2,
       status: 'succeeded',
-      outcome: 'llm_declared',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'From (activity), pick the items that need follow-up…',
-        llmSummary: 'One actionable item: expired certificate on the intranet.',
-      }),
-      at: hoursAgo(1.98),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888815',
-      runId: RUN_STEP_FAILED_ID,
-      stepId: STEP_BRANCH,
-      stepIndex: 2,
-      attempt: 1,
-      status: 'succeeded',
-      outcome: 'path_chosen',
-      outcomeCode: null,
-      toolCallCount: 0,
-      detail: attemptDetail({
-        resolvedInstruction: 'Did (actionable) turn up at least one item that needs follow-up?',
-        llmSummary: 'One actionable item was listed.',
-        chosenPathId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
-        chosenPathName: BRANCH_YES_NAME,
-      }),
-      at: hoursAgo(1.97),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888813',
-      runId: RUN_STEP_FAILED_ID,
-      stepId: STEP_FILE,
-      stepIndex: 3,
-      attempt: 1,
-      status: 'failed',
-      outcome: 'tool_error',
-      outcomeCode: 'project-not-found',
+      outcome: 'failed',
       toolCallCount: 1,
-      detail: attemptDetail({
-        resolvedInstruction: 'Create one issue per item…',
-        llmSummary: 'Jira rejected the project key.',
+      detail: turnDetail({
+        llmSummary: 'Could not file the follow-up: the OPS project rejected the issue type “Task”.',
         toolCalls: [
-          {
-            tool: 'jira_create_issue',
-            argsPreview: '{"project":"OPS","summary":"Expired intranet certificate"}',
-            resultPreview: 'No project matches the key OPS.',
-            durationMs: 431,
-            isError: true,
-          },
+          { tool: 'jira_get_issue', argsPreview: '{"issueKey":"OPS-240"}', resultPreview: 'Issue type Task is not valid in OPS', durationMs: 310, isError: true },
+          { tool: 'finish_run', argsPreview: '{"outcome":"failed"}', resultPreview: '', durationMs: 0, free: true },
         ],
+        finish: 'failed',
+        modelCalls: model(1700),
       }),
       at: hoursAgo(1.95),
     },
     {
-      id: '88888888-8888-4888-8888-888888888814',
-      runId: RUN_STEP_FAILED_ID,
-      stepId: STEP_FILE,
-      stepIndex: 3,
-      attempt: 2,
-      status: 'failed',
-      outcome: 'tool_error',
-      outcomeCode: 'other',
-      toolCallCount: 1,
-      detail: attemptDetail({
-        resolvedInstruction: 'Create one issue per item…',
-        llmSummary: 'Retry against OPSX also failed — permissions.',
-        toolCalls: [
-          {
-            tool: 'jira_create_issue',
-            argsPreview: '{"project":"OPSX","summary":"Expired intranet certificate"}',
-            resultPreview: 'The note content was not accepted.',
-            durationMs: 512,
-            isError: true,
-          },
-        ],
-      }),
-      at: hoursAgo(1.92),
-    },
-    {
-      id: '88888888-8888-4888-8888-888888888821',
       runId: RUN_TIMEOUT_ID,
-      stepId: STEP_COLLECT,
-      stepIndex: 0,
-      attempt: 1,
-      status: 'succeeded',
-      outcome: 'tool_ok',
-      outcomeCode: null,
+      turn: 1,
+      status: 'failed',
+      outcome: null,
       toolCallCount: 1,
-      detail: attemptDetail({
-        resolvedInstruction: 'Search for issues updated yesterday…',
-        llmSummary: 'Found 41 activity items.',
+      detail: turnDetail({
+        opening: 'Your schedule started this run. Work toward your goal now.',
+        llmSummary: 'Paging through every updated issue.',
+        toolCalls: [{ tool: 'jira_search_issues', argsPreview: '{"jql":"updated >= -1d"}', resultPreview: '50 of 1,204 results', durationMs: 900 }],
+        modelCalls: model(2400),
       }),
       at: hoursAgo(50),
     },
     {
-      id: '88888888-8888-4888-8888-888888888831',
       runId: RUN_RUNNING_ID,
-      stepId: STEP_COLLECT,
-      stepIndex: 0,
-      attempt: 1,
+      turn: 1,
       status: 'running',
       outcome: null,
-      outcomeCode: null,
       toolCallCount: 0,
       detail: null,
       at: hoursAgo(0.05),
     },
+    {
+      runId: RUN_ITERATIONS_ID,
+      turn: 1,
+      status: 'succeeded',
+      outcome: null,
+      toolCallCount: 1,
+      detail: turnDetail({
+        opening: 'Your owner started this run by hand. Work toward your goal now.',
+        llmSummary: 'Finding the open requests.',
+        toolCalls: [
+          { tool: 'jira_search_issues', argsPreview: '{"jql":"status = Open"}', resultPreview: 'OPS-301 (VPN outage), OPS-302 (laptop request)', durationMs: 733 },
+        ],
+        modelCalls: model(2000),
+      }),
+      at: hoursAgo(5),
+    },
+    {
+      runId: RUN_ITERATIONS_ID,
+      turn: 2,
+      status: 'succeeded',
+      outcome: null,
+      toolCallCount: 2,
+      detail: turnDetail({
+        llmSummary: 'OPS-301 is critical, OPS-302 routine — proposing both comments in one batch.',
+        toolCalls: [{ tool: 'stage_actions', argsPreview: '{"summary":"Escalate one, acknowledge one"}', resultPreview: 'Accepted.', durationMs: 0, staged: 2 }],
+        modelCalls: model(2600),
+      }),
+      at: hoursAgo(4.97),
+    },
+    {
+      runId: RUN_ITERATIONS_ID,
+      turn: 3,
+      status: 'succeeded',
+      outcome: 'done',
+      toolCallCount: 0,
+      detail: turnDetail({
+        llmSummary: 'Both comments were made. The queue is worked.',
+        toolCalls: [{ tool: 'finish_run', argsPreview: '{"outcome":"done"}', resultPreview: '', durationMs: 0, free: true }],
+        finish: 'done',
+        result: 'Escalated OPS-301; acknowledged OPS-302.',
+        modelCalls: model(1100),
+      }),
+      at: hoursAgo(4.92),
+    },
   ];
-
-  for (const row of stepRows) {
+  for (const row of turnRows) {
     await client.query(
-      `INSERT INTO agent_run_steps\n         (id, run_id, step_id, step_index, attempt, iteration, status,\n          outcome, outcome_code, tool_call_count, detail, started_at, finished_at)\n       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-      [row.id, row.runId, row.stepId, row.stepIndex, row.attempt, row.iteration ?? 0, row.status, row.outcome, row.outcomeCode, row.toolCallCount, row.detail, row.at, row.status === 'running' ? null : new Date(row.at.getTime() + 30_000)]
+      `INSERT INTO agent_run_steps\n         (id, run_id, step_id, step_index, attempt, iteration, status,\n          outcome, tool_call_count, detail, started_at, finished_at)\n       VALUES (gen_random_uuid(), $1, 'turn', $2, $2, 0, $3, $4, $5, $6, $7, $8)`,
+      [row.runId, row.turn, row.status, row.outcome, row.toolCallCount, row.detail, row.at, row.status === 'running' ? null : new Date(row.at.getTime() + 30_000)]
     );
   }
+  await client.query(
+    `INSERT INTO agent_action_batches\n       (id, run_id, agent_id, owner_subject, turn, status, summary, actions, results,\n        accepted_by, decided_by, decided_at, created_at, finished_at)\n     VALUES ($1, $2, $3, $4, 2, 'completed', $5, $6, $7, 'person', $4, $8, $8, $9)`,
+    [
+      BATCH_DEEP_ID,
+      RUN_ITERATIONS_ID,
+      AGENT_DEEP_ID,
+      E2E_SUBJECT,
+      'Escalate the VPN outage and acknowledge the laptop request.',
+      JSON.stringify([
+        { tool: 'jira_add_comment', args: { issueKey: 'OPS-301', body: 'Escalating to on-call — building B is down.' }, reason: 'A building-wide outage is critical.' },
+        { tool: 'jira_add_comment', args: { issueKey: 'OPS-302', body: 'Thanks — queued for this week.' }, reason: 'Routine request: acknowledge it.' },
+      ]),
+      JSON.stringify([
+        { tool: 'jira_add_comment', outcome: 'succeeded', text: 'Comment 10041 added to OPS-301', durationMs: 410 },
+        { tool: 'jira_add_comment', outcome: 'succeeded', text: 'Comment 10042 added to OPS-302', durationMs: 380 },
+      ]),
+      hoursAgo(4.96),
+      hoursAgo(4.94),
+    ]
+  );
 
   // The admin event monitor: one row per status it can render (the deletes
   // live in the FK-ordered block at the top — events reference the tenant).
@@ -1113,13 +597,13 @@ export async function seed(client: Client): Promise<void> {
   );
 
   // Token-ledger rows behind the oversight columns and the agent page's
-  // by-model / by-step tables: the rich agent's steps on two models with
+  // by-model table: the rich agent's turns on two models with
   // two prompt-cached (cached is a PORTION of input), an optimizer pass outside any step, a row from
   // before the model was recorded, and a little on the plain agent so the
   // oversight sort has something to order. Same day spread as the run log.
   await client.query(
-    `INSERT INTO llm_calls\n       (subject, agent_id, run_id, step_id, purpose, provider, model,\n        input_tokens, output_tokens, cache_read_input_tokens, cache_write_input_tokens, created_at)\n     SELECT $2, $1, gen_random_uuid(), step.id::uuid, 'run', step.provider, step.model,\n            step.input_tokens, step.output_tokens, step.cache_read, step.cache_write,\n            NOW() - make_interval(days => spread.days_ago, mins => n)\n     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)\n     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n\n     CROSS JOIN (VALUES\n       ($3, 'anthropic', 'claude-sonnet-5', 3580, 210, 2400, 0),\n       ($4, 'anthropic', 'claude-opus-5', 3650, 640, 0, 0),\n       ($5, 'openai', 'gpt-5-mini', 1200, 95, 480, 0),\n       ($6, NULL, NULL, 310, 40, 0, 0)\n     ) AS step(id, provider, model, input_tokens, output_tokens, cache_read, cache_write)`,
-    [AGENT_RICH_ID, E2E_SUBJECT, STEP_COLLECT, STEP_RANK, STEP_FILE, STEP_WRAP]
+    `INSERT INTO llm_calls\n       (subject, agent_id, run_id, purpose, provider, model,\n        input_tokens, output_tokens, cache_read_input_tokens, cache_write_input_tokens, created_at)\n     SELECT $2, $1, gen_random_uuid(), 'run', step.provider, step.model,\n            step.input_tokens, step.output_tokens, step.cache_read, step.cache_write,\n            NOW() - make_interval(days => spread.days_ago, mins => n)\n     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)\n     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n\n     CROSS JOIN (VALUES\n       ('anthropic', 'claude-sonnet-5', 3580, 210, 2400, 0),\n       ('anthropic', 'claude-opus-5', 3650, 640, 0, 0),\n       ('openai', 'gpt-5-mini', 1200, 95, 480, 0),\n       (NULL, NULL, 310, 40, 0, 0)\n     ) AS step(provider, model, input_tokens, output_tokens, cache_read, cache_write)`,
+    [AGENT_RICH_ID, E2E_SUBJECT]
   );
   await client.query(
     `INSERT INTO llm_calls\n       (subject, agent_id, purpose, provider, model, input_tokens, output_tokens, cache_write_input_tokens, created_at)\n     VALUES ($2, $1, 'optimize', 'anthropic', 'claude-opus-5', 18400, 1900, 6200, NOW() - interval '3 hours'),\n            ($2, $3, 'run', 'anthropic', 'claude-sonnet-5', 950, 120, 0, NOW() - interval '1 day'),\n            ($2, NULL, 'chat', 'anthropic', 'claude-sonnet-5', 4100, 800, 900, NOW() - interval '2 hours')`,

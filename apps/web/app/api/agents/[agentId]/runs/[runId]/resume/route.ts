@@ -1,7 +1,7 @@
 /**
- * Resume a FAILED run at the step it failed on — the same run, with that
- * step's attempts set aside and, when the caller adds one, a note on what
- * to do differently. The semantics live in resumeAgentRun
+ * Resume a FAILED run where it stopped — the same run and conversation,
+ * with a fresh budget and, when the caller adds one, a note on what to do
+ * differently. The semantics live in resumeAgentRun
  * (@renkei/agents/runs); this route only checks who is asking and, like
  * the rerun route, asks before piling a resumed run on top of one already
  * in flight for the same agent.
@@ -94,7 +94,6 @@ export async function POST(
       case 'NOT_FOUND':
         return NextResponse.json({ error: 'Not found' }, { status: 404 });
       case 'NOT_FAILED':
-      case 'NOT_RESUMABLE':
         return NextResponse.json(
           { error: resumed.err.message ?? 'This run cannot be resumed.' },
           { status: 409 }
@@ -109,16 +108,10 @@ export async function POST(
     }
   }
 
-  logger.info('run {runId} resumed at step "{stepName}" by {subject}', {
+  logger.info('run {runId} resumed by {subject}', {
     component: 'web/agents',
     runId,
-    stepName: resumed.val.stepName ?? '(start)',
-    retiredAttempts: resumed.val.retiredAttempts,
     subject: session.subject,
   });
-  return NextResponse.json({
-    runId,
-    stepName: resumed.val.stepName,
-    retiredAttempts: resumed.val.retiredAttempts,
-  });
+  return NextResponse.json({ runId });
 }

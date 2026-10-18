@@ -57,17 +57,24 @@ export function isRunSettled(status: string): boolean {
 /**
  * One phrase for why a run failed. `llm_rate_limit` and `guard` are in the
  * migration's taxonomy though today's engine never writes them — cheap
- * insurance. Unknown kinds pass through raw: never hide a truth we can't
- * translate.
+ * insurance; `step_failed` is what runs from before agents became
+ * instructions recorded. Unknown kinds pass through raw: never hide a
+ * truth we can't translate.
  */
-export function errorSummary(errorKind: string, failedStepName?: string | null): string {
+export function errorSummary(errorKind: string): string {
   switch (errorKind) {
+    case 'agent_failed':
+      return 'The agent could not reach its goal';
     case 'step_failed':
-      return failedStepName ? `Failed on step: ${failedStepName}` : 'A step failed';
+      return 'A step failed';
     case 'config':
       return 'Setup problem';
     case 'timeout':
-      return 'Ran out of time';
+      return 'Used its active time';
+    case 'budget':
+      return 'Used its tool-call budget';
+    case 'converted':
+      return 'Canceled when the agent moved to instructions';
     case 'llm_auth':
       return 'AI model sign-in problem';
     case 'llm_error':

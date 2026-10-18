@@ -1,5 +1,7 @@
 # Per-item failure handling in loops, and visible retry budgets — design
 
+> **Superseded.** This design belongs to the step-document agent model, which was replaced by instruction-based agents (migration 155; see [`agents.md`](./agents.md)). Kept for history; nothing here describes the current code.
+
 No code yet.
 
 Two things, related by the same confusion: **what "retry" means depends on

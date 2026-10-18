@@ -1,7 +1,7 @@
 /**
  * The agents tools' contract: access resolves through resolveAgentAccess
  * (owner or grantee — someone with neither reads an agentId as not-found),
- * the three definition-editing tools refuse agent-run callers and
+ * the definition-editing tools refuse agent-run callers and
  * enabled:true, writes are confirm-gated dry runs by default, and batch
  * knowledge operations report per-entry results.
  */
@@ -17,7 +17,13 @@ jest.mock('@/lib/identity', () => ({
   getIdentityEmail: jest.fn(async () => ({ ok: true, val: 'alice@example.com' })),
 }));
 jest.mock('@/lib/agents/save', () => ({ saveAgent: jest.fn() }));
-jest.mock('@/lib/agents/describe', () => ({ renderStepsOutline: jest.fn(() => 'OUTLINE') }));
+jest.mock('@renkei/settings', () => {
+  const actual = jest.requireActual<typeof import('@renkei/settings')>('@renkei/settings');
+  return {
+    ...actual,
+    getOrgSettings: jest.fn(async () => ({ ok: true, val: actual.DEFAULT_ORG_SETTINGS })),
+  };
+});
 jest.mock('@/lib/agents/trigger-summary', () => ({ triggerSummary: jest.fn(() => 'on demand') }));
 jest.mock('@/lib/agents/runs-view', () => ({
   listRunsForOwner: jest.fn(),
@@ -30,7 +36,6 @@ jest.mock('@/lib/agents/agent-usage', () => {
   return {
     ZERO_TOKEN_USAGE,
     getAgentTokenUsage: jest.fn(async () => ZERO_TOKEN_USAGE),
-    getAgentTokenUsageByStep: jest.fn(async () => []),
     getAgentToolUsage: jest.fn(async () => []),
     getRunTokenUsage: jest.fn(async () => []),
     getTokenUsageByAgent: jest.fn(async () => ({})),
@@ -96,7 +101,7 @@ jest.mock('@renkei/agents/memory', () => ({
 import type { McpServer } from '@modelcontextprotocol/server';
 import { registerAgentTools } from './index';
 import type { MCPToolContext } from '../common';
-import { APPROVAL_DEFAULT_TIMEOUT_HOURS, CURRENT_STEPS_VERSION } from '@renkei/agents';
+import { INSTRUCTION_SECTIONS } from '@renkei/agents';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const storeMock = jest.requireMock<{ listAgents: jest.Mock }>('@/lib/agents/store');
@@ -137,7 +142,6 @@ const cancelMock = jest.requireMock<{ requestRunCancellation: jest.Mock }>(
 );
 const usageMock = jest.requireMock<{
   getAgentTokenUsage: jest.Mock;
-  getAgentTokenUsageByStep: jest.Mock;
   getAgentToolUsage: jest.Mock;
   getRunTokenUsage: jest.Mock;
   getTokenUsageByAgent: jest.Mock;
@@ -199,30 +203,31 @@ const AGENT = {
   description: 'Sorts tickets.',
   descriptionStatus: 'ok',
   reviewNotes: null,
-  steps: { version: 1, steps: [] },
-  stepsVersion: 1,
+  instructions: '## Goal\n\nSort new tickets.',
+  tools: ['jira_search_issues', 'jira_add_comment'],
+  revision: 1,
   llmModelId: null,
   enabled: true,
   guardrails: 'Never invent numbers.',
-  blockedTools: ['outlook_send_mail'],
+  canAskQuestions: false,
+  autoAcceptActions: false,
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
   triggers: [],
 };
 
-/** A minimal wire-valid steps document for create/update payloads. */
-const STEPS_DOC = {
-  version: 1,
-  steps: [
-    {
-      id: '11111111-1111-4111-8111-111111111111',
-      name: 'Do the thing',
-      instruction: [{ t: 'text', v: 'Do it.' }],
-      tool: null,
-      maxAttempts: 1,
-      failureHandling: [],
-    },
-  ],
+/** Minimal wire-valid instructions for create/update payloads. */
+const INSTRUCTIONS = '## Goal\n\nDo the thing.';
+/** What saveAgent hands back as `normalized` for a payload built from INSTRUCTIONS. */
+const NORMALIZED = {
+  name: 'X',
+  instructions: INSTRUCTIONS,
+  tools: [],
+  triggers: [],
+  enabled: false,
+  guardrails: null,
+  canAskQuestions: false,
+  autoAcceptActions: false,
 };
 
 /** The AgentAccess shape resolveAgentAccess returns for the caller's own agent. */
@@ -240,7 +245,6 @@ beforeEach(() => {
   usageMock.getRunTokenUsage.mockResolvedValue([]);
   usageMock.getTokenUsageByAgent.mockResolvedValue({});
   usageMock.getTokenUsageByModel.mockResolvedValue([]);
-  usageMock.getAgentTokenUsageByStep.mockResolvedValue([]);
   usageMock.getAgentToolUsage.mockResolvedValue([]);
   accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
   accessGrantsMock.listAgentsSharedWith.mockResolvedValue([]);
@@ -253,7 +257,7 @@ test('the definition-editing tools refuse agent-run callers', async () => {
     const result = await handlers.get(name)!({
       agentId: 'agent-1',
       name: 'X',
-      steps: STEPS_DOC,
+      instructions: INSTRUCTIONS,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain('Agent runs cannot edit agent definitions');
@@ -271,9 +275,10 @@ test('agent_get returns the exact definition as raw JSON — no prose, no fence'
     enabled: true,
     name: 'Triage',
     guardrails: 'Never invent numbers.',
-    blockedTools: ['outlook_send_mail'],
+    instructions: '## Goal\n\nSort new tickets.',
+    tools: ['jira_search_issues', 'jira_add_comment'],
   });
-  expect(parsed.steps).toEqual({ version: 1, steps: [] });
+  expect(parsed).not.toHaveProperty('steps');
 });
 
 test('agent_get_description renders the readable view without the definition', async () => {
@@ -283,6 +288,10 @@ test('agent_get_description renders the readable view without the definition', a
   const text = result.content[0]?.text ?? '';
   expect(text).toContain('Triage — ON (agentId: agent-1)');
   expect(text).toContain('Standing guardrails:');
+  // The instructions verbatim and the tool selection, not a step outline.
+  expect(text).toContain('Instructions:\n## Goal\n\nSort new tickets.');
+  expect(text).toContain('- jira_add_comment');
+  expect(text).toContain('Staged changes: wait for you to accept them');
   expect(text).not.toContain('renkei-agent');
 });
 
@@ -300,7 +309,7 @@ test('enabled:true is refused outright on create and update', async () => {
     const result = await handlers.get(name)!({
       agentId: 'agent-1',
       name: 'X',
-      steps: STEPS_DOC,
+      instructions: INSTRUCTIONS,
       enabled: true,
       confirm: true,
     });
@@ -313,10 +322,10 @@ test('enabled:true is refused outright on create and update', async () => {
 test('agent_create without confirm is a dry run that persists nothing', async () => {
   saveMock.saveAgent.mockResolvedValue({
     outcome: 'valid-dry-run',
-    normalized: { name: 'X', steps: STEPS_DOC, triggers: [], enabled: false, guardrails: null },
+    normalized: NORMALIZED,
   });
   const handlers = registerAll({});
-  const result = await handlers.get('agent_create')!({ name: 'X', steps: STEPS_DOC });
+  const result = await handlers.get('agent_create')!({ name: 'X', instructions: INSTRUCTIONS });
   expect(result.isError).toBeUndefined();
   expect(result.content[0]?.text).toContain('Nothing was saved');
   expect(saveMock.saveAgent).toHaveBeenCalledWith(
@@ -333,12 +342,12 @@ test('agent_create with confirm persists disabled and reports the id', async () 
     agentId: 'agent-new',
     apiKeys: [],
     descriptionPending: true,
-    normalized: { name: 'X', steps: STEPS_DOC, triggers: [], enabled: false, guardrails: null },
+    normalized: NORMALIZED,
   });
   const handlers = registerAll({});
   const result = await handlers.get('agent_create')!({
     name: 'X',
-    steps: STEPS_DOC,
+    instructions: INSTRUCTIONS,
     confirm: true,
   });
   expect(result.isError).toBeUndefined();
@@ -358,13 +367,13 @@ test('agent_update keeps an already-enabled agent on, unless keepEnabled:false',
     agentId: 'agent-1',
     apiKeys: [],
     descriptionPending: true,
-    normalized: { name: 'X', steps: STEPS_DOC, triggers: [], enabled: true, guardrails: null },
+    normalized: { ...NORMALIZED, enabled: true },
   });
   const handlers = registerAll({});
   await handlers.get('agent_update')!({
     agentId: 'agent-1',
     name: 'X',
-    steps: STEPS_DOC,
+    instructions: INSTRUCTIONS,
     confirm: true,
   });
   expect(saveMock.saveAgent).toHaveBeenLastCalledWith(
@@ -377,7 +386,7 @@ test('agent_update keeps an already-enabled agent on, unless keepEnabled:false',
   await handlers.get('agent_update')!({
     agentId: 'agent-1',
     name: 'X',
-    steps: STEPS_DOC,
+    instructions: INSTRUCTIONS,
     keepEnabled: false,
     confirm: true,
   });
@@ -392,17 +401,17 @@ test('agent_update keeps an already-enabled agent on, unless keepEnabled:false',
 test('validation issues come back as per-path lines, nothing saved', async () => {
   saveMock.saveAgent.mockResolvedValue({
     outcome: 'invalid',
-    issues: [{ path: 'steps.0.instruction', message: 'needs an instruction' }],
+    issues: [{ path: 'instructions', message: 'Write the instructions' }],
   });
   const handlers = registerAll({});
   const result = await handlers.get('agent_update')!({
     agentId: 'agent-1',
     name: 'X',
-    steps: STEPS_DOC,
+    instructions: INSTRUCTIONS,
     confirm: true,
   });
   expect(result.isError).toBe(true);
-  expect(result.content[0]?.text).toContain('steps.0.instruction: needs an instruction');
+  expect(result.content[0]?.text).toContain('instructions: Write the instructions');
 });
 
 test("someone else's agentId reads as not-found on every agent-scoped tool", async () => {
@@ -505,7 +514,7 @@ test('every agents tool fails closed without a subject', async () => {
       agentId: 'agent-1',
       runId: 'run-1',
       name: 'X',
-      steps: STEPS_DOC,
+      instructions: INSTRUCTIONS,
       text: 'do something useful',
       notes: [{ title: 'T', content: 'C' }],
       noteIds: ['n-1'],
@@ -556,7 +565,7 @@ describe('agent_list_tools', () => {
     const handlers = registerAll({});
     const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
 
-    // Names, not descriptions: what a step has to get exactly right, without
+    // Names, not descriptions: what a tool selection has to get exactly right, without
     // the wall of prose for a catalog this size.
     expect(text).toContain('3 skills your agents can use, across 2 connectors:');
     expect(text).toContain('outlook (2):');
@@ -569,22 +578,23 @@ describe('agent_list_tools', () => {
     const handlers = registerAll({});
     const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
 
-    // The model never sees them, so an author must not be told to write a
-    // step for one.
+    // The model never sees them, so an author must not be told to give an
+    // agent one.
     expect(text).not.toContain('jira_create_issue_preview');
   });
 
-  it('gives the full description and the failure codes once filtered', async () => {
+  it('gives the full description, and says an act is staged, once filtered', async () => {
     const handlers = registerAll({});
     const text =
       (await handlers.get('agent_list_tools')!({ connector: 'outlook', kind: 'act' })).content[0]
         ?.text ?? '';
 
-    // The failure codes are the vocabulary failureHandling is keyed by — a
-    // step cannot handle a condition it was never told about.
+    // Whether a tool reads or changes decides how the agent uses it: called
+    // directly, or staged for acceptance.
     expect(text).toContain('- outlook_send_mail');
-    expect(text).toContain('[act] — Send an email as yourself.');
-    expect(text).toContain('failure codes: not-found, other');
+    expect(text).toContain(
+      '[act — changes something; staged for acceptance] — Send an email as yourself.'
+    );
     expect(text).not.toContain('outlook_list_messages');
   });
 
@@ -617,58 +627,43 @@ describe('agent_list_tools', () => {
 });
 
 /**
- * The approval card is a capability with no skill behind it, so a catalog
- * built from registered tools cannot mention it. Every place a caller
- * learns what an agent can do has to say so itself, or a model asked to
- * "check with me first" writes a step that says so and acts anyway.
+ * How an agent works — autonomy inside limits, every change staged — is
+ * not a skill, so a catalog built from registered tools cannot mention
+ * it. Every place a caller learns what an agent can do has to say so
+ * itself, or a model writes instructions that assume the agent just acts.
  */
-describe('the approval-card capability is discoverable', () => {
+describe('how agents work is discoverable', () => {
   /** The zod field description, wherever in the shape it sits. */
   type Zodish = { description?: string; _def?: { description?: string } } | undefined;
-  const described = (tool: string, walk: (shape: Record<string, Zodish>) => Zodish): string => {
+  const described = (tool: string, field: string): string => {
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     const schema = configs.get(tool)?.inputSchema as { shape?: Record<string, Zodish> } | undefined;
-    const field = walk(schema?.shape ?? {});
-    return String(field?.description ?? field?._def?.description ?? '');
+    const entry = schema?.shape?.[field];
+    return String(entry?.description ?? entry?._def?.description ?? '');
   };
 
-  it('is spelled out on the steps argument of agent_create and agent_update', async () => {
+  it('spells the instruction sections out on agent_create, agent_update and agent_patch', async () => {
     registerAll({});
 
-    for (const tool of ['agent_create', 'agent_update']) {
-      const steps = described(tool, (shape) => shape?.steps);
-      expect(steps).toContain('needsApproval');
-      expect(steps).toContain('CARD');
-      // The recovery path is the part a caller cannot guess.
-      expect(steps).toContain('onNotApproved');
-      // Caps come from the constants, so they cannot name a limit the
-      // validator does not enforce.
-      expect(steps).toContain(`${APPROVAL_DEFAULT_TIMEOUT_HOURS}`);
+    for (const tool of ['agent_create', 'agent_update', 'agent_patch']) {
+      const instructions = described(tool, 'instructions');
+      for (const section of INSTRUCTION_SECTIONS) {
+        expect(instructions).toContain(`## ${section.heading}`);
+      }
+      expect(instructions).toContain('staged for acceptance');
     }
+    expect(described('agent_create', 'autoAcceptActions')).toContain('high-risk');
   });
 
-  it('is spelled out on the node agent_patch_steps takes', async () => {
-    registerAll({});
-
-    const node = described('agent_patch_steps', (shape) => {
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-      const operations = shape.operations as
-        { element?: { shape?: Record<string, Zodish> } } | undefined;
-      return operations?.element?.shape?.node;
-    });
-    expect(node).toContain('needsApproval');
-    expect(node).toContain('onNotApproved');
-  });
-
-  it('is named by agent_list_tools, which no skill list could cover', async () => {
+  it("is told by agent_list_tools, with the org's live limits", async () => {
     catalogMock.listAvailableTools.mockResolvedValue(CATALOG);
     const handlers = registerAll({});
 
     const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
 
-    expect(text).toContain('PAUSE BEFORE A TOOL CALL');
-    expect(text).toContain('home-page feed');
-    expect(text).toContain('ASK A PERSON, ANYTIME');
+    expect(text).toContain('HARD LIMITS on every run: 150 tool calls and 30 minutes');
+    expect(text).toContain('stage_actions');
+    expect(text).toContain('ASK A PERSON');
   });
 
   it('names them even when the caller has no connectors at all', async () => {
@@ -678,7 +673,12 @@ describe('the approval-card capability is discoverable', () => {
     const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
 
     expect(text).toContain('no connectors enabled');
-    expect(text).toContain('PAUSE BEFORE A TOOL CALL');
+    expect(text).toContain('stage_actions');
+  });
+
+  it('has no step-patching tool any more', () => {
+    const handlers = registerAll({});
+    expect(handlers.has('agent_patch_steps')).toBe(false);
   });
 });
 
@@ -687,16 +687,22 @@ const PENDING = {
   runId: 'run-1',
   agentId: 'agent-1',
   agentName: 'Refund triage',
-  title: 'Refund triage — needs your approval',
-  summary: 'Wants to call Refund payment.',
-  proposedTool: 'jira_refund_payment',
-  proposedArgs: { amount: 240, customer: 'Dana Lin' },
+  title: 'Refund triage — wants to make 2 changes',
+  summary: 'Refund Dana and note it on the ticket.',
+  actions: [
+    {
+      tool: 'jira_refund_payment',
+      args: { amount: 240, customer: 'Dana Lin' },
+      reason: 'The order was never delivered',
+    },
+    { tool: 'jira_add_comment', args: { issueKey: 'OPS-1' }, reason: 'Record the refund' },
+  ],
   raisedAt: '2026-08-28T09:00:00.000Z',
   waitingUntil: '2026-08-31T09:00:00.000Z',
 };
 
 describe('agent_approvals_list', () => {
-  it('carries what a decision needs: the cardId, the proposed call, and the time left', async () => {
+  it('carries what a decision needs: the cardId, every staged action, and the time left', async () => {
     approvalsMock.listPendingApprovals.mockResolvedValue([PENDING]);
     jest.useFakeTimers().setSystemTime(new Date('2026-08-30T09:00:00.000Z'));
     const handlers = registerAll({});
@@ -704,9 +710,12 @@ describe('agent_approvals_list', () => {
     const text = (await handlers.get('agent_approvals_list')!({})).content[0]?.text ?? '';
     jest.useRealTimers();
 
-    expect(text).toContain('1 approval(s) waiting on you');
+    expect(text).toContain('1 batch(es) of staged changes waiting on you');
     expect(text).toContain('cardId: card-1');
-    expect(text).toContain('Wants to call');
+    expect(text).toContain('2 staged action(s)');
+    expect(text).toContain('Refund Dana and note it on the ticket.');
+    expect(text).toContain('— The order was never delivered');
+    expect(text).toContain('2. ');
     expect(text).toContain('"amount":240');
     expect(text).toContain('24h left before it times out');
     expect(text).toContain('agent_approval_decide');
@@ -792,8 +801,8 @@ describe('agent_approval_decide', () => {
     approvalsMock.decideApproval.mockReset();
   });
 
-  it('REFUSES an agent run — the pause exists so a person decides', async () => {
-    // An agent that could answer its own approval makes every approval step
+  it('REFUSES an agent run — staging exists so a person decides', async () => {
+    // An agent that could accept its own staged changes makes staging
     // decorative. This is the single most important rule in this file.
     const handlers = registerAll({ agent: { agentId: 'agent-1' } });
 
@@ -803,7 +812,7 @@ describe('agent_approval_decide', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('Agent runs cannot decide approvals');
+    expect(result.content[0]?.text).toContain('Agent runs cannot decide staged changes');
     expect(approvalsMock.decideApproval).not.toHaveBeenCalled();
   });
 
@@ -820,7 +829,8 @@ describe('agent_approval_decide', () => {
       (await handlers.get('agent_approval_decide')!({ cardId: 'card-1', decision: 'approve' }))
         .content[0]?.text ?? '';
 
-    expect(text).toContain('Approved — the call fires for real. Run run-1.');
+    expect(text).toContain('Accepted — the batch will be carried out');
+    expect(text).toContain('Run run-1.');
     expect(text).toContain('queued to resume');
   });
 
@@ -888,7 +898,6 @@ describe('a waiting run says what it is waiting on', () => {
         durationMs: null,
         error: null,
         errorKind: null,
-        failedStepName: null,
       },
     ]);
     approvalsMock.listPendingApprovals.mockResolvedValue([PENDING]);
@@ -914,7 +923,6 @@ describe('a waiting run says what it is waiting on', () => {
         durationMs: 1200,
         error: null,
         errorKind: null,
-        failedStepName: null,
       },
     ]);
     approvalsMock.listPendingApprovals.mockClear();
@@ -962,14 +970,10 @@ describe('agent_memory_forget', () => {
       entryIds: ['mem-1', 'mem-9'],
     });
     expect(result.isError).toBeUndefined();
-    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(
-      expect.anything(),
-      'agent-1',
-      {
-        kind: 'entries',
-        entryIds: ['mem-1', 'mem-9'],
-      }
-    );
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(expect.anything(), 'agent-1', {
+      kind: 'entries',
+      entryIds: ['mem-1', 'mem-9'],
+    });
     const text = result.content[0]?.text ?? '';
     expect(text).toContain('1/2');
     expect(text).toContain('mem-9: no entry of this agent has that id.');
@@ -1013,11 +1017,9 @@ describe('agent_memory_forget', () => {
       confirm: true,
     });
     expect(result.isError).toBeUndefined();
-    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(
-      expect.anything(),
-      'agent-1',
-      { kind: 'all' }
-    );
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(expect.anything(), 'agent-1', {
+      kind: 'all',
+    });
     expect(result.content[0]?.text).toContain('12 entries and the rolling summary forgotten');
   });
 
@@ -1070,20 +1072,17 @@ describe('agent_memory_forget', () => {
       summary: true,
     });
     expect(result.isError).toBeUndefined();
-    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(
-      expect.anything(),
-      'agent-1',
-      { kind: 'summary' }
-    );
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(expect.anything(), 'agent-1', {
+      kind: 'summary',
+    });
     expect(result.content[0]?.text).toContain('Rolling summary cleared.');
   });
 });
 
 describe('agent_run_now', () => {
-  /** An agent the engine would actually accept: steps at the current version. */
+  /** An agent with an armed schedule. */
   const RUNNABLE = {
     ...AGENT,
-    steps: { version: CURRENT_STEPS_VERSION, steps: [] },
     triggers: [
       {
         id: 'trigger-1',
@@ -1122,6 +1121,7 @@ describe('agent_run_now', () => {
         triggerId: null,
         triggerKind: 'manual',
         triggeredBySubject: 'auth0|alice',
+        definition: { instructions: AGENT.instructions, tools: AGENT.tools },
         initialState: expect.objectContaining({ timezone: 'America/Chicago' }),
       })
     );
@@ -1303,7 +1303,7 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
       outcome: 'saved',
       agentId: 'agent-1',
       apiKeys: [],
-      normalized: { name: 'Triage', steps: AGENT.steps, triggers: [], enabled: true },
+      normalized: { ...NORMALIZED, name: 'Triage', enabled: true },
     });
     const handlers = registerAll({});
 
@@ -1346,12 +1346,7 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
     runs.findInProgressRun.mockResolvedValue(null);
     runs.resumeAgentRun.mockResolvedValue({
       ok: true,
-      val: {
-        runId: 'run-1',
-        stepId: 'step-9',
-        stepName: 'Create the approved issue',
-        retiredAttempts: 1,
-      },
+      val: { runId: 'run-1' },
     });
     const handlers = registerAll({});
 
@@ -1372,9 +1367,8 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
       })
     );
     const text = result.content[0]?.text ?? '';
-    expect(text).toContain('at "Create the approved issue"');
-    expect(text).toContain('setting aside 1 earlier attempt(s)');
-    expect(text).toContain('Your guidance rides');
+    expect(text).toContain('where it stopped, with a fresh budget');
+    expect(text).toContain('Your guidance is the first thing the agent reads');
   });
 
   it('agent_run_resume refuses a run that is not failed, in the library’s words', async () => {
@@ -1448,7 +1442,6 @@ describe("token usage — the dashboards' numbers, over MCP", () => {
         durationMs: 4000,
         error: null,
         errorKind: null,
-        failedStepName: null,
       },
       {
         id: 'run-2',
@@ -1458,7 +1451,6 @@ describe("token usage — the dashboards' numbers, over MCP", () => {
         durationMs: null,
         error: null,
         errorKind: null,
-        failedStepName: null,
       },
     ]);
     usageMock.getTokenUsageByRun.mockResolvedValue({
@@ -1479,29 +1471,17 @@ describe("token usage — the dashboards' numbers, over MCP", () => {
     expect(text.split('tokens:')).toHaveLength(2);
   });
 
-  it("agent_run_get appends the run's tokens by step, named from the run's own snapshot", async () => {
+  it("agent_run_get appends the run's tokens in total and by model", async () => {
     stubDb({ row: { agent_id: 'agent-1' } });
     runsMock.getRunForOwner.mockResolvedValue({
       id: 'run-1',
       status: 'succeeded',
       attempts: [],
-      stepsSnapshot: {
-        version: CURRENT_STEPS_VERSION,
-        steps: [
-          {
-            id: '11111111-1111-4111-8111-111111111111',
-            name: 'Read the inbox',
-            instruction: [{ t: 'text', v: 'Look.' }],
-            tool: null,
-            maxAttempts: 1,
-            failureHandling: [],
-          },
-        ],
-      },
+      batches: [],
+      definition: { instructions: AGENT.instructions, tools: AGENT.tools },
     });
     usageMock.getRunTokenUsage.mockResolvedValue([
       {
-        stepId: '11111111-1111-4111-8111-111111111111',
         provider: 'anthropic',
         model: 'claude-big',
         input: 1_000,
@@ -1523,9 +1503,7 @@ describe("token usage — the dashboards' numbers, over MCP", () => {
     expect(text).toContain(
       '- Total: 1,000 in (400 cached) · 50 out · 20 cache writes · 2 model calls'
     );
-    expect(text).toContain(
-      '- 1. Read the inbox: 1,000 in (400 cached) · 50 out · 20 cache writes · 2 model calls'
-    );
+    expect(text).not.toContain('By step');
     expect(text).toContain('- claude-big: 1,000 in (400 cached) · 50 out · 20 cache writes');
   });
 
@@ -1554,11 +1532,7 @@ describe("token usage — the dashboards' numbers, over MCP", () => {
       'auth0|alice',
       'agent-1'
     );
-    expect(usageMock.getAgentToolUsage).toHaveBeenCalledWith(
-      expect.anything(),
-      'agent-1',
-      30
-    );
+    expect(usageMock.getAgentToolUsage).toHaveBeenCalledWith(expect.anything(), 'agent-1', 30);
     const text = result.content[0]?.text ?? '';
     expect(text).toContain('Usage of "Triage" (agentId: agent-1)');
     expect(text).toContain('- This week: 5,000 in (1,000 cached) · 400 out');
@@ -1566,7 +1540,7 @@ describe("token usage — the dashboards' numbers, over MCP", () => {
     expect(text).toContain(
       'By model · this week:\n- claude-big: 5,000 in (1,000 cached) · 400 out'
     );
-    expect(text).toContain('By step · this week:\n- no tokens this week');
+    expect(text).not.toContain('By step');
     expect(text).toContain('Tool calls, last 30 days: 12 (1 failed)');
     expect(text).toContain('- jira_search_issues: 12 calls · 1 failed · median 300ms, p95 1.2s');
   });

@@ -4,19 +4,12 @@
  * Claude Code or another dev tool with zero cleanup.
  *
  * Works from the same RunDetail projection the page renders, so the
- * audience's redaction carries over untouched: an attempt the projection
+ * audience's redaction carries over untouched: a turn the projection
  * withheld content for is copied as hidden, not resurrected here.
  */
 
-import {
-  describeFailureHandling,
-  findNodeById,
-  instructionPreview,
-  isAgentStepsDoc,
-  walkSteps,
-} from '@renkei/agents';
-import { TOOL_RESULT_CHARS } from '@renkei/agents/step-prompts';
-import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
+import { TOOL_RESULT_CHARS } from '@renkei/agents/run-prompts';
+import { statusLabel } from '@/lib/agents/run-labels';
 import { activityHeadline, runActivity } from '@/lib/agents/run-actions';
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
 
@@ -27,13 +20,9 @@ function str(value: unknown): string {
 /**
  * Values printed once and elided everywhere after.
  *
- * A saved result is listed in full under the attempt that saved it, and
- * then AGAIN — verbatim, under "Known information" — inside the prompt of
- * every later step that references it. Five steps chipping one 10 KB
- * plan is 50 KB of the same text in a paste, which is where most of a
- * long export's bulk came from. Each long value is therefore printed
- * where it first appears (the trigger input section, or the "Saved
- * result" line) and later occurrences inside prompts become a pointer
+ * The trigger's input is listed in full under "Trigger input", and then
+ * AGAIN inside the run's opening message. Each long value is therefore
+ * printed where it first appears and later occurrences become a pointer
  * back to it. Exact-substring replacement, no prompt parsing: a value
  * short enough to read inline is left alone, and a value the projection
  * clipped differently from the prompt simply does not match and stays.
@@ -65,39 +54,13 @@ class SeenValues {
   }
 }
 
-function stepNameOf(run: RunDetail, stepId: string, stepIndex: number): string {
-  if (isAgentStepsDoc(run.stepsSnapshot)) {
-    const found = findNodeById(run.stepsSnapshot.steps, stepId);
-    if (found?.node.name) {
-      switch (found.node.kind) {
-        case 'branch':
-          return `Branch: ${found.node.name}`;
-        case 'loop':
-          return `Loop: ${found.node.name}`;
-        case 'group':
-          return `Group: ${found.node.name}`;
-        case 'terminal':
-          return `End: ${found.node.name}`;
-        case 'action':
-        case undefined:
-          return found.node.name;
-        default: {
-          const unhandled: never = found.node;
-          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
-        }
-      }
-    }
-  }
-  return `Step ${stepIndex + 1}`;
-}
-
 /**
  * What the trigger handed the run.
  *
  * First section after the header on purpose: when an agent misbehaves, the
  * answer is very often that it was given something other than what the
  * author pictured — a space NAME where a step wanted a room id, an empty
- * subject, a body that arrived truncated. Reading the steps without this is
+ * subject, a body that arrived truncated. Reading the turns without this is
  * reading half the problem.
  */
 function initialStateLines(run: RunDetail, seen: SeenValues): string[] {
@@ -122,173 +85,98 @@ function initialStateLines(run: RunDetail, seen: SeenValues): string[] {
 
 /** Every tool call in order — the "what did it touch" half of the paste. */
 function activityLines(run: RunDetail): string[] {
-  const activity = runActivity(run, (stepId, stepIndex) => stepNameOf(run, stepId, stepIndex));
+  const activity = runActivity(run);
   const lines = ['## What it did', '', activityHeadline(activity), ''];
   if (activity.toolsUsed.length > 0) {
     lines.push(`Tools used: ${activity.toolsUsed.join(', ')}`, '');
   }
   for (const action of activity.actions) {
-    const where =
-      `${action.stepName}` + (action.iteration > 0 ? ` (iteration ${action.iteration})` : '');
+    const state = action.failed ? ' — FAILED' : action.notMade ? ' — not made' : '';
     lines.push(
-      `${action.ordinal}. ${action.tool}${action.failed ? ' — FAILED' : ''} — in ${where}` +
+      `${action.ordinal}. ${action.kind === 'change' ? 'CHANGE' : 'read'} ${action.tool}${state} — turn ${action.turn}` +
         (action.durationMs !== null ? ` (${action.durationMs}ms)` : '')
     );
     if (action.argsPreview) lines.push(`   args: ${action.argsPreview}`);
   }
   if (activity.hiddenAttempts > 0) {
-    lines.push(`(${activity.hiddenAttempts} attempt(s) had their calls hidden for this audience)`);
+    lines.push(`(${activity.hiddenAttempts} turn(s) had their calls hidden for this audience)`);
   }
   lines.push('');
   return lines;
 }
 
-/** The drafted steps as an outline — the "agent context" half of the paste. */
-function snapshotLines(run: RunDetail): string[] {
-  if (!isAgentStepsDoc(run.stepsSnapshot)) return [];
-  const lines: string[] = ['## Agent steps (as snapshotted for this run)', ''];
-  for (const { node, ordinal, depth } of walkSteps(run.stepsSnapshot.steps)) {
-    const indent = '  '.repeat(depth - 1);
-    switch (node.kind) {
-      case 'branch':
-        lines.push(
-          `${indent}${ordinal + 1}. Branch: ${node.name} — condition: ` +
-            instructionPreview(node.condition)
-        );
-        break;
-      case 'loop':
-        lines.push(
-          node.mode === 'foreach'
-            ? `${indent}${ordinal + 1}. Loop: ${node.name} — for each ${node.itemVar} in ${node.itemsVar} (max ${node.maxIterations})`
-            : `${indent}${ordinal + 1}. Loop: ${node.name} — until: ${instructionPreview(node.condition)} (max ${node.maxIterations})`
-        );
-        if (node.collectVar) {
-          lines.push(`${indent}   collects "${node.collectFrom}" into: ${node.collectVar}`);
-        }
-        break;
-      case 'group':
-        lines.push(`${indent}${ordinal + 1}. Group: ${node.name}`);
-        break;
-      case 'terminal': {
-        const wording =
-          node.result === 'failure'
-            ? 'fails the run'
-            : node.result === 'stop'
-              ? 'stops the run (skipped)'
-              : 'finishes the run';
-        lines.push(`${indent}${ordinal + 1}. End: ${node.name} — ${wording}`);
-        const message = instructionPreview(node.message);
-        if (message) lines.push(`${indent}   message: ${message}`);
-        break;
-      }
-      case 'action':
-      case undefined: {
-        lines.push(`${indent}${ordinal + 1}. ${node.name}`);
-        const instruction = instructionPreview(node.instruction);
-        if (instruction) lines.push(`${indent}   instruction: ${instruction}`);
-        if (node.saveAs) lines.push(`${indent}   saves result as: ${node.saveAs}`);
-        // The handling is part of what the run DID — a debug reader asking
-        // "why did the run keep going after this failed?" finds the answer
-        // here instead of in the builder.
-        for (const handling of node.failureHandling) {
-          lines.push(
-            `${indent}   ${describeFailureHandling(handling, node.maxAttempts, node.saveAs)}`
-          );
-        }
-        if (node.needsApproval) {
-          lines.push(
-            `${indent}   needs approval: pauses for the owner before this tool call, waits up to ${node.approvalTimeoutHours ?? 96}h` +
-              (node.onNotApproved
-                ? `; if not approved, path: ${node.onNotApproved.name}`
-                : '; if not approved, continues below')
-          );
-        }
-        break;
-      }
-      default: {
-        const unhandled: never = node;
-        throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
-      }
+/** What the run executed — its instructions and tools as snapshotted. */
+function definitionLines(run: RunDetail): string[] {
+  if (!run.definition) return [];
+  return [
+    '## Agent instructions (as snapshotted for this run)',
+    '',
+    '```markdown',
+    run.definition.instructions,
+    '```',
+    '',
+    `Tools: ${run.definition.tools.length > 0 ? run.definition.tools.join(', ') : 'none'}`,
+    '',
+  ];
+}
+
+/** The batches this run staged, with each action's outcome. */
+function batchLines(run: RunDetail): string[] {
+  if (run.batches.length === 0) return [];
+  const lines = ['## Staged actions', ''];
+  for (const batch of run.batches) {
+    lines.push(
+      `### Turn ${batch.turn}: ${batch.status}` +
+        (batch.acceptedBy
+          ? ` (accepted ${batch.acceptedBy === 'auto' ? 'automatically' : 'by the owner'})`
+          : '') +
+        (batch.reviewReason ? ` — needed a person: ${batch.reviewReason}` : '')
+    );
+    if (!batch.actions) {
+      lines.push(`(${batch.actionCount} action(s), hidden for this audience)`, '');
+      continue;
     }
+    if (batch.summary) lines.push(batch.summary);
+    if (batch.comment) lines.push(`Owner's comment: ${batch.comment}`);
+    batch.actions.forEach((action, index) => {
+      const result = batch.results?.[index];
+      lines.push(
+        `${index + 1}. ${action.tool}${result ? ` — ${result.outcome}` : ''} — ${action.reason}`,
+        `   args: ${JSON.stringify(action.args)}`,
+        ...(result ? [`   result: ${result.text.replace(/\n/g, '\n   ')}`] : [])
+      );
+    });
+    lines.push('');
   }
-  lines.push('');
   return lines;
 }
 
-function attemptLines(
-  attempt: AttemptView,
-  endedRunHere: boolean,
-  seen: SeenValues,
-  savedAs: string | null,
-  stepName: string
-): string[] {
+function turnLines(attempt: AttemptView, seen: SeenValues): string[] {
   const heading =
-    `- ${attempt.iteration > 0 ? `Iteration ${attempt.iteration}, attempt` : 'Attempt'} ${attempt.attempt}: ${statusLabel(attempt.status)}` +
-    (attempt.outcomeCode ? ` (${outcomeCodeLabel(attempt.outcomeCode)})` : '') +
-    (attempt.toolCallCount > 0 ? ` — ${attempt.toolCallCount} tool call(s)` : '');
-  if (attempt.redacted) return [heading, '  (details hidden for this audience)'];
+    `### Turn ${attempt.attempt}: ${statusLabel(attempt.status)}` +
+    (attempt.outcome ? ` (${attempt.outcome})` : '') +
+    (attempt.toolCallCount > 0 ? ` — ${attempt.toolCallCount} tool call(s) billed` : '');
+  if (attempt.redacted) return [heading, '(details hidden for this audience)', ''];
 
   const lines = [heading];
-  // A retired attempt is what a resume set aside: it failed, the owner
-  // picked the run back up here, and the retry is the attempt that
-  // follows it. Said explicitly, or the timeline reads as a failure the
-  // run then ignored.
-  if (attempt.status === 'retired') {
-    lines.push('  Set aside by the owner’s resume — the retry is the attempt after this one.');
-  }
   const detail: Record<string, unknown> =
     typeof attempt.detail === 'object' && attempt.detail !== null && !Array.isArray(attempt.detail)
       ? attempt.detail
       : {};
-  // The user message the model was actually sent, byte-for-byte — captured
-  // by the engine at send time (attempts recorded before that ship only the
-  // resolved-instruction preview below). The system prompt is not stored:
-  // it is the step frame plus the agent's guardrails, knowledge index and
-  // memory as they stood at run time, the same on every call of the run.
-  // Everything after this block — outcomes, summaries, tool calls, errors
-  // — is appended context; this block is the 1:1 part.
-  if (str(detail.promptText)) {
-    const prompt = seen.elide(str(detail.promptText));
+  if (str(detail.opening)) {
+    const opening = seen.elide(str(detail.opening));
     lines.push(
-      '  System prompt: the step frame plus this agent’s guardrails, knowledge index and memory as they stood at run time (not stored; see the export and the Memory panel for current values).',
-      prompt.elided
-        ? '  User message (as sent to the model, except that long values already shown above are replaced by a pointer to them):'
-        : '  User message (verbatim, as sent to the model):',
+      opening.elided
+        ? 'Message the turn opened with (long values already shown above are replaced by a pointer):'
+        : 'Message the turn opened with (verbatim):',
       '```text',
-      prompt.text,
+      opening.text,
       '```'
     );
   }
-  if (str(detail.chosenPathName)) lines.push(`  Took path: ${str(detail.chosenPathName)}`);
-  // A skip is step-local — it does NOT by itself end the run (see
-  // engine.ts's decideOutcome) — but without this line a "Succeeded"
-  // attempt that made no tool call and saved nothing reads as unexplained.
-  // Only claim the run ended here when it actually did ('nothing-to-do' is
-  // the pre-rename stored spelling).
-  const declared = str(detail.declaredOutcome);
-  if (declared === 'skipped' || declared === 'nothing-to-do') {
-    lines.push(
-      endedRunHere
-        ? '  Declared skipped — this action did not apply to this input; the run ended here.'
-        : '  Declared skipped — this action did not apply to this input; no tool was called and the automation moved on.'
-    );
-  }
-  if (str(detail.llmSummary)) lines.push(`  Summary: ${str(detail.llmSummary)}`);
-  if (str(detail.guidanceUsed)) lines.push(`  Guidance used: ${str(detail.guidanceUsed)}`);
-  if (str(detail.saveValue)) {
-    lines.push(`  Saved result: ${str(detail.saveValue)}`);
-    seen.add(
-      str(detail.saveValue),
-      `value of "${savedAs ?? 'the saved result'}", saved by "${stepName}"`
-    );
-  }
-  const saveItems = Array.isArray(detail.saveItems) ? detail.saveItems : [];
-  if (saveItems.length > 0 && saveItems.every((item) => typeof item === 'string')) {
-    const items = saveItems.map(String);
-    lines.push(`  Saved items (${items.length}):`, ...items.map((item) => `    - ${item}`));
-    seen.add(items.join('\n'), `list "${savedAs ?? 'the saved items'}", saved by "${stepName}"`);
-    for (const item of items) seen.add(item, `an item of "${savedAs ?? 'the saved items'}"`);
-  }
+  if (str(detail.llmSummary)) lines.push(`Model said: ${str(detail.llmSummary)}`);
+  if (str(detail.finish)) lines.push(`Finished: ${str(detail.finish)}`);
+  if (str(detail.result)) lines.push(`Result: ${str(detail.result)}`);
 
   const toolCalls = Array.isArray(detail.toolCalls) ? detail.toolCalls : [];
   for (const call of toolCalls) {
@@ -297,17 +185,17 @@ function attemptLines(
     const tool = str(entry.tool) || 'tool';
     const flags = [
       entry.isError === true ? 'ERROR' : '',
+      entry.free === true ? 'built-in' : '',
+      typeof entry.staged === 'number' ? `staged ${entry.staged}` : '',
       typeof entry.durationMs === 'number' ? `${entry.durationMs}ms` : '',
     ]
       .filter(Boolean)
       .join(', ');
-    lines.push(`  Tool call: ${tool}${flags ? ` (${flags})` : ''}`);
-    if (str(entry.argsPreview)) lines.push(`    args: ${str(entry.argsPreview)}`);
+    lines.push(`- Tool call: ${tool}${flags ? ` (${flags})` : ''}`);
+    if (str(entry.argsPreview)) lines.push(`  args: ${str(entry.argsPreview)}`);
     if (str(entry.resultPreview)) {
       // The stored preview is a 2 000-char display clip; the model read the
-      // result whole up to TOOL_RESULT_CHARS. Say which where the preview
-      // ends, or a reader takes the short log for what the model saw and
-      // hunts a truncation that never reached the model.
+      // result whole up to TOOL_RESULT_CHARS. Say which where the preview ends.
       const preview = str(entry.resultPreview);
       const total = typeof entry.resultChars === 'number' ? entry.resultChars : null;
       const shown =
@@ -318,18 +206,11 @@ function attemptLines(
                 : 'the model read all of it'
             })`
           : '';
-      lines.push(`    result${shown}: ${preview.replace(/\n/g, '\n    ')}`);
+      lines.push(`  result${shown}: ${preview.replace(/\n/g, '\n  ')}`);
     }
   }
+  lines.push('');
   return lines;
-}
-
-/** The saveAs of an action step, for naming its saved result in the paste. */
-function savedAsOf(run: RunDetail, stepId: string): string | null {
-  if (!isAgentStepsDoc(run.stepsSnapshot)) return null;
-  const found = findNodeById(run.stepsSnapshot.steps, stepId);
-  if (!found || (found.node.kind !== 'action' && found.node.kind !== undefined)) return null;
-  return found.node.saveAs ?? null;
 }
 
 export function renderRunDebugMarkdown(agentName: string, run: RunDetail): string {
@@ -342,49 +223,26 @@ export function renderRunDebugMarkdown(agentName: string, run: RunDetail): strin
     `- Trigger: ${run.triggerKind}`,
     `- Created: ${run.createdAt}`,
     ...(run.finishedAt ? [`- Finished: ${run.finishedAt}`] : []),
-    ...(run.durationMs !== null ? [`- Duration: ${run.durationMs}ms`] : []),
+    ...(run.durationMs !== null ? [`- Wall time: ${run.durationMs}ms`] : []),
+    `- Active time: ${run.activeMs}ms (time waiting on a person excluded)`,
     ...(run.errorKind ? [`- Error kind: ${run.errorKind}`] : []),
-    ...(run.failedStepName ? [`- Failed step: ${run.failedStepName}`] : []),
     ...(run.error ? [`- Error: ${run.error}`] : []),
     ...(run.resumeCount > 0
       ? [
           `- Resumed by the owner: ${run.resumeCount} time(s)` +
-            (run.resumedAt ? `, last ${run.resumedAt}` : '') +
-            (run.resumeStepName ? ` at "${run.resumeStepName}"` : '') +
-            ' (attempts marked "Set aside" are what each resume retired)',
+            (run.resumedAt ? `, last ${run.resumedAt}` : ''),
           ...(run.resumeGuidance ? [`- Resume guidance: ${run.resumeGuidance}`] : []),
         ]
       : []),
     '',
     ...initialStateLines(run, seen),
     ...activityLines(run),
-    ...snapshotLines(run),
-    '## Timeline',
+    ...definitionLines(run),
+    ...batchLines(run),
+    '## Turns',
     '',
   ];
-
-  const byStep = new Map<string, AttemptView[]>();
-  for (const attempt of run.attempts) {
-    const list = byStep.get(attempt.stepId) ?? [];
-    list.push(attempt);
-    byStep.set(attempt.stepId, list);
-  }
-  // Attempts arrive in execution order (runs-view.ts orders by step_index,
-  // iteration, attempt), so the last one is where the run actually ended —
-  // whatever its eventual status (a plain success's own onSuccess: 'stop'
-  // ends the run as 'succeeded' too, not only 'stopped'). That is the one
-  // case a declared skip's line may say the run ended here.
-  const lastAttempt = run.attempts[run.attempts.length - 1];
-  for (const [stepId, attempts] of byStep) {
-    const stepName = stepNameOf(run, stepId, attempts[0]?.stepIndex ?? 0);
-    const savedAs = savedAsOf(run, stepId);
-    lines.push(`### ${stepName}`);
-    for (const attempt of attempts) {
-      lines.push(...attemptLines(attempt, attempt === lastAttempt, seen, savedAs, stepName));
-    }
-    lines.push('');
-  }
-  if (run.attempts.length === 0) lines.push('(no steps ran)');
-
+  for (const attempt of run.attempts) lines.push(...turnLines(attempt, seen));
+  if (run.attempts.length === 0) lines.push('(the run has not reached the model)');
   return lines.join('\n').trimEnd() + '\n';
 }

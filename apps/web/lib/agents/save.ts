@@ -19,7 +19,6 @@ import {
   type AgentDraft,
   type ValidationIssue,
 } from '@renkei/agents';
-import { getOrgSettings } from '@renkei/settings';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { createAgent, getAgent, updateAgent, type SaveAgentInput } from '@/lib/agents/store';
 import { generateAgentDescription } from '@/lib/agents/describe';
@@ -73,15 +72,9 @@ export async function saveAgent(
   const defer = options.defer ?? ((task) => after(task));
   const owner = options.ownerSubject ?? subject;
 
-  const settings = await getOrgSettings();
-  const normalized = normalizeAgentDraft(parsed.draft, {
-    attemptsCap: settings.ok ? settings.val.agentMaxStepAttempts : undefined,
-    approvalWaitCapHours: settings.ok ? settings.val.agentApprovalMaxWaitDays * 24 : undefined,
-  });
+  const normalized = normalizeAgentDraft(parsed.draft);
   const tools = await listAvailableTools(owner);
-  const issues = validateAgentDraft(normalized, tools, {
-    maxSteps: settings.ok ? settings.val.agentMaxSteps : undefined,
-  });
+  const issues = validateAgentDraft(normalized, tools);
   if (issues.length > 0) return { outcome: 'invalid', issues };
 
   if (options.dryRun) {
@@ -95,10 +88,11 @@ export async function saveAgent(
   const savedInput: SaveAgentInput = {
     ...parsed.input,
     name: normalized.name,
-    steps: normalized.steps,
+    instructions: normalized.instructions,
+    tools: normalized.tools,
     guardrails: normalized.guardrails,
-    blockedTools: normalized.blockedTools,
     canAskQuestions: normalized.canAskQuestions,
+    autoAcceptActions: normalized.autoAcceptActions,
   };
   const nameTaken: SaveAgentResult = {
     outcome: 'invalid',
@@ -118,7 +112,8 @@ export async function saveAgent(
       generateAgentDescription(db, {
         id: result.agentId,
         name: normalized.name,
-        steps: normalized.steps,
+        instructions: normalized.instructions,
+        tools: normalized.tools,
         triggers: normalized.triggers,
         llmModelId: parsed.input.llmModelId,
         guardrails: normalized.guardrails,
@@ -136,36 +131,29 @@ export async function saveAgent(
   const agentId = options.agentId;
   const existing = await getAgent(db, owner, agentId);
   if (!existing) return { outcome: 'not-found' };
-  // Compared NORMALIZED-to-normalized: the stored doc may predate a
-  // normalizer rule (an older steps version, a since-added strip), and a
-  // round-tripped save that changed nothing the author can see must not
-  // read as a content change — the list's on/off toggle sends the whole
-  // definition back, and it was re-describing untouched agents purely
-  // because normalization moved.
-  const existingNormalized = normalizeAgentDraft(
-    {
-      name: existing.name,
-      steps: existing.steps,
-      triggers: existing.triggers.map((trigger) => trigger.draft),
-      enabled: existing.enabled,
-      llmModelId: existing.llmModelId,
-      guardrails: existing.guardrails,
-      blockedTools: existing.blockedTools,
-      canAskQuestions: existing.canAskQuestions,
-    },
-    {
-      attemptsCap: settings.ok ? settings.val.agentMaxStepAttempts : undefined,
-      approvalWaitCapHours: settings.ok ? settings.val.agentApprovalMaxWaitDays * 24 : undefined,
-    }
-  );
+  // Compared NORMALIZED-to-normalized: a round-tripped save that changed
+  // nothing the author can see must not read as a content change — the
+  // list's on/off toggle sends the whole definition back.
+  const existingNormalized = normalizeAgentDraft({
+    name: existing.name,
+    instructions: existing.instructions,
+    tools: existing.tools,
+    triggers: existing.triggers.map((trigger) => trigger.draft),
+    enabled: existing.enabled,
+    llmModelId: existing.llmModelId,
+    guardrails: existing.guardrails,
+    canAskQuestions: existing.canAskQuestions,
+    autoAcceptActions: existing.autoAcceptActions,
+  });
   const describedChanged =
     existingNormalized.name !== normalized.name ||
-    JSON.stringify(existingNormalized.steps.steps) !== JSON.stringify(normalized.steps.steps) ||
+    existingNormalized.instructions !== normalized.instructions ||
+    JSON.stringify(existingNormalized.tools) !== JSON.stringify(normalized.tools) ||
     // Guardrails shape the summary and the reviewer's concerns, so a
-    // guardrails edit re-describes like a steps edit does.
+    // guardrails edit re-describes like an instructions edit does.
     existingNormalized.guardrails !== normalized.guardrails ||
-    JSON.stringify(existingNormalized.blockedTools) !== JSON.stringify(normalized.blockedTools) ||
     existingNormalized.canAskQuestions !== normalized.canAskQuestions ||
+    existingNormalized.autoAcceptActions !== normalized.autoAcceptActions ||
     JSON.stringify(existingNormalized.triggers) !== JSON.stringify(normalized.triggers);
   // An explicit save (refreshDescription — the builder's Save button)
   // rewrites the summary unconditionally: the review panel is about to
@@ -188,7 +176,7 @@ export async function saveAgent(
   const grantDetails = owner !== subject ? { details: { ownerSubject: owner } } : {};
   // A toggle and an edit are different stories in the audit trail: "turned
   // it on" is a decision to let it act, "changed it" is a change to what it
-  // does. A save that flips enabled AND rewrites steps records both.
+  // does. A save that flips enabled AND rewrites instructions records both.
   if (existing.enabled !== normalized.enabled) {
     recordAuditEvent({
       actorSubject: subject,
@@ -221,7 +209,8 @@ export async function saveAgent(
       generateAgentDescription(db, {
         id: agentId,
         name: normalized.name,
-        steps: normalized.steps,
+        instructions: normalized.instructions,
+        tools: normalized.tools,
         triggers: normalized.triggers,
         llmModelId: parsed.input.llmModelId,
         guardrails: normalized.guardrails,

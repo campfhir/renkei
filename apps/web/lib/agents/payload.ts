@@ -5,12 +5,7 @@
  * validator, which runs on the parsed result.
  */
 
-import {
-  isAgentStepsDoc,
-  isTriggerDraft,
-  triggerDraftIssue,
-  type AgentDraft,
-} from '@renkei/agents';
+import { isTriggerDraft, triggerDraftIssue, type AgentDraft } from '@renkei/agents';
 import type { SaveAgentInput, TriggerPayload } from '@/lib/agents/store';
 
 export function parseAgentPayload(
@@ -19,18 +14,29 @@ export function parseAgentPayload(
   if (typeof body !== 'object' || body === null) return { error: 'A JSON body is required' };
   const payload: {
     name?: unknown;
-    steps?: unknown;
+    instructions?: unknown;
+    tools?: unknown;
     triggers?: unknown;
     enabled?: unknown;
     llmModelId?: unknown;
     guardrails?: unknown;
-    blockedTools?: unknown;
     canAskQuestions?: unknown;
+    autoAcceptActions?: unknown;
     refreshDescription?: unknown;
   } = body;
 
   if (typeof payload.name !== 'string') return { error: 'name is required' };
-  if (!isAgentStepsDoc(payload.steps)) return { error: 'steps is not a valid step document' };
+  if (typeof payload.instructions !== 'string') {
+    return { error: 'instructions is required — the agent’s instruction prompt, as text' };
+  }
+  if (
+    !Array.isArray(payload.tools) ||
+    !payload.tools.every((tool): tool is string => typeof tool === 'string')
+  ) {
+    return { error: 'tools must be a list of tool names' };
+  }
+  const instructions = payload.instructions;
+  const tools = payload.tools;
   if (!Array.isArray(payload.triggers)) return { error: 'triggers must be a list' };
 
   const triggers: TriggerPayload[] = [];
@@ -66,33 +72,31 @@ export function parseAgentPayload(
   const llmModelId = typeof payload.llmModelId === 'string' ? payload.llmModelId : null;
   const guardrails =
     typeof payload.guardrails === 'string' && payload.guardrails.trim() ? payload.guardrails : null;
-  const blockedTools = Array.isArray(payload.blockedTools)
-    ? payload.blockedTools.filter(
-        (entry): entry is string => typeof entry === 'string' && entry.length > 0
-      )
-    : [];
   const canAskQuestions = payload.canAskQuestions === true;
+  const autoAcceptActions = payload.autoAcceptActions === true;
 
   return {
     input: {
       name: payload.name,
-      steps: payload.steps,
+      instructions,
+      tools,
       triggers,
       enabled,
       llmModelId,
       guardrails,
-      blockedTools,
       canAskQuestions,
+      autoAcceptActions,
     },
     draft: {
       name: payload.name,
-      steps: payload.steps,
+      instructions,
+      tools,
       triggers: triggers.map((trigger) => trigger.draft),
       enabled,
       llmModelId,
       guardrails,
-      blockedTools,
       canAskQuestions,
+      autoAcceptActions,
     },
     // The builder's Save sets this: an explicit save rewrites the summary
     // unconditionally, because the person is about to be shown it for

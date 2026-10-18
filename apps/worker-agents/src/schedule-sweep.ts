@@ -19,7 +19,7 @@ import type { QueueProducer } from '@renkei/queue';
 import {
   blackoutPredicate,
   computeNextRunForSchedule,
-  isCurrentStepsDoc,
+  agentDefinitionOf,
   isBlackoutEntry,
   parseScheduleConfig,
   type BlackoutEntry,
@@ -35,10 +35,7 @@ const MAX_PER_PASS = 25;
  * rather than disabling the trigger: the schedule itself is intact, only
  * its holiday overlay is gone.
  */
-async function calendarDatesOf(
-  db: Kysely<DB>,
-  calendarId: string
-): Promise<BlackoutEntry[]> {
+async function calendarDatesOf(db: Kysely<DB>, calendarId: string): Promise<BlackoutEntry[]> {
   const row = await db
     .selectFrom('schedule_calendars')
     .select(['dates'])
@@ -65,7 +62,8 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
         't.config',
         't.next_run_at',
         'a.owner_subject',
-        'a.steps',
+        'a.instructions',
+        'a.tools',
         'a.llm_model_id',
       ])
       .where('t.kind', '=', 'schedule')
@@ -97,9 +95,7 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
       const observed = row.next_run_at;
       if (!observed) continue;
       const scheduledFor = observed.toISOString();
-      const calendarDates = config.calendarId
-        ? await calendarDatesOf(db, config.calendarId)
-        : [];
+      const calendarDates = config.calendarId ? await calendarDatesOf(db, config.calendarId) : [];
       let next: Date;
       try {
         next = computeNextRunForSchedule(config, new Date(), blackoutPredicate(calendarDates));
@@ -127,19 +123,10 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
         .executeTakeFirst();
       if (Number(advanced.numUpdatedRows ?? 0) === 0) continue;
 
-      if (!isCurrentStepsDoc(row.steps)) {
-        await recordTriggerError(
-          db,
-          row.trigger_id,
-          'This agent is saved in an older format — open it in the builder and save to update it.'
-        );
-        continue;
-      }
-
       const result = await createAgentRun(db, producer, {
         agentId: row.agent_id,
         ownerSubject: row.owner_subject,
-        steps: row.steps,
+        definition: agentDefinitionOf(row),
         llmModelId: row.llm_model_id,
         triggerId: row.trigger_id,
         triggerKind: 'schedule',

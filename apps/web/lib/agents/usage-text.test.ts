@@ -1,5 +1,3 @@
-import { CURRENT_STEPS_VERSION } from '@renkei/agents';
-import { labelStepUsage } from './step-usage-labels';
 import {
   renderAgentUsageText,
   renderAgentsUsageText,
@@ -19,30 +17,6 @@ const buckets = (overrides: Partial<UsageBuckets> = {}): UsageBuckets => ({
   allTime: 0,
   ...overrides,
 });
-
-const STEP_A = '11111111-1111-4111-8111-111111111111';
-const STEP_B = '22222222-2222-4222-8222-222222222222';
-const doc = {
-  version: CURRENT_STEPS_VERSION,
-  steps: [
-    {
-      id: STEP_A,
-      name: 'Read the inbox',
-      instruction: [{ t: 'text', v: 'Look.' }],
-      tool: null,
-      maxAttempts: 1,
-      failureHandling: [],
-    },
-    {
-      id: STEP_B,
-      name: 'Reply',
-      instruction: [{ t: 'text', v: 'Answer.' }],
-      tool: null,
-      maxAttempts: 1,
-      failureHandling: [],
-    },
-  ],
-};
 
 describe('tokenFigure', () => {
   it('names the cached portion and cache writes only when there are any', () => {
@@ -98,59 +72,6 @@ describe('renderAgentUsageText', () => {
         cacheWrite: buckets(),
       },
     ],
-    bySteps: labelStepUsage(doc, [
-      // The reply step twice, once per model — summed into one line.
-      {
-        stepId: STEP_B,
-        provider: 'anthropic',
-        model: 'claude-big',
-        calls: buckets({ month: 2 }),
-        input: buckets({ month: 2_000 }),
-        output: buckets({ month: 150 }),
-        cacheRead: buckets({ month: 500 }),
-        cacheWrite: buckets(),
-      },
-      {
-        stepId: STEP_B,
-        provider: 'openai',
-        model: 'gpt-small',
-        calls: buckets({ month: 1 }),
-        input: buckets({ month: 1_000 }),
-        output: buckets({ month: 100 }),
-        cacheRead: buckets(),
-        cacheWrite: buckets(),
-      },
-      {
-        stepId: null,
-        provider: 'anthropic',
-        model: 'claude-big',
-        calls: buckets({ month: 1 }),
-        input: buckets({ month: 500 }),
-        output: buckets({ month: 50 }),
-        cacheRead: buckets(),
-        cacheWrite: buckets(),
-      },
-      {
-        stepId: '33333333-3333-4333-8333-333333333333',
-        provider: 'anthropic',
-        model: 'claude-big',
-        calls: buckets({ month: 1 }),
-        input: buckets({ month: 300 }),
-        output: buckets({ month: 20 }),
-        cacheRead: buckets(),
-        cacheWrite: buckets(),
-      },
-      {
-        stepId: STEP_A,
-        provider: 'anthropic',
-        model: 'claude-big',
-        calls: buckets({ month: 3 }),
-        input: buckets({ month: 1_200 }),
-        output: buckets({ month: 80 }),
-        cacheRead: buckets({ month: 500 }),
-        cacheWrite: buckets(),
-      },
-    ]),
     tools: [
       {
         tool: 'outlook_send_mail',
@@ -201,19 +122,6 @@ describe('renderAgentUsageText', () => {
     expect(text).not.toContain('Model not recorded');
   });
 
-  it('splits it by step in definition order, summed across models, unnamed rows last', () => {
-    expect(text).toContain(
-      [
-        'By step · this month:',
-        '- 1. Read the inbox: 1,200 in (500 cached) · 80 out · 3 model calls',
-        '- 2. Reply: 3,000 in (500 cached) · 250 out · 3 model calls',
-        '- A step since removed: 300 in · 20 out · 1 model call',
-        '- Outside any step (optimizer): 500 in · 50 out · 1 model call',
-        '',
-      ].join('\n')
-    );
-  });
-
   it('groups tool calls by connector, busiest first, with failures and latency where known', () => {
     expect(text).toContain(
       [
@@ -236,12 +144,10 @@ describe('renderAgentUsageText', () => {
       period: 'today',
       tokens: { input: buckets(), output: buckets(), cacheRead: buckets(), cacheWrite: buckets() },
       byModel: [],
-      bySteps: [],
       tools: [],
       toolWindowDays: 30,
     });
     expect(empty).toContain('By model · today:\n- no tokens today');
-    expect(empty).toContain('By step · today:\n- no tokens today');
     expect(empty).toContain('Tool calls, last 30 days: 0\n- none');
   });
 });
@@ -280,7 +186,7 @@ describe('renderAgentsUsageText', () => {
         '- Quiet: 0 in · 0 out',
         '  agentId: a',
         '',
-        'Give an agentId for its usage by model and by step, and its tool calls.',
+        'Give an agentId for its usage by model and its tool calls.',
       ].join('\n')
     );
   });
@@ -293,10 +199,9 @@ describe('renderRunUsageMarkdown', () => {
     );
   });
 
-  it('totals the run and splits it by step in snapshot order and by model by spend', () => {
-    const rows = labelStepUsage(doc, [
+  it('totals the run and splits it by model by spend', () => {
+    const rows = [
       {
-        stepId: STEP_B,
         provider: 'anthropic',
         model: 'claude-big',
         input: 2_000,
@@ -306,7 +211,6 @@ describe('renderRunUsageMarkdown', () => {
         calls: 2,
       },
       {
-        stepId: STEP_A,
         provider: 'openai',
         model: 'gpt-small',
         input: 100,
@@ -316,7 +220,6 @@ describe('renderRunUsageMarkdown', () => {
         calls: 1,
       },
       {
-        stepId: STEP_A,
         provider: 'anthropic',
         model: 'claude-big',
         input: 1_000,
@@ -325,17 +228,12 @@ describe('renderRunUsageMarkdown', () => {
         cacheWrite: 20,
         calls: 1,
       },
-    ]);
+    ];
     expect(renderRunUsageMarkdown(rows)).toBe(
       [
         '## Token usage',
         '',
         '- Total: 3,100 in (900 cached) · 240 out · 20 cache writes · 4 model calls',
-        '',
-        '### By step',
-        '',
-        '- 1. Read the inbox: 1,100 in (400 cached) · 90 out · 20 cache writes · 2 model calls',
-        '- 2. Reply: 2,000 in (500 cached) · 150 out · 2 model calls',
         '',
         '### By model',
         '',

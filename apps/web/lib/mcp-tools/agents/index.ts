@@ -6,7 +6,7 @@
  * save, so mine can use it?"), improvement ("show me the failed run, then
  * update the agent"), and curation (an agent writing reference notes onto
  * another agent it feeds). Reads render through the SAME renderers the web
- * UI uses — the reviewer's steps outline, the run-debug markdown, the
+ * UI uses — the agent's instructions verbatim, the run-debug markdown, the
  * bounded knowledge/memory blocks runs themselves receive — so there is no
  * third description of an agent to drift.
  *
@@ -23,14 +23,13 @@
  *    feed (agent_approvals_list/agent_approval_decide and their question
  *    siblings) and agent deletion — both stay owner-only, matching every
  *    web route that touches them.
- *  - The DEFINITION-EDITING tools (agent_create, agent_update, and the
- *    agent_patch_* pair) REFUSE
- *    agent-run callers (`context.agent` set): a run must not rewrite its
- *    own steps or strip its guardrails — the cards ground rule, applied
+ *  - The DEFINITION-EDITING tools (agent_create, agent_update, agent_patch)
+ *    REFUSE agent-run callers (`context.agent` set): a run must not rewrite
+ *    its own instructions or strip its guardrails — the cards ground rule, applied
  *    to behavior. Knowledge and memory tools stay available to runs:
  *    knowledge is reference data an agent legitimately curates
- *    (knowledge_create_note already exists); steps and guardrails are
- *    behavior definition, and that line is the point. The one memory
+ *    (knowledge_create_note already exists); instructions and guardrails
+ *    are behavior definition, and that line is the point. The one memory
  *    exception: agent_memory_forget's blanket `all` wipe refuses runs too,
  *    because that record is what the NEXT run and the owner both read —
  *    forgetting named entries stays open to runs.
@@ -42,7 +41,7 @@
  *    `all` wipe (a dry run reports what would go), while forgetting named
  *    entries is immediate — the caller listed them from agent_memory_list
  *    first.
- *  - There is NO drafting tool here. Prose-to-steps drafting is the web
+ *  - There is NO drafting tool here. Prose-to-instructions drafting is the web
  *    builder's own REST path (/agents/draft + the worker job); model
  *    callers work at the definition level instead — agent_get hands them
  *    the exact JSON, agent_update validates their edit deterministically.
@@ -55,14 +54,14 @@
  *  - USAGE is read from the token and tool ledgers (agent-usage.ts), the
  *    same rows the usage dashboards show: agent_usage_get per agent (or
  *    a line per reachable agent), a tokens line per run in
- *    agent_runs_list, and a per-step/per-model split under agent_run_get.
+ *    agent_runs_list, and a per-model split under agent_run_get.
  *    Content-free by construction, so a grantee reads the owner's numbers
  *    and an agent run may read its own.
  *  - EDITS ARE PARTIAL BY DEFAULT: agent_update replaces the whole
- *    definition, which makes every untouched step and trigger a
- *    transcription risk, and an omitted trigger an outright delete.
- *    agent_patch_steps (steps, by id) and agent_patch (name, one trigger by
- *    id, guardrails, blocked skills, model) change what they name and
+ *    definition, which makes every untouched trigger a transcription risk,
+ *    and an omitted trigger an outright delete. agent_patch (name,
+ *    instructions, tools added/removed, one trigger by id, guardrails, the
+ *    question and auto-accept switches, model) changes what it names and
  *    nothing else, through the same parse-and-save path — so a patch can
  *    never reach a state a full update could not.
  */
@@ -75,25 +74,19 @@ import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
   MAX_QUESTION_FIELDS,
   BUILTIN_VARIABLES,
-  CURRENT_STEPS_VERSION,
   DEFAULT_APPROVAL_WAIT_CAP_HOURS,
+  INSTRUCTION_SECTIONS,
   MAX_ACTIVE_HOURS,
-  MAX_BRANCH_DEPTH_V3,
-  MAX_BRANCH_PATHS,
-  MAX_LOOP_ITERATIONS,
+  MAX_AGENT_TOOLS,
+  MAX_INSTRUCTIONS_CHARS,
   MAX_SCHEDULE_RULES,
-  MAX_STEPS,
-  MAX_STEP_ATTEMPTS,
   MAX_QUESTION_ANSWER_CHARS,
   TRIGGER_EVENT_CATALOG,
-  flattenActionSteps,
+  agentDefinitionOf,
   flattenFormFields,
   friendlyToolName,
   isAlwaysApprovalTool,
-  isCurrentStepsDoc,
-  lintAgentDraft,
-  savesByPathCoverage,
-  type AgentStepsDoc,
+  triggerVariableDescriptors,
   type QuestionField,
   type TriggerDraft,
 } from '@renkei/agents';
@@ -109,16 +102,13 @@ import {
 } from '@/lib/agents/access-grants';
 import { getIdentityEmail } from '@/lib/identity';
 import { saveAgent } from '@/lib/agents/save';
-import { applyStepPatch, toPatchOperations } from '@/lib/agents/patch-steps';
 import { applyTriggerPatch, toTriggerOperations } from '@/lib/agents/patch-triggers';
 import { parseAgentPayload } from '@/lib/agents/payload';
-import { renderStepsOutline } from '@/lib/agents/describe';
 import { triggerSummary } from '@/lib/agents/trigger-summary';
 import { listRunsForOwner, getRunForOwner } from '@/lib/agents/runs-view';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 import {
   getAgentTokenUsage,
-  getAgentTokenUsageByStep,
   getAgentToolUsage,
   getRunTokenUsage,
   getTokenUsageByAgent,
@@ -126,7 +116,6 @@ import {
   getTokenUsageByRun,
   ZERO_TOKEN_USAGE,
 } from '@/lib/agents/agent-usage';
-import { labelStepUsage } from '@/lib/agents/step-usage-labels';
 import { isUsagePeriod, PERIOD_KEYS } from '@/lib/agents/usage-periods';
 import {
   renderAgentUsageText,
@@ -206,38 +195,28 @@ async function agentAccessFor(
   return resolveAgentAccess(db, context.subject, id);
 }
 
-function outlineOf(steps: AgentStepsDoc): string {
-  const outline = renderStepsOutline(steps);
-  return outline.trim() ? outline : '(no steps yet)';
+/** The instructions, verbatim, or a note that there are none yet. */
+function instructionsOf(instructions: string): string {
+  return instructions.trim() ? instructions : '(no instructions yet)';
+}
+
+/** The tool selection, one per line, or a note that there is none. */
+function toolListLines(tools: string[]): string[] {
+  return tools.length > 0 ? tools.map((tool) => `- ${tool}`) : ['- none (reasoning only)'];
 }
 
 /**
- * What an agent's steps bind, with whether each name always materializes,
- * plus the builtins every step can reference regardless.
- *
- * The builtins are listed because an author working over MCP has no
- * autocomplete to discover them from — the builder's insert menu is the
- * only other place they appear, and a chip nobody knows about is a chip
- * nobody writes.
+ * What every run of this agent is handed: the builtins, and what its
+ * triggers deliver. Listed because an author working over MCP has no
+ * builder sidebar to discover them from — instructions that never name the
+ * message the run reacts to are instructions the agent has to guess at.
  */
-function variableLines(steps: AgentStepsDoc): string[] {
-  const coverage = savesByPathCoverage(steps.steps);
+function valueLines(triggers: TriggerDraft[]): string[] {
+  const fromTriggers = triggerVariableDescriptors(triggers);
   return [
-    'A step sees only the variables it names as var chips (in its instruction, guidance or',
-    'condition), plus the builtins below, the approval.*/question.* values bound for it, and',
-    'the item var of an enclosing loop. A trigger value or saved result a step only alludes',
-    'to in words is not sent to it — chip it explicitly.',
-    'Variables always available (var chips):',
+    'Every run is handed these values in its opening message (instructions may name them):',
     ...BUILTIN_VARIABLES.map((variable) => `- ${variable.name}: ${variable.description}`),
-    ...(coverage.size > 0
-      ? [
-          'Variables this agent saves (chainable):',
-          ...[...coverage.entries()].map(
-            ([name, kind]) =>
-              `- ${name} (${kind === 'always' ? 'always set on success' : 'conditional — only some routes set it'})`
-          ),
-        ]
-      : []),
+    ...fromTriggers.map((variable) => `- ${variable.name}: ${variable.description}`),
   ];
 }
 
@@ -247,22 +226,26 @@ function remainingClause(waitingUntil: string | null, now: number): string {
   const hoursLeft = deadline === null ? null : Math.round((deadline - now) / 3_600_000);
   if (hoursLeft === null) return '';
   return hoursLeft <= 0
-    ? ' — the wait has run out; the run treats it as not approved next'
+    ? ' — the wait has run out; the run treats it as declined next'
     : ` — ${hoursLeft}h left before it times out`;
 }
 
 /**
- * One waiting gate, with everything a decision needs in the lines that
- * announce it: the proposed call, which run it holds up, and how long is
- * left.
+ * One waiting batch, with everything a decision needs in the lines that
+ * announce it: what the agent says it is for, every action in the order it
+ * would run (tool, reason, arguments), which run it holds up, and how long
+ * is left.
  */
 function approvalLines(approval: PendingApproval, now: number): string[] {
   return [
     `- ${approval.title}`,
     `  cardId: ${approval.cardId} · agent "${approval.agentName}" (${approval.agentId}) · run ${approval.runId}`,
-    `  Wants to call ${approval.proposedTool ? friendlyToolName(approval.proposedTool, null) : 'a tool'}` +
-      ` · raised ${approval.raisedAt}${remainingClause(approval.waitingUntil, now)}`,
-    ...(approval.proposedArgs ? [`  args: ${JSON.stringify(approval.proposedArgs)}`] : []),
+    `  ${approval.actions.length} staged action(s) · raised ${approval.raisedAt}${remainingClause(approval.waitingUntil, now)}`,
+    ...(approval.summary ? [`  ${approval.summary.replace(/\n/g, '\n  ')}`] : []),
+    ...approval.actions.flatMap((action, index) => [
+      `  ${index + 1}. ${friendlyToolName(action.tool, null)} (${action.tool}) — ${action.reason}`,
+      `     args: ${JSON.stringify(action.args)}`,
+    ]),
   ];
 }
 
@@ -309,65 +292,57 @@ function describeQuestionField(field: QuestionField): string {
 }
 
 /**
- * What an agent can do that no skill accounts for.
+ * How an agent works, which no skill in the catalog accounts for.
  *
- * The engine provides these as step-level FLAGS and an agent-level
- * CAPABILITY, so they are invisible to a catalog built from registered
- * tools — and a model that reads the catalog as "everything this agent
- * could do" concludes an agent cannot pause for a person, because nothing
- * named `*_ask_approval` came back. It then writes a step that says "check
- * with the owner first" and acts anyway.
+ * A model reading the catalog as "everything this agent could do" would
+ * conclude an agent calls a send tool the moment it decides to — and write
+ * instructions that assume so. It cannot: every change is staged and
+ * accepted first. The limits are the org's LIVE values, read by the caller.
  */
-const NATIVE_CAPABILITIES = [
-  'These are step-level FLAGS and an agent-level CAPABILITY, not skills, so no name above covers them:',
-  '- PAUSE BEFORE A TOOL CALL — set `needsApproval: true` on any step that has a `tool`. Before ' +
-    'that step\'s call fires, the run parks as "waiting" and puts an interactive card on the ' +
-    "owner's home-page feed showing exactly what the step is about to do (the tool and its " +
-    'rendered arguments) — never an authored message, there is nothing to author. Approved: the ' +
-    'call fires for real, with the SAME arguments the card showed. Denied or timed out: the ' +
-    'call is skipped. `approvalTimeoutHours` sets the wait (default ' +
-    `${APPROVAL_DEFAULT_TIMEOUT_HOURS}, clamped by the org's cap, never more than ` +
-    `${DEFAULT_APPROVAL_WAIT_CAP_HOURS}); \`onNotApproved\` is one optional recovery path ` +
-    '({id, name, steps:[...]}) taken when denied OR timed out (empty/absent = just skip the ' +
-    'call and continue below the step). `approval.outcome` ("approved"|"denied"|"timedOut") ' +
-    "and `approval.comment` (the person's typed note, if any) bind as variables so a branch " +
-    'inside onNotApproved can tell denied and timed-out apart, or a later step can read why. ' +
-    'Use this for "ask me before sending", "let me approve this", "check with me first". ' +
-    'agent_approvals_list shows the ones waiting on you right now, and agent_approval_decide ' +
-    'answers one.',
-  '  Retrying with the feedback from a denial needs no backward jump: wrap "decide the value → ' +
-    'gated step" in a {kind:"loop", mode:"until"} whose exit condition reads `approval.outcome` ' +
-    '— a denial with a comment drives another bounded round. Steps are a forward-only tree; ' +
-    'there is no goto.',
-  '- ASK A PERSON, ANYTIME — set the AGENT-level `canAskQuestions: true` (agent_create/' +
-    'agent_update, alongside `guardrails`/`blockedTools`) and every step gains a free ' +
-    '`ask_person` tool it may call mid-reasoning: {message, form?, timeoutHours?}. Calling it ' +
-    'pauses the run exactly like a gate (the same card/waiting/resume mechanics) with ONE card ' +
-    'carrying everything the step needs answered right now: `form` is an array of up to ' +
-    `${MAX_QUESTION_FIELDS} entries — {kind:"field", name, label, ` +
-    'type:"text"|"longtext"|"number"|"date"|"choice"|"multi", required, options?, min?, max?, ' +
-    'help?, key?} (an answerable control, binding its own variable — a two-option "choice" ' +
-    'covers yes/no), {kind:"paragraph", text} (context with nothing to answer), or ' +
-    '{kind:"group", label, nodes} (one level of fields/paragraphs clustered under a heading, ' +
-    'no nesting) — so a step with several pending questions asks them all in ONE card, never a ' +
-    'loop of single-question asks. On answer or timeout the step gets a FRESH attempt whose ' +
-    'prompt states what was asked and what came back (question.message, question.answer, and ' +
-    'one variable per answered field) — nothing to plan ahead of time. agent_questions_list ' +
-    'shows the ones waiting on you, and agent_question_answer answers one.',
-  '- THE ORG GATES ACT STEPS TOO — a step whose skill CHANGES something (an Act skill: sends, ' +
-    'creates, edits, deletes) pauses for the same card even without `needsApproval`, when the ' +
-    "org's policy applies to the run: by default on every run an event or webhook started (the " +
-    'content it acts on came from outside), optionally on every run, or never. Sending mail, ' +
-    'merging a pull request, deleting or sharing a document, and directory writes (password ' +
-    'resets, Entra application changes) ALWAYS pause in an agent run, whatever the policy. ' +
-    'Expect the pause when you plan such a step; set `needsApproval: true` yourself when the ' +
-    'step should pause on every run regardless of the setting.',
-  '- END THE RUN AND SAY SO — a {kind:"terminal"} step ends the whole run as a success, a ' +
-    'deliberate failure, or a graceful skip, and emails or WebEx-messages the owner the ' +
-    'message it carries.',
-  '- DECIDE, REPEAT, GROUP — {kind:"branch"}, {kind:"loop"} and {kind:"group"} nodes.',
-  'The full shape of each is on the "steps" argument of agent_create and agent_update.',
-].join('\n');
+function nativeCapabilities(limits: { minutes: number; toolCalls: number }): string {
+  return [
+    'How an agent works — no skill above accounts for this:',
+    '- An agent is INSTRUCTIONS plus a TOOL SELECTION. It works autonomously from the ' +
+      'instructions: it decides which of its tools to call and in what order, and retries ' +
+      'another way when a call fails. Write a goal and guidance, not a script.',
+    `- HARD LIMITS on every run: ${limits.toolCalls} tool calls and ${limits.minutes} minutes ` +
+      'of ACTIVE time (time spent waiting on a person does not count). The agent is told what ' +
+      'is left as it goes and is expected to finish as soon as the goal is met; reaching a ' +
+      'limit ends the run unfinished.',
+    '- It READS freely with its [read] tools. It NEVER calls an [act] tool itself: it stages ' +
+      'the changes as ONE batch (its built-in stage_actions call: an ordered list of ' +
+      '{tool, args, reason}), and the run pauses. The owner accepts or declines the WHOLE ' +
+      'batch on one card — or, when the agent has `autoAcceptActions: true`, it is accepted ' +
+      "automatically wherever the org's policy allows (by default not on runs an event or " +
+      'webhook started) and never for the fixed high-risk tools (sending mail, merging a pull ' +
+      'request, deleting or sharing a document, directory writes). A separate process then ' +
+      'carries the batch out in order, stops at the first failure, and reports each outcome ' +
+      'back to the agent, which carries on. So give an agent the [act] tools its changes need, ' +
+      'and say in its instructions exactly what each change must contain. ' +
+      'agent_approvals_list shows the batches waiting on you; agent_approval_decide answers one.',
+    '- ASK A PERSON — with the agent-level `canAskQuestions: true` the agent gains a free ' +
+      '`ask_person` call: {message, form?, timeoutHours?}. It pauses the run behind one ' +
+      `question card (default wait ${APPROVAL_DEFAULT_TIMEOUT_HOURS}h, never more than ` +
+      `${DEFAULT_APPROVAL_WAIT_CAP_HOURS}h); \`form\` holds up to ${MAX_QUESTION_FIELDS} ` +
+      'fields ({kind:"field", name, label, type:"text"|"longtext"|"number"|"date"|"choice"|' +
+      '"multi", required, options?, min?, max?, help?, key?}), paragraphs ({kind:"paragraph", ' +
+      'text}) and one level of groups ({kind:"group", label, nodes}). The answer comes back as ' +
+      "the call's result. agent_questions_list shows the ones waiting on you, and " +
+      'agent_question_answer answers one.',
+    '- REMEMBER — a free `remember` call records one fact future runs need (what was already ' +
+      'handled). Say so in the instructions when it matters ("remember which ticket you filed").',
+    '- FINISH — the agent ends every run with `finish_run`: "done", "nothing_to_do" (quietly, ' +
+      'when the input called for no work) or "failed", with a summary and an optional result ' +
+      'that an agent chained after it receives.',
+  ].join('\n');
+}
+
+/** The org's live per-run limits, or the defaults when settings cannot be read. */
+async function runLimits(): Promise<{ minutes: number; toolCalls: number }> {
+  const settings = await getOrgSettings();
+  const org = settings.ok ? settings.val : DEFAULT_ORG_SETTINGS;
+  return { minutes: org.agentRunTimeoutMinutes, toolCalls: org.agentRunToolCallBudget };
+}
 
 /**
  * How many tools one call spells out in full before it stops and says how
@@ -379,20 +354,19 @@ const TOOLS_DETAILED = 60;
 /**
  * One tool, as an author choosing between them needs to read it.
  *
- * The FULL description, deliberately, and the failure codes with it — the
- * same two things the web builder's drafting prompt puts in front of the
- * model that writes steps. A clipped description is how a step gets drafted
- * against a tool whose requirements (an input it needs, a bulk variant to
- * prefer) lived in the part nobody read, and the failure codes are the
- * vocabulary `failureHandling` is keyed by, so a step cannot handle a
- * condition it was never told about.
+ * The FULL description, deliberately — the same thing the web builder's
+ * drafting prompt puts in front of the model that writes instructions. A
+ * clipped description is how instructions get written against a tool whose
+ * requirements (an input it needs, a bulk variant to prefer) lived in the
+ * part nobody read. Whether it reads or changes is the one fact that
+ * decides how the agent uses it: called directly, or staged for acceptance.
  */
 function toolLine(tool: ToolDescriptor): string {
   const description = (tool.description ?? '').replace(/\s+/g, ' ').trim();
   return (
-    `- ${tool.name} (${friendlyToolName(tool.name, tool.title)}) [${tool.kind}]` +
-    `${description ? ` — ${description}` : ''}` +
-    ` | failure codes: ${tool.outcomes.failures.map((failure) => failure.code).join(', ')}`
+    `- ${tool.name} (${friendlyToolName(tool.name, tool.title)}) ` +
+    `[${tool.kind === 'read' ? 'read' : 'act — changes something; staged for acceptance'}]` +
+    `${description ? ` — ${description}` : ''}`
   );
 }
 
@@ -466,14 +440,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Read — The exact definition, as JSON',
       description:
         "One of your agents' (or one shared with you) EXACT stored definition, as raw JSON — " +
-        'the machine path. ' +
-        'To change a STEP, take its id from here and use agent_patch_steps: it inserts, ' +
-        'replaces, removes or moves one step at a time and leaves the rest untouched. ' +
-        'To change the NAME, a TRIGGER, the guardrails, the blocked skills or the model, ' +
-        'take the trigger ids from here and use agent_patch: it changes only the fields ' +
-        'you send. Reach for agent_update — which replaces the whole definition, ids and ' +
-        'all — only for a rewrite. For the human-readable rendering (outline, knowledge, ' +
-        'memory, chaining), use agent_get_description.',
+        'the machine path: its instructions, tool selection, triggers, guardrails and ' +
+        'switches. To change the NAME, the INSTRUCTIONS, the TOOLS, a TRIGGER, the ' +
+        'guardrails, the question/auto-accept switches or the model, take the trigger ids ' +
+        'from here and use agent_patch: it changes only the fields you send. Reach for ' +
+        'agent_update — which replaces the whole definition, trigger ids and all — only for ' +
+        'a rewrite. For the human-readable rendering (values it is handed, chaining), use ' +
+        'agent_get_description.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -508,11 +481,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             ...agentDefinition({
               name: agent.name,
               description: agent.description,
-              steps: agent.steps,
+              instructions: agent.instructions,
+              tools: agent.tools,
               triggers: agent.triggers,
               guardrails: agent.guardrails,
-              blockedTools: agent.blockedTools,
               canAskQuestions: agent.canAskQuestions,
+              autoAcceptActions: agent.autoAcceptActions,
               llmModelId: agent.llmModelId,
             }),
           },
@@ -528,9 +502,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Read — One agent, described',
       description:
-        'The human-readable rendering of one of your agents (or one shared with you): the ' +
-        'steps outline, guardrails, ' +
-        'blocked skills, the variables it saves (for chaining), triggers, and agents ' +
+        'The human-readable rendering of one of your agents (or one shared with you): its ' +
+        'instructions, its tools, guardrails, whether it may ask you questions and accepts ' +
+        'its own staged changes, the values every run is handed, triggers, and agents ' +
         'chained after it. For the exact definition to edit, use agent_get; for what its ' +
         'runs carry, agent_knowledge_list and agent_memory_list.',
       annotations: { readOnlyHint: true },
@@ -563,14 +537,17 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         `${agent.name} — ${agent.enabled ? 'ON' : 'off'} (agentId: ${agent.id})`,
         ...(agent.description ? ['', agent.description] : []),
         '',
-        'Steps:',
-        outlineOf(agent.steps),
-        ...(agent.guardrails ? ['', 'Standing guardrails:', agent.guardrails] : []),
-        ...(agent.blockedTools.length > 0
-          ? ['', `Blocked skills (the engine refuses these): ${agent.blockedTools.join(', ')}`]
-          : []),
+        'Instructions:',
+        instructionsOf(agent.instructions),
         '',
-        ...variableLines(agent.steps),
+        'Tools:',
+        ...toolListLines(agent.tools),
+        ...(agent.guardrails ? ['', 'Standing guardrails:', agent.guardrails] : []),
+        '',
+        `Can ask you questions: ${agent.canAskQuestions ? 'yes' : 'no'}`,
+        `Staged changes: ${agent.autoAcceptActions ? 'accepted automatically where the org allows it (never the high-risk tools)' : 'wait for you to accept them'}`,
+        '',
+        ...valueLines(agent.triggers.map((trigger) => trigger.draft)),
         '',
         'Triggers:',
         ...(agent.triggers.length > 0
@@ -595,12 +572,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Read — The skills an agent of yours can use',
       description:
-        'Every skill your agents can be given a step for — the vocabulary agent_create, ' +
-        'agent_update and agent_patch_steps accept in a step\'s "tool", and the failure ' +
-        'codes its "failureHandling" is keyed by. READ THIS BEFORE WRITING STEPS: the ' +
-        'builder shows an author this catalog in a picker, and a caller working over MCP ' +
-        'has nowhere else to find it — a step naming a tool that does not exist here is ' +
-        'refused by validation, and a tool nobody knows about is a step nobody writes. ' +
+        'Every skill your agents can be given — the vocabulary agent_create, agent_update ' +
+        'and agent_patch accept in "tools". Each is a READ (the agent calls it directly) ' +
+        'or an ACT (it changes something, so the agent stages it for acceptance — never ' +
+        'calls it itself). READ THIS BEFORE WRITING AN AGENT: the builder shows an author ' +
+        'this catalog in a picker, and a caller working over MCP has nowhere else to find ' +
+        'it — a tool that does not exist here is refused by validation, and a tool nobody ' +
+        'knows about is a capability nobody gives the agent. ' +
         'What comes back is scoped to YOU: only the connectors this organization has ' +
         'enabled and you have authorized, so it is what your agents could actually run, ' +
         'not a brochure. With no filter it names every skill by connector; pass connector, ' +
@@ -614,7 +592,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         kind: z
           .enum(['read', 'act'])
           .optional()
-          .describe('"read" gathers information; "act" changes something in a system'),
+          .describe('"read" gathers information; "act" changes something (staged for acceptance)'),
         query: z
           .union([z.string(), z.array(z.string())])
           .optional()
@@ -628,12 +606,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!context.subject) return errText(NO_SUBJECT);
 
       // Same projection the save path validates against, so this cannot
-      // offer a tool a step would then be refused for naming.
-      const all = (
-        await listAvailableTools(context.subject, { roles: context.roles })
-      ).filter(
+      // offer a tool the save would then refuse.
+      const all = (await listAvailableTools(context.subject, { roles: context.roles })).filter(
         // Preview-card buttons: the model never sees them, so an author must
-        // not be told to write a step for one.
+        // not be told to give an agent one.
         (tool) => !tool.appOnly
       );
       if (all.length === 0) {
@@ -642,7 +618,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             'No skills are available to you — this organization has no connectors enabled, ' +
               'or none that you have authorized. Connect one in the web app, then ask again.',
             '',
-            NATIVE_CAPABILITIES,
+            nativeCapabilities(await runLimits()),
           ].join('\n')
         );
       }
@@ -689,7 +665,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       ];
 
       // No filter at all: the whole vocabulary by name. Names are what a
-      // step has to get exactly right, and the full descriptions for 300
+      // tool selection has to get exactly right, and the full descriptions for 300
       // skills are a wall nobody reads — so the overview is complete, and
       // reading what one DOES is a filtered call away.
       if (!connector && !kind && queries.length === 0) {
@@ -711,10 +687,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             '',
             ...sections,
             '',
-            'Pass connector, kind or query to read what each one does and the failure codes ' +
-              'its steps can handle.',
+            'Pass connector, kind or query to read what each one does and whether it reads ' +
+              'or changes.',
             '',
-            NATIVE_CAPABILITIES,
+            nativeCapabilities(await runLimits()),
           ].join('\n')
         );
       }
@@ -762,15 +738,16 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   server.registerTool(
     'agent_approvals_list',
     {
-      title: 'Agents · Read — Approvals waiting on you',
+      title: 'Agents · Read — Staged changes waiting on you',
       description:
-        'The `needsApproval` gate cards your agents are PAUSED on, waiting for you to decide ' +
-        '— oldest first, because the oldest is the one about to time out. A gated step parks ' +
-        'its whole run as "waiting" and raises one of these BEFORE its tool call fires; ' +
-        'until somebody decides, that run does nothing and the call does not happen. Each ' +
-        'entry carries the cardId agent_approval_decide takes, the proposed call (tool + ' +
-        'arguments), which run it holds up, and how long is left before the wait runs out ' +
-        'and the run treats it as not approved.',
+        'The batches of staged changes your agents are PAUSED on, waiting for you to accept ' +
+        'or decline — oldest first, because the oldest is the one about to time out. An agent ' +
+        'never makes a change itself: it stages its changes as one batch, and its run waits ' +
+        'here until somebody decides; nothing in the batch happens before then. Each entry ' +
+        'carries the cardId agent_approval_decide takes, what the agent says the batch is ' +
+        'for, every action in the order it would run (tool, reason, arguments), which run it ' +
+        'holds up, and how long is left before the wait runs out and the batch is treated as ' +
+        'declined.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z
@@ -785,24 +762,20 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
-      const approvals = await listPendingApprovals(
-        dbResult.val,
-        context.subject,
-        {
-          agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
-          limit: typeof args.limit === 'number' ? args.limit : undefined,
-        }
-      );
+      const approvals = await listPendingApprovals(dbResult.val, context.subject, {
+        agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
+        limit: typeof args.limit === 'number' ? args.limit : undefined,
+      });
       if (approvals.length === 0) {
         return textResult(
-          'Nothing is waiting on you — none of your agents is paused for a decision.'
+          'Nothing is waiting on you — none of your agents has changes staged for a decision.'
         );
       }
 
       const now = Date.now();
       return textResult(
         [
-          `${approvals.length} approval(s) waiting on you, longest-waiting first:`,
+          `${approvals.length} batch(es) of staged changes waiting on you, longest-waiting first:`,
           ...approvals.flatMap((approval) => ['', ...approvalLines(approval, now)]),
           '',
           'Answer one with agent_approval_decide, giving its cardId.',
@@ -814,30 +787,31 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   server.registerTool(
     'agent_approval_decide',
     {
-      title: 'Agents · Act — Approve or decline a paused run',
+      title: 'Agents · Act — Accept or decline a batch of staged changes',
       description:
-        'Answer one of the approval cards from agent_approvals_list: approve it, or decline ' +
-        'it. Approved fires the proposed call for real, with the SAME arguments the card ' +
-        'showed — not a re-ask of the model. Declined skips the call; the run takes its ' +
-        '`onNotApproved` recovery path if the step named one, or just continues if not. A ' +
-        'decline does NOT fail the run by itself. An optional `comment` binds as ' +
-        'approval.comment for the run to read (e.g. a recovery path that acts on WHY it was ' +
-        'declined). ' +
+        'Decide one of the batches from agent_approvals_list — the WHOLE batch, accepted or ' +
+        'declined; there is no per-action choice and no editing the arguments. Accepted: a ' +
+        'separate process carries every action out in order with the SAME arguments the ' +
+        'card showed, stopping at the first failure, and reports each outcome back to the ' +
+        'agent. Declined: none of it happens, and the agent is told so. Either way the run ' +
+        'then continues — a decline does NOT fail it by itself. An optional `comment` is ' +
+        'passed to the agent with the decision (e.g. WHY it was declined, so it can stage ' +
+        'something better). ' +
         "This is a REAL DECISION on the owner's behalf, taken immediately and not " +
-        'reversible from here — a gate exists because a person was meant to weigh in, so ' +
-        'confirm with them before deciding for them. AGENT RUNS CANNOT CALL THIS: an agent ' +
-        'approving its own pause is the whole point of the pause, undone.',
+        'reversible from here — staged changes wait because a person was meant to weigh in, ' +
+        'so confirm with them before deciding for them. AGENT RUNS CANNOT CALL THIS: an ' +
+        'agent accepting its own changes is the whole point of staging them, undone.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         cardId: z.string().min(1).describe('From agent_approvals_list'),
         decision: z
           .enum(['approve', 'decline'])
-          .describe('"approve" fires the proposed call; "decline" skips it'),
+          .describe('"approve" carries the whole batch out; "decline" makes none of it'),
         comment: z
           .string()
           .max(MAX_QUESTION_ANSWER_CHARS)
           .optional()
-          .describe('A short note alongside the decision — binds to approval.comment'),
+          .describe('A short note alongside the decision — the agent reads it'),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -847,9 +821,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // agent's — would make every gate decorative.
       if (context.agent) {
         return errText(
-          'Agent runs cannot decide approvals — that is the one thing a needsApproval gate ' +
-            'exists to prevent. A person answers this, in the Renkei feed or through their ' +
-            'own MCP client.'
+          'Agent runs cannot decide staged changes — that is the one thing staging exists to ' +
+            'prevent. A person answers this, in the Renkei feed or through their own MCP client.'
         );
       }
       const decision =
@@ -875,30 +848,30 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           return errText(`The comment must stay under ${result.max} characters.`);
         case 'not-found':
           return errText(
-            'No approval of yours has that cardId. Approvals are owner-scoped — ' +
+            'No staged batch of yours has that cardId. Batches are owner-scoped — ' +
               'agent_approvals_list shows the ones you can decide.'
           );
         case 'not-approval':
           return errText(
-            'That card is not an approval. Informational cards are dismissed with ' +
+            'That card is not a staged batch. Informational cards are dismissed with ' +
               'card_dismiss; a question card is answered with agent_question_answer.'
           );
         case 'already-decided':
           // Someone (or the timeout sweep) got there first. Saying so beats
           // overwriting a decision that already stands.
           return errText(
-            `That approval is already ${result.status} — it was decided elsewhere, or the ` +
-              'wait ran out and the run treated it as not approved.'
+            `That batch is already ${result.status} — it was decided elsewhere, or the ` +
+              'wait ran out and it was treated as declined.'
           );
         case 'decided': {
-          logger.info('agent_approval_decide answered a paused run', {
+          logger.info('agent_approval_decide decided a staged batch', {
             component: 'mcp/tool',
             runId: result.runId,
             decision: result.decision,
           });
           return textResult(
             [
-              `${result.decision === 'approve' ? 'Approved — the call fires for real.' : 'Declined — the call is skipped.'} Run ${result.runId}.`,
+              `${result.decision === 'approve' ? 'Accepted — the batch will be carried out, in order, and the agent told how each action went.' : 'Declined — none of it happens; the agent is told.'} Run ${result.runId}.`,
               // The claim is durable either way; only the wake is in doubt,
               // and the sweep covers it. Never report this as a failure.
               result.resumed
@@ -917,8 +890,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Read — Questions waiting on you',
       description:
         'The ask_person cards your agents are PAUSED on, waiting for you to answer — oldest ' +
-        'first, because the oldest is the one about to time out. A step whose agent has ' +
-        '`canAskQuestions` on may pause mid-reasoning and raise one of these; until somebody ' +
+        'first, because the oldest is the one about to time out. An agent with ' +
+        '`canAskQuestions` on may pause mid-run and raise one of these; until somebody ' +
         'answers, that run does nothing. Each entry carries the cardId ' +
         'agent_question_answer takes, what is being asked (and its form, if it has one), ' +
         'which run it holds up, and how long is left before the wait runs out and the run ' +
@@ -937,14 +910,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
-      const questions = await listPendingQuestions(
-        dbResult.val,
-        context.subject,
-        {
-          agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
-          limit: typeof args.limit === 'number' ? args.limit : undefined,
-        }
-      );
+      const questions = await listPendingQuestions(dbResult.val, context.subject, {
+        agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
+        limit: typeof args.limit === 'number' ? args.limit : undefined,
+      });
       if (questions.length === 0) {
         return textResult(
           'Nothing is waiting on you — none of your agents has a pending question.'
@@ -968,12 +937,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Answer a paused run',
       description:
-        'Answer one of the question cards from agent_questions_list. The run resumes on a ' +
-        'FRESH attempt that sees both what was asked and what came back — never a re-ask of ' +
-        'the model, and no reasoning is lost, since the step ended its turn the moment it ' +
-        'asked. ' +
+        'Answer one of the question cards from agent_questions_list. The run resumes where ' +
+        'it paused, with your answer as the result of its question — nothing it had worked ' +
+        'out is lost. ' +
         "This is a REAL ANSWER on the owner's behalf, taken immediately and not reversible " +
-        'from here — a step asked because a person was meant to supply the answer, so confirm ' +
+        'from here — the agent asked because a person was meant to supply the answer, so confirm ' +
         'with them before answering for them. AGENT RUNS CANNOT CALL THIS: an agent answering ' +
         'its own question is the whole point of asking, undone.',
       annotations: { readOnlyHint: false },
@@ -1061,8 +1029,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Read — Recent runs of an agent',
       description:
         "One of your agents' (or one shared with you) recent runs: status (including " +
-        "'waiting' for approval pauses), " +
-        'what failed and where, trigger, timing, and the tokens each run spent. Use ' +
+        "'waiting' for staged changes or a question), " +
+        'what failed, trigger, timing, and the tokens each run spent. Use ' +
         'agent_run_get on a runId for the full story; agent_usage_get for the agent as a whole.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -1094,12 +1062,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         args.status === 'canceled'
           ? args.status
           : undefined;
-      const runs = await listRunsForOwner(
-        dbResult.val,
-        access.ownerSubject,
-        agent.id,
-        { status, limit }
-      );
+      const runs = await listRunsForOwner(dbResult.val, access.ownerSubject, agent.id, {
+        status,
+        limit,
+      });
       if (runs.length === 0) return textResult('No runs match.');
 
       // "waiting" on its own says a run is stuck without saying on WHAT, and
@@ -1133,11 +1099,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           ...(approval
             ? ['  Waiting on you:', ...approvalLines(approval, now).map((line) => `  ${line}`)]
             : []),
-          ...(run.error
-            ? [
-                `  ${run.errorKind ?? 'error'}${run.failedStepName ? ` at "${run.failedStepName}"` : ''}: ${run.error}`,
-              ]
-            : [])
+          ...(run.error ? [`  ${run.errorKind ?? 'error'}: ${run.error}`] : [])
         );
       }
       return textResult(lines.join('\n'));
@@ -1150,10 +1112,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Read — One run in full',
       description:
         'The full debugging view of one run of one of your agents (or one shared with you) — ' +
-        'snapshot outline, timeline, every ' +
-        'attempt with its tool calls. The same markdown the run page\'s "Copy for debugging" ' +
-        'button produces, designed to be handed to a model, plus the tokens the run spent ' +
-        'in total, by step and by model.',
+        'the instructions it ran with, what it touched (reads and changes), the batches it ' +
+        'staged and how each action went, every model turn with its tool calls, and active ' +
+        'vs wall time. The same markdown the run page\'s "Copy for debugging" button ' +
+        'produces, designed to be handed to a model, plus the tokens the run spent in total ' +
+        'and by model.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         runId: z.string().min(1).describe('From agent_runs_list'),
@@ -1178,11 +1141,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .where('id', '=', runId)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
-      const access = await resolveAgentAccess(
-        db,
-        context.subject,
-        runRow.agent_id
-      );
+      const access = await resolveAgentAccess(db, context.subject, runRow.agent_id);
       if (!access) return errText('No run of yours has that id.');
       const agent = access.agent;
       const run = await getRunForOwner(db, access.ownerSubject, agent.id, runId);
@@ -1203,13 +1162,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             ).find((pending) => pending.runId === runId)
           : undefined;
 
-      // The run's own tokens from the ledger, its steps named from the
-      // snapshot it ran with (not the agent's current definition, which
-      // may have changed since).
-      const usageRows = labelStepUsage(
-        run.stepsSnapshot,
-        await getRunTokenUsage(db, runId)
-      );
+      // The run's own tokens from the ledger, by model.
+      const usageRows = await getRunTokenUsage(db, runId);
 
       return textResult(
         [
@@ -1238,11 +1192,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         'What your agents (and those shared with you) spend, from the same ledger the usage ' +
         'dashboards read. Without agentId: every agent you can reach, one line each, tokens ' +
         "in/out for the chosen period, largest first. With agentId: that agent's tokens for " +
-        'every period (today through all time), the chosen period split by model and by ' +
-        'step, and its tool calls over the last 30 days by connector. Cached prompt tokens ' +
+        'every period (today through all time), the chosen period split by model, and its ' +
+        'tool calls over the last 30 days by connector. Cached prompt tokens ' +
         'are reported as the portion of the input served from cache. For what one RUN ' +
         'cost, agent_runs_list shows a tokens line per run and agent_run_get the split by ' +
-        'step and model.',
+        'model.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z
@@ -1297,10 +1251,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const access = await agentAccessFor(db, context, agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
-      const [tokens, byModel, stepRows, tools] = await Promise.all([
+      const [tokens, byModel, tools] = await Promise.all([
         getAgentTokenUsage(db, agent.id),
         getTokenUsageByModel(db, agent.id),
-        getAgentTokenUsageByStep(db, agent.id),
         getAgentToolUsage(db, agent.id, TOOL_USAGE_WINDOW_DAYS),
       ]);
       return textResult(
@@ -1310,7 +1263,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           period,
           tokens,
           byModel,
-          bySteps: labelStepUsage(agent.steps, stepRows),
           tools,
           toolWindowDays: TOOL_USAGE_WINDOW_DAYS,
         })
@@ -1325,8 +1277,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       description:
         'Stop a run of one of your agents (or one shared with you) that has not finished — ' +
         'queued, waiting on you, or actively running. This only REQUESTS the stop: a queued ' +
-        'or waiting run cancels within a moment, but a running one finishes its current step ' +
-        'first and stops before the next — agent_run_get shows when it lands. Refuses ' +
+        'or waiting run cancels within a moment, but a running one finishes the call it is ' +
+        'making first and stops before the next — agent_run_get shows when it lands. Refuses ' +
         'agent-run callers, same as agent_run_now: stopping runs outside the chain is a ' +
         'human/API decision, not one an agent makes for itself or another run mid-chain.',
       annotations: { readOnlyHint: false },
@@ -1354,11 +1306,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .where('id', '=', runId)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
-      const access = await resolveAgentAccess(
-        db,
-        context.subject,
-        runRow.agent_id
-      );
+      const access = await resolveAgentAccess(db, context.subject, runRow.agent_id);
       if (!access) return errText('No run of yours has that id.');
 
       const result = await requestRunCancellation(db, agentJobsQueue().producer, {
@@ -1387,19 +1335,17 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   server.registerTool(
     'agent_run_resume',
     {
-      title: 'Agents · Act — Resume a failed run at the step that failed',
+      title: 'Agents · Act — Resume a failed run where it stopped',
       description:
-        'Pick a FAILED run of one of your agents (or one shared with you) back up at the step ' +
-        'it failed on — the same run, its snapshot and everything earlier steps saved, with ' +
-        "that step's failed attempts set aside so it gets a fresh try. Pass guidance to tell " +
-        'that step what to do differently (it reads the note as binding: "the CIO project has ' +
-        'no Task issue type — file it as a Project"). Different from agent_run_now: that ' +
-        'starts a NEW run from the top; this continues an existing one from where it stopped. ' +
-        'Refuses runs that are not failed, and a run that ended on a terminal failure marker ' +
-        "(that is the plan's own verdict — fix the steps instead). If the agent already has a " +
-        'run queued or running, this refuses and says so — pass confirm: true to queue it ' +
-        'anyway. Refuses agent-run callers, same as agent_run_cancel. Follow the run with ' +
-        'agent_run_get; attempts it set aside show as "Set aside".',
+        'Pick a FAILED run of one of your agents (or one shared with you) back up where it ' +
+        'stopped — the same run and conversation, with everything it had already found, and ' +
+        'a fresh budget of tool calls and active time. Pass guidance to tell the agent what ' +
+        'to do differently (it reads the note as binding: "the CIO project has no Task issue ' +
+        'type — file it as a Project"). Different from agent_run_now: that starts a NEW run ' +
+        'from the top; this continues an existing one. Refuses runs that are not failed. If ' +
+        'the agent already has a run queued or running, this refuses and says so — pass ' +
+        'confirm: true to queue it anyway. Refuses agent-run callers, same as ' +
+        'agent_run_cancel. Follow the run with agent_run_get.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         runId: z.string().min(1).describe('From agent_runs_list — a run whose status is failed'),
@@ -1407,7 +1353,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           .string()
           .max(2000)
           .optional()
-          .describe('What the failed step should do differently this time (optional)'),
+          .describe('What the agent should do differently this time (optional)'),
         confirm: z
           .boolean()
           .optional()
@@ -1431,11 +1377,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .where('id', '=', runId)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
-      const access = await resolveAgentAccess(
-        db,
-        context.subject,
-        runRow.agent_id
-      );
+      const access = await resolveAgentAccess(db, context.subject, runRow.agent_id);
       if (!access) return errText('No run of yours has that id.');
       const agent = access.agent;
 
@@ -1461,7 +1403,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           case 'NOT_FOUND':
             return errText('No run of yours has that id.');
           case 'NOT_FAILED':
-          case 'NOT_RESUMABLE':
             return errText(resumed.err.message ?? 'This run cannot be resumed.');
           case 'QUEUE_ERROR':
             return errText('The run could not be queued — try again shortly.');
@@ -1473,21 +1414,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       logger.info('agent_run_resume resumed a failed run', {
         component: 'mcp/tool',
         agentId: agent.id,
-        runId,
-        stepName: resumed.val.stepName ?? '(start)',
+        runId: resumed.val.runId,
       });
       return textResult(
         [
-          `Resumed run ${runId} of "${agent.name}"` +
-            (resumed.val.stepName
-              ? ` at "${resumed.val.stepName}"`
-              : ' from the start (it failed before reaching a step)') +
-            (resumed.val.retiredAttempts > 0
-              ? `, setting aside ${resumed.val.retiredAttempts} earlier attempt(s) of that step.`
-              : '.'),
+          `Resumed run ${runId} of "${agent.name}" where it stopped, with a fresh budget.`,
           typeof args.guidance === 'string' && args.guidance.trim()
-            ? "Your guidance rides with that step's next attempt."
-            : 'No guidance given — the step simply gets another try.',
+            ? 'Your guidance is the first thing the agent reads when it continues.'
+            : 'No guidance given — the agent is told the run stopped and takes another go.',
           'It is queued; agent_run_get on that runId shows how it went.',
         ].join('\n')
       );
@@ -1579,13 +1513,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             'scheduled run to bring forward. Turn the schedule back on in the builder.'
         );
       }
-      if (!isCurrentStepsDoc(agent.steps)) {
-        return errText(
-          'This agent is saved in an older format — open it in the builder and save it to ' +
-            'update it, then run it.'
-        );
-      }
-
       // Same sanity check the "Run now" button's confirm modal makes a
       // person answer: a run already queued or running for this agent is
       // not a reason to refuse forever, just a reason to ask first — an
@@ -1603,13 +1530,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       }
 
       // Recorded as the manual run it is (trigger_id stays null), while the
-      // state matches what the sweep hands a scheduled run, so steps that
-      // read trigger.scheduledFor behave the same way they will tonight.
+      // state matches what the sweep hands a scheduled run, so an agent
+      // reading trigger.scheduledFor behaves the same way it will tonight.
       const scheduledFor = new Date().toISOString();
       const result = await createAgentRun(db, agentJobsQueue().producer, {
         agentId: agent.id,
         ownerSubject: access.ownerSubject,
-        steps: agent.steps,
+        definition: agentDefinitionOf(agent),
         llmModelId: agent.llmModelId,
         triggerId: null,
         triggerKind: 'manual',
@@ -1644,8 +1571,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       description:
         "One of your agents' (or one shared with you) memory in full: the rolling summary " +
         'and the newest entries the ' +
-        'engine recorded across runs. Each entry came from a step explicitly calling the ' +
-        'runtime remember tool — a deliberate note, never an automatic side effect of a step ' +
+        'engine recorded across runs. Each entry came from a run explicitly calling the ' +
+        'runtime remember tool — a deliberate note, never an automatic side effect of a run ' +
         'succeeding or failing. agent_get shows the bounded slice runs receive; this is ' +
         'the raw list. Returns entryIds for agent_memory_forget.',
       annotations: { readOnlyHint: true },
@@ -2078,131 +2005,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   );
 
   /**
-   * The step-node grammar, written out for the same reason the trigger one
-   * is: `steps` crosses the wire as an opaque object, and the builder — a
-   * UI with a node palette — is the only other place the vocabulary
-   * appears. A caller here cannot read a palette.
-   *
-   * needsApproval is the load-bearing entry on the ACTION step. It is a
-   * Renkei capability with NO TOOL BEHIND IT: agent_list_tools cannot
-   * mention it, because pausing before a call fires and raising a card on
-   * someone's home page is something the engine does, not something a
-   * connector exposes. So a model asked to "have it check with me first"
-   * had no way to know the construct existed, and wrote a step that says
-   * "ask the owner" and then acts anyway.
-   *
-   * Caps come from the constants they enforce, so this cannot name a limit
-   * the validator does not.
-   */
-  const STEP_NODE_GRAMMAR = [
-    'Every node has a uuid "id" and a "name". A node is one of:',
-    'An ACTION step (NO "kind" key) — the default: {id, name, instruction:[segment,...],',
-    'tool:<a skill name from agent_list_tools, or null for a pure reasoning step>,',
-    `maxAttempts:1-${MAX_STEP_ATTEMPTS}, saveAs?:<short name later steps reference as a var>,`,
-    'failureHandling:[{outcome:<a failure code of THAT skill, from agent_list_tools, or',
-    '"other">, action:"retry"|"exit"|"stop-quiet"|"continue", guidance?:[segment,...]}],',
-    'onSuccess?:"continue"|"stop"|"stop-quiet",',
-    "needsApproval?:true (PAUSE BEFORE THIS STEP'S TOOL CALL fires and ask a person first —",
-    'only meaningful with `tool` set. Reaching for the tool parks the whole run as "waiting"',
-    "and puts an interactive CARD on the owner's home-page feed showing the proposed call —",
-    'the tool name and its rendered arguments, never an authored message: there is nothing to',
-    'author, the flag gates whatever the step is about to do. Approved: the SAME call fires',
-    'for real. Denied or timed out: the call is skipped. REACH FOR THIS whenever the',
-    'automation should not act without a person saying so — "ask me before sending", "let me',
-    'approve the refund", "check with me first"), approvalTimeoutHours? (how long it may',
-    `wait; default ${APPROVAL_DEFAULT_TIMEOUT_HOURS}, clamped by the org's cap, never more`,
-    `than ${DEFAULT_APPROVAL_WAIT_CAP_HOURS}), onNotApproved? ({id, name, steps:[node,...]})`,
-    '— ONE recovery path taken when the decision is denied OR the wait times out (both are',
-    '"not approved"); empty or absent just skips the call and continues below the step.',
-    'approval.outcome ("approved"|"denied"|"timedOut") and approval.comment (the person\'s',
-    'typed note, if any) bind as variables so a branch inside onNotApproved can tell denied',
-    'and timed-out apart, or a later step can read why}. The ORG gates act steps too: a step',
-    'whose skill changes something pauses for the same card without needsApproval when the',
-    "org's policy applies to the run (by default: runs an event or webhook started), and a",
-    'fixed high-risk set (send mail, merge a PR, delete or share a document, directory writes)',
-    'always pauses — plan for the pause rather than around it. At most one tool per step. At runtime',
-    '(not something you author on the node) every action step attempt may also call a free',
-    '`remember` tool to record ONE fact future runs of the agent need and could not',
-    "rediscover — a deliberate, standalone call, never a side effect of declaring the step's",
-    'outcome. When a step should do this, say so explicitly in its instruction (e.g. "remember',
-    'which ticket this was so a later run does not reopen it"); most steps have nothing worth',
-    'remembering, and their instruction should say nothing about it.',
-    '{kind:"branch"} — a fork the model decides: {id, name, condition:[segment,...] (prose and',
-    'var segments only, NEVER tool segments — do the tool work in a step before the branch and',
-    `save it), paths:[2-${MAX_BRANCH_PATHS} × {id, name, steps:[...]}] where the LAST path is`,
-    'the fallback, failurePath?:{id, name, steps} (taken when the EVALUATION itself runs out',
-    `of attempts), maxAttempts}. Branches nest at most ${MAX_BRANCH_DEPTH_V3} deep; a step's`,
-    'onNotApproved path counts toward the CONTAINER budget instead (same as a loop or group).',
-    '{kind:"loop"} — repeat a body: mode:"foreach" with itemsVar (a saved list) and itemVar',
-    '(the per-round binding), or mode:"until" with condition:[segment,...] checked AFTER each',
-    `round. Both take maxIterations:1-${MAX_LOOP_ITERATIONS} and steps:[...], and may set`,
-    'collectFrom (a saveAs inside the body) plus collectVar (a new list of what it saved).',
-    'Loops never nest in loops. Prefer ONE bulk skill call over a loop wherever one exists.',
-    '{kind:"group"} — pure structure for readability: {id, name, steps:[...]}, executed as if',
-    'inlined.',
-    '{kind:"terminal"} — end the whole run here: {id, name, result:"success"|"failure"|"stop",',
-    "message:[segment,...] — an optional note on why, shown on the run's own timeline; whether",
-    "anyone is notified about the run at all is that PERSON's own Preferences, not a step field.",
-    'A segment is {t:"text", v:"..."}, {t:"var", name:"<a variable this agent has>"} or',
-    '{t:"tool", name:"<a skill name>"}. A node\'s model sees ONLY the variables its own',
-    'segments name as var segments (plus today, user.*, the approval.*/question.* bound for',
-    'that step, and the item var of an enclosing foreach loop). A trigger value, a saved',
-    'result or a collected list the text merely alludes to ("reply to the message", "use the',
-    'ticket found earlier") is NOT sent — put the var segment in, in the instruction, the',
-    'guidance, or the branch/loop condition that needs it.',
-  ].join(' ');
-
-  /**
-   * ONE worked example: a gated step retried with the person's feedback.
-   *
-   * The steps model is a forward-only tree — there is no backward jump —
-   * so "ask again with what they said" is not a construct on the gate
-   * itself, it is a {kind:"loop", mode:"until"} wrapping the gated step,
-   * exiting once approval.outcome reads "approved". Without a worked
-   * example, what came back was a step reaching for onNotApproved to
-   * point BACK at an earlier node — the one shape the tree cannot express.
-   */
-  const GATE_EXAMPLE = [
-    "Example of a gated step retried with the person's feedback, no backward jump needed:",
-    JSON.stringify({
-      id: '<uuid>',
-      kind: 'loop',
-      name: 'Post the update, retrying on feedback',
-      mode: 'until',
-      condition: [{ t: 'text', v: 'approval.outcome is "approved"' }],
-      maxIterations: 3,
-      steps: [
-        {
-          id: '<uuid>',
-          name: 'Post the comment',
-          instruction: [
-            {
-              t: 'text',
-              v: 'Post the drafted update as a comment. If approval.comment is set, this is a retry — revise the draft to address it first.',
-            },
-          ],
-          tool: 'jira_add_comment',
-          maxAttempts: 1,
-          failureHandling: [],
-          needsApproval: true,
-          approvalTimeoutHours: 24,
-        },
-      ],
-    }),
-    'The loop reruns the gated step until approval.outcome reads "approved" or the round cap',
-    "is hit; a denial's approval.comment lands in scope for the NEXT round's instruction, so",
-    'the model can act on the feedback without any node pointing backward.',
-  ].join(' ');
-
-  const STEPS_DESCRIPTION = [
-    `The full steps document: {version:${CURRENT_STEPS_VERSION}, steps:[node,...]} — e.g. the`,
-    '`steps` value from agent_get. Array order is execution order.',
-    `At most ${MAX_STEPS} steps by default (the org may allow more).`,
-    STEP_NODE_GRAMMAR,
-    GATE_EXAMPLE,
-  ].join(' ');
-
-  /**
    * The trigger grammar, written out because a caller here has nowhere else
    * to read it: drafts are `unknown` to zod (the shapes are a discriminated
    * union zod's JSON Schema projection would flatten into noise), and the
@@ -2247,26 +2049,58 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     TRIGGER_DRAFT_GRAMMAR,
   ].join(' ');
 
+  /**
+   * What `instructions` should look like, from the same section list the
+   * builder's editor and the drafting prompt use — so an instruction
+   * written over MCP reads like one written anywhere else.
+   */
+  const INSTRUCTIONS_DESCRIPTION = [
+    "The agent's instructions, as Markdown — what it should achieve and how; it works out the",
+    'calls itself. Write them under these headings, in order:',
+    ...INSTRUCTION_SECTIONS.map((section) => `"## ${section.heading}" — ${section.asks}`),
+    'Name tools by their exact names where they fit, and the identifiers the agent needs',
+    '(projects, channels, recipients). Name the values a run is handed (trigger.*, user.*,',
+    `today) where it should use them. At most ${MAX_INSTRUCTIONS_CHARS.toLocaleString('en-US')}`,
+    'characters. The agent never makes a change itself — describe the changes it should',
+    'propose and what each must contain; they are staged for acceptance.',
+  ].join(' ');
+
+  const TOOLS_DESCRIPTION = [
+    'The tools the agent may use, by exact name from agent_list_tools — reads it calls',
+    'directly, acts it stages for acceptance. Every tool the instructions rely on and nothing',
+    `else; at most ${MAX_AGENT_TOOLS}. Each is described to the model on every call, so a long`,
+    'list of unused tools costs tokens every turn.',
+  ].join(' ');
+
   const definitionSchema = {
     name: z.string().min(1).max(200).describe('The agent name'),
-    steps: z.record(z.string(), z.unknown()).describe(STEPS_DESCRIPTION),
+    instructions: z.string().min(1).max(MAX_INSTRUCTIONS_CHARS).describe(INSTRUCTIONS_DESCRIPTION),
+    tools: z.array(z.string()).max(MAX_AGENT_TOOLS).optional().describe(TOOLS_DESCRIPTION),
     triggers: z.array(z.unknown()).optional().describe(TRIGGERS_DESCRIPTION),
     llmModelId: z.string().optional().describe('Model config id; default the org default'),
     guardrails: z
       .string()
       .max(1_000_000)
       .optional()
-      .describe('Standing instructions injected into every model call of every run'),
-    blockedTools: z
-      .array(z.string())
-      .optional()
-      .describe('Act tools the engine must refuse for this agent, by name from agent_list_tools'),
+      .describe(
+        'Standing rules injected into every model call of every run; binding over the ' +
+          'instructions where they conflict'
+      ),
     canAskQuestions: z
       .boolean()
       .optional()
       .describe(
-        'Default false. When true, every step gains the free ask_person tool — see the ' +
-          'agent-native-capabilities note above steps.'
+        'Default false. When true, the agent gains the free ask_person call — see ' +
+          'agent_list_tools for how agents work.'
+      ),
+    autoAcceptActions: z
+      .boolean()
+      .optional()
+      .describe(
+        "Default false. When true, the agent's staged changes are accepted without a person " +
+          "wherever the org's policy allows (by default not on runs an event or webhook " +
+          'started) — never for the fixed high-risk tools (sending mail, merging, deleting or ' +
+          'sharing documents, directory writes).'
       ),
     confirm: z
       .boolean()
@@ -2274,7 +2108,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       .describe('Without true: validate and report only, persist nothing'),
   };
 
-  /** The wire body agent_create/agent_update share, via the routes' parser. */
+  /** The wire body agent_create/agent_update/agent_patch share, via the routes' parser. */
   function parseDefinition(args: Record<string, unknown>, enabled: boolean) {
     // Bare TriggerDraft entries are wrapped to the routes' {draft, enabled}
     // shape; entries already in that shape pass through.
@@ -2287,13 +2121,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       : [];
     return parseAgentPayload({
       name: args.name,
-      steps: args.steps,
+      instructions: args.instructions,
+      tools: Array.isArray(args.tools) ? args.tools : [],
       triggers,
       enabled,
       llmModelId: typeof args.llmModelId === 'string' ? args.llmModelId : null,
       guardrails: typeof args.guardrails === 'string' ? args.guardrails : null,
-      blockedTools: Array.isArray(args.blockedTools) ? args.blockedTools : [],
       canAskQuestions: args.canAskQuestions === true,
+      autoAcceptActions: args.autoAcceptActions === true,
     });
   }
 
@@ -2318,39 +2153,32 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     ].join('\n');
   }
 
-  /**
-   * The builder's lint, for an author with no builder: prose leaning on a
-   * value the node does not chip. Never a refusal — the definition is
-   * saved as given — but the surest sign a step will run without the
-   * ticket or message it talks about. Followed by which steps the org's
-   * act-approval policy will pause (policyLines), for the same reason: an
-   * author who did not set needsApproval should still know the run will
-   * stop and wait there.
-   */
-  async function hintLines(draft: {
-    steps: AgentStepsDoc;
-    triggers: TriggerDraft[];
-  }): Promise<string[]> {
-    const hints = lintAgentDraft(draft);
-    const lint =
-      hints.length === 0
-        ? []
-        : [
-            '',
-            'Worth a look (a node is only given the variables its segments name):',
-            ...hints.map((hint) => `- ${hint.path}: ${hint.message}`),
-          ];
-    return [...lint, ...(await policyLines(draft.steps))];
+  /** What a save would leave: the instructions, the tools, the guardrails. */
+  function definitionLines(normalized: {
+    instructions: string;
+    tools: string[];
+    guardrails: string | null;
+  }): string[] {
+    return [
+      'Instructions:',
+      instructionsOf(normalized.instructions),
+      '',
+      'Tools:',
+      ...toolListLines(normalized.tools),
+      ...(normalized.guardrails ? ['', 'Guardrails:', normalized.guardrails] : []),
+    ];
   }
 
   /**
-   * The steps the org's act-approval policy (or the fixed high-risk list)
-   * will pause for a person, beyond the author's own gates — so the reply
-   * to a save says where the run will stop and wait. Best effort: the
-   * catalog's read-or-act kind and the org setting are read here, and a
-   * failure to read either says nothing rather than refusing the save.
+   * Where the agent's changes will wait for a person — so the reply to a
+   * save says it before the first run does. Best effort: the catalog's
+   * read-or-act kind and the org setting are read here, and a failure to
+   * read either says nothing rather than refusing the save.
    */
-  async function policyLines(steps: AgentStepsDoc): Promise<string[]> {
+  async function hintLines(draft: {
+    tools: string[];
+    autoAcceptActions: boolean;
+  }): Promise<string[]> {
     if (!context.subject) return [];
     let policy: ActApprovalPolicy = DEFAULT_ORG_SETTINGS.agentActStepsRequireApproval;
     let kinds: Map<string, 'read' | 'act'>;
@@ -2364,25 +2192,31 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     } catch {
       return [];
     }
-    const always: string[] = [];
-    const byPolicy: string[] = [];
-    for (const step of flattenActionSteps(steps.steps)) {
-      if (!step.tool || step.needsApproval) continue;
-      const label = `"${step.name}" (${step.tool})`;
-      if (isAlwaysApprovalTool(step.tool)) always.push(label);
-      else if (policy !== 'off' && kinds.get(step.tool) === 'act') byPolicy.push(label);
+    const acts = draft.tools.filter((tool) => kinds.get(tool) !== 'read');
+    if (acts.length === 0) {
+      return ['', 'This agent has no act tools: it can read and report, but stage no changes.'];
     }
-    if (always.length === 0 && byPolicy.length === 0) return [];
-    const when =
-      policy === 'all'
-        ? 'on every run'
-        : 'on runs started by an event or webhook (not when run by hand or on a schedule)';
-    return [
+    const highRisk = acts.filter(isAlwaysApprovalTool);
+    const lines = [
       '',
-      'Approval the org requires (beyond any needsApproval you set — the run parks behind a card there):',
-      ...always.map((label) => `- ${label}: always pauses for approval, whatever the org policy.`),
-      ...byPolicy.map((label) => `- ${label}: pauses for approval ${when}.`),
+      `Changes it can stage (accepted before anything happens): ${acts.join(', ')}.`,
     ];
+    if (!draft.autoAcceptActions) {
+      lines.push('Every batch it stages waits for you to accept it.');
+    } else {
+      lines.push(
+        policy === 'all'
+          ? "Auto-accept is on, but the org's policy has a person accept every batch anyway."
+          : policy === 'externally_triggered'
+            ? 'Batches are accepted automatically on runs started by hand or on a schedule; ' +
+              'runs an event or webhook started still wait for you.'
+            : 'Batches are accepted automatically.'
+      );
+      if (highRisk.length > 0) {
+        lines.push(`A batch holding ${highRisk.join(', ')} always waits for you.`);
+      }
+    }
+    return lines;
   }
 
   server.registerTool(
@@ -2390,14 +2224,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Create an agent (confirm-gated)',
       description:
-        'Create a new agent of yours from a full definition — authored directly, or taken ' +
-        "from another agent's agent_get JSON or exported markdown. Authoring one directly " +
-        'starts at agent_list_tools: it names every skill a step may use and the failure ' +
-        'codes that step can handle, which is the catalog the web builder shows in a picker ' +
-        'and nothing else here would tell you. Without ' +
-        'confirm:true this is a DRY RUN — it validates and ' +
-        'shows what would be created, persisting nothing. The agent is always created ' +
-        'DISABLED: turning it on happens in the builder, where the review panel is.',
+        'Create a new agent of yours from a full definition — instructions plus a tool ' +
+        "selection — authored directly, or taken from another agent's agent_get JSON or " +
+        'exported markdown. Authoring one directly starts at agent_list_tools: it names every ' +
+        'skill an agent may be given, whether each reads or changes, and how agents work ' +
+        'here — the catalog the web builder shows in a picker and nothing else here would ' +
+        'tell you. Without confirm:true this is a DRY RUN — it validates and shows what would ' +
+        'be created, persisting nothing. The agent is always created DISABLED: turning it on ' +
+        'happens in the builder, where the review panel is.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object(definitionSchema),
     },
@@ -2424,10 +2258,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         return textResult(
           [
             `Valid. This would create "${result.normalized.name}" (disabled) with:`,
-            outlineOf(result.normalized.steps),
-            ...(result.normalized.guardrails
-              ? ['', 'Guardrails:', result.normalized.guardrails]
-              : []),
+            ...definitionLines(result.normalized),
             ...(await hintLines(result.normalized)),
             '',
             'Nothing was saved. Call again with confirm:true to create it.',
@@ -2457,163 +2288,42 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   );
 
   server.registerTool(
-    'agent_patch_steps',
-    {
-      title: 'Agents · Act — Change some steps of an agent (confirm-gated)',
-      description:
-        "Change PART of one of your agents' (or one shared with you) steps without resending " +
-        'the whole definition — ' +
-        'insert a step between two others, replace one, remove one, or move one. Prefer this ' +
-        'over agent_update for anything short of a rewrite: agent_update requires echoing ' +
-        'every untouched step back verbatim, and one transcription slip silently rewrites a ' +
-        'step nobody meant to touch. Positions are given as after/before another step id ' +
-        '(from agent_get), or intoPath / intoContainer / atTop for a list. Operations apply ' +
-        'in order and each sees the last, so you can insert a loop and move a step into it in ' +
-        'one call; if any operation cannot be applied, NONE are. Without confirm:true this is ' +
-        'a DRY RUN. Ids are never changed here — run history, retry settings and trigger ' +
-        'firings anchor to them.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        agentId: z.string().min(1).describe('From agent_list'),
-        operations: z
-          .array(
-            z.object({
-              op: z.enum(['insert', 'replace', 'remove', 'move']),
-              id: z
-                .string()
-                .optional()
-                .describe('The step to replace, remove or move (not used by insert)'),
-              node: z
-                .unknown()
-                .optional()
-                .describe(
-                  'The step node for insert/replace — the same shape agent_get returns. ' +
-                    'A new step needs a fresh uuid; a replacement keeps the id it ' +
-                    'replaces. ' +
-                    STEP_NODE_GRAMMAR +
-                    ' ' +
-                    GATE_EXAMPLE
-                ),
-              at: z
-                .object({
-                  after: z
-                    .string()
-                    .optional()
-                    .describe("Immediately after this step, in that step's own list"),
-                  before: z
-                    .string()
-                    .optional()
-                    .describe("Immediately before this step, in that step's own list"),
-                  intoPath: z
-                    .string()
-                    .optional()
-                    .describe('Into this branch path (appended unless index is given)'),
-                  intoContainer: z
-                    .string()
-                    .optional()
-                    .describe('Into this loop or group (appended unless index is given)'),
-                  atTop: z.boolean().optional().describe('Onto the top-level list'),
-                  index: z.number().int().min(0).optional(),
-                })
-                .optional()
-                .describe('Where the step goes, for insert and move. Exactly one anchor.'),
-            })
-          )
-          .min(1)
-          .describe('Applied in order; all or nothing'),
-        confirm: z.boolean().optional().describe('Without true: validate and report only'),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      if (!context.subject) return errText(NO_SUBJECT);
-      if (context.agent) return errText(RUN_REFUSAL);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const access = await agentAccessFor(dbResult.val, context, args.agentId);
-      if (!access) return errText(NOT_FOUND);
-      const agent = access.agent;
-
-      const operations = toPatchOperations(args.operations);
-      if ('error' in operations) return errText(operations.error);
-
-      const patched = applyStepPatch(agent.steps, operations.val);
-      if (!patched.ok) return errText(patched.error);
-
-      // The patched document goes through the SAME save path as a full
-      // update, so validation, clamping and the format re-stamp are
-      // identical — a patch cannot reach a state agent_update could not.
-      const dryRun = args.confirm !== true;
-      // Everything except the steps is the agent as stored: a patch changes
-      // steps and nothing else, and it goes through the SAME parse and save
-      // path as a full update so validation and clamping are identical.
-      const parsed = parseDefinition(
-        {
-          name: agent.name,
-          steps: patched.steps,
-          triggers: agent.triggers,
-          llmModelId: agent.llmModelId,
-          guardrails: agent.guardrails,
-          blockedTools: agent.blockedTools,
-        },
-        agent.enabled
-      );
-      if ('error' in parsed) return errText(parsed.error);
-
-      const result = await saveAgent(dbResult.val, context.subject, parsed, {
-        agentId: agent.id,
-        dryRun,
-        ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),
-      });
-      if (result.outcome === 'not-found') return errText(NOT_FOUND);
-      if (result.outcome === 'invalid') return errText(issueLines(result.issues));
-      if (result.outcome === 'valid-dry-run') {
-        return textResult(
-          [
-            `Valid. ${operations.val.length} operation(s) would leave "${result.normalized.name}" as:`,
-            outlineOf(result.normalized.steps),
-            ...(await hintLines(result.normalized)),
-            '',
-            'Nothing was saved. Call again with confirm:true to apply it.',
-          ].join('\n')
-        );
-      }
-
-      logger.info('agent_patch_steps applied', {
-        component: 'mcp/tool',
-        agentId: agent.id,
-      });
-      return textResult(
-        [
-          `Updated "${result.normalized.name}":`,
-          outlineOf(result.normalized.steps),
-          ...(await hintLines(result.normalized)),
-        ].join('\n')
-      );
-    }
-  );
-
-  server.registerTool(
     'agent_patch',
     {
-      title: 'Agents · Act — Change one part of an agent (confirm-gated)',
+      title: 'Agents · Act — Change part of an agent (confirm-gated)',
       description:
-        'Change PART of one of your agents (or one shared with you) WITHOUT resending its ' +
-        'steps — its name, its ' +
-        'triggers (one at a time, by id), its guardrails, its blocked skills, or its model. ' +
-        'ONLY the fields you send change; everything you leave out is kept exactly as ' +
-        'stored. Prefer this over agent_update for anything short of a rewrite: agent_update ' +
-        'REPLACES the whole definition, so it makes you echo every step and every trigger ' +
-        'back verbatim, and a trigger missing from that echo is DELETED along with its ' +
-        'firing history, its next run time and an API key that can never be shown again. ' +
-        'To change STEPS use agent_patch_steps. Trigger ids come from agent_get; a trigger ' +
-        'you do not name here is left untouched, ids and all. Without confirm:true this is ' +
-        'a DRY RUN — it validates and shows what would change, persisting nothing. This ' +
-        'tool never TURNS ON an agent (the builder is the consent surface for that): an off ' +
-        'agent stays off, an already-enabled one stays on unless keepEnabled:false.',
+        'Change PART of one of your agents (or one shared with you) WITHOUT resending all of ' +
+        'it — its name, its instructions (sent whole), tools to add or remove, its triggers ' +
+        '(one at a time, by id), its guardrails, whether it may ask you questions, whether it ' +
+        'auto-accepts its staged changes, or its model. ONLY the fields you send change; ' +
+        'everything you leave out is kept exactly as stored. Prefer this over agent_update ' +
+        'for anything short of a rewrite: agent_update REPLACES the whole definition, so it ' +
+        'makes you echo every trigger back verbatim, and a trigger missing from that echo is ' +
+        'DELETED along with its firing history, its next run time and an API key that can ' +
+        'never be shown again. Trigger ids come from agent_get; a trigger you do not name ' +
+        'here is left untouched, ids and all. Without confirm:true this is a DRY RUN — it ' +
+        'validates and shows what would change, persisting nothing. This tool never TURNS ON ' +
+        'an agent (the builder is the consent surface for that): an off agent stays off, an ' +
+        'already-enabled one stays on unless keepEnabled:false.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
         name: z.string().min(1).max(200).optional().describe('Rename the agent'),
+        instructions: z
+          .string()
+          .min(1)
+          .max(MAX_INSTRUCTIONS_CHARS)
+          .optional()
+          .describe(
+            "Replaces the instructions WHOLE — start from agent_get's and change only what " +
+              'the edit needs. ' +
+              INSTRUCTIONS_DESCRIPTION
+          ),
+        addTools: z
+          .array(z.string())
+          .optional()
+          .describe('Tools to give the agent, by exact name from agent_list_tools'),
+        removeTools: z.array(z.string()).optional().describe('Tools to take away, by name'),
         triggers: z
           .array(
             z.object({
@@ -2658,19 +2368,18 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           .nullable()
           .optional()
           .describe(
-            'Standing instructions injected into every model call of every run; null or "" ' +
-              'to drop them'
+            'Standing rules injected into every model call of every run; null or "" to drop them'
           ),
-        blockedTools: z
-          .array(z.string())
-          .optional()
-          .describe('Replaces the blocked-skill list outright; [] unblocks everything'),
         canAskQuestions: z
           .boolean()
           .optional()
+          .describe('Whether the agent may pause and ask you a question (ask_person)'),
+        autoAcceptActions: z
+          .boolean()
+          .optional()
           .describe(
-            'Default false. When true, every step gains the free ask_person tool — see the ' +
-              'agent-native-capabilities note above steps.'
+            "Whether its staged changes are accepted without a person where the org's policy " +
+              'allows (never for the fixed high-risk tools)'
           ),
         keepEnabled: z
           .boolean()
@@ -2703,15 +2412,37 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const given = (key: string) => key in args && args[key] !== undefined;
       const fields = [
         'name',
+        'instructions',
+        'addTools',
+        'removeTools',
         'triggers',
         'guardrails',
-        'blockedTools',
         'canAskQuestions',
+        'autoAcceptActions',
         'llmModelId',
       ];
       if (!fields.some(given) && args.keepEnabled === undefined) {
         return errText(`Nothing to change — send at least one of ${fields.join(', ')}.`);
       }
+
+      const names = (value: unknown): string[] =>
+        Array.isArray(value)
+          ? value.filter((entry): entry is string => typeof entry === 'string')
+          : [];
+      const removed = new Set(names(args.removeTools).map((tool) => tool.trim()));
+      const unknownRemovals = [...removed].filter((tool) => !agent.tools.includes(tool));
+      if (unknownRemovals.length > 0) {
+        return errText(
+          `This agent does not have ${unknownRemovals.join(', ')} — its tools are: ` +
+            `${agent.tools.join(', ') || 'none'}.`
+        );
+      }
+      const tools = [
+        ...agent.tools.filter((tool) => !removed.has(tool)),
+        ...names(args.addTools)
+          .map((tool) => tool.trim())
+          .filter((tool) => tool && !agent.tools.includes(tool)),
+      ];
 
       let triggers: TriggerPayload[] = agent.triggers.map((trigger) => ({
         id: trigger.id,
@@ -2730,17 +2461,20 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const enabled = agent.enabled && args.keepEnabled !== false;
       // Everything the caller left out is the agent as stored, and the whole
       // thing goes through the SAME parse and save path as a full update, so
-      // validation and clamping are identical — a patch cannot reach a state
-      // agent_update could not.
+      // validation is identical — a patch cannot reach a state agent_update
+      // could not.
       const parsed = parseDefinition(
         {
           name: given('name') ? args.name : agent.name,
-          steps: agent.steps,
+          instructions: given('instructions') ? args.instructions : agent.instructions,
+          tools,
           triggers,
           llmModelId: given('llmModelId') ? args.llmModelId : agent.llmModelId,
           guardrails: given('guardrails') ? args.guardrails : agent.guardrails,
-          blockedTools: given('blockedTools') ? args.blockedTools : agent.blockedTools,
           canAskQuestions: given('canAskQuestions') ? args.canAskQuestions : agent.canAskQuestions,
+          autoAcceptActions: given('autoAcceptActions')
+            ? args.autoAcceptActions
+            : agent.autoAcceptActions,
         },
         enabled
       );
@@ -2748,10 +2482,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       const changed = [
         ...(given('name') ? [`name → "${parsed.input.name}"`] : []),
+        ...(given('instructions') ? ['instructions'] : []),
+        ...(given('addTools') || given('removeTools') ? ['tools'] : []),
         ...(given('triggers') ? ['triggers'] : []),
         ...(given('guardrails') ? ['guardrails'] : []),
-        ...(given('blockedTools') ? ['blocked skills'] : []),
         ...(given('canAskQuestions') ? ['canAskQuestions'] : []),
+        ...(given('autoAcceptActions') ? ['autoAcceptActions'] : []),
         ...(given('llmModelId') ? ['model'] : []),
         ...(agent.enabled && !enabled ? ['turned off'] : []),
       ].join(', ');
@@ -2764,13 +2500,21 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       });
       if (result.outcome === 'not-found') return errText(NOT_FOUND);
       if (result.outcome === 'invalid') return errText(issueLines(result.issues));
+      const toolsChanged = given('addTools') || given('removeTools');
       if (result.outcome === 'valid-dry-run') {
         return textResult(
           [
             `Valid. This would change "${agent.name}": ${changed}.`,
+            ...(given('instructions')
+              ? ['', 'Instructions:', instructionsOf(result.normalized.instructions)]
+              : []),
+            ...(toolsChanged ? ['', 'Tools:', ...toolListLines(result.normalized.tools)] : []),
             ...triggerLines(triggers),
+            ...(toolsChanged || given('autoAcceptActions')
+              ? await hintLines(result.normalized)
+              : []),
             '',
-            `Its steps are untouched. It stays ${enabled ? 'ENABLED' : 'disabled'}. Nothing was saved. Call again with confirm:true to apply.`,
+            `It stays ${enabled ? 'ENABLED' : 'disabled'}. Nothing was saved. Call again with confirm:true to apply.`,
           ].join('\n')
         );
       }
@@ -2783,6 +2527,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         [
           `Updated "${result.normalized.name}" (${enabled ? 'still enabled' : 'disabled'}): ${changed}.`,
           ...triggerLines(triggers),
+          ...(toolsChanged || given('autoAcceptActions') ? await hintLines(result.normalized) : []),
           ...(result.apiKeys.length > 0
             ? [
                 '',
@@ -2800,23 +2545,20 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Update an agent (confirm-gated)',
       description:
-        "REPLACE one of your agents' (or one shared with you) definition (name, steps, " +
-        'triggers, guardrails, blocked skills) — the whole-document path, for a REWRITE. ' +
-        'FOR ANYTHING SHORT OF ONE, PATCH INSTEAD: agent_patch_steps changes steps by id, ' +
-        'agent_patch changes the name, a trigger, the guardrails, the blocked skills or the ' +
-        'model. This tool requires echoing everything untouched back verbatim, where one ' +
-        'slip silently rewrites a step nobody meant to touch and an omitted trigger is ' +
-        'deleted with its firing history and its API key. ' +
+        "REPLACE one of your agents' (or one shared with you) definition (name, instructions, " +
+        'tools, triggers, guardrails, switches) — the whole-document path, for a REWRITE. ' +
+        'FOR ANYTHING SHORT OF ONE, USE agent_patch, which changes only the fields you send. ' +
+        'This tool requires echoing everything untouched back verbatim, and an omitted ' +
+        'trigger is deleted with its firing history and its API key. ' +
         "If you do use this: start from the exact definition in agent_get's " +
         '```json renkei-agent block, change ONLY what the edit needs, and send the whole ' +
-        'definition back. Keep the ids of steps, branch paths, and triggers you are keeping ' +
-        'VERBATIM (run history, retry settings, and firings anchor to them); give brand-new ' +
-        'steps fresh UUIDs. Validation is deterministic and reports precise per-path issues; ' +
-        'the save also re-stamps the current steps format. Without confirm:true this is a ' +
-        'DRY RUN — it validates and shows what would change, persisting nothing. This tool ' +
-        'never TURNS ON an agent (the builder is the consent surface for that): an off agent ' +
-        'stays off, an already-enabled one stays on unless keepEnabled:false disables it. ' +
-        'Prose-to-steps drafting lives in the web builder.',
+        'definition back. Keep the ids of triggers you are keeping VERBATIM (their firings ' +
+        'and API keys anchor to them). Validation is deterministic and reports precise ' +
+        'per-field issues. Without confirm:true this is a DRY RUN — it validates and shows ' +
+        'what would change, persisting nothing. This tool never TURNS ON an agent (the ' +
+        'builder is the consent surface for that): an off agent stays off, an already-enabled ' +
+        'one stays on unless keepEnabled:false disables it. Prose-to-instructions drafting ' +
+        'lives in the web builder.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -2860,10 +2602,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         return textResult(
           [
             `Valid. This would rewrite "${agent.name}" to:`,
-            outlineOf(result.normalized.steps),
-            ...(result.normalized.guardrails
-              ? ['', 'Guardrails:', result.normalized.guardrails]
-              : []),
+            ...definitionLines(result.normalized),
             ...(await hintLines(result.normalized)),
             '',
             `It stays ${enabled ? 'ENABLED' : 'disabled'}. Nothing was saved. Call again with confirm:true to apply.`,

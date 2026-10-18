@@ -417,81 +417,6 @@ export async function getTokenUsageByModel(
   }));
 }
 
-export interface StepTokenUsage extends TokenUsage {
-  /** Null for spend outside any step — the optimizer's passes. */
-  stepId: string | null;
-  /**
-   * The step's current name from the agent's definition, or null when
-   * the id no longer exists there (a step since removed) — see
-   * `labelStepUsage`.
-   */
-  stepName: string | null;
-  /** The step's 1-based position in the definition's pre-order walk, or null with the name. */
-  stepNumber: number | null;
-  provider: string | null;
-  model: string | null;
-  /** Attempts that reached the model — one ledger row each. */
-  calls: UsageBuckets;
-}
-
-interface StepBucketRow extends ModelBucketRow {
-  step_id: string | null;
-  calls_today: string;
-  calls_yesterday: string;
-  calls_week: string;
-  calls_month: string;
-  calls_quarter: string;
-  calls_year: string;
-  calls_all_time: string;
-}
-
-/**
- * One agent's token spend per step and model — the drill-down under the
- * per-agent total, so the step that costs the most can be found without
- * opening its runs one by one. Grouped on `step_id`, which the engine
- * stamps on every attempt's ledger row; names are resolved afterwards
- * against the agent's CURRENT definition by `labelStepUsage`, so a step
- * renamed since keeps its history under its new name and a removed one
- * is still listed, unnamed.
- *
- * Content-free like the rest of this module: step ids and names come
- * from the definition, which the viewer can already see.
- */
-export async function getAgentTokenUsageByStep(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<Omit<StepTokenUsage, 'stepName' | 'stepNumber'>[]> {
-  const result = await sql<StepBucketRow>`
-    SELECT step_id, provider, model, ${TOKEN_BUCKET_COLUMNS},
-      COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) AS calls_today,
-      COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE - 1) AS calls_yesterday,
-      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)) AS calls_week,
-      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)) AS calls_month,
-      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)) AS calls_quarter,
-      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)) AS calls_year,
-      COUNT(*) AS calls_all_time
-    FROM llm_calls
-    WHERE agent_id = ${agentId}
-    GROUP BY step_id, provider, model
-    ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
-  `.execute(db);
-  return result.rows.map((row) => ({
-    stepId: row.step_id,
-    provider: row.provider,
-    model: row.model,
-    calls: {
-      today: Number(row.calls_today ?? 0),
-      yesterday: Number(row.calls_yesterday ?? 0),
-      week: Number(row.calls_week ?? 0),
-      month: Number(row.calls_month ?? 0),
-      quarter: Number(row.calls_quarter ?? 0),
-      year: Number(row.calls_year ?? 0),
-      allTime: Number(row.calls_all_time ?? 0),
-    },
-    ...usageOf(row),
-  }));
-}
-
 /**
  * One run's tokens: plain totals, no calendar buckets — a run is a point
  * in time, so "this week" is a question about the agent, not the run.
@@ -501,7 +426,7 @@ export interface RunTokenTotals {
   output: number;
   cacheRead: number;
   cacheWrite: number;
-  /** Attempts that reached the model — one ledger row each. */
+  /** Model turns — one ledger row each. */
   calls: number;
 }
 
@@ -561,27 +486,19 @@ export async function getTokenUsageByRun(
   );
 }
 
-export interface RunStepTokenUsage extends RunTokenTotals {
-  /** Null for a ledger row stamped with no step — never expected of a run's, but tolerated. */
-  stepId: string | null;
+export interface RunModelTokenUsage extends RunTokenTotals {
   provider: string | null;
   model: string | null;
 }
 
-/**
- * One run's token spend per step and model — the run-level twin of
- * `getAgentTokenUsageByStep`, ordered by spend. Step names are resolved
- * afterwards against the run's OWN steps snapshot (what actually ran),
- * through `labelStepUsage`, rather than the agent's current definition.
- */
+/** One run's token spend per model, ordered by spend. */
 export async function getRunTokenUsage(
   db: Kysely<DB>,
   runId: string
-): Promise<RunStepTokenUsage[]> {
+): Promise<RunModelTokenUsage[]> {
   const rows = await db
     .selectFrom('llm_calls')
     .select(({ fn }) => [
-      'step_id',
       'provider',
       'model',
       fn.sum<string>('input_tokens').as('input_tokens'),
@@ -591,11 +508,10 @@ export async function getRunTokenUsage(
       fn.countAll<string>().as('calls'),
     ])
     .where('run_id', '=', runId)
-    .groupBy(['step_id', 'provider', 'model'])
+    .groupBy(['provider', 'model'])
     .orderBy(sql`SUM(input_tokens) + SUM(output_tokens)`, 'desc')
     .execute();
   return rows.map((row) => ({
-    stepId: row.step_id,
     provider: row.provider,
     model: row.model,
     ...totalsOf(row),

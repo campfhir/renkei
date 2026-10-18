@@ -9,7 +9,6 @@
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({ hasActiveGrant: jest.fn(async () => false) }));
-jest.mock('@renkei/agents', () => ({ isCurrentStepsDoc: jest.fn(() => true) }));
 jest.mock('@renkei/agents/runs', () => ({
   createAgentRun: jest.fn(),
   findInProgressRun: jest.fn(),
@@ -33,7 +32,8 @@ const AGENT_ROW = {
   id: AGENT_ID,
   owner_subject: 'alice',
   name: 'Portfolio Updater',
-  steps: { version: 1, steps: [] },
+  instructions: '## Goal\n\nGo.',
+  tools: [],
   llm_model_id: null,
   enabled: true,
 };

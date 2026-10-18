@@ -1,13 +1,15 @@
 /**
  * The description-regeneration rules of the one save path: a save that
- * changes nothing the author can see (the list's on/off toggle, a stored
- * doc merely re-normalized to the current version) must not spend a model
- * call; an explicit refresh or a real content change must.
+ * changes nothing the author can see (the list's on/off toggle, stored
+ * instructions merely re-normalized) must not spend a model call; an
+ * explicit refresh or a real content change must. And the save validates
+ * the tool selection against the owner's own projection.
  */
 
 jest.mock('next/server', () => ({ after: (task: () => unknown) => void task() }));
-jest.mock('@renkei/settings', () => ({ getOrgSettings: jest.fn(async () => ({ ok: false })) }));
-jest.mock('@/lib/mcp-tools/tool-catalog', () => ({ listAvailableTools: jest.fn(async () => []) }));
+jest.mock('@/lib/mcp-tools/tool-catalog', () => ({
+  listAvailableTools: jest.fn(async () => [{ name: 'jira_search_issues', appOnly: false }]),
+}));
 jest.mock('@/lib/agents/store', () => ({
   getAgent: jest.fn(),
   createAgent: jest.fn(),
@@ -17,7 +19,6 @@ jest.mock('@/lib/agents/describe', () => ({ generateAgentDescription: jest.fn(as
 jest.mock('@/lib/agents/edit-notification', () => ({ notifyAgentEdited: jest.fn() }));
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 
-import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { AgentDraft } from '@renkei/agents';
@@ -29,26 +30,9 @@ const storeMock = jest.requireMock<{ getAgent: jest.Mock; updateAgent: jest.Mock
 const describeMock = jest.requireMock<{ generateAgentDescription: jest.Mock }>(
   '@/lib/agents/describe'
 );
-const settingsMock = jest.requireMock<{ getOrgSettings: jest.Mock }>('@renkei/settings');
 
 // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
 const db = {} as Kysely<DB>;
-
-const stepId = randomUUID();
-/** Stored in an OLDER format on purpose: version 1, pre-collapse. */
-const storedSteps = {
-  version: 1,
-  steps: [
-    {
-      id: stepId,
-      name: 'Think',
-      instruction: [{ t: 'text', v: 'Think it through.' }],
-      tool: null,
-      maxAttempts: 1,
-      failureHandling: [],
-    },
-  ],
-};
 
 const existing = {
   id: 'agent-1',
@@ -56,26 +40,29 @@ const existing = {
   description: 'Thinks.',
   descriptionStatus: 'failed',
   reviewNotes: null,
-  steps: storedSteps,
+  // Stored with trailing whitespace on purpose: normalization trims it,
+  // and that alone must not read as an edit.
+  instructions: '## Goal\n\nThink it through.\n\n',
+  tools: ['jira_search_issues'],
   llmModelId: null,
   enabled: true,
   guardrails: null,
-  blockedTools: [],
   canAskQuestions: false,
+  autoAcceptActions: false,
   triggers: [],
 };
 
 function parsedWith(overrides: Partial<AgentDraft> = {}, refreshDescription = false) {
   const draft: AgentDraft = {
     name: 'Thinker',
-    // The toggle round-trips the STORED doc; JSON round-trip mimics the wire.
-    steps: JSON.parse(JSON.stringify(storedSteps)),
+    instructions: existing.instructions,
+    tools: [...existing.tools],
     triggers: [],
     enabled: false,
     llmModelId: null,
     guardrails: null,
-    blockedTools: [],
     canAskQuestions: false,
+    autoAcceptActions: false,
     ...overrides,
   };
   return {
@@ -91,7 +78,7 @@ beforeEach(() => {
 });
 
 describe('saveAgent description regeneration', () => {
-  it('a toggle-shaped save never re-describes — version renormalization included', async () => {
+  it('a toggle-shaped save never re-describes — renormalization included', async () => {
     const result = await saveAgent(db, 'auth0|alice', parsedWith(), {
       agentId: 'agent-1',
     });
@@ -114,71 +101,28 @@ describe('saveAgent description regeneration', () => {
   });
 
   it('a real content change re-describes', async () => {
-    const changed = JSON.parse(JSON.stringify(storedSteps));
-    changed.steps[0].instruction = [{ t: 'text', v: 'Think harder.' }];
-    await saveAgent(db, 'auth0|alice', parsedWith({ steps: changed }), {
+    await saveAgent(db, 'auth0|alice', parsedWith({ instructions: '## Goal\n\nThink harder.' }), {
+      agentId: 'agent-1',
+    });
+    expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);
+  });
+
+  it('turning auto-accept on is a change worth re-describing', async () => {
+    await saveAgent(db, 'auth0|alice', parsedWith({ autoAcceptActions: true }), {
       agentId: 'agent-1',
     });
     expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('the org step ceiling', () => {
-  /** The parsed payload for an agent of `count` trivial steps. */
-  function parsedOf(count: number) {
-    return parsedWith({
-      name: 'Long one',
-      steps: {
-        version: 1,
-        steps: Array.from({ length: count }, () => ({
-          id: randomUUID(),
-          name: 'Think',
-          instruction: [{ t: 'text', v: 'Think it through.' }],
-          tool: null,
-          maxAttempts: 1,
-          failureHandling: [],
-        })),
-      },
+describe('validation against the owner’s tools', () => {
+  it('refuses a tool the owner does not have', async () => {
+    const result = await saveAgent(db, 'auth0|alice', parsedWith({ tools: ['gone_tool'] }), {
+      agentId: 'agent-1',
     });
-  }
-
-  afterEach(() => {
-    settingsMock.getOrgSettings.mockImplementation(async () => ({ ok: false }));
-  });
-
-  it('refuses past the built-in default when the org has no setting', async () => {
-    settingsMock.getOrgSettings.mockImplementation(async () => ({ ok: false }));
-    const result = await saveAgent(db, 'owner', parsedOf(25), { dryRun: true });
-
-    expect(result.outcome).toBe('invalid');
-    expect(result.outcome === 'invalid' && result.issues.map((i) => i.message)).toContain(
-      'Keep the agent to 20 steps or fewer.'
-    );
-  });
-
-  it('allows what a RAISED org ceiling allows', async () => {
-    // The bug this pins was the builder validating against the constant while
-    // the save path read the setting; every MCP write (create, update,
-    // patch_steps) goes through here, so this is the guarantee they inherit.
-    settingsMock.getOrgSettings.mockImplementation(async () => ({
-      ok: true,
-      val: { agentMaxSteps: 30, agentMaxStepAttempts: 10, agentApprovalMaxWaitDays: 7 },
-    }));
-    const result = await saveAgent(db, 'owner', parsedOf(25), { dryRun: true });
-
-    expect(result.outcome).toBe('valid-dry-run');
-  });
-
-  it('still refuses past a raised ceiling', async () => {
-    settingsMock.getOrgSettings.mockImplementation(async () => ({
-      ok: true,
-      val: { agentMaxSteps: 30, agentMaxStepAttempts: 10, agentApprovalMaxWaitDays: 7 },
-    }));
-    const result = await saveAgent(db, 'owner', parsedOf(31), { dryRun: true });
-
-    expect(result.outcome).toBe('invalid');
-    expect(result.outcome === 'invalid' && result.issues.map((i) => i.message)).toContain(
-      'Keep the agent to 30 steps or fewer.'
-    );
+    expect(result).toEqual({
+      outcome: 'invalid',
+      issues: [expect.objectContaining({ path: 'tools.0' })],
+    });
   });
 });

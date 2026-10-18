@@ -1,103 +1,51 @@
 /**
- * The export's contract: its step sections are byte-identical to what the
- * engine sends the model — proven by rendering the same step through the
- * shared builder and comparing against the fenced block, not by matching
+ * The export's contract: its system prompt section is byte-identical to
+ * what the engine sends the model — proven by rendering through the shared
+ * builder and comparing against the fenced block, not by matching
  * hand-copied phrases.
  */
 
-import { randomUUID } from 'node:crypto';
-import type { ActionStep, AgentStepsDoc } from '@renkei/agents';
-import {
-  NORMAL_TOOL_CAP,
-  SYSTEM_PROMPT,
-  buildAttemptMessages,
-  outcomeGuideFor,
-} from '@renkei/agents/step-prompts';
-import { agentMarkdown } from './export-markdown';
+import { runSystemPrompt } from '@renkei/agents/run-prompts';
+import { agentMarkdown, type AgentExportInput } from './export-markdown';
 
-const step: ActionStep = {
-  id: randomUUID(),
-  name: 'Find the statement',
-  instruction: [
-    { t: 'text', v: 'Find the statement for ' },
-    { t: 'var', name: 'trigger.month' },
-    { t: 'text', v: ' with ' },
-    { t: 'tool', name: 'jira_search_issues' },
-  ],
-  tool: 'jira_search_issues',
-  maxAttempts: 3,
-  saveAs: 'the statement',
-  failureHandling: [
-    {
-      outcome: 'no-results',
-      action: 'retry',
-      guidance: [{ t: 'text', v: 'Broaden the search terms.' }],
-      exhausted: 'continue',
-    },
-    {
-      outcome: 'poor-match',
-      action: 'continue',
-      when: 'results exist but none match the description closely enough',
-      guidance: [{ t: 'text', v: 'Note the closest candidates and move on.' }],
-    },
-  ],
+const agent: AgentExportInput = {
+  name: 'Statement finder',
+  description: 'Finds statements.',
+  enabled: true,
+  instructions: '## Goal\n\nFind the month’s statement and file it.',
+  tools: ['jira_search_issues', 'jira_add_comment'],
+  triggers: [],
+  guardrails: 'Never invent numbers.',
+  canAskQuestions: true,
+  autoAcceptActions: false,
+  limits: { minutes: 30, toolCalls: 150 },
 };
 
-const doc: AgentStepsDoc = { version: 8, steps: [step] };
-
-function exported(guardrails: string | null = 'Never invent numbers.'): string {
-  return agentMarkdown({
-    name: 'Statement finder',
-    description: 'Finds statements.',
-    enabled: true,
-    steps: doc,
-    triggers: [],
-    guardrails,
-    blockedTools: [],
-  });
-}
-
 describe('agentMarkdown', () => {
-  it('embeds the step prompt byte-identical to the engine builder output', () => {
-    const vars = { 'trigger.month': '{{trigger.month}}' };
-    const guide = outcomeGuideFor(step, vars);
-    const runtime = buildAttemptMessages({
-      step,
-      attempt: 1,
-      variables: vars,
-      toolBudget: NORMAL_TOOL_CAP,
-      ...(guide ? { outcomeGuide: guide } : {}),
-    }).messages[0].content[0];
-    if (runtime?.type !== 'text') throw new Error('expected a text block');
-
-    expect(exported()).toContain('```\n' + runtime.text + '\n```');
-  });
-
-  it('carries the runtime rules the reader needs to trust it', () => {
-    const markdown = exported();
-    // The step system prompt, verbatim, with the guardrails framing.
-    expect(markdown).toContain(SYSTEM_PROMPT);
-    expect(markdown).toContain('guardrails are shown below');
-    // The guardrails block inside the system prompt, exactly as injected.
-    expect(markdown).toContain('Standing guardrails from this agent’s owner');
-    // The custom condition steers via its applies-when text…
-    expect(markdown).toContain(
-      '"poor-match" (applies when: results exist but none match the description closely enough)'
+  it('embeds the system prompt byte-identical to the engine builder output', () => {
+    const runtime = runSystemPrompt(
+      agent.limits,
+      { canAsk: true },
+      {
+        agentName: agent.name,
+        instructions: agent.instructions,
+        guardrailsText: 'Never invent numbers.',
+      }
     );
-    // …with the author's non-retry note, and WITHOUT attempt-1 retry text
-    // in the PROMPT sections (the definition block at the end carries it as
-    // data, which is the round trip's job, not the prompt's).
-    expect(markdown).toContain('the author notes: Note the closest candidates and move on.');
-    const promptSections = markdown.slice(0, markdown.indexOf('## Definition'));
-    expect(promptSections).not.toContain('Broaden the search terms.');
-    // Variables are placeholders, stated up front.
-    expect(markdown).toContain('{{trigger.month}}');
-    expect(markdown).toContain(`Tool budget: at most ${NORMAL_TOOL_CAP} tool call(s)`);
+    expect(agentMarkdown(agent)).toContain('````\n' + runtime + '\n````');
   });
 
-  it('drops the guardrails framing when the agent has none', () => {
-    const markdown = exported(null);
-    expect(markdown).toContain(SYSTEM_PROMPT);
-    expect(markdown).not.toContain('Standing guardrails');
+  it('states the limits, the tools and how actions are accepted', () => {
+    const markdown = agentMarkdown(agent);
+    expect(markdown).toContain('150 tool calls, 30 minutes of active time');
+    expect(markdown).toContain('- jira_add_comment');
+    expect(markdown).toContain('Staged actions: accepted by the owner');
+    expect(agentMarkdown({ ...agent, autoAcceptActions: true })).toContain(
+      'accepted automatically where the organization allows it'
+    );
+  });
+
+  it('drops the guardrails block when the agent has none', () => {
+    expect(agentMarkdown({ ...agent, guardrails: null })).not.toContain('Standing guardrails');
   });
 });
