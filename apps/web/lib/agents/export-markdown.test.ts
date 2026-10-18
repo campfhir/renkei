@@ -40,9 +40,9 @@ describe('agentMarkdown', () => {
     expect(markdown).toContain('150 tool calls, 30 minutes of active time');
     expect(markdown).toContain('- jira_add_comment');
     expect(markdown).toContain('Staged actions: accepted by the owner');
-    expect(
-      agentMarkdown({ ...agent, autoAcceptActions: true })
-    ).toContain('accepted automatically where the organization allows it');
+    expect(agentMarkdown({ ...agent, autoAcceptActions: true })).toContain(
+      'accepted automatically where the organization allows it'
+    );
   });
 
   it('drops the guardrails block when the agent has none', () => {

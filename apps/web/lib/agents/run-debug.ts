@@ -127,7 +127,9 @@ function batchLines(run: RunDetail): string[] {
   for (const batch of run.batches) {
     lines.push(
       `### Turn ${batch.turn}: ${batch.status}` +
-        (batch.acceptedBy ? ` (accepted ${batch.acceptedBy === 'auto' ? 'automatically' : 'by the owner'})` : '') +
+        (batch.acceptedBy
+          ? ` (accepted ${batch.acceptedBy === 'auto' ? 'automatically' : 'by the owner'})`
+          : '') +
         (batch.reviewReason ? ` — needed a person: ${batch.reviewReason}` : '')
     );
     if (!batch.actions) {

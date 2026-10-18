@@ -91,7 +91,12 @@ describe('parseAgentPayload on the definition', () => {
   it('needs the instructions as text and the tools as a list of names', () => {
     const missing = parseAgentPayload({ name: 'X', tools: [], triggers: [] });
     expect(missing).toEqual({ error: expect.stringContaining('instructions is required') });
-    const badTools = parseAgentPayload({ name: 'X', instructions: 'Go.', tools: [1], triggers: [] });
+    const badTools = parseAgentPayload({
+      name: 'X',
+      instructions: 'Go.',
+      tools: [1],
+      triggers: [],
+    });
     expect(badTools).toEqual({ error: 'tools must be a list of tool names' });
   });
 

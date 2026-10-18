@@ -235,7 +235,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       ADD COLUMN active_ms bigint NOT NULL DEFAULT 0,
       ADD COLUMN resume_failure text
   `.execute(db);
-  await sql`ALTER TABLE agent_runs RENAME COLUMN steps_snapshot TO legacy_steps_snapshot`.execute(db);
+  await sql`ALTER TABLE agent_runs RENAME COLUMN steps_snapshot TO legacy_steps_snapshot`.execute(
+    db
+  );
   await sql`ALTER TABLE agent_runs ALTER COLUMN legacy_steps_snapshot DROP NOT NULL`.execute(db);
 
   // In-flight step runs cannot continue as conversations: end them, and
@@ -294,7 +296,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 
 export async function down(db: Kysely<unknown>): Promise<void> {
   await sql`DROP TABLE IF EXISTS agent_action_batches`.execute(db);
-  await sql`ALTER TABLE agent_runs RENAME COLUMN legacy_steps_snapshot TO steps_snapshot`.execute(db);
+  await sql`ALTER TABLE agent_runs RENAME COLUMN legacy_steps_snapshot TO steps_snapshot`.execute(
+    db
+  );
   await sql`UPDATE agent_runs SET steps_snapshot = '{"version":9,"steps":[]}'::jsonb WHERE steps_snapshot IS NULL`.execute(
     db
   );
@@ -304,7 +308,9 @@ export async function down(db: Kysely<unknown>): Promise<void> {
       DROP COLUMN definition_snapshot, DROP COLUMN active_ms, DROP COLUMN resume_failure
   `.execute(db);
   await sql`ALTER TABLE agents RENAME COLUMN legacy_steps TO steps`.execute(db);
-  await sql`UPDATE agents SET steps = '{"version":9,"steps":[]}'::jsonb WHERE steps IS NULL`.execute(db);
+  await sql`UPDATE agents SET steps = '{"version":9,"steps":[]}'::jsonb WHERE steps IS NULL`.execute(
+    db
+  );
   await sql`ALTER TABLE agents ALTER COLUMN steps SET NOT NULL`.execute(db);
   await sql`
     ALTER TABLE agents

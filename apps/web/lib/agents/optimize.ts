@@ -240,7 +240,9 @@ export async function gatherOptimizationEvidence(
               typeof call === 'object' && call !== null && !Array.isArray(call)
           );
           // Failed calls first — they are the evidence.
-          calls.sort((left, right) => Number(right.isError === true) - Number(left.isError === true));
+          calls.sort(
+            (left, right) => Number(right.isError === true) - Number(left.isError === true)
+          );
           return {
             turn: turn.attempt,
             summary: clip(detail.llmSummary, CLIP_SUMMARY),

@@ -101,12 +101,9 @@ describe('saveAgent description regeneration', () => {
   });
 
   it('a real content change re-describes', async () => {
-    await saveAgent(
-      db,
-      'auth0|alice',
-      parsedWith({ instructions: '## Goal\n\nThink harder.' }),
-      { agentId: 'agent-1' }
-    );
+    await saveAgent(db, 'auth0|alice', parsedWith({ instructions: '## Goal\n\nThink harder.' }), {
+      agentId: 'agent-1',
+    });
     expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);
   });
 

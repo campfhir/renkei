@@ -61,7 +61,11 @@ const CARD_ROW = {
     batchId: 'batch-1',
     summary: 'Refund Dana and tell her.',
     actions: [
-      { tool: 'jira_refund_payment', args: { amount: 240, customer: 'Dana Lin' }, reason: 'Overcharged' },
+      {
+        tool: 'jira_refund_payment',
+        args: { amount: 240, customer: 'Dana Lin' },
+        reason: 'Overcharged',
+      },
       { tool: 'outlook_send_mail', args: { to: ['dana@example.com'] }, reason: 'Let her know' },
     ],
   },
