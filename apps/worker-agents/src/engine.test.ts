@@ -103,7 +103,10 @@ const READS = ['jira_get_issue', 'jira_search_issues'];
 /** Tools as the gateway lists them for a token: only those the token names. */
 function stubMcp(
   named: string[],
-  callTool: (name: string, args: Record<string, unknown>) => McpToolResult,
+  callTool: (
+    name: string,
+    args: Record<string, unknown>
+  ) => McpToolResult | Promise<McpToolResult>,
   calls: { name: string; args: Record<string, unknown> }[]
 ): McpClient {
   return {
@@ -573,6 +576,46 @@ maybe('agent run engine', () => {
     expect(report).toContain('1. jira_create_issue: failed. Project not found');
     expect(report).toContain('2. jira_add_comment: skipped.');
     expect((await runOf(runId)).status).toBe('failed');
+  });
+
+  it('stops a batch mid-way when the run is canceled, never making the rest', async () => {
+    const { runId } = await seedRun({
+      autoAccept: true,
+      tools: [...READS, 'jira_add_comment', 'jira_create_issue'],
+    });
+    const llm = stubLlm(() =>
+      call('stage_actions', {
+        summary: 'Two changes',
+        actions: [
+          { tool: 'jira_create_issue', args: {}, reason: 'a' },
+          { tool: 'jira_add_comment', args: {}, reason: 'b' },
+        ],
+      })
+    );
+    const h = harness(llm, async (name) => {
+      // The owner presses Cancel while the first change is going out.
+      if (name === 'jira_create_issue') {
+        await db
+          .updateTable('agent_runs')
+          .set({ cancel_requested_at: sql`NOW()` })
+          .where('id', '=', runId)
+          .execute();
+      }
+      return text('ok');
+    });
+    await h.handler({ payload: { runId } });
+    await h.executor({ payload: h.producer.take('actions')[0].payload });
+    expect(h.calls.map((entry) => entry.name)).toEqual(['jira_create_issue']);
+    const batch = await db
+      .selectFrom('agent_action_batches')
+      .select(['status', 'results'])
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(batch.status).toBe('completed');
+    expect(JSON.stringify(batch.results)).toContain('Not made: the run was canceled.');
+    // The woken run ends canceled, quietly.
+    await h.handler({ payload: { runId } });
+    expect((await runOf(runId)).status).toBe('canceled');
   });
 
   it('holds the tool budget: refuses calls past it, then forces finish_run', async () => {

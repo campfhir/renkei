@@ -16,7 +16,8 @@
  *    'executing' on redelivery was interrupted mid-call: the action that
  *    was running is recorded as failed with its outcome unknown and the
  *    rest skipped — never made a second time.
- *  - A batch whose run was canceled meanwhile is not executed.
+ *  - A batch whose run was canceled meanwhile is not executed; a cancel
+ *    that lands mid-batch stops it before the next action.
  *  - Done, the run is re-enqueued; the engine reads the batch and returns
  *    the report as the agent's stage_actions result. The run's clock was
  *    stopped the whole time.
@@ -195,6 +196,7 @@ export function createActionsHandler(deps: ActionsDeps) {
     };
 
     const failedEarlier = () => results.some((result) => result.outcome !== 'succeeded');
+    let canceledMidway = false;
     if (results.length < actions.length && !failedEarlier()) {
       const token = await mint(db, {
         subject: batch.owner_subject,
@@ -217,6 +219,17 @@ export function createActionsHandler(deps: ActionsDeps) {
         });
         for (let index = results.length; index < actions.length; index += 1) {
           if (failedEarlier()) break;
+          // A cancel that lands mid-batch stops it before the next action:
+          // what was made stays made, the rest is never made.
+          const live = await db
+            .selectFrom('agent_runs')
+            .select(['cancel_requested_at', 'status'])
+            .where('id', '=', batch.run_id)
+            .executeTakeFirst();
+          if (!live || live.cancel_requested_at !== null || live.status === 'canceled') {
+            canceledMidway = true;
+            break;
+          }
           const action = actions[index];
           if (!toolsByName.has(action.tool)) {
             results.push({
@@ -283,7 +296,9 @@ export function createActionsHandler(deps: ActionsDeps) {
       results.push({
         tool: actions[index].tool,
         outcome: 'skipped',
-        text: 'Not made: an earlier action in this batch failed.',
+        text: canceledMidway
+          ? 'Not made: the run was canceled.'
+          : 'Not made: an earlier action in this batch failed.',
         durationMs: 0,
       });
     }
