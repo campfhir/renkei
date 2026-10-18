@@ -67,7 +67,8 @@ export function registerResolveDateTool(server: McpServer, _context: MCPToolCont
         'yourself — "3 days ago", "since last Friday at 9am", "the start of this month". Give ' +
         'a timezone plus a signed amount+unit (and optionally a time of day, or a snap to the ' +
         'start/end of the unit) and get back the real instant, with daylight saving and ' +
-        'calendar length handled. Always available, whatever this chat\'s toolset — never ' +
+        'calendar length handled, and its day of the week — ask this rather than naming a ' +
+        'weekday yourself. Always available, whatever this chat\'s toolset — never ' +
         'guess or hand-calculate a date, call this instead. When authoring or editing an ' +
         'agent (agent_create, agent_update, agent_patch_steps), the reply also gives the ' +
         'exact date-chip object ({"t":"date",...}) to paste directly into a step\'s ' +
@@ -162,7 +163,8 @@ export function registerResolveDateTool(server: McpServer, _context: MCPToolCont
           {
             type: 'text' as const,
             text: [
-              `${resolved.value.iso} (UTC) — reads as ${resolved.value.local} in ${timezone}.`,
+              `${resolved.value.iso} (UTC) — reads as ${resolved.value.local} in ${timezone}; ` +
+                `that is a ${resolved.value.weekday} there.`,
               `Date-chip for an agent step: ${JSON.stringify(chip)}`,
             ].join('\n'),
           },

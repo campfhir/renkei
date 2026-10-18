@@ -55,6 +55,7 @@ import {
   describeQuestionAnswer,
   flattenFormFields,
   resolveTime,
+  weekdayOf,
   sealedDetailOf,
   splitDetailForSealing,
   TIME_UNITS,
@@ -1168,6 +1169,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
         if (vars[builtin.name]) facts[builtin.name] = vars[builtin.name];
       }
       facts.now = new Date(now()).toISOString();
+      // Named outright: a model works the weekday out from a date wrongly
+      // often enough to matter ("next Monday" is then off by a day).
+      facts.weekday = `${weekdayOf(new Date(now()))} (UTC)`;
       const triggerValues = Object.fromEntries(
         Object.entries(vars).filter(([name]) => name.startsWith('trigger.'))
       );

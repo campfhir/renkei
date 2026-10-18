@@ -70,8 +70,13 @@ export interface ResolvedTime {
   /** The instant, UTC, ISO 8601 — what a tool call should actually use. */
   iso: string;
   epochMs: number;
-  /** How that instant reads on the wall clock in `timezone`. */
+  /** How that instant reads on the wall clock in `timezone`, weekday first:
+   *  "Monday 2026-08-24 19:00 (UTC-07:00)". */
   local: string;
+  /** The day of the week in `timezone` — "Monday". Stated outright because a
+   *  model asked "which day is 2026-08-24?" will name one confidently, and
+   *  is wrong often enough to schedule a meeting on the wrong day. */
+  weekday: string;
   timezone: string;
   /** Minutes east of UTC at that instant, e.g. -420 for PDT. */
   offsetMinutes: number;
@@ -88,6 +93,22 @@ function clampUnit(value: unknown): number {
 
 function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** English weekday names, indexed like `Date#getUTCDay` and recurrence.ts. */
+export const WEEKDAY_NAMES = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+] as const;
+
+/** The day of the week `instant` falls on in `timezone` (UTC by default). */
+export function weekdayOf(instant: Date, timezone = 'UTC'): string {
+  return WEEKDAY_NAMES[wallClockAt(instant, timezone).weekday] ?? 'Sunday';
 }
 
 function pad(value: number, width = 2): string {
@@ -210,6 +231,7 @@ export function resolveTime(
   const offsetMinutes = Math.round((asUtc - instant.getTime()) / 60_000);
   const sign = offsetMinutes < 0 ? '-' : '+';
   const absolute = Math.abs(offsetMinutes);
+  const weekday = WEEKDAY_NAMES[readBack.weekday] ?? 'Sunday';
 
   return {
     ok: true,
@@ -217,9 +239,10 @@ export function resolveTime(
       iso: instant.toISOString(),
       epochMs: instant.getTime(),
       local:
-        `${readBack.year}-${pad(readBack.month)}-${pad(readBack.day)} ` +
+        `${weekday} ${readBack.year}-${pad(readBack.month)}-${pad(readBack.day)} ` +
         `${pad(readBack.hour)}:${pad(readBack.minute)} ` +
         `(UTC${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)})`,
+      weekday,
       timezone,
       offsetMinutes,
     },

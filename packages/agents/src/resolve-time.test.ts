@@ -4,7 +4,7 @@
  * offset changes, a "yesterday" that spans a DST boundary, and month ends.
  */
 
-import { resolveTime } from './resolve-time';
+import { resolveTime, weekdayOf } from './resolve-time';
 
 const LA = 'America/Los_Angeles';
 
@@ -17,8 +17,21 @@ describe('resolveTime', () => {
     // 19:00 PDT on the 24th is 02:00Z on the 25th — the conversion a model
     // routinely gets an hour or a day wrong.
     expect(result.value.iso).toBe('2026-08-25T02:00:00.000Z');
-    expect(result.value.local).toBe('2026-08-24 19:00 (UTC-07:00)');
+    expect(result.value.local).toBe('Monday 2026-08-24 19:00 (UTC-07:00)');
     expect(result.value.offsetMinutes).toBe(-420);
+    expect(result.value.weekday).toBe('Monday');
+  });
+
+  it('names the weekday in the target zone, not in UTC', () => {
+    // 02:00Z on Tuesday the 25th is still Monday evening in Los Angeles.
+    const anchor = '2026-08-25T02:00:00Z';
+    const la = resolveTime({ timezone: LA, anchor });
+    const utc = resolveTime({ timezone: 'UTC', anchor });
+    if (!la.ok || !utc.ok) throw new Error('expected both to resolve');
+    expect(la.value.weekday).toBe('Monday');
+    expect(utc.value.weekday).toBe('Tuesday');
+    expect(weekdayOf(new Date(anchor), LA)).toBe('Monday');
+    expect(weekdayOf(new Date(anchor))).toBe('Tuesday');
   });
 
   it('keeps "yesterday at 19:00" at 19:00 across the autumn transition', () => {
@@ -29,7 +42,7 @@ describe('resolveTime', () => {
     const now = new Date('2026-11-02T18:00:00Z');
     const result = resolveTime({ timezone: LA, amount: -1, unit: 'day', atTime: '19:00' }, now);
     if (!result.ok) throw new Error(result.error);
-    expect(result.value.local).toBe('2026-11-01 19:00 (UTC-08:00)');
+    expect(result.value.local).toBe('Sunday 2026-11-01 19:00 (UTC-08:00)');
     expect(result.value.iso).toBe('2026-11-02T03:00:00.000Z');
   });
 
@@ -42,7 +55,7 @@ describe('resolveTime', () => {
     // ...and with no atTime, -1 day lands on the same wall clock.
     const byDays = resolveTime({ timezone: LA, amount: -1, unit: 'day' }, now);
     if (!byDays.ok) throw new Error(byDays.error);
-    expect(byDays.value.local).toBe('2026-08-24 10:00 (UTC-07:00)');
+    expect(byDays.value.local).toBe('Monday 2026-08-24 10:00 (UTC-07:00)');
   });
 
   it('snaps to the start and end of a day in the target zone', () => {
@@ -51,8 +64,8 @@ describe('resolveTime', () => {
     const end = resolveTime({ timezone: LA, endOf: 'day' }, now);
     if (!start.ok || !end.ok) throw new Error('expected both to resolve');
     expect(start.value.iso).toBe('2026-08-25T07:00:00.000Z');
-    expect(start.value.local).toBe('2026-08-25 00:00 (UTC-07:00)');
-    expect(end.value.local).toBe('2026-08-25 23:59 (UTC-07:00)');
+    expect(start.value.local).toBe('Tuesday 2026-08-25 00:00 (UTC-07:00)');
+    expect(end.value.local).toBe('Tuesday 2026-08-25 23:59 (UTC-07:00)');
   });
 
   it('clamps a month shift onto a shorter month', () => {
@@ -60,7 +73,7 @@ describe('resolveTime', () => {
     const result = resolveTime({ timezone: 'UTC', amount: -1, unit: 'month' }, now);
     if (!result.ok) throw new Error(result.error);
     // Feb has no 31st; the calendar convention is the last day.
-    expect(result.value.local.startsWith('2026-02-28')).toBe(true);
+    expect(result.value.local.startsWith('Saturday 2026-02-28')).toBe(true);
   });
 
   it('measures from an explicit anchor instead of now', () => {

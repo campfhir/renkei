@@ -50,6 +50,21 @@ describe('resolve_date', () => {
     );
   });
 
+  it('names the day of the week in the target zone', async () => {
+    const handler = await resolveHandler();
+
+    // 02:00Z on Tuesday the 25th is still Monday evening in Los Angeles.
+    const result = await handler({
+      timezone: 'America/Los_Angeles',
+      anchor: '2026-08-25T02:00:00Z',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain(
+      'reads as Monday 2026-08-24 19:00 (UTC-07:00) in America/Los_Angeles; that is a Monday there.'
+    );
+  });
+
   it('carries atTime and boundary through into the returned chip', async () => {
     const handler = await resolveHandler();
 

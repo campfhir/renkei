@@ -17,6 +17,7 @@
  * the complete contract with the provider.
  */
 
+import { weekdayOf } from '@renkei/agents';
 import type { WebSearchConfig, WebSearchLocation } from './config';
 
 /** A search can be agentic (several searches, page opens) — well past the 15s read budget. */
@@ -105,13 +106,16 @@ export function buildRequestBody(
   if (Object.keys(filters).length > 0) tool.filters = filters;
 
   const today = request.today ?? new Date().toISOString().slice(0, 10);
+  // Named so the search model need not work it out (and get it wrong).
+  const noon = new Date(`${today}T12:00:00Z`);
+  const dated = Number.isNaN(noon.getTime()) ? today : `${weekdayOf(noon)}, ${today}`;
   return {
     model: config.model,
     // A search query is a person's own words; the provider is not to keep it.
     store: false,
     ...(config.reasoningEffort ? { reasoning: { effort: config.reasoningEffort } } : {}),
     instructions:
-      `Today is ${today}. Search the web to answer the user's query — always call the ` +
+      `Today is ${dated}. Search the web to answer the user's query — always call the ` +
       'web_search tool rather than answering from memory. Reply with a concise, factual ' +
       'summary of what the sources say, in the order of relevance, with a citation for ' +
       'every claim. Say plainly when the sources disagree or when nothing relevant was found.',
