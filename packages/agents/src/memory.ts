@@ -68,10 +68,7 @@ export interface AgentMemory {
 }
 
 /** The agent's owner — whose automation key the memory is sealed under. */
-async function ownerSubjectOf(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<string | null> {
+async function ownerSubjectOf(db: Kysely<DB>, agentId: string): Promise<string | null> {
   const row = await db
     .selectFrom('agents')
     .select('owner_subject')
@@ -114,11 +111,7 @@ async function sealContent(
   ownerSubject: string,
   content: string
 ): Promise<{ ok: true; sealed: string } | { ok: false; reason: KeyOpError }> {
-  const sealed = await delegateClient().sealForSubject(
-    ownerSubject,
-    [content],
-    'automation'
-  );
+  const sealed = await delegateClient().sealForSubject(ownerSubject, [content], 'automation');
   if (!sealed.ok) return { ok: false, reason: sealed.err.type };
   return { ok: true, sealed: sealed.val[0] };
 }
@@ -320,10 +313,7 @@ export const AGENT_NOTES_INJECT_MAX_NOTES = 50;
  * search is off; chunk rows collapse to one note each (first chunk wins,
  * which carries the opening of the content).
  */
-export async function renderAgentKnowledgeNotes(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<string> {
+export async function renderAgentKnowledgeNotes(db: Kysely<DB>, agentId: string): Promise<string> {
   const keyResult = contentEncryptionKey();
   const contentKey = keyResult.ok ? keyResult.val : null;
   const rows = await db
@@ -460,10 +450,7 @@ export async function forgetAgentMemory(
 ): Promise<AgentMemoryForgetResult> {
   if (target.kind === 'all') {
     const before = await countAgentMemory(db, agentId);
-    await db
-      .deleteFrom('agent_memories')
-      .where('agent_id', '=', agentId)
-      .execute();
+    await db.deleteFrom('agent_memories').where('agent_id', '=', agentId).execute();
     return {
       entriesDeleted: before.entries,
       summaryCleared: before.hasSummary,

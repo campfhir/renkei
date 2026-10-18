@@ -37,20 +37,24 @@ export function isLogLevel(value: unknown): value is LogLevel {
 }
 
 /**
- * When an agent step that CHANGES something (an Act tool — readOnlyHint
- * false) pauses for a person's approval even though its author set no
- * `needsApproval` on it. Ordered least to most permissive as the admin
+ * An agent never calls a tool that CHANGES something (an Act tool —
+ * readOnlyHint false) itself: it stages the calls as an action batch, and
+ * a separate executor runs the batch once it is accepted. An agent whose
+ * owner turned on "accept proposed actions automatically" has its batches
+ * accepted without a person — this policy names the runs where a person
+ * must accept anyway. Ordered least to most permissive as the admin
  * select renders them.
  *
  * - 'externally_triggered' (the default): runs an event or webhook started
  *   — the content that reached the model came from outside (a mail, a chat
  *   message, an API caller), so nothing it says may write without a human
- *   in the loop. Runs a person started by hand, or a schedule, act as the
- *   author wrote them.
- * - 'all': every run.
- * - 'off': only steps whose author set `needsApproval`. A fixed high-risk
- *   set (send mail, merge a PR, delete or share a document, directory
- *   writes — @renkei/agents' act-approval.ts) still pauses regardless.
+ *   in the loop. Runs a person started by hand, or a schedule, honor the
+ *   agent's auto-accept.
+ * - 'all': every run — auto-accept is never honored.
+ * - 'off': auto-accept is always honored. A batch holding one of a fixed
+ *   high-risk set (send mail, merge a PR, delete or share a document,
+ *   directory writes — @renkei/agents' act-approval.ts) still waits for a
+ *   person regardless.
  */
 export const ACT_APPROVAL_POLICIES = ['externally_triggered', 'all', 'off'] as const;
 export type ActApprovalPolicy = (typeof ACT_APPROVAL_POLICIES)[number];
@@ -216,41 +220,40 @@ export interface OrgSettings {
    * budget bounds retries, not fan-out; this is the fan-out bound.
    */
   agentMaxChainDepth: number;
-  /** Wall-clock budget for a single agent run, checked between attempts. */
+  /**
+   * The hard ceiling on one agent run's ACTIVE time, in minutes: the time
+   * the run spends with the model and its own tool calls. Time spent
+   * waiting on a person (a staged action batch awaiting acceptance, a
+   * question awaiting an answer) and executing an accepted batch does not
+   * count — the clock stops while control is out of the agent's hands and
+   * resumes when it is handed back. Checked before every model call and
+   * every tool call; reaching it ends the run as a timeout.
+   */
   agentRunTimeoutMinutes: number;
   /**
-   * Org ceiling on a step's total attempts ("give up after N tries").
-   * Default 10 — a deliberate limit, not a hard one: an org may raise it
-   * (the admin API bounds it at 100 so a typo cannot mint a thousand-try
-   * loop) or lower it. Enforced by the engine at runtime, so a change takes
-   * effect on existing agents without re-saving them.
+   * The hard ceiling on tool calls one agent run may make — every call the
+   * agent makes to a real tool, and each action it stages (counted once,
+   * when proposed). The platform's own built-ins (finishing, remembering,
+   * date arithmetic, asking a person) are free. The agent spends the
+   * budget however it judges best, retries included, and is told what is
+   * left as it goes.
+   * Default 150; the admin API bounds it at 1000.
    */
-  agentMaxStepAttempts: number;
-  /**
-   * Org ceiling on how many steps one agent may hold. Default 20 — the
-   * value that used to be the hardcoded MAX_STEPS — and, like the attempt
-   * ceiling, a policy rather than a platform constant: an org may raise it
-   * (the admin API bounds it at 100) or lower it. Enforced at save time;
-   * an already-saved agent over a lowered ceiling keeps running until its
-   * next edit, because refusing to RUN what was legal to save would stop
-   * automations with nobody at the keyboard.
-   */
-  agentMaxSteps: number;
+  agentRunToolCallBudget: number;
   /** Per-tenant ceiling on runs started per day — the runaway-trigger brake. */
   agentMaxRunsPerDay: number;
   /**
-   * Hard upper bound on how long an approval node may wait for the owner
-   * to act before its timeout path routes. Nodes declare their own wait in
-   * hours; this org ceiling clamps them — at save AND live at pause time,
-   * so lowering it bites existing agents without a re-save.
+   * Hard upper bound on how long a staged action batch or a question may
+   * wait for the owner before it is treated as declined / unanswered. The
+   * agent may ask for a shorter wait; this org ceiling clamps it live at
+   * pause time.
    */
   agentApprovalMaxWaitDays: number;
   /**
-   * Which agent runs pause an Act step (one whose tool changes a system)
-   * for approval when its author did not ask for one — see
-   * ActApprovalPolicy. Enforced live by the engine at the moment a step
-   * reaches for the tool, so a change bites in-flight agents without a
-   * re-save; a fixed high-risk tool set pauses whatever this says.
+   * Which agent runs need a person to accept a staged action batch even
+   * when the agent auto-accepts — see ActApprovalPolicy. Read live by the
+   * engine when a batch is staged, so a change bites in-flight agents; a
+   * fixed high-risk tool set waits for a person whatever this says.
    */
   agentActStepsRequireApproval: ActApprovalPolicy;
   /**
@@ -392,9 +395,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentOptimizerWindowDays: 30,
   phiConnectorsRequireCoveredModel: false,
   agentMaxChainDepth: 3,
-  agentRunTimeoutMinutes: 15,
-  agentMaxStepAttempts: 10,
-  agentMaxSteps: 20,
+  agentRunTimeoutMinutes: 30,
+  agentRunToolCallBudget: 150,
   agentMaxRunsPerDay: 200,
   agentApprovalMaxWaitDays: 14,
   agentActStepsRequireApproval: 'externally_triggered',
@@ -563,10 +565,9 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
     agentRunTimeoutMinutes: Number(
       coerce(stored.get('agent_run_timeout_minutes'), d.agentRunTimeoutMinutes)
     ),
-    agentMaxStepAttempts: Number(
-      coerce(stored.get('agent_max_step_attempts'), d.agentMaxStepAttempts)
+    agentRunToolCallBudget: Number(
+      coerce(stored.get('agent_run_tool_call_budget'), d.agentRunToolCallBudget)
     ),
-    agentMaxSteps: Number(coerce(stored.get('agent_max_steps'), d.agentMaxSteps)),
     agentMaxRunsPerDay: Number(coerce(stored.get('agent_max_runs_per_day'), d.agentMaxRunsPerDay)),
     agentApprovalMaxWaitDays: Number(
       coerce(stored.get('agent_approval_max_wait_days'), d.agentApprovalMaxWaitDays)
@@ -683,8 +684,7 @@ export async function setOrgSettings(
     ['phi_connectors_require_covered_model', updates.phiConnectorsRequireCoveredModel],
     ['agent_max_chain_depth', updates.agentMaxChainDepth],
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
-    ['agent_max_step_attempts', updates.agentMaxStepAttempts],
-    ['agent_max_steps', updates.agentMaxSteps],
+    ['agent_run_tool_call_budget', updates.agentRunToolCallBudget],
     ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
     ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
     ['agent_act_steps_require_approval', updates.agentActStepsRequireApproval],

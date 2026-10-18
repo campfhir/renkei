@@ -17,7 +17,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
-import { isCurrentStepsDoc } from './steps';
+import { agentDefinitionOf } from './definition';
 import { createAgentRun } from './runs';
 import { matchesTriggerEvent } from './trigger-catalog';
 
@@ -86,7 +86,8 @@ export async function fanOutAgentEvents(
       't.agent_id',
       't.config',
       'a.owner_subject',
-      'a.steps',
+      'a.instructions',
+      'a.tools',
       'a.llm_model_id',
     ])
     .where('t.kind', '=', 'event')
@@ -120,8 +121,6 @@ export async function fanOutAgentEvents(
       filtered += 1;
       continue;
     }
-    if (!isCurrentStepsDoc(trigger.steps)) continue;
-
     // The firing lock: one run per (trigger, source event), across every
     // worker process. Whoever wins this INSERT creates the run; a lost
     // conflict means another process (or a replay of this delivery, or a
@@ -143,7 +142,7 @@ export async function fanOutAgentEvents(
     const result = await createAgentRun(db, producer, {
       agentId: trigger.agent_id,
       ownerSubject: trigger.owner_subject,
-      steps: trigger.steps,
+      definition: agentDefinitionOf(trigger),
       llmModelId: trigger.llm_model_id,
       triggerId: trigger.trigger_id,
       triggerKind: 'event',

@@ -11,7 +11,7 @@ import {
   describeQuestionAnswer,
   questionAnswerText,
 } from './question-answers';
-import type { QuestionField } from './steps';
+import type { QuestionField } from './question-field';
 
 const field = (
   name: string,

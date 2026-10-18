@@ -84,6 +84,28 @@ export interface AgentAccessGrants {
   owner_subject: string;
 }
 
+export interface AgentActionBatches {
+  accepted_by: string | null;
+  actions: Json;
+  agent_id: string;
+  comment: string | null;
+  created_at: Generated<Timestamp>;
+  decided_at: Timestamp | null;
+  decided_by: string | null;
+  finished_at: Timestamp | null;
+  id: string;
+  owner_subject: string;
+  results: Generated<Json>;
+  review_reason: string | null;
+  run_id: string;
+  started_at: Timestamp | null;
+  status: Generated<string>;
+  summary: string;
+  turn: number;
+  updated_at: Generated<Timestamp>;
+  waiting_until: Timestamp | null;
+}
+
 export interface AgentDrafts {
   agent_id: string | null;
   attempts: Generated<number>;
@@ -205,29 +227,32 @@ export interface AgentRunLog {
 }
 
 export interface AgentRuns {
+  active_ms: Generated<Int8>;
   agent_id: string;
   cancel_requested_at: Timestamp | null;
   cancel_requested_by: string | null;
   created_at: Generated<Timestamp>;
   current_step_id: string | null;
+  definition_snapshot: Json | null;
   depth: Generated<number>;
   error: string | null;
   error_kind: string | null;
   finished_at: Timestamp | null;
   id: string;
   initial_state: Json | null;
+  legacy_steps_snapshot: Json | null;
   lineage: Generated<Json>;
   llm_model_id: string | null;
   owner_subject: string;
   parent_run_id: string | null;
   resume_count: Generated<number>;
+  resume_failure: string | null;
   resume_guidance: string | null;
   resume_step_id: string | null;
   resumed_at: Timestamp | null;
   resumed_by: string | null;
   started_at: Timestamp | null;
   status: Generated<string>;
-  steps_snapshot: Json;
   trigger_id: string | null;
   trigger_kind: string;
   triggered_by_subject: string | null;
@@ -244,7 +269,7 @@ export interface AgentRunSteps {
   finished_at: Timestamp | null;
   id: string;
   input_tokens: Generated<number>;
-  /** 0 = not inside a loop (all pre-v3 rows); 1-based inside a loop. */
+  /** 0 for a run's turns; 1-based inside a loop for pre-instruction step rows. */
   iteration: Generated<number>;
   outcome: string | null;
   outcome_code: string | null;
@@ -259,6 +284,7 @@ export interface AgentRunSteps {
 }
 
 export interface Agents {
+  auto_accept_actions: Generated<boolean>;
   blocked_tools: Json | null;
   can_ask_questions: Generated<boolean>;
   created_at: Generated<Timestamp>;
@@ -267,12 +293,14 @@ export interface Agents {
   enabled: Generated<boolean>;
   guardrails: string | null;
   id: string;
+  instructions: Generated<string>;
+  legacy_steps: Json | null;
   llm_model_id: string | null;
   name: string;
   owner_subject: string;
   review_notes: Json | null;
-  steps: Json;
   steps_version: Generated<number>;
+  tools: Generated<Json>;
   updated_at: Generated<Timestamp>;
 }
 
@@ -1507,6 +1535,7 @@ export interface DB {
   admanager_instance_connections: AdmanagerInstanceConnections;
   admanager_instances: AdmanagerInstances;
   agent_access_grants: AgentAccessGrants;
+  agent_action_batches: AgentActionBatches;
   agent_drafts: AgentDrafts;
   agent_jobs: AgentJobs;
   agent_jobs_dead_letters: AgentJobsDeadLetters;

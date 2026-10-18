@@ -22,7 +22,7 @@
  */
 
 import { isValidDateString } from './recurrence';
-import { type QuestionField } from './steps';
+import { type QuestionField } from './question-field';
 
 /** The longest a single text answer may be. */
 export const MAX_QUESTION_ANSWER_CHARS = 10_000;
