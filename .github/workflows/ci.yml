@@ -218,6 +218,10 @@ jobs:
             echo "tags=${repo}:${version},${repo}:latest,${repo}:${GITHUB_SHA}"
             echo "scan_tag=${repo}:scan-${GITHUB_SHA}"
             echo "commit=$(git rev-parse --short HEAD)"
+            # The upgrade layers' cache key (docker/Dockerfile, DISTRO_REFRESH):
+            # one value per UTC day, so a distribution fix reaches the image
+            # within a day instead of waiting on an unrelated Dockerfile edit.
+            echo "distro_refresh=$(date -u +%Y-%m-%d)"
           } >> "$GITHUB_OUTPUT"
           if [[ "$PUBLISH" == "true" ]]; then
             echo "Publishing ${repo}:${version}, ${repo}:latest and ${repo}:${GITHUB_SHA}"
@@ -249,6 +253,7 @@ jobs:
           build-args: |
             GIT_COMMIT=${{ steps.meta.outputs.commit }}
             APP_VERSION=${{ steps.meta.outputs.version }}
+            DISTRO_REFRESH=${{ steps.meta.outputs.distro_refresh }}
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,scope=${{ matrix.target }},mode=max
 
@@ -309,6 +314,7 @@ jobs:
           build-args: |
             GIT_COMMIT=${{ steps.meta.outputs.commit }}
             APP_VERSION=${{ steps.meta.outputs.version }}
+            DISTRO_REFRESH=${{ steps.meta.outputs.distro_refresh }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
