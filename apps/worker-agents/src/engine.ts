@@ -1,23 +1,37 @@
 /**
- * The run executor: claims a `{ runId }` job and drives the run to a
- * terminal state, one step at a time, one attempt at a time.
+ * The run executor: claims a `{ runId }` job and lets the agent work.
  *
- * The database is the engine's memory. Every attempt exists as an
- * agent_run_steps row BEFORE its LLM loop starts; the user's attempt
- * budget (≤ 5, the platform ceiling) is enforced by COUNTING those rows,
- * never by trusting the snapshot; `unique(run_id, step_id, attempt)` makes
- * a second executor of the same run fail loudly instead of acting twice.
- * A redelivered job therefore RESUMES: terminal runs complete idempotently,
- * an interrupted attempt is closed as failed, and execution picks up at
- * `current_step_id`.
+ * An agent is instructions and tools (@renkei/agents' definition.ts). A
+ * run is ONE conversation: the system prompt carries the frame, the
+ * owner's guardrails, the instructions, knowledge and memory; the opening
+ * message carries this run's input; then the model calls tools, reads
+ * results, retries when something does not work, and ends with
+ * finish_run. There is no plan for the engine to walk — what it enforces
+ * is the boundary around the agent's autonomy:
  *
- * The model sees only the current step (prompt.ts). Its outcome claim is
- * checked against reality: a step whose primary tool only ever returned
- * errors cannot be declared a success.
+ *  - ACTIVE TIME: the org's agentRunTimeoutMinutes, counted only while
+ *    the agent holds control (`agent_runs.active_ms`). A wait on a person
+ *    — a staged batch awaiting acceptance, a question awaiting an answer —
+ *    and the batch's own execution stop the clock; it resumes when the
+ *    run is handed back.
+ *  - TOOL CALLS: the org's agentRunToolCallBudget, counted from the turn
+ *    rows (every real tool call, and each staged action), never from an
+ *    in-memory counter that could drift. Built-ins are free.
+ *  - NO DIRECT WRITES: the agent's own MCP token is minted with its READ
+ *    tools only. Every tool that changes something is staged with
+ *    stage_actions into an `agent_action_batches` row, accepted by a
+ *    person (or by auto-accept, where the org allows it), and run by the
+ *    separate executor (actions.ts) under a token of its own; the agent
+ *    reads each outcome when control comes back.
  *
- * Failure classification order for choosing a FailureHandling row:
- * `_meta['renkei/outcome']` on the tool result → text heuristics on the
- * error → the model's declared code → 'other'.
+ * The database is the engine's memory. Each model turn is an
+ * agent_run_steps row (step_id 'turn', attempt = turn number) written
+ * BEFORE the model is called, updated as each tool result lands, and
+ * sealed under the owner's automation key (turn-detail.ts). A redelivered
+ * job — a crash, a deploy, a wake after a pause — rebuilds the
+ * conversation from the rows and carries on from exactly where it was;
+ * `unique(run_id, step_id, iteration, attempt)` makes a second executor of
+ * the same run fail loudly instead of acting twice.
  */
 
 import type { Kysely } from 'kysely';
@@ -27,37 +41,50 @@ import { describeActor as describeActorRaw } from '@renkei/db';
 import type { DB, Json } from '@renkei/db';
 import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
-  MAX_COLLECTED_ITEMS,
-  attemptVariables,
-  describeQuestionAnswer,
-  findNodeById,
-  flattenFormFields,
-  friendlyToolName,
-  flattenActionSteps,
-  isAgentStepsDoc,
-  parseFormNodes,
-  questionAnswerText,
-  renderInstruction,
-  toolSegments,
-  walkSteps,
-  type ActionStep,
-  type AgentStepNode,
-  type FormNode,
-  resolveTime,
-  TIME_UNITS,
-  type ResolveTimeRequest,
-  type TimeUnit,
-  type BranchPath,
-  type BranchStep,
-  type FailureHandling,
-  type LoopStep,
-  type TerminalStep,
-  type UntilLoopStep,
-  referencedTools,
+  BUILTIN_VARIABLES,
   actApprovalReason,
-  delimitUntrustedVariables,
+  batchReportForAgent,
+  friendlyToolName,
   isExternallyTriggered,
+  mergeOpenedDetail,
+  parseAgentDefinition,
+  parseFormNodes,
+  parseStagedActions,
+  parseStoredActions,
+  parseStoredResults,
+  describeQuestionAnswer,
+  flattenFormFields,
+  resolveTime,
+  sealedDetailOf,
+  splitDetailForSealing,
+  TIME_UNITS,
+  type ActionBatchStatus,
+  type AgentDefinition,
+  type FormNode,
+  type ResolveTimeRequest,
+  type StagedAction,
+  type TimeUnit,
 } from '@renkei/agents';
+import {
+  ASK_PERSON_DEF,
+  ASK_PERSON_TOOL,
+  FINISH_RUN_DEF,
+  FINISH_RUN_TOOL,
+  REMEMBER_DEF,
+  REMEMBER_TOOL,
+  RESOLVE_TIME_DEF,
+  RESOLVE_TIME_TOOL,
+  RUN_RESULT_CHARS,
+  STAGE_ACTIONS_TOOL,
+  TOOL_RESULT_CHARS,
+  budgetLine,
+  buildRunOpening,
+  buildStageActionsDef,
+  resumeMessage,
+  runSystemPrompt,
+  untrustedBlock,
+  type RunLimits,
+} from '@renkei/agents/run-prompts';
 import {
   resolveAgentLlm,
   maskCredentialHeaders,
@@ -69,7 +96,7 @@ import {
   type LlmUsage,
   type ResolvedLlm,
 } from '@renkei/agent-llm';
-import { getOrgSettings, getPublicBaseUrl, type ActApprovalPolicy } from '@renkei/settings';
+import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
 import { toolKindOf } from '@renkei/tool-outcomes';
 import {
   NOTIFIER_TOOLS,
@@ -80,6 +107,7 @@ import {
 } from './notifications';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import { delegateClient } from '@renkei/delegate-client';
+import type { QueueProducer } from '@renkei/queue';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { MessageReleased } from '@renkei/worker-loop';
 import { AgentMcpClient } from './mcp-client';
@@ -91,92 +119,52 @@ import {
   renderAgentKnowledgeNotes,
 } from '@renkei/agents/memory';
 import { recordAgentRunOutcome, recordLlmCall } from '@renkei/agents/runs';
-import { mergeOpenedDetail, sealedDetailOf, splitDetailForSealing } from '@renkei/agents';
-import {
-  ASK_PERSON_DEF,
-  ASK_PERSON_TOOL,
-  BRANCH_SYSTEM_PROMPT,
-  ROUTER_SYSTEM_PROMPT,
-  LOOP_SYSTEM_PROMPT,
-  buildAttemptMessages,
-  buildBranchMessages,
-  buildChoosePathDef,
-  buildLoopConditionMessages,
-  CHOOSE_PATH_TOOL,
-  FINISH_STEP_DEF,
-  FINISH_STEP_TOOL,
-  REMEMBER_DEF,
-  REMEMBER_TOOL,
-  RESOLVE_TIME_DEF,
-  RESOLVE_TIME_TOOL,
-  LOOP_DECISION_DEF,
-  LOOP_DECISION_TOOL,
-  systemPromptWith,
-  withRunContext,
-  outcomeGuideFor,
-  usesTime,
-  resumeNoteFor,
-  NORMAL_TOOL_CAP,
-  CORRECTIVE_TOOL_CAP,
-  SAVE_ITEM_CHARS,
-  SAVE_ITEMS_MAX,
-  SAVE_VALUE_CHARS,
-  TOOL_RESULT_CHARS,
-  untrustedBlock,
-  type PromptMessage,
-} from './prompt';
 import { logger, secure } from './logger';
 
+/** The step_id every turn row carries: a run has turns, not steps. */
+export const TURN_STEP_ID = 'turn';
 /**
- * Turns a branch or loop condition gets to reach its verdict. Enough for a
- * free date lookup and a nudge before the final forced decision.
- */
-const CONDITION_TURNS = 4;
-const MAX_LLM_TURNS = 10;
-/**
- * The per-field cap on what an attempt ROW keeps: previews of tool
- * arguments and results, the resolved instruction, the model's summary.
- * A display bound only — the timeline and the debug paste read these, the
- * model never does. What the model reads is bounded by TOOL_RESULT_CHARS.
+ * The per-field cap on what a turn row keeps for the timeline: previews of
+ * tool arguments and results. A display bound only — what the model reads
+ * is bounded by TOOL_RESULT_CHARS.
  */
 const PREVIEW_CHARS = 2_000;
-const DETAIL_CHARS = 60_000;
-/** Mirrors approvals.ts's APPROVAL_IDENTITY_KEYS — the proposed-call keys
- * an approval's own edit can never override, kept in sync by hand since
- * engine.ts and the web app are separate deployables. */
-const IDENTITY_ARG_KEYS = new Set(['projectKey', 'issueType', 'issueKey']);
-const TOKEN_SLACK_SECONDS = 15 * 60;
 /**
- * The run-wide execution budget: total attempt rows a run may create.
- * MAX_STEPS bounds the static plan; this bounds the RUNTIME (a loop's body
- * runs many times), together with per-loop maxIterations and the deadline.
+ * How much conversation the model is sent. Past this, the oldest tool
+ * results are elided to a short head (the rows keep them whole): a long
+ * run of 150 calls would otherwise outgrow any model's context.
  */
-const MAX_RUN_ATTEMPT_ROWS = 250;
+const TRANSCRIPT_CHARS = 400_000;
+/** Results in the most recent turns are never elided. */
+const KEEP_RECENT_TURNS = 3;
+const ELIDED_HEAD_CHARS = 600;
+const TOKEN_SLACK_SECONDS = 15 * 60;
 /** Parents walked to find a chained run's root trigger — past any org's chain depth. */
 const MAX_CHAIN_WALK = 10;
-// Module scope on purpose: the factory returns its handler BEFORE its tail
-// statements run, so hoisted functions inside it may only reference consts
-// declared out here (a factory-scope const after the return stays in its
-// temporal dead zone forever).
-const RUN_BUDGET_ERROR = `The run exceeded its execution budget (${MAX_RUN_ATTEMPT_ROWS} step attempts).`;
+/** Model turns in a row that call no tool before the run is ended as stuck. */
+const MAX_IDLE_TURNS = 3;
+/** What a turn opens with after a reply that called no tool. */
+const IDLE_NUDGE =
+  'Use your tools to make progress, stage the changes that are needed, or call finish_run if you are done.';
+/** The knowledge tool a run is given whenever its agent keeps notes. */
+const KNOWLEDGE_TOOL = 'agent_knowledge_list';
 
 export interface FinalizedRun {
   runId: string;
   agentId: string;
   ownerSubject: string;
   /**
-   * 'stopped' = the run ended gracefully as skipped — not a failure.
+   * 'stopped' = the agent found nothing to do — not a failure.
    * 'canceled' = someone asked it to stop; always carries `quiet: true`.
    */
   status: 'succeeded' | 'failed' | 'stopped' | 'canceled';
   errorKind: string | null;
   error: string | null;
-  /** saveAs bindings accumulated over the run, for chained agents. */
+  /** What the run hands a chained agent: its summary and result. */
   vars: Record<string, string>;
   /**
-   * A deliberate silent stop: the run succeeded but asked for NO reply, no
-   * notification, no chaining — "not relevant, do nothing" ends invisibly
-   * everywhere except run history.
+   * A deliberate silent stop: no notification, no chaining — "not
+   * relevant, do nothing" ends invisibly everywhere except run history.
    */
   quiet: boolean;
 }
@@ -185,6 +173,8 @@ export interface EngineDeps {
   db: Kysely<DB>;
   /** Base URL the worker reaches the web app on (RENKEI_WEB_INTERNAL_URL). */
   webBaseUrl: string;
+  /** Where accepted batches go for the action executor (actions.ts). */
+  actionsProducer: QueueProducer;
   createMcpClient?: (
     token: string,
     webBaseUrl: string,
@@ -194,108 +184,58 @@ export interface EngineDeps {
   mintToken?: typeof mintRunToken;
   revokeToken?: typeof revokeRunToken;
   resolveLlm?: typeof resolveAgentLlm;
-  /** Called once per terminal run — trigger fan-out and notifications hook. */
+  /** Called once per terminal run — chaining and the failure event. */
   onFinalized?: (run: FinalizedRun) => Promise<void>;
   /**
    * Whether this process is shutting down. Polled at every checkpoint —
-   * before a step, before a model call, before a tool call — and true
-   * ends the run's execution here, to be resumed elsewhere: see
-   * ExecutorStopping. Omitted, a run executes to its end.
+   * before a model call and before a tool call — and true ends the run's
+   * execution here, to be resumed elsewhere: see ExecutorStopping.
    */
   stopRequested?: () => boolean;
+  /** The clock, for tests. */
+  now?: () => number;
 }
 
 interface RunRow {
   id: string;
   agent_id: string;
   owner_subject: string;
-  steps_snapshot: Json;
+  definition_snapshot: Json | null;
   llm_model_id: string | null;
   initial_state: Json | null;
   status: string;
-  current_step_id: string | null;
   started_at: Date | null;
   waiting_until: Date | null;
   cancel_requested_at: Date | null;
-  /** Set once an owner resumed this run from a failure (migration 099). */
   resumed_at: Date | null;
-  /** The step the latest resume picked back up at; its attempts get the guidance. */
-  resume_step_id: string | null;
   resume_guidance: string | null;
+  resume_failure: string | null;
   /** Why the run stopped or waits; 'needs-sign-in' marks a run parked for its owner's key. */
   error_kind: string | null;
   /** What started the run: 'event' | 'schedule' | 'agent' | 'api' | 'manual' (runs.ts). */
   trigger_kind: string;
-  /** The run that chained this one when trigger_kind is 'agent'; null otherwise. */
   parent_run_id: string | null;
+  active_ms: string | number;
 }
 
-/** actionable_items decision → the gate's outcome vocabulary. */
-function gateOutcomeOf(decision: unknown): 'approved' | 'denied' | 'timedOut' {
-  if (decision === 'approved') return 'approved';
-  if (decision === 'declined') return 'denied';
-  return 'timedOut';
-}
-
-/** A 'question' card's `result.answers` — the form reply keyed by field name. */
-function answersOf(result: unknown): Record<string, unknown> {
-  const resultObj: { answers?: unknown } =
-    typeof result === 'object' && result !== null && !Array.isArray(result) ? result : {};
-  return typeof resultObj.answers === 'object' &&
-    resultObj.answers !== null &&
-    !Array.isArray(resultObj.answers)
-    ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
-      (resultObj.answers as Record<string, unknown>)
-    : {};
-}
-
-interface AttemptRecord {
-  step_id: string;
-  attempt: number;
-  status: string;
-  detail: Json | null;
-  iteration: number;
-}
-
+/** One tool call as the timeline shows it. */
 interface ToolCallRecord {
   tool: string;
   argsPreview: string;
   resultPreview: string;
-  /**
-   * The full length of the result text the tool returned, so a reader of
-   * the 2 000-char preview can tell a short result from a long one that
-   * the preview cut — and, against TOOL_RESULT_CHARS, whether the model
-   * itself saw all of it. Absent on records written before it existed.
-   */
+  /** The full length of the result text, so a reader can tell what the preview cut. */
   resultChars?: number;
   isError: boolean;
   durationMs: number;
-  /**
-   * Whether the call read or changed something, stamped by the MCP layer at
-   * registration time (`kind-stamp.ts`). Recorded here rather than inferred
-   * later because it CANNOT be inferred later: read-vs-act is decided from
-   * a tool's annotations during a per-user registration against a database,
-   * and guessing from the tool's name would mislabel eventually. See the
-   * note at the top of apps/web/lib/agents/run-actions.ts.
-   *
-   * Absent on a record written before the stamp existed, so a reader must
-   * treat "no kind" as "not known", never as "read".
-   */
+  /** Whether the call read or changed something, as the gateway stamped it. */
   kind?: 'read' | 'act';
-  /**
-   * An in-process call that cost no budget (resolve_time). Recorded so the
-   * timeline can show what was computed, excluded from tool_call_count so
-   * the number still means "calls against the step's budget".
-   */
+  /** A built-in, answered in-process and not billed. */
   free?: boolean;
+  /** stage_actions: how many actions it proposed (each billed once). */
+  staged?: number;
 }
 
-/**
- * One model call of an attempt, as the timeline reads it: how long the
- * engine waited on the provider and what came back. Beside `toolCalls`
- * in the attempt's detail, this is the split a slow step is read by —
- * the model deliberating, or a tool it called being slow.
- */
+/** One model call, as the timeline reads it. */
 interface ModelCallRecord {
   durationMs: number;
   stopReason: string;
@@ -303,126 +243,97 @@ interface ModelCallRecord {
   outputTokens: number;
 }
 
-function modelCallsMs(calls: ModelCallRecord[]): number {
-  return calls.reduce((sum, call) => sum + call.durationMs, 0);
-}
-
-/** A step whose attempt row always has zero tool calls (a terminal ending). */
-const NO_TOOL_CALLS: ToolCallRecord[] = [];
-
-interface AttemptOutcome {
-  succeeded: boolean;
-  /**
-   * Set when a SUCCESS declared the whole run over: 'done' from the plain
-   * stop flag, 'quiet' when it also asked for silence. This is the runtime
-   * override of the step's own static `onSuccess`, which `finishAttempt`
-   * falls back to when this is absent — see the header note on
-   * `decideOutcome`'s 'skipped' branch for why a declared skip does NOT set
-   * this itself.
-   */
-  stopRun?: 'done' | 'quiet';
-  outcome: 'tool_ok' | 'llm_declared' | 'tool_error' | 'llm_error' | 'guard';
-  outcomeCode: string | null;
-  summary: string;
-  saveValue: string | null;
-  /** finish_step's saveItems, when the step saved a LIST. */
-  saveItems: string[] | null;
-  /**
-   * Set when finish_step declared 'skipped': THIS STEP's action does not
-   * apply to this input — no tool call, nothing saved — recorded for the
-   * run timeline. It is otherwise treated exactly like a no-op success: the
-   * run continues to the next step unless the step's own static
-   * `onSuccess` says to stop, same as it would for a plain success. A
-   * skipped step never halts the run on its own — see the header note on
-   * `decideOutcome`.
-   */
-  declaredSkip?: boolean;
-  toolCalls: ToolCallRecord[];
-  modelCalls: ModelCallRecord[];
-  usage: UsageTotals;
-  unbound: string[];
-  resolvedInstruction: string;
-  /**
-   * The attempt's first user message, verbatim — what the model was
-   * actually sent. Stored on the attempt row so the run-debug markdown can
-   * reproduce the instruction 1:1, runtime data included.
-   */
-  promptText: string;
-  /**
-   * Set instead of every other field above when a `needsApproval` step's
-   * model turn reached for the gated tool — the call never ran. Carries
-   * exactly what the card shows and what an approval later replays
-   * verbatim (see runAttempt's primary-tool branch and executeStep's gate
-   * handling).
-   */
-  proposedCall?: { tool: string; args: Record<string, unknown> };
-  /**
-   * Set instead of every other field above when the model called
-   * `ask_person` (only offered with the agent's `canAskQuestions` on) —
-   * the attempt ends here, parked behind a 'question' card, the same way
-   * a gate parks behind an 'approval' one.
-   */
-  askPerson?: { message: string; form: FormNode[]; timeoutHours?: number };
-}
-
-/** The run-scoped context blocks every attempt's prompt carries. */
-interface RunContextText {
-  memoryText: string;
-  knowledgeText: string;
-  /**
-   * The agent's standing guardrails, live-read from the agents row (never
-   * snapshotted — tightening a rule must bite in-flight runs immediately)
-   * and injected IN FULL into every model call's system prompt. '' = none.
-   */
-  guardrailsText: string;
-  /**
-   * Where this run's acts get recorded for its owner. Rides in the context
-   * bag because that bag is already threaded to every place a tool is
-   * called, and adding a parameter to executeStep/runAttempt/evaluateBranch
-   * to carry one object would be a worse trade.
-   *
-   * Filled by the caller, like guardrailsText — loadRunContext returns a
-   * silent one so the field is never undefined mid-run.
-   */
-  notifier: Notifier;
-  /**
-   * The item vars of every foreach loop the run is currently inside — what
-   * a step must see under "Known information" without a chip naming it.
-   * Set by the frame loop before each dispatch; rides here for the same
-   * reason the notifier does (the bag already reaches every builder).
-   */
-  liveInputs: ReadonlySet<string>;
-  /**
-   * The org's act-approval policy and whether THIS run counts as
-   * externally triggered under it (@renkei/agents' act-approval.ts),
-   * resolved once at run start. Read wherever a step reaches for a tool —
-   * the gate decision — so it rides in the bag for the same reason the
-   * notifier does. The silent default fails closed until the caller fills it.
-   */
-  actApproval: { policy: ActApprovalPolicy; externallyTriggered: boolean };
-}
-
-/**
- * A notifier that records nothing, for the window before the real one is
- * attached and for paths that legitimately have no owner to tell.
- */
-const SILENT_NOTIFIER: Notifier = {
-  act: async () => undefined,
-  runStarted: async () => undefined,
-  runFinished: async () => undefined,
-};
-
-/**
- * Token spend summed over an attempt's turns. inputTokens is every prompt
- * token the model read (the contract's meaning, cache-served or not); the
- * cache fields are its breakdown, null when no turn reported one — the
- * ledgers (migration 097) keep that as "not reported" rather than 0.
- */
 interface UsageTotals {
   inputTokens: number;
   outputTokens: number;
   cacheReadInputTokens: number | null;
   cacheWriteInputTokens: number | null;
+}
+
+type ToolUseBlock = Extract<LlmContentBlock, { type: 'tool_use' }>;
+type ToolResultBlock = Extract<LlmContentBlock, { type: 'tool_result' }>;
+
+/** What a turn is parked on. */
+type Pause =
+  | { kind: 'actions'; toolUseId: string; batchId: string }
+  | {
+      kind: 'question';
+      toolUseId: string;
+      message: string;
+      form: FormNode[];
+      timeoutHours?: number;
+    };
+
+/** A turn row's detail, opened. */
+interface TurnDetail {
+  opening?: string;
+  assistant?: LlmContentBlock[];
+  results?: ToolResultBlock[];
+  /** The tool_use the executor was inside when it last wrote — its outcome is unknown. */
+  inFlight?: string;
+  pause?: Pause;
+  finish?: 'done' | 'nothing_to_do' | 'failed';
+  llmSummary?: string;
+  result?: string;
+  quiet?: boolean;
+  toolCalls?: ToolCallRecord[];
+  modelCalls?: ModelCallRecord[];
+  usage?: UsageTotals;
+}
+
+interface TurnRow {
+  id: string;
+  attempt: number;
+  status: string;
+  created_at: Date;
+  tool_call_count: number;
+  detail: TurnDetail;
+}
+
+class RunAbort extends Error {
+  constructor(
+    public readonly kind: string,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+/** The queue retries this one: nothing about the run is wrong. */
+class TransientFailure extends Error {}
+
+/**
+ * Thrown at a checkpoint when this process has been told to stop: the run
+ * stays `running`, its turn row as last written, and the job goes back to
+ * the queue untouched (worker-loop's MessageReleased) for the next
+ * executor to continue from the same point.
+ */
+class ExecutorStopping extends Error {}
+
+/** A cancel click landed while the run was working. */
+class RunCanceled extends Error {}
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
+}
+
+/**
+ * The clip a tool result gets on its way to the model. The marker states
+ * the loss, so a model knows the list it is reading is partial and can
+ * page or filter.
+ */
+function clipForModel(text: string): string {
+  if (text.length <= TOOL_RESULT_CHARS) return text;
+  const dropped = text.length - TOOL_RESULT_CHARS;
+  return `${text.slice(0, TOOL_RESULT_CHARS)}\n… [truncated: ${dropped} more characters were cut to fit; the result is incomplete — narrow the query or page the results to see the rest]`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function argsOf(input: unknown): Record<string, unknown> {
+  return isRecord(input) ? input : {};
 }
 
 function emptyUsage(): UsageTotals {
@@ -437,165 +348,53 @@ function emptyUsage(): UsageTotals {
 function addUsage(totals: UsageTotals, usage: LlmUsage): void {
   totals.inputTokens += usage.inputTokens;
   totals.outputTokens += usage.outputTokens;
-  if (usage.cacheReadInputTokens !== undefined) {
+  if (typeof usage.cacheReadInputTokens === 'number') {
     totals.cacheReadInputTokens = (totals.cacheReadInputTokens ?? 0) + usage.cacheReadInputTokens;
   }
-  if (usage.cacheWriteInputTokens !== undefined) {
+  if (typeof usage.cacheWriteInputTokens === 'number') {
     totals.cacheWriteInputTokens =
       (totals.cacheWriteInputTokens ?? 0) + usage.cacheWriteInputTokens;
   }
 }
 
-/** agents.blocked_tools jsonb → the runtime's refusal set. */
-function blockedToolsOf(value: unknown): Set<string> {
-  if (!Array.isArray(value)) return new Set();
-  return new Set(
-    value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
-  );
-}
-
-/** A run-level abort that retrying attempts cannot fix. */
-class RunAbort extends Error {
-  constructor(
-    public readonly kind: string,
-    message: string
-  ) {
-    super(message);
-  }
-}
-
-/** Thrown to nack the queue job — transient, resume later, no attempt burned. */
-class TransientFailure extends Error {}
-
-/**
- * Thrown at a checkpoint when this process has been told to stop
- * (EngineDeps.stopRequested — the worker's SIGTERM): the run stays
- * `running` at its current step, the attempt in flight is voided like a
- * TransientFailure's, and the job goes back to the queue untouched
- * (worker-loop's MessageReleased) for the next executor to resume from
- * the same checkpoint — at once, rather than after the 30-minute lease
- * a killed process would have left behind.
- */
-class ExecutorStopping extends Error {}
-
-/**
- * Thrown mid-attempt when an owner's cancel click lands while a step is
- * still inside runAttempt's turn loop. Distinct from RunAbort so the run
- * finalizes as 'canceled' (quiet, no failure notification) rather than
- * 'failed' — the same terminal status the pre-step checkpoint already
- * produces for a cancel requested between steps.
- */
-class RunCanceled extends Error {}
-
-function clip(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
+function textOf(result: McpToolResult): string {
+  return result.content
+    .flatMap((block) => (typeof block.text === 'string' ? [block.text] : []))
+    .join('\n');
 }
 
 /**
- * The clip a tool result gets on its way to the model. Unlike `clip`, the
- * marker states the loss: a model told "12 340 more characters were cut"
- * knows the list it is reading is partial and can page or filter, where a
- * bare "[truncated]" reads as a footnote and the partial list as complete.
+ * Documents a tool attached for the model to SEE — carried in the MCP
+ * result's `_meta.renkeiDocuments`. Sent with the turn they arrive in;
+ * not persisted (their extracted text rode the tool result), so a
+ * conversation rebuilt after a pause reads the text alone.
  */
-function clipForModel(text: string): string {
-  if (text.length <= TOOL_RESULT_CHARS) return text;
-  const dropped = text.length - TOOL_RESULT_CHARS;
-  return `${text.slice(0, TOOL_RESULT_CHARS)}\n… [truncated: ${dropped} more characters were cut to fit; the result is incomplete — narrow the query or page the results to see the rest]`;
-}
+const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const ATTACHMENT_MAX_BLOCKS = 3;
+const ATTACHMENT_MAX_BASE64_CHARS = 14_000_000;
 
-/**
- * An attempt's `detail` as the JSON the row stores, kept under
- * DETAIL_CHARS by shrinking the biggest field — the verbatim prompt —
- * rather than cutting the serialized text. Clipping the JSON string
- * itself, which is what this replaced, would have handed Postgres an
- * unterminated document and failed the write that closes the attempt:
- * a run whose prompt referenced three large saved values would have died
- * exactly when it had the most to record.
- */
-function detailJson(detail: Record<string, unknown>): string {
-  let text = JSON.stringify(detail);
-  if (text.length <= DETAIL_CHARS) return text;
-  const prompt = detail.promptText;
-  if (typeof prompt === 'string' && prompt.length > 0) {
-    const excess = text.length - DETAIL_CHARS;
-    const kept = Math.max(0, prompt.length - excess - 32);
-    text = JSON.stringify({ ...detail, promptText: clip(prompt, kept) });
-    if (text.length <= DETAIL_CHARS) return text;
-  }
-  // Still over with the prompt gone: drop the tool-call previews, which
-  // are the next largest thing, and say so where the timeline reads them.
-  const { toolCalls: _toolCalls, promptText: _promptText, ...rest } = detail;
-  return JSON.stringify({
-    ...rest,
-    toolCalls: [],
-    detailTruncated: 'tool-call previews and the prompt were dropped to fit the record',
-  });
-}
+type AttachmentBlock = Extract<LlmContentBlock, { type: 'document' | 'image' }>;
 
-/**
- * The verbatim-prompt cap for attempt details. The debug view's 1:1
- * contract is the point of storing this at all, so the bound is generous —
- * it exists only so a pathological guardrails blob cannot balloon every
- * attempt row, and the clip marker is the honest boundary when it bites.
- */
-const PROMPT_DETAIL_CHARS = 40_000;
-
-/**
- * A finished attempt's detail, sealed for the row (step-detail.ts in
- * @renkei/agents): the content fields — prompt, summary, tool-call
- * previews, saved result — as one `uenc1:` envelope under the run
- * OWNER's automation key, the structure beside it in the clear. The
- * delegate seals; the run holds that delegation already (handleRun
- * parks a run whose owner has none), so a seal that fails here is the
- * delegation lapsing mid-run: a transient, retried by the queue rather
- * than written around — this row is what a re-entry rebuilds the run's
- * variables from, and an attempt stored in the clear would be exactly
- * the leak this exists to close.
- */
-async function sealedDetailJson(run: RunRow, detail: Record<string, unknown>): Promise<string> {
-  const { clear, plaintext } = splitDetailForSealing(detail);
-  if (plaintext === null) return detailJson(clear);
-  const sealed = await delegateClient().sealForSubject(
-    run.owner_subject,
-    [plaintext],
-    'automation'
-  );
-  if (!sealed.ok) {
-    throw new TransientFailure(`attempt detail could not be sealed: ${sealed.err.type}`);
-  }
-  return detailJson({ ...clear, sealed: sealed.val[0] });
-}
-
-/**
- * Attempt rows with their sealed content opened as the run's owner, in
- * one delegate call — for the re-entry paths that rebuild variables from
- * the rows. A row without an envelope (a pause, a row from before
- * sealing) is returned as it is. An envelope that will not open is the
- * owner's delegation lapsing: transient, like a failed seal — the
- * alternative is a resumed run reading a shorter memory than it wrote.
- */
-async function openAttemptDetails<T extends { detail: Json | null }>(
-  run: Pick<RunRow, 'owner_subject'>,
-  rows: T[]
-): Promise<T[]> {
-  const envelopes = rows.map((row) => sealedDetailOf(row.detail));
-  const stored = envelopes.flatMap((envelope) => (envelope === null ? [] : [envelope]));
-  if (stored.length === 0) return rows;
-  const opened = await delegateClient().openForSubject(run.owner_subject, stored);
-  if (!opened.ok) {
-    throw new TransientFailure(`attempt detail could not be opened: ${opened.err.type}`);
-  }
-  let next = 0;
-  return rows.map((row, index) => {
-    if (envelopes[index] === null) return row;
-    const plaintext = opened.val[next] ?? null;
-    next += 1;
-    if (plaintext === null) {
-      throw new TransientFailure('attempt detail could not be opened: envelope did not open');
+function attachmentBlocksOfMeta(meta: Record<string, unknown>): AttachmentBlock[] {
+  const raw = meta.renkeiDocuments;
+  if (!Array.isArray(raw)) return [];
+  const blocks: AttachmentBlock[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue;
+    const { mediaType, dataBase64, title } = entry;
+    if (typeof mediaType !== 'string' || typeof dataBase64 !== 'string' || !dataBase64) continue;
+    if (mediaType === 'application/pdf') {
+      blocks.push({
+        type: 'document',
+        mediaType,
+        dataBase64,
+        ...(typeof title === 'string' && title ? { title } : {}),
+      });
+    } else if (IMAGE_MEDIA_TYPES.has(mediaType)) {
+      blocks.push({ type: 'image', mediaType, dataBase64 });
     }
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    return { ...row, detail: mergeOpenedDetail(row.detail, plaintext, '') as Json };
-  });
+  }
+  return blocks;
 }
 
 /**
@@ -609,19 +408,7 @@ function wireDebugOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[WIRE_DEBUG_ENV]?.trim().toLowerCase() === 'true';
 }
 
-/**
- * The request fields for a model-error log line. Always: the URL and
- * `summarizeWireRequest`'s summary — every field NAME and structural
- * value that could be wrong (model, token-limit field, temperature,
- * reasoning effort, tool_choice, message roles and sizes) with the
- * content replaced by lengths, so the line can be read by anyone who
- * reads logs. The verbatim body is a run's whole prompt — tool results,
- * saved values, whatever the step read — and is written ONLY when
- * AGENT_LLM_DEBUG_WIRE=true, and then wrapped in secure() so it sits
- * encrypted at rest beside the credential header it travels with. `{}`
- * when the error carries no cause (a codepath that predates it, or a
- * kind — aborted, timeout — with no specific request to blame).
- */
+/** The request fields for a model-error log line (see WIRE_DEBUG_ENV). */
 export function requestLogFieldOf(
   cause: unknown,
   env: NodeJS.ProcessEnv = process.env
@@ -640,228 +427,7 @@ export function requestLogFieldOf(
   };
 }
 
-/** The attempt's first user message — the prompt the model was sent. */
-function promptTextOf(messages: PromptMessage[]): string {
-  const first = messages[0]?.content[0];
-  return first && first.type === 'text' ? first.text : '';
-}
-
-function classifyErrorText(text: string): string {
-  if (/not found|does not exist|no such|404/i.test(text)) return 'not-found';
-  if (/forbidden|permission|unauthorized|access denied|401|403/i.test(text)) return 'no-permission';
-  if (/invalid|required|rejected|malformed|400|422/i.test(text)) return 'invalid-input';
-  if (/rate limit|timed? ?out|unavailable|overloaded|429|5\d\d/i.test(text)) {
-    return 'service-unavailable';
-  }
-  return 'other';
-}
-
-function textOf(result: McpToolResult): string {
-  return result.content
-    .flatMap((block) => (typeof block.text === 'string' ? [block.text] : []))
-    .join('\n');
-}
-
-/** The failure code that selects a FailureHandling row. */
-/**
- * Documents a tool attached for the model to SEE — carried in the MCP
- * result's `_meta.renkeiDocuments`, never in the text the model reads
- * (base64-as-text is transport pretending to be information). The engine
- * turns them into typed document/image content blocks the provider
- * decodes into actual pages; providers without an equivalent degrade in
- * their adapter. Only shapes the providers can render are admitted: PDFs
- * become document blocks, common raster images become image blocks,
- * anything else is dropped (its extracted text rode the tool result).
- */
-const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-/** At most this many attachments per attempt, and this much base64 total. */
-const ATTACHMENT_MAX_BLOCKS = 3;
-const ATTACHMENT_MAX_BASE64_CHARS = 14_000_000;
-
-type AttachmentBlock = Extract<LlmContentBlock, { type: 'document' | 'image' }>;
-
-function attachmentBlocksOfMeta(meta: Record<string, unknown>): AttachmentBlock[] {
-  const raw = meta.renkeiDocuments;
-  if (!Array.isArray(raw)) return [];
-  const blocks: AttachmentBlock[] = [];
-  for (const entry of raw) {
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
-    const record: { mediaType?: unknown; dataBase64?: unknown; title?: unknown } = entry;
-    if (typeof record.mediaType !== 'string' || typeof record.dataBase64 !== 'string') continue;
-    if (!record.dataBase64) continue;
-    const title = typeof record.title === 'string' && record.title ? record.title : undefined;
-    if (record.mediaType === 'application/pdf') {
-      blocks.push({
-        type: 'document',
-        mediaType: record.mediaType,
-        dataBase64: record.dataBase64,
-        ...(title ? { title } : {}),
-      });
-    } else if (IMAGE_MEDIA_TYPES.has(record.mediaType)) {
-      blocks.push({ type: 'image', mediaType: record.mediaType, dataBase64: record.dataBase64 });
-    }
-  }
-  return blocks;
-}
-
-function classifyFailure(primaryResults: McpToolResult[], declaredCode: string | null): string {
-  const lastError = [...primaryResults].reverse().find((result) => result.isError);
-  if (lastError) {
-    const metaCode = lastError.meta['renkei/outcome'];
-    if (typeof metaCode === 'string' && metaCode) return metaCode;
-    const heuristic = classifyErrorText(textOf(lastError));
-    if (heuristic !== 'other') return heuristic;
-  }
-  return declaredCode ?? 'other';
-}
-
-function handlingFor(step: ActionStep, code: string): FailureHandling | undefined {
-  return (
-    step.failureHandling.find((handling) => handling.outcome === code) ??
-    step.failureHandling.find((handling) => handling.outcome === 'other')
-  );
-}
-
-/**
- * The chosen path INDEX from a choose_path call: 'yes'/'no' on two-path
- * branches (frozen v2 wire), a 1-based number on routers. Null = not a
- * valid choice for this branch.
- */
-function chosenPathIndexOf(
-  input: unknown,
-  pathCount: number
-): { index: number; reason: string } | null {
-  if (typeof input !== 'object' || input === null) return null;
-  const args: { choice?: unknown; reason?: unknown } = input;
-  const reason = typeof args.reason === 'string' ? args.reason : '';
-  if (pathCount === 2) {
-    if (args.choice === 'yes') return { index: 0, reason };
-    if (args.choice === 'no') return { index: 1, reason };
-    return null;
-  }
-  if (typeof args.choice !== 'string' || !/^\d+$/.test(args.choice)) return null;
-  const index = Number(args.choice) - 1;
-  if (index < 0 || index >= pathCount) return null;
-  return { index, reason };
-}
-
-function loopArgsOf(input: unknown): { choice: 'finished' | 'continue'; reason: string } | null {
-  if (typeof input !== 'object' || input === null) return null;
-  const args: { choice?: unknown; reason?: unknown } = input;
-  if (args.choice !== 'finished' && args.choice !== 'continue') return null;
-  return { choice: args.choice, reason: typeof args.reason === 'string' ? args.reason : '' };
-}
-
-/**
- * One executable frame: a sibling list and the position within it. The
- * stack of frames IS the program counter — popping an exhausted frame
- * lands execution after the container block that pushed it. Loop frames
- * additionally carry the live iteration counter and (foreach) the resolved
- * item list; NOTHING here is persisted — attempt rows are the memory, and
- * a resumed run rebuilds this by fast-forwarding.
- */
-interface SeqFrame {
-  kind: 'seq';
-  nodes: AgentStepNode[];
-  index: number;
-}
-
-interface LoopFrame {
-  kind: 'loop';
-  loop: LoopStep;
-  nodes: AgentStepNode[];
-  index: number;
-  /** 1-based. */
-  iteration: number;
-  /** foreach: resolved once at entry (bounded by maxIterations); until: null. */
-  items: string[] | null;
-}
-
-type Frame = SeqFrame | LoopFrame;
-
-/** The item vars bound by every enclosing foreach loop, outermost first. */
-function liveItemVars(stack: Frame[]): Set<string> {
-  const names = new Set<string>();
-  for (const frame of stack) {
-    if (frame.kind === 'loop' && frame.loop.mode === 'foreach') names.add(frame.loop.itemVar);
-  }
-  return names;
-}
-
-/** The innermost loop's iteration, or 0 outside any loop. */
-function currentIteration(stack: Frame[]): number {
-  for (let i = stack.length - 1; i >= 0; i -= 1) {
-    const frame = stack[i];
-    if (frame.kind === 'loop') return frame.iteration;
-  }
-  return 0;
-}
-
-/**
- * The frame stack that puts `startId` on top, derived purely from where the
- * id lives in the tree — ids are doc-unique, so the ancestor chain IS the
- * record of which paths the run took. Unknown/absent id → start at the top.
- *
- * LOOPS TRUNCATE THE DESCENT: iteration counters are not persisted, so the
- * stack stops AT the first loop ancestor and execution re-enters it from
- * iteration 1 — completed iterations fast-forward through their succeeded
- * rows and recorded decisions with zero model calls, landing exactly where
- * the run stopped.
- */
-function buildResumeStack(nodes: AgentStepNode[], startId: string | null): Frame[] {
-  if (!startId) return [{ kind: 'seq', nodes, index: 0 }];
-  const found = findNodeById(nodes, startId);
-  if (!found) return [{ kind: 'seq', nodes, index: 0 }];
-  const stack: Frame[] = [];
-  let container = nodes;
-  for (const ancestor of found.ancestors) {
-    switch (ancestor.kind) {
-      case 'branch': {
-        const branchIndex = container.indexOf(ancestor.branch);
-        // Past the branch, so popping this frame continues AFTER the block.
-        stack.push({ kind: 'seq', nodes: container, index: Math.max(0, branchIndex) + 1 });
-        container = ancestor.path.steps;
-        break;
-      }
-      case 'group': {
-        const groupIndex = container.indexOf(ancestor.group);
-        stack.push({ kind: 'seq', nodes: container, index: Math.max(0, groupIndex) + 1 });
-        container = ancestor.group.steps;
-        break;
-      }
-      case 'gate': {
-        // Branch-like: past the step, then down the recovery path the id
-        // lives in — popping the path frame lands after the gate.
-        const gateIndex = container.indexOf(ancestor.step);
-        stack.push({ kind: 'seq', nodes: container, index: Math.max(0, gateIndex) + 1 });
-        container = ancestor.path.steps;
-        break;
-      }
-      case 'loop': {
-        const loopIndex = container.indexOf(ancestor.loop);
-        stack.push({ kind: 'seq', nodes: container, index: Math.max(0, loopIndex) });
-        return stack;
-      }
-      default: {
-        const unhandled: never = ancestor;
-        throw new Error(`unknown ancestor kind: ${JSON.stringify(unhandled)}`);
-      }
-    }
-  }
-  stack.push({ kind: 'seq', nodes: found.siblings, index: found.index });
-  return stack;
-}
-
-/**
- * resolve_time's arguments, narrowed field by field. Anything unusable is
- * dropped rather than coerced — resolveTime then reports precisely what was
- * wrong, and the model gets a free retry to fix it.
- */
-/**
- * The owner's name for a log line. Total on purpose: resolving a display
- * name is a convenience, and a run must never fail because one could not be
- * found (a stubbed module in a test is enough to make that happen).
- */
+/** The owner's name for a log line — total: a run never fails over a display name. */
 async function describeActor(
   db: Kysely<DB>,
   subject: string | null | undefined
@@ -874,15 +440,7 @@ async function describeActor(
 }
 
 function resolveTimeArgsOf(input: unknown): ResolveTimeRequest {
-  const args: {
-    timezone?: unknown;
-    anchor?: unknown;
-    amount?: unknown;
-    unit?: unknown;
-    atTime?: unknown;
-    startOf?: unknown;
-    endOf?: unknown;
-  } = typeof input === 'object' && input !== null && !Array.isArray(input) ? input : {};
+  const args = argsOf(input);
   const snap = (value: unknown): 'hour' | 'day' | 'week' | 'month' | undefined =>
     value === 'hour' || value === 'day' || value === 'week' || value === 'month'
       ? value
@@ -902,99 +460,9 @@ function resolveTimeArgsOf(input: unknown): ResolveTimeRequest {
 }
 
 /**
- * Answer any resolve_time calls the model made while deciding a branch or
- * loop condition.
- *
- * Conditions are judgment-only by design — no tools, so a decision can
- * never act or fetch a fresh fact. resolve_time does not weaken that: it
- * reaches nothing, changes nothing, and is a pure function of its
- * arguments. What it removes is the arithmetic, which is the one part of
- * "is this older than yesterday 19:00?" a model reliably gets wrong while
- * sounding certain.
- *
- * Returns the tool_result blocks to hand back, plus a readable note per
- * lookup for the attempt's detail — when a branch decides wrongly, the
- * first question is which instant it thought it was comparing against.
- */
-function answerTimeLookups(toolUses: Extract<LlmContentBlock, { type: 'tool_use' }>[]): {
-  results: LlmContentBlock[];
-  notes: string[];
-} {
-  const results: LlmContentBlock[] = [];
-  const notes: string[] = [];
-  for (const use of toolUses) {
-    if (use.name !== RESOLVE_TIME_TOOL) continue;
-    const resolved = resolveTime(resolveTimeArgsOf(use.input));
-    results.push({
-      type: 'tool_result',
-      toolUseId: use.id,
-      content: resolved.ok
-        ? JSON.stringify(resolved.value)
-        : `${resolved.error} Call ${RESOLVE_TIME_TOOL} again with that corrected — it is free.`,
-      isError: !resolved.ok,
-    });
-    notes.push(resolved.ok ? `${resolved.value.iso} (${resolved.value.local})` : resolved.error);
-  }
-  return { results, notes };
-}
-
-function finishArgsOf(input: unknown): {
-  outcome: 'success' | 'failure' | 'skipped';
-  code: string | null;
-  summary: string;
-  saveValue: string | null;
-  saveItems: string[] | null;
-  stop: boolean;
-  quiet: boolean;
-} | null {
-  if (typeof input !== 'object' || input === null) return null;
-  const args: {
-    outcome?: unknown;
-    code?: unknown;
-    summary?: unknown;
-    saveValue?: unknown;
-    saveItems?: unknown;
-    stop?: unknown;
-    quiet?: unknown;
-  } = input;
-  // 'nothing-to-do' is the pre-rename spelling of 'skipped' — still
-  // accepted so an attempt in flight across a deploy lands, never taught
-  // to new models (the tool schema offers only 'skipped').
-  const outcome = args.outcome === 'nothing-to-do' ? 'skipped' : args.outcome;
-  if (outcome !== 'success' && outcome !== 'failure' && outcome !== 'skipped') {
-    return null;
-  }
-  const saveItems = Array.isArray(args.saveItems)
-    ? args.saveItems
-        .flatMap((entry) => (typeof entry === 'string' && entry ? [stripToolResidue(entry)] : []))
-        .filter(Boolean)
-        .slice(0, SAVE_ITEMS_MAX)
-        .map((entry) => clip(entry, SAVE_ITEM_CHARS))
-    : null;
-  // Bound HERE, once, at the single cap the row will store it at — so the
-  // value later steps read live is byte-identical to the one a resumed run
-  // recovers from the row (see SAVE_VALUE_CHARS).
-  const saveValue =
-    typeof args.saveValue === 'string'
-      ? clip(stripToolResidue(args.saveValue), SAVE_VALUE_CHARS)
-      : null;
-  return {
-    outcome,
-    code: typeof args.code === 'string' ? args.code : null,
-    summary: typeof args.summary === 'string' ? stripToolResidue(args.summary) : '',
-    saveValue,
-    saveItems: saveItems && saveItems.length > 0 ? saveItems : null,
-    stop: args.stop === true,
-    quiet: args.quiet === true,
-  };
-}
-
-/**
  * Trailing tool-call markup a model sometimes leaves inside a string
- * argument (`</saveValue>\n</invoke>` at the end of a saved value, seen in
- * production). Bound as-is, it rode into every later step's prompt and
- * into the record. Only closing tags at the very end are stripped — a
- * value that legitimately contains markup mid-text is untouched.
+ * argument (`</result>\n</invoke>`). Only closing tags at the very end
+ * are stripped — markup mid-text is untouched.
  */
 const TOOL_RESIDUE = /(?:\s*<\/[a-z_][\w:-]*>)+\s*$/i;
 
@@ -1002,17 +470,36 @@ function stripToolResidue(text: string): string {
   return text.replace(TOOL_RESIDUE, '').trim();
 }
 
+function finishArgsOf(input: unknown): {
+  outcome: 'done' | 'nothing_to_do' | 'failed';
+  summary: string;
+  result: string | null;
+  quiet: boolean;
+} | null {
+  const args = argsOf(input);
+  const outcome = args.outcome;
+  if (outcome !== 'done' && outcome !== 'nothing_to_do' && outcome !== 'failed') return null;
+  const summary = typeof args.summary === 'string' ? stripToolResidue(args.summary) : '';
+  if (!summary) return null;
+  return {
+    outcome,
+    summary,
+    result:
+      typeof args.result === 'string' && args.result.trim()
+        ? clip(stripToolResidue(args.result), RUN_RESULT_CHARS)
+        : null,
+    quiet: outcome === 'nothing_to_do' && args.quiet === true,
+  };
+}
+
 /**
- * ask_person's arguments. Only `message` is required — a malformed or
- * missing `form` degrades to a message-only question (`parseFormNodes`
- * drops what it cannot read) rather than refusing the whole call, the
- * same leniency the card rendering already extends to a saved form.
+ * ask_person's arguments. Only `message` is required — a malformed `form`
+ * degrades to a message-only question rather than refusing the call.
  */
 function askPersonArgsOf(
   input: unknown
 ): { message: string; form: FormNode[]; timeoutHours?: number } | null {
-  if (typeof input !== 'object' || input === null) return null;
-  const args: { message?: unknown; form?: unknown; timeoutHours?: unknown } = input;
+  const args = argsOf(input);
   const message = typeof args.message === 'string' ? args.message.trim() : '';
   if (!message) return null;
   return {
@@ -1025,10 +512,89 @@ function askPersonArgsOf(
 }
 
 function rememberArgsOf(input: unknown): { note: string } | null {
-  if (typeof input !== 'object' || input === null) return null;
-  const args: { note?: unknown } = input;
+  const args = argsOf(input);
   const note = typeof args.note === 'string' ? stripToolResidue(args.note).trim() : '';
   return note ? { note } : null;
+}
+
+/** A question card's answers as the agent reads them: one line per field. */
+function answerTextOf(form: FormNode[], answers: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const field of flattenFormFields(form)) {
+    const raw = answers[field.name];
+    const value: string | string[] | null = Array.isArray(raw)
+      ? raw.filter((entry): entry is string => typeof entry === 'string')
+      : typeof raw === 'string'
+        ? raw
+        : null;
+    if (value !== null) lines.push(describeQuestionAnswer(field, value));
+  }
+  return lines.join('\n') || 'Answered, with nothing filled in.';
+}
+
+/** A card's `result.answers` — the form reply keyed by field name. */
+function answersOf(result: unknown): Record<string, unknown> {
+  const answers = isRecord(result) ? result.answers : undefined;
+  return isRecord(answers) ? answers : {};
+}
+
+function commentOf(result: unknown): string | null {
+  const comment = isRecord(result) ? result.comment : undefined;
+  return typeof comment === 'string' && comment.trim() ? comment.trim() : null;
+}
+
+/** A stored detail → the turn's shape (fields that do not read are dropped). */
+function turnDetailOf(value: unknown): TurnDetail {
+  if (!isRecord(value)) return {};
+  // The detail is the engine's own write, read back; the guards below are
+  // for the fields whose shape later code branches on.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- engine-written JSON
+  const detail = value as TurnDetail;
+  return {
+    ...detail,
+    assistant: Array.isArray(detail.assistant) ? detail.assistant : undefined,
+    results: Array.isArray(detail.results) ? detail.results : undefined,
+    toolCalls: Array.isArray(detail.toolCalls) ? detail.toolCalls : undefined,
+    modelCalls: Array.isArray(detail.modelCalls) ? detail.modelCalls : undefined,
+  };
+}
+
+function toolUsesOf(blocks: LlmContentBlock[] | undefined): ToolUseBlock[] {
+  return (blocks ?? []).filter((block): block is ToolUseBlock => block.type === 'tool_use');
+}
+
+/**
+ * The conversation the model is sent, elided to fit: oldest tool results
+ * outside the most recent turns are cut to a short head once the whole
+ * transcript passes TRANSCRIPT_CHARS. Deterministic, so consecutive turns
+ * elide the same results and the prompt cache keeps what it can.
+ */
+export function fitTranscript(messages: LlmMessage[], maxChars = TRANSCRIPT_CHARS): LlmMessage[] {
+  const sizeOf = (message: LlmMessage) =>
+    message.content.reduce((sum, block) => {
+      if (block.type === 'text') return sum + block.text.length;
+      if (block.type === 'tool_result') return sum + block.content.length;
+      if (block.type === 'tool_use') return sum + JSON.stringify(block.input ?? {}).length;
+      return sum;
+    }, 0);
+  let total = messages.reduce((sum, message) => sum + sizeOf(message), 0);
+  if (total <= maxChars) return messages;
+  const keepFrom = Math.max(0, messages.length - KEEP_RECENT_TURNS * 2);
+  return messages.map((message, index) => {
+    if (index >= keepFrom || total <= maxChars || message.role !== 'user') return message;
+    return {
+      ...message,
+      content: message.content.map((block) => {
+        if (block.type !== 'tool_result' || total <= maxChars) return block;
+        if (block.content.length <= ELIDED_HEAD_CHARS) return block;
+        total -= block.content.length - ELIDED_HEAD_CHARS;
+        return {
+          ...block,
+          content: `${block.content.slice(0, ELIDED_HEAD_CHARS)}\n… [earlier result elided to keep the conversation within the model's limits; call the tool again if you need it whole]`,
+        };
+      }),
+    };
+  });
 }
 
 export function createAgentRunHandler(deps: EngineDeps) {
@@ -1042,61 +608,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
   const mint = deps.mintToken ?? mintRunToken;
   const revoke = deps.revokeToken ?? revokeRunToken;
   const resolveLlm = deps.resolveLlm ?? resolveAgentLlm;
+  const now = deps.now ?? (() => Date.now());
 
-  /**
-   * The token ledger (migration 085): one row per attempt that finalizes
-   * with token spend, attributed to the owner, so usage can be read in
-   * the viewer's own day. Skipped when both counts are zero (a pure-tool
-   * attempt, or a step that never reached the model). Best effort — a
-   * finished attempt must not fail over its bookkeeping.
-   */
-  async function recordUsage(
-    run: RunRow,
-    usage: UsageTotals,
-    stepId: string,
-    llm: ResolvedLlm,
-    /** The attempt's model calls, wall time summed (migration 125). */
-    durationMs: number | null = null
-  ): Promise<void> {
-    if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
-    const ledger = await recordLlmCall(db, {
-      subject: run.owner_subject,
-      agentId: run.agent_id,
-      runId: run.id,
-      stepId,
-      purpose: 'run',
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      ...(durationMs !== null ? { durationMs } : {}),
-      ...(usage.cacheReadInputTokens !== null
-        ? { cacheReadInputTokens: usage.cacheReadInputTokens }
-        : {}),
-      ...(usage.cacheWriteInputTokens !== null
-        ? { cacheWriteInputTokens: usage.cacheWriteInputTokens }
-        : {}),
-      // The model this attempt's turns actually went to — every turn of
-      // one attempt runs on the one resolved model (migration 098).
-      model: { provider: llm.providerName, model: llm.model, llmModelId: llm.modelConfigId },
-    });
-    if (!ledger.ok) {
-      logger.warn('token usage not recorded for run {runId}', {
-        component: 'worker-agents/engine',
-        runId: run.id,
-        agentId: run.agent_id,
-      });
-    }
-  }
-
-  return async function handleRun(message: { payload: Json }): Promise<void> {
-    const payload: { runId?: unknown } =
-      typeof message.payload === 'object' &&
-      message.payload !== null &&
-      !Array.isArray(message.payload)
-        ? message.payload
-        : {};
+  async function handleRun(message: { payload: Json }): Promise<void> {
+    const payload = isRecord(message.payload) ? message.payload : {};
     if (typeof payload.runId !== 'string') {
-      // A malformed pointer can never become valid; dead-letter via throw
-      // would retry it, so log and complete instead.
+      // A malformed pointer can never become valid; log and complete.
       logger.error('agent job without runId; dropping', { component: 'worker-agents/engine' });
       return;
     }
@@ -1108,20 +625,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
         'id',
         'agent_id',
         'owner_subject',
-        'steps_snapshot',
+        'definition_snapshot',
         'llm_model_id',
         'initial_state',
         'status',
-        'current_step_id',
         'started_at',
         'waiting_until',
         'cancel_requested_at',
         'resumed_at',
-        'resume_step_id',
         'resume_guidance',
+        'resume_failure',
         'error_kind',
         'trigger_kind',
         'parent_run_id',
+        'active_ms',
       ])
       .where('id', '=', runId)
       .executeTakeFirst();
@@ -1133,70 +650,52 @@ export function createAgentRunHandler(deps: EngineDeps) {
       return;
     }
     // Idempotent redelivery: a terminal run is simply acknowledged.
-    if (
-      run.status === 'succeeded' ||
-      run.status === 'failed' ||
-      run.status === 'canceled' ||
-      run.status === 'stopped'
-    ) {
-      return;
-    }
+    if (['succeeded', 'failed', 'canceled', 'stopped'].includes(run.status)) return;
 
     try {
       await executeRun(run);
     } catch (error) {
       if (error instanceof TransientFailure) throw error; // → queue backoff
       if (error instanceof ExecutorStopping) {
-        logger.info('run {runId} handed back at step {stepId}: this executor is stopping', {
+        logger.info('run {runId} handed back: this executor is stopping', {
           component: 'worker-agents/engine',
           runId,
-          stepId: run.current_step_id,
         });
-        throw new MessageReleased('the agents worker is stopping'); // → back to the queue, at once
+        throw new MessageReleased('the agents worker is stopping');
       }
       throw error;
     }
-  };
+  }
 
   async function executeRun(run: RunRow): Promise<void> {
-    const { id: runId } = run;
+    const runId = run.id;
 
     const settingsResult = await getOrgSettings();
     if (!settingsResult.ok) throw new TransientFailure('org settings unavailable');
     const settings = settingsResult.val;
 
-    if (!isAgentStepsDoc(run.steps_snapshot)) {
-      await finalizeRun(run, 'failed', 'config', 'The saved steps could not be read.', {});
+    const definition = parseAgentDefinition(run.definition_snapshot);
+    if (!definition) {
+      await finalizeRun(run, 'failed', 'config', 'The saved instructions could not be read.', {});
       return;
     }
-    const nodes = run.steps_snapshot.steps;
-    // Pre-order ordinal per node id — what agent_run_steps.step_index
-    // records. On a linear doc this is the flat index, byte-for-byte the
-    // old behavior; inside branches it stays monotone along any executed
-    // sequence, so timeline ordering keeps working.
-    const ordinals = new Map(walkSteps(nodes).map((entry) => [entry.node.id, entry.ordinal]));
 
-    // The agent may have been disabled between enqueue and claim. The name
-    // rides along for terminal-node notifications; guardrails and the
-    // blocked-tool set are LIVE-READ here on purpose (see RunContextText).
+    // Guardrails and the question/auto-accept switches are LIVE-READ: a
+    // rule tightened mid-flight bites this run's next model call.
     const agentRow = await db
       .selectFrom('agents')
-      .select(['enabled', 'name', 'guardrails', 'blocked_tools', 'can_ask_questions'])
+      .select(['enabled', 'name', 'guardrails', 'can_ask_questions', 'auto_accept_actions'])
       .where('id', '=', run.agent_id)
       .executeTakeFirst();
     if (!agentRow) {
       await finalizeRun(run, 'failed', 'config', 'The agent no longer exists.', {});
       return;
     }
+
     // The owner's key must be delegated for anything of theirs to open
-    // (docs/delegate-key-design.md): their automation key while they are
-    // away, or their session's while they are signed in. Without either,
-    // the run is PARKED — 'waiting', with error_kind 'needs-sign-in' —
-    // rather than failed: the owner's next sign-in (the web app's
-    // keys/delegate route) re-queues it, and it runs then with a note on
-    // why it is late. A key service that cannot be reached is transient.
-    // Asked as THIS run: the delegate checks the run is the owner's before
-    // it says anything about them (the agents worker's binding).
+    // (docs/delegate-key-design.md). Without it the run is PARKED —
+    // 'waiting', error_kind 'needs-sign-in' — and the owner's next sign-in
+    // re-queues it.
     const owner = await delegateClient().forRun(runId).keyStatus(run.owner_subject);
     if (!owner.ok) throw new TransientFailure('key service unavailable');
     const delegated =
@@ -1223,54 +722,26 @@ export function createAgentRunHandler(deps: EngineDeps) {
       return;
     }
 
-    // A cancel request wins over resuming, same as a disabled agent does —
-    // both are reasons this run must not go any further, checked before
-    // either gets a chance to look "resumable" below. Run-status
-    // transitions belong to the ENGINE alone (see approvals.ts); the web
-    // route/MCP tool that took the cancel click only set the flag and,
-    // for a queued/waiting run, woke us — THIS is where it becomes real.
+    // A cancel request — or a disabled agent — wins over resuming.
+    // Run-status transitions belong to the ENGINE alone: the route that
+    // took the cancel click only set the flag and woke us.
     const cancelReason = run.cancel_requested_at
       ? 'canceled-by-owner'
       : !agentRow.enabled
         ? 'agent-disabled'
         : null;
     if (cancelReason && (run.status === 'queued' || run.status === 'waiting')) {
-      // An owner's approval click must not resurrect a disabled or
-      // canceled run — the waiting run cancels and its pending card (if
-      // any) archives.
-      await db
-        .updateTable('agent_runs')
-        .set({
-          status: 'canceled',
-          waiting_until: null,
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', runId)
-        .execute();
-      await db
-        .updateTable('actionable_items')
-        .set({
-          status: 'expired',
-          decided_at: sql`NOW()`,
-          archived_at: sql`NOW()`,
-          result: JSON.stringify({ reason: cancelReason }),
-          updated_at: sql`NOW()`,
-        })
-        .where('run_id', '=', runId)
-        .where('status', '=', 'suggested')
-        .execute();
+      await cancelWaiting(run, cancelReason);
       return;
     }
 
     const llmResult = await resolveLlm(db, run.llm_model_id);
     if (!llmResult.ok) {
-      const kind = llmResult.err.type === 'DB_ERROR' ? null : 'config';
-      if (!kind) throw new TransientFailure('model config unavailable');
+      if (llmResult.err.type === 'DB_ERROR') throw new TransientFailure('model config unavailable');
       await finalizeRun(
         run,
         'failed',
-        kind,
+        'config',
         llmResult.err.message ?? 'No model is configured for this organization.',
         {}
       );
@@ -1278,431 +749,1470 @@ export function createAgentRunHandler(deps: EngineDeps) {
     }
     const llm = llmResult.val;
 
-    // A resume from a human-scale wait gets a FRESH deadline budget: the
-    // pause was the owner's time, not the run's.
-    const resumingFromWait = run.status === 'waiting';
-    const startedAt = resumingFromWait ? new Date() : (run.started_at ?? new Date());
-    if (run.status === 'queued' || resumingFromWait) {
-      await db
-        .updateTable('agent_runs')
-        .set({
-          status: 'running',
-          started_at: startedAt,
-          waiting_until: null,
-          llm_model_id: llm.modelConfigId,
-          // A run parked for the owner's sign-in carries that note; it is running now.
-          ...(run.error_kind === 'needs-sign-in' ? { error_kind: null, error: null } : {}),
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', runId)
-        .execute();
-    }
-    const deadline = startedAt.getTime() + settings.agentRunTimeoutMinutes * 60_000;
-
-    // The token names the only tools this run may see and call (migration
-    // 096): what the snapshot's steps and retry guidance reference, minus
-    // the agent's blocked set, plus the notifier's own. The gateway then
-    // registers nothing else for it — listTools below returns a handful of
-    // schemas instead of the owner's whole surface, and no tool a step did
-    // not name can be reached even by mistake.
-    const blockedTools = blockedToolsOf(agentRow.blocked_tools);
-    const runTools = [...referencedTools(nodes, blockedTools), ...NOTIFIER_TOOLS];
-    // Org policy on PHI connectors (phiConnectorsRequireCoveredModel): a
-    // run whose steps name Mirth, OnBase or file-share tools must resolve
-    // to a model the org records a BAA for. A config failure like a
-    // missing model — nothing is minted, no attempt row is spent.
     const phiRefusal = phiCoveredModelRefusal(
       settings.phiConnectorsRequireCoveredModel,
-      runTools,
+      definition.tools,
       llm
     );
     if (phiRefusal) {
       await finalizeRun(run, 'failed', 'config', phiRefusal, {});
       return;
     }
-    const token = await mint(db, {
+
+    const limits: RunLimits = {
+      minutes: settings.agentRunTimeoutMinutes,
+      toolCalls: Math.max(1, settings.agentRunToolCallBudget),
+    };
+    const tokenTtl = settings.agentRunTimeoutMinutes * 60 + TOKEN_SLACK_SECONDS;
+
+    // The PROBE token names every tool the agent selected (plus the
+    // notifier's own): it is how the engine learns which of them read and
+    // which act, and it carries the notifier's mail/WebEx calls. The model
+    // never reaches it.
+    const probeToken = await mint(db, {
       subject: run.owner_subject,
       agentId: run.agent_id,
-      ttlSeconds: settings.agentRunTimeoutMinutes * 60 + TOKEN_SLACK_SECONDS,
-      tools: runTools,
+      ttlSeconds: tokenTtl,
+      tools: [...new Set([...definition.tools, ...NOTIFIER_TOOLS])],
     });
-
+    const minted = [probeToken];
     try {
-      const mcp = createClient(token, deps.webBaseUrl, run.id);
-      await mcp.initialize();
-      const availableTools = await mcp.listTools();
-      const toolsByName = new Map(availableTools.map((tool) => [tool.name, tool]));
+      const probe = createClient(probeToken, deps.webBaseUrl, run.id);
+      await probe.initialize();
+      const listed = await probe.listTools();
+      const toolsByName = new Map(listed.map((tool) => [tool.name, tool]));
+      const selected = definition.tools.flatMap((name) => {
+        const info = toolsByName.get(name);
+        return info ? [info] : [];
+      });
+      const readTools = selected.filter((tool) => tool.kind === 'read');
+      // Unknown reads as act — the capability gate's own conservative call.
+      const actTools = selected.filter((tool) => tool.kind !== 'read');
+      const missing = definition.tools.filter((name) => !toolsByName.has(name));
 
-      // Resume state: prior attempt rows rebuild position, budgets, and the
-      // saveAs bindings recorded on succeeded attempts.
-      const priorAttempts = await openAttemptDetails(
-        run,
-        await db
-          .selectFrom('agent_run_steps')
-          .select(['step_id', 'attempt', 'status', 'detail', 'iteration'])
-          .where('run_id', '=', runId)
-          // Iteration-major so a looped step's LATEST iteration wins the
-          // recovered binding, matching live last-write-wins.
-          .orderBy('iteration')
-          .orderBy('attempt')
-          .execute()
-      );
-      const { vars, lists } = await baseVariables(run);
-      recoverSavedVars(nodes, priorAttempts, vars, lists);
-      // Steps whose saveAs feeds a loop get nudged toward saveItems.
-      const loopSourceVars = new Set(
-        walkSteps(nodes).flatMap(({ node }) =>
-          node.kind === 'loop' && node.mode === 'foreach' ? [node.itemsVar] : []
-        )
-      );
-
-      // The agent's carried context: memory (what earlier runs chose to remember)
-      // and its own knowledge notes, both bounded at render time — the
-      // read-side budget is what keeps prompts safe however large either
-      // store grows. Best-effort: an unreadable memory degrades the run to
-      // amnesiac, it never fails it. Guardrails ride in from the agents
-      // row read above — deliberately unbounded (see RunContextText).
-      const context = await loadRunContext(run);
-      context.guardrailsText = agentRow.guardrails ?? '';
-      // Which act calls this run may make unattended: the org's policy,
-      // read live like the guardrails so a change bites in-flight runs,
-      // against where this run came from (resolved to the root of an
-      // agent-to-agent chain).
-      context.actApproval = {
-        policy: settings.agentActStepsRequireApproval,
-        externallyTriggered: await runIsExternallyTriggered(run),
-      };
-      // One preference read per run, beside the org settings — not one per
-      // tool call, which a forty-item loop would turn into forty.
-      context.notifier = await notifierFor(db, {
+      const context = await loadRunContext(run.agent_id);
+      // The MODEL's token: read tools only. However the conversation goes,
+      // nothing the agent calls can change a system — the gateway does not
+      // register an act tool for this token at all.
+      const agentToken = await mint(db, {
         subject: run.owner_subject,
         agentId: run.agent_id,
-        agentName: await agentNameOf(run.agent_id),
+        ttlSeconds: tokenTtl,
+        tools: [
+          ...readTools.map((tool) => tool.name),
+          ...(context.knowledgeText ? [KNOWLEDGE_TOOL] : []),
+        ],
+      });
+      minted.push(agentToken);
+      const mcp = createClient(agentToken, deps.webBaseUrl, run.id);
+      await mcp.initialize();
+      const agentTools = await mcp.listTools();
+      const callable = new Map(
+        agentTools.filter((tool) => tool.kind === 'read').map((tool) => [tool.name, tool])
+      );
+
+      const vars = await baseVariables(run);
+      const notifier = await notifierFor(db, {
+        subject: run.owner_subject,
+        agentId: run.agent_id,
+        agentName: agentRow.name,
         runId: run.id,
-        mcp,
+        mcp: probe,
         toolsByName,
         ownerEmail: vars['user.email'],
       });
-      // Only on a genuinely NEW run. A crash-resume or a wake from an
-      // approval pause re-enters here, and "started" arriving twice for one
-      // run would be worse than not having it at all. Off by default.
-      if (run.status === 'queued' && run.resumed_at === null) void context.notifier.runStarted();
 
-      // Crash-resume rebuilds the frame stack from where current_step_id
-      // sits in the tree; a fresh run starts one frame at the top.
-      const stack = buildResumeStack(nodes, run.current_step_id);
-
-      while (stack.length > 0) {
-        const frame = stack[stack.length - 1];
-        if (frame.index >= frame.nodes.length) {
-          if (frame.kind === 'loop') {
-            // ITERATION BOUNDARY: the body just finished a round. Collect
-            // what this iteration saved (if configured), then decide
-            // whether another round runs.
-            await collectIteration(run, frame, vars, lists);
-            context.liveInputs = liveItemVars(stack);
-            const boundary = await loopBoundary(
-              run,
-              frame,
-              llm,
-              vars,
-              context,
-              deadline,
-              settings.agentMaxStepAttempts,
-              ordinals
-            );
-            if (boundary.kind === 'fail') {
-              await finalizeRun(run, 'failed', boundary.errorKind, boundary.error, vars);
-              return;
-            }
-            if (boundary.kind === 'next') {
-              frame.iteration += 1;
-              frame.index = 0;
-              if (frame.loop.mode === 'foreach' && frame.items) {
-                vars[frame.loop.itemVar] = frame.items[frame.iteration - 1] ?? '';
-              }
-              continue;
-            }
-            stack.pop();
-            continue;
-          }
-          // This sibling list is done — resume the enclosing one, which is
-          // already positioned after its container block.
-          stack.pop();
-          continue;
-        }
-        const node = frame.nodes[frame.index];
-        const iteration = currentIteration(stack);
-        // The in-memory row moves WITH the database row. finalizeRun resolves
-        // the failed step's name from `run.current_step_id`, so a write that
-        // only lands in Postgres leaves every failure reporting the value the
-        // run started with — null on a fresh run — and the log line then
-        // carries a literal "{failedStep}" instead of a step name.
-        run.current_step_id = node.id;
-        // Stopping: the run is left exactly here, `running` at this step,
-        // and the job released for the next executor to resume from.
-        if (deps.stopRequested?.()) throw new ExecutorStopping();
-        // A RUNNING run has no separate job to notice a cancel click — this
-        // one call to executeRun IS its only executor — so this checkpoint,
-        // reached before every step, is the entire mechanism: request a
-        // cancel from outside (setting cancel_requested_at) and the WHERE
-        // below simply stops matching, before the next step ever starts.
-        const advanced = await db
+      // Becoming 'running': a fresh run, a wake from a pause, a resume.
+      const firstStart = run.status === 'queued' && run.started_at === null;
+      if (run.status === 'queued' || run.status === 'waiting') {
+        await db
           .updateTable('agent_runs')
-          .set({ current_step_id: node.id, updated_at: sql`NOW()` })
+          .set({
+            status: 'running',
+            started_at: run.started_at ?? new Date(now()),
+            // waiting_until stays: a pause that is still pending re-parks
+            // with the deadline it already had.
+            llm_model_id: llm.modelConfigId,
+            ...(run.error_kind === 'needs-sign-in' ? { error_kind: null, error: null } : {}),
+            updated_at: sql`NOW()`,
+          })
           .where('id', '=', runId)
-          .where('cancel_requested_at', 'is', null)
-          .returning('id')
-          .executeTakeFirst();
-        if (!advanced) {
-          await finalizeRun(run, 'canceled', null, null, vars, true);
-          return;
-        }
-        context.liveInputs = liveItemVars(stack);
-
-        // Exhaustive dispatch on the node kind: a kind this switch does not
-        // handle is a compile error, never a silent fall-through into the
-        // action path.
-        //
-        // WHICH ARMS CALL A MODEL is mirrored by `nodeUsesModel` in
-        // @renkei/agents, which the builder canvas reads to mark the
-        // deterministic nodes. Nothing can span the app boundary to catch
-        // the two drifting, so changing whether an arm reaches an LLM means
-        // changing that function in the same commit.
-        switch (node.kind) {
-          case 'branch': {
-            const decided = await evaluateBranch(
-              run,
-              node,
-              llm,
-              vars,
-              context,
-              deadline,
-              settings.agentMaxStepAttempts,
-              ordinals,
-              iteration
-            );
-            if (decided.kind === 'fail') {
-              await finalizeRun(run, 'failed', decided.errorKind, decided.error, vars);
-              return;
-            }
-            if (decided.viaFailurePath) {
-              logger.warn('branch {branchId} took its failure path in run {runId}', {
-                component: 'worker-agents/engine',
-                runId,
-                branchId: node.id,
-              });
-            }
-            // Advance past the branch FIRST, then descend — popping the path
-            // frame later lands exactly after the block.
-            frame.index += 1;
-            stack.push({ kind: 'seq', nodes: decided.path.steps, index: 0 });
-            continue;
-          }
-          case 'group': {
-            // Pure structure: no attempt row, no model call — as if inlined.
-            frame.index += 1;
-            stack.push({ kind: 'seq', nodes: node.steps, index: 0 });
-            continue;
-          }
-          case 'loop': {
-            frame.index += 1;
-            let items: string[] | null = null;
-            if (node.mode === 'foreach') {
-              items = resolveItems(node.itemsVar, vars, lists);
-              if (!items || items.length === 0) {
-                // Nothing to iterate is not a failure — the loop just
-                // doesn't run, exactly like an empty else-path.
-                logger.info('loop {loopId} skipped: "{itemsVar}" is empty in run {runId}', {
-                  component: 'worker-agents/engine',
-                  runId,
-                  loopId: node.id,
-                  itemsVar: node.itemsVar,
-                });
-                continue;
-              }
-              if (items.length > node.maxIterations) {
-                logger.warn(
-                  'loop {loopId} truncated: {total} item(s), processing first {cap} in run {runId}',
-                  {
-                    component: 'worker-agents/engine',
-                    runId,
-                    loopId: node.id,
-                    total: items.length,
-                    cap: node.maxIterations,
-                  }
-                );
-                items = items.slice(0, node.maxIterations);
-              }
-              vars[node.itemVar] = items[0] ?? '';
-            }
-            stack.push({
-              kind: 'loop',
-              loop: node,
-              nodes: node.steps,
-              index: 0,
-              iteration: 1,
-              items,
-            });
-            continue;
-          }
-          case 'terminal': {
-            // An explicit end marker: the run ends HERE with the configured
-            // result — inside a branch path or loop body too. Deterministic,
-            // no LLM. Whether the owner hears about it is finalizeRun's
-            // call below, same as any other ending — this node no longer
-            // has notification channels of its own.
-            const ended = await executeTerminal(run, node, vars, ordinals, iteration);
-            switch (node.result) {
-              case 'failure':
-                // quiet=true: the node's OWN channels are the notification
-                // now — the generic context-free run.failed mail must not
-                // double up on an ending the owner configured explicitly.
-                await finalizeRun(
-                  run,
-                  'failed',
-                  'step_failed',
-                  `The flow ended at "${node.name || 'a failure marker'}"${ended.message ? `: ${clip(ended.message, 300)}` : '.'}`,
-                  vars,
-                  true
-                );
-                return;
-              case 'stop':
-                await finalizeRun(run, 'stopped', null, null, vars, true);
-                return;
-              case 'success':
-                // Not quiet: a successful finish still chains dependent
-                // agents, exactly like reaching the end of the list.
-                await finalizeRun(run, 'succeeded', null, null, vars);
-                return;
-              default: {
-                const unhandled: never = node.result;
-                throw new Error(`unknown terminal result: ${JSON.stringify(unhandled)}`);
-              }
-            }
-          }
-          case 'action':
-          case undefined:
-            break;
-          default: {
-            const unhandled: never = node;
-            throw new Error(`unknown step kind in snapshot: ${JSON.stringify(unhandled)}`);
-          }
-        }
-
-        const result = await executeStep(
-          run,
-          node,
-          toolsByName,
-          llm,
-          mcp,
-          vars,
-          lists,
-          loopSourceVars,
-          context,
-          blockedTools,
-          deadline,
-          settings.agentMaxStepAttempts,
-          ordinals,
-          iteration,
-          settings.agentApprovalMaxWaitDays * 24,
-          agentRow.can_ask_questions === true
-        );
-        if (result.kind === 'advance') {
-          frame.index += 1;
-          continue;
-        }
-        if (result.kind === 'route') {
-          // A needsApproval gate resolved to 'denied'/'timedOut' with a
-          // recovery path configured — take it, exactly like a branch.
-          frame.index += 1;
-          stack.push({ kind: 'seq', nodes: result.path.steps, index: 0 });
-          continue;
-        }
-        if (result.kind === 'waiting') {
-          logger.info('run {runId} waiting for approval at {stepId}', {
-            component: 'worker-agents/engine',
-            runId,
-            stepId: node.id,
-          });
-          // Job acks; the decision route or the timeout sweep re-enqueues
-          // {runId} when there is something to route.
-          return;
-        }
-        if (result.kind === 'finish') {
-          // A deliberate early success — configured on the step or declared
-          // by the instruction's own "…and stop here".
-          await finalizeRun(run, 'succeeded', null, null, vars, result.quiet);
-          return;
-        }
-        if (result.kind === 'stop') {
-          // The step judged the automation does not apply to this input (a
-          // declared skip, or a failure the owner marked benign) —
-          // a graceful terminal: no error, and quiet so no notification and
-          // no chained agents (nothing was done to chain from). The why is
-          // on the step's attempt row in the run timeline.
-          await finalizeRun(run, 'stopped', null, null, vars, true);
-          return;
-        }
-        if (result.kind === 'canceled') {
-          // A cancel click landed mid-attempt — same terminal status and
-          // quiet handling as the pre-step checkpoint above, just caught
-          // from inside runAttempt's turn loop instead of before it.
-          await finalizeRun(run, 'canceled', null, null, vars, true);
-          return;
-        }
-        await finalizeRun(run, 'failed', result.errorKind, result.error, vars);
-        return;
+          .execute();
       }
+      if (firstStart && run.resumed_at === null) void notifier.runStarted();
 
-      await finalizeRun(run, 'succeeded', null, null, vars);
+      const canAsk = agentRow.can_ask_questions === true;
+      const offered: LlmToolDef[] = [
+        FINISH_RUN_DEF,
+        ...(actTools.length > 0
+          ? [
+              buildStageActionsDef(
+                actTools.map((tool) => ({
+                  name: tool.name,
+                  description: tool.description,
+                  inputSchema: tool.inputSchema,
+                }))
+              ),
+            ]
+          : []),
+        REMEMBER_DEF,
+        RESOLVE_TIME_DEF,
+        ...(canAsk ? [ASK_PERSON_DEF] : []),
+        ...[...callable.values()].map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        })),
+      ];
+      const stageable = new Set(actTools.map((tool) => tool.name));
+
+      const loop = new RunLoop({
+        run,
+        definition,
+        agentName: agentRow.name,
+        guardrails: agentRow.guardrails ?? '',
+        canAsk,
+        autoAccept: agentRow.auto_accept_actions === true,
+        externallyTriggered: await runIsExternallyTriggered(run),
+        actPolicy: settings.agentActStepsRequireApproval,
+        approvalWaitCapHours: settings.agentApprovalMaxWaitDays * 24,
+        limits,
+        llm,
+        mcp,
+        probe,
+        toolsByName,
+        callable,
+        stageable,
+        offered,
+        missing,
+        context,
+        notifier,
+        vars,
+      });
+      await loop.execute();
     } finally {
-      await revoke(db, token);
+      for (const token of minted) await revoke(db, token);
     }
   }
 
-  /** Memory + knowledge notes, rendered and bounded; '' halves on failure. */
-  async function loadRunContext(run: RunRow): Promise<RunContextText> {
-    let memoryText = '';
-    let knowledgeText = '';
-    try {
-      memoryText = renderAgentMemory(await readAgentMemory(db, run.agent_id));
-    } catch (error) {
-      logger.warn('agent memory unreadable for run {runId}: {error}', {
-        component: 'worker-agents/engine',
-        runId: run.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    try {
-      knowledgeText = await renderAgentKnowledgeNotes(db, run.agent_id);
-    } catch (error) {
-      logger.warn('agent knowledge notes unreadable for run {runId}: {error}', {
-        component: 'worker-agents/engine',
-        runId: run.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    // guardrailsText is filled by the caller from the agents row it
-    // already read — one query, not two.
-    return {
-      memoryText,
-      knowledgeText,
-      guardrailsText: '',
-      notifier: SILENT_NOTIFIER,
-      liveInputs: new Set(),
-      actApproval: { policy: 'all', externallyTriggered: true },
-    };
+  interface LoopInput {
+    run: RunRow;
+    definition: AgentDefinition;
+    agentName: string;
+    guardrails: string;
+    canAsk: boolean;
+    autoAccept: boolean;
+    externallyTriggered: boolean;
+    actPolicy: 'externally_triggered' | 'all' | 'off';
+    approvalWaitCapHours: number;
+    limits: RunLimits;
+    llm: ResolvedLlm;
+    /** The model's client — read tools only. */
+    mcp: McpClient;
+    /** The probe/notifier client — never driven by the model. */
+    probe: McpClient;
+    toolsByName: Map<string, McpToolInfo>;
+    callable: Map<string, McpToolInfo>;
+    stageable: Set<string>;
+    offered: LlmToolDef[];
+    /** Selected tools the owner no longer has — told to the agent once. */
+    missing: string[];
+    context: { memoryText: string; knowledgeText: string };
+    notifier: Notifier;
+    vars: Record<string, string>;
   }
 
   /**
-   * Whether a run started from outside the org's own hand (act-approval.ts's
-   * isExternallyTriggered): an event or an API key. A run another run
-   * chained ('agent') inherits its ROOT's provenance — a mail that fired
-   * agent A, which chained agent B, is still that mail acting — so the
-   * chain is walked up through parent_run_id. A parent that is gone (pruned
-   * by retention) or a chain deeper than any the org allows reads as
-   * external: the fail-closed direction.
+   * One execution of a run, from wherever it stands to the next point it
+   * finishes, pauses, or is handed back. A class only so the turn helpers
+   * share the run's state without a dozen parameters each.
+   */
+  class RunLoop {
+    private readonly input: LoopInput;
+    private readonly segmentStartedAt = now();
+    /** Active time spent before this execution, in ms. */
+    private readonly priorActiveMs: number;
+
+    constructor(input: LoopInput) {
+      this.input = input;
+      this.priorActiveMs = Number(input.run.active_ms ?? 0);
+    }
+
+    private get runRow(): RunRow {
+      return this.input.run;
+    }
+
+    private activeMs(): number {
+      return this.priorActiveMs + (now() - this.segmentStartedAt);
+    }
+
+    private minutesLeft(): number {
+      return (this.input.limits.minutes * 60_000 - this.activeMs()) / 60_000;
+    }
+
+    /** The checkpoints before anything that spends time or acts. */
+    private async checkpoint(): Promise<void> {
+      if (this.minutesLeft() <= 0) {
+        throw new RunAbort(
+          'timeout',
+          `The run used its ${this.input.limits.minutes} minutes of active time.`
+        );
+      }
+      if (await isCanceled(this.runRow.id)) throw new RunCanceled();
+      if (deps.stopRequested?.()) throw new ExecutorStopping();
+    }
+
+    /** Persist the active-time clock — on every turn, and before control leaves. */
+    private async saveClock(): Promise<void> {
+      await db
+        .updateTable('agent_runs')
+        .set({ active_ms: Math.round(this.activeMs()), updated_at: sql`NOW()` })
+        .where('id', '=', this.runRow.id)
+        .execute();
+    }
+
+    async execute(): Promise<void> {
+      try {
+        await this.drive();
+      } catch (error) {
+        if (error instanceof RunAbort) {
+          await this.saveClock();
+          await this.closeOpenTurn('failed');
+          await finalizeRun(this.runRow, 'failed', error.kind, error.message, {});
+          return;
+        }
+        if (error instanceof RunCanceled) {
+          await this.saveClock();
+          await this.closeOpenTurn('canceled');
+          await finalizeRun(this.runRow, 'canceled', null, null, {}, true);
+          return;
+        }
+        if (error instanceof ExecutorStopping || error instanceof TransientFailure) {
+          await this.saveClock();
+        }
+        throw error;
+      }
+    }
+
+    private async closeOpenTurn(status: 'failed' | 'canceled'): Promise<void> {
+      await db
+        .updateTable('agent_run_steps')
+        .set({ status, finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+        .where('run_id', '=', this.runRow.id)
+        .where('status', 'in', ['running', 'waiting'])
+        .execute();
+    }
+
+    private async drive(): Promise<void> {
+      // Loaded once: this executor is the run's only writer (the unique
+      // turn index is the tripwire), so the rows in hand stay the truth.
+      const turns = await this.loadTurns();
+      let idleTurns = 0;
+      let turnsOverBudget = 0;
+      for (;;) {
+        const last = turns[turns.length - 1];
+
+        // Where the conversation stands decides what happens next. A turn
+        // from before an owner's resume is history: the run goes on past it.
+        const resumedPast =
+          last !== undefined &&
+          this.runRow.resumed_at !== null &&
+          new Date(this.runRow.resumed_at).getTime() > last.created_at.getTime();
+        if (last && !resumedPast && last.status === 'succeeded' && last.detail.finish) {
+          // Finished, but the run row did not say so (a crash between the
+          // two writes): finalize from what the row recorded.
+          await this.finalizeFrom(last.detail);
+          return;
+        }
+        if (last && last.status === 'waiting') {
+          if ((await this.resolvePause(last)) === 'waiting') return;
+          continue; // the turn is running again — continue its tool calls
+        }
+        if (last && last.status === 'running' && last.detail.assistant) {
+          const outcome = await this.continueTurn(last, turns);
+          if (outcome === 'paused' || outcome === 'finished') return;
+          continue;
+        }
+
+        await this.checkpoint();
+        // Out of tool calls: one last model turn, forced to finish_run, so
+        // the run ends with the agent's own account of where it got to.
+        const exhausted = this.budgetLeft(turns).toolCalls <= 0;
+        if (exhausted) {
+          turnsOverBudget += 1;
+          if (turnsOverBudget > 1) {
+            throw new RunAbort(
+              'budget',
+              `The run used its ${this.input.limits.toolCalls} tool calls without finishing.`
+            );
+          }
+        }
+
+        // A model call: into the open row a crash left without one, or a new row.
+        let row: TurnRow;
+        if (last && last.status === 'running' && !last.detail.assistant) {
+          row = last;
+        } else {
+          row = await this.openTurn(turns);
+          turns.push(row);
+        }
+        const answered = await this.callModel(row, turns, exhausted);
+        if (answered === 'idle') {
+          idleTurns += 1;
+          if (idleTurns >= MAX_IDLE_TURNS) {
+            throw new RunAbort('llm_error', 'The model stopped calling tools without finishing.');
+          }
+        } else {
+          idleTurns = 0;
+        }
+      }
+    }
+
+    /** Every turn row of this run, opened, oldest first. */
+    private async loadTurns(): Promise<TurnRow[]> {
+      const rows = await db
+        .selectFrom('agent_run_steps')
+        .select(['id', 'attempt', 'status', 'created_at', 'tool_call_count', 'detail'])
+        .where('run_id', '=', this.runRow.id)
+        .where('step_id', '=', TURN_STEP_ID)
+        .orderBy('attempt')
+        .execute();
+      const opened = await openDetails(this.runRow, rows);
+      return opened.map((row) => ({
+        id: row.id,
+        attempt: row.attempt,
+        status: row.status,
+        created_at: new Date(row.created_at),
+        tool_call_count: row.tool_call_count,
+        detail: turnDetailOf(row.detail),
+      }));
+    }
+
+    /** Tool calls billed since the run started — or since its last resume. */
+    private toolCallsSpent(turns: TurnRow[]): number {
+      const since = this.runRow.resumed_at ? new Date(this.runRow.resumed_at).getTime() : 0;
+      return turns
+        .filter((turn) => turn.created_at.getTime() >= since)
+        .reduce((sum, turn) => sum + turn.tool_call_count, 0);
+    }
+
+    private budgetLeft(turns: TurnRow[], pending = 0): { toolCalls: number; minutes: number } {
+      return {
+        toolCalls: this.input.limits.toolCalls - this.toolCallsSpent(turns) - pending,
+        minutes: this.minutesLeft(),
+      };
+    }
+
+    /**
+     * A new turn row. The first carries the run's opening message; the
+     * first after a resume carries the resume note.
+     */
+    private async openTurn(turns: TurnRow[]): Promise<TurnRow> {
+      const attempt = (turns[turns.length - 1]?.attempt ?? 0) + 1;
+      const resumedAt = this.runRow.resumed_at ? new Date(this.runRow.resumed_at).getTime() : null;
+      const resumedSinceLastTurn =
+        resumedAt !== null &&
+        turns.length > 0 &&
+        turns.every((turn) => turn.created_at.getTime() < resumedAt);
+      const previous = turns[turns.length - 1];
+      const detail: TurnDetail = {};
+      if (turns.length === 0) {
+        detail.opening = this.openingText();
+      } else if (resumedSinceLastTurn) {
+        detail.opening = resumeMessage({
+          failure: this.runRow.resume_failure,
+          guidance: this.runRow.resume_guidance,
+        });
+      } else if (previous?.detail.assistant && toolUsesOf(previous.detail.assistant).length === 0) {
+        // The last reply called no tool: the conversation needs a user
+        // turn, and the agent needs telling what moves it on.
+        detail.opening = IDLE_NUDGE;
+      }
+      const id = randomUUID();
+      try {
+        await db
+          .insertInto('agent_run_steps')
+          .values({
+            id,
+            run_id: this.runRow.id,
+            step_id: TURN_STEP_ID,
+            step_index: attempt,
+            attempt,
+            iteration: 0,
+            status: 'running',
+            started_at: sql`NOW()`,
+            detail: await sealedDetailJson(this.runRow, { ...detail }),
+          })
+          .execute();
+      } catch (error) {
+        // The unique (run, step, iteration, attempt) tripwire: another
+        // executor holds this run. Back off; the queue redelivers.
+        throw new TransientFailure(
+          `turn ${attempt} already exists: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+      return {
+        id,
+        attempt,
+        status: 'running',
+        created_at: new Date(now()),
+        tool_call_count: 0,
+        detail,
+      };
+    }
+
+    private openingText(): string {
+      const { vars, missing } = this.input;
+      const facts: Record<string, string> = {};
+      for (const builtin of BUILTIN_VARIABLES) {
+        if (vars[builtin.name]) facts[builtin.name] = vars[builtin.name];
+      }
+      facts.now = new Date(now()).toISOString();
+      const triggerValues = Object.fromEntries(
+        Object.entries(vars).filter(([name]) => name.startsWith('trigger.'))
+      );
+      const opening = buildRunOpening({
+        facts,
+        triggerValues,
+        startedBy: startedByText(this.runRow.trigger_kind),
+      }).content[0].text;
+      return missing.length > 0
+        ? `${opening}\n\nNot available to you this run (the owner no longer has them): ${missing.join(', ')}.`
+        : opening;
+    }
+
+    /** The conversation so far, as the model is sent it. */
+    private messagesOf(turns: TurnRow[]): LlmMessage[] {
+      const messages: LlmMessage[] = [];
+      let pending: LlmContentBlock[] = [];
+      turns.forEach((turn, index) => {
+        const isLast = index === turns.length - 1;
+        if (turn.detail.opening) pending.push({ type: 'text', text: turn.detail.opening });
+        if (!turn.detail.assistant) return;
+        if (pending.length > 0) messages.push({ role: 'user', content: pending });
+        messages.push({ role: 'assistant', content: turn.detail.assistant });
+        const results = [...(turn.detail.results ?? [])];
+        // A turn that ended before answering every call (a timeout, a
+        // failure the owner resumed) still owes each one a result.
+        if (!isLast || turn.status !== 'running') {
+          const answered = new Set(results.map((result) => result.toolUseId));
+          for (const use of toolUsesOf(turn.detail.assistant)) {
+            if (!answered.has(use.id)) {
+              results.push({
+                type: 'tool_result',
+                toolUseId: use.id,
+                content: 'Not run: the run stopped before this call.',
+                isError: true,
+              });
+            }
+          }
+        }
+        pending = results;
+      });
+      if (pending.length > 0) messages.push({ role: 'user', content: pending });
+      return messages;
+    }
+
+    private systemPrompt(): string {
+      return runSystemPrompt(
+        this.input.limits,
+        { canAsk: this.input.canAsk },
+        {
+          agentName: this.input.agentName,
+          instructions: this.input.definition.instructions,
+          guardrailsText: this.input.guardrails,
+          knowledgeText: this.input.context.knowledgeText,
+          memoryText: this.input.context.memoryText,
+        }
+      );
+    }
+
+    /** One model call into `row`. 'idle' when the reply called no tool. */
+    private async callModel(
+      row: TurnRow,
+      turns: TurnRow[],
+      finishOnly: boolean
+    ): Promise<'ok' | 'idle'> {
+      const { llm } = this.input;
+      const messages = fitTranscript(this.messagesOf(turns));
+      const tail = messages[messages.length - 1];
+      if (this.pendingAttachments.length > 0 && tail?.role === 'user') {
+        // Documents ride only on the turn they arrived in: this call sees
+        // them, a conversation rebuilt later reads their text alone.
+        messages[messages.length - 1] = {
+          ...tail,
+          content: [...tail.content, ...this.pendingAttachments],
+        };
+      }
+      this.pendingAttachments = [];
+      const startedAt = now();
+      const completion = await llm.provider.complete({
+        system: this.systemPrompt(),
+        messages,
+        // The tool list never changes within a run: it heads the cached
+        // prefix. Exhaustion is expressed through tool_choice alone.
+        tools: this.input.offered,
+        toolChoice: finishOnly ? { name: FINISH_RUN_TOOL } : 'any',
+        promptCache: true,
+        maxTokens: llm.maxOutputTokens,
+        ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
+      });
+      if (!completion.ok) {
+        const kind = completion.err.type;
+        logger.error('model error in run {runId}: {kind} {message}', {
+          component: 'worker-agents/engine',
+          runId: this.runRow.id,
+          kind,
+          message: completion.err.message ?? '',
+          ...requestLogFieldOf(completion.err.cause),
+        });
+        if (kind === 'auth') throw new RunAbort('llm_auth', 'The model rejected the API key.');
+        if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
+          // The row stays open without a reply; the redelivery calls again.
+          throw new TransientFailure(`model ${kind}`);
+        }
+        throw new RunAbort('llm_error', completion.err.message ?? `The model failed (${kind}).`);
+      }
+      const usage = emptyUsage();
+      addUsage(usage, completion.val.usage);
+      const modelCall: ModelCallRecord = {
+        durationMs: now() - startedAt,
+        stopReason: completion.val.stopReason,
+        inputTokens: completion.val.usage.inputTokens,
+        outputTokens: completion.val.usage.outputTokens,
+      };
+      const content = completion.val.content;
+      const text = content
+        .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+        .join('\n')
+        .trim();
+      const idle = toolUsesOf(content).length === 0;
+      row.detail = {
+        ...row.detail,
+        // An empty reply still has to be a message the provider accepts back.
+        assistant: content.length > 0 ? content : [{ type: 'text', text: '(no reply)' }],
+        ...(text ? { llmSummary: clip(text, PREVIEW_CHARS) } : {}),
+        modelCalls: [modelCall],
+        usage,
+        toolCalls: [],
+        results: [],
+      };
+      await recordUsage(this.runRow, usage, llm, modelCall.durationMs);
+      await this.writeTurn(row, idle ? 'succeeded' : 'running');
+      await this.saveClock();
+      return idle ? 'idle' : 'ok';
+    }
+
+    /**
+     * Work through the turn's tool calls in order, skipping those already
+     * answered. Each real call is recorded before it is made (inFlight) and
+     * its result written as soon as it lands, so a crash re-enters with no
+     * call made twice.
+     */
+    private async continueTurn(
+      row: TurnRow,
+      turns: TurnRow[]
+    ): Promise<'next' | 'paused' | 'finished'> {
+      const uses = toolUsesOf(row.detail.assistant);
+      const results = row.detail.results ?? [];
+      const toolCalls = row.detail.toolCalls ?? [];
+      const answered = new Set(results.map((result) => result.toolUseId));
+      const attachments: AttachmentBlock[] = [];
+      let finishing: ReturnType<typeof finishArgsOf> = null;
+
+      // A call that was in flight when the last executor died: its outcome
+      // is unknown, and making it again might act twice.
+      if (row.detail.inFlight && !answered.has(row.detail.inFlight)) {
+        results.push({
+          type: 'tool_result',
+          toolUseId: row.detail.inFlight,
+          content:
+            'This call was interrupted and its outcome is unknown. Check whether it took effect before repeating it.',
+          isError: true,
+        });
+        answered.add(row.detail.inFlight);
+        row.detail.inFlight = undefined;
+      }
+
+      const reply = async (result: ToolResultBlock, record?: ToolCallRecord) => {
+        results.push(result);
+        answered.add(result.toolUseId);
+        if (record) toolCalls.push(record);
+        row.detail.results = results;
+        row.detail.toolCalls = toolCalls;
+        row.detail.inFlight = undefined;
+        await this.writeTurn(row, 'running');
+      };
+
+      for (const use of uses) {
+        if (answered.has(use.id)) continue;
+
+        if (use.name === FINISH_RUN_TOOL) {
+          const finish = finishArgsOf(use.input);
+          if (!finish) {
+            await reply({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: 'finish_run needs {outcome: "done" | "nothing_to_do" | "failed", summary}.',
+              isError: true,
+            });
+            continue;
+          }
+          // Answered last: any other calls in the same reply still run.
+          finishing = finish;
+          continue;
+        }
+
+        if (use.name === RESOLVE_TIME_TOOL) {
+          const resolved = resolveTime(resolveTimeArgsOf(use.input));
+          await reply(
+            {
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: resolved.ok
+                ? JSON.stringify(resolved.value)
+                : `${resolved.error} Call ${RESOLVE_TIME_TOOL} again with that corrected — it is free.`,
+              isError: !resolved.ok,
+            },
+            {
+              free: true,
+              tool: RESOLVE_TIME_TOOL,
+              argsPreview: clip(JSON.stringify(use.input ?? {}), PREVIEW_CHARS),
+              resultPreview: clip(
+                resolved.ok ? `${resolved.value.iso} (${resolved.value.local})` : resolved.error,
+                PREVIEW_CHARS
+              ),
+              isError: !resolved.ok,
+              durationMs: 0,
+            }
+          );
+          continue;
+        }
+
+        if (use.name === REMEMBER_TOOL) {
+          const resultText = await this.remember(use.input);
+          await reply(
+            {
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: resultText.text,
+              isError: resultText.isError,
+            },
+            {
+              free: true,
+              tool: REMEMBER_TOOL,
+              argsPreview: clip(JSON.stringify(use.input ?? {}), PREVIEW_CHARS),
+              resultPreview: clip(resultText.text, PREVIEW_CHARS),
+              isError: resultText.isError,
+              durationMs: 0,
+            }
+          );
+          continue;
+        }
+
+        if (use.name === ASK_PERSON_TOOL && this.input.canAsk) {
+          const asked = askPersonArgsOf(use.input);
+          if (!asked) {
+            await reply({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: 'ask_person needs at least {message}.',
+              isError: true,
+            });
+            continue;
+          }
+          await this.pauseForQuestion(row, use.id, asked);
+          return 'paused';
+        }
+
+        if (use.name === STAGE_ACTIONS_TOOL && this.input.stageable.size > 0) {
+          const parsed = parseStagedActions(use.input, this.input.stageable);
+          if ('error' in parsed) {
+            await reply({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: parsed.error,
+              isError: true,
+            });
+            continue;
+          }
+          const left = this.budgetLeft(turns);
+          if (parsed.actions.length > left.toolCalls) {
+            await reply({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: `This batch has ${parsed.actions.length} actions but only ${Math.max(0, left.toolCalls)} tool calls are left in your budget — stage only what matters most, or finish.`,
+              isError: true,
+            });
+            continue;
+          }
+          await this.checkpoint();
+          await this.stage(row, use, parsed.summary, parsed.actions);
+          return 'paused';
+        }
+
+        const info = this.input.callable.get(use.name);
+        if (!info) {
+          const content = this.input.stageable.has(use.name)
+            ? `"${use.name}" changes something, so you cannot call it directly — propose it with ${STAGE_ACTIONS_TOOL}.`
+            : `The tool "${use.name}" is not available to this agent.`;
+          await reply({ type: 'tool_result', toolUseId: use.id, content, isError: true });
+          continue;
+        }
+
+        if (this.budgetLeft(turns).toolCalls <= 0) {
+          await reply({
+            type: 'tool_result',
+            toolUseId: use.id,
+            content:
+              'Tool budget spent — this call was not made. Call finish_run now with what you have.',
+            isError: true,
+          });
+          continue;
+        }
+
+        await this.checkpoint();
+        row.detail.inFlight = use.id;
+        row.tool_call_count += 1;
+        await this.writeTurn(row, 'running');
+        const outcome = await this.callTool(use);
+        for (const block of outcome.attachments) {
+          if (attachments.length < ATTACHMENT_MAX_BLOCKS) attachments.push(block);
+        }
+        await reply(outcome.result, outcome.record);
+      }
+
+      if (finishing) {
+        const finishUse = uses.find((use) => use.name === FINISH_RUN_TOOL && !answered.has(use.id));
+        row.detail = {
+          ...row.detail,
+          finish: finishing.outcome,
+          llmSummary: clip(finishing.summary, PREVIEW_CHARS),
+          ...(finishing.result ? { result: finishing.result } : {}),
+          quiet: finishing.quiet,
+          results: [
+            ...results,
+            ...(finishUse
+              ? [{ type: 'tool_result' as const, toolUseId: finishUse.id, content: 'Finished.' }]
+              : []),
+          ],
+          toolCalls: [
+            ...toolCalls,
+            {
+              free: true,
+              tool: FINISH_RUN_TOOL,
+              argsPreview: clip(JSON.stringify({ outcome: finishing.outcome }), PREVIEW_CHARS),
+              resultPreview: '',
+              isError: false,
+              durationMs: 0,
+            },
+          ],
+        };
+        await this.writeTurn(row, 'succeeded');
+        await this.saveClock();
+        await this.finalizeFrom(row.detail);
+        return 'finished';
+      }
+
+      // Every call answered: the budget line rides on the results, then
+      // the turn closes and the next one is the model's.
+      const withBudget = [...results];
+      const lastResult = withBudget[withBudget.length - 1];
+      if (lastResult) {
+        withBudget[withBudget.length - 1] = {
+          ...lastResult,
+          content: `${lastResult.content}\n\n${budgetLine(this.budgetLeft(turns))}`,
+        };
+      }
+      row.detail.results = withBudget;
+      await this.writeTurn(row, 'succeeded');
+      await this.saveClock();
+      this.pendingAttachments = attachments;
+      return 'next';
+    }
+
+    private pendingAttachments: AttachmentBlock[] = [];
+
+    /** One real tool call through the agent's read-only client. */
+    private async callTool(
+      use: ToolUseBlock
+    ): Promise<{
+      result: ToolResultBlock;
+      record: ToolCallRecord;
+      attachments: AttachmentBlock[];
+    }> {
+      const args = argsOf(use.input);
+      const startedAt = now();
+      let result: McpToolResult;
+      try {
+        result = await this.input.mcp.callTool(use.name, args);
+      } catch (error) {
+        result = {
+          content: [
+            {
+              type: 'text',
+              text: `The tool could not be reached: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+          meta: {},
+        };
+      }
+      const durationMs = now() - startedAt;
+      const resultText = textOf(result);
+      const kind = toolKindOf(result.meta);
+      if (result.isError) {
+        logger.warn('agent "{agentName}": {toolLabel} failed — {error}', {
+          component: 'worker-agents/engine',
+          runId: this.runRow.id,
+          agentId: this.runRow.agent_id,
+          agentName: this.input.agentName,
+          subject: this.runRow.owner_subject,
+          toolLabel: friendlyToolName(use.name, null),
+          tool: use.name,
+          durationMs,
+          error: clip(resultText, PREVIEW_CHARS),
+        });
+      }
+      return {
+        result: {
+          type: 'tool_result',
+          toolUseId: use.id,
+          // Fenced as data (untrusted.ts): a result can carry a stranger's words.
+          content: untrustedBlock(`tool:${use.name}`, clipForModel(resultText)),
+          ...(result.isError ? { isError: true } : {}),
+        },
+        record: {
+          tool: use.name,
+          argsPreview: clip(JSON.stringify(args), PREVIEW_CHARS),
+          resultPreview: clip(resultText, PREVIEW_CHARS),
+          resultChars: resultText.length,
+          isError: result.isError,
+          durationMs,
+          ...(kind ? { kind } : {}),
+        },
+        attachments: attachmentBlocksOfMeta(result.meta).filter(
+          (block) => block.dataBase64.length <= ATTACHMENT_MAX_BASE64_CHARS
+        ),
+      };
+    }
+
+    private async remember(input: unknown): Promise<{ text: string; isError: boolean }> {
+      const remembered = rememberArgsOf(input);
+      if (!remembered) return { text: 'remember needs {note}, a non-empty string.', isError: true };
+      try {
+        const { inserted } = await appendAgentMemory(db, {
+          agentId: this.runRow.agent_id,
+          content: remembered.note,
+          runId: this.runRow.id,
+        });
+        if (!inserted) return { text: 'Already remembered — no change.', isError: false };
+        this.input.context.memoryText = renderAgentMemory(
+          await readAgentMemory(db, this.runRow.agent_id)
+        );
+        return { text: 'Remembered.', isError: false };
+      } catch (error) {
+        logger.warn('memory append failed for run {runId}: {error}', {
+          component: 'worker-agents/engine',
+          runId: this.runRow.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return { text: 'Could not save that to memory.', isError: true };
+      }
+    }
+
+    /** Write the row: status, billed calls, the sealed detail. */
+    private async writeTurn(row: TurnRow, status: string): Promise<void> {
+      row.status = status;
+      const usage = row.detail.usage ?? emptyUsage();
+      await db
+        .updateTable('agent_run_steps')
+        .set({
+          status,
+          tool_call_count: row.tool_call_count,
+          input_tokens: usage.inputTokens,
+          output_tokens: usage.outputTokens,
+          cache_read_input_tokens: usage.cacheReadInputTokens,
+          cache_write_input_tokens: usage.cacheWriteInputTokens,
+          outcome:
+            status === 'succeeded' && row.detail.finish
+              ? row.detail.finish
+              : status === 'waiting'
+                ? (row.detail.pause?.kind ?? null)
+                : null,
+          detail: await sealedDetailJson(this.runRow, { ...row.detail }),
+          ...(status === 'running' || status === 'waiting' ? {} : { finished_at: sql`NOW()` }),
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', row.id)
+        .execute();
+    }
+
+    /**
+     * Stage a batch: the row, then — when a person must accept — the card,
+     * or an auto-accept straight to the executor. Either way the run waits
+     * and its clock stops.
+     */
+    private async stage(
+      row: TurnRow,
+      use: ToolUseBlock,
+      summary: string,
+      actions: StagedAction[]
+    ): Promise<void> {
+      const reason = actApprovalReason({
+        tools: actions.map((action) => action.tool),
+        autoAccept: this.input.autoAccept,
+        policy: this.input.actPolicy,
+        externallyTriggered: this.input.externallyTriggered,
+      });
+      const timeoutHours = argsOf(use.input).timeoutHours;
+      const waitHours = Math.min(
+        Math.max(
+          1,
+          typeof timeoutHours === 'number' ? timeoutHours : APPROVAL_DEFAULT_TIMEOUT_HOURS
+        ),
+        Math.max(1, this.input.approvalWaitCapHours)
+      );
+      const batchId = randomUUID();
+      const waitingUntil = reason ? new Date(now() + waitHours * 3_600_000) : null;
+      try {
+        await db
+          .insertInto('agent_action_batches')
+          .values({
+            id: batchId,
+            run_id: this.runRow.id,
+            agent_id: this.runRow.agent_id,
+            owner_subject: this.runRow.owner_subject,
+            turn: row.attempt,
+            status: reason ? 'proposed' : 'accepted',
+            summary,
+            actions: JSON.stringify(actions),
+            review_reason: reason,
+            accepted_by: reason ? null : 'auto',
+            decided_at: reason ? null : sql`NOW()`,
+            waiting_until: waitingUntil,
+          })
+          .execute();
+      } catch (error) {
+        throw new TransientFailure(
+          `batch for turn ${row.attempt} already exists: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+      row.tool_call_count += actions.length;
+      row.detail.pause = { kind: 'actions', toolUseId: use.id, batchId };
+      row.detail.toolCalls = [
+        ...(row.detail.toolCalls ?? []),
+        {
+          tool: STAGE_ACTIONS_TOOL,
+          argsPreview: clip(JSON.stringify(use.input ?? {}), PREVIEW_CHARS),
+          resultPreview: reason ? 'Waiting for acceptance.' : 'Accepted automatically.',
+          isError: false,
+          durationMs: 0,
+          staged: actions.length,
+        },
+      ];
+      await this.writeTurn(row, 'waiting');
+      await this.saveClock();
+      await db
+        .updateTable('agent_runs')
+        .set({ status: 'waiting', waiting_until: waitingUntil, updated_at: sql`NOW()` })
+        .where('id', '=', this.runRow.id)
+        .execute();
+      if (reason) {
+        await this.raiseBatchCard(row.attempt, batchId, summary, actions);
+      } else {
+        await enqueueBatch(this.runRow, batchId);
+      }
+      logger.info('run {runId} staged {count} action(s) ({how})', {
+        component: 'worker-agents/engine',
+        runId: this.runRow.id,
+        count: actions.length,
+        how: reason ? `waiting: ${reason}` : 'auto-accepted',
+      });
+    }
+
+    private async raiseBatchCard(
+      turn: number,
+      batchId: string,
+      summary: string,
+      actions: StagedAction[]
+    ): Promise<void> {
+      const path = runPagePath(this.runRow);
+      const link = approvalLink(path);
+      const { agentName } = this.input;
+      try {
+        await db
+          .insertInto('actionable_items')
+          .values({
+            id: randomUUID(),
+            source: 'agents',
+            status: 'suggested',
+            kind: 'approval',
+            title: `${agentName} — ${actions.length === 1 ? 'wants to make a change' : `wants to make ${actions.length} changes`}`,
+            summary: clip(summary, PREVIEW_CHARS),
+            evidence: JSON.stringify([]),
+            // A snapshot: what a person is looking at keeps showing what it
+            // showed. The executor reads the BATCH row, never this.
+            suggested_action: JSON.stringify({ batchId, summary, actions }),
+            owner_subject: this.runRow.owner_subject,
+            created_by: this.runRow.owner_subject,
+            created_by_agent_id: this.runRow.agent_id,
+            run_id: this.runRow.id,
+            step_id: TURN_STEP_ID,
+            iteration: 0,
+            attempt: turn,
+          })
+          .execute();
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
+          return; // a racing executor raised it already
+        }
+        throw error;
+      }
+      const heading = `Agent “${agentName}” wants your go-ahead`;
+      await writeNotificationRow(
+        db,
+        {
+          subject: this.runRow.owner_subject,
+          agentId: this.runRow.agent_id,
+          agentName,
+          runId: this.runRow.id,
+        },
+        { kind: 'approval', headline: heading, stepId: null, refUrl: path }
+      );
+      const prefs = await getNotificationPrefs(this.runRow.owner_subject);
+      const { deliverOwnerNotifications } = notificationDeliverer(
+        this.input.probe,
+        this.input.toolsByName
+      );
+      await deliverOwnerNotifications({
+        email: prefs.approvalNeeded.email,
+        webex: prefs.approvalNeeded.webex,
+        heading,
+        body: [
+          summary,
+          actions
+            .map(
+              (action, index) =>
+                `${index + 1}. ${friendlyToolName(action.tool, null)} — ${action.reason}`
+            )
+            .join('\n'),
+          ...(link ? [`Respond here: ${link}`] : []),
+        ].join('\n\n'),
+        ownerEmail: this.input.vars['user.email'],
+      });
+    }
+
+    private async pauseForQuestion(
+      row: TurnRow,
+      toolUseId: string,
+      asked: { message: string; form: FormNode[]; timeoutHours?: number }
+    ): Promise<void> {
+      const waitHours = Math.min(
+        Math.max(1, asked.timeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
+        Math.max(1, this.input.approvalWaitCapHours)
+      );
+      const waitingUntil = new Date(now() + waitHours * 3_600_000);
+      row.detail.pause = { kind: 'question', toolUseId, ...asked };
+      row.detail.toolCalls = [
+        ...(row.detail.toolCalls ?? []),
+        {
+          free: true,
+          tool: ASK_PERSON_TOOL,
+          argsPreview: clip(asked.message, PREVIEW_CHARS),
+          resultPreview: 'Waiting for an answer.',
+          isError: false,
+          durationMs: 0,
+        },
+      ];
+      await this.writeTurn(row, 'waiting');
+      await this.saveClock();
+      await db
+        .updateTable('agent_runs')
+        .set({ status: 'waiting', waiting_until: waitingUntil, updated_at: sql`NOW()` })
+        .where('id', '=', this.runRow.id)
+        .execute();
+      await this.raiseQuestionCard(row.attempt, asked.message, asked.form);
+    }
+
+    private async raiseQuestionCard(
+      turn: number,
+      message: string,
+      form: FormNode[]
+    ): Promise<void> {
+      const path = runPagePath(this.runRow);
+      const link = approvalLink(path);
+      const { agentName } = this.input;
+      try {
+        await db
+          .insertInto('actionable_items')
+          .values({
+            id: randomUUID(),
+            source: 'agents',
+            status: 'suggested',
+            kind: 'question',
+            title: `${agentName} — has a question`,
+            summary: clip(message, PREVIEW_CHARS),
+            evidence: JSON.stringify([]),
+            suggested_action: JSON.stringify({ message, form }),
+            owner_subject: this.runRow.owner_subject,
+            created_by: this.runRow.owner_subject,
+            created_by_agent_id: this.runRow.agent_id,
+            run_id: this.runRow.id,
+            step_id: TURN_STEP_ID,
+            iteration: 0,
+            attempt: turn,
+          })
+          .execute();
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
+          return;
+        }
+        throw error;
+      }
+      const heading = `Agent “${agentName}” has a question`;
+      await writeNotificationRow(
+        db,
+        {
+          subject: this.runRow.owner_subject,
+          agentId: this.runRow.agent_id,
+          agentName,
+          runId: this.runRow.id,
+        },
+        { kind: 'question', headline: heading, stepId: null, refUrl: path }
+      );
+      const prefs = await getNotificationPrefs(this.runRow.owner_subject);
+      const { deliverOwnerNotifications } = notificationDeliverer(
+        this.input.probe,
+        this.input.toolsByName
+      );
+      await deliverOwnerNotifications({
+        email: prefs.questionAsked.email,
+        webex: prefs.questionAsked.webex,
+        heading,
+        body: [message, ...(link ? [`Answer here: ${link}`] : [])].join('\n\n'),
+        ownerEmail: this.input.vars['user.email'],
+      });
+    }
+
+    /**
+     * A parked turn's re-entry. Resolved → the pause's tool_result is
+     * written, the row runs again, and the loop continues its remaining
+     * calls. Still pending → the run re-parks with the same deadline.
+     */
+    private async resolvePause(row: TurnRow): Promise<'waiting' | 'resolved'> {
+      const pause = row.detail.pause;
+      if (!pause) {
+        await this.writeTurn(row, 'running');
+        return 'resolved';
+      }
+      const content =
+        pause.kind === 'actions'
+          ? await this.resolveBatch(row, pause)
+          : await this.resolveQuestion(row, pause);
+      if (content === null) {
+        await db
+          .updateTable('agent_runs')
+          .set({ status: 'waiting', updated_at: sql`NOW()` })
+          .where('id', '=', this.runRow.id)
+          .execute();
+        return 'waiting';
+      }
+      row.detail.results = [
+        ...(row.detail.results ?? []),
+        { type: 'tool_result', toolUseId: pause.toolUseId, content },
+      ];
+      row.detail.pause = undefined;
+      await this.writeTurn(row, 'running');
+      await db
+        .updateTable('agent_runs')
+        .set({ status: 'running', waiting_until: null, updated_at: sql`NOW()` })
+        .where('id', '=', this.runRow.id)
+        .execute();
+      return 'resolved';
+    }
+
+    /** The batch's report once it is settled, or null while it is not. */
+    private async resolveBatch(
+      row: TurnRow,
+      pause: Extract<Pause, { kind: 'actions' }>
+    ): Promise<string | null> {
+      const batch = await db
+        .selectFrom('agent_action_batches')
+        .select(['id', 'status', 'actions', 'results', 'accepted_by', 'comment', 'waiting_until'])
+        .where('id', '=', pause.batchId)
+        .executeTakeFirst();
+      if (!batch) return 'The batch could not be found; none of its actions were made.';
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the column only holds these
+      let status = batch.status as ActionBatchStatus;
+      let comment = batch.comment;
+      let acceptedBy = batch.accepted_by;
+
+      if (status === 'proposed') {
+        const card = await db
+          .selectFrom('actionable_items')
+          .select(['id', 'status', 'result', 'decided_by'])
+          .where('run_id', '=', this.runRow.id)
+          .where('step_id', '=', TURN_STEP_ID)
+          .where('attempt', '=', row.attempt)
+          .executeTakeFirst();
+        if (!card) {
+          // A crash between the batch and its card: raise it now.
+          await this.raiseBatchCard(row.attempt, batch.id, '', parseStoredActions(batch.actions));
+          return null;
+        }
+        if (card.status === 'suggested') {
+          const due = batch.waiting_until ? new Date(batch.waiting_until).getTime() : Infinity;
+          if (now() < due) return null;
+          const claimed = await db
+            .updateTable('actionable_items')
+            .set({
+              status: 'expired',
+              decided_at: sql`NOW()`,
+              archived_at: sql`NOW()`,
+              result: JSON.stringify({ reason: 'timeout' }),
+              updated_at: sql`NOW()`,
+            })
+            .where('id', '=', card.id)
+            .where('status', '=', 'suggested')
+            .executeTakeFirst();
+          if (Number(claimed.numUpdatedRows ?? 0) === 0) return this.resolveBatch(row, pause);
+          card.status = 'expired';
+        }
+        comment = commentOf(card.result);
+        if (card.status === 'approved') {
+          status = 'accepted';
+          acceptedBy = 'person';
+        } else {
+          status = card.status === 'declined' ? 'declined' : 'expired';
+        }
+        const moved = await db
+          .updateTable('agent_action_batches')
+          .set({
+            status,
+            accepted_by: acceptedBy,
+            decided_by: card.decided_by,
+            decided_at: sql`NOW()`,
+            comment,
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', batch.id)
+          .where('status', '=', 'proposed')
+          .executeTakeFirst();
+        if (Number(moved.numUpdatedRows ?? 0) === 0) return this.resolveBatch(row, pause);
+      }
+
+      if (status === 'accepted' || status === 'executing') {
+        // Handed to the executor (again, harmlessly, if the first enqueue
+        // was lost — its claim is the arbiter). It wakes the run when done.
+        await enqueueBatch(this.runRow, batch.id);
+        await db
+          .updateTable('agent_runs')
+          .set({ waiting_until: null, updated_at: sql`NOW()` })
+          .where('id', '=', this.runRow.id)
+          .execute();
+        return null;
+      }
+      return batchReportForAgent({
+        status,
+        actions: parseStoredActions(batch.actions),
+        results: parseStoredResults(batch.results),
+        acceptedBy: acceptedBy === 'auto' ? 'auto' : acceptedBy === 'person' ? 'person' : null,
+        comment,
+      });
+    }
+
+    /** The question's answer once it is in, or null while it is not. */
+    private async resolveQuestion(
+      row: TurnRow,
+      pause: Extract<Pause, { kind: 'question' }>
+    ): Promise<string | null> {
+      const card = await db
+        .selectFrom('actionable_items')
+        .select(['id', 'status', 'result'])
+        .where('run_id', '=', this.runRow.id)
+        .where('step_id', '=', TURN_STEP_ID)
+        .where('attempt', '=', row.attempt)
+        .executeTakeFirst();
+      if (!card) {
+        await this.raiseQuestionCard(row.attempt, pause.message, pause.form);
+        return null;
+      }
+      if (card.status === 'suggested') {
+        const due = this.runRow.waiting_until
+          ? new Date(this.runRow.waiting_until).getTime()
+          : Infinity;
+        if (now() < due) return null;
+        const claimed = await db
+          .updateTable('actionable_items')
+          .set({
+            status: 'expired',
+            decided_at: sql`NOW()`,
+            archived_at: sql`NOW()`,
+            result: JSON.stringify({ reason: 'timeout' }),
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', card.id)
+          .where('status', '=', 'suggested')
+          .executeTakeFirst();
+        if (Number(claimed.numUpdatedRows ?? 0) === 0) return this.resolveQuestion(row, pause);
+        return 'Nobody answered before the deadline. Carry on without the answer, or finish if you cannot.';
+      }
+      if (card.status !== 'answered') {
+        return 'The question was closed without an answer. Carry on without it, or finish if you cannot.';
+      }
+      return `The owner answered:\n${untrustedBlock('answer', answerTextOf(pause.form, answersOf(card.result)))}`;
+    }
+
+    private async finalizeFrom(detail: TurnDetail): Promise<void> {
+      const vars: Record<string, string> = {
+        ...(detail.llmSummary ? { summary: detail.llmSummary } : {}),
+        ...(detail.result ? { result: detail.result } : {}),
+      };
+      if (detail.finish === 'failed') {
+        await finalizeRun(
+          this.runRow,
+          'failed',
+          'agent_failed',
+          clip(detail.llmSummary ?? 'The agent could not reach its goal.', 2_000),
+          vars
+        );
+      } else if (detail.finish === 'nothing_to_do') {
+        await finalizeRun(this.runRow, 'stopped', null, null, vars, true);
+      } else {
+        await finalizeRun(this.runRow, 'succeeded', null, null, vars, detail.quiet === true);
+      }
+    }
+  }
+
+  /** Model spend for one turn, on the token ledger. Best effort. */
+  async function recordUsage(
+    run: RunRow,
+    usage: UsageTotals,
+    llm: ResolvedLlm,
+    durationMs: number
+  ): Promise<void> {
+    if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
+    const ledger = await recordLlmCall(db, {
+      subject: run.owner_subject,
+      agentId: run.agent_id,
+      runId: run.id,
+      purpose: 'run',
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      durationMs,
+      ...(usage.cacheReadInputTokens !== null
+        ? { cacheReadInputTokens: usage.cacheReadInputTokens }
+        : {}),
+      ...(usage.cacheWriteInputTokens !== null
+        ? { cacheWriteInputTokens: usage.cacheWriteInputTokens }
+        : {}),
+      model: { provider: llm.providerName, model: llm.model, llmModelId: llm.modelConfigId },
+    });
+    if (!ledger.ok) {
+      logger.warn('token usage not recorded for run {runId}', {
+        component: 'worker-agents/engine',
+        runId: run.id,
+      });
+    }
+  }
+
+  async function enqueueBatch(run: RunRow, batchId: string): Promise<void> {
+    const enqueued = await deps.actionsProducer.enqueue({
+      source: `agents:${run.agent_id}`,
+      type: 'actions',
+      payload: { batchId },
+      // Its own lane: a batch must never queue behind the run waiting on it.
+      orderingKey: `batch:${batchId}`,
+    });
+    if (!enqueued.ok) throw new TransientFailure('could not enqueue the action batch');
+  }
+
+  async function cancelWaiting(run: RunRow, reason: string): Promise<void> {
+    await db
+      .updateTable('agent_runs')
+      .set({
+        status: 'canceled',
+        waiting_until: null,
+        finished_at: sql`NOW()`,
+        updated_at: sql`NOW()`,
+      })
+      .where('id', '=', run.id)
+      .execute();
+    await db
+      .updateTable('actionable_items')
+      .set({
+        status: 'expired',
+        decided_at: sql`NOW()`,
+        archived_at: sql`NOW()`,
+        result: JSON.stringify({ reason }),
+        updated_at: sql`NOW()`,
+      })
+      .where('run_id', '=', run.id)
+      .where('status', '=', 'suggested')
+      .execute();
+    // A batch nobody accepted will never run now. One already accepted is
+    // the executor's to finish or refuse — it checks the run first.
+    await db
+      .updateTable('agent_action_batches')
+      .set({ status: 'expired', updated_at: sql`NOW()` })
+      .where('run_id', '=', run.id)
+      .where('status', '=', 'proposed')
+      .execute();
+    await db
+      .updateTable('agent_run_steps')
+      .set({ status: 'canceled', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+      .where('run_id', '=', run.id)
+      .where('status', 'in', ['running', 'waiting'])
+      .execute();
+    await recordAgentRunOutcome(db, {
+      agentId: run.agent_id,
+      runId: run.id,
+      ownerSubject: run.owner_subject,
+      status: 'canceled',
+    });
+  }
+
+  async function isCanceled(runId: string): Promise<boolean> {
+    const row = await db
+      .selectFrom('agent_runs')
+      .select(['cancel_requested_at'])
+      .where('id', '=', runId)
+      .executeTakeFirst();
+    return Boolean(row?.cancel_requested_at);
+  }
+
+  /** Memory + knowledge notes, rendered and bounded; '' halves on failure. */
+  async function loadRunContext(
+    agentId: string
+  ): Promise<{ memoryText: string; knowledgeText: string }> {
+    let memoryText = '';
+    let knowledgeText = '';
+    try {
+      memoryText = renderAgentMemory(await readAgentMemory(db, agentId));
+    } catch (error) {
+      logger.warn('agent memory unreadable for agent {agentId}: {error}', {
+        component: 'worker-agents/engine',
+        agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    try {
+      knowledgeText = await renderAgentKnowledgeNotes(db, agentId);
+    } catch (error) {
+      logger.warn('agent knowledge notes unreadable for agent {agentId}: {error}', {
+        component: 'worker-agents/engine',
+        agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return { memoryText, knowledgeText };
+  }
+
+  /**
+   * Whether a run started from outside the org's own hand (act-approval.ts).
+   * A chained run inherits its ROOT's provenance; a chain that cannot be
+   * walked reads as external — the fail-closed direction.
    */
   async function runIsExternallyTriggered(run: RunRow): Promise<boolean> {
     let kind = run.trigger_kind;
@@ -1720,51 +2230,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
     return isExternallyTriggered(kind);
   }
 
-  /**
-   * The tools a step may reach for that the org's policy (or the fixed
-   * high-risk list) gates behind a person — the step's own tool and its
-   * retry guidance's chips, minus the agent's blocked set, which never
-   * enter the offer at all. Empty when nothing the step can call needs a
-   * decision, which is every read-only step and, under the default
-   * policy, every act step of a run a person or a schedule started.
-   */
-  function policyGatedTools(
-    step: ActionStep,
-    toolsByName: Map<string, McpToolInfo>,
-    blockedTools: ReadonlySet<string>,
-    actApproval: RunContextText['actApproval']
-  ): Set<string> {
-    const candidates = [
-      ...(step.tool ? [step.tool] : []),
-      ...step.failureHandling.flatMap((handling) => toolSegments(handling.guidance ?? [])),
-    ];
-    const gated = new Set<string>();
-    for (const name of candidates) {
-      if (blockedTools.has(name)) continue;
-      const info = toolsByName.get(name);
-      if (!info) continue;
-      const reason = actApprovalReason({
-        tool: name,
-        kind: info.kind ?? null,
-        // The author's own gate is executeStep's/runAttempt's existing
-        // check; this set names only what the policy adds.
-        authorGated: false,
-        policy: actApproval.policy,
-        externallyTriggered: actApproval.externallyTriggered,
-      });
-      if (reason) gated.add(name);
-    }
-    return gated;
-  }
-
-  /** Builtins + trigger.* from initial_state; list-valued inputs also land in `lists`. */
-  async function baseVariables(
-    run: RunRow
-  ): Promise<{ vars: Record<string, string>; lists: Record<string, string[]> }> {
-    const vars: Record<string, string> = {
-      today: new Date().toISOString().slice(0, 10),
-    };
-    const lists: Record<string, string[]> = {};
+  /** Builtins + trigger.* from initial_state. */
+  async function baseVariables(run: RunRow): Promise<Record<string, string>> {
+    const vars: Record<string, string> = { today: new Date(now()).toISOString().slice(0, 10) };
     const identity = await db
       .selectFrom('identities')
       .select(['email', 'display_name'])
@@ -1772,2855 +2240,25 @@ export function createAgentRunHandler(deps: EngineDeps) {
       .executeTakeFirst();
     if (identity?.display_name) vars['user.name'] = identity.display_name;
     if (identity?.email) vars['user.email'] = identity.email;
-
-    if (
-      typeof run.initial_state === 'object' &&
-      run.initial_state !== null &&
-      !Array.isArray(run.initial_state)
-    ) {
+    if (isRecord(run.initial_state)) {
       for (const [key, value] of Object.entries(run.initial_state)) {
         if (value === null || value === undefined) continue;
         vars[`trigger.${key}`] =
-          typeof value === 'string' ? value : clip(JSON.stringify(value), PREVIEW_CHARS);
-        if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
-          lists[`trigger.${key}`] = value.map((entry) => clip(entry, SAVE_ITEM_CHARS));
-        }
+          typeof value === 'string' ? value : clip(JSON.stringify(value), TOOL_RESULT_CHARS);
       }
     }
-    return { vars, lists };
+    return vars;
   }
 
-  function recoverSavedVars(
-    nodes: AgentStepNode[],
-    prior: AttemptRecord[],
-    vars: Record<string, string>,
-    lists: Record<string, string[]>
-  ): void {
-    // saveAs bindings must survive crash-resume like any other saved
-    // result — flattenActionSteps already walks into a gate's
-    // onNotApproved path, so a step saved there is covered too.
-    const saveAsByStep = new Map(
-      flattenActionSteps(nodes).flatMap((step) =>
-        step.saveAs ? [[step.id, step.saveAs] as const] : []
-      )
-    );
-    for (const attempt of prior) {
-      if (attempt.status !== 'succeeded') continue;
-      const name = saveAsByStep.get(attempt.step_id);
-      if (!name) continue;
-      const detail: { saveValue?: unknown; saveItems?: unknown } =
-        typeof attempt.detail === 'object' &&
-        attempt.detail !== null &&
-        !Array.isArray(attempt.detail)
-          ? attempt.detail
-          : {};
-      if (Array.isArray(detail.saveItems) && detail.saveItems.every((e) => typeof e === 'string')) {
-        lists[name] = detail.saveItems;
-        vars[name] = clip(detail.saveItems.join('\n'), SAVE_VALUE_CHARS);
-      } else if (typeof detail.saveValue === 'string') {
-        vars[name] = detail.saveValue;
-      }
-    }
-  }
-
-  /** The foreach source list: a saved list, or a JSON-array string fallback. */
-  function resolveItems(
-    itemsVar: string,
-    vars: Record<string, string>,
-    lists: Record<string, string[]>
-  ): string[] | null {
-    const direct = lists[itemsVar];
-    if (direct) return [...direct];
-    const raw = vars[itemsVar];
-    if (!raw) return null;
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === 'string')) {
-        return parsed.map((entry) => clip(entry, SAVE_ITEM_CHARS));
-      }
-    } catch {
-      // Not JSON — fall through.
-    }
-    return null;
-  }
-
-  /**
-   * Append what THIS iteration's collectFrom step actually saved to the
-   * loop's collected list — nothing (a filtering iteration), one saveValue,
-   * or every saveItems entry (an expanding one). Read from the iteration's
-   * attempt row, never from the flat vars record, so a skipped iteration
-   * can't smuggle in a stale value. Rows are the memory: a resumed run
-   * rebuilds the whole collection by crossing these boundaries again.
-   */
-  async function collectIteration(
-    run: RunRow,
-    frame: LoopFrame,
-    vars: Record<string, string>,
-    lists: Record<string, string[]>
-  ): Promise<void> {
-    const { collectFrom, collectVar } = frame.loop;
-    if (!collectFrom || !collectVar) return;
-    const source = flattenActionSteps(frame.loop.steps).find((step) => step.saveAs === collectFrom);
-    if (!source) return;
-
-    const stored = await db
-      .selectFrom('agent_run_steps')
-      .select('detail')
-      .where('run_id', '=', run.id)
-      .where('step_id', '=', source.id)
-      .where('iteration', '=', frame.iteration)
-      .where('status', '=', 'succeeded')
-      .executeTakeFirst();
-    if (!stored) return;
-    const [row] = await openAttemptDetails(run, [stored]);
-    const detail: { saveValue?: unknown; saveItems?: unknown } =
-      typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
-        ? row.detail
-        : {};
-    const additions = Array.isArray(detail.saveItems)
-      ? detail.saveItems.flatMap((entry) => (typeof entry === 'string' ? [entry] : []))
-      : typeof detail.saveValue === 'string'
-        ? [detail.saveValue]
-        : [];
-    if (additions.length === 0) return;
-
-    const current = lists[collectVar] ?? [];
-    const room = MAX_COLLECTED_ITEMS - current.length;
-    if (room <= 0) return;
-    if (additions.length > room) {
-      logger.warn('collected list "{collectVar}" truncated at {cap} entries in run {runId}', {
-        component: 'worker-agents/engine',
-        runId: run.id,
-        collectVar,
-        cap: MAX_COLLECTED_ITEMS,
-      });
-    }
-    lists[collectVar] = [
-      ...current,
-      ...additions.slice(0, room).map((entry) => clip(entry, SAVE_ITEM_CHARS)),
-    ];
-    vars[collectVar] = lists[collectVar].join('\n');
-  }
-
-  /**
-   * What happens after an iteration finishes: foreach counts items; until
-   * asks the model (via evaluateLoopCondition, with per-iteration decision
-   * rows and replay). 'next' = run another round; 'done' = continue after
-   * the loop; reaching maxIterations with an unmet until-condition FAILS
-   * the run — the guard is a tripwire for a premise that never came true.
-   */
-  async function loopBoundary(
-    run: RunRow,
-    frame: LoopFrame,
-    llm: ResolvedLlm,
-    vars: Record<string, string>,
-    context: RunContextText,
-    deadline: number,
-    orgAttemptCap: number,
-    ordinals: Map<string, number>
-  ): Promise<
-    { kind: 'next' } | { kind: 'done' } | { kind: 'fail'; errorKind: string; error: string }
-  > {
-    if (frame.loop.mode === 'foreach') {
-      const total = frame.items?.length ?? 0;
-      return frame.iteration >= total ? { kind: 'done' } : { kind: 'next' };
-    }
-    const decided = await evaluateLoopCondition(
-      run,
-      frame.loop,
-      frame.iteration,
-      llm,
-      vars,
-      context,
-      deadline,
-      orgAttemptCap,
-      ordinals
-    );
-    if (decided.kind === 'fail') return decided;
-    if (decided.choice === 'finished') return { kind: 'done' };
-    if (frame.iteration >= frame.loop.maxIterations) {
-      return {
-        kind: 'fail',
-        errorKind: 'step_failed',
-        error: `Loop "${frame.loop.name}" reached its limit of ${frame.loop.maxIterations} round${frame.loop.maxIterations === 1 ? '' : 's'} before its stop condition was met.`,
-      };
-    }
-    return { kind: 'next' };
-  }
-
-  /** The run-wide execution budget check, before each attempt-row insert. */
-  async function runBudgetExceeded(runId: string): Promise<boolean> {
-    const counted = await db
-      .selectFrom('agent_run_steps')
-      .select(({ fn }) => fn.countAll<string>().as('count'))
-      .where('run_id', '=', runId)
-      .executeTakeFirst();
-    return Number(counted?.count ?? 0) >= MAX_RUN_ATTEMPT_ROWS;
-  }
-
-  /**
-   * A fresh read of cancel_requested_at, for runAttempt's turn loop — the
-   * only place a cancel click needs to interrupt something already
-   * in-flight rather than just gate the next thing from starting. The
-   * in-memory `run` row is loaded once at run start and never reflects a
-   * cancel that arrives afterward, so this is a real (cheap) query, not a
-   * field read.
-   */
-  async function isCanceled(runId: string): Promise<boolean> {
-    const row = await db
-      .selectFrom('agent_runs')
-      .select('cancel_requested_at')
-      .where('id', '=', runId)
-      .executeTakeFirst();
-    return row?.cancel_requested_at != null;
-  }
-
-  async function executeStep(
-    run: RunRow,
-    step: ActionStep,
-    toolsByName: Map<string, McpToolInfo>,
-    llm: ResolvedLlm,
-    mcp: McpClient,
-    vars: Record<string, string>,
-    lists: Record<string, string[]>,
-    loopSourceVars: ReadonlySet<string>,
-    context: RunContextText,
-    blockedTools: ReadonlySet<string>,
-    deadline: number,
-    orgAttemptCap: number,
-    ordinals: Map<string, number>,
-    iteration: number,
-    approvalWaitCapHours: number,
-    canAskQuestions: boolean
-  ): Promise<
-    | { kind: 'advance' }
-    | { kind: 'finish'; quiet: boolean }
-    | { kind: 'stop'; reason: string }
-    | { kind: 'fail'; errorKind: string; error: string }
-    | { kind: 'route'; path: BranchPath }
-    | { kind: 'waiting' }
-    | { kind: 'canceled' }
-  > {
-    // Pre-flight: the step's tool must exist in the OWNER's live projection.
-    // No LLM spend on a run that cannot work.
-    if (step.tool && !toolsByName.has(step.tool)) {
-      return {
-        kind: 'fail',
-        errorKind: 'config',
-        error: `The skill "${step.tool}" is not available to this agent's owner right now.`,
-      };
-    }
-    // Guardrails' mechanical arm: a blocked skill fails the run as a guard
-    // stop, live — a rule added mid-flight bites the very next step. The
-    // validator catches this at save; runtime is the backstop.
-    if (step.tool && blockedTools.has(step.tool)) {
-      return {
-        kind: 'fail',
-        errorKind: 'guard',
-        error: `The skill "${step.tool}" is blocked by this agent's guardrails.`,
-      };
-    }
-
-    // Two ceilings, lower wins: the step's own setting and the ORG's cap —
-    // a live setting, so lowering it bites existing agents without a
-    // re-save. The org cap may exceed MAX_STEP_ATTEMPTS (that constant is
-    // the default, not an absolute), which is why it is not min'd in here.
-    const budget = Math.min(step.maxAttempts, Math.max(1, orgAttemptCap));
-    let lastFailureSummary: string | undefined;
-    let lastFailureCode: string | null = null;
-
-    type StepResult =
-      | { kind: 'advance' }
-      | { kind: 'finish'; quiet: boolean }
-      | { kind: 'stop'; reason: string }
-      | { kind: 'fail'; errorKind: string; error: string }
-      | { kind: 'route'; path: BranchPath }
-      | { kind: 'canceled' };
-
-    /**
-     * The post-processing every closed attempt shares, gated or not:
-     * record the detail, bind saveAs, and route succeeded/failed into
-     * advance/finish/stop/fail — or, on a retriable failure, hand back
-     * 'retry' for the caller's own loop to act on (this function has no
-     * loop of its own to `continue`).
-     */
-    async function finishAttempt(
-      rowId: string,
-      outcome: AttemptOutcome,
-      guidance: FailureHandling['guidance'] | undefined
-    ): Promise<StepResult | { kind: 'retry' }> {
-      const detail = {
-        resolvedInstruction: clip(outcome.resolvedInstruction, PREVIEW_CHARS),
-        ...(outcome.promptText
-          ? { promptText: clip(outcome.promptText, PROMPT_DETAIL_CHARS) }
-          : {}),
-        llmSummary: clip(outcome.summary, PREVIEW_CHARS),
-        declaredOutcome: outcome.declaredSkip
-          ? 'skipped'
-          : outcome.succeeded
-            ? 'success'
-            : 'failure',
-        // Stored whole (it is already within SAVE_VALUE_CHARS): the row is
-        // what a re-entry rebuilds the variables from, so a clipped copy
-        // here would have every step after a pause read a shorter value
-        // than the steps before it did — which is exactly what happened.
-        ...(outcome.saveValue !== null ? { saveValue: outcome.saveValue } : {}),
-        ...(outcome.saveItems !== null ? { saveItems: outcome.saveItems } : {}),
-        ...(outcome.unbound.length > 0 ? { unboundVariables: outcome.unbound } : {}),
-        ...(guidance
-          ? { guidanceUsed: clip(renderInstruction(guidance, vars).text, PREVIEW_CHARS) }
-          : {}),
-        toolCalls: outcome.toolCalls,
-        modelCalls: outcome.modelCalls,
-        usage: outcome.usage,
-      };
-      const detailText = await sealedDetailJson(run, detail);
-
-      await db
-        .updateTable('agent_run_steps')
-        .set({
-          status: outcome.succeeded ? 'succeeded' : 'failed',
-          outcome: outcome.outcome,
-          outcome_code: outcome.outcomeCode,
-          tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
-          input_tokens: outcome.usage.inputTokens,
-
-          output_tokens: outcome.usage.outputTokens,
-
-          cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
-
-          cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
-          detail: detailText,
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', rowId)
-        .execute();
-      await recordUsage(run, outcome.usage, step.id, llm, modelCallsMs(outcome.modelCalls));
-
-      if (outcome.succeeded) {
-        // A 'skipped' declaration never binds saveValue/saveItems (both are
-        // always null on that path — see decideOutcome), so a step with a
-        // saveAs simply keeps whatever it was already bound to (or stays
-        // unbound) and the run falls through to the next step exactly as a
-        // no-op success would.
-        if (step.saveAs && outcome.saveItems !== null) {
-          // A saved LIST: bind both representations — the list for loops,
-          // the joined text for var chips.
-          lists[step.saveAs] = outcome.saveItems;
-          vars[step.saveAs] = clip(outcome.saveItems.join('\n'), SAVE_VALUE_CHARS);
-        } else if (step.saveAs && outcome.saveValue !== null) {
-          vars[step.saveAs] = outcome.saveValue;
-        }
-        // A stop can be declared at runtime (the instruction's own "…and
-        // stop here", via finish_step) or configured statically on the
-        // step; the runtime declaration wins because it saw the condition.
-        const staticStop =
-          step.onSuccess === 'stop'
-            ? 'done'
-            : step.onSuccess === 'stop-quiet'
-              ? 'quiet'
-              : undefined;
-        const stop = outcome.stopRun ?? staticStop;
-        if (stop) return { kind: 'finish', quiet: stop === 'quiet' };
-        return { kind: 'advance' };
-      }
-
-      lastFailureSummary = outcome.summary || 'The previous attempt failed.';
-      lastFailureCode = outcome.outcomeCode ?? 'other';
-      const handling = handlingFor(step, lastFailureCode);
-      // The owner declared this outcome NOT an error ("ticket not found" is
-      // sometimes a reason to skip the rest) — the same graceful terminal a
-      // step's own `onSuccess: 'stop-quiet'` produces on success. The
-      // attempt row keeps its outcome code (the timeline still says exactly
-      // what happened) but its STATUS becomes 'stopped', matching the run:
-      // left 'failed', the timeline showed a red Failed pill inside a
-      // gracefully-ended run, and the admin redaction rule (step content is
-      // visible on failures, for troubleshooting) exposed content of a step
-      // the owner explicitly declared benign.
-      if (handling?.action === 'stop-quiet') {
-        await db
-          .updateTable('agent_run_steps')
-          .set({ status: 'stopped', updated_at: sql`NOW()` })
-          .where('id', '=', rowId)
-          .execute();
-        return { kind: 'stop', reason: clip(lastFailureSummary, 300) };
-      }
-      // The owner chose to move on past this failure (version 7). The
-      // attempt row keeps its failed status and code — the timeline stays
-      // honest — and the saved result, when the step names one, binds to
-      // the failure summary so later steps and branches can see what
-      // happened instead of meeting an unbound chip.
-      if (handling?.action === 'continue') {
-        if (step.saveAs) vars[step.saveAs] = clip(lastFailureSummary, PREVIEW_CHARS);
-        return { kind: 'advance' };
-      }
-      if (!handling || handling.action === 'exit') {
-        return {
-          kind: 'fail',
-          errorKind: 'step_failed',
-          error: `Step "${step.name}" stopped the agent (${lastFailureCode}): ${clip(lastFailureSummary, 300)}`,
-        };
-      }
-      // action === 'retry' → the caller's loop decides whether another
-      // attempt actually starts (the budget check at its top).
-      return { kind: 'retry' };
-    }
-
-    /**
-     * Raise (or re-raise, after a crash between the row and the card) the
-     * card a needsApproval gate pauses behind — the proposed call, never
-     * an authored message: there is nothing to author, the point of the
-     * flag is "gate whatever this step is about to do."
-     */
-    async function raiseApprovalCard(
-      gatedStep: ActionStep,
-      currentIteration: number,
-      currentAttempt: number,
-      tool: string,
-      args: Record<string, unknown>,
-      waitCapHours: number
-    ): Promise<void> {
-      const clampedHours = Math.min(
-        Math.max(1, gatedStep.approvalTimeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
-        Math.max(1, waitCapHours)
-      );
-      const waitingUntil = new Date(Date.now() + clampedHours * 3_600_000);
-      const path = await runPagePath(run);
-      const link = approvalLink(path);
-      const agentName = await agentNameOf(run.agent_id);
-      try {
-        await db
-          .insertInto('actionable_items')
-          .values({
-            id: randomUUID(),
-            source: 'agents',
-            status: 'suggested',
-            kind: 'approval',
-            title: `${agentName} — ${gatedStep.name.trim() || 'needs your approval'}`,
-            summary: clip(`Wants to call ${friendlyToolName(tool, null)}.`, PREVIEW_CHARS),
-            evidence: JSON.stringify([]),
-            // Not an executable action: the card UI reads tool/args here to
-            // render the proposed call, and reuses them verbatim to fire it
-            // for real if approved — a snapshot on purpose, so a card a
-            // person is looking at keeps showing what it showed even if the
-            // step is edited while it waits.
-            suggested_action: JSON.stringify({ tool, args }),
-            owner_subject: run.owner_subject,
-            created_by: run.owner_subject,
-            created_by_agent_id: run.agent_id,
-            run_id: run.id,
-            step_id: gatedStep.id,
-            iteration: currentIteration,
-            attempt: currentAttempt,
-          })
-          .execute();
-      } catch (error) {
-        // The unique (run, step, iteration, attempt) card index: a racing
-        // executor won — its card (and notification) stand; back off and
-        // re-enter.
-        if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
-          throw new TransientFailure('another executor created the approval card');
-        }
-        throw error;
-      }
-
-      vars['approval.link'] = link ?? '';
-      const heading = `Agent “${agentName}” needs your approval${gatedStep.name.trim() ? `: ${gatedStep.name.trim()}` : ''}`;
-      // The card itself is not optional — a waiting run needs it, so the
-      // app's own feed (and the push it triggers) always gets this row.
-      // Only whether it ALSO pages the owner by email or WebEx is their call.
-      // refUrl is the run's own (relative) page — the card lives there, so a
-      // push for it can be skipped when that page is already open in front.
-      await writeNotificationRow(
-        db,
-        {
-          subject: run.owner_subject,
-          agentId: run.agent_id,
-          agentName,
-          runId: run.id,
-        },
-        { kind: 'approval', headline: heading, stepId: gatedStep.id, refUrl: path }
-      );
-      const ownerPrefs = await getNotificationPrefs(run.owner_subject);
-      const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
-      await deliverOwnerNotifications({
-        email: ownerPrefs.approvalNeeded.email,
-        webex: ownerPrefs.approvalNeeded.webex,
-        heading,
-        body: [
-          `Wants to call ${friendlyToolName(tool, null)} with:`,
-          clip(JSON.stringify(args, null, 2), PREVIEW_CHARS),
-          ...(link ? [`Respond here: ${link}`] : []),
-        ].join('\n\n'),
-        ownerEmail: vars['user.email'],
-      });
-
-      await db
-        .updateTable('agent_runs')
-        .set({ status: 'waiting', waiting_until: waitingUntil, updated_at: sql`NOW()` })
-        .where('id', '=', run.id)
-        .execute();
-    }
-
-    /**
-     * Raise the card an `ask_person` call pauses behind — a `'question'`
-     * kind actionable_item, distinct from a gate's `'approval'` one so
-     * the feed and the answer route can tell them apart at a glance.
-     */
-    async function raiseQuestionCard(
-      askingStep: ActionStep,
-      currentIteration: number,
-      currentAttempt: number,
-      message: string,
-      form: FormNode[],
-      timeoutHours: number | undefined,
-      waitCapHours: number
-    ): Promise<void> {
-      const clampedHours = Math.min(
-        Math.max(1, timeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
-        Math.max(1, waitCapHours)
-      );
-      const waitingUntil = new Date(Date.now() + clampedHours * 3_600_000);
-      const path = await runPagePath(run);
-      const link = approvalLink(path);
-      const agentName = await agentNameOf(run.agent_id);
-      try {
-        await db
-          .insertInto('actionable_items')
-          .values({
-            id: randomUUID(),
-            source: 'agents',
-            status: 'suggested',
-            kind: 'question',
-            title: `${agentName} — ${askingStep.name.trim() || 'has a question'}`,
-            summary: clip(message, PREVIEW_CHARS),
-            evidence: JSON.stringify([]),
-            // A snapshot, like the gate's card: what a person is looking
-            // at keeps asking what it asked even if the step changes
-            // before they answer.
-            suggested_action: JSON.stringify({ message, form }),
-            owner_subject: run.owner_subject,
-            created_by: run.owner_subject,
-            created_by_agent_id: run.agent_id,
-            run_id: run.id,
-            step_id: askingStep.id,
-            iteration: currentIteration,
-            attempt: currentAttempt,
-          })
-          .execute();
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
-          throw new TransientFailure('another executor created the question card');
-        }
-        throw error;
-      }
-
-      vars['question.link'] = link ?? '';
-      const heading = `Agent “${agentName}” has a question${askingStep.name.trim() ? `: ${askingStep.name.trim()}` : ''}`;
-      // Same reasoning as the approval card's: the app's own feed always
-      // gets this row, and only email/WebEx are the owner's choice. refUrl
-      // is the run's own (relative) page — see the approval card's note.
-      await writeNotificationRow(
-        db,
-        {
-          subject: run.owner_subject,
-          agentId: run.agent_id,
-          agentName,
-          runId: run.id,
-        },
-        { kind: 'question', headline: heading, stepId: askingStep.id, refUrl: path }
-      );
-      const ownerPrefs = await getNotificationPrefs(run.owner_subject);
-      const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
-      await deliverOwnerNotifications({
-        email: ownerPrefs.questionAsked.email,
-        webex: ownerPrefs.questionAsked.webex,
-        heading,
-        body: [message, ...(link ? [`Answer here: ${link}`] : [])].join('\n\n'),
-        ownerEmail: vars['user.email'],
-      });
-
-      await db
-        .updateTable('agent_runs')
-        .set({ status: 'waiting', waiting_until: waitingUntil, updated_at: sql`NOW()` })
-        .where('id', '=', run.id)
-        .execute();
-    }
-
-    /**
-     * A needsApproval gate's re-entry: the CARD IS THE SINGLE ARBITER.
-     * Decided → resolve the waiting row (firing the recorded call for
-     * real on approval) and return the routed StepResult. Suggested past
-     * the deadline → claim expiry through the same optimistic status
-     * UPDATE the decision route uses (a lost claim means a human decided
-     * in the same instant — their decision wins). Suggested and not yet
-     * due → re-park with the SAME deadline. Already-resolved rows replay
-     * from `detail` without touching the card at all, so an archived or
-     * retention-pruned card cannot re-route history. Returns null when
-     * there is no prior row at all — nothing to resolve, propose fresh.
-     */
-    async function resolveGate(
-      gatedStep: ActionStep,
-      currentIteration: number,
-      waitCapHours: number
-    ): Promise<StepResult | { kind: 'waiting' } | null> {
-      const row = await db
-        .selectFrom('agent_run_steps')
-        .select(['id', 'status', 'detail', 'attempt'])
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', gatedStep.id)
-        .where('iteration', '=', currentIteration)
-        .where((eb) => eb.or([eb('status', '=', 'waiting'), eb('status', '=', 'succeeded')]))
-        .orderBy('attempt', 'desc')
-        .limit(1)
-        .executeTakeFirst();
-      if (!row) return null;
-
-      const rowDetail: {
-        decision?: unknown;
-        comment?: unknown;
-        proposedTool?: unknown;
-        proposedArgs?: unknown;
-        pauseKind?: unknown;
-      } =
-        typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
-          ? row.detail
-          : {};
-
-      if (row.status === 'succeeded') {
-        // Replay: this gate already resolved. A 'denied'/'timedOut'
-        // resolution recorded its own `decision` and must rebind the vars
-        // a routed path reads and re-route; an APPROVED-and-executed row
-        // has no `decision` field (it closed through finishAttempt like
-        // any ordinary succeeded attempt) and just advances, same as the
-        // generic succeeded-check right after this call handles it. A
-        // row that is neither — an ordinary succeeded attempt, or a
-        // resolved `ask_person` pause (resolveQuestion's job, not ours) —
-        // is not this function's to touch.
-        const decision = rowDetail.decision;
-        if (decision === 'denied' || decision === 'timedOut') {
-          vars['approval.outcome'] = decision;
-          if (typeof rowDetail.comment === 'string' && rowDetail.comment) {
-            vars['approval.comment'] = rowDetail.comment;
-          }
-          if (gatedStep.onNotApproved) return { kind: 'route', path: gatedStep.onNotApproved };
-          return { kind: 'advance' };
-        }
-        return null;
-      }
-
-      // status === 'waiting'. Not every waiting row is a gate's — the same
-      // step, with canAskQuestions on, may be parked behind an ask_person
-      // pause instead (resolveQuestion's job).
-      if (rowDetail.pauseKind !== 'approval') return null;
-      const proposedTool =
-        typeof rowDetail.proposedTool === 'string' ? rowDetail.proposedTool : null;
-      const proposedArgs =
-        typeof rowDetail.proposedArgs === 'object' &&
-        rowDetail.proposedArgs !== null &&
-        !Array.isArray(rowDetail.proposedArgs)
-          ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
-            (rowDetail.proposedArgs as Record<string, unknown>)
-          : {};
-
-      const card = await db
-        .selectFrom('actionable_items')
-        .select(['id', 'status', 'result', 'created_at'])
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', gatedStep.id)
-        .where('iteration', '=', currentIteration)
-        .where('attempt', '=', row.attempt)
-        .executeTakeFirst();
-
-      const resolveDecision = async (status: string, result: unknown): Promise<StepResult> => {
-        const decision = gateOutcomeOf(status);
-        const resultObj: { comment?: unknown; argsOverride?: unknown } =
-          typeof result === 'object' && result !== null && !Array.isArray(result) ? result : {};
-        const comment =
-          typeof resultObj.comment === 'string' && resultObj.comment.trim()
-            ? resultObj.comment.trim()
-            : null;
-        vars['approval.outcome'] = decision;
-        if (comment) vars['approval.comment'] = comment;
-        // Re-narrowed here, not just trusted from the stored row: the same
-        // identity keys a preview card's edit can never touch
-        // (approvals.ts's APPROVAL_IDENTITY_KEYS — kept in sync by hand,
-        // since engine.ts and the web app are separate deployables).
-        // Everything else about the call a person approved can be reworded
-        // by their edit; the call's identity (project, type, which issue)
-        // cannot be redirected to one nobody reviewed.
-        const argsOverride: Record<string, unknown> = {};
-        if (
-          typeof resultObj.argsOverride === 'object' &&
-          resultObj.argsOverride !== null &&
-          !Array.isArray(resultObj.argsOverride)
-        ) {
-          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
-          const override = resultObj.argsOverride as Record<string, unknown>;
-          for (const [key, entry] of Object.entries(override)) {
-            if (IDENTITY_ARG_KEYS.has(key)) continue;
-            argsOverride[key] = entry;
-          }
-        }
-
-        if (decision !== 'approved') {
-          const wording =
-            decision === 'denied'
-              ? 'You declined the proposed action.'
-              : 'Nobody responded before the deadline.';
-          await db
-            .updateTable('agent_run_steps')
-            .set({
-              status: 'succeeded',
-              outcome: 'guard',
-              outcome_code: 'not_approved',
-              tool_call_count: 0,
-              detail: detailJson({
-                llmSummary: wording,
-                decision,
-                ...(comment ? { comment } : {}),
-              }),
-              finished_at: sql`NOW()`,
-              updated_at: sql`NOW()`,
-            })
-            .where('id', '=', row.id)
-            .execute();
-          if (gatedStep.onNotApproved) return { kind: 'route', path: gatedStep.onNotApproved };
-          return { kind: 'advance' };
-        }
-
-        // Approved: claim the row before firing the real call so a
-        // redelivered job cannot fire it twice — the same 'running' status
-        // a fresh attempt uses, cleaned up by this loop's own crash-cleanup
-        // UPDATE if the executor dies mid-call (an accepted, pre-existing
-        // risk any non-idempotent step tool already carries).
-        const claimed = await db
-          .updateTable('agent_run_steps')
-          .set({ status: 'running', updated_at: sql`NOW()` })
-          .where('id', '=', row.id)
-          .where('status', '=', 'waiting')
-          .executeTakeFirst();
-        if (Number(claimed.numUpdatedRows ?? 0) === 0) {
-          throw new TransientFailure('another executor is resolving this approval');
-        }
-        if (!proposedTool) {
-          // Defensive: nothing recorded to execute.
-          return { kind: 'advance' };
-        }
-        const effectiveArgs =
-          Object.keys(argsOverride).length > 0
-            ? { ...proposedArgs, ...argsOverride }
-            : proposedArgs;
-        let toolResult: McpToolResult;
-        try {
-          toolResult = await mcp.callTool(proposedTool, effectiveArgs);
-        } catch (error) {
-          toolResult = {
-            content: [
-              {
-                type: 'text',
-                text: `The tool could not be reached: ${error instanceof Error ? error.message : String(error)}`,
-              },
-            ],
-            isError: true,
-            meta: {},
-          };
-        }
-        const resultText = textOf(toolResult);
-        const decidedNote = comment ? ` (comment: ${comment})` : '';
-        const synthetic: AttemptOutcome = {
-          // The model already decided before the pause; this attempt only ran the call.
-          modelCalls: [],
-          succeeded: !toolResult.isError,
-          outcome: toolResult.isError ? 'tool_error' : 'tool_ok',
-          outcomeCode: toolResult.isError ? classifyFailure([toolResult], null) : null,
-          summary: toolResult.isError
-            ? clip(resultText, PREVIEW_CHARS) || 'The tool reported an error.'
-            : clip(`Approved${decidedNote}. ${resultText}`, PREVIEW_CHARS),
-          saveValue: gatedStep.saveAs ? clip(resultText, SAVE_VALUE_CHARS) : null,
-          saveItems: null,
-          toolCalls: [
-            {
-              tool: proposedTool,
-              argsPreview: clip(JSON.stringify(effectiveArgs), PREVIEW_CHARS),
-              resultPreview: clip(resultText, PREVIEW_CHARS),
-              resultChars: resultText.length,
-              isError: toolResult.isError,
-              durationMs: 0,
-            },
-          ],
-          usage: emptyUsage(),
-          unbound: [],
-          resolvedInstruction: renderInstruction(gatedStep.instruction, vars).text,
-          promptText: '',
-        };
-        const finished = await finishAttempt(row.id, synthetic, undefined);
-        // A gate's approved call never retries on its own initiative — a
-        // failed approved call is this attempt's failure like any other,
-        // routed by the step's own failureHandling; 'retry' from there
-        // means "spend another attempt", which re-enters the loop below
-        // and gates the NEXT proposal fresh, exactly as a first pause
-        // would. There is nothing sensible to retry HERE with no loop.
-        return finished.kind === 'retry' ? { kind: 'advance' } : finished;
-      };
-
-      if (!card) {
-        // A crash between marking the row 'waiting' and inserting the
-        // card: recreate the card from what the row already recorded.
-        if (!proposedTool) return { kind: 'advance' };
-        await raiseApprovalCard(
-          gatedStep,
-          currentIteration,
-          row.attempt ?? 0,
-          proposedTool,
-          proposedArgs,
-          waitCapHours
-        );
-        return { kind: 'waiting' };
-      }
-
-      if (card.status !== 'suggested') {
-        return resolveDecision(card.status, card.result);
-      }
-
-      const clampedHours = Math.min(
-        Math.max(1, gatedStep.approvalTimeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
-        Math.max(1, waitCapHours)
-      );
-      const dueAt = run.waiting_until
-        ? new Date(run.waiting_until).getTime()
-        : new Date(card.created_at).getTime() + clampedHours * 3_600_000;
-      if (Date.now() < dueAt) {
-        await db
-          .updateTable('agent_runs')
-          .set({ status: 'waiting', waiting_until: new Date(dueAt), updated_at: sql`NOW()` })
-          .where('id', '=', run.id)
-          .execute();
-        return { kind: 'waiting' };
-      }
-      const claimed = await db
-        .updateTable('actionable_items')
-        .set({
-          status: 'expired',
-          decided_at: sql`NOW()`,
-          archived_at: sql`NOW()`,
-          result: JSON.stringify({ reason: 'timeout' }),
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', card.id)
-        .where('status', '=', 'suggested')
-        .executeTakeFirst();
-      if (Number(claimed.numUpdatedRows ?? 0) === 0) {
-        const decided = await db
-          .selectFrom('actionable_items')
-          .select(['status', 'result'])
-          .where('id', '=', card.id)
-          .executeTakeFirst();
-        return resolveDecision(decided?.status ?? 'expired', decided?.result ?? null);
-      }
-      return resolveDecision('expired', { reason: 'timeout' });
-    }
-
-    /**
-     * Bind what an `ask_person` pause asked and, once resolved, what came
-     * back — the vars a FRESH attempt's prompt lists under "Known
-     * information" (see buildAttemptMessages), which is the entire
-     * mechanism that lets the model "pick the thread back up": no
-     * in-flight conversation is persisted or replayed, the next attempt
-     * just starts already knowing the answer.
-     */
-    function bindQuestionAnswer(
-      message: string,
-      form: FormNode[],
-      answered: boolean,
-      answers: Record<string, unknown>
-    ): void {
-      vars['question.message'] = message;
-      if (!answered) {
-        vars['question.answer'] = 'Nobody answered before the deadline.';
-        return;
-      }
-      const lines: string[] = [];
-      for (const field of flattenFormFields(form)) {
-        const raw = answers[field.name];
-        const value: string | string[] | null = Array.isArray(raw)
-          ? raw.filter((entry): entry is string => typeof entry === 'string')
-          : typeof raw === 'string'
-            ? raw
-            : null;
-        if (value === null) continue;
-        vars[field.name] = questionAnswerText(value);
-        if (Array.isArray(value)) lists[field.name] = value;
-        lines.push(describeQuestionAnswer(field, value));
-      }
-      vars['question.answer'] = lines.join('\n') || 'Answered, with nothing filled in.';
-    }
-
-    /**
-     * An `ask_person` pause's re-entry — the same single-arbiter shape as
-     * resolveGate, simplified: there is nothing to execute on an answer,
-     * only vars to bind, so a resolved pause always returns null (bind,
-     * then let the caller's loop spend a FRESH attempt) rather than a
-     * StepResult of its own. Available to every step, not just gated
-     * ones — canAskQuestions is agent-wide.
-     */
-    async function resolveQuestion(
-      askingStep: ActionStep,
-      currentIteration: number,
-      waitCapHours: number
-    ): Promise<{ kind: 'waiting' } | null> {
-      const row = await db
-        .selectFrom('agent_run_steps')
-        .select(['id', 'status', 'detail', 'attempt'])
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', askingStep.id)
-        .where('iteration', '=', currentIteration)
-        .where((eb) => eb.or([eb('status', '=', 'waiting'), eb('status', '=', 'succeeded')]))
-        .orderBy('attempt', 'desc')
-        .limit(1)
-        .executeTakeFirst();
-      if (!row) return null;
-
-      const rowDetail: {
-        pauseKind?: unknown;
-        message?: unknown;
-        form?: unknown;
-        answers?: unknown;
-        timedOut?: unknown;
-        timeoutHours?: unknown;
-      } =
-        typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
-          ? row.detail
-          : {};
-      if (rowDetail.pauseKind !== 'question') return null;
-      const message = typeof rowDetail.message === 'string' ? rowDetail.message : '';
-      const form = parseFormNodes(rowDetail.form);
-      const timeoutHours =
-        typeof rowDetail.timeoutHours === 'number' && Number.isFinite(rowDetail.timeoutHours)
-          ? rowDetail.timeoutHours
-          : undefined;
-
-      if (row.status === 'succeeded') {
-        // Replay: rebind what a fresh attempt needs, then let the caller
-        // spend one — this row's only job was ever to carry the pause.
-        const answers: Record<string, unknown> =
-          typeof rowDetail.answers === 'object' &&
-          rowDetail.answers !== null &&
-          !Array.isArray(rowDetail.answers)
-            ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
-              (rowDetail.answers as Record<string, unknown>)
-            : {};
-        bindQuestionAnswer(message, form, rowDetail.timedOut !== true, answers);
-        return null;
-      }
-
-      // status === 'waiting'.
-      const card = await db
-        .selectFrom('actionable_items')
-        .select(['id', 'status', 'result', 'created_at'])
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', askingStep.id)
-        .where('iteration', '=', currentIteration)
-        .where('attempt', '=', row.attempt)
-        .executeTakeFirst();
-
-      const close = async (answered: boolean, answers: Record<string, unknown>): Promise<null> => {
-        bindQuestionAnswer(message, form, answered, answers);
-        await db
-          .updateTable('agent_run_steps')
-          .set({
-            status: 'succeeded',
-            outcome: 'question',
-            outcome_code: null,
-            tool_call_count: 0,
-            detail: detailJson({
-              pauseKind: 'question',
-              llmSummary: answered ? 'Answered.' : 'Nobody answered before the deadline.',
-              message,
-              form,
-              answers,
-              timedOut: !answered,
-            }),
-            finished_at: sql`NOW()`,
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', row.id)
-          .execute();
-        return null;
-      };
-
-      if (!card) {
-        // A crash between marking the row 'waiting' and inserting the
-        // card: recreate it from what the row already recorded.
-        if (!message) return null;
-        await raiseQuestionCard(
-          askingStep,
-          currentIteration,
-          row.attempt ?? 0,
-          message,
-          form,
-          timeoutHours,
-          waitCapHours
-        );
-        return { kind: 'waiting' };
-      }
-
-      if (card.status === 'suggested') {
-        const clampedHours = Math.min(
-          Math.max(1, timeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
-          Math.max(1, waitCapHours)
-        );
-        const dueAt = run.waiting_until
-          ? new Date(run.waiting_until).getTime()
-          : new Date(card.created_at).getTime() + clampedHours * 3_600_000;
-        if (Date.now() < dueAt) {
-          await db
-            .updateTable('agent_runs')
-            .set({ status: 'waiting', waiting_until: new Date(dueAt), updated_at: sql`NOW()` })
-            .where('id', '=', run.id)
-            .execute();
-          return { kind: 'waiting' };
-        }
-        const claimed = await db
-          .updateTable('actionable_items')
-          .set({
-            status: 'expired',
-            decided_at: sql`NOW()`,
-            archived_at: sql`NOW()`,
-            result: JSON.stringify({ reason: 'timeout' }),
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', card.id)
-          .where('status', '=', 'suggested')
-          .executeTakeFirst();
-        if (Number(claimed.numUpdatedRows ?? 0) === 0) {
-          const decided = await db
-            .selectFrom('actionable_items')
-            .select(['status', 'result'])
-            .where('id', '=', card.id)
-            .executeTakeFirst();
-          if (decided?.status === 'answered') {
-            return close(true, answersOf(decided.result));
-          }
-          return close(false, {});
-        }
-        return close(false, {});
-      }
-
-      // Already decided (answered, most likely a spurious wake replaying
-      // a decision the sweep or a redelivery already resolved once).
-      if (card.status === 'answered') {
-        return close(true, answersOf(card.result));
-      }
-      return close(false, {});
-    }
-
-    for (;;) {
-      // Close an attempt a crashed worker left open, then recount. All
-      // bookkeeping is scoped to THIS iteration — a looped step's budget
-      // and its succeeded-short-circuit are per round, or a loop would
-      // run its body once and skip every later round.
-      await db
-        .updateTable('agent_run_steps')
-        .set({
-          status: 'failed',
-          outcome: 'llm_error',
-          outcome_code: 'other',
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', step.id)
-        .where('iteration', '=', iteration)
-        .where('status', '=', 'running')
-        .execute();
-
-      // An ask_person pause: a prior attempt asked a question and is
-      // either still waiting on an answer, or was resolved while this
-      // executor was away. Checked for every step (canAskQuestions is
-      // agent-wide, not gated-step-only) before the gate check below —
-      // resolved, it only binds vars and falls through to spend a fresh
-      // attempt, same as `null`.
-      const asked = await resolveQuestion(step, iteration, approvalWaitCapHours);
-      if (asked) return asked;
-
-      // A needsApproval gate: a prior attempt reached the gated tool call
-      // and is either still waiting on a decision, or was resolved while
-      // this executor was away (a decision route woke the run, or the
-      // sweep did). At most one such row exists per iteration — nothing
-      // else moves a gated step's row to 'waiting'. Checked before the
-      // budget/insert path below so a resolved gate never spends a fresh
-      // attempt, and a crash after resolving replays from `detail` instead
-      // of re-touching the card or (worse) re-firing an approved tool call.
-      //
-      // The org's act-approval policy gates a step the same way the
-      // author's flag does — same row, same card, same resume — so a step
-      // it applies to is checked here too (policyGatedTools: the step's
-      // tool or a guidance chip the policy or the high-risk list names).
-      const policyGated = policyGatedTools(step, toolsByName, blockedTools, context.actApproval);
-      if (step.needsApproval || policyGated.size > 0) {
-        const gated = await resolveGate(step, iteration, approvalWaitCapHours);
-        if (gated) return gated;
-      }
-
-      // Every row for this step+iteration, not just a count — needed to
-      // tell a resolved ask_person pause apart from a real attempt below.
-      // Row-fetching a handful of small JSON blobs (bounded by maxAttempts,
-      // never more than a few) is cheaper than it sounds and far simpler
-      // than pushing the pauseKind check into SQL.
-      const stepRows = await db
-        .selectFrom('agent_run_steps')
-        .select(['status', 'detail'])
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', step.id)
-        .where('iteration', '=', iteration)
-        .execute();
-      // The NEXT row's attempt number — this MUST count every row ever
-      // written here, pauses included, or a resolved pause and the fresh
-      // attempt after it would fight over the same number and collide on
-      // the (run_id, step_id, iteration, attempt) constraint.
-      const totalRows = stepRows.length;
-      // The step's BUDGET, in contrast, only meant to bound real work: an
-      // ask_person pause asked nothing of the model and risked nothing —
-      // it is the owner's answer being awaited, not a retry — so it must
-      // never count against maxAttempts, or a step could exhaust its
-      // whole budget on pure waiting before doing a single real turn.
-      // A 'retired' row is an attempt an owner's resume set aside (see
-      // resumeAgentRun): it happened, the timeline shows it, and it costs
-      // this fresh budget nothing — that is what a resume IS.
-      const attemptsUsed = stepRows.filter((row) => {
-        if (row.status === 'retired') return false;
-        const detail: { pauseKind?: unknown } =
-          typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
-            ? row.detail
-            : {};
-        return detail.pauseKind !== 'question';
-      }).length;
-      // The resumed step, on any round: the owner's note rides every one
-      // of its attempts, and the failure it recovers from is the retired
-      // attempt of THIS round when there is one.
-      const resumeNote =
-        run.resume_step_id === step.id
-          ? resumeNoteFor({
-              ...(await retiredFailureText(run.id, step.id, iteration)),
-              ...(run.resume_guidance ? { guidance: run.resume_guidance } : {}),
-            })
-          : undefined;
-
-      // Advance past a step that already succeeded (resume/fast-forward) —
-      // EXCEPT a resolved ask_person pause, whose whole point is that the
-      // step is NOT done: resolveQuestion above already replayed its vars
-      // and returned null specifically so a fresh attempt gets spent here,
-      // not skipped by this generic fast-path. A step can carry MORE than
-      // one 'succeeded' row per iteration now (migration 070) — one per
-      // resolved pause, plus the step's real completion — so this MUST
-      // read the latest attempt, never an arbitrary one, or a stale
-      // pause row (pauseKind: 'question') can shadow a genuine finish and
-      // burn the step's whole attempt budget re-running work already done.
-      const succeeded = await db
-        .selectFrom('agent_run_steps')
-        .select(['id', 'detail'])
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', step.id)
-        .where('iteration', '=', iteration)
-        .where('status', '=', 'succeeded')
-        .orderBy('attempt', 'desc')
-        .executeTakeFirst();
-      if (succeeded) {
-        const detail: { pauseKind?: unknown } =
-          typeof succeeded.detail === 'object' &&
-          succeeded.detail !== null &&
-          !Array.isArray(succeeded.detail)
-            ? succeeded.detail
-            : {};
-        if (detail.pauseKind !== 'question') return { kind: 'advance' };
-      }
-
-      const onIteration = iteration > 0 ? ` on round ${iteration}` : '';
-      if (attemptsUsed >= budget) {
-        // Every try is spent. A retry handling may name where to land when
-        // that happens (`exhausted`, version 7); the default is the fail
-        // below — the pre-v7 behavior. After a redelivery the in-memory
-        // failure state is gone, so it is re-read from the last attempt
-        // row rather than silently ignoring the configured choice.
-        let code: string | null = lastFailureCode;
-        let summary: string | undefined = lastFailureSummary;
-        if (code === null) {
-          const lastFailed = await db
-            .selectFrom('agent_run_steps')
-            .select(['outcome_code', 'detail'])
-            .where('run_id', '=', run.id)
-            .where('step_id', '=', step.id)
-            .where('iteration', '=', iteration)
-            .where('status', '=', 'failed')
-            .orderBy('attempt', 'desc')
-            .limit(1)
-            .executeTakeFirst();
-          code = lastFailed?.outcome_code ?? null;
-          const lastDetail: { llmSummary?: unknown } =
-            typeof lastFailed?.detail === 'object' &&
-            lastFailed.detail !== null &&
-            !Array.isArray(lastFailed.detail)
-              ? lastFailed.detail
-              : {};
-          summary = typeof lastDetail.llmSummary === 'string' ? lastDetail.llmSummary : undefined;
-        }
-        const matched = code === null ? undefined : handlingFor(step, code);
-        const exhausted = matched?.action === 'retry' ? matched.exhausted : undefined;
-        const spent =
-          summary ??
-          `Step "${step.name}" did not succeed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}.`;
-        if (exhausted === 'continue') {
-          // Move on with the failure on record; the saved result, when the
-          // step names one, binds to the failure summary so later steps
-          // and branches see what happened instead of an unbound chip.
-          if (step.saveAs) vars[step.saveAs] = clip(spent, PREVIEW_CHARS);
-          return { kind: 'advance' };
-        }
-        if (exhausted === 'stop-quiet') {
-          return { kind: 'stop', reason: clip(spent, 300) };
-        }
-        return {
-          kind: 'fail',
-          errorKind: 'step_failed',
-          error: `Step "${step.name}" failed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}${onIteration}${code ? ` (${code})` : ''}.`,
-        };
-      }
-      if (Date.now() > deadline) {
-        return { kind: 'fail', errorKind: 'timeout', error: 'The run exceeded its time budget.' };
-      }
-      if (await runBudgetExceeded(run.id)) {
-        return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
-      }
-
-      const attempt = totalRows + 1;
-      const matched = lastFailureCode === null ? undefined : handlingFor(step, lastFailureCode);
-      const guidance = attempt > 1 ? matched?.guidance : undefined;
-
-      const rowId = randomUUID();
-      // The tripwire: a racing second executor violates the unique
-      // constraint here and backs off via queue redelivery.
-      try {
-        await db
-          .insertInto('agent_run_steps')
-          .values({
-            id: rowId,
-            run_id: run.id,
-            step_id: step.id,
-            step_index: ordinals.get(step.id) ?? 0,
-            attempt,
-            iteration,
-            status: 'running',
-            started_at: sql`NOW()`,
-          })
-          .execute();
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('agent_run_steps_attempt')) {
-          throw new TransientFailure('another executor holds this run');
-        }
-        throw error;
-      }
-
-      let outcome: AttemptOutcome;
-      try {
-        outcome = await runAttempt(
-          run,
-          step,
-          attempt,
-          guidance,
-          toolsByName,
-          llm,
-          mcp,
-          vars,
-          context,
-          blockedTools,
-          iteration,
-          Boolean(step.saveAs && loopSourceVars.has(step.saveAs)),
-          canAskQuestions,
-          deadline,
-          policyGated,
-          resumeNote
-        );
-      } catch (error) {
-        if (error instanceof TransientFailure || error instanceof ExecutorStopping) {
-          // No tool ran (or this executor is stopping): void the attempt
-          // row so the user-visible budget is untouched, and let the queue
-          // back off — or, stopping, hand the job straight back.
-          await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-          throw error;
-        }
-        if (error instanceof RunCanceled) {
-          // Same treatment as the pre-step checkpoint: void the in-progress
-          // attempt row (nothing to show for it) and let the caller
-          // finalize the run as 'canceled', not 'failed'.
-          await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-          return { kind: 'canceled' };
-        }
-        if (error instanceof RunAbort) {
-          await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-          return { kind: 'fail', errorKind: error.kind, error: error.message };
-        }
-        throw error;
-      }
-
-      if (outcome.proposedCall) {
-        // The gate fired: this attempt ends here, parked — not succeeded,
-        // not failed. Record exactly what the card will show, then raise
-        // it (or surface the race if another executor already has).
-        await db
-          .updateTable('agent_run_steps')
-          .set({
-            status: 'waiting',
-            outcome: 'guard',
-            tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
-            input_tokens: outcome.usage.inputTokens,
-
-            output_tokens: outcome.usage.outputTokens,
-
-            cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
-
-            cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
-            detail: detailJson({
-              pauseKind: 'approval',
-              llmSummary: 'Waiting for your approval.',
-              proposedTool: outcome.proposedCall.tool,
-              proposedArgs: outcome.proposedCall.args,
-              toolCalls: outcome.toolCalls,
-              modelCalls: outcome.modelCalls,
-            }),
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', rowId)
-          .execute();
-        await recordUsage(run, outcome.usage, step.id, llm, modelCallsMs(outcome.modelCalls));
-        await raiseApprovalCard(
-          step,
-          iteration,
-          attempt,
-          outcome.proposedCall.tool,
-          outcome.proposedCall.args,
-          approvalWaitCapHours
-        );
-        return { kind: 'waiting' };
-      }
-
-      if (outcome.askPerson) {
-        // ask_person fired: this attempt ends here too, the same shape as
-        // a gate's pause — parked, not succeeded, not failed.
-        await db
-          .updateTable('agent_run_steps')
-          .set({
-            status: 'waiting',
-            outcome: 'question',
-            tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
-            input_tokens: outcome.usage.inputTokens,
-
-            output_tokens: outcome.usage.outputTokens,
-
-            cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
-
-            cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
-            detail: detailJson({
-              pauseKind: 'question',
-              llmSummary: 'Waiting for your answer.',
-              message: outcome.askPerson.message,
-              form: outcome.askPerson.form,
-              ...(outcome.askPerson.timeoutHours !== undefined
-                ? { timeoutHours: outcome.askPerson.timeoutHours }
-                : {}),
-              toolCalls: outcome.toolCalls,
-              modelCalls: outcome.modelCalls,
-            }),
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', rowId)
-          .execute();
-        await recordUsage(run, outcome.usage, step.id, llm, modelCallsMs(outcome.modelCalls));
-        await raiseQuestionCard(
-          step,
-          iteration,
-          attempt,
-          outcome.askPerson.message,
-          outcome.askPerson.form,
-          outcome.askPerson.timeoutHours,
-          approvalWaitCapHours
-        );
-        return { kind: 'waiting' };
-      }
-
-      const stepResult = await finishAttempt(rowId, outcome, guidance);
-      if (stepResult.kind === 'retry') continue;
-      return stepResult;
-    }
-  }
-
-  /**
-   * Execute a terminal node: record its attempt row and deliver its
-   * configured notifications through the run's own MCP client — the same
-   * owner-granted tools the steps use (`outlook_send_mail` to the owner's
-   * own address, `webex_note_to_self`), so the message carries the run's
-   * real variable values instead of the old context-free failure mail.
-   *
-   * Deterministic and best-effort: no LLM is involved, and a channel that
-   * is unconnected or errors becomes a note on the attempt row, never a
-   * run failure — the ending itself is what the node is for. Redelivery
-   * replays: an existing terminal row for this iteration means the
-   * notifications already went out, so they are not re-sent.
-   */
-  async function executeTerminal(
-    run: RunRow,
-    node: TerminalStep,
-    vars: Record<string, string>,
-    ordinals: Map<string, number>,
-    iteration: number
-  ): Promise<{ message: string }> {
-    const rendered = renderInstruction(node.message, vars);
-    const message = rendered.text.trim();
-
-    // Close a row a crashed worker left open, then replay a finished one.
-    await db
-      .updateTable('agent_run_steps')
-      .set({
-        status: 'failed',
-        outcome: 'terminal',
-        finished_at: sql`NOW()`,
-        updated_at: sql`NOW()`,
-      })
-      .where('run_id', '=', run.id)
-      .where('step_id', '=', node.id)
-      .where('iteration', '=', iteration)
-      .where('status', '=', 'running')
-      .execute();
-    const existing = await db
-      .selectFrom('agent_run_steps')
-      .select('id')
-      .where('run_id', '=', run.id)
-      .where('step_id', '=', node.id)
-      .where('iteration', '=', iteration)
-      .where('status', 'in', ['succeeded', 'failed', 'stopped'])
-      .executeTakeFirst();
-    if (existing) return { message };
-
-    const counted = await db
-      .selectFrom('agent_run_steps')
-      .select(({ fn }) => fn.countAll<string>().as('count'))
-      .where('run_id', '=', run.id)
-      .where('step_id', '=', node.id)
-      .where('iteration', '=', iteration)
-      .executeTakeFirst();
-    const rowId = randomUUID();
-    try {
-      await db
-        .insertInto('agent_run_steps')
-        .values({
-          id: rowId,
-          run_id: run.id,
-          step_id: node.id,
-          step_index: ordinals.get(node.id) ?? 0,
-          attempt: Number(counted?.count ?? 0) + 1,
-          iteration,
-          status: 'running',
-          started_at: sql`NOW()`,
-        })
-        .execute();
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('agent_run_steps_attempt')) {
-        throw new TransientFailure('another executor holds this run');
-      }
-      throw error;
-    }
-
-    const resultPhrase =
-      node.result === 'failure'
-        ? 'stopped at a failure marker'
-        : node.result === 'stop'
-          ? 'finished — nothing to do'
-          : 'finished';
-
-    const detail = {
-      llmSummary: `The flow ended here (${resultPhrase}).`,
-      declaredOutcome:
-        node.result === 'failure' ? 'failure' : node.result === 'stop' ? 'skipped' : 'success',
-      terminalResult: node.result,
-      ...(message ? { terminalMessage: clip(message, PREVIEW_CHARS) } : {}),
-      ...(rendered.unbound.length > 0 ? { unboundVariables: rendered.unbound } : {}),
-      // An ending calls no tools of its own anymore — this stays an empty,
-      // typed array so `detail`'s shape matches every other attempt row's.
-      toolCalls: NO_TOOL_CALLS,
-      modelCalls: [],
-    };
-    // The row's status mirrors the run's ending, so the timeline never
-    // shows a green pill at the node that failed the run on purpose (the
-    // same reasoning as the stop-quiet failure handling above).
-    await db
-      .updateTable('agent_run_steps')
-      .set({
-        status:
-          node.result === 'failure' ? 'failed' : node.result === 'stop' ? 'stopped' : 'succeeded',
-        outcome: 'terminal',
-        outcome_code: null,
-        tool_call_count: 0,
-        detail: detailJson(detail),
-        finished_at: sql`NOW()`,
-        updated_at: sql`NOW()`,
-      })
-      .where('id', '=', rowId)
-      .execute();
-    return { message };
-  }
-
-  /**
-   * The run's own page, relative — what a same-origin click (a toast, a
-   * push's `appPath`) should land on. No base URL needed, so this works
-   * even when `getPublicBaseUrl()` is unconfigured.
-   */
   function runPagePath(run: RunRow): string {
     return `/agents/${run.agent_id}/runs/${run.id}`;
   }
 
-  /** The owner-facing run link approval cards and notifications carry —
-   *  `path` already resolved by the caller, so this never re-queries. */
   function approvalLink(path: string | null): string | null {
     const base = getPublicBaseUrl();
     return path && base ? `${base}${path}` : null;
   }
 
-  /**
-   * Decide a branch: a forced choose_path call against the condition — a
-   * slimmed sibling of executeStep with the SAME bookkeeping (attempt rows
-   * before LLM spend, budget by counting rows, unique-constraint tripwire,
-   * deadline) and NO tools. Success closes the attempt row with outcome
-   * 'path_chosen' and detail.chosenPathId, which is also what redelivery
-   * reuses instead of asking the model twice.
-   */
-  async function evaluateBranch(
-    run: RunRow,
-    branch: BranchStep,
-    llm: ResolvedLlm,
-    vars: Record<string, string>,
-    context: RunContextText,
-    deadline: number,
-    orgAttemptCap: number,
-    ordinals: Map<string, number>,
-    iteration: number
-  ): Promise<
-    | { kind: 'path'; path: BranchPath; viaFailurePath?: boolean }
-    | { kind: 'fail'; errorKind: string; error: string }
-  > {
-    const pathById = (id: string | undefined): BranchPath | null => {
-      for (const path of branch.paths) if (path.id === id) return path;
-      if (branch.failurePath && branch.failurePath.id === id) return branch.failurePath;
-      return null;
-    };
-
-    const budget = Math.min(branch.maxAttempts, Math.max(1, orgAttemptCap));
-    let lastFailureSummary: string | undefined;
-
-    for (;;) {
-      // Close an evaluation a crashed worker left open, then recount —
-      // scoped to this iteration, so a branch inside a loop decides FRESH
-      // each round while redelivery within a round still replays.
-      await db
-        .updateTable('agent_run_steps')
-        .set({
-          status: 'failed',
-          outcome: 'llm_error',
-          outcome_code: 'other',
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', branch.id)
-        .where('iteration', '=', iteration)
-        .where('status', '=', 'running')
-        .execute();
-
-      // Redelivery/resume: an already-decided branch is not re-asked.
-      const succeeded = await db
-        .selectFrom('agent_run_steps')
-        .select('detail')
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', branch.id)
-        .where('iteration', '=', iteration)
-        .where('status', '=', 'succeeded')
-        .executeTakeFirst();
-      if (succeeded) {
-        const detail: { chosenPathId?: unknown; viaFailurePath?: unknown } =
-          typeof succeeded.detail === 'object' &&
-          succeeded.detail !== null &&
-          !Array.isArray(succeeded.detail)
-            ? succeeded.detail
-            : {};
-        const chosen =
-          typeof detail.chosenPathId === 'string' ? pathById(detail.chosenPathId) : null;
-        if (chosen) {
-          return {
-            kind: 'path',
-            path: chosen,
-            ...(detail.viaFailurePath === true ? { viaFailurePath: true } : {}),
-          };
-        }
-        // Unreadable choice: fall through and re-evaluate under whatever
-        // budget the counted rows leave.
-      }
-
-      // Two counts, as executeStep keeps them: every row numbers the next
-      // attempt (the unique constraint needs that), only live rows — not
-      // the ones a resume retired — spend the budget.
-      const counted = await db
-        .selectFrom('agent_run_steps')
-        .select(['status'])
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', branch.id)
-        .where('iteration', '=', iteration)
-        .execute();
-      const totalRows = counted.length;
-      const attemptsUsed = counted.filter((row) => row.status !== 'retired').length;
-
-      if (attemptsUsed >= budget) {
-        // Evaluation exhausted its attempts. With a failure path configured
-        // this is the STRUCTURAL exit, not a run failure: the automation
-        // routes there instead (an empty failure path just continues after
-        // the branch). Deterministic on resume too — re-counting lands
-        // here again.
-        if (branch.failurePath) {
-          logger.warn('branch {branchId} evaluation exhausted; taking failure path', {
-            component: 'worker-agents/engine',
-            runId: run.id,
-            branchId: branch.id,
-          });
-          return { kind: 'path', path: branch.failurePath, viaFailurePath: true };
-        }
-        return {
-          kind: 'fail',
-          errorKind: 'step_failed',
-          error: `Branch "${branch.name}" could not be decided after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}${lastFailureSummary ? `: ${clip(lastFailureSummary, 300)}` : '.'}`,
-        };
-      }
-      if (Date.now() > deadline) {
-        return { kind: 'fail', errorKind: 'timeout', error: 'The run exceeded its time budget.' };
-      }
-      if (await runBudgetExceeded(run.id)) {
-        return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
-      }
-
-      const attempt = totalRows + 1;
-      const rowId = randomUUID();
-      try {
-        await db
-          .insertInto('agent_run_steps')
-          .values({
-            id: rowId,
-            run_id: run.id,
-            step_id: branch.id,
-            step_index: ordinals.get(branch.id) ?? 0,
-            attempt,
-            iteration,
-            status: 'running',
-            started_at: sql`NOW()`,
-          })
-          .execute();
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('agent_run_steps_attempt')) {
-          throw new TransientFailure('another executor holds this run');
-        }
-        throw error;
-      }
-
-      const resumeNote =
-        run.resume_step_id === branch.id
-          ? resumeNoteFor({
-              ...(await retiredFailureText(run.id, branch.id, iteration)),
-              ...(run.resume_guidance ? { guidance: run.resume_guidance } : {}),
-            })
-          : undefined;
-      const built = buildBranchMessages({
-        branch,
-        variables: vars,
-        attempt,
-        inputs: [...context.liveInputs],
-        ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
-        ...(resumeNote ? { resumeNote } : {}),
-      });
-      const resolvedInstruction = renderInstruction(branch.condition, vars).text;
-      const promptText = promptTextOf(built.messages);
-      const messages: LlmMessage[] = [...built.messages];
-      const usage = emptyUsage();
-      let failureSummary = 'The model never chose a path.';
-
-      let decidedPath: BranchPath | null = null;
-      let decidedReason = '';
-      const choosePathDef = buildChoosePathDef(branch);
-      const branchSystem = branch.paths.length === 2 ? BRANCH_SYSTEM_PROMPT : ROUTER_SYSTEM_PROMPT;
-      // One tool list for every turn (it heads the cached prefix); the last
-      // turn forces the decision through tool_choice instead of narrowing.
-      const branchTools = usesTime([branch.condition])
-        ? [choosePathDef, RESOLVE_TIME_DEF]
-        : [choosePathDef];
-      const timeNotes: string[] = [];
-      // A short turn cap: the decision should come immediately; the spare
-      // turns cover a model that answered in prose first, or spent one
-      // looking up a date. On the LAST turn the decision tool is forced
-      // alone — a condition that keeps asking the time must still land.
-      const modelCalls: ModelCallRecord[] = [];
-      for (let turn = 0; turn < CONDITION_TURNS && !decidedPath; turn += 1) {
-        const lastTurn = turn === CONDITION_TURNS - 1;
-        const callStartedAt = Date.now();
-        const completion = await llm.provider.complete({
-          system: withRunContext(branchSystem, context),
-          messages,
-          tools: branchTools,
-          // 'any' rather than the named tool: forcing choose_path would make
-          // resolve_time unreachable, which is the whole point of offering
-          // it. Either way the model must call SOMETHING.
-          toolChoice: lastTurn ? { name: CHOOSE_PATH_TOOL } : 'any',
-          promptCache: true,
-
-          maxTokens: llm.maxOutputTokens,
-          ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
-        });
-        if (!completion.ok) {
-          const kind = completion.err.type;
-          logger.error('model error deciding branch {branchId} in run {runId}: {kind} {message}', {
-            component: 'worker-agents/engine',
-            runId: run.id,
-            branchId: branch.id,
-            kind,
-            message: completion.err.message ?? '',
-            ...requestLogFieldOf(completion.err.cause),
-          });
-          if (kind === 'auth') {
-            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-            return {
-              kind: 'fail',
-              errorKind: 'llm_auth',
-              error: 'The model rejected the API key.',
-            };
-          }
-          if (kind === 'invalid_request') {
-            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-            return {
-              kind: 'fail',
-              errorKind: 'llm_error',
-              error: completion.err.message ?? 'The model rejected the request.',
-            };
-          }
-          if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
-            // Nothing spent — void the row and let the queue back off.
-            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-            throw new TransientFailure(`model ${kind}`);
-          }
-          failureSummary = completion.err.message ?? `The model failed (${kind}).`;
-          break;
-        }
-
-        addUsage(usage, completion.val.usage);
-        modelCalls.push({
-          durationMs: Date.now() - callStartedAt,
-          stopReason: completion.val.stopReason,
-          inputTokens: completion.val.usage.inputTokens,
-          outputTokens: completion.val.usage.outputTokens,
-        });
-        messages.push({ role: 'assistant', content: completion.val.content });
-
-        const toolUses = completion.val.content.filter(
-          (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> =>
-            block.type === 'tool_use'
-        );
-        const chooseUse = toolUses.find((use) => use.name === CHOOSE_PATH_TOOL);
-        const choice = chooseUse ? chosenPathIndexOf(chooseUse.input, branch.paths.length) : null;
-        if (chooseUse && choice) {
-          decidedPath = branch.paths[choice.index];
-          decidedReason = choice.reason;
-          break;
-        }
-        // A date lookup is not a failure to decide: answer it and let the
-        // model decide on the next turn, without spending the nudge.
-        const lookups = answerTimeLookups(toolUses);
-        if (lookups.results.length > 0) {
-          timeNotes.push(...lookups.notes);
-          messages.push({ role: 'user', content: lookups.results });
-          continue;
-        }
-        messages.push({
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text:
-                branch.paths.length === 2
-                  ? 'Call choose_path exactly once with {choice: "yes" | "no", reason}.'
-                  : `Call choose_path exactly once with {choice: "1"–"${branch.paths.length}", reason}.`,
-            },
-          ],
-        });
-      }
-
-      if (decidedPath) {
-        const detail = {
-          resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
-          ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
-          llmSummary: clip(decidedReason, PREVIEW_CHARS),
-          // Which instants it compared against — the first thing anyone
-          // asks when a time-based branch went the wrong way.
-          ...(timeNotes.length > 0 ? { timeLookups: timeNotes } : {}),
-          declaredOutcome: 'success',
-          chosenPathId: decidedPath.id,
-          chosenPathName: decidedPath.name,
-          modelCalls,
-          ...(built.unbound.length > 0 ? { unboundVariables: built.unbound } : {}),
-          usage,
-        };
-        await db
-          .updateTable('agent_run_steps')
-          .set({
-            status: 'succeeded',
-            outcome: 'path_chosen',
-            outcome_code: null,
-            tool_call_count: 0,
-            input_tokens: usage.inputTokens,
-
-            output_tokens: usage.outputTokens,
-
-            cache_read_input_tokens: usage.cacheReadInputTokens,
-
-            cache_write_input_tokens: usage.cacheWriteInputTokens,
-            detail: detailJson(detail),
-            finished_at: sql`NOW()`,
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', rowId)
-          .execute();
-        await recordUsage(run, usage, branch.id, llm, modelCallsMs(modelCalls));
-        return { kind: 'path', path: decidedPath };
-      }
-
-      // The attempt failed to produce a choice — close it and let the loop
-      // retry until the budget runs out.
-      lastFailureSummary = failureSummary;
-      const detail = {
-        resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
-        ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
-        llmSummary: clip(failureSummary, PREVIEW_CHARS),
-        declaredOutcome: 'failure',
-        usage,
-      };
-      await db
-        .updateTable('agent_run_steps')
-        .set({
-          status: 'failed',
-          outcome: 'llm_error',
-          outcome_code: 'other',
-          tool_call_count: 0,
-          input_tokens: usage.inputTokens,
-
-          output_tokens: usage.outputTokens,
-
-          cache_read_input_tokens: usage.cacheReadInputTokens,
-
-          cache_write_input_tokens: usage.cacheWriteInputTokens,
-          detail: detailJson(detail),
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', rowId)
-        .execute();
-      await recordUsage(run, usage, branch.id, llm, modelCallsMs(modelCalls));
-    }
-  }
-
-  /**
-   * Decide an until-loop's stop condition after an iteration — the loop
-   * sibling of evaluateBranch, with identical bookkeeping: per-iteration
-   * attempt rows keyed on the LOOP's id, budget by counting rows, the
-   * unique-constraint tripwire, deadline, and decision replay (a decided
-   * iteration is never re-asked).
-   */
-  async function evaluateLoopCondition(
-    run: RunRow,
-    loop: UntilLoopStep,
-    iteration: number,
-    llm: ResolvedLlm,
-    vars: Record<string, string>,
-    context: RunContextText,
-    deadline: number,
-    orgAttemptCap: number,
-    ordinals: Map<string, number>
-  ): Promise<
-    | { kind: 'decided'; choice: 'finished' | 'continue' }
-    | { kind: 'fail'; errorKind: string; error: string }
-  > {
-    const budget = Math.min(loop.maxAttempts, Math.max(1, orgAttemptCap));
-    let lastFailureSummary: string | undefined;
-
-    for (;;) {
-      await db
-        .updateTable('agent_run_steps')
-        .set({
-          status: 'failed',
-          outcome: 'llm_error',
-          outcome_code: 'other',
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', loop.id)
-        .where('iteration', '=', iteration)
-        .where('status', '=', 'running')
-        .execute();
-
-      // Replay: this iteration's decision, if already made.
-      const succeeded = await db
-        .selectFrom('agent_run_steps')
-        .select('detail')
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', loop.id)
-        .where('iteration', '=', iteration)
-        .where('status', '=', 'succeeded')
-        .executeTakeFirst();
-      if (succeeded) {
-        const detail: { loopDecision?: unknown } =
-          typeof succeeded.detail === 'object' &&
-          succeeded.detail !== null &&
-          !Array.isArray(succeeded.detail)
-            ? succeeded.detail
-            : {};
-        if (detail.loopDecision === 'finished' || detail.loopDecision === 'continue') {
-          return { kind: 'decided', choice: detail.loopDecision };
-        }
-      }
-
-      const counted = await db
-        .selectFrom('agent_run_steps')
-        .select(['status'])
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', loop.id)
-        .where('iteration', '=', iteration)
-        .execute();
-      const totalRows = counted.length;
-      const attemptsUsed = counted.filter((row) => row.status !== 'retired').length;
-
-      if (attemptsUsed >= budget) {
-        return {
-          kind: 'fail',
-          errorKind: 'step_failed',
-          error: `Loop "${loop.name}" could not decide its stop condition after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'} on round ${iteration}${lastFailureSummary ? `: ${clip(lastFailureSummary, 300)}` : '.'}`,
-        };
-      }
-      if (Date.now() > deadline) {
-        return { kind: 'fail', errorKind: 'timeout', error: 'The run exceeded its time budget.' };
-      }
-      if (await runBudgetExceeded(run.id)) {
-        return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
-      }
-
-      const attempt = totalRows + 1;
-      const rowId = randomUUID();
-      try {
-        await db
-          .insertInto('agent_run_steps')
-          .values({
-            id: rowId,
-            run_id: run.id,
-            step_id: loop.id,
-            step_index: ordinals.get(loop.id) ?? 0,
-            attempt,
-            iteration,
-            status: 'running',
-            started_at: sql`NOW()`,
-          })
-          .execute();
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('agent_run_steps_attempt')) {
-          throw new TransientFailure('another executor holds this run');
-        }
-        throw error;
-      }
-
-      const resumeNote =
-        run.resume_step_id === loop.id
-          ? resumeNoteFor({
-              ...(await retiredFailureText(run.id, loop.id, iteration)),
-              ...(run.resume_guidance ? { guidance: run.resume_guidance } : {}),
-            })
-          : undefined;
-      const built = buildLoopConditionMessages({
-        loop,
-        inputs: [...context.liveInputs],
-        iteration,
-        variables: vars,
-        attempt,
-        ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
-        ...(resumeNote ? { resumeNote } : {}),
-      });
-      const resolvedInstruction = renderInstruction(loop.condition, vars).text;
-      const promptText = promptTextOf(built.messages);
-      const messages: LlmMessage[] = [...built.messages];
-      const usage = emptyUsage();
-      let failureSummary = 'The model never decided the loop.';
-
-      let decided: 'finished' | 'continue' | null = null;
-      let decidedReason = '';
-      const timeNotes: string[] = [];
-      // Same shape as a branch decision: free date lookups (when the
-      // condition is about time) on every turn but the last, where the
-      // verdict is forced through tool_choice — the tool list itself never
-      // changes, it heads the cached prefix. An until-loop asking "has it
-      // been an hour yet?" is exactly the arithmetic worth taking out of
-      // the model's head.
-      const loopTools = usesTime([loop.condition])
-        ? [LOOP_DECISION_DEF, RESOLVE_TIME_DEF]
-        : [LOOP_DECISION_DEF];
-      const modelCalls: ModelCallRecord[] = [];
-      for (let turn = 0; turn < CONDITION_TURNS && !decided; turn += 1) {
-        const lastTurn = turn === CONDITION_TURNS - 1;
-        const callStartedAt = Date.now();
-        const completion = await llm.provider.complete({
-          system: withRunContext(LOOP_SYSTEM_PROMPT, context),
-          messages,
-          tools: loopTools,
-          toolChoice: lastTurn ? { name: LOOP_DECISION_TOOL } : 'any',
-          promptCache: true,
-
-          maxTokens: llm.maxOutputTokens,
-          ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
-        });
-        if (!completion.ok) {
-          const kind = completion.err.type;
-          logger.error('model error deciding loop {loopId} in run {runId}: {kind} {message}', {
-            component: 'worker-agents/engine',
-            runId: run.id,
-            loopId: loop.id,
-            kind,
-            message: completion.err.message ?? '',
-            ...requestLogFieldOf(completion.err.cause),
-          });
-          if (kind === 'auth') {
-            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-            return {
-              kind: 'fail',
-              errorKind: 'llm_auth',
-              error: 'The model rejected the API key.',
-            };
-          }
-          if (kind === 'invalid_request') {
-            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-            return {
-              kind: 'fail',
-              errorKind: 'llm_error',
-              error: completion.err.message ?? 'The model rejected the request.',
-            };
-          }
-          if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
-            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-            throw new TransientFailure(`model ${kind}`);
-          }
-          failureSummary = completion.err.message ?? `The model failed (${kind}).`;
-          break;
-        }
-
-        addUsage(usage, completion.val.usage);
-        modelCalls.push({
-          durationMs: Date.now() - callStartedAt,
-          stopReason: completion.val.stopReason,
-          inputTokens: completion.val.usage.inputTokens,
-          outputTokens: completion.val.usage.outputTokens,
-        });
-        messages.push({ role: 'assistant', content: completion.val.content });
-
-        const toolUses = completion.val.content.filter(
-          (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> =>
-            block.type === 'tool_use'
-        );
-        const decisionUse = toolUses.find((use) => use.name === LOOP_DECISION_TOOL);
-        const choice = decisionUse ? loopArgsOf(decisionUse.input) : null;
-        if (decisionUse && choice) {
-          decided = choice.choice;
-          decidedReason = choice.reason;
-          break;
-        }
-        const lookups = answerTimeLookups(toolUses);
-        if (lookups.results.length > 0) {
-          timeNotes.push(...lookups.notes);
-          messages.push({ role: 'user', content: lookups.results });
-          continue;
-        }
-        messages.push({
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: 'Call loop_decision exactly once with {choice: "finished" | "continue", reason}.',
-            },
-          ],
-        });
-      }
-
-      if (decided) {
-        const detail = {
-          resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
-          ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
-          llmSummary: clip(decidedReason, PREVIEW_CHARS),
-          ...(timeNotes.length > 0 ? { timeLookups: timeNotes } : {}),
-          declaredOutcome: 'success',
-          loopDecision: decided,
-          modelCalls,
-          ...(built.unbound.length > 0 ? { unboundVariables: built.unbound } : {}),
-          usage,
-        };
-        await db
-          .updateTable('agent_run_steps')
-          .set({
-            status: 'succeeded',
-            outcome: 'loop_decided',
-            outcome_code: null,
-            tool_call_count: 0,
-            input_tokens: usage.inputTokens,
-
-            output_tokens: usage.outputTokens,
-
-            cache_read_input_tokens: usage.cacheReadInputTokens,
-
-            cache_write_input_tokens: usage.cacheWriteInputTokens,
-            detail: detailJson(detail),
-            finished_at: sql`NOW()`,
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', rowId)
-          .execute();
-        await recordUsage(run, usage, loop.id, llm, modelCallsMs(modelCalls));
-        return { kind: 'decided', choice: decided };
-      }
-
-      lastFailureSummary = failureSummary;
-      const detail = {
-        resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
-        ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
-        llmSummary: clip(failureSummary, PREVIEW_CHARS),
-        declaredOutcome: 'failure',
-        usage,
-      };
-      await db
-        .updateTable('agent_run_steps')
-        .set({
-          status: 'failed',
-          outcome: 'llm_error',
-          outcome_code: 'other',
-          tool_call_count: 0,
-          input_tokens: usage.inputTokens,
-
-          output_tokens: usage.outputTokens,
-
-          cache_read_input_tokens: usage.cacheReadInputTokens,
-
-          cache_write_input_tokens: usage.cacheWriteInputTokens,
-          detail: detailJson(detail),
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', rowId)
-        .execute();
-      await recordUsage(run, usage, loop.id, llm, modelCallsMs(modelCalls));
-    }
-  }
-
-  async function runAttempt(
-    run: RunRow,
-    step: ActionStep,
-    attempt: number,
-    guidance: FailureHandling['guidance'],
-    toolsByName: Map<string, McpToolInfo>,
-    llm: ResolvedLlm,
-    mcp: McpClient,
-    vars: Record<string, string>,
-    context: RunContextText,
-    blockedTools: ReadonlySet<string>,
-    iteration: number,
-    savesItemsForLoop: boolean,
-    canAskQuestions: boolean,
-    deadline: number,
-    /**
-     * The tools this attempt may offer that pause for a person under the
-     * org's act-approval policy or the fixed high-risk list — gated exactly
-     * like the author's own `needsApproval` (policyGatedTools).
-     */
-    policyGated: ReadonlySet<string>,
-    /** Present on the step an owner resumed the run at — see resumeNoteFor. */
-    resumeNote?: string
-  ): Promise<AttemptOutcome> {
-    // Corrective guidance is the likeliest place for "try [attempt] of
-    // [attempt.max]" to be written, so it renders against the same bindings
-    // the instruction gets.
-    const attemptVars = { ...vars, ...attemptVariables(attempt, step.maxAttempts) };
-    // Tools see the same numbers the instruction does, so one that can widen
-    // its own search on a retry has the fact to act on.
-    mcp.setAttempt?.(attempt, step.maxAttempts);
-    // Trigger values render fenced here as they do in the instruction
-    // (untrusted.ts) — guidance is prose the model reads the same way.
-    const guidanceText = guidance
-      ? renderInstruction(guidance, delimitUntrustedVariables(attemptVars)).text
-      : undefined;
-    const previousFailure =
-      attempt > 1 ? await lastFailureText(run.id, step.id, iteration) : undefined;
-    // A resumed attempt gets the corrective allowance: the owner's note
-    // usually means "look again, differently", and fixing a failure takes
-    // extra lookups whether the retry was the plan's or the owner's.
-    const toolCap = attempt > 1 || resumeNote ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
-    const outcomeGuide = outcomeGuideFor(step, attemptVars);
-    // resolve_time only where the call can use it — decided from the step's
-    // own prose and its tool's parameters, before the model sees anything.
-    const primaryTool = step.tool;
-    const offersTime = usesTime(
-      [step.instruction, ...step.failureHandling.map((handling) => handling.guidance ?? [])],
-      primaryTool ? toolsByName.get(primaryTool)?.inputSchema : undefined
-    );
-    const built = buildAttemptMessages({
-      step,
-      attempt,
-      variables: vars,
-      toolBudget: toolCap,
-      offersTime,
-      inputs: [...context.liveInputs],
-      guidanceText,
-      previousFailure,
-      savesItemsForLoop,
-      ...(outcomeGuide ? { outcomeGuide } : {}),
-      ...(resumeNote ? { resumeNote } : {}),
-    });
-
-    // The step's one tool, plus (on corrective attempts) the guidance's
-    // chips — the deliberately laxer set for fixing a failure. Blocked
-    // skills never enter the offer, so guidance chips can't smuggle one
-    // past the guardrails.
-    // resolve_time and remember both ride alongside finish_step: in-process,
-    // free of the budget, and NOT the step's "one tool" — a step whose one
-    // skill is a mail search must still be able to work out what
-    // "yesterday 19:00 Los Angeles" means, or note a fact for future runs,
-    // without spending its only call. remember is offered unconditionally
-    // (any step may turn out to have something worth keeping); resolve_time
-    // only where the step can actually use it.
-    const offered: LlmToolDef[] = [
-      FINISH_STEP_DEF,
-      REMEMBER_DEF,
-      ...(offersTime ? [RESOLVE_TIME_DEF] : []),
-      ...(canAskQuestions ? [ASK_PERSON_DEF] : []),
-    ];
-    const offeredNames = new Set<string>(offered.map((tool) => tool.name));
-    const offer = (name: string) => {
-      if (blockedTools.has(name)) return;
-      const info = toolsByName.get(name);
-      if (!info || offeredNames.has(name)) return;
-      offeredNames.add(name);
-      offered.push({
-        name: info.name,
-        description: info.description,
-        inputSchema: info.inputSchema,
-      });
-    };
-    if (primaryTool) offer(primaryTool);
-    if (attempt > 1 && guidance) for (const name of toolSegments(guidance)) offer(name);
-
-    const messages: LlmMessage[] = [...built.messages];
-    const toolCalls: ToolCallRecord[] = [];
-    const modelCalls: ModelCallRecord[] = [];
-    // Once the budget is spent the conversation narrows to finish_step only:
-    // the model generally holds enough to answer, and "declare from what you
-    // have seen" turns exhaustion into an honest outcome the step's failure
-    // handling can route, where insta-failing produced an unroutable 'other'.
-    let budgetExhausted = false;
-    const primaryResults: McpToolResult[] = [];
-    // Attachment budget for the whole attempt: document/image blocks get
-    // resent with every subsequent turn's messages, so they are priced as
-    // scarce — over-budget attachments are dropped (their extracted text
-    // already rode the tool result), never queued.
-    const attachmentBudget = { blocks: 0, base64Chars: 0 };
-    const usage = emptyUsage();
-    const resolvedInstruction = renderInstruction(step.instruction, vars).text;
-
-    const base = {
-      toolCalls,
-      modelCalls,
-      usage,
-      unbound: built.unbound,
-      resolvedInstruction,
-      promptText: promptTextOf(built.messages),
-    };
-
-    for (let turn = 0; turn < MAX_LLM_TURNS; turn += 1) {
-      // The step-boundary deadline/cancel checkpoints (before this attempt
-      // was ever started) only bound the time BETWEEN attempts — nothing
-      // previously re-checked either one across an attempt's own up-to-10
-      // LLM turns, each with its own tool-call budget. A single attempt
-      // could quietly run well past the run's timeout, alive the whole
-      // time, immune to both the timeout and a cancel click. Re-checking
-      // here, once per turn, closes that gap at the same granularity the
-      // rest of the engine already uses.
-      if (Date.now() > deadline) {
-        throw new RunAbort('timeout', 'The run exceeded its time budget.');
-      }
-      if (await isCanceled(run.id)) {
-        throw new RunCanceled();
-      }
-      // Stopping mid-attempt: the turns so far are this attempt's alone
-      // and go with it (the row is voided by the caller); the step starts
-      // over on the next executor.
-      if (deps.stopRequested?.()) throw new ExecutorStopping();
-      // The tool list never changes within an attempt: tools render first
-      // in the cached prompt prefix, so narrowing them would throw the
-      // whole cache away. Exhaustion is expressed through tool_choice
-      // alone — a forced finish_step leaves the others uncallable anyway.
-      const callStartedAt = Date.now();
-      const completion = await llm.provider.complete({
-        system: systemPromptWith(context),
-        messages,
-        tools: offered,
-        toolChoice: budgetExhausted ? { name: FINISH_STEP_TOOL } : 'any',
-        promptCache: true,
-
-        maxTokens: llm.maxOutputTokens,
-        ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
-      });
-      if (!completion.ok) {
-        const kind = completion.err.type;
-        logger.error('model error on step {stepId} in run {runId}: {kind} {message}', {
-          component: 'worker-agents/engine',
-          runId: run.id,
-          stepId: step.id,
-          kind,
-          message: completion.err.message ?? '',
-          ...requestLogFieldOf(completion.err.cause),
-        });
-        if (kind === 'auth') throw new RunAbort('llm_auth', 'The model rejected the API key.');
-        if (kind === 'invalid_request') {
-          throw new RunAbort(
-            'llm_error',
-            completion.err.message ?? 'The model rejected the request.'
-          );
-        }
-        if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
-          if (toolCalls.every((call) => call.free)) throw new TransientFailure(`model ${kind}`);
-          return {
-            ...base,
-            succeeded: false,
-            outcome: 'llm_error',
-            outcomeCode: 'service-unavailable',
-            summary: `The model became unavailable mid-attempt (${kind}).`,
-            saveValue: null,
-            saveItems: null,
-          };
-        }
-        return {
-          ...base,
-          succeeded: false,
-          outcome: 'llm_error',
-          outcomeCode: 'other',
-          summary: completion.err.message ?? `The model failed (${kind}).`,
-          saveValue: null,
-          saveItems: null,
-        };
-      }
-
-      addUsage(usage, completion.val.usage);
-      modelCalls.push({
-        durationMs: Date.now() - callStartedAt,
-        stopReason: completion.val.stopReason,
-        inputTokens: completion.val.usage.inputTokens,
-        outputTokens: completion.val.usage.outputTokens,
-      });
-      messages.push({ role: 'assistant', content: completion.val.content });
-
-      const toolUses = completion.val.content.filter(
-        (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> =>
-          block.type === 'tool_use'
-      );
-      if (toolUses.length === 0) {
-        // No tool call and no finish: nudge once via the loop; the turn cap
-        // bounds a model that never converges.
-        messages.push({
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: 'Call finish_step with the outcome, or use the provided tool to do the work.',
-            },
-          ],
-        });
-        continue;
-      }
-
-      const results: LlmContentBlock[] = [];
-      const attachments: AttachmentBlock[] = [];
-      for (const use of toolUses) {
-        if (use.name === FINISH_STEP_TOOL) {
-          const finish = finishArgsOf(use.input);
-          if (!finish) {
-            results.push({
-              type: 'tool_result',
-              toolUseId: use.id,
-              content: 'finish_step needs {outcome, summary}.',
-              isError: true,
-            });
-            continue;
-          }
-          return decideOutcome(step, finish, primaryResults, base);
-        }
-
-        if (use.name === ASK_PERSON_TOOL && canAskQuestions) {
-          const asked = askPersonArgsOf(use.input);
-          if (!asked) {
-            results.push({
-              type: 'tool_result',
-              toolUseId: use.id,
-              content: 'ask_person needs at least {message}.',
-              isError: true,
-            });
-            continue;
-          }
-          return {
-            ...base,
-            succeeded: false,
-            outcome: 'guard',
-            outcomeCode: null,
-            summary: 'Waiting for an answer.',
-            saveValue: null,
-            saveItems: null,
-            askPerson: asked,
-          };
-        }
-
-        // Free and local: answered here, never sent to MCP, never charged
-        // against the budget. Placed ahead of the budget check on purpose
-        // — a model that has spent its calls must still be able to get a
-        // date right while declaring its outcome.
-        if (use.name === RESOLVE_TIME_TOOL && offersTime) {
-          const resolved = resolveTime(resolveTimeArgsOf(use.input));
-          results.push({
-            type: 'tool_result',
-            toolUseId: use.id,
-            content: resolved.ok
-              ? JSON.stringify(resolved.value)
-              : `${resolved.error} Call ${RESOLVE_TIME_TOOL} again with that corrected — it is free.`,
-            isError: !resolved.ok,
-          });
-          // Recorded for the run timeline (someone reading a bad search
-          // wants to see which instant was computed), but not counted:
-          // tool_call_count is the budget's tally.
-          toolCalls.push({
-            free: true,
-            tool: RESOLVE_TIME_TOOL,
-            argsPreview: clip(JSON.stringify(use.input ?? {}), PREVIEW_CHARS),
-            resultPreview: clip(
-              resolved.ok ? `${resolved.value.iso} (${resolved.value.local})` : resolved.error,
-              PREVIEW_CHARS
-            ),
-            isError: !resolved.ok,
-            durationMs: 0,
-          });
-          continue;
-        }
-
-        // Free and local, exactly like resolve_time — but this one is a
-        // deliberate, standalone act, never a field on finish_step's
-        // outcome. Written immediately (not deferred to finishAttempt) so a
-        // fact recorded early in a multi-turn attempt is visible to the
-        // rest of THIS run right away, the same as it would be for a later
-        // step. Best-effort: a memory write must never fail the attempt.
-        if (use.name === REMEMBER_TOOL) {
-          const remembered = rememberArgsOf(use.input);
-          if (!remembered) {
-            results.push({
-              type: 'tool_result',
-              toolUseId: use.id,
-              content: 'remember needs {note}, a non-empty string.',
-              isError: true,
-            });
-            continue;
-          }
-          let resultText = 'Remembered.';
-          let isError = false;
-          try {
-            const { inserted } = await appendAgentMemory(db, {
-              agentId: run.agent_id,
-              content: remembered.note,
-              runId: run.id,
-            });
-            if (inserted) {
-              context.memoryText = renderAgentMemory(
-                await readAgentMemory(db, run.agent_id)
-              );
-            } else {
-              resultText = 'Already remembered — no change.';
-            }
-          } catch (error) {
-            isError = true;
-            resultText = 'Could not save that to memory.';
-            logger.warn('memory append failed for run {runId}: {error}', {
-              component: 'worker-agents/engine',
-              runId: run.id,
-              subject: run.owner_subject,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-          results.push({
-            type: 'tool_result',
-            toolUseId: use.id,
-            content: resultText,
-            isError,
-          });
-          // Recorded for the run timeline, but not counted: tool_call_count
-          // is the budget's tally.
-          toolCalls.push({
-            free: true,
-            tool: REMEMBER_TOOL,
-            argsPreview: clip(JSON.stringify(use.input ?? {}), PREVIEW_CHARS),
-            resultPreview: clip(resultText, PREVIEW_CHARS),
-            isError,
-            durationMs: 0,
-          });
-          continue;
-        }
-
-        if (!offeredNames.has(use.name)) {
-          results.push({
-            type: 'tool_result',
-            toolUseId: use.id,
-            content: `The tool "${use.name}" is not available in this step.`,
-            isError: true,
-          });
-          continue;
-        }
-
-        if ((use.name === primaryTool && step.needsApproval) || policyGated.has(use.name)) {
-          // The gate: this attempt ends the moment the model reaches for
-          // the step's own tool — the call never runs. executeStep parks
-          // it behind a card showing exactly this proposal (tool + args)
-          // and raises a fresh attempt (or fires this recorded call
-          // directly on approval) once a person decides. Free of the
-          // budget: proposing costs nothing, only calling does. The org's
-          // act-approval policy (and the fixed high-risk list) gates a
-          // call the same way, author flag or not — see policyGatedTools.
-          const args =
-            typeof use.input === 'object' && use.input !== null && !Array.isArray(use.input)
-              ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
-                (use.input as Record<string, unknown>)
-              : {};
-          return {
-            ...base,
-            succeeded: false,
-            outcome: 'guard',
-            outcomeCode: null,
-            summary: 'Waiting for your approval before calling this tool.',
-            saveValue: null,
-            saveItems: null,
-            proposedCall: { tool: use.name, args },
-          };
-        }
-
-        const billedCalls = toolCalls.filter((call) => !call.free);
-        if (billedCalls.length >= toolCap) {
-          // Out of budget — but the model has context worth a verdict.
-          // Refuse the call and force finish_step on the next turn instead
-          // of failing the attempt outright: exhaustion should end in a
-          // declared outcome ('success' when the intent is met, a coded
-          // failure when it clearly is not), which the step's failure
-          // handling can route — where a guard failure routed nowhere.
-          budgetExhausted = true;
-          // Same-tool repetition usually means iterating items one call at a
-          // time — the fix is a bulk tool in the step, not more budget.
-          const repetitive =
-            billedCalls.length > 1 && billedCalls.every((call) => call.tool === use.name);
-          results.push({
-            type: 'tool_result',
-            toolUseId: use.id,
-            content:
-              `Tool budget spent (${toolCap} calls this attempt) — this call was not made. ` +
-              'Call finish_step now: declare success if what you already found satisfies the ' +
-              'step, "skipped" if the automation turned out not to apply to this input, ' +
-              'or failure with the best-matching code if it clearly does not.' +
-              (repetitive
-                ? ` Note: every call this attempt was ${use.name} — if you were covering many ` +
-                  'items one at a time, say so in finish_step: the step should use a bulk ' +
-                  'variant of the tool (or one search covering all items) instead.'
-                : ''),
-            isError: true,
-          });
-          continue;
-        }
-
-        // A single turn can carry several tool_use blocks (toolCap is
-        // spent across the whole attempt, not per turn), each with its own
-        // up-to-60s network timeout — re-check here too, so a chatty turn
-        // can't burn many minutes between the once-per-turn check above.
-        if (Date.now() > deadline) {
-          throw new RunAbort('timeout', 'The run exceeded its time budget.');
-        }
-        // Before a call that acts, not after: a tool this process will not
-        // live to record the result of is better not made at all.
-        if (deps.stopRequested?.()) throw new ExecutorStopping();
-        const args =
-          typeof use.input === 'object' && use.input !== null && !Array.isArray(use.input)
-            ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
-              (use.input as Record<string, unknown>)
-            : {};
-        const startedAt = Date.now();
-        let result: McpToolResult;
-        try {
-          result = await mcp.callTool(use.name, args);
-        } catch (error) {
-          result = {
-            content: [
-              {
-                type: 'text',
-                text: `The tool could not be reached: ${error instanceof Error ? error.message : String(error)}`,
-              },
-            ],
-            isError: true,
-            meta: {},
-          };
-        }
-        const durationMs = Date.now() - startedAt;
-        // Every tool an agent calls, on the record. Debug when it worked —
-        // this is the highest-volume event in the system and nobody reads a
-        // successful call — but a FAILED call is exactly what someone is
-        // hunting for, so it speaks up, naming the agent and the person
-        // whose authority it borrowed.
-        const toolFields = {
-          component: 'worker-agents/engine',
-          runId: run.id,
-          agentId: run.agent_id,
-          agentName: await agentNameOf(run.agent_id),
-          userName: (await describeActor(db, run.owner_subject)).displayName,
-          subject: run.owner_subject,
-          stepName: step.name,
-          // Readable in the sentence, exact in the metadata: someone
-          // grepping for the wire name still finds it.
-          toolLabel: friendlyToolName(use.name, null),
-          tool: use.name,
-          durationMs,
-        };
-        if (result.isError) {
-          logger.warn('agent "{agentName}" ({userName}): {toolLabel} failed — {error}', {
-            ...toolFields,
-            error: clip(textOf(result), PREVIEW_CHARS),
-          });
-        } else {
-          logger.debug('agent "{agentName}" ({userName}): {toolLabel} ok', toolFields);
-        }
-        const kind = toolKindOf(result.meta);
-        // Only a call that WORKED is worth telling anyone about: a failed
-        // act did not happen, and the run record is where a failure belongs.
-        if (!result.isError) void context.notifier.act(use.name, kind, result.meta, step.id);
-        const resultText = textOf(result);
-        toolCalls.push({
-          tool: use.name,
-          argsPreview: clip(JSON.stringify(args), PREVIEW_CHARS),
-          resultPreview: clip(resultText, PREVIEW_CHARS),
-          resultChars: resultText.length,
-          isError: result.isError,
-          durationMs,
-          ...(kind ? { kind } : {}),
-        });
-        if (use.name === primaryTool) primaryResults.push(result);
-        results.push({
-          type: 'tool_result',
-          toolUseId: use.id,
-          // Fenced as data (untrusted.ts): a result can carry a stranger's
-          // words — a mail body, a comment — and the system prompt's rule
-          // tells the model what the fence means. The record above keeps
-          // the bare text; the fence is for the model alone.
-          content: untrustedBlock(`tool:${use.name}`, clipForModel(resultText)),
-          ...(result.isError ? { isError: true } : {}),
-        });
-        for (const block of attachmentBlocksOfMeta(result.meta)) {
-          if (
-            attachmentBudget.blocks >= ATTACHMENT_MAX_BLOCKS ||
-            attachmentBudget.base64Chars + block.dataBase64.length > ATTACHMENT_MAX_BASE64_CHARS
-          ) {
-            logger.debug('attachment block dropped over budget for run {runId}', {
-              component: 'worker-agents/engine',
-              runId: run.id,
-              tool: use.name,
-              mediaType: block.mediaType,
-            });
-            continue;
-          }
-          attachmentBudget.blocks += 1;
-          attachmentBudget.base64Chars += block.dataBase64.length;
-          attachments.push(block);
-        }
-      }
-      // tool_result blocks first (the wire contract), then any documents the
-      // tools attached for the model to see.
-      messages.push({ role: 'user', content: [...results, ...attachments] });
-    }
-
-    return {
-      ...base,
-      succeeded: false,
-      outcome: 'llm_error',
-      outcomeCode: 'other',
-      summary: 'The model never declared an outcome for this step.',
-      saveValue: null,
-      saveItems: null,
-    };
-  }
-
-  function decideOutcome(
-    step: ActionStep,
-    finish: {
-      outcome: 'success' | 'failure' | 'skipped';
-      code: string | null;
-      summary: string;
-      saveValue: string | null;
-      saveItems: string[] | null;
-      stop: boolean;
-      quiet: boolean;
-    },
-    primaryResults: McpToolResult[],
-    base: Pick<
-      AttemptOutcome,
-      'toolCalls' | 'modelCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'promptText'
-    >
-  ): AttemptOutcome {
-    if (finish.outcome === 'skipped') {
-      // THIS STEP's action does not apply to this input — a judgment call,
-      // not an error, so the attempt records as succeeded (its summary
-      // carries the why) with nothing saved. It is NOT, on its own, a
-      // reason to end the whole run: an author's own conditional skip
-      // language ("skip entirely for X") describes this one step, and
-      // every later step must still run exactly as if this one had done
-      // nothing. A step meant to end the run when its own condition fails
-      // says so explicitly — a branch's stop-quiet path, a terminal node,
-      // or this step's own static `onSuccess` — which `finishAttempt`
-      // still honors here (see its succeeded-handling below), same as it
-      // would for a plain success.
-      return {
-        ...base,
-        succeeded: true,
-        declaredSkip: true,
-        outcome: primaryResults.length > 0 ? 'tool_ok' : 'llm_declared',
-        outcomeCode: null,
-        summary: finish.summary,
-        saveValue: null,
-        saveItems: null,
-      };
-    }
-    if (finish.outcome === 'success') {
-      // Reality check: a declared success over a primary tool that only ever
-      // errored is recorded as the failure it is.
-      const everyPrimaryErrored =
-        step.tool !== null &&
-        primaryResults.length > 0 &&
-        primaryResults.every((result) => result.isError);
-      if (everyPrimaryErrored) {
-        return {
-          ...base,
-          succeeded: false,
-          outcome: 'tool_error',
-          outcomeCode: classifyFailure(primaryResults, finish.code),
-          summary: finish.summary || 'The tool reported errors on every call.',
-          saveValue: null,
-          saveItems: null,
-        };
-      }
-      return {
-        ...base,
-        succeeded: true,
-        ...(finish.stop ? { stopRun: finish.quiet ? 'quiet' : 'done' } : {}),
-        outcome: primaryResults.length > 0 ? 'tool_ok' : 'llm_declared',
-        outcomeCode: null,
-        summary: finish.summary,
-        saveValue: finish.saveValue,
-        saveItems: finish.saveItems,
-      };
-    }
-    return {
-      ...base,
-      succeeded: false,
-      outcome: primaryResults.some((result) => result.isError) ? 'tool_error' : 'llm_declared',
-      outcomeCode: classifyFailure(primaryResults, finish.code),
-      summary: finish.summary,
-      saveValue: null,
-      saveItems: null,
-    };
-  }
-
-  /**
-   * The newest attempt row of one status for a step's round, its sealed
-   * content opened as the run's owner (sealedDetailJson's counterpart).
-   * The owner is read off the run row by id, so the callers — one of them
-   * inside the approval gate — keep passing the run id alone.
-   */
-  async function openedAttemptRow(
-    runId: string,
-    stepId: string,
-    iteration: number,
-    status: 'failed' | 'retired'
-  ): Promise<{ detail: Json | null; outcome_code: string | null } | undefined> {
-    const row = await db
-      .selectFrom('agent_run_steps')
-      .select(['detail', 'outcome_code'])
-      .where('run_id', '=', runId)
-      .where('step_id', '=', stepId)
-      .where('iteration', '=', iteration)
-      .where('status', '=', status)
-      .orderBy('attempt', 'desc')
-      .limit(1)
-      .executeTakeFirst();
-    if (!row || sealedDetailOf(row.detail) === null) return row;
-    const owner = await db
-      .selectFrom('agent_runs')
-      .select(['owner_subject'])
-      .where('id', '=', runId)
-      .executeTakeFirst();
-    if (!owner) return row;
-    const [opened] = await openAttemptDetails(
-      { owner_subject: owner.owner_subject },
-      [row]
-    );
-    return opened;
-  }
-
-  async function lastFailureText(
-    runId: string,
-    stepId: string,
-    iteration: number
-  ): Promise<string | undefined> {
-    const row = await openedAttemptRow(runId, stepId, iteration, 'failed');
-    const detail: { llmSummary?: unknown } =
-      typeof row?.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
-        ? row.detail
-        : {};
-    return typeof detail.llmSummary === 'string' ? detail.llmSummary : undefined;
-  }
-
-  /**
-   * What the retired attempt of this round recorded before the owner
-   * resumed the run — the "what went wrong" a resumed step reads. Shaped
-   * for spreading into resumeNoteFor: empty when the round has no retired
-   * row (a later round of the resumed step, or a resume with no attempt
-   * to point at).
-   */
-  async function retiredFailureText(
-    runId: string,
-    stepId: string,
-    iteration: number
-  ): Promise<{ previousFailure?: string }> {
-    const row = await openedAttemptRow(runId, stepId, iteration, 'retired');
-    if (!row) return {};
-    const detail: { llmSummary?: unknown } =
-      typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
-        ? row.detail
-        : {};
-    const summary = typeof detail.llmSummary === 'string' ? detail.llmSummary : '';
-    const text = [row.outcome_code ? `(${row.outcome_code})` : '', clip(summary, 600)]
-      .filter(Boolean)
-      .join(' ');
-    return text ? { previousFailure: text } : {};
-  }
-
-  /** The agent's name for a log sentence; its id stays in the metadata. */
   async function agentNameOf(agentId: string): Promise<string> {
     try {
       const row = await db
@@ -4632,18 +2270,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
     } catch {
       return '(unknown agent)';
     }
-  }
-
-  /**
-   * Which step stopped the run. current_step_id records where execution was
-   * when it failed; resolving it to the step's NAME is the difference
-   * between a log line you can act on and a uuid you have to go look up.
-   */
-  function failedStepNameOf(run: RunRow): string | null {
-    if (!run.current_step_id) return null;
-    if (!isAgentStepsDoc(run.steps_snapshot)) return null;
-    const found = findNodeById(run.steps_snapshot.steps, run.current_step_id);
-    return found?.node.name?.trim() || null;
   }
 
   async function finalizeRun(
@@ -4660,36 +2286,19 @@ export function createAgentRunHandler(deps: EngineDeps) {
         status,
         error_kind: errorKind,
         error,
+        waiting_until: null,
         finished_at: sql`NOW()`,
         updated_at: sql`NOW()`,
       })
       .where('id', '=', run.id)
       .execute();
-    // Every path that finishes a step's own attempt row (runAttempt's
-    // RunCanceled/RunAbort catches, a normal success/failure write) has
-    // already resolved it by the time finalizeRun runs. The one path that
-    // has NOT: the per-step checkpoint above bails into finalizeRun before
-    // ever dispatching the current node, which is also exactly what a
-    // RESUMED run does when it re-enters at the same current_step_id a
-    // crashed or stale-reclaimed executor never finished — that earlier
-    // attempt's row is still 'running', and nothing on this path would
-    // otherwise touch it. Closing it out here, unconditionally, guarantees
-    // no attempt is ever left "Running" under a run that is done — but
-    // UPDATE rather than the delete runAttempt's own RunCanceled catch uses
-    // for a live attempt: THAT attempt just started this very turn, nothing
-    // is lost by voiding it, but an orphaned one may have sat stuck for a
-    // long time before anyone canceled it — started_at and which step it
-    // was on are exactly the evidence a stuck run leaves behind, and are
-    // worth keeping rather than erasing.
+    // No turn is ever left "running" under a run that is done.
     await db
       .updateTable('agent_run_steps')
       .set({ status: 'canceled', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
       .where('run_id', '=', run.id)
-      .where('status', '=', 'running')
+      .where('status', 'in', ['running', 'waiting'])
       .execute();
-    // A run's log line has to answer "whose agent, which one, and where did
-    // it stop" without a second query. The ids stay in the metadata; the
-    // sentence carries the names.
     const actor = await describeActor(db, run.owner_subject);
     const agentName = await agentNameOf(run.agent_id);
     const common = {
@@ -4697,67 +2306,34 @@ export function createAgentRunHandler(deps: EngineDeps) {
       runId: run.id,
       agentId: run.agent_id,
       agentName,
-      // The agent's OWNER — agent activity in the logs attributes to the
-      // person whose authority the run borrowed.
       userName: actor.displayName,
       subject: actor.subject,
       status,
       errorKind: errorKind ?? undefined,
     };
-    // 'stopped' is a quiet outcome by construction — an agent that decided
-    // there was nothing to do. Announcing it would make the quiet ending
-    // the loudest thing in the feed. 'canceled' is quiet for a different
-    // reason: whoever canceled it already knows — that was the click.
-    //
-    // Its own notifier rather than the run context's: finalizeRun is also
-    // reached from paths that never built a context (a run refused before
-    // it started), and the names it needs are already in hand above.
     if (status === 'succeeded' || status === 'failed') {
       const notifier = await notifierFor(db, {
         subject: run.owner_subject,
         agentId: run.agent_id,
         agentName,
         runId: run.id,
-        // No MCP session on every path that reaches finalizeRun (a run
-        // refused before it started); runFinished never needs one — it
-        // only writes the in-app row, unlike act()'s email/WebEx arm.
         ownerEmail: undefined,
       });
       void notifier.runFinished(status, error);
     }
-
     if (status === 'failed') {
-      // The only one worth an unprompted read: it names the agent, the
-      // person, and the step that stopped it.
-      //
-      // Every attribute this sentence NAMES is built to be present, because
-      // the interpolator leaves "{failedStep}" in the message rather than
-      // erroring when a key is missing — a placeholder in the log is the
-      // whole failure mode this shape exists to prevent. An unnameable step
-      // and a detail-free error each degrade to prose; the raw step id stays
-      // in the metadata for anyone who needs to go and look it up.
-      logger.warn('agent "{agentName}" ({userName}) failed at step "{failedStep}": {error}', {
+      logger.warn('agent "{agentName}" ({userName}) failed: {error}', {
         ...common,
-        failedStep: failedStepNameOf(run) ?? 'an unnamed step',
-        failedStepId: run.current_step_id ?? undefined,
         error: error ?? 'no detail recorded',
       });
     } else {
-      // Success is the expected case; at info it is just volume between the
-      // lines that matter.
       logger.debug('agent "{agentName}" ({userName}) run {status}', common);
     }
-    // The durable run log (migration 083): the outcome for every status,
-    // and on failure which step, what kind, what it cost — what every
-    // usage page counts and the optimizer reads. Best effort, like the
-    // log row written at creation.
     const logged = await recordAgentRunOutcome(db, {
       agentId: run.agent_id,
       runId: run.id,
       ownerSubject: run.owner_subject,
       status,
-      stepId: run.current_step_id,
-      stepName: failedStepNameOf(run),
       errorKind,
       error,
     });
@@ -4765,15 +2341,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       logger.warn('run outcome not logged for run {runId}', {
         component: 'worker-agents/engine',
         runId: run.id,
-        agentId: run.agent_id,
       });
     }
-    // No automatic memory entry: what future runs need to know is a step's
-    // explicit call to the remember tool (runAttempt), never a per-run
-    // breadcrumb — an agent firing every few minutes wrote one for every
-    // run, and every later run re-read all of them on every call. Trigger
-    // deduplication is the firing ledger's job (agent_trigger_firings), not
-    // memory's.
     if (deps.onFinalized) {
       try {
         await deps.onFinalized({
@@ -4787,7 +2356,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           quiet,
         });
       } catch (hookError) {
-        // Fan-out and notification failures must not un-finish the run.
         logger.error('finalize hook failed for run {runId}: {error}', {
           component: 'worker-agents/engine',
           runId: run.id,
@@ -4796,4 +2364,78 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
     }
   }
+
+  // Last, on purpose: the class and consts above must be initialized
+  // before the handler can run.
+  return handleRun;
+}
+
+/** How a run's opening message says it started. */
+function startedByText(triggerKind: string): string {
+  switch (triggerKind) {
+    case 'event':
+      return 'An event you watch for just happened';
+    case 'schedule':
+      return 'Your schedule started this run';
+    case 'agent':
+      return 'Another agent finished and started this run';
+    case 'api':
+      return 'A system called you through your API trigger';
+    default:
+      return 'Your owner started this run by hand';
+  }
+}
+
+/**
+ * A turn's detail, sealed for the row (turn-detail.ts): the content
+ * fields as one `uenc1:` envelope under the run OWNER's automation key,
+ * the structure beside it in the clear. A seal that fails is the
+ * delegation lapsing mid-run: a transient, retried by the queue rather
+ * than written around in the clear.
+ */
+async function sealedDetailJson(
+  run: Pick<RunRow, 'owner_subject'>,
+  detail: Record<string, unknown>
+): Promise<string> {
+  const { clear, plaintext } = splitDetailForSealing(detail);
+  if (plaintext === null) return JSON.stringify(clear);
+  const sealed = await delegateClient().sealForSubject(
+    run.owner_subject,
+    [plaintext],
+    'automation'
+  );
+  if (!sealed.ok) {
+    throw new TransientFailure(`turn detail could not be sealed: ${sealed.err.type}`);
+  }
+  return JSON.stringify({ ...clear, sealed: sealed.val[0] });
+}
+
+/**
+ * Rows with their sealed content opened as the run's owner, in one
+ * delegate call. An envelope that will not open is the owner's delegation
+ * lapsing: transient — a run must never continue from a conversation it
+ * cannot read.
+ */
+async function openDetails<T extends { detail: Json | null }>(
+  run: Pick<RunRow, 'owner_subject'>,
+  rows: T[]
+): Promise<T[]> {
+  const envelopes = rows.map((row) => sealedDetailOf(row.detail));
+  const stored = envelopes.flatMap((envelope) => (envelope === null ? [] : [envelope]));
+  if (stored.length === 0) return rows;
+  const opened = await delegateClient().openForSubject(run.owner_subject, stored);
+  if (!opened.ok) {
+    throw new TransientFailure(`turn detail could not be opened: ${opened.err.type}`);
+  }
+  let next = 0;
+  return rows.map((row, index) => {
+    if (envelopes[index] === null) return row;
+    const plaintext = opened.val[next] ?? null;
+    next += 1;
+    if (plaintext === null) {
+      throw new TransientFailure('turn detail could not be opened: envelope did not open');
+    }
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    return { ...row, detail: mergeOpenedDetail(row.detail, plaintext, '') as Json };
+  });
 }

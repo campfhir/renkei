@@ -312,11 +312,7 @@ async function retally(
   headline: string
 ): Promise<void> {
   try {
-    await db
-      .updateTable('agent_notifications')
-      .set({ headline })
-      .where('id', '=', id)
-      .execute();
+    await db.updateTable('agent_notifications').set({ headline }).where('id', '=', id).execute();
   } catch (error) {
     logger.warn('could not tally a notification for run {runId}', {
       component: 'worker-agents/notifications',

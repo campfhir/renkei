@@ -73,9 +73,7 @@ describe('the draft job', () => {
 
     // Thrown so the queue retries — a token left valid for twenty minutes
     // after a failure is a credential nobody is tracking.
-    await expect(handler({ payload: { draftId: 'd' } })).rejects.toThrow(
-      'HTTP 500'
-    );
+    await expect(handler({ payload: { draftId: 'd' } })).rejects.toThrow('HTTP 500');
     expect(revokeRunToken).toHaveBeenCalledTimes(1);
   });
 

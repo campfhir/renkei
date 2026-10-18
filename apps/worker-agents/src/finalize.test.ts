@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { InMemoryQueue } from '@renkei/queue';
-import { CURRENT_STEPS_VERSION, type AgentStepsDoc } from '@renkei/agents';
+import type { AgentDefinition } from '@renkei/agents';
 import { createFinalizeHook } from './finalize';
 import type { FinalizedRun } from './engine';
 
@@ -28,21 +28,7 @@ maybe('finalize hook', () => {
   const suiteId = randomUUID();
   const owner = `chain-owner-${suiteId.slice(0, 8)}`;
 
-  // The run-creation gate (isCurrentStepsDoc) refuses any other version,
-  // so a hard-coded number here silently seeds an agent nothing will fire.
-  const steps: AgentStepsDoc = {
-    version: CURRENT_STEPS_VERSION,
-    steps: [
-      {
-        id: randomUUID(),
-        name: 'Do the thing',
-        instruction: [{ t: 'text', v: 'Do the thing' }],
-        tool: null,
-        maxAttempts: 1,
-        failureHandling: [],
-      },
-    ],
-  };
+  const definition: AgentDefinition = { instructions: '## Goal\n\nReact to the email.', tools: [] };
 
   beforeAll(async () => {
     const result = getDatabase();
@@ -52,7 +38,9 @@ maybe('finalize hook', () => {
 
   afterAll(async () => {
     await sql`DELETE FROM agent_runs WHERE owner_subject = ${owner}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${owner})`.execute(db);
+    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${owner})`.execute(
+      db
+    );
     await sql`DELETE FROM agents WHERE owner_subject = ${owner}`.execute(db);
     await closeDatabase();
   });
@@ -65,7 +53,8 @@ maybe('finalize hook', () => {
         id: agentId,
         owner_subject: owner,
         name: `${name}-${agentId.slice(0, 8)}`,
-        steps: JSON.stringify(steps),
+        instructions: definition.instructions,
+        tools: JSON.stringify(definition.tools),
         enabled: true,
       })
       .execute();
@@ -96,7 +85,7 @@ maybe('finalize hook', () => {
         agent_id: agentId,
         owner_subject: owner,
         trigger_kind: 'manual',
-        steps_snapshot: JSON.stringify(steps),
+        definition_snapshot: JSON.stringify(definition),
         lineage: JSON.stringify(lineage),
         depth: lineage.length,
         status: 'succeeded',
@@ -129,7 +118,7 @@ maybe('finalize hook', () => {
         owner_subject: owner,
         trigger_id: triggerId,
         trigger_kind: 'event',
-        steps_snapshot: JSON.stringify(steps),
+        definition_snapshot: JSON.stringify(definition),
         lineage: JSON.stringify([]),
         initial_state: JSON.stringify({ roomId: 'room-1', messageId: 'msg-1', text: 'hello' }),
         status: 'succeeded',
@@ -150,7 +139,7 @@ maybe('finalize hook', () => {
     quiet: false,
     errorKind: status === 'failed' ? 'step_failed' : null,
     error: status === 'failed' ? 'Step "Do the thing" stopped the agent.' : null,
-    vars: { theTicket: 'PROJ-42' },
+    vars: { summary: 'Filed it.', result: 'PROJ-42' },
   });
 
   it('starts the chained agent with the parent in its lineage', async () => {
@@ -226,7 +215,7 @@ maybe('finalize hook', () => {
       eventsQueue.producer
     )({
       ...finalized(runId, agentId, 'succeeded'),
-      vars: { reply: 'a saved reply var must not leak into the room' },
+      vars: { result: 'a saved result must not leak into the room' },
     });
     expect(await eventsQueue.consumer.claim()).toBeNull();
   });

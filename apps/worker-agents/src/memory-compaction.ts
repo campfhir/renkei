@@ -80,11 +80,7 @@ export function createMemoryCompactionSweep(db: Kysely<DB>) {
   };
 }
 
-async function compactOne(
-  db: Kysely<DB>,
-  agentId: string,
-  ownerSubject: string
-): Promise<void> {
+async function compactOne(db: Kysely<DB>, agentId: string, ownerSubject: string): Promise<void> {
   // Oldest-beyond-the-keep-window, capped: the fold set.
   const entries = await db
     .selectFrom('agent_memories')

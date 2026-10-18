@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { InMemoryQueue } from '@renkei/queue';
-import { CURRENT_STEPS_VERSION, type AgentStepsDoc } from '@renkei/agents';
+import type { AgentDefinition } from '@renkei/agents';
 import { createScheduleSweep } from './schedule-sweep';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
@@ -25,21 +25,7 @@ maybe('schedule sweep', () => {
   const suiteId = randomUUID();
   const subject = `sched-subject-${suiteId.slice(0, 8)}`;
 
-  // The run-creation gate (isCurrentStepsDoc) refuses any other version,
-  // so a hard-coded number here silently seeds an agent nothing will fire.
-  const steps: AgentStepsDoc = {
-    version: CURRENT_STEPS_VERSION,
-    steps: [
-      {
-        id: randomUUID(),
-        name: 'Say hello',
-        instruction: [{ t: 'text', v: 'Say hello' }],
-        tool: null,
-        maxAttempts: 1,
-        failureHandling: [],
-      },
-    ],
-  };
+  const definition: AgentDefinition = { instructions: '## Goal\n\nReact to the email.', tools: [] };
 
   beforeAll(async () => {
     const result = getDatabase();
@@ -49,7 +35,9 @@ maybe('schedule sweep', () => {
 
   afterAll(async () => {
     await sql`DELETE FROM agent_runs WHERE owner_subject = ${subject}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${subject})`.execute(db);
+    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${subject})`.execute(
+      db
+    );
     await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
     await closeDatabase();
   });
@@ -66,7 +54,8 @@ maybe('schedule sweep', () => {
         id: agentId,
         owner_subject: subject,
         name: `sched-agent-${agentId.slice(0, 8)}`,
-        steps: JSON.stringify(steps),
+        instructions: definition.instructions,
+        tools: JSON.stringify(definition.tools),
         enabled: true,
       })
       .execute();

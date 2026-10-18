@@ -39,10 +39,7 @@ const DECIDED_STUCK_MINUTES = 10;
 const ORPHAN_GRACE_MINUTES = 60;
 
 export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
-  const enqueueResume = async (run: {
-    id: string;
-    agent_id: string;
-  }): Promise<void> => {
+  const enqueueResume = async (run: { id: string; agent_id: string }): Promise<void> => {
     const result = await producer.enqueue({
       source: `agents:${run.agent_id}`,
       type: 'run',

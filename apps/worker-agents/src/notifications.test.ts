@@ -61,7 +61,6 @@ maybe('agent notifications', () => {
         id: agentId,
         owner_subject: subject,
         name: 'Triage bot',
-        steps: JSON.stringify({ version: 1, steps: [] }),
         enabled: true,
       })
       .execute();
@@ -72,7 +71,7 @@ maybe('agent notifications', () => {
         agent_id: agentId,
         owner_subject: subject,
         trigger_kind: 'manual',
-        steps_snapshot: JSON.stringify({ version: 1, steps: [] }),
+        definition_snapshot: JSON.stringify({ instructions: 'Go.', tools: [] }),
       })
       .execute();
   });

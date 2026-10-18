@@ -1,5 +1,5 @@
 /**
- * What happens after a run's last step: chained agents and the failure
+ * What happens after a run finishes: chained agents and the failure
  * notification event.
  *
  * Chaining is authorized on the TARGET — agent B runs after agent A only
@@ -14,15 +14,15 @@
  * the interactive worker, which owns those connector paths.
  *
  * There is deliberately NO automatic thread reply here: an agent that
- * should answer in the triggering room says so as a STEP (webex_send_message
- * with trigger.roomId/messageId), where the owner controls whether and
- * what it says — an engine-side courtesy reply was the bot era's shape.
+ * should answer in the triggering room stages that reply itself
+ * (webex_send_message with trigger.roomId/messageId), where the owner
+ * controls whether and what it says.
  */
 
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
-import { isCurrentStepsDoc } from '@renkei/agents';
+import { agentDefinitionOf } from '@renkei/agents';
 import { createAgentRun } from '@renkei/agents/runs';
 import type { FinalizedRun } from './engine';
 import { logger } from './logger';
@@ -88,7 +88,14 @@ export function createFinalizeHook(
     const chained = await db
       .selectFrom('agent_triggers as t')
       .innerJoin('agents as a', 'a.id', 't.agent_id')
-      .select(['t.id as trigger_id', 't.agent_id', 'a.owner_subject', 'a.steps', 'a.llm_model_id'])
+      .select([
+        't.id as trigger_id',
+        't.agent_id',
+        'a.owner_subject',
+        'a.instructions',
+        'a.tools',
+        'a.llm_model_id',
+      ])
       .where('t.kind', '=', 'agent')
       .where('t.enabled', '=', true)
       .where('a.enabled', '=', true)
@@ -96,21 +103,21 @@ export function createFinalizeHook(
       .execute();
 
     for (const trigger of chained) {
-      if (!isCurrentStepsDoc(trigger.steps)) continue;
-      const varLines = Object.entries(run.vars)
-        .map(([name, value]) => `${name}: ${value}`)
-        .join('; ');
+      const produced = [
+        ...(run.vars.summary ? [`Its summary: ${run.vars.summary}`] : []),
+        ...(run.vars.result ? [`Its result:\n${run.vars.result}`] : []),
+      ].join('\n');
       const result = await createAgentRun(db, agentProducer, {
         agentId: trigger.agent_id,
         ownerSubject: trigger.owner_subject,
-        steps: trigger.steps,
+        definition: agentDefinitionOf(trigger),
         llmModelId: trigger.llm_model_id,
         triggerId: trigger.trigger_id,
         triggerKind: 'agent',
         parentRunId: run.runId,
         lineage: [...parentLineage, run.agentId],
         initialState: {
-          parentSummary: `The agent “${finishedAgent?.name ?? run.agentId}” finished successfully.${varLines ? ` It produced: ${varLines}` : ''}`,
+          parentSummary: `The agent “${finishedAgent?.name ?? run.agentId}” finished successfully.${produced ? `\n${produced}` : ''}`,
         },
       });
       if (result.ok) {
