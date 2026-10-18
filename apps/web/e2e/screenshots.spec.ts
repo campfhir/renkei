@@ -184,7 +184,7 @@ test('builder — tool picker filtered', async ({ page }, testInfo) => {
   await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.getByLabel('Search tools').fill('comment');
-  await expect(page.getByLabel('Add a comment', { exact: false }).first()).toBeVisible();
+  await expect(page.getByText('jira_add_comment', { exact: true })).toBeVisible();
   await shot(page, testInfo, 'builder-tool-picker');
 });
 

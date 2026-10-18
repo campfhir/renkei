@@ -110,9 +110,12 @@ export default function RunLive({ agentId, runId, agentName, initialData }: {
       </div>
       {pauseCard ? (
         <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50/50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
-          <p className="mb-2 whitespace-pre-wrap break-words text-sm font-medium">
-            {pauseCard.summary}
-          </p>
+          {/* A batch states its own summary below; a question's is the question. */}
+          {pauseCard.kind === 'question' || !pendingBatch ? (
+            <p className="mb-2 whitespace-pre-wrap break-words text-sm font-medium">
+              {pauseCard.summary}
+            </p>
+          ) : null}
           {pauseCard.kind === 'question' ? (
             <QuestionActions itemId={pauseCard.id} form={questionForm} />
           ) : (

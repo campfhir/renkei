@@ -385,6 +385,11 @@ export function AgentBuilder({
       .filter((issue) => issue.path === prefix || issue.path.startsWith(`${prefix}.`))
       .map((issue) => issue.message);
 
+  // An untouched skeleton is not an error yet — it is where you start. The
+  // missing-content issue still blocks Save; it just is not shown in red.
+  const instructionIssues =
+    hasRealInstructions || serverIssues.length > 0 ? issuesAt('instructions') : [];
+
   const triggerValues = useMemo(
     () => triggerVariableDescriptors(triggers.map((trigger) => trigger.draft)),
     [triggers]
@@ -883,8 +888,8 @@ export function AgentBuilder({
                 }}
                 rows={22}
                 spellCheck
-                aria-invalid={issuesAt('instructions').length > 0 || undefined}
-                className={`${fieldClass(issuesAt('instructions').length > 0)} min-h-[24rem] font-mono text-xs leading-relaxed xl:flex-1`}
+                aria-invalid={instructionIssues.length > 0 || undefined}
+                className={`${fieldClass(instructionIssues.length > 0)} min-h-[24rem] font-mono text-xs leading-relaxed xl:flex-1`}
               />
               <aside
                 aria-label="Instruction sections"
@@ -937,7 +942,7 @@ export function AgentBuilder({
                 ) : null}
               </aside>
             </div>
-            <FieldIssues messages={issuesAt('instructions')} />
+            <FieldIssues messages={instructionIssues} />
           </section>
 
           <ToolPicker

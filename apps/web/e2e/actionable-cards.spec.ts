@@ -107,6 +107,9 @@ async function seedCard(
     summary: 'Wants to make a change.',
     actions: [{ ...call, reason: 'The agent judged this change necessary.' }],
   };
+  // The card has no owner (a tenant-wide card), so the owner-scoped reset in
+  // seedTenant never reaches it; a rerun must clear its fixed id itself.
+  await client.query('DELETE FROM actionable_items WHERE id = $1', [itemId]);
   await client.query(
     `INSERT INTO actionable_items\n       (id, source, kind, status, title, summary, evidence, suggested_action)\n     VALUES ($1, 'jira', 'approval', 'suggested', $2, 'Wants to make a change.', '{}'::jsonb, $3::jsonb)`,
     [itemId, title, JSON.stringify(suggestedAction)]
@@ -128,6 +131,7 @@ async function seedExecutedCard(
   title: string,
   result: unknown
 ): Promise<void> {
+  await client.query('DELETE FROM actionable_items WHERE id = $1', [itemId]);
   await client.query(
     `INSERT INTO actionable_items\n       (id, source, kind, status, title, summary, evidence, result)\n     VALUES ($1, 'jira', 'info', 'executed', $2, 'Created a tool.', '{}'::jsonb, $3::jsonb)`,
     [itemId, title, JSON.stringify(result)]

@@ -68,6 +68,8 @@ export default function ActionableCards({ items, showArchived = false }: {
     cards.push(
       <div
         key={item.id}
+        role="article"
+        aria-label={item.title}
         className={`rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950 ${
           item.archived_at !== null ? 'opacity-70' : ''
         }`}

@@ -14,6 +14,7 @@ import { useMemo, useState } from 'react';
 import { MAX_AGENT_TOOLS } from '@renkei/agents';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { friendlyToolName } from '@/lib/tool-name';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export function ToolPicker({
   tools,
@@ -52,8 +53,7 @@ export function ToolPicker({
         connector,
         list: [...list].sort(
           (a, b) =>
-            Number(chosen.has(b.name)) - Number(chosen.has(a.name)) ||
-            a.name.localeCompare(b.name)
+            Number(chosen.has(b.name)) - Number(chosen.has(a.name)) || a.name.localeCompare(b.name)
         ),
         picked: list.filter((tool) => chosen.has(tool.name)).length,
       }))
@@ -71,8 +71,10 @@ export function ToolPicker({
   const missing = selected.filter((name) => !known.has(name));
   const over = selected.length > MAX_AGENT_TOOLS;
 
+  const toolsAnchor = useCoachAnchor('builder-tools');
   return (
     <section
+      {...toolsAnchor}
       aria-label="Tools"
       className="rounded-lg border border-gray-200 p-4 dark:border-gray-800"
     >
@@ -117,7 +119,9 @@ export function ToolPicker({
       <div className="mt-2 max-h-96 space-y-3 overflow-y-auto rounded-md border border-gray-200 p-2 dark:border-gray-800">
         {groups.length === 0 ? (
           <p className="px-1 py-0.5 text-xs text-gray-400">
-            {offered.length === 0 ? 'Connect an account to give your agents tools.' : 'No tools match.'}
+            {offered.length === 0
+              ? 'Connect an account to give your agents tools.'
+              : 'No tools match.'}
           </p>
         ) : (
           groups.map((group) => (
@@ -141,7 +145,9 @@ export function ToolPicker({
                         aria-label={friendlyToolName(tool.name, tool.title)}
                       />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate">{friendlyToolName(tool.name, tool.title)}</span>
+                        <span className="block truncate">
+                          {friendlyToolName(tool.name, tool.title)}
+                        </span>
                         <span className="block truncate font-mono text-[11px] text-gray-400">
                           {tool.name}
                         </span>

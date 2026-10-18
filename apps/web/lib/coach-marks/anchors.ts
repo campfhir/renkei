@@ -48,10 +48,10 @@ export const COACH_ANCHORS = [
   // The agent builder (agents/new, agents/[id]/edit).
   /** The name field. */
   'builder-name',
-  /** The flow canvas the steps are drawn on. */
+  /** The instructions editor. */
   'builder-canvas',
-  /** A "+" between nodes — add a step, branch, loop or group there. */
-  'builder-add',
+  /** The tool picker. */
+  'builder-tools',
   /** The "Add a trigger" control in the trigger node. */
   'builder-triggers',
   /** The Save / Update button (rendered for the phone and the desktop alike). */

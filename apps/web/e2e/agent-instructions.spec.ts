@@ -189,7 +189,7 @@ test('builder: draft, pick tools, save, and read it back', async ({ page }, test
   await page.goto(`/agents/new`);
   await expect(page.getByRole('heading', { name: 'New agent' })).toBeVisible();
   // A new agent starts from the section skeleton, and Save waits for content.
-  await expect(page.getByLabel('Instructions')).toHaveValue(/## Goal/);
+  await expect(page.getByRole('textbox', { name: 'Instructions' })).toHaveValue(/## Goal/);
   await expect(page.getByRole('button', { name: 'Save' }).first()).toBeDisabled();
   await expect(page.getByLabel('Run limits')).toContainText('tool calls');
   await shot(page, testInfo, '01-new');
@@ -198,7 +198,7 @@ test('builder: draft, pick tools, save, and read it back', async ({ page }, test
     .getByLabel('Describe the agent')
     .fill('Every morning, list the Jira issues from yesterday that nobody answered.');
   await page.getByRole('button', { name: 'Draft it for me' }).click();
-  await expect(page.getByLabel('Instructions')).toHaveValue(DRAFTED_INSTRUCTIONS);
+  await expect(page.getByRole('textbox', { name: 'Instructions' })).toHaveValue(DRAFTED_INSTRUCTIONS);
   await expect(page.getByLabel('Name it')).toHaveValue('Unanswered issues digest');
   await expect(page.getByText('Which projects should it look at?')).toBeVisible();
   await expect(page.getByText('Left out “slack_post”', { exact: false })).toBeVisible();
@@ -236,7 +236,7 @@ test('builder: draft, pick tools, save, and read it back', async ({ page }, test
   // Phone width: the edit page stacks, nothing scrolls sideways.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`/agents/${agentId}/edit`);
-  await expect(page.getByLabel('Instructions')).toHaveValue(DRAFTED_INSTRUCTIONS);
+  await expect(page.getByRole('textbox', { name: 'Instructions' })).toHaveValue(DRAFTED_INSTRUCTIONS);
   await page.getByLabel('Accept proposed actions automatically').check();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
@@ -307,7 +307,7 @@ test('a staged batch: the run page and the card, accepted', async ({ page }, tes
 
   await page.goto(`/agents/${agentId}/runs/${runId}`);
   await expect(page.getByRole('heading', { name: 'Run' })).toBeVisible();
-  await expect(page.getByText('Turn 1', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('turn-heading').first()).toHaveText('Turn 1');
   await expect(page.getByText('Two new tickets need a reply; proposing both comments.')).toBeVisible();
   await expect(page.getByTestId('staged-batch').first()).toContainText('Proposed 2 changes');
   await expect(page.getByText('Waiting for your go-ahead.').first()).toBeVisible();
@@ -315,8 +315,9 @@ test('a staged batch: the run page and the card, accepted', async ({ page }, tes
   await shot(page, testInfo, '05-run-waiting');
 
   await page.goto(`/`);
-  const card = page.locator('div', { has: page.getByText('Ticket greeter — wants to make 2 changes') }).last();
-  const proposed = page.getByRole('list', { name: 'Proposed actions' });
+  // Scoped to this card: owner-less cards other specs seed show on every feed.
+  const card = page.getByRole('article', { name: 'Ticket greeter — wants to make 2 changes' });
+  const proposed = card.getByRole('list', { name: 'Proposed actions' });
   await expect(proposed.getByRole('listitem')).toHaveCount(2);
   await expect(proposed).toContainText('OPS-7 has no reply yet.');
   await proposed.getByRole('listitem').first().getByText('Details', { exact: true }).click();
@@ -327,8 +328,8 @@ test('a staged batch: the run page and the card, accepted', async ({ page }, tes
   await expect(proposed).toBeVisible();
   await shot(page, testInfo, '07-card-mobile');
 
-  await card.getByLabel('Comment').first().fill('Go ahead.');
-  await card.getByRole('button', { name: 'Accept' }).first().click();
+  await card.getByRole('textbox', { name: 'Comment' }).fill('Go ahead.');
+  await card.getByRole('button', { name: 'Accept' }).click();
   await expect(page.getByText('Ticket greeter — wants to make 2 changes')).toHaveCount(0);
   const decided = await withDb((client) =>
     client.query<{ status: string; result: { comment?: string } }>(

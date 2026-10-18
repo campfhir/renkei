@@ -9,7 +9,6 @@
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({ resolveAgentAccess: jest.fn() }));
-jest.mock('@renkei/agents', () => ({ isCurrentStepsDoc: jest.fn(() => true) }));
 jest.mock('@renkei/agents/runs', () => ({
   createAgentRun: jest.fn(),
   findInProgressRun: jest.fn(),
@@ -36,7 +35,8 @@ const RUN_ID = '00000000-0000-4000-8000-000000000002';
 const AGENT_ROW = {
   id: AGENT_ID,
   owner_subject: 'alice',
-  steps: { version: 1, steps: [] },
+  instructions: '## Goal\n\nGo.',
+  tools: [],
   llm_model_id: null,
 };
 

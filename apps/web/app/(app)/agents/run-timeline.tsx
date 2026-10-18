@@ -316,7 +316,9 @@ export function RunTimeline({ run }: { run: RunDetail }) {
             className="rounded-md border border-gray-200 p-3 dark:border-gray-800"
           >
             <p className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="font-medium">Turn {turn.attempt}</span>
+              <span className="font-medium" data-testid="turn-heading">
+                Turn {turn.attempt}
+              </span>
               <StatusPill status={turn.status} />
               {turn.toolCallCount > 0 ? (
                 <span className="text-xs text-gray-400">
