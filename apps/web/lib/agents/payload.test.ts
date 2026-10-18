@@ -10,11 +10,11 @@
 
 import { parseAgentPayload } from './payload';
 
-const STEPS = { version: 1, steps: [] };
+const DEFINITION = { instructions: '## Goal\n\nSend the weekly digest.', tools: [] };
 
 const body = (drafts: unknown[]) => ({
   name: 'Weekly digest',
-  steps: STEPS,
+  ...DEFINITION,
   triggers: drafts.map((draft) => ({ draft })),
 });
 
@@ -28,7 +28,7 @@ describe('parseAgentPayload on triggers', () => {
   it('accepts the weekly form a named day needs, and honours enabled', () => {
     const parsed = parseAgentPayload({
       name: 'Weekly digest',
-      steps: STEPS,
+      ...DEFINITION,
       triggers: [
         {
           draft: {
@@ -50,7 +50,7 @@ describe('parseAgentPayload on triggers', () => {
   it('tells a caller who sent a bare draft which shape an entry takes', () => {
     const parsed = parseAgentPayload({
       name: 'Weekly digest',
-      steps: STEPS,
+      ...DEFINITION,
       triggers: [{ kind: 'api', inputs: [] }],
     });
     if (!('error' in parsed)) throw new Error('expected the payload to be rejected');
@@ -79,10 +79,26 @@ describe('parseAgentPayload on triggers', () => {
   it('rejects a non-object entry by saying what an entry is', () => {
     const parsed = parseAgentPayload({
       name: 'Weekly digest',
-      steps: STEPS,
+      ...DEFINITION,
       triggers: ['every sunday at 9'],
     });
     if (!('error' in parsed)) throw new Error('expected the payload to be rejected');
     expect(parsed.error).toBe('Trigger 1 must be a {draft, enabled} entry');
+  });
+});
+
+describe('parseAgentPayload on the definition', () => {
+  it('needs the instructions as text and the tools as a list of names', () => {
+    const missing = parseAgentPayload({ name: 'X', tools: [], triggers: [] });
+    expect(missing).toEqual({ error: expect.stringContaining('instructions is required') });
+    const badTools = parseAgentPayload({ name: 'X', instructions: 'Go.', tools: [1], triggers: [] });
+    expect(badTools).toEqual({ error: 'tools must be a list of tool names' });
+  });
+
+  it('carries auto-accept and questions through, off unless said', () => {
+    const parsed = parseAgentPayload({ ...body([]), autoAcceptActions: true });
+    if ('error' in parsed) throw new Error(parsed.error);
+    expect(parsed.draft.autoAcceptActions).toBe(true);
+    expect(parsed.draft.canAskQuestions).toBe(false);
   });
 });

@@ -8,7 +8,6 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
-import { CURRENT_STEPS_VERSION } from '@renkei/agents';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { QueueMessageInput, QueueProducer } from '@renkei/queue';
 import { NEEDS_SIGN_IN, resumeRunsNeedingSignIn } from './needs-sign-in';
@@ -21,7 +20,7 @@ maybe('resumeRunsNeedingSignIn', () => {
   const owner = `owner-${suiteId.slice(0, 8)}`;
   const other = `other-${suiteId.slice(0, 8)}`;
   const agentId = randomUUID();
-  const steps = { version: CURRENT_STEPS_VERSION, steps: [] };
+  const definition = { instructions: '## Goal\n\nGo.', tools: [] };
 
   const seedRun = async (
     ownerSubject: string,
@@ -36,7 +35,7 @@ maybe('resumeRunsNeedingSignIn', () => {
         agent_id: agentId,
         owner_subject: ownerSubject,
         trigger_kind: 'manual',
-        steps_snapshot: JSON.stringify(steps),
+        definition_snapshot: JSON.stringify(definition),
         lineage: JSON.stringify([]),
         initial_state: JSON.stringify({}),
         status,
@@ -57,7 +56,7 @@ maybe('resumeRunsNeedingSignIn', () => {
         id: agentId,
         owner_subject: owner,
         name: 'Parked agent',
-        steps: JSON.stringify(steps),
+        instructions: definition.instructions,
         enabled: true,
       })
       .execute();

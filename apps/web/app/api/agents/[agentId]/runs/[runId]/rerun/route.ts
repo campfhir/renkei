@@ -1,13 +1,13 @@
 /**
- * Run this agent again on the SAME input, with its CURRENT steps.
+ * Run this agent again on the SAME input, with its CURRENT instructions.
  *
  * The point of the button is the second half: you read a failed run, saw
- * what the agent got wrong, fixed the steps — and now want the same
+ * what the agent got wrong, fixed the instructions — and now want the same
  * triggering message put back through the corrected agent. So this reads
  * the old run's initial_state (its trigger.* variables) and starts a fresh
  * run from the agent as it stands NOW. It deliberately does not resume the
  * old run: that run's snapshot is the version you just decided was wrong,
- * and half its attempt rows describe a plan that no longer exists.
+ * and its conversation was had under instructions that no longer exist.
  *
  * A new run, not a mutation of the old one, also keeps the history honest —
  * the failure stays on the record next to the retry.
@@ -18,7 +18,7 @@
  *
  * Owner or grantee, like the invoke route's session path: an unexpired
  * access grant (access-grants.ts) exists precisely for this loop — read
- * the failed run, fix the steps, put the same message back through. The
+ * the failed run, fix the instructions, put the same message back through. The
  * run still executes on the OWNER's grants; triggered_by_subject records
  * who pressed the button. Anyone else — an admin reading someone else's
  * run included — gets a 404 here, not a 403.
@@ -27,7 +27,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
-import { isCurrentStepsDoc } from '@renkei/agents';
+import { agentDefinitionOf } from '@renkei/agents';
 import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -73,17 +73,11 @@ export async function POST(
 
   const agent = await db
     .selectFrom('agents')
-    .select(['id', 'owner_subject', 'steps', 'llm_model_id'])
+    .select(['id', 'owner_subject', 'instructions', 'tools', 'llm_model_id'])
     .where('id', '=', agentId)
     .where('owner_subject', '=', access.ownerSubject)
     .executeTakeFirst();
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  if (!isCurrentStepsDoc(agent.steps)) {
-    return NextResponse.json(
-      { error: 'This agent is saved in an older format — open it in the builder and save to update it.' },
-      { status: 409 }
-    );
-  }
 
   const raw = await request.text();
   let confirmed = false;
@@ -127,11 +121,11 @@ export async function POST(
   const created = await createAgentRun(db, agentJobsQueue().producer, {
     agentId,
     ownerSubject: agent.owner_subject,
-    steps: agent.steps,
+    definition: agentDefinitionOf(agent),
     llmModelId: agent.llm_model_id,
     // Not the original trigger row: this run was started by a person
     // pressing a button, and the history should say so. The trigger's DATA
-    // rides along in initialState, which is what the steps actually read.
+    // rides along in initialState, which is what the run actually reads.
     triggerId: null,
     triggerKind: 'manual',
     triggeredBySubject: session.subject,

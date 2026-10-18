@@ -1,5 +1,5 @@
 /**
- * The per-model and per-step token reads against a real database
+ * The per-model and per-run token reads against a real database
  * (skipped without DATABASE_URL), end to end from `recordLlmCall` — the
  * grouped SQL with its conditional agent filter is the part a unit test
  * cannot see.
@@ -8,39 +8,18 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
-import { CURRENT_STEPS_VERSION } from '@renkei/agents';
 import { recordLlmCall } from '@renkei/agents/runs';
-import {
-  getAgentTokenUsageByStep,
-  getRunTokenUsage,
-  getTokenUsageByModel,
-  getTokenUsageByRun,
-} from './agent-usage';
-import { labelStepUsage } from './step-usage-labels';
+import { getRunTokenUsage, getTokenUsageByModel, getTokenUsageByRun } from './agent-usage';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
-maybe('token usage by model and by step', () => {
+maybe('token usage by model and by run', () => {
   let db: Kysely<DB>;
   const suiteId = randomUUID();
   const agentId = randomUUID();
   const stepId = randomUUID();
   const runId = randomUUID();
   const subject = `owner-${suiteId.slice(0, 8)}`;
-  const steps = {
-    version: CURRENT_STEPS_VERSION,
-    steps: [
-      {
-        id: stepId,
-        name: 'Read the inbox',
-        instruction: [{ t: 'text', v: 'Look.' }],
-        tool: null,
-        maxAttempts: 1,
-        failureHandling: [],
-      },
-    ],
-  };
-
   beforeAll(async () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
@@ -51,7 +30,6 @@ maybe('token usage by model and by step', () => {
         id: agentId,
         owner_subject: subject,
         name: 'Usage agent',
-        steps: JSON.stringify(steps),
         enabled: true,
       })
       .execute();
@@ -136,24 +114,6 @@ maybe('token usage by model and by step', () => {
     expect(await getTokenUsageByModel(db, [])).toEqual([]);
   });
 
-  it('splits one agent by step and model, named from its definition', async () => {
-    const rows = labelStepUsage(steps, await getAgentTokenUsageByStep(db, agentId));
-    expect(
-      rows.map((row) => [
-        row.stepName,
-        row.model,
-        row.calls.today,
-        row.input.today,
-        row.cacheRead.today,
-        row.output.today,
-      ])
-    ).toEqual([
-      ['Read the inbox', 'claude-big', 2, 1_200, 900, 30],
-      [null, 'gpt-small', 1, 1_000, 0, 50],
-      ['Read the inbox', null, 1, 7, 0, 3],
-    ]);
-    expect(rows[1].stepId).toBeNull();
-  });
   it('totals one run at a time for a listing, absent when the ledger has nothing', async () => {
     const other = randomUUID();
     const byRun = await getTokenUsageByRun(db, [runId, other]);
@@ -168,12 +128,10 @@ maybe('token usage by model and by step', () => {
     expect(await getTokenUsageByRun(db, [])).toEqual({});
   });
 
-  it('splits one run by step and model, named from the steps it ran with', async () => {
-    const rows = labelStepUsage(steps, await getRunTokenUsage(db, runId));
+  it('splits one run by model', async () => {
+    const rows = await getRunTokenUsage(db, runId);
     expect(
       rows.map((row) => [
-        row.stepNumber,
-        row.stepName,
         row.model,
         row.input,
         row.output,
@@ -182,8 +140,8 @@ maybe('token usage by model and by step', () => {
         row.calls,
       ])
     ).toEqual([
-      [1, 'Read the inbox', 'claude-big', 1_200, 30, 900, 40, 2],
-      [1, 'Read the inbox', null, 7, 3, 0, 0, 1],
+      ['claude-big', 1_200, 30, 900, 40, 2],
+      [null, 7, 3, 0, 0, 1],
     ]);
     expect(await getRunTokenUsage(db, randomUUID())).toEqual([]);
   });

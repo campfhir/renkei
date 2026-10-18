@@ -60,7 +60,9 @@ export function agentMarkdown(agent: AgentExportInput): string {
     '',
     '## System prompt',
     '',
-    '```',
+    // Four backticks: the instructions inside may carry fenced blocks of
+    // their own.
+    '````',
     runSystemPrompt(
       agent.limits,
       { canAsk: agent.canAskQuestions },
@@ -70,7 +72,7 @@ export function agentMarkdown(agent: AgentExportInput): string {
         ...(agent.guardrails ? { guardrailsText: agent.guardrails } : {}),
       }
     ),
-    '```',
+    '````',
     '',
     // The round-trip half: everything above is projection; this block is
     // the SOURCE, verbatim, so the document can be imported back — Import

@@ -55,7 +55,8 @@ export async function POST(
     generateAgentDescription(db, {
       id: agent.id,
       name: agent.name,
-      steps: agent.steps,
+      instructions: agent.instructions,
+      tools: agent.tools,
       triggers: agent.triggers.map((trigger) => trigger.draft),
       llmModelId: agent.llmModelId,
       guardrails: agent.guardrails,

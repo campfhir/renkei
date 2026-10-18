@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import { getDatabase, type DB } from '@renkei/db';
-import { CURRENT_STEPS_VERSION, splitDetailForSealing } from '@renkei/agents';
+import { splitDetailForSealing } from '@renkei/agents';
 import { delegateClient } from '@renkei/delegate-client';
 import { useTestDelegate } from '@/lib/test-support/delegate';
 import { getRunForAdmin, getRunForOwner } from './runs-view';
@@ -25,26 +25,12 @@ maybe('run detail with sealed attempt content', () => {
   const suiteId = randomUUID();
   const owner = `owner-${suiteId.slice(0, 8)}`;
   const stranger = `stranger-${suiteId.slice(0, 8)}`;
-  const stepId = randomUUID();
-  const steps = {
-    version: CURRENT_STEPS_VERSION,
-    steps: [
-      {
-        id: stepId,
-        kind: 'action',
-        name: 'Find the ticket',
-        instruction: [],
-        maxAttempts: 1,
-        failureHandling: [],
-      },
-    ],
-  };
+  const definition = { instructions: '## Goal\n\nFind the ticket.', tools: ['jira_get_issue'] };
   const detail = {
-    resolvedInstruction: 'Find PROJ-42',
-    promptText: 'You are executing one step… PROJ-42',
+    opening: 'Started by hand. PROJ-42',
     llmSummary: 'Found PROJ-42: patient Jane Doe cannot sign in.',
-    declaredOutcome: 'success',
-    saveValue: 'PROJ-42',
+    finish: 'done',
+    result: 'PROJ-42',
     toolCalls: [
       {
         tool: 'jira_get_issue',
@@ -71,7 +57,8 @@ maybe('run detail with sealed attempt content', () => {
         id: agentId,
         owner_subject: ownerSubject,
         name: `agent-${agentId.slice(0, 8)}`,
-        steps: JSON.stringify(steps),
+        instructions: definition.instructions,
+        tools: JSON.stringify(definition.tools),
         enabled: true,
       })
       .execute();
@@ -82,7 +69,7 @@ maybe('run detail with sealed attempt content', () => {
         agent_id: agentId,
         owner_subject: ownerSubject,
         trigger_kind: 'manual',
-        steps_snapshot: JSON.stringify(steps),
+        definition_snapshot: JSON.stringify(definition),
         lineage: JSON.stringify([]),
         initial_state: JSON.stringify({}),
         status,
@@ -93,8 +80,8 @@ maybe('run detail with sealed attempt content', () => {
       .values({
         id: randomUUID(),
         run_id: runId,
-        step_id: stepId,
-        step_index: 0,
+        step_id: 'turn',
+        step_index: 1,
         attempt: 1,
         status: status === 'failed' ? 'failed' : 'succeeded',
         detail: JSON.stringify(storedDetail),
@@ -118,11 +105,7 @@ maybe('run detail with sealed attempt content', () => {
 
   it('round-trips: the owner reads the attempt as the engine wrote it, and the row holds no content', async () => {
     const { clear, plaintext } = splitDetailForSealing(detail);
-    const sealed = await delegateClient().sealForSubject(
-      owner,
-      [plaintext!],
-      'automation'
-    );
+    const sealed = await delegateClient().sealForSubject(owner, [plaintext!], 'automation');
     if (!sealed.ok) throw new Error(sealed.err.type);
     const stored = { ...clear, sealed: sealed.val[0] };
     expect(JSON.stringify(stored)).not.toContain('PROJ-42');
@@ -131,6 +114,37 @@ maybe('run detail with sealed attempt content', () => {
     const { agentId, runId } = await seedRun(owner, 'succeeded', stored);
     const run = await getRunForOwner(db, owner, agentId, runId);
     expect(run?.attempts[0]?.detail).toEqual(detail);
+    expect(run?.definition).toEqual(definition);
+  });
+
+  it('shows an admin nothing of a working run, and the staged batches only on a failed one', async () => {
+    const working = await seedRun(stranger, 'succeeded', detail);
+    const failed = await seedRun(stranger, 'failed', detail);
+    for (const { runId, agentId } of [working, failed]) {
+      await db
+        .insertInto('agent_action_batches')
+        .values({
+          id: randomUUID(),
+          run_id: runId,
+          agent_id: agentId,
+          owner_subject: stranger,
+          turn: 1,
+          status: 'completed',
+          summary: 'Comment on PROJ-42',
+          actions: JSON.stringify([
+            { tool: 'jira_add_comment', args: { issueKey: 'PROJ-42' }, reason: 'r' },
+          ]),
+        })
+        .execute();
+    }
+    const quiet = await getRunForAdmin(db, working.agentId, working.runId);
+    expect(quiet?.attempts[0]?.redacted).toBe(true);
+    expect(quiet?.batches[0]).toMatchObject({ actionCount: 1, status: 'completed' });
+    expect(quiet?.batches[0]).not.toHaveProperty('actions');
+    expect(JSON.stringify(quiet)).not.toContain('PROJ-42');
+
+    const broken = await getRunForAdmin(db, failed.agentId, failed.runId);
+    expect(broken?.batches[0]?.actions?.[0]?.tool).toBe('jira_add_comment');
   });
 
   it("renders the locked-row marker, and no content, when the owner's key is not available", async () => {
@@ -143,7 +157,7 @@ maybe('run detail with sealed attempt content', () => {
     const run = await getRunForAdmin(db, agentId, runId);
     const shown = run?.attempts[0]?.detail;
     expect(shown).toMatchObject({
-      declaredOutcome: 'success',
+      finish: 'done',
       sealedUnavailable: true,
       llmSummary: expect.stringContaining('[content unavailable:'),
       toolCalls: [{ tool: 'jira_get_issue', resultChars: 8, durationMs: 5 }],

@@ -20,9 +20,8 @@ import { periodLabel, type UsagePeriod } from './usage-periods';
 import type {
   AgentToolUsageRow,
   ModelTokenUsage,
-  RunStepTokenUsage,
+  RunModelTokenUsage,
   RunTokenTotals,
-  StepTokenUsage,
   TokenUsage,
   UsageBuckets,
 } from './agent-usage';
@@ -66,17 +65,6 @@ function callCount(calls: number): string {
   return `${number(calls)} model ${calls === 1 ? 'call' : 'calls'}`;
 }
 
-/** The step label the usage panel uses, in text: number, name, or why there is neither. */
-function stepLabel(row: {
-  stepId: string | null;
-  stepName: string | null;
-  stepNumber: number | null;
-}): string {
-  if (row.stepId === null) return 'Outside any step (optimizer)';
-  if (row.stepName === null) return 'A step since removed';
-  return row.stepNumber !== null ? `${row.stepNumber}. ${row.stepName}` : row.stepName;
-}
-
 /** The per-model lines for one period, largest first, models with nothing spent left out. */
 function modelLines(rows: readonly ModelTokenUsage[], bucket: UsagePeriod): string[] {
   return rows
@@ -86,45 +74,6 @@ function modelLines(rows: readonly ModelTokenUsage[], bucket: UsagePeriod): stri
     .map(
       (entry) =>
         `- ${modelLabel(entry.row.provider, entry.row.model)}: ${tokenFigure(entry.figure)}`
-    );
-}
-
-/**
- * The per-step lines for one period, summed across models, in the
- * definition's order with the unnumbered rows (removed steps, the
- * optimizer) last — the usage panel's ordering.
- */
-function stepLines(rows: readonly StepTokenUsage[], bucket: UsagePeriod): string[] {
-  const byStep = new Map<string, { row: StepTokenUsage; figure: Figure & { calls: number } }>();
-  for (const row of rows) {
-    const figure = bucketFigure(row, bucket);
-    if (spent(figure) === 0) continue;
-    const key = row.stepId ?? 'none';
-    const line = byStep.get(key) ?? {
-      row,
-      figure: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 },
-    };
-    line.figure.input += figure.input;
-    line.figure.output += figure.output;
-    line.figure.cacheRead += figure.cacheRead;
-    line.figure.cacheWrite += figure.cacheWrite;
-    line.figure.calls += row.calls[bucket];
-    byStep.set(key, line);
-  }
-  return [...byStep.values()]
-    .sort((a, b) => {
-      const left = a.row.stepNumber;
-      const right = b.row.stepNumber;
-      if (left !== null && right !== null) return left - right;
-      if (left !== null) return -1;
-      if (right !== null) return 1;
-      if (a.row.stepId === null) return 1;
-      if (b.row.stepId === null) return -1;
-      return 0;
-    })
-    .map(
-      ({ row, figure }) =>
-        `- ${stepLabel(row)}: ${tokenFigure(figure)} · ${callCount(figure.calls)}`
     );
 }
 
@@ -160,7 +109,6 @@ export interface AgentUsageText {
   period: UsagePeriod;
   tokens: TokenUsage;
   byModel: readonly ModelTokenUsage[];
-  bySteps: readonly StepTokenUsage[];
   tools: readonly AgentToolUsageRow[];
   toolWindowDays: number;
 }
@@ -168,8 +116,8 @@ export interface AgentUsageText {
 /**
  * One agent's usage, the way its page's usage panel shows it: the token
  * totals for every period at once (the page's period pills, without a
- * round trip per period), then the chosen period's split by model and
- * by step, and the tool calls over the trailing window.
+ * round trip per period), then the chosen period's split by model, and
+ * the tool calls over the trailing window.
  */
 export function renderAgentUsageText(input: AgentUsageText): string {
   const label = periodLabel(input.period).toLowerCase();
@@ -189,9 +137,6 @@ export function renderAgentUsageText(input: AgentUsageText): string {
     `By model · ${label}:`,
     ...(models.length > 0 ? models : [`- no tokens ${label}`])
   );
-
-  const steps = stepLines(input.bySteps, input.period);
-  lines.push('', `By step · ${label}:`, ...(steps.length > 0 ? steps : [`- no tokens ${label}`]));
 
   const calls = input.tools.reduce((sum, row) => sum + row.calls, 0);
   const errors = input.tools.reduce((sum, row) => sum + row.errors, 0);
@@ -240,7 +185,7 @@ export function renderAgentsUsageText(
       `  agentId: ${agent.agentId}`
     );
   }
-  lines.push('', 'Give an agentId for its usage by model and by step, and its tool calls.');
+  lines.push('', 'Give an agentId for its usage by model and its tool calls.');
   return lines.join('\n');
 }
 
@@ -249,15 +194,12 @@ export function runTokenLine(totals: RunTokenTotals): string {
   return `tokens: ${tokenFigure(totals)} · ${callCount(totals.calls)}`;
 }
 
-type LabeledRunStep = RunStepTokenUsage & { stepName: string | null; stepNumber: number | null };
-
 /**
  * The "## Token usage" section under a run's debug markdown: the run's
- * total, then by step (named from the run's own snapshot, in the order
- * they ran) and by model. Empty when the ledger has nothing for the run
- * — a queued run, or one pruned past the org's usage retention.
+ * total, then by model. Empty when the ledger has nothing for the run —
+ * a queued run, or one pruned past the org's usage retention.
  */
-export function renderRunUsageMarkdown(rows: readonly LabeledRunStep[]): string {
+export function renderRunUsageMarkdown(rows: readonly RunModelTokenUsage[]): string {
   const lines = ['## Token usage', ''];
   if (rows.length === 0) {
     lines.push('No model calls recorded for this run.');
@@ -266,27 +208,6 @@ export function renderRunUsageMarkdown(rows: readonly LabeledRunStep[]): string 
   lines.push(
     `- Total: ${tokenFigure(sumRunTotals(rows))} · ${callCount(sumRunTotals(rows).calls)}`
   );
-
-  const byStep = new Map<string, LabeledRunStep[]>();
-  for (const row of rows) {
-    const key = row.stepId ?? 'none';
-    const list = byStep.get(key) ?? [];
-    list.push(row);
-    byStep.set(key, list);
-  }
-  const steps = [...byStep.values()].sort((a, b) => {
-    const left = a[0]!.stepNumber;
-    const right = b[0]!.stepNumber;
-    if (left !== null && right !== null) return left - right;
-    if (left !== null) return -1;
-    if (right !== null) return 1;
-    return 0;
-  });
-  lines.push('', '### By step', '');
-  for (const list of steps) {
-    const totals = sumRunTotals(list);
-    lines.push(`- ${stepLabel(list[0]!)}: ${tokenFigure(totals)} · ${callCount(totals.calls)}`);
-  }
 
   const byModel = new Map<string, RunTokenTotals[]>();
   for (const row of rows) {

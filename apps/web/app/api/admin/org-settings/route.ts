@@ -38,14 +38,12 @@ const NUMERIC_BOUNDS = {
   // the session's absolute 30-day lifetime, past which the dial is inert.
   sessionIdleTimeoutMinutes: [15, 43_200],
   agentMaxChainDepth: [1, 10],
+  // Active minutes per run (waits on a person excluded).
   agentRunTimeoutMinutes: [1, 120],
-  // Above the 10 default is allowed on purpose; 100 is the typo guard.
-  agentMaxStepAttempts: [1, 100],
-  // Same shape: above the 20 default is allowed, 100 stops a typo from
-  // authorizing hundred-step plans nobody meant to permit.
-  agentMaxSteps: [1, 100],
+  // Above the 150 default is allowed on purpose; 1000 is the typo guard.
+  agentRunToolCallBudget: [1, 1_000],
   agentMaxRunsPerDay: [1, 10_000],
-  // Ceiling on how long an approval node may wait for its owner; 90 days
+  // Ceiling on how long a staged batch or a question may wait for its owner; 90 days
   // is the typo guard, 1 the floor (a sub-day org bound would make the
   // feature useless).
   agentApprovalMaxWaitDays: [1, 90],
@@ -99,8 +97,7 @@ const NUMERIC_KEYS = [
   'sessionIdleTimeoutMinutes',
   'agentMaxChainDepth',
   'agentRunTimeoutMinutes',
-  'agentMaxStepAttempts',
-  'agentMaxSteps',
+  'agentRunToolCallBudget',
   'agentMaxRunsPerDay',
   'agentApprovalMaxWaitDays',
   'contentPollMinutes',
@@ -162,8 +159,7 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
     sessionIdleTimeoutMinutes: settings.sessionIdleTimeoutMinutes,
     agentMaxChainDepth: settings.agentMaxChainDepth,
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
-    agentMaxStepAttempts: settings.agentMaxStepAttempts,
-    agentMaxSteps: settings.agentMaxSteps,
+    agentRunToolCallBudget: settings.agentRunToolCallBudget,
     agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
     agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
     contentPollMinutes: settings.contentPollMinutes,
