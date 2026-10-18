@@ -166,6 +166,8 @@ export {
   isTimeUnit,
   resolveTime,
   TIME_UNITS,
+  WEEKDAY_NAMES,
+  weekdayOf,
   type ResolveTimeRequest,
   type ResolvedTime,
   type TimeUnit,

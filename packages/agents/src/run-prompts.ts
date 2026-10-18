@@ -64,7 +64,8 @@ export const RESOLVE_TIME_DEF: PromptToolDef = {
   description:
     'Compute an exact timestamp instead of working one out yourself. Say which timezone, ' +
     'how far to move (amount + unit), and optionally the time of day; you get back the ' +
-    'instant in UTC. Free: it never counts against your tool budget, so use it whenever a ' +
+    'instant in UTC, how it reads locally and its day of the week. Ask this rather than ' +
+    'naming a weekday yourself — "which day is the 24th?" is a guess otherwise. Free: it never counts against your tool budget, so use it whenever a ' +
     'date or time matters — never hand-calculate one.',
   inputSchema: {
     type: 'object',

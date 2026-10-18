@@ -363,6 +363,8 @@ maybe('agent run engine', () => {
     expect(opening.type === 'text' && opening.text).toContain(
       '<untrusted source="trigger.subject">'
     );
+    // The weekday is stated, not left for the model to work out.
+    expect(opening.type === 'text' && opening.text).toMatch(/weekday: [A-Z][a-z]+day \(UTC\)/);
     const second = resultFor(llm.requests[1], lastToolUseId(llm.requests[1]));
     expect(second).toContain('does not exist');
     expect(second).toContain('[Budget left: 149 tool calls');

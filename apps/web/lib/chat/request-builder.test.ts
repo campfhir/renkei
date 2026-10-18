@@ -341,6 +341,7 @@ describe('buildSystemPrompt', () => {
     const later = buildSystemPrompt({ ...base, now: new Date('2026-09-04T10:59:59Z') });
     expect(later).toBe(first);
     expect(first).toContain('2026-09-04T10:00Z');
+    expect(first).toContain('a Friday in UTC');
     expect(first).not.toContain('10:00:07');
   });
 

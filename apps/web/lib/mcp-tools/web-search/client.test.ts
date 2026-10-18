@@ -52,7 +52,7 @@ describe('buildRequestBody', () => {
     expect(body.reasoning).toBeUndefined();
     // The query is a person's own words: never stored on the provider's side.
     expect(body.store).toBe(false);
-    expect(String(body.instructions)).toContain('2026-09-04');
+    expect(String(body.instructions)).toContain('Today is Friday, 2026-09-04.');
   });
 
   it('carries the org location as an approximate user_location, and a per-call override wins', () => {

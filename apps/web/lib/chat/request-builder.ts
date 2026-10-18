@@ -11,6 +11,7 @@
  */
 
 import type { LlmContentBlock, LlmMessage } from '@renkei/agent-llm';
+import { weekdayOf } from '@renkei/agents';
 import { AUTO_BRIEF } from './auto-mode';
 import type { StoredMessage } from './messages';
 
@@ -228,8 +229,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   // list and the history in the provider's cache prefix, so a stamp that
   // differs every turn re-writes the whole conversation into the cache
   // on every Send (full input price and prefill latency, no reads).
-  // resolve_date is always offered for the exact moment.
-  who.push(`The current date and time is ${hourStamp(input.now)} (UTC, to the hour).`);
+  // resolve_date is always offered for the exact moment. The weekday is
+  // named outright: models work it out from the date wrongly often enough
+  // to put "next Monday" on a Tuesday.
+  who.push(
+    `The current date and time is ${hourStamp(input.now)} (UTC, to the hour), a ${weekdayOf(input.now)} in UTC.`
+  );
   sections.push(who.join(' '));
 
   if (input.chatSummary) {
