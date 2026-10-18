@@ -1,5 +1,7 @@
 # Dragging nodes to rearrange them — design
 
+> **Superseded.** This design belongs to the step-document agent model, which was replaced by instruction-based agents (migration 155; see [`agents.md`](./agents.md)). Kept for history; nothing here describes the current code.
+
 No code yet. The MCP half of the same request (`agent_patch_steps`) is built;
 this is the builder half.
 

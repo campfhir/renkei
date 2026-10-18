@@ -1114,10 +1114,38 @@ UPDATE, DELETE ON phi_access_events FROM <app role>;` so the guarantee no
 longer rests on the trigger alone. A failed insert is logged at `warn`
 (`component=phi-access`); the read it describes still returns.
 
+### Upgrading to migration 155 (agents become instructions)
+
+Agents stop being step plans: each is a structured instruction prompt and a
+tool selection, run autonomously inside two org limits — **active minutes
+per run** (`agentRunTimeoutMinutes`, default 30; waiting on a person does
+not count) and **tool calls per run** (`agentRunToolCallBudget`, default
+150) — and every change an agent makes is staged for acceptance and carried
+out by the agents worker's action executor (docs/agents.md). The migration:
+
+- converts every agent's steps into instructions (the plan becomes a
+  numbered Approach) and its tools into a selection; an agent that gated no
+  step converts with "accept proposed actions automatically" on, so it keeps
+  acting where the org's policy let it act unattended before. The step
+  documents are kept, unread, in `agents.legacy_steps` /
+  `agent_runs.legacy_steps_snapshot`;
+- **cancels every run still queued, running or waiting** (error kind
+  `converted`) and expires their open cards — a half-walked step plan cannot
+  continue as a conversation. Drain or let pending approvals settle first if
+  that matters to you;
+- leaves an explicitly saved `agent_run_timeout_minutes` as it is: an
+  organization that saved its settings page before this release keeps the
+  old 15-minute value until an admin raises it. The step-count and
+  per-step attempt ceilings are no longer read.
+
+Ship the web app and the agents worker together: the worker must handle the
+new `actions` job type, and the web app no longer offers the step builder.
+
 ### Sealed agent content
 
-An agent run's attempt detail (`agent_run_steps.detail`: the prompt, the
-model's summary, tool-call previews, saved results) and the agent's
+An agent run's turn detail (`agent_run_steps.detail`: the opening
+message, the model's replies, tool calls and results, the run's summary
+and result) and the agent's
 memory (`agent_memories.content`) are sealed under the run owner's
 **automation key** — the key their agents already run with — as one
 `uenc1:` envelope per row, sealed and opened by the delegate. The run
