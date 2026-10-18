@@ -103,10 +103,7 @@ const READS = ['jira_get_issue', 'jira_search_issues'];
 /** Tools as the gateway lists them for a token: only those the token names. */
 function stubMcp(
   named: string[],
-  callTool: (
-    name: string,
-    args: Record<string, unknown>
-  ) => McpToolResult | Promise<McpToolResult>,
+  callTool: (name: string, args: Record<string, unknown>) => McpToolResult | Promise<McpToolResult>,
   calls: { name: string; args: Record<string, unknown> }[]
 ): McpClient {
   return {
@@ -271,7 +268,10 @@ maybe('agent run engine', () => {
 
   function harness(
     llm: ResolvedLlm,
-    callTool: (name: string, args: Record<string, unknown>) => McpToolResult = () => text('ok'),
+    callTool: (
+      name: string,
+      args: Record<string, unknown>
+    ) => McpToolResult | Promise<McpToolResult> = () => text('ok'),
     extra: { stopRequested?: () => boolean } = {}
   ): Harness {
     const producer = new CapturingProducer();

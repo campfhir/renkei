@@ -1534,9 +1534,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     private pendingAttachments: AttachmentBlock[] = [];
 
     /** One real tool call through the agent's read-only client. */
-    private async callTool(
-      use: ToolUseBlock
-    ): Promise<{
+    private async callTool(use: ToolUseBlock): Promise<{
       result: ToolResultBlock;
       record: ToolCallRecord;
       attachments: AttachmentBlock[];
