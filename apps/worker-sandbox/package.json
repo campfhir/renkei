@@ -17,8 +17,8 @@
     "@renkei/db": "workspace:*",
     "@renkei/settings": "workspace:*",
     "kysely": "^0.29.6",
-    "mermaid": "12.1.0",
-    "playwright-core": "1.62.1",
+    "mermaid": "12.2.0",
+    "playwright-core": "1.64.1",
     "tsx": "^4.23.15"
   },
   "devDependencies": {
