@@ -173,6 +173,8 @@ export interface StartTurnInput {
   llmModelId?: string | null;
   /** The message came from a voice conversation; the reply is written to be heard. */
   voice?: boolean;
+  /** The person's IANA zone, from their browser (time-zone.ts); null when it did not say. */
+  timeZone?: string | null;
   /**
    * How the user row is stored and shown: a 'prompt' is what the person
    * typed, their bubble; a 'note' is what they did outside the composer —
@@ -252,8 +254,12 @@ export async function startChatTurn(
         llmModelId: llm.modelConfigId,
         thinkingBudget,
         // For a process that resumes this turn after this one is gone
-        // (turn-recovery.ts): the session's roles and the voice flag.
-        runner: { roles: input.session.roles, voice: input.voice === true },
+        // (turn-recovery.ts): the session's roles, the voice flag and the zone.
+        runner: {
+          roles: input.session.roles,
+          voice: input.voice === true,
+          timeZone: input.timeZone ?? null,
+        },
       });
       if (!turn.ok) return turn;
       let user: InsertedMessage | null = null;
@@ -340,6 +346,7 @@ export async function startChatTurn(
         thinkingBudget,
         settings,
         voice: input.voice === true,
+        timeZone: input.timeZone ?? null,
       })
     );
   } catch (error) {
@@ -365,6 +372,8 @@ export interface ExecuteTurnInput {
   localTools?: LocalTool[];
   /** See StartTurnInput.voice. */
   voice?: boolean;
+  /** See StartTurnInput.timeZone. */
+  timeZone?: string | null;
   /**
    * This is a turn another process left running (turn-recovery.ts): the
    * rows are already reconciled, `assistantMessage` is the fresh row to
@@ -713,6 +722,7 @@ async function executeTurnBody(
       filesAllowed,
       chartsAllowed: filesAllowed && (await sandboxChartsEnabled()),
       autoMode: auto,
+      timeZone: input.timeZone ?? null,
       now: new Date(),
     });
     log(

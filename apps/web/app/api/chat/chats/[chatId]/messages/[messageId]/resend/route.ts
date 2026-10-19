@@ -7,6 +7,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { isUuid } from '@/lib/uuid';
+import { timeZoneOf } from '@/lib/chat/time-zone';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { USER_MESSAGE_MAX_CHARS } from '@/lib/chat/start-turn';
 import { resendFromMessage } from '@/lib/chat/resend';
@@ -43,6 +44,7 @@ export async function POST(
     extraAttachmentIds,
     llmModelId,
     voice: body.voice === true,
+    timeZone: timeZoneOf(body.timeZone),
   });
   if (!resent.ok) {
     switch (resent.err.type) {

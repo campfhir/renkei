@@ -25,6 +25,19 @@ import type { WidgetModelContextOutcome } from './widget-tools';
 
 const base = () => `/api/chat`;
 
+/**
+ * The browser's IANA zone, sent with every prompt so the model knows the
+ * person's local day and time instead of guessing it (from an office
+ * address, say). Undefined where Intl cannot say.
+ */
+function browserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const chatClient = {
   sidebar: () => getJson<ChatSidebarData>(`${base()}/chats`),
 
@@ -82,7 +95,7 @@ export const chatClient = {
     sendJsonFull<StartedTurn & { code?: string }>(
       `${base()}/chats/${chatId}/turns`,
       'POST',
-      input
+      { ...input, timeZone: browserTimeZone() }
     ),
 
   /** Replace the chat's held sends with `queue` — the whole list, so a stale write cannot resurrect a sent one. */
@@ -103,7 +116,7 @@ export const chatClient = {
     sendJsonFull<StartedTurn & { fromSeq: number; removedArtifactIds: string[]; code?: string }>(
       `${base()}/chats/${chatId}/messages/${messageId}/resend`,
       'POST',
-      input
+      { ...input, timeZone: browserTimeZone() }
     ),
 
   /** The person's connected network shares, for copying a file out. */

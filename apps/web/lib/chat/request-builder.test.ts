@@ -345,6 +345,43 @@ describe('buildSystemPrompt', () => {
     expect(first).not.toContain('10:00:07');
   });
 
+  it("reads now in the person's browser zone and points at resolve_date with it", () => {
+    const base = {
+      personName: null,
+      orgName: null,
+      project: null,
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: false,
+    };
+    // 00:41Z on Monday the 19th is still Sunday afternoon in Los Angeles.
+    const now = new Date('2026-10-19T00:41:00Z');
+    const local = buildSystemPrompt({ ...base, timeZone: 'America/Los_Angeles', now });
+    expect(local).toContain(
+      'for them it is Sunday 2026-10-18 17:00 (UTC-07:00), also rounded down to the hour'
+    );
+    expect(local).toContain('call resolve_date with timezone "America/Los_Angeles"');
+    // Still the same text all hour: the prompt cache keeps its prefix.
+    expect(
+      buildSystemPrompt({
+        ...base,
+        timeZone: 'America/Los_Angeles',
+        now: new Date('2026-10-19T00:59:00Z'),
+      })
+    ).toBe(local);
+
+    const unknown = buildSystemPrompt({ ...base, timeZone: null, now });
+    expect(unknown).toContain("The person's timezone is not known");
+    expect(unknown).toContain('call resolve_date with timezone "UTC"');
+    // No tools, no instruction to call one.
+    expect(buildSystemPrompt({ ...base, hasTools: false, now })).not.toContain('resolve_date');
+  });
+
   it('asks a voice turn to say what it is doing before each call, and only a voice turn', () => {
     const base = {
       personName: null,

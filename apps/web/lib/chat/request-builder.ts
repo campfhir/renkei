@@ -11,7 +11,7 @@
  */
 
 import type { LlmContentBlock, LlmMessage } from '@renkei/agent-llm';
-import { weekdayOf } from '@renkei/agents';
+import { resolveTime, weekdayOf } from '@renkei/agents';
 import { AUTO_BRIEF } from './auto-mode';
 import type { StoredMessage } from './messages';
 
@@ -87,6 +87,12 @@ export interface SystemPromptInput {
    * says so, right after the project it works in.
    */
   autoMode?: boolean;
+  /**
+   * The person's IANA zone as their browser reported it (time-zone.ts);
+   * null when it did not say. Named so the model reads "today" and "now"
+   * in the person's day, not UTC's, and passes it to resolve_date.
+   */
+  timeZone?: string | null;
   now: Date;
 }
 
@@ -231,10 +237,30 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   // on every Send (full input price and prefill latency, no reads).
   // resolve_date is always offered for the exact moment. The weekday is
   // named outright: models work it out from the date wrongly often enough
-  // to put "next Monday" on a Tuesday.
+  // to put "next Monday" on a Tuesday. The person's own reading is of the
+  // same hour-truncated instant, so it is just as cache-stable.
+  const stamp = hourStamp(input.now);
   who.push(
-    `The current date and time is ${hourStamp(input.now)} (UTC, to the hour), a ${weekdayOf(input.now)} in UTC.`
+    `The current date and time is ${stamp} (UTC, rounded down to the hour), a ${weekdayOf(input.now)} in UTC.`
   );
+  const local = input.timeZone
+    ? resolveTime({ timezone: input.timeZone, anchor: stamp }, input.now)
+    : null;
+  if (input.timeZone && local?.ok) {
+    who.push(
+      `The person's timezone is ${input.timeZone} (from their browser): for them it is ${local.value.local}, also rounded down to the hour. Read "today", "tomorrow", "this morning" and the like in that zone unless they name another.`
+    );
+  } else {
+    who.push(
+      "The person's timezone is not known; do not guess it from an address or a name — use UTC, and ask only if the answer depends on their local time."
+    );
+  }
+  if (input.hasTools) {
+    const zone = input.timeZone && local?.ok ? input.timeZone : 'UTC';
+    who.push(
+      `These times are approximate. For the exact current time, a day of the week, or any date relative to today (yesterday, next Friday, two weeks out), call resolve_date with timezone "${zone}" unless the person names another — never work a date, time or weekday out yourself.`
+    );
+  }
   sections.push(who.join(' '));
 
   if (input.chatSummary) {
