@@ -280,6 +280,9 @@ test('a staged batch: the run page and the card, accepted', async ({ page }, tes
       reason: 'OPS-8 repeats OPS-7.',
     },
   ];
+  // A search result well past the 2,000-character preview, ending in a
+  // line only the full result carries.
+  const longResult = `${'OPS-7 VPN outage, no reply yet. '.repeat(190)}\nLast line: OPS-8 duplicate of OPS-7.`;
   await withDb(async (client) => {
     await client.query(
       `INSERT INTO agents (id, owner_subject, name, instructions, tools, enabled)\n       VALUES ($1, $2, 'Ticket greeter', $3, $4, false)`,
@@ -297,8 +300,17 @@ test('a staged batch: the run page and the card, accepted', async ({ page }, tes
           opening: 'Your owner started this run by hand. Work toward your goal now.',
           llmSummary: 'Two new tickets need a reply; proposing both comments.',
           toolCalls: [
-            { tool: 'jira_search_issues', argsPreview: '{"jql":"project = OPS"}', resultPreview: 'OPS-7, OPS-8', isError: false, durationMs: 420 },
+            { tool: 'jira_search_issues', argsPreview: '{"jql":"project = OPS"}', resultPreview: `${longResult.slice(0, 2000)}… [truncated]`, isError: false, durationMs: 420, toolUseId: 'tu_search' },
             { tool: 'stage_actions', argsPreview: '{}', resultPreview: 'Waiting for acceptance.', isError: false, durationMs: 0, staged: 2 },
+          ],
+          // The whole result, fenced as the model read it: the timeline shows
+          // this, not the 2,000-character preview above.
+          results: [
+            {
+              type: 'tool_result',
+              toolUseId: 'tu_search',
+              content: `<untrusted source="tool:jira_search_issues">\n${longResult}\n</untrusted>`,
+            },
           ],
           pause: { kind: 'actions', toolUseId: 'tu_1', batchId },
         }),
@@ -318,6 +330,12 @@ test('a staged batch: the run page and the card, accepted', async ({ page }, tes
   await expect(page.getByRole('heading', { name: 'Run' })).toBeVisible();
   await expect(page.getByTestId('turn-heading').first()).toHaveText('Turn 1');
   await expect(page.getByText('Two new tickets need a reply; proposing both comments.')).toBeVisible();
+  // The tool result is the whole of what the agent read, not the preview.
+  const showAll = page.getByText(`Show all (${longResult.length.toLocaleString()} characters)`);
+  await expect(showAll).toBeVisible();
+  await showAll.click();
+  await expect(page.getByText('Last line: OPS-8 duplicate of OPS-7.')).toBeVisible();
+  await expect(page.getByText('… [truncated]')).toHaveCount(0);
   await expect(page.getByTestId('staged-batch').first()).toContainText('Proposed 2 changes');
   await expect(page.getByText('Waiting for your go-ahead.').first()).toBeVisible();
   await expect(page.getByTestId('run-times')).toContainText('active time');

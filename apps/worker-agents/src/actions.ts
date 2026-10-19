@@ -27,6 +27,7 @@ import { sql, type Kysely } from 'kysely';
 import type { DB, Json } from '@renkei/db';
 import {
   ACTION_RESULT_CHARS,
+  clipActionResult,
   parseStoredActions,
   parseStoredResults,
   type ActionResult,
@@ -269,7 +270,7 @@ export function createActionsHandler(deps: ActionsDeps) {
             tool: action.tool,
             outcome: result.isError ? 'failed' : 'succeeded',
             text:
-              clip(text, ACTION_RESULT_CHARS) ||
+              clipActionResult(text, ACTION_RESULT_CHARS) ||
               (result.isError ? 'The tool reported an error.' : 'Done.'),
             durationMs: now() - startedAt,
           });

@@ -17,6 +17,7 @@
  */
 
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
+import { toolResultText } from '@/lib/agents/tool-result';
 
 export interface RunAction {
   /** Position in the run, 1-based — the number the UI shows. */
@@ -106,7 +107,7 @@ export function runActivity(run: RunDetail): RunActivity {
         notMade: false,
         durationMs: typeof call.durationMs === 'number' ? call.durationMs : null,
         argsPreview: str(call.argsPreview),
-        resultPreview: str(call.resultPreview),
+        resultPreview: isRecord(attempt.detail) ? toolResultText(attempt.detail, call) : null,
       });
     }
     const batch = batchesByTurn.get(attempt.attempt);

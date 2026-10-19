@@ -33,8 +33,26 @@ export const MAX_STAGED_ACTIONS = 20;
 export const MAX_ACTION_REASON_CHARS = 500;
 /** The longest summary a batch may carry. */
 export const MAX_BATCH_SUMMARY_CHARS = 1_000;
-/** What one action's result keeps for the agent and the card. */
-export const ACTION_RESULT_CHARS = 4_000;
+/**
+ * What one action's result keeps for the agent and the card — the same
+ * bound a direct read gets (TOOL_RESULT_CHARS, run-prompts.ts). A staged
+ * call is often a read the agent needs whole: a browser page is an act
+ * only because it drives a session, and at 4 000 a segment page's field
+ * table was cut at its fifth row.
+ */
+export const ACTION_RESULT_CHARS = 30_000;
+/**
+ * The most a whole batch's report hands back to the agent: twenty full
+ * results would be 600 000 characters in one tool result. Past this the
+ * succeeded results share it evenly, each cut with a marker saying so.
+ */
+export const ACTION_REPORT_CHARS = 120_000;
+
+/** Cut `text` to `max`, saying what was cut and why, so it is never read as the whole. */
+export function clipActionResult(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}\n… [truncated by the action executor: ${text.length - max} more characters were not kept; the tool returned more than this — narrow the call to see the rest]`;
+}
 
 export interface StagedAction {
   tool: string;
@@ -176,12 +194,19 @@ export function batchReportForAgent(input: {
   if (input.status !== 'completed') {
     return `The batch is ${input.status}; no outcome has been reported yet.`;
   }
+  // Past the report budget, the succeeded results share it evenly.
+  const succeeded = input.results.filter((result) => result.outcome === 'succeeded');
+  const total = succeeded.reduce((sum, result) => sum + result.text.length, 0);
+  const share =
+    total > ACTION_REPORT_CHARS
+      ? Math.floor(ACTION_REPORT_CHARS / Math.max(1, succeeded.length))
+      : Infinity;
   const lines = input.actions.map((action, index) => {
     const result = input.results[index];
     if (!result) return `${index + 1}. ${action.tool}: no outcome recorded.`;
     const body =
       result.outcome === 'succeeded'
-        ? untrustedBlock(`tool:${action.tool}`, result.text)
+        ? untrustedBlock(`tool:${action.tool}`, clipActionResult(result.text, share))
         : result.text;
     return `${index + 1}. ${action.tool}: ${result.outcome}. ${body}`;
   });

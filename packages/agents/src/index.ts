@@ -51,7 +51,9 @@ export {
   type QuestionFieldType,
 } from './question-field';
 export {
+  ACTION_REPORT_CHARS,
   ACTION_RESULT_CHARS,
+  clipActionResult,
   MAX_ACTION_REASON_CHARS,
   MAX_BATCH_SUMMARY_CHARS,
   MAX_STAGED_ACTIONS,
@@ -95,7 +97,7 @@ export {
   type ActApprovalReason,
   type ToolKindHint,
 } from './act-approval';
-export { UNTRUSTED_RULE, UNTRUSTED_TAG, untrustedBlock } from './untrusted';
+export { UNTRUSTED_RULE, UNTRUSTED_TAG, unfenceUntrusted, untrustedBlock } from './untrusted';
 export {
   computeNextRun,
   computeNextRunForSchedule,

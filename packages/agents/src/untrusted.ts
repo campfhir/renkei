@@ -44,3 +44,20 @@ export function untrustedBlock(source: string, text: string): string {
   const safeText = text.replace(CLOSE_PATTERN, '<\\/$1');
   return `<${UNTRUSTED_TAG} source="${safeSource}">\n${safeText}\n</${UNTRUSTED_TAG}>`;
 }
+
+const OPEN_PATTERN = new RegExp(`^<${UNTRUSTED_TAG} source="[^"]*">\\n`);
+const CLOSE_SUFFIX = `\n</${UNTRUSTED_TAG}>`;
+const ESCAPED_CLOSE = new RegExp(`<\\\\/(\\s*${UNTRUSTED_TAG})`, 'gi');
+
+/**
+ * The text an `untrustedBlock` fenced, for showing a person what the
+ * model read: the frame removed and the escaped closing tags put back.
+ * Text that is not one whole block comes back as it is.
+ */
+export function unfenceUntrusted(text: string): string {
+  if (!OPEN_PATTERN.test(text) || !text.endsWith(CLOSE_SUFFIX)) return text;
+  return text
+    .replace(OPEN_PATTERN, '')
+    .slice(0, -CLOSE_SUFFIX.length)
+    .replace(ESCAPED_CLOSE, '</$1');
+}

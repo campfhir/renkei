@@ -243,6 +243,12 @@ interface ToolCallRecord {
   free?: boolean;
   /** stage_actions: how many actions it proposed (each billed once). */
   staged?: number;
+  /**
+   * The tool_use this answers. The turn's sealed `results` hold the full
+   * result under the same id, so the run page shows all of it rather than
+   * the preview. Absent on a sub-agent's calls, whose results are not kept.
+   */
+  toolUseId?: string;
 }
 
 /** One model call, as the timeline reads it. */
@@ -1363,7 +1369,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const reply = async (result: ToolResultBlock, record?: ToolCallRecord) => {
         results.push(result);
         answered.add(result.toolUseId);
-        if (record) toolCalls.push(record);
+        if (record) toolCalls.push({ ...record, toolUseId: result.toolUseId });
         row.detail.results = results;
         row.detail.toolCalls = toolCalls;
         row.detail.inFlight = undefined;
