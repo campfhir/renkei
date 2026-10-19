@@ -313,3 +313,26 @@ export {
   validateOutputName,
   type ScriptLanguage,
 } from './scripts';
+
+export {
+  CRAWL_MAX_PAGES,
+  CRAWL_DEFAULT_PAGES,
+  CRAWL_MAX_DEPTH,
+  CRAWL_MAX_TEMPLATE_VALUES,
+  CRAWL_MAX_VALUE_CHARS,
+  CRAWL_PAGE_DELAY_MS,
+  CRAWL_PAGE_TEXT_MAX_CHARS,
+  CRAWL_MAX_TABLES,
+  CRAWL_MAX_TABLE_ROWS,
+  CRAWL_MAX_PATTERN_CHARS,
+  crawlPatternRegExp,
+  expandCrawlTemplate,
+  inCrawlScope,
+  inferCrawlPattern,
+  normalizeCrawlUrl,
+  planCrawl,
+  type CrawlPlanResult,
+  type CrawlRecipe,
+  type CrawlRegion,
+  type InferredCrawlPattern,
+} from './crawl';

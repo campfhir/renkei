@@ -1261,6 +1261,45 @@ export interface ResourceKeys {
   resource_kind: string;
 }
 
+export interface SandboxCrawlPages {
+  content: string | null;
+  crawl_id: string;
+  depth: Generated<number>;
+  error: string | null;
+  fetched_at: Generated<Timestamp>;
+  seq: number;
+  status: string;
+  table_count: Generated<number>;
+  text_chars: Generated<number>;
+  title: string | null;
+  url: string;
+}
+
+export interface SandboxCrawlRecipes {
+  created_at: Generated<Timestamp>;
+  last_crawl_id: string | null;
+  name: string;
+  recipe: Json;
+  subject: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface SandboxCrawls {
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  expires_at: Timestamp;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  pages_done: Generated<number>;
+  pages_failed: Generated<number>;
+  queue: Generated<Json>;
+  recipe: Json;
+  recipe_name: string | null;
+  status: string;
+  subject: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface SandboxEnvSecrets {
   created_at: Generated<Timestamp>;
   id: string;
@@ -1626,6 +1665,9 @@ export interface DB {
   resource_access_grants: ResourceAccessGrants;
   resource_key_grants: ResourceKeyGrants;
   resource_keys: ResourceKeys;
+  sandbox_crawl_pages: SandboxCrawlPages;
+  sandbox_crawl_recipes: SandboxCrawlRecipes;
+  sandbox_crawls: SandboxCrawls;
   sandbox_env_secrets: SandboxEnvSecrets;
   sandbox_files: SandboxFiles;
   sandbox_size_requests: SandboxSizeRequests;

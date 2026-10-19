@@ -72,6 +72,9 @@ import { interruptRunningProcesses, orphanedByNow } from './workspaces';
 import { createWorkspaceHandlers } from './workspace-endpoints';
 import { createServiceHandlers } from './service-endpoints';
 import { createScriptHandlers } from './script-endpoints';
+import { createCrawlHandlers } from './crawl-endpoints';
+import type { Crawler } from './crawler';
+import type { CrawlStore } from './crawl-store';
 import { expiryFromNow, quotaHeadroom } from './staging';
 import type { ServiceManager } from './services';
 import type { ScriptRunner } from './scripts';
@@ -148,6 +151,9 @@ export interface SandboxServerDeps {
    * this worker has no interpreter, which answers the script verb 503.
    */
   scripts?: ScriptRunner | null;
+  /** The background crawler and its store (`/v1/crawls/*`); absent answers 503. */
+  crawler?: Crawler | null;
+  crawlStore?: CrawlStore | null;
   /** How the runner starts a run with no network; null means every run would have this container's. */
   scriptsNetworkIsolation?: NetworkIsolation | null;
   uidIsolation?: SandboxCapabilities['uidIsolation'];
@@ -334,6 +340,11 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     capability: capabilities.scripts,
     networkIsolation: scriptsNetworkIsolation,
     orgFeatures,
+  });
+  const crawls = createCrawlHandlers({
+    crawler: deps.crawler ?? null,
+    store: deps.crawlStore ?? null,
+    enabledFor: async () => (await orgFeatures()).browser,
   });
   const workspaces = createWorkspaceHandlers({
     db: deps.db,
@@ -999,7 +1010,9 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     const servicesOp = op.startsWith('services/') ? op.slice('services/'.length) : null;
     const chartsOp = op.startsWith('charts/') ? op.slice('charts/'.length) : null;
     const scriptsOp = op.startsWith('scripts/') ? op.slice('scripts/'.length) : null;
+    const crawlsOp = op.startsWith('crawls/') ? op.slice('crawls/'.length) : null;
     const prefixed =
+      crawlsOp !== null ||
       browserOp !== null ||
       secretsOp !== null ||
       workspacesOp !== null ||
@@ -1033,6 +1046,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     if (servicesOp !== null) return services.handleServices(servicesOp, parsedBody, response);
     if (chartsOp !== null) return handleCharts(chartsOp, parsedBody, response);
     if (scriptsOp !== null) return scripts.handleScripts(scriptsOp, parsedBody, response);
+    if (crawlsOp !== null) return crawls.handleCrawls(crawlsOp, parsedBody, response);
     await jsonHandler!(parsedBody, response);
   }
 
