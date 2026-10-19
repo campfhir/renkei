@@ -2234,3 +2234,257 @@ export async function sbChartStage(
     },
   };
 }
+
+// ── Web crawls (/v1/crawls/*) ─────────────────────────────────────────────
+// One staged sandbox_browser_crawl starts a crawl the worker runs in the
+// background (apps/worker-sandbox/src/crawler.ts); these read it back.
+
+export interface WireCrawlRecipe {
+  origin: string;
+  pattern: string;
+  urls?: string[];
+  template?: { url: string; values: string[] };
+  follow?: { from: string[]; depth: number };
+  region: string;
+  maxPages: number;
+}
+
+export interface WireCrawl {
+  id: string;
+  status: string;
+  recipeName: string | null;
+  recipe: WireCrawlRecipe;
+  pagesDone: number;
+  pagesFailed: number;
+  pagesQueued: number;
+  nextUrls: string[];
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+export interface WireCrawlTable {
+  headers: string[];
+  rows: string[][];
+}
+
+export interface WireCrawlPage {
+  url: string;
+  seq: number;
+  depth: number;
+  status: 'ok' | 'failed';
+  title: string | null;
+  textChars: number;
+  tableCount: number;
+  error: string | null;
+  /** Only from sbCrawlPages; null when the page failed or did not open. */
+  content?: {
+    title: string;
+    region: string;
+    text: string;
+    textTruncated: boolean;
+    tables: WireCrawlTable[];
+  } | null;
+}
+
+export interface WireSavedCrawlRecipe {
+  name: string;
+  recipe: WireCrawlRecipe;
+  lastCrawlId: string | null;
+  updatedAt: string;
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+}
+
+function numOr0(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function crawlRecipeOf(value: unknown): WireCrawlRecipe | null {
+  if (!isRecord(value) || typeof value.origin !== 'string' || typeof value.pattern !== 'string') {
+    return null;
+  }
+  const template = isRecord(value.template)
+    ? { url: str(value.template.url), values: strings(value.template.values) }
+    : undefined;
+  const follow = isRecord(value.follow)
+    ? { from: strings(value.follow.from), depth: numOr0(value.follow.depth) }
+    : undefined;
+  return {
+    origin: value.origin,
+    pattern: value.pattern,
+    ...(Array.isArray(value.urls) ? { urls: strings(value.urls) } : {}),
+    ...(template ? { template } : {}),
+    ...(follow ? { follow } : {}),
+    region: str(value.region) || 'auto',
+    maxPages: numOr0(value.maxPages),
+  };
+}
+
+function crawlOf(value: unknown): WireCrawl | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.status !== 'string') {
+    return null;
+  }
+  const recipe = crawlRecipeOf(value.recipe);
+  if (!recipe) return null;
+  return {
+    id: value.id,
+    status: value.status,
+    recipeName: typeof value.recipeName === 'string' ? value.recipeName : null,
+    recipe,
+    pagesDone: numOr0(value.pagesDone),
+    pagesFailed: numOr0(value.pagesFailed),
+    pagesQueued: numOr0(value.pagesQueued),
+    nextUrls: strings(value.nextUrls),
+    error: typeof value.error === 'string' ? value.error : null,
+    createdAt: str(value.createdAt),
+    updatedAt: str(value.updatedAt),
+    finishedAt: typeof value.finishedAt === 'string' ? value.finishedAt : null,
+  };
+}
+
+function crawlTableOf(value: unknown): WireCrawlTable | null {
+  if (!isRecord(value) || !Array.isArray(value.rows)) return null;
+  return { headers: strings(value.headers), rows: value.rows.map(strings) };
+}
+
+function crawlPageOf(value: unknown): WireCrawlPage | null {
+  if (!isRecord(value) || typeof value.url !== 'string') return null;
+  let content: WireCrawlPage['content'];
+  if ('content' in value) {
+    const raw = value.content;
+    content =
+      isRecord(raw) && typeof raw.text === 'string'
+        ? {
+            title: str(raw.title),
+            region: str(raw.region),
+            text: raw.text,
+            textTruncated: raw.textTruncated === true,
+            tables: Array.isArray(raw.tables)
+              ? raw.tables.flatMap((table) => crawlTableOf(table) ?? [])
+              : [],
+          }
+        : null;
+  }
+  return {
+    url: value.url,
+    seq: numOr0(value.seq),
+    depth: numOr0(value.depth),
+    status: value.status === 'ok' ? 'ok' : 'failed',
+    title: typeof value.title === 'string' ? value.title : null,
+    textChars: numOr0(value.textChars),
+    tableCount: numOr0(value.tableCount),
+    error: typeof value.error === 'string' ? value.error : null,
+    ...(content !== undefined ? { content } : {}),
+  };
+}
+
+function crawlPagesOf(value: unknown): WireCrawlPage[] | null {
+  if (!Array.isArray(value)) return null;
+  const pages: WireCrawlPage[] = [];
+  for (const entry of value) {
+    const page = crawlPageOf(entry);
+    if (!page) return null;
+    pages.push(page);
+  }
+  return pages;
+}
+
+/** Name a crawl by id, or a saved recipe (its last crawl) by name. */
+export interface CrawlRef {
+  crawlId?: string;
+  recipe?: string;
+}
+
+/** Start a crawl from a plan, or from a saved recipe; `saveAs` keeps the recipe by name. */
+export async function sbCrawlStart(
+  target: SandboxTarget,
+  input: { plan?: unknown; recipe?: string; saveAs?: string; maxPages?: number }
+): Promise<ClientResult<{ crawl: WireCrawl; seeds: number }>> {
+  const called = await callJson('crawls/start', { ...target, ...input });
+  if (!called.ok) return called;
+  const value = called.val;
+  const crawl = isRecord(value) ? crawlOf(value.crawl) : null;
+  if (!isRecord(value) || !crawl) return malformed();
+  return { ok: true, val: { crawl, seeds: numOr0(value.seeds) } };
+}
+
+export async function sbCrawlResume(
+  target: SandboxTarget,
+  input: CrawlRef & { maxPages?: number }
+): Promise<ClientResult<WireCrawl>> {
+  const called = await callJson('crawls/resume', { ...target, ...input });
+  if (!called.ok) return called;
+  const crawl = isRecord(called.val) ? crawlOf(called.val.crawl) : null;
+  return crawl ? { ok: true, val: crawl } : malformed();
+}
+
+export async function sbCrawlStop(
+  target: SandboxTarget,
+  input: CrawlRef
+): Promise<ClientResult<{ stopped: boolean; crawl: WireCrawl }>> {
+  const called = await callJson('crawls/stop', { ...target, ...input });
+  if (!called.ok) return called;
+  const crawl = isRecord(called.val) ? crawlOf(called.val.crawl) : null;
+  if (!isRecord(called.val) || !crawl) return malformed();
+  return { ok: true, val: { stopped: called.val.stopped === true, crawl } };
+}
+
+/** One crawl and its page list (waiting up to `waitMs` for it to finish). */
+export async function sbCrawlStatus(
+  target: SandboxTarget,
+  input: CrawlRef & { waitMs?: number; pageOffset?: number; pageLimit?: number }
+): Promise<ClientResult<{ crawl: WireCrawl; pages: WireCrawlPage[] }>> {
+  const called = await callJson('crawls/status', { ...target, ...input });
+  if (!called.ok) return called;
+  const value = called.val;
+  const crawl = isRecord(value) ? crawlOf(value.crawl) : null;
+  const pages = isRecord(value) ? crawlPagesOf(value.pages) : null;
+  return crawl && pages ? { ok: true, val: { crawl, pages } } : malformed();
+}
+
+/** Recent crawls and saved recipes. */
+export async function sbCrawlList(
+  target: SandboxTarget
+): Promise<ClientResult<{ crawls: WireCrawl[]; recipes: WireSavedCrawlRecipe[] }>> {
+  const called = await callJson('crawls/status', target);
+  if (!called.ok) return called;
+  const value = called.val;
+  if (!isRecord(value) || !Array.isArray(value.crawls) || !Array.isArray(value.recipes)) {
+    return malformed();
+  }
+  const crawls = value.crawls.flatMap((entry) => crawlOf(entry) ?? []);
+  const recipes = value.recipes.flatMap((entry): WireSavedCrawlRecipe[] => {
+    if (!isRecord(entry) || typeof entry.name !== 'string') return [];
+    const recipe = crawlRecipeOf(entry.recipe);
+    return recipe
+      ? [
+          {
+            name: entry.name,
+            recipe,
+            lastCrawlId: typeof entry.lastCrawlId === 'string' ? entry.lastCrawlId : null,
+            updatedAt: str(entry.updatedAt),
+          },
+        ]
+      : [];
+  });
+  return { ok: true, val: { crawls, recipes } };
+}
+
+/** Pages' content: text and tables as rows, by URL or by position. */
+export async function sbCrawlPages(
+  target: SandboxTarget,
+  input: { crawlId: string; urls?: string[]; offset?: number; limit?: number }
+): Promise<ClientResult<{ crawl: WireCrawl; pages: WireCrawlPage[] }>> {
+  const called = await callJson('crawls/pages', { ...target, ...input });
+  if (!called.ok) return called;
+  const value = called.val;
+  const crawl = isRecord(value) ? crawlOf(value.crawl) : null;
+  const pages = isRecord(value) ? crawlPagesOf(value.pages) : null;
+  return crawl && pages ? { ok: true, val: { crawl, pages } } : malformed();
+}

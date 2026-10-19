@@ -92,6 +92,10 @@ import { createSandboxServer, orgMaxFileBytes } from './server';
 import { DockerClient, parseDockerHost } from './docker';
 import { ServiceManager } from './services';
 import { BrowserSessions } from './browser';
+import { assertPublicHttpsUrl } from '@renkei/connector-sandbox';
+import { CRAWL_STALE_MS, Crawler } from './crawler';
+import { createCrawlStore } from './crawl-store';
+import { envSecretsKey } from './env-secrets';
 import { ChartRenderer } from './charts';
 import { SecretVault } from './secret-vault';
 import { createSecretResolver } from './secrets';
@@ -419,6 +423,34 @@ async function main(): Promise<void> {
     state,
   });
 
+  // Crawls run in the background in contexts of the same browser; their
+  // pages are stored sealed, so only with a key. Crawls a stopped worker
+  // left mid-way are released for a resume, and expired ones swept.
+  const crawlKey = envSecretsKey();
+  const crawlStore = crawlKey ? createCrawlStore(dbResult.val, crawlKey, keyDomain) : null;
+  const crawler = crawlStore
+    ? new Crawler({
+        store: crawlStore,
+        openContext: () => browser.newCrawlContext(),
+        guard: async (url) => {
+          await assertPublicHttpsUrl(url);
+        },
+      })
+    : null;
+  if (crawlStore) {
+    const sweepCrawls = async () => {
+      await crawlStore.releaseStale(new Date(Date.now() - CRAWL_STALE_MS));
+      await crawlStore.sweepExpired(new Date());
+    };
+    void sweepCrawls().catch(() => undefined);
+    setInterval(() => void sweepCrawls().catch(() => undefined), 60_000).unref();
+  } else {
+    logger.warn(
+      'web crawls are unavailable (no SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY to seal crawled pages)',
+      { component: 'worker-sandbox/crawler' }
+    );
+  }
+
   // Charts render in a Chromium of their own, launched on the first chart
   // and closed when idle — with no network at all, unlike the browser.
   let charts: ChartRenderer | null = new ChartRenderer();
@@ -436,6 +468,8 @@ async function main(): Promise<void> {
     db: dbResult.val,
     apiKeys,
     browser,
+    crawler,
+    crawlStore,
     vault,
     charts,
     workspaces: commandsPossible,

@@ -547,6 +547,65 @@ model can open — the tool descriptions tell the model never to type a
 credential as text, to use a stored secret, and to ask the person when
 none exists or it is locked.
 
+## Web crawls (`sandbox_browser_crawl`, `sandbox_crawl_*`)
+
+Reading many pages of one site with the browser verbs costs a call per
+page, and for an agent a _staged_ call per page — navigation is an act,
+and stays one, because a page an agent loads can carry what it read out
+in its URL. A crawl keeps that guarantee while making the approval one
+decision instead of dozens: one staged `sandbox_browser_crawl` names a
+**scope**, and the worker reads every page inside it in the background.
+
+**The scope is the approval** (`@renkei/connector-sandbox`, `crawl.ts`):
+one `https` origin; the pages named outright (`urls`, a `template` with
+one `{value}` expanded over `values` — each value URL-encoded into a
+single path segment — and `follow.from` start pages); and a path glob
+(`*` one segment, `**` any depth) a _followed_ link must match. A link
+found on a page is queued only when it is on the origin, matches the
+pattern, and is within `follow.depth` (≤ 3) of a start page. Nothing a
+page says widens that. Every URL also goes through the egress guard
+before it loads, the browser's egress proxy still pins every connection,
+and a page that redirects off the origin is recorded as failed and not
+read. At most 200 pages per crawl.
+
+**Learning.** `inferCrawlPattern` turns two or more example URLs into
+the origin and pattern (segments the examples share are kept, the ones
+that differ become `*`) and, when exactly one segment varies, a template
+over the examples' values. `sandbox_crawl_plan` shows the result — and
+exactly which pages a crawl would read — without fetching anything.
+`saveAs` keeps a crawl's recipe by name per person
+(`sandbox_crawl_recipes`), so a later run or chat re-crawls it
+(`recipe`) or carries a stopped crawl on (`resume`).
+
+**What is kept per page** (`crawl-page-script.ts`, run in the page):
+the text of its `<main>` landmark when it has one (`region: "auto"`) —
+without the header, nav, footer and cookie banner every page repeats —
+and every visible table as its header and rows, with collapsed detail
+rows and icon-font text ("expand_more") dropped. A page whose links are
+followed is first scrolled through a screen at a time, collecting links
+at each step: a long index in a virtual list renders only the rows in
+view (the HL7 segment list shows 16 of 110 without it).
+
+**Running** (`apps/worker-sandbox/src/crawler.ts`). The call returns at
+once with a crawl id; the crawl runs in its own browser context (never
+the caller's interactive session), at most two crawls at a time per
+worker, a page at a time with a short pause between pages. Progress — the
+pages read, the queue left — is written after every page, so a crawl
+that reaches its page budget, is stopped (`sandbox_crawl_stop`), or is
+cut off by a worker restart (released as `stopped` by the sweep) resumes
+exactly where it was. `sandbox_crawl_status` waits up to 45 s for a
+running crawl (inside an agent's 60 s tool-call limit) and lists its
+pages; `sandbox_crawl_read` hands back several pages per call, tables as
+Markdown, bounded by `maxChars` (≤ 30,000) with where to continue.
+
+**Storage** (migration 156): `sandbox_crawls` (the recipe, status, queue
+and counts), `sandbox_crawl_pages` (one row per page; its content sealed
+under a key derived per subject from the worker's sealing key, as
+browser state is — a worker without `SANDBOX_ENV_SECRETS_KEY` /
+`TOKEN_ENCRYPTION_KEY` offers no crawls) and `sandbox_crawl_recipes`.
+Every read is scoped to the caller's subject. Crawls and their pages are
+swept 30 days after they start; recipes stay until replaced.
+
 ## `sandbox_run_python` — a script over the caller's own files
 
 The one thing on this surface that runs code the model wrote, added
@@ -647,6 +706,11 @@ first where it costs nothing to take.
 | `sandbox_browser_back`         | Act  | Browser history back.                                                                                                                                                                                          |
 | `sandbox_browser_screenshot`   | Act  | PNG of the open page, staged as a scratch-space file.                                                                                                                                                          |
 | `sandbox_browser_close`        | Act  | Close the caller's session (pages, cookies, history).                                                                                                                                                          |
+| `sandbox_crawl_plan`           | Read | Check a crawl's scope, or learn it from example URLs, and list the pages it would read; nothing is fetched.                                                                                                    |
+| `sandbox_browser_crawl`        | Act  | Start a background crawl of many pages within one approved scope (or re-crawl a saved recipe, or resume a stopped crawl).                                                                                      |
+| `sandbox_crawl_status`         | Read | A crawl's progress and page list, waiting up to 45 s; with nothing named, recent crawls and saved recipes.                                                                                                     |
+| `sandbox_crawl_read`           | Read | Crawled pages' main text and tables (as Markdown), several per call.                                                                                                                                           |
+| `sandbox_crawl_stop`           | Act  | Stop a crawl after its current page; resumable.                                                                                                                                                                |
 
 `sandbox_render_chart`, the browser tools and `sandbox_run_python` exist
 only for an organization that has turned charts, the browser and scripts

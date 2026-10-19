@@ -76,6 +76,8 @@ import {
   SECRET_ATTRIBUTE,
   type PageWalkResult,
 } from './browser-page-script';
+import { callInPage } from './crawl-page-script';
+import type { CrawlContext, CrawlPage } from './crawler';
 import type { BrowserSnapshotNode } from '@renkei/connector-sandbox';
 import { startEgressProxy, type EgressProxy } from './browser-proxy';
 import { logger } from './logger';
@@ -268,6 +270,8 @@ export class BrowserSessions {
   /** Why each caller's most recent session ended, so the next refusal can say. */
   private readonly lastLoss = new Map<string, SessionLoss>();
   private browser: Browser | null = null;
+  /** Contexts handed to the crawler: the idle sweep keeps the browser while any is open. */
+  private crawlContexts = 0;
   private launching: Promise<Browser> | null = null;
   private proxy: EgressProxy | null = null;
   private readonly sweep: NodeJS.Timeout;
@@ -284,6 +288,43 @@ export class BrowserSessions {
     this.replica = deps.replica ?? randomUUID();
     this.sweep = setInterval(() => void this.sweepIdle(), deps.sweepIntervalMs ?? 60_000);
     this.sweep.unref();
+  }
+
+  /**
+   * A fresh context for a crawl (crawler.ts): no caller's cookies, no
+   * session of anyone's, the same egress proxy and limits as every
+   * session. Closing it is the crawler's; until then the browser stays up.
+   */
+  async newCrawlContext(): Promise<CrawlContext> {
+    const browser = await this.browserInstance();
+    const context = await browser.newContext({
+      viewport: { ...BROWSER_VIEWPORT },
+      acceptDownloads: false,
+      serviceWorkers: 'block',
+      ignoreHTTPSErrors: false,
+    });
+    context.setDefaultTimeout(BROWSER_ACTION_TIMEOUT_MS);
+    context.setDefaultNavigationTimeout(BROWSER_NAVIGATION_TIMEOUT_MS);
+    this.crawlContexts += 1;
+    let open = true;
+    return {
+      newPage: async (): Promise<CrawlPage> => {
+        const page = await context.newPage();
+        return {
+          goto: (url, options) => page.goto(url, options),
+          waitForLoadState: (state, options) => page.waitForLoadState(state, options),
+          url: () => page.url(),
+          call: (source, arg) => callInPage(page, source, arg),
+          close: () => page.close(),
+        };
+      },
+      close: async () => {
+        if (!open) return;
+        open = false;
+        this.crawlContexts -= 1;
+        await context.close().catch(() => undefined);
+      },
+    };
   }
 
   /** How many callers currently hold an open browser context. */
@@ -459,7 +500,7 @@ export class BrowserSessions {
     }
     // Saved sessions outlive an idle close on purpose; only their own TTL ends them.
     await this.stateStore?.sweep(this.now()).catch(() => 0);
-    if (this.sessions.size === 0 && this.browser && !this.launching) {
+    if (this.sessions.size === 0 && this.crawlContexts === 0 && this.browser && !this.launching) {
       const browser = this.browser;
       this.browser = null;
       await browser.close().catch(() => {});
