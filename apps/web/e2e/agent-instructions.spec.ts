@@ -176,6 +176,7 @@ test('builder: draft, pick tools, save, and read it back', async ({ page }, test
             instructions: DRAFTED_INSTRUCTIONS,
             tools: ['jira_search_issues'],
             questions: ['Which projects should it look at?'],
+            canAskQuestions: true,
             notes: ['Left out “slack_post”: it is not one of your tools.'],
           },
         },
@@ -203,6 +204,8 @@ test('builder: draft, pick tools, save, and read it back', async ({ page }, test
   await expect(page.getByText('Which projects should it look at?')).toBeVisible();
   await expect(page.getByText('Left out “slack_post”', { exact: false })).toBeVisible();
   expect(draftRequest).toMatchObject({ current: null, suggestTriggers: true });
+  // The drafted instructions ask the owner something, so the draft turns the option on.
+  await expect(page.getByLabel('Can ask me questions')).toBeChecked();
 
   // The drafted tool is selected; add a second by hand from the picker.
   const tools = page.getByRole('region', { name: 'Tools' });
@@ -223,14 +226,20 @@ test('builder: draft, pick tools, save, and read it back', async ({ page }, test
   await expect(page.getByRole('region', { name: 'Tools' }).locator('li')).toHaveCount(2);
 
   const saved = await withDb((client) =>
-    client.query<{ instructions: string; tools: string[]; auto_accept_actions: boolean }>(
-      `SELECT instructions, tools, auto_accept_actions FROM agents WHERE id = $1`,
+    client.query<{
+      instructions: string;
+      tools: string[];
+      auto_accept_actions: boolean;
+      can_ask_questions: boolean;
+    }>(
+      `SELECT instructions, tools, auto_accept_actions, can_ask_questions FROM agents WHERE id = $1`,
       [agentId]
     )
   );
   expect(saved.rows[0]?.instructions).toBe(DRAFTED_INSTRUCTIONS);
   expect(saved.rows[0]?.tools).toEqual(['jira_search_issues', 'jira_get_issue']);
   expect(saved.rows[0]?.auto_accept_actions).toBe(false);
+  expect(saved.rows[0]?.can_ask_questions).toBe(true);
   await shot(page, testInfo, '03-saved-overview');
 
   // Phone width: the edit page stacks, nothing scrolls sideways.

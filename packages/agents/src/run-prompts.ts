@@ -295,12 +295,111 @@ export const ASK_PERSON_DEF: PromptToolDef = {
   },
 };
 
+export const SPAWN_AGENT_TOOL = 'spawn_agent';
+
+/** The most tool calls one sub-agent may make, whatever the parent has left. */
+export const MAX_SUB_AGENT_TOOL_CALLS = 30;
+/** Sub-agents running at once for one run; more in a turn wait their turn. */
+export const MAX_CONCURRENT_SUB_AGENTS = 3;
+/** Sub-agents one run may start in all. */
+export const MAX_SUB_AGENTS_PER_RUN = 10;
+/** The most model turns one sub-agent may take. */
+export const MAX_SUB_AGENT_TURNS = 15;
+/** The longest report a sub-agent hands back to its parent. */
+export const SUB_AGENT_REPORT_CHARS = TOOL_RESULT_CHARS;
+
+/**
+ * Hand a self-contained piece of READ work to a sub-agent: a fresh, short
+ * conversation with some of your read tools that returns one report. Its
+ * tool calls count against YOUR budget and its model time against your
+ * clock; it cannot change anything, ask the owner, or spawn further
+ * agents. What it reads stays out of your context — only its report comes
+ * back — which is the point.
+ */
+export const SPAWN_AGENT_DEF: PromptToolDef = {
+  name: SPAWN_AGENT_TOOL,
+  description:
+    'Start a read-only sub-agent for a self-contained piece of research or checking, and get ' +
+    'back its written report. Use it when a part of the goal needs many reads (many issues, ' +
+    'notes or messages to go through) whose raw results you do not need to see — the sub-agent ' +
+    'reads them in its own context and returns only what matters, keeping yours small. It has ' +
+    'only the read tools you name, cannot change anything, ask the owner or spawn further ' +
+    'agents, and knows nothing you do not put in "task". Its tool calls count against your ' +
+    'budget. Give it a precise task and say what the report must contain, with quotes and ' +
+    'identifiers you will need. Several calls in one reply run in parallel (three at a time); a ' +
+    `run may start at most ${MAX_SUB_AGENTS_PER_RUN} in all. The spawn itself is not a tool ` +
+    `call; each read the sub-agent makes is, taken from your budget as it is made (at most ${MAX_SUB_AGENT_TOOL_CALLS} per sub-agent). Do not use it for a single lookup you can make yourself.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      task: {
+        type: 'string',
+        description:
+          'What to find out, and exactly what the report must contain. Self-contained: the sub-agent sees nothing else of this run.',
+      },
+      tools: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Names of your read tools the sub-agent may use. Omit for all of them; name only the ones it needs to keep it focused.',
+      },
+      maxToolCalls: {
+        type: 'number',
+        description: `Cap on its tool calls (at most ${MAX_SUB_AGENT_TOOL_CALLS}); the run's own budget may stop it sooner.`,
+      },
+    },
+    required: ['task'],
+  },
+};
+
+export interface SpawnArgs {
+  task: string;
+  tools: string[] | null;
+  maxToolCalls: number | null;
+}
+
+/** A `spawn_agent` call's arguments, or null when it holds no task. */
+export function spawnArgsOf(input: unknown): SpawnArgs | null {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return null;
+  const record: { task?: unknown; tools?: unknown; maxToolCalls?: unknown } = input;
+  const task = typeof record.task === 'string' ? record.task.trim() : '';
+  if (!task) return null;
+  const tools = Array.isArray(record.tools)
+    ? record.tools.filter((tool): tool is string => typeof tool === 'string')
+    : null;
+  const maxToolCalls =
+    typeof record.maxToolCalls === 'number' && record.maxToolCalls >= 1
+      ? Math.floor(record.maxToolCalls)
+      : null;
+  return { task, tools, maxToolCalls };
+}
+
+/** The system prompt a sub-agent works under. */
+export function subAgentSystemPrompt(input: {
+  toolCalls: number;
+  /** user.name, user.email, today, now, weekday — the same facts the parent's opening states. */
+  facts: Record<string, string>;
+}): string {
+  const facts = Object.entries(input.facts)
+    .map(([name, value]) => `- ${name}: ${value}`)
+    .join('\n');
+  return [
+    'You are a sub-agent working for another agent, on one task it gave you. Do the task with the tools you have, then reply with your report as plain text and no further tool call.',
+    ...(facts ? [`Facts:\n${facts}`] : []),
+    `You may make at most ${input.toolCalls} tool calls, and the run you are part of has a budget of its own that may run out first; use as few as the task needs, and do not repeat a call whose result you already have. When you are told to stop, make no further call and report what you have. resolve_time is free and does not count: use it for any date, time or weekday rather than working one out.`,
+    'You can only read: you cannot change anything, ask a person, or start other agents.',
+    'Your report is all the other agent will see. Make it complete and compact: the facts the task asked for, each with a short verbatim quote and the identifier (issue key, note title, message time) it came from; say plainly what you could not find or could not read.',
+    UNTRUSTED_RULE,
+  ].join('\n\n');
+}
+
 /** The platform's own tools — answered by the engine, never by the gateway, never billed. */
 export const BUILTIN_TOOL_NAMES: readonly string[] = [
   FINISH_RUN_TOOL,
   REMEMBER_TOOL,
   RESOLVE_TIME_TOOL,
   ASK_PERSON_TOOL,
+  SPAWN_AGENT_TOOL,
 ];
 
 /** The run's limits as the model is told them. */
@@ -317,6 +416,7 @@ export function runFrame(limits: RunLimits, options: { canAsk: boolean }): strin
     'You are an autonomous agent working for the person who owns you, under their account and permissions. Your instructions below say what to achieve; how to get there is your judgment.',
     'Work toward the goal with the tools you have: look things up, check what you find, and when a call fails or a result is not what you need, try a different way — you may retry as you see fit.',
     `You have hard limits for this run: ${limits.toolCalls} tool calls and ${limits.minutes} minutes of active time. The time you spend waiting on a person is not counted. You are told what is left as you go. These are ceilings, not targets: finish as soon as the goal is met, and do not spend calls double-checking what you already know. If the limits run out the run ends unfinished.`,
+    'For a large, self-contained read job — many issues, notes or messages to go through — you may hand it to a sub-agent with spawn_agent and work from its report; do this when it keeps your own context small or lets the goal be reached with fewer calls, not for a single lookup.',
     'You cannot change anything directly. Reading is yours; every change — creating, updating, sending, deleting — is proposed with stage_actions, accepted (by the owner, or automatically where they allow it), and carried out for you, after which you see each outcome. Stage complete, ready-to-run actions; group what belongs together into one batch.',
     options.canAsk
       ? 'When you need something only the owner knows, ask with ask_person rather than guessing. Do not ask what you can find out yourself.'

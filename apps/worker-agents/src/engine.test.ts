@@ -639,6 +639,131 @@ maybe('agent run engine', () => {
     }
   });
 
+  it('hands read work to a sub-agent: its calls are billed to the parent, only its report returns', async () => {
+    const { runId } = await seedRun();
+    const isSub = (request: LlmRequest) => request.system.startsWith('You are a sub-agent');
+    const llm = stubLlm((request, n) => {
+      if (isSub(request)) {
+        const tools = request.tools?.map((tool) => tool.name) ?? [];
+        // A sub-agent can read, use the free clock, and nothing else.
+        expect(tools).toEqual(['resolve_time', 'jira_search_issues']);
+        expect(request.system).toMatch(/Facts:\n[\s\S]*- today: \d{4}-\d{2}-\d{2}/);
+        return request.messages.length === 1
+          ? call('jira_search_issues', { jql: 'project = PROJ' })
+          : {
+              content: [{ type: 'text', text: 'PROJ-42 is broken: "blocked on vendor"' }],
+              stopReason: 'end_turn',
+              usage: { inputTokens: 10, outputTokens: 5 },
+            };
+      }
+      return n === 0
+        ? call('spawn_agent', { task: 'Find what blocks PROJ-42', tools: ['jira_search_issues'] })
+        : finish('done');
+    });
+    const h = harness(llm);
+    await h.handler({ payload: { runId } });
+
+    expect((await runOf(runId)).status).toBe('succeeded');
+    expect(h.calls.map((entry) => entry.name)).toEqual(['jira_search_issues']);
+    expect(llm.requests[0].tools?.map((tool) => tool.name)).toContain('spawn_agent');
+    const parentBack = llm.requests.filter((request) => !isSub(request))[1];
+    const report = resultFor(parentBack, lastToolUseId(parentBack));
+    expect(report).toContain('blocked on vendor');
+    expect(report).toContain('counted against your budget');
+    // The sub-agent's read is billed to the parent's turn, so the budget sees it.
+    const turns = await turnsOf(runId);
+    expect(turns[0].tool_call_count).toBe(1);
+  });
+
+  it('runs sub-agents in parallel, three at a time, and no more than ten in a run', async () => {
+    const { runId } = await seedRun();
+    const isSub = (request: LlmRequest) => request.system.startsWith('You are a sub-agent');
+    const spawnAll = (count: number): LlmResponse => ({
+      content: Array.from({ length: count }, (_, i) => ({
+        type: 'tool_use' as const,
+        id: `sp_${(toolUseSeq += 1)}`,
+        name: 'spawn_agent',
+        input: { task: `job ${i}` },
+      })),
+      stopReason: 'tool_use',
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+    let parentTurns = 0;
+    const llm = stubLlm((request) => {
+      if (isSub(request)) {
+        return request.messages.length === 1
+          ? call('jira_search_issues', {})
+          : {
+              content: [{ type: 'text', text: 'report' }],
+              stopReason: 'end_turn',
+              usage: { inputTokens: 1, outputTokens: 1 },
+            };
+      }
+      parentTurns += 1;
+      return parentTurns === 1 ? spawnAll(8) : parentTurns === 2 ? spawnAll(4) : finish('done');
+    });
+    let running = 0;
+    let peak = 0;
+    const h = harness(llm, async () => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      running -= 1;
+      return text('ok');
+    });
+    await h.handler({ payload: { runId } });
+
+    expect((await runOf(runId)).status).toBe('succeeded');
+    expect(peak).toBe(3);
+    // 8 + 4 asked for; the tenth is the last one started, the other two are refused.
+    expect(h.calls).toHaveLength(10);
+    const parentRequests = llm.requests.filter((request) => !isSub(request));
+    const lastBlocks = parentRequests[2].messages[parentRequests[2].messages.length - 1].content;
+    const refused = lastBlocks.filter(
+      (block) => block.type === 'tool_result' && block.content.includes('At most 10 sub-agents')
+    );
+    expect(refused).toHaveLength(2);
+  });
+
+  it('stops a sub-agent at the run’s budget and takes its report, with the budget deducted at use', async () => {
+    await setOrgSettings({ agentRunToolCallBudget: 2 });
+    try {
+      const { runId } = await seedRun();
+      const isSub = (request: LlmRequest) => request.system.startsWith('You are a sub-agent');
+      let subTurns = 0;
+      const llm = stubLlm((request, n) => {
+        if (isSub(request)) {
+          subTurns += 1;
+          // Keeps asking for reads; once told to stop, the call has no tools.
+          if (request.tools?.length === 0) {
+            return {
+              content: [{ type: 'text', text: 'Got two; the third was not made.' }],
+              stopReason: 'end_turn',
+              usage: { inputTokens: 1, outputTokens: 1 },
+            };
+          }
+          return call('jira_search_issues', { page: subTurns });
+        }
+        if (request.toolChoice && typeof request.toolChoice === 'object') return finish('done');
+        return n === 0 ? call('spawn_agent', { task: 'read three pages' }) : finish('done');
+      });
+      const h = harness(llm);
+      await h.handler({ payload: { runId } });
+      // Two reads fit the budget; the third was refused and the sub-agent reported.
+      expect(h.calls).toHaveLength(2);
+      const parentBack = llm.requests.filter((request) => !isSub(request))[1];
+      const report = resultFor(parentBack, lastToolUseId(parentBack));
+      expect(report).toContain('Sub-agent made 2 tool calls');
+      expect(report).toContain('third was not made');
+      const subRequests = llm.requests.filter(isSub);
+      const stopNote = subRequests[subRequests.length - 1].messages.at(-1)?.content.at(-1);
+      expect(stopNote?.type === 'text' && stopNote.text).toContain("the run's tool budget is spent");
+      expect((await runOf(runId)).status).toBe('succeeded');
+    } finally {
+      await setOrgSettings({ agentRunToolCallBudget: 150 });
+    }
+  });
+
   it('ends a run that uses up its active time', async () => {
     await setOrgSettings({ agentRunTimeoutMinutes: 1 });
     try {

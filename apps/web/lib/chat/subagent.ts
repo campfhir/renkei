@@ -46,6 +46,8 @@ import { errorResult, textResult, type LocalToolContext } from './local-tools';
 import { friendlyLlmError, textOfResult } from './turn-runner';
 
 const RESULT_MAX_CHARS = 30_000;
+/** Time left on the wall clock at which the next step is the wrap-up. */
+const WRAP_UP_HEADROOM_MS = 60_000;
 const REPORT_MAX_CHARS = 20_000;
 export const SUBAGENT_TASK_MAX_CHARS = 20_000;
 export const SUBAGENT_INSTRUCTIONS_MAX_CHARS = 20_000;
@@ -314,8 +316,11 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
     return status === 'completed' ? textResult(outcome) : errorResult(outcome);
   };
 
+  // The last step is the report: no tools are offered, so the model can
+  // only answer — told so on the step before, as the results come back.
+  let wrapUp = false;
   const callModel = () => {
-    const defs = tools.defs();
+    const defs = wrapUp ? [] : tools.defs();
     return streamOrComplete(
       llm.provider,
       {
@@ -383,7 +388,7 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
     const uses = reply.content.filter(
       (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> => block.type === 'tool_use'
     );
-    if (reply.stopReason !== 'tool_use' || uses.length === 0) {
+    if (reply.stopReason !== 'tool_use' || uses.length === 0 || wrapUp) {
       if (recorder && runId) {
         await recorder.progress(runId, {
           steps: step,
@@ -426,6 +431,13 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
         ).text,
         ...(outcome.isError ? { isError: true } : {}),
         durationMs: Date.now() - toolStartedAt,
+      });
+    }
+    if (step === run.maxSteps - 1 || Date.now() + WRAP_UP_HEADROOM_MS > deadline) {
+      wrapUp = true;
+      results.push({
+        type: 'text',
+        text: 'Stop here: your steps are spent and no further tool call will be made. Reply now with your report, as plain text, from what you have — including what you did not get to.',
       });
     }
     messages.push({ role: 'user', content: results });
