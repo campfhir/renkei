@@ -1,4 +1,5 @@
 import {
+  spawnArgsOf,
   budgetLine,
   buildRunOpening,
   buildStageActionsDef,
@@ -93,5 +94,18 @@ describe('budget and resume lines', () => {
     expect(resumeMessage({ failure: 'timeout', guidance: 'Use project OPS' })).toContain(
       'binding for how you continue: Use project OPS'
     );
+  });
+});
+
+describe('spawnArgsOf', () => {
+  it('needs a task, and reads the optional tool list and call cap', () => {
+    expect(spawnArgsOf({})).toBeNull();
+    expect(spawnArgsOf({ task: '  ' })).toBeNull();
+    expect(spawnArgsOf({ task: ' read it ', tools: ['a', 1], maxToolCalls: 4.7 })).toEqual({
+      task: 'read it',
+      tools: ['a'],
+      maxToolCalls: 4,
+    });
+    expect(spawnArgsOf({ task: 't' })).toEqual({ task: 't', tools: null, maxToolCalls: null });
   });
 });

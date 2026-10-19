@@ -639,6 +639,41 @@ maybe('agent run engine', () => {
     }
   });
 
+  it('hands read work to a sub-agent: its calls are billed to the parent, only its report returns', async () => {
+    const { runId } = await seedRun();
+    const isSub = (request: LlmRequest) => request.system.startsWith('You are a sub-agent');
+    const llm = stubLlm((request, n) => {
+      if (isSub(request)) {
+        const tools = request.tools?.map((tool) => tool.name) ?? [];
+        // A sub-agent can read, and nothing else.
+        expect(tools).toEqual(['jira_search_issues']);
+        return request.messages.length === 1
+          ? call('jira_search_issues', { jql: 'project = PROJ' })
+          : {
+              content: [{ type: 'text', text: 'PROJ-42 is broken: "blocked on vendor"' }],
+              stopReason: 'end_turn',
+              usage: { inputTokens: 10, outputTokens: 5 },
+            };
+      }
+      return n === 0
+        ? call('spawn_agent', { task: 'Find what blocks PROJ-42', tools: ['jira_search_issues'] })
+        : finish('done');
+    });
+    const h = harness(llm);
+    await h.handler({ payload: { runId } });
+
+    expect((await runOf(runId)).status).toBe('succeeded');
+    expect(h.calls.map((entry) => entry.name)).toEqual(['jira_search_issues']);
+    expect(llm.requests[0].tools?.map((tool) => tool.name)).toContain('spawn_agent');
+    const parentBack = llm.requests.filter((request) => !isSub(request))[1];
+    const report = resultFor(parentBack, lastToolUseId(parentBack));
+    expect(report).toContain('blocked on vendor');
+    expect(report).toContain('counted against your budget');
+    // The sub-agent's read is billed to the parent's turn, so the budget sees it.
+    const turns = await turnsOf(runId);
+    expect(turns[0].tool_call_count).toBe(1);
+  });
+
   it('ends a run that uses up its active time', async () => {
     await setOrgSettings({ agentRunTimeoutMinutes: 1 });
     try {

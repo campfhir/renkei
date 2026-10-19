@@ -73,6 +73,11 @@ import {
   FINISH_RUN_TOOL,
   REMEMBER_DEF,
   REMEMBER_TOOL,
+  MAX_SUB_AGENT_TOOL_CALLS,
+  MAX_SUB_AGENT_TURNS,
+  SPAWN_AGENT_DEF,
+  SPAWN_AGENT_TOOL,
+  SUB_AGENT_REPORT_CHARS,
   RESOLVE_TIME_DEF,
   RESOLVE_TIME_TOOL,
   RUN_RESULT_CHARS,
@@ -83,6 +88,8 @@ import {
   buildStageActionsDef,
   resumeMessage,
   runSystemPrompt,
+  spawnArgsOf,
+  subAgentSystemPrompt,
   untrustedBlock,
   type RunLimits,
 } from '@renkei/agents/run-prompts';
@@ -859,6 +866,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
         REMEMBER_DEF,
         RESOLVE_TIME_DEF,
         ...(canAsk ? [ASK_PERSON_DEF] : []),
+        // Only worth offering when there is something to read.
+        ...(callable.size > 0 ? [SPAWN_AGENT_DEF] : []),
         ...[...callable.values()].map((tool) => ({
           name: tool.name,
           description: tool.description,
@@ -1455,6 +1464,53 @@ export function createAgentRunHandler(deps: EngineDeps) {
           return 'paused';
         }
 
+        if (use.name === SPAWN_AGENT_TOOL && this.input.callable.size > 0) {
+          const spawn = spawnArgsOf(use.input);
+          if (!spawn) {
+            await reply({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: 'spawn_agent needs {task}, a non-empty description of the job.',
+              isError: true,
+            });
+            continue;
+          }
+          const left = this.budgetLeft(turns).toolCalls;
+          if (left <= 0) {
+            await reply({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content:
+                'Tool budget spent — the sub-agent was not started. Call finish_run now with what you have.',
+              isError: true,
+            });
+            continue;
+          }
+          await this.checkpoint();
+          row.detail.inFlight = use.id;
+          await this.writeTurn(row, 'running');
+          const sub = await this.runSubAgent(row, toolCalls, spawn, left);
+          await reply(
+            {
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: untrustedBlock('sub-agent', sub.report),
+              ...(sub.isError ? { isError: true } : {}),
+            },
+            {
+              tool: SPAWN_AGENT_TOOL,
+              argsPreview: clip(JSON.stringify({ task: clip(spawn.task, 300) }), PREVIEW_CHARS),
+              resultPreview: clip(sub.report, PREVIEW_CHARS),
+              resultChars: sub.report.length,
+              isError: sub.isError,
+              durationMs: sub.durationMs,
+              kind: 'read',
+              free: true,
+            }
+          );
+          continue;
+        }
+
         const info = this.input.callable.get(use.name);
         if (!info) {
           const content = this.input.stageable.has(use.name)
@@ -1597,6 +1653,124 @@ export function createAgentRunHandler(deps: EngineDeps) {
           (block) => block.dataBase64.length <= ATTACHMENT_MAX_BASE64_CHARS
         ),
       };
+    }
+
+    /**
+     * A read-only sub-agent: its own short conversation over some of the
+     * parent's read tools, ending in one written report. Its tool calls are
+     * billed to the parent's turn row (so the budget counts them) and logged
+     * on it; its model calls ride the parent's usage. It has no stage,
+     * ask or spawn tools, so it cannot change anything or recurse.
+     */
+    private async runSubAgent(
+      row: TurnRow,
+      toolCalls: ToolCallRecord[],
+      spawn: NonNullable<ReturnType<typeof spawnArgsOf>>,
+      parentLeft: number
+    ): Promise<{ report: string; isError: boolean; durationMs: number }> {
+      const { callable, llm } = this.input;
+      const startedAt = now();
+      const requested = spawn.tools ?? [...callable.keys()];
+      const names = requested.filter((name) => callable.has(name));
+      const unknown = requested.filter((name) => !callable.has(name));
+      const notes = unknown.length > 0 ? [`Not read tools of yours, left out: ${unknown.join(', ')}.`] : [];
+      if (names.length === 0) {
+        return {
+          report: `No usable tools: name some of your read tools. ${notes.join(' ')}`.trim(),
+          isError: true,
+          durationMs: now() - startedAt,
+        };
+      }
+      const cap = Math.max(
+        1,
+        Math.min(MAX_SUB_AGENT_TOOL_CALLS, spawn.maxToolCalls ?? MAX_SUB_AGENT_TOOL_CALLS, parentLeft)
+      );
+      const defs: LlmToolDef[] = names.map((name) => {
+        const tool = callable.get(name)!;
+        return { name, description: tool.description, inputSchema: tool.inputSchema };
+      });
+      const allowed = new Set(names);
+      const system = subAgentSystemPrompt({ toolCalls: cap });
+      const messages: LlmMessage[] = [{ role: 'user', content: [{ type: 'text', text: spawn.task }] }];
+      let calls = 0;
+      let report = '';
+      let isError = false;
+      let wrapUp = false;
+
+      for (let turn = 1; turn <= MAX_SUB_AGENT_TURNS; turn += 1) {
+        await this.checkpoint();
+        const turnStartedAt = now();
+        const completion = await llm.provider.complete({
+          system,
+          messages: fitTranscript(messages),
+          tools: defs,
+          toolChoice: 'auto',
+          promptCache: true,
+          maxTokens: llm.maxOutputTokens,
+          ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
+        });
+        if (!completion.ok) {
+          report = `The sub-agent's model call failed (${completion.err.type}${completion.err.message ? `: ${clip(completion.err.message, 200)}` : ''}).`;
+          isError = true;
+          break;
+        }
+        const usage = emptyUsage();
+        addUsage(usage, completion.val.usage);
+        addUsage((row.detail.usage ??= emptyUsage()), completion.val.usage);
+        await recordUsage(this.runRow, usage, llm, now() - turnStartedAt);
+
+        const content = completion.val.content;
+        const text = content
+          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+          .join('\n')
+          .trim();
+        const uses = toolUsesOf(content);
+        if (uses.length === 0 || wrapUp) {
+          report = text;
+          break;
+        }
+        messages.push({ role: 'assistant', content });
+        const results: ToolResultBlock[] = [];
+        for (const use of uses) {
+          if (!allowed.has(use.name) || calls >= cap) {
+            results.push({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: allowed.has(use.name)
+                ? 'Tool budget spent — this call was not made. Reply with your report now.'
+                : `The tool "${use.name}" is not available to you.`,
+              isError: true,
+            });
+            continue;
+          }
+          calls += 1;
+          row.tool_call_count += 1;
+          const outcome = await this.callTool(use);
+          toolCalls.push(outcome.record);
+          results.push(outcome.result);
+        }
+        const outOfRoad = calls >= cap || turn === MAX_SUB_AGENT_TURNS - 1;
+        const blocks: LlmContentBlock[] = [...results];
+        if (outOfRoad) {
+          wrapUp = true;
+          blocks.push({
+            type: 'text',
+            text: 'You are out of tool calls or turns. Reply now with your report, as plain text, from what you have.',
+          });
+        }
+        messages.push({ role: 'user', content: blocks });
+      }
+
+      if (!report) {
+        report = 'The sub-agent ended without a report.';
+        isError = true;
+      }
+      report = [
+        ...notes,
+        `(Sub-agent made ${calls} tool call${calls === 1 ? '' : 's'}, counted against your budget.)`,
+        clip(report, SUB_AGENT_REPORT_CHARS),
+      ].join('\n');
+      return { report, isError, durationMs: now() - startedAt };
     }
 
     private async remember(input: unknown): Promise<{ text: string; isError: boolean }> {
