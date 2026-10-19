@@ -81,7 +81,8 @@ export function registerResolveDateTool(server: McpServer, _context: MCPToolCont
           .min(1)
           .describe(
             'IANA zone the times are read and written in, e.g. "America/Los_Angeles", "UTC" ' +
-              '— use the zone the request is phrased in, not your own.'
+              "— the person's own timezone when you were given it, or the zone the request " +
+              'is phrased in; not your own.'
           ),
         amount: z
           .number()

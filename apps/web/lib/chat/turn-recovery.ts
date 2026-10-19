@@ -283,6 +283,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     thinkingBudget: turn.thinkingBudget,
     settings: settingsResult.ok ? settingsResult.val : null,
     voice: turn.runner?.voice === true,
+    timeZone: turn.runner?.timeZone ?? null,
     resume: { seed },
   });
 }
