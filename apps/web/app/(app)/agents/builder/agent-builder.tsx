@@ -249,6 +249,8 @@ export function AgentBuilder({
     if (!guardrails.trim() && typeof data.guardrails === 'string') {
       setGuardrails(data.guardrails);
     }
+    // Drafting only ever turns questions on: the instructions ask the owner something.
+    if (data.canAskQuestions === true) setCanAskQuestions(true);
     if (!name.trim() && typeof data.name === 'string' && data.name) setName(data.name);
     if (triggers.length === 0 && Array.isArray(data.triggers)) {
       // A drafted schedule with no stated timezone means "the prose never

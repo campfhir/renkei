@@ -89,6 +89,12 @@ export interface DraftedAgent {
    * send") — proposed only when the agent has no guardrails yet.
    */
   guardrails?: string;
+  /**
+   * True when the instructions have the agent ask the owner something
+   * mid-run, which only works with the agent's `canAskQuestions` on. The
+   * builder turns the option on; it never turns it off.
+   */
+  canAskQuestions?: boolean;
   /** What was dropped or corrected on the way in, for the builder to show. */
   notes?: string[];
 }
@@ -177,7 +183,8 @@ export function draftSystemPrompt(input: {
     '{',
     '  "name": string — a short agent name, at most 60 characters,',
     '  "instructions": string — the Markdown instructions described above,',
-    '  "tools": array of tool names from the list above,',
+    '  "tools": array of tool names from the list above — every tool your instructions name must be in it,',
+    '  "canAskQuestions": OPTIONAL boolean — true ONLY when the instructions have the agent ask the owner something mid-run (it then gets an ask_person tool); omit it otherwise,',
     `  "questions": OPTIONAL array of at most ${MAX_QUESTIONS} short questions for the person — ONLY for what the description leaves out that you must not guess,`,
     ...(input.offerGuardrails
       ? [
@@ -251,6 +258,7 @@ export function parseDraftReply(
     questions?: unknown;
     guardrails?: unknown;
     triggers?: unknown;
+    canAskQuestions?: unknown;
   } = parsed;
 
   const instructions = typeof reply.instructions === 'string' ? reply.instructions.trim() : '';
@@ -289,6 +297,23 @@ export function parseDraftReply(
     tools.splice(MAX_AGENT_TOOLS);
   }
 
+  // The instructions and the tool list must agree: a tool the text relies
+  // on but the list omits is a tool the agent will not have at run time.
+  const unlisted = [...context.validTools].filter(
+    (name) => !tools.includes(name) && new RegExp(`(?<![\\w-])${name}(?![\\w-])`).test(instructions)
+  );
+  if (unlisted.length > 0) {
+    softProblems.push(
+      `The instructions name ${unlisted.map((name) => `"${name}"`).join(', ')} but "tools" does not list ${unlisted.length === 1 ? 'it' : 'them'} — add ${unlisted.length === 1 ? 'it' : 'them'} to "tools" or stop relying on ${unlisted.length === 1 ? 'it' : 'them'}.`
+    );
+  }
+  const canAskQuestions = reply.canAskQuestions === true;
+  if (!canAskQuestions && /\bask_person\b/.test(instructions)) {
+    softProblems.push(
+      'The instructions use ask_person, which exists only with "canAskQuestions": true — set it, or remove the ask.'
+    );
+  }
+
   const questions = Array.isArray(reply.questions)
     ? reply.questions
         .filter((question): question is string => typeof question === 'string')
@@ -321,6 +346,7 @@ export function parseDraftReply(
       ...(triggers ? { triggers } : {}),
       ...(questions.length > 0 ? { questions } : {}),
       ...(guardrails ? { guardrails } : {}),
+      ...(canAskQuestions ? { canAskQuestions } : {}),
       ...(notes.length > 0 ? { notes } : {}),
     },
     softProblems,
