@@ -418,11 +418,16 @@ maybe('agent run engine', () => {
           ],
         });
       }
-      expect(resultFor(request, lastToolUseId(request))).toContain('accepted by the owner');
+      const report = resultFor(request, lastToolUseId(request));
+      expect(report).toContain('accepted by the owner');
+      // A staged call's result reaches the agent whole, like a direct read's:
+      // cut at 4 000 it once ended a segment page at its fifth field.
+      expect(report).toContain('Last field: AIG.14');
       return finish('done');
     });
+    const longReply = `${'AIG.n field row. '.repeat(500)}Last field: AIG.14`;
     const h = harness(llm, (name) =>
-      text(name === 'jira_create_issue' ? 'Created PROJ-43' : 'Commented')
+      text(name === 'jira_create_issue' ? 'Created PROJ-43' : longReply)
     );
 
     h.clock.now += 1_000;

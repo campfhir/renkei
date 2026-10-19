@@ -51,7 +51,9 @@ export {
   type QuestionFieldType,
 } from './question-field';
 export {
+  ACTION_REPORT_CHARS,
   ACTION_RESULT_CHARS,
+  clipActionResult,
   MAX_ACTION_REASON_CHARS,
   MAX_BATCH_SUMMARY_CHARS,
   MAX_STAGED_ACTIONS,

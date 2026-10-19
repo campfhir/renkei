@@ -1,6 +1,9 @@
 import {
+  ACTION_REPORT_CHARS,
+  ACTION_RESULT_CHARS,
   MAX_STAGED_ACTIONS,
   batchReportForAgent,
+  clipActionResult,
   parseStagedActions,
   parseStoredActions,
   parseStoredResults,
@@ -134,6 +137,45 @@ describe('batchReportForAgent', () => {
     });
     expect(report).toContain('<untrusted source="tool:jira_create_issue">');
     expect(report).toContain('Their comment: Looks right');
+  });
+
+  it('hands back a page-sized result whole', () => {
+    const page = `${'AIG.n row. '.repeat(800)}AIG.14 Filler Status Code`;
+    expect(clipActionResult(page, ACTION_RESULT_CHARS)).toBe(page);
+    const report = batchReportForAgent({
+      status: 'completed',
+      actions: actions.slice(0, 1),
+      results: [{ tool: 'jira_create_issue', outcome: 'succeeded', text: page, durationMs: 5 }],
+      acceptedBy: 'auto',
+      comment: null,
+    });
+    expect(report).toContain('AIG.14 Filler Status Code');
+    expect(report).not.toContain('truncated');
+  });
+
+  it('shares the report budget across a batch too big to return whole, and says so', () => {
+    const many = Array.from({ length: 5 }, (_, index) => ({
+      tool: 'jira_add_comment',
+      args: {},
+      reason: `r${index}`,
+    }));
+    const full = 'x'.repeat(ACTION_RESULT_CHARS);
+    const report = batchReportForAgent({
+      status: 'completed',
+      actions: many,
+      results: many.map((action) => ({
+        tool: action.tool,
+        outcome: 'succeeded' as const,
+        text: full,
+        durationMs: 1,
+      })),
+      acceptedBy: 'auto',
+      comment: null,
+    });
+    const share = Math.floor(ACTION_REPORT_CHARS / 5);
+    expect(report.match(/truncated by the action executor/g)).toHaveLength(5);
+    expect(report).toContain(`${ACTION_RESULT_CHARS - share} more characters were not kept`);
+    expect(report.length).toBeLessThan(ACTION_REPORT_CHARS + 5_000);
   });
 
   it('says plainly when nothing ran', () => {
