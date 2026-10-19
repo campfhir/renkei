@@ -299,6 +299,10 @@ export const SPAWN_AGENT_TOOL = 'spawn_agent';
 
 /** The most tool calls one sub-agent may make, whatever the parent has left. */
 export const MAX_SUB_AGENT_TOOL_CALLS = 30;
+/** Sub-agents running at once for one run; more in a turn wait their turn. */
+export const MAX_CONCURRENT_SUB_AGENTS = 3;
+/** Sub-agents one run may start in all. */
+export const MAX_SUB_AGENTS_PER_RUN = 10;
 /** The most model turns one sub-agent may take. */
 export const MAX_SUB_AGENT_TURNS = 15;
 /** The longest report a sub-agent hands back to its parent. */
@@ -322,8 +326,9 @@ export const SPAWN_AGENT_DEF: PromptToolDef = {
     'only the read tools you name, cannot change anything, ask the owner or spawn further ' +
     'agents, and knows nothing you do not put in "task". Its tool calls count against your ' +
     'budget. Give it a precise task and say what the report must contain, with quotes and ' +
-    'identifiers you will need. You may call this several times; do not use it for a single ' +
-    'lookup you can make yourself.',
+    'identifiers you will need. Several calls in one reply run in parallel (three at a time); a ' +
+    `run may start at most ${MAX_SUB_AGENTS_PER_RUN} in all, and the spawn itself is not a tool ` +
+    'call. Do not use it for a single lookup you can make yourself.',
   inputSchema: {
     type: 'object',
     properties: {

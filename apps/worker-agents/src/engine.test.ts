@@ -674,6 +674,56 @@ maybe('agent run engine', () => {
     expect(turns[0].tool_call_count).toBe(1);
   });
 
+  it('runs sub-agents in parallel, three at a time, and no more than ten in a run', async () => {
+    const { runId } = await seedRun();
+    const isSub = (request: LlmRequest) => request.system.startsWith('You are a sub-agent');
+    const spawnAll = (count: number): LlmResponse => ({
+      content: Array.from({ length: count }, (_, i) => ({
+        type: 'tool_use' as const,
+        id: `sp_${(toolUseSeq += 1)}`,
+        name: 'spawn_agent',
+        input: { task: `job ${i}` },
+      })),
+      stopReason: 'tool_use',
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+    let parentTurns = 0;
+    const llm = stubLlm((request) => {
+      if (isSub(request)) {
+        return request.messages.length === 1
+          ? call('jira_search_issues', {})
+          : {
+              content: [{ type: 'text', text: 'report' }],
+              stopReason: 'end_turn',
+              usage: { inputTokens: 1, outputTokens: 1 },
+            };
+      }
+      parentTurns += 1;
+      return parentTurns === 1 ? spawnAll(8) : parentTurns === 2 ? spawnAll(4) : finish('done');
+    });
+    let running = 0;
+    let peak = 0;
+    const h = harness(llm, async () => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      running -= 1;
+      return text('ok');
+    });
+    await h.handler({ payload: { runId } });
+
+    expect((await runOf(runId)).status).toBe('succeeded');
+    expect(peak).toBe(3);
+    // 8 + 4 asked for; the tenth is the last one started, the other two are refused.
+    expect(h.calls).toHaveLength(10);
+    const parentRequests = llm.requests.filter((request) => !isSub(request));
+    const lastBlocks = parentRequests[2].messages[parentRequests[2].messages.length - 1].content;
+    const refused = lastBlocks.filter(
+      (block) => block.type === 'tool_result' && block.content.includes('At most 10 sub-agents')
+    );
+    expect(refused).toHaveLength(2);
+  });
+
   it('ends a run that uses up its active time', async () => {
     await setOrgSettings({ agentRunTimeoutMinutes: 1 });
     try {
