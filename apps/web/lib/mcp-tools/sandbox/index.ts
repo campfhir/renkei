@@ -69,6 +69,7 @@ import {
 import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
 import { registerSandboxBrowserTools } from './browser';
+import { registerSandboxCrawlTools } from './crawl';
 import { registerSandboxChartTools } from './charts';
 import { registerSandboxScriptTools } from './scripts';
 import { claimPendingUploadSlotByOwner } from '../upload-slots';
@@ -120,7 +121,11 @@ export async function registerSandboxTools(
   // can do, resolved once per catalog (@renkei/sandbox-client).
   const features = await sandboxFeatures();
   // The browser verbs register only where the worker runs one — see ./browser.ts.
-  if (features.browser) registerSandboxBrowserTools(server, context);
+  // Crawls run in that browser on the worker — see ./crawl.ts.
+  if (features.browser) {
+    registerSandboxBrowserTools(server, context);
+    registerSandboxCrawlTools(server, context);
+  }
   // Likewise the chart renderer — see ./charts.ts.
   if (features.charts) registerSandboxChartTools(server, context);
   // And scripts over staged files, told the truth about their network — see ./scripts.ts.

@@ -106,6 +106,7 @@ describe('registration', () => {
       'sandbox_browser_back',
       'sandbox_browser_click',
       'sandbox_browser_close',
+      'sandbox_browser_crawl',
       'sandbox_browser_list_secrets',
       'sandbox_browser_navigate',
       'sandbox_browser_press_key',
@@ -119,12 +120,15 @@ describe('registration', () => {
     expect(tools.has('sandbox_download_url')).toBe(true);
     expect(tools.get('sandbox_browser_snapshot')?.config.annotations?.readOnlyHint).toBe(true);
     expect(tools.get('sandbox_browser_navigate')?.config.annotations?.readOnlyHint).toBe(false);
+    // The crawl tools come with the browser (./crawl.ts).
+    expect(tools.has('sandbox_crawl_read')).toBe(true);
   });
 
   it('registers none of them when the deployment has no browser', async () => {
     client.sandboxFeatures.mockResolvedValue(features());
     const tools = await collect(context());
     expect([...tools.keys()].some((name) => name.startsWith('sandbox_browser_'))).toBe(false);
+    expect([...tools.keys()].some((name) => name.startsWith('sandbox_crawl_'))).toBe(false);
     expect(tools.has('sandbox_download_url')).toBe(true);
   });
 });
