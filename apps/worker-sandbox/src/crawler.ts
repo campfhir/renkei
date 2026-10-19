@@ -31,7 +31,13 @@ import {
   normalizeCrawlUrl,
   type CrawlRecipe,
 } from '@renkei/connector-sandbox';
-import { crawlScriptSource, linkHarvestSource, type CrawlPageExtract } from './crawl-page-script';
+import {
+  CRAWL_EXTRACT_SOURCE,
+  LINK_HARVEST_SOURCE,
+  type CrawlExtractLimits,
+  type CrawlPageExtract,
+  type LinkHarvestLimits,
+} from './crawl-page-script';
 import type { CrawlRow, CrawlStore, CrawlTarget, PageSummary, QueuedPage } from './crawl-store';
 import { logger } from './logger';
 
@@ -50,19 +56,24 @@ const PAGE_SETTLE_TIMEOUT_MS = 5_000;
  * index in a virtual list (the HL7 segment list) renders only the rows in
  * view. Bounded in steps and time.
  */
-const LINK_HARVEST = linkHarvestSource({
+const LINK_HARVEST: LinkHarvestLimits = {
   maxSteps: 120,
   stepWaitMs: 300,
   maxMs: 45_000,
   maxLinks: 5_000,
-});
+};
 
 /** The slice of a Playwright page the crawler uses — the test seam. */
 export interface CrawlPage {
   goto(url: string, options: { waitUntil: 'domcontentloaded'; timeout: number }): Promise<unknown>;
   waitForLoadState(state: 'networkidle', options: { timeout: number }): Promise<void>;
   url(): string;
-  evaluate<T>(expression: string): Promise<T>;
+  /**
+   * Run `source` — an expression that evaluates to a function — in the
+   * page, calling it with `arg`. The argument travels as data, never
+   * written into the source.
+   */
+  call<T>(source: string, arg: unknown): Promise<T>;
   close(): Promise<void>;
 }
 
@@ -337,17 +348,16 @@ export class Crawler {
     // Collected before the extract, which then reads the page as the
     // harvest left it; its own links are added to these.
     const harvested = scrollToEnd
-      ? await page.evaluate<string[]>(LINK_HARVEST).catch((): string[] => [])
+      ? await page.call<string[]>(LINK_HARVEST_SOURCE, LINK_HARVEST).catch((): string[] => [])
       : [];
     try {
-      const extract = await page.evaluate<CrawlPageExtract>(
-        crawlScriptSource({
-          region: recipe.region,
-          maxTextChars: CRAWL_PAGE_TEXT_MAX_CHARS,
-          maxTables: CRAWL_MAX_TABLES,
-          maxRows: CRAWL_MAX_TABLE_ROWS,
-        })
-      );
+      const extract = await page.call<CrawlPageExtract>(CRAWL_EXTRACT_SOURCE, {
+        // Only the three regions the page script knows, whatever a stored recipe says.
+        region: recipe.region === 'main' || recipe.region === 'page' ? recipe.region : 'auto',
+        maxTextChars: CRAWL_PAGE_TEXT_MAX_CHARS,
+        maxTables: CRAWL_MAX_TABLES,
+        maxRows: CRAWL_MAX_TABLE_ROWS,
+      } satisfies CrawlExtractLimits);
       const links = [...new Set([...harvested, ...extract.links])];
       return { ok: true, extract: { ...extract, links } };
     } catch (error) {

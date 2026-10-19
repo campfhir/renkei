@@ -266,6 +266,10 @@ describe('crawl tools', () => {
     expect(tableMarkdown({ headers: [], rows: [['a', 'b']] })).toBe(
       '| Column 1 | Column 2 |\n| --- | --- |\n| a | b |'
     );
+    // A trailing backslash cannot swallow the cell's closing pipe.
+    expect(tableMarkdown({ headers: ['Path'], rows: [['C:\\dir\\']] })).toBe(
+      '| Path |\n| --- |\n| C:\\\\dir\\\\ |'
+    );
     expect(
       pageMarkdown({ ...page(1, 'X', []), status: 'failed', error: 'nope', content: null }, 'all')
     ).toContain('Not read: nope');

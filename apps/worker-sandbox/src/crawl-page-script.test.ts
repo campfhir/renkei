@@ -7,7 +7,12 @@
 
 import { existsSync } from 'node:fs';
 import { chromium, type Browser } from 'playwright-core';
-import { crawlScriptSource, linkHarvestSource, type CrawlPageExtract } from './crawl-page-script';
+import {
+  CRAWL_EXTRACT_SOURCE,
+  LINK_HARVEST_SOURCE,
+  callInPage,
+  type CrawlPageExtract,
+} from './crawl-page-script';
 
 function executable(): string | null {
   const candidates = [
@@ -71,9 +76,12 @@ const SEGMENT_PAGE = `<!doctype html><html><head><title>AIG - Segment (HL7 v2.3)
         route.fulfill({ contentType: 'text/html', body: html })
       );
       await page.goto('https://crawl.test/v2/HL7v2.3/Segments/AIG');
-      return await page.evaluate<CrawlPageExtract>(
-        crawlScriptSource({ region, maxTextChars: 10_000, maxTables: 5, maxRows: 100 })
-      );
+      return await callInPage<CrawlPageExtract>(page, CRAWL_EXTRACT_SOURCE, {
+        region,
+        maxTextChars: 10_000,
+        maxTables: 5,
+        maxRows: 100,
+      });
     } finally {
       await page.close();
     }
@@ -129,9 +137,12 @@ const SEGMENT_PAGE = `<!doctype html><html><head><title>AIG - Segment (HL7 v2.3)
         route.fulfill({ contentType: 'text/html', body: html })
       );
       await page.goto('https://crawl.test/Segments');
-      const links = await page.evaluate<string[]>(
-        linkHarvestSource({ maxSteps: 200, stepWaitMs: 20, maxMs: 20_000, maxLinks: 1_000 })
-      );
+      const links = await callInPage<string[]>(page, LINK_HARVEST_SOURCE, {
+        maxSteps: 200,
+        stepWaitMs: 20,
+        maxMs: 20_000,
+        maxLinks: 1_000,
+      });
       const segments = links.filter((link) => link.includes('/Segments/S'));
       expect(segments).toHaveLength(300);
       expect(segments).toContain('https://crawl.test/Segments/S299');

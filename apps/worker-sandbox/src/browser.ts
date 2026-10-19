@@ -76,6 +76,8 @@ import {
   SECRET_ATTRIBUTE,
   type PageWalkResult,
 } from './browser-page-script';
+import { callInPage } from './crawl-page-script';
+import type { CrawlContext, CrawlPage } from './crawler';
 import type { BrowserSnapshotNode } from '@renkei/connector-sandbox';
 import { startEgressProxy, type EgressProxy } from './browser-proxy';
 import { logger } from './logger';
@@ -293,7 +295,7 @@ export class BrowserSessions {
    * session of anyone's, the same egress proxy and limits as every
    * session. Closing it is the crawler's; until then the browser stays up.
    */
-  async newCrawlContext(): Promise<{ newPage(): Promise<Page>; close(): Promise<void> }> {
+  async newCrawlContext(): Promise<CrawlContext> {
     const browser = await this.browserInstance();
     const context = await browser.newContext({
       viewport: { ...BROWSER_VIEWPORT },
@@ -306,7 +308,16 @@ export class BrowserSessions {
     this.crawlContexts += 1;
     let open = true;
     return {
-      newPage: () => context.newPage(),
+      newPage: async (): Promise<CrawlPage> => {
+        const page = await context.newPage();
+        return {
+          goto: (url, options) => page.goto(url, options),
+          waitForLoadState: (state, options) => page.waitForLoadState(state, options),
+          url: () => page.url(),
+          call: (source, arg) => callInPage(page, source, arg),
+          close: () => page.close(),
+        };
+      },
       close: async () => {
         if (!open) return;
         open = false;

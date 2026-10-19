@@ -36,9 +36,9 @@ function fakeBrowser(site: FakeSite) {
       },
       async waitForLoadState() {},
       url: () => current,
-      async evaluate<T>(expression: string): Promise<T> {
+      async call<T>(source: string): Promise<T> {
         const entry = site[current] ?? {};
-        if (expression.includes('harvestLinksInPage')) {
+        if (source.includes('harvestLinksInPage')) {
           // Scrolled through: what the page shows only on the way down.
           scrolls += 1;
           // eslint-disable-next-line @typescript-eslint/consistent-type-assertions

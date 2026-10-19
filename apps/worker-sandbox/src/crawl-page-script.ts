@@ -18,6 +18,25 @@
  *    here).
  */
 
+import type { Page } from 'playwright-core';
+
+/**
+ * Call a function given as source in the page, with `arg`: the source is
+ * evaluated to a handle on the function, and that is called with the
+ * argument Playwright serializes — so nothing a caller passes ever becomes
+ * code. (`page.evaluate(string, arg)` would ignore the argument.)
+ */
+export async function callInPage<T>(page: Page, source: string, arg: unknown): Promise<T> {
+  const fn = await page.evaluateHandle(source);
+  try {
+    // The handle is the function the source evaluated to; Playwright types it as unknown.
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    return (await fn.evaluate((f, a) => (f as (input: unknown) => unknown)(a), arg)) as T;
+  } finally {
+    await fn.dispose().catch(() => undefined);
+  }
+}
+
 export interface CrawledTable {
   headers: string[];
   rows: string[][];
@@ -40,10 +59,13 @@ export interface CrawlExtractLimits {
   maxRows: number;
 }
 
-/** The extract as an expression for `page.evaluate(string)` — see pageScriptSource for why. */
-export function crawlScriptSource(limits: CrawlExtractLimits): string {
-  return `(() => { const __name = (fn) => fn; return (${extractCrawlPageInPage.toString()})(${JSON.stringify(limits)}); })()`;
-}
+/**
+ * The extract as an expression that evaluates to the function
+ * (callInPage below calls it with the limits — passed as data, never
+ * written into the source; see pageScriptSource for why a string at all:
+ * the `__name` shim).
+ */
+export const CRAWL_EXTRACT_SOURCE = `(() => { const __name = (fn) => fn; return ${extractCrawlPageInPage.toString()}; })()`;
 
 export function extractCrawlPageInPage(limits: CrawlExtractLimits): CrawlPageExtract {
   const MAX_LINKS = 2000;
@@ -173,10 +195,8 @@ export interface LinkHarvestLimits {
   maxLinks: number;
 }
 
-/** The harvest as an expression for `page.evaluate(string)` — it resolves to the links found. */
-export function linkHarvestSource(limits: LinkHarvestLimits): string {
-  return `(() => { const __name = (fn) => fn; return (${harvestLinksInPage.toString()})(${JSON.stringify(limits)}); })()`;
-}
+/** The harvest, as CRAWL_EXTRACT_SOURCE is; called with its limits, it resolves to the links found. */
+export const LINK_HARVEST_SOURCE = `(() => { const __name = (fn) => fn; return ${harvestLinksInPage.toString()}; })()`;
 
 /**
  * Every link a page shows while it is scrolled through, a screen at a

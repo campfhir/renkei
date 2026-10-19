@@ -194,8 +194,12 @@ function pageLine(page: WireCrawlPage): string {
     : `${page.seq}. FAILED ${page.url} — ${page.error ?? 'no reason given'}`;
 }
 
+/** A table cell for Markdown: backslashes first, so an escaped pipe stays one. */
 function cell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\s*\n\s*/g, ' ');
 }
 
 /** A crawled table as Markdown: header row (or Column N), then its rows. */

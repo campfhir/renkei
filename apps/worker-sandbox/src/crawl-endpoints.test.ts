@@ -43,7 +43,7 @@ function openContext(): Promise<CrawlContext> {
         },
         async waitForLoadState() {},
         url: () => current,
-        async evaluate<T>(): Promise<T> {
+        async call<T>(): Promise<T> {
           const extract: CrawlPageExtract = {
             title: current.split('/').pop() ?? '',
             region: 'main',
