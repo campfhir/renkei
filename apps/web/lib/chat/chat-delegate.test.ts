@@ -213,6 +213,27 @@ describe('chat_delegate', () => {
     expect(recorded).toEqual(['start:d1:true:15', 'finish:run-1:completed:2:2']);
   });
 
+  it('out of steps, it is told to stop and gets one tool-less call to report', async () => {
+    const { client, calls } = mcpClient();
+    const fake = provider([
+      calling([{ id: 'u1', name: 'jira_get_issue', input: { key: 'OPS-1' } }]),
+      calling([{ id: 'u2', name: 'jira_get_issue', input: { key: 'OPS-2' } }]),
+      // Would keep reading; the last step offers no tools, so this is a report.
+      done('OPS-1 and OPS-2 are both open; OPS-3 not reached.'),
+    ]);
+    const tool = chatDelegateTool({ surface: surface(client), localTools: [] });
+    const result = await tool!.execute(
+      { task: 'Read OPS-1..3', maxSteps: 3 },
+      context({ llm: llmOf(fake.provider), toolUseId: 'd1' })
+    );
+    expect(result.isError).toBe(false);
+    expect(calls).toHaveLength(2);
+    expect(fake.requests[2]).toEqual([]);
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('Sub-agent done — 3 model calls, 2 tool calls');
+    expect(text).toContain('OPS-3 not reached');
+  });
+
   it('refuses a tool that acts, whether offered to the chat or named from memory', async () => {
     const { client, calls } = mcpClient();
     const fake = provider([

@@ -222,6 +222,7 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
       };
       const system =
         SUB_AGENT_BRIEF +
+        `\n\nNow is about ${new Date().toISOString()} (UTC). For an exact time, a weekday or a date relative to today, call resolve_date when it is among your tools rather than working it out.` +
         (discovery ? `\n\n${DISCOVERY_NOTE}` : '') +
         (instructions ? `\n\nInstructions from the assistant:\n${instructions}` : '');
       return runSubagent({

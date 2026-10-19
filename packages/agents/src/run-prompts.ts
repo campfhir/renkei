@@ -306,7 +306,7 @@ export const MAX_SUB_AGENTS_PER_RUN = 10;
 /** The most model turns one sub-agent may take. */
 export const MAX_SUB_AGENT_TURNS = 15;
 /** The longest report a sub-agent hands back to its parent. */
-export const SUB_AGENT_REPORT_CHARS = 8_000;
+export const SUB_AGENT_REPORT_CHARS = TOOL_RESULT_CHARS;
 
 /**
  * Hand a self-contained piece of READ work to a sub-agent: a fresh, short
@@ -327,8 +327,8 @@ export const SPAWN_AGENT_DEF: PromptToolDef = {
     'agents, and knows nothing you do not put in "task". Its tool calls count against your ' +
     'budget. Give it a precise task and say what the report must contain, with quotes and ' +
     'identifiers you will need. Several calls in one reply run in parallel (three at a time); a ' +
-    `run may start at most ${MAX_SUB_AGENTS_PER_RUN} in all, and the spawn itself is not a tool ` +
-    'call. Do not use it for a single lookup you can make yourself.',
+    `run may start at most ${MAX_SUB_AGENTS_PER_RUN} in all. The spawn itself is not a tool ` +
+    `call; each read the sub-agent makes is, taken from your budget as it is made (at most ${MAX_SUB_AGENT_TOOL_CALLS} per sub-agent). Do not use it for a single lookup you can make yourself.`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -345,7 +345,7 @@ export const SPAWN_AGENT_DEF: PromptToolDef = {
       },
       maxToolCalls: {
         type: 'number',
-        description: `Cap on its tool calls (at most ${MAX_SUB_AGENT_TOOL_CALLS}, and never more than you have left).`,
+        description: `Cap on its tool calls (at most ${MAX_SUB_AGENT_TOOL_CALLS}); the run's own budget may stop it sooner.`,
       },
     },
     required: ['task'],
@@ -375,10 +375,18 @@ export function spawnArgsOf(input: unknown): SpawnArgs | null {
 }
 
 /** The system prompt a sub-agent works under. */
-export function subAgentSystemPrompt(limits: { toolCalls: number }): string {
+export function subAgentSystemPrompt(input: {
+  toolCalls: number;
+  /** user.name, user.email, today, now, weekday — the same facts the parent's opening states. */
+  facts: Record<string, string>;
+}): string {
+  const facts = Object.entries(input.facts)
+    .map(([name, value]) => `- ${name}: ${value}`)
+    .join('\n');
   return [
     'You are a sub-agent working for another agent, on one task it gave you. Do the task with the tools you have, then reply with your report as plain text and no further tool call.',
-    `You may make at most ${limits.toolCalls} tool calls; use as few as the task needs, and do not repeat a call whose result you already have.`,
+    ...(facts ? [`Facts:\n${facts}`] : []),
+    `You may make at most ${input.toolCalls} tool calls, and the run you are part of has a budget of its own that may run out first; use as few as the task needs, and do not repeat a call whose result you already have. When you are told to stop, make no further call and report what you have. resolve_time is free and does not count: use it for any date, time or weekday rather than working one out.`,
     'You can only read: you cannot change anything, ask a person, or start other agents.',
     'Your report is all the other agent will see. Make it complete and compact: the facts the task asked for, each with a short verbatim quote and the identifier (issue key, note title, message time) it came from; say plainly what you could not find or could not read.',
     UNTRUSTED_RULE,

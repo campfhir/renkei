@@ -99,6 +99,10 @@ export interface DraftedAgent {
   notes?: string[];
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** One line per tool: what it is called, whether it changes anything, what it does. */
 function toolCatalogLines(tools: ToolDescriptor[]): string[] {
   const byConnector = new Map<string, ToolDescriptor[]>();
@@ -264,7 +268,11 @@ export function parseDraftReply(
 
   const instructions = typeof reply.instructions === 'string' ? reply.instructions.trim() : '';
   if (!instructionsHaveContent(instructions)) {
-    return { problems: ['"instructions" is required — the Markdown instructions, with content under the headings.'] };
+    return {
+      problems: [
+        '"instructions" is required — the Markdown instructions, with content under the headings.',
+      ],
+    };
   }
   const softProblems: string[] = [];
   const notes: string[] = [];
@@ -277,7 +285,9 @@ export function parseDraftReply(
     );
   }
   if (instructions.length > MAX_INSTRUCTIONS_CHARS) {
-    softProblems.push(`The instructions are over ${MAX_INSTRUCTIONS_CHARS} characters — tighten them.`);
+    softProblems.push(
+      `The instructions are over ${MAX_INSTRUCTIONS_CHARS} characters — tighten them.`
+    );
   }
 
   const requested = Array.isArray(reply.tools)
@@ -287,7 +297,9 @@ export function parseDraftReply(
   for (const name of requested.map((tool) => tool.trim())) {
     if (!name || tools.includes(name)) continue;
     if (!context.validTools.has(name)) {
-      softProblems.push(`"${name}" is not one of the person's tools — use only names from the list.`);
+      softProblems.push(
+        `"${name}" is not one of the person's tools — use only names from the list.`
+      );
       notes.push(`Left out “${name}”: it is not one of your tools.`);
       continue;
     }
@@ -301,7 +313,9 @@ export function parseDraftReply(
   // The instructions and the tool list must agree: a tool the text relies
   // on but the list omits is a tool the agent will not have at run time.
   const unlisted = [...context.validTools].filter(
-    (name) => !tools.includes(name) && new RegExp(`(?<![\\w-])${name}(?![\\w-])`).test(instructions)
+    (name) =>
+      !tools.includes(name) &&
+      new RegExp(`(?<![\\w-])${escapeRegExp(name)}(?![\\w-])`).test(instructions)
   );
   if (unlisted.length > 0) {
     softProblems.push(

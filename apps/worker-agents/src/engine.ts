@@ -338,6 +338,16 @@ function clipForModel(text: string): string {
   return `${text.slice(0, TOOL_RESULT_CHARS)}\n… [truncated: ${dropped} more characters were cut to fit; the result is incomplete — narrow the query or page the results to see the rest]`;
 }
 
+/**
+ * A sub-agent's report goes to its parent whole; only one past the model
+ * result limit is cut, and the cut is stated so the parent can tell.
+ */
+function clipSubAgentReport(text: string): string {
+  if (text.length <= SUB_AGENT_REPORT_CHARS) return text;
+  const dropped = text.length - SUB_AGENT_REPORT_CHARS;
+  return `${text.slice(0, SUB_AGENT_REPORT_CHARS)}\n… [REPORT TRUNCATED: ${dropped} more characters were cut because the report was unusually long; what follows the cut is lost — give the sub-agent a narrower task if you need it]`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -1619,14 +1629,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
       };
     }
 
-    /** Sub-agents running now, each with the tool calls it may still make. */
-    private readonly activeSubAgents = new Set<{ cap: number; calls: number }>();
-
     /**
      * Run a turn's spawn_agent calls, at most MAX_CONCURRENT_SUB_AGENTS at
-     * once and MAX_SUB_AGENTS_PER_RUN over the whole run. A spawn is not a
-     * tool call; the reads inside it are, and each sub-agent is held to what
-     * the parent still has after the others' allowances.
+     * once and MAX_SUB_AGENTS_PER_RUN over the run (counted like the tool
+     * budget: since the last resume). A spawn is not a tool call; the reads
+     * inside it are, deducted from the parent's budget as each is made —
+     * nothing is reserved, so a sub-agent that finishes early leaves the
+     * rest for the parent or the next sub-agent.
      */
     private async runSpawns(
       row: TurnRow,
@@ -1637,12 +1646,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
     ): Promise<void> {
       const refuse = (use: ToolUseBlock, content: string) =>
         reply({ type: 'tool_result', toolUseId: use.id, content, isError: true });
+      const since = this.runRow.resumed_at ? new Date(this.runRow.resumed_at).getTime() : 0;
       const recorded = () =>
-        turns.reduce(
-          (sum, turn) =>
-            sum + (turn.detail.toolCalls ?? []).filter((c) => c.tool === SPAWN_AGENT_TOOL).length,
-          0
-        );
+        turns
+          .filter((turn) => turn.created_at.getTime() >= since)
+          .reduce(
+            (sum, turn) =>
+              sum + (turn.detail.toolCalls ?? []).filter((c) => c.tool === SPAWN_AGENT_TOOL).length,
+            0
+          );
       let started = 0;
       const queue = [...spawns];
       const worker = async (): Promise<void> => {
@@ -1659,23 +1671,18 @@ export function createAgentRunHandler(deps: EngineDeps) {
             );
             continue;
           }
-          const committed = [...this.activeSubAgents].reduce(
-            (sum, active) => sum + Math.max(0, active.cap - active.calls),
-            0
-          );
-          const left = this.budgetLeft(turns).toolCalls - committed;
-          if (left <= 0) {
+          if (this.budgetLeft(turns).toolCalls <= 0) {
             await refuse(
               use,
-              'Tool budget spent (or promised to running sub-agents) — the sub-agent was not started. Work from the reports you have, or finish.'
+              'Tool budget spent — the sub-agent was not started. Work from the reports you have, or finish.'
             );
             continue;
           }
           started += 1;
-          await this.checkpoint();
           let sub: Awaited<ReturnType<typeof this.runSubAgent>>;
           try {
-            sub = await this.runSubAgent(row, toolCalls, spawn, left);
+            await this.checkpoint();
+            sub = await this.runSubAgent(row, turns, toolCalls, spawn);
           } finally {
             started -= 1;
           }
@@ -1706,24 +1713,37 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (failed && failed.status === 'rejected') throw failed.reason;
     }
 
+    /** The facts a sub-agent is told, the same the parent's opening states. */
+    private subAgentFacts(): Record<string, string> {
+      const facts: Record<string, string> = {};
+      for (const builtin of BUILTIN_VARIABLES) {
+        if (this.input.vars[builtin.name]) facts[builtin.name] = this.input.vars[builtin.name];
+      }
+      facts.now = new Date(now()).toISOString();
+      facts.weekday = `${weekdayOf(new Date(now()))} (UTC)`;
+      return facts;
+    }
+
     /**
      * A read-only sub-agent: its own short conversation over some of the
-     * parent's read tools, ending in one written report. Its tool calls are
-     * billed to the parent's turn row (so the budget counts them) and logged
-     * on it; its model calls ride the parent's usage. It has no stage,
-     * ask or spawn tools, so it cannot change anything or recurse.
+     * parent's read tools (plus the free resolve_time), ending in one
+     * written report. Each read is billed to the parent's turn row as it is
+     * made, so the budget counts it, and logged on it; its model calls
+     * ride the parent's usage. It has no stage, ask or spawn tools, so it
+     * cannot change anything or recurse. When its own cap or the parent's
+     * budget runs out mid-way it is told to stop and report.
      */
     private async runSubAgent(
       row: TurnRow,
+      turns: TurnRow[],
       toolCalls: ToolCallRecord[],
-      spawn: NonNullable<ReturnType<typeof spawnArgsOf>>,
-      parentLeft: number
+      spawn: NonNullable<ReturnType<typeof spawnArgsOf>>
     ): Promise<{ report: string; isError: boolean; durationMs: number }> {
-      const { callable } = this.input;
+      const { callable, llm } = this.input;
       const startedAt = now();
       const requested = spawn.tools ?? [...callable.keys()];
       const names = requested.filter((name) => callable.has(name));
-      const unknown = requested.filter((name) => !callable.has(name));
+      const unknown = requested.filter((name) => !callable.has(name) && name !== RESOLVE_TIME_TOOL);
       const notes =
         unknown.length > 0 ? [`Not read tools of yours, left out: ${unknown.join(', ')}.`] : [];
       if (names.length === 0) {
@@ -1735,51 +1755,17 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
       const cap = Math.max(
         1,
-        Math.min(
-          MAX_SUB_AGENT_TOOL_CALLS,
-          spawn.maxToolCalls ?? MAX_SUB_AGENT_TOOL_CALLS,
-          parentLeft
-        )
+        Math.min(MAX_SUB_AGENT_TOOL_CALLS, spawn.maxToolCalls ?? MAX_SUB_AGENT_TOOL_CALLS)
       );
-      const defs: LlmToolDef[] = names.map((name) => {
-        const tool = callable.get(name)!;
-        return { name, description: tool.description, inputSchema: tool.inputSchema };
-      });
+      const defs: LlmToolDef[] = [
+        RESOLVE_TIME_DEF,
+        ...names.map((name) => {
+          const tool = callable.get(name)!;
+          return { name, description: tool.description, inputSchema: tool.inputSchema };
+        }),
+      ];
       const allowed = new Set(names);
-      const allowance = { cap, calls: 0 };
-      this.activeSubAgents.add(allowance);
-      try {
-        return await this.runSubAgentLoop(row, toolCalls, spawn, {
-          names,
-          defs,
-          allowed,
-          cap,
-          notes,
-          startedAt,
-          allowance,
-        });
-      } finally {
-        this.activeSubAgents.delete(allowance);
-      }
-    }
-
-    private async runSubAgentLoop(
-      row: TurnRow,
-      toolCalls: ToolCallRecord[],
-      spawn: NonNullable<ReturnType<typeof spawnArgsOf>>,
-      setup: {
-        names: string[];
-        defs: LlmToolDef[];
-        allowed: Set<string>;
-        cap: number;
-        notes: string[];
-        startedAt: number;
-        allowance: { cap: number; calls: number };
-      }
-    ): Promise<{ report: string; isError: boolean; durationMs: number }> {
-      const { llm } = this.input;
-      const { defs, allowed, cap, notes, startedAt, allowance } = setup;
-      const system = subAgentSystemPrompt({ toolCalls: cap });
+      const system = subAgentSystemPrompt({ toolCalls: cap, facts: this.subAgentFacts() });
       const messages: LlmMessage[] = [
         { role: 'user', content: [{ type: 'text', text: spawn.task }] },
       ];
@@ -1794,14 +1780,22 @@ export function createAgentRunHandler(deps: EngineDeps) {
         const completion = await llm.provider.complete({
           system,
           messages: fitTranscript(messages),
-          tools: defs,
-          toolChoice: 'auto',
+          // Once told to wrap up, it can only answer.
+          tools: wrapUp ? [] : defs,
+          ...(wrapUp ? {} : { toolChoice: 'auto' as const }),
           promptCache: true,
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
         });
         if (!completion.ok) {
-          report = `The sub-agent's model call failed (${completion.err.type}${completion.err.message ? `: ${clip(completion.err.message, 200)}` : ''}).`;
+          const kind = completion.err.type;
+          // The same moment-bound failures that hand the parent's run back
+          // to the queue do so here: the turn re-enters and only the spawns
+          // still unanswered run again.
+          if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
+            throw new TransientFailure(`sub-agent model ${kind}`);
+          }
+          report = `The sub-agent's model call failed (${kind}${completion.err.message ? `: ${clip(completion.err.message, 200)}` : ''}).`;
           isError = true;
           break;
         }
@@ -1822,32 +1816,52 @@ export function createAgentRunHandler(deps: EngineDeps) {
         }
         messages.push({ role: 'assistant', content });
         const results: ToolResultBlock[] = [];
+        let stopReason: string | null = null;
         for (const use of uses) {
-          if (!allowed.has(use.name) || calls >= cap) {
+          if (use.name === RESOLVE_TIME_TOOL) {
+            const resolved = resolveTime(resolveTimeArgsOf(use.input));
             results.push({
               type: 'tool_result',
               toolUseId: use.id,
-              content: allowed.has(use.name)
-                ? 'Tool budget spent — this call was not made. Reply with your report now.'
-                : `The tool "${use.name}" is not available to you.`,
+              content: resolved.ok ? JSON.stringify(resolved.value) : resolved.error,
+              isError: !resolved.ok,
+            });
+            continue;
+          }
+          if (!allowed.has(use.name)) {
+            results.push({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: `The tool "${use.name}" is not available to you.`,
+              isError: true,
+            });
+            continue;
+          }
+          // Deducted at use: the parent's budget as it stands now, shared
+          // with the parent and any other sub-agent running beside this one.
+          if (calls >= cap) stopReason = `your own cap of ${cap} tool calls`;
+          else if (this.budgetLeft(turns).toolCalls <= 0) stopReason = "the run's tool budget";
+          if (stopReason) {
+            results.push({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: `Not made: ${stopReason} is spent.`,
               isError: true,
             });
             continue;
           }
           calls += 1;
-          allowance.calls = calls;
           row.tool_call_count += 1;
           const outcome = await this.callTool(use);
           toolCalls.push(outcome.record);
           results.push(outcome.result);
         }
-        const outOfRoad = calls >= cap || turn === MAX_SUB_AGENT_TURNS - 1;
         const blocks: LlmContentBlock[] = [...results];
-        if (outOfRoad) {
+        if (stopReason || turn === MAX_SUB_AGENT_TURNS - 1) {
           wrapUp = true;
           blocks.push({
             type: 'text',
-            text: 'You are out of tool calls or turns. Reply now with your report, as plain text, from what you have.',
+            text: `Stop here: ${stopReason ? `${stopReason} is` : 'your turns are'} spent and no further tool call will be made. Reply now with your report, as plain text, from what you have — including what you did not get to.`,
           });
         }
         messages.push({ role: 'user', content: blocks });
@@ -1860,7 +1874,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       report = [
         ...notes,
         `(Sub-agent made ${calls} tool call${calls === 1 ? '' : 's'}, counted against your budget.)`,
-        clip(report, SUB_AGENT_REPORT_CHARS),
+        clipSubAgentReport(report),
       ].join('\n');
       return { report, isError, durationMs: now() - startedAt };
     }
