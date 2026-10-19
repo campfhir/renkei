@@ -355,6 +355,15 @@ maybe('agent run engine', () => {
     // Content is sealed; the clear half shows structure only.
     expect(JSON.stringify(turns[0].detail)).not.toContain('PROJ-999');
     expect(unsealed(turns[0].detail).opening).toContain('PROJ-42 is broken');
+    // Each call names the tool_use it answers, so the run page can show the
+    // whole stored result rather than the preview.
+    const searchTurn = unsealed(turns[1].detail);
+    const searchCall = Array.isArray(searchTurn.toolCalls) ? searchTurn.toolCalls[0] : null;
+    const searchResult = Array.isArray(searchTurn.results) ? searchTurn.results[0] : null;
+    expect(isRecord(searchCall) && typeof searchCall.toolUseId).toBe('string');
+    expect(isRecord(searchResult) && isRecord(searchCall) && searchResult.toolUseId).toBe(
+      isRecord(searchCall) ? searchCall.toolUseId : undefined
+    );
     expect(h.finalized[0].vars).toEqual({ summary: 'declared done', result: 'PROJ-42' });
 
     // The opening fenced the trigger's words; the failed call's error and

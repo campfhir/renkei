@@ -95,7 +95,7 @@ export {
   type ActApprovalReason,
   type ToolKindHint,
 } from './act-approval';
-export { UNTRUSTED_RULE, UNTRUSTED_TAG, untrustedBlock } from './untrusted';
+export { UNTRUSTED_RULE, UNTRUSTED_TAG, unfenceUntrusted, untrustedBlock } from './untrusted';
 export {
   computeNextRun,
   computeNextRunForSchedule,

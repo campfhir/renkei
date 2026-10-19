@@ -16,6 +16,7 @@ import { friendlyToolName } from '@/lib/tool-name';
 import { statusLabel } from '@/lib/agents/run-labels';
 import type { ActionBatchView, AttemptView, RunDetail } from '@/lib/agents/runs-view';
 import { formatDurationMs } from '@/lib/duration';
+import { toolResultText } from '@/lib/agents/tool-result';
 
 function statusTone(status: string): string {
   switch (status) {
@@ -231,6 +232,7 @@ function TurnDetail({ turn, batches }: { turn: AttemptView; batches: ActionBatch
         <ul className="space-y-1">
           {toolCalls.map((call, index) => {
             const free = call.free === true;
+            const resultText = toolResultText(detail, call);
             const tool = typeof call.tool === 'string' ? call.tool : 'tool';
             return (
               <li
@@ -257,9 +259,7 @@ function TurnDetail({ turn, batches }: { turn: AttemptView; batches: ActionBatch
                 {typeof call.argsPreview === 'string' && call.argsPreview !== '{}' ? (
                   <p className="mt-0.5 break-all font-mono text-[0.65rem]">{call.argsPreview}</p>
                 ) : null}
-                {typeof call.resultPreview === 'string' && call.resultPreview ? (
-                  <ClampedText label="" text={call.resultPreview} />
-                ) : null}
+                {resultText ? <ClampedText label="" text={resultText} /> : null}
               </li>
             );
           })}
