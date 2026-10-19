@@ -39,6 +39,25 @@ describe('parseStagedActions', () => {
     });
   });
 
+  it('reads actions and args that arrive as JSON text, and says when actions is not a list', () => {
+    const parsed = parseStagedActions(
+      {
+        summary: 's',
+        actions: JSON.stringify([
+          { tool: 'jira_add_comment', args: JSON.stringify({ issueKey: 'CIO-1' }), reason: 'r' },
+        ]),
+      },
+      stageable
+    );
+    expect(parsed).toEqual({
+      summary: 's',
+      actions: [{ tool: 'jira_add_comment', args: { issueKey: 'CIO-1' }, reason: 'r' }],
+    });
+    expect(parseStagedActions({ summary: 's', actions: 'oops' }, stageable)).toEqual({
+      error: expect.stringContaining('array'),
+    });
+  });
+
   it('needs a summary, actions, reasons and object args, and caps the batch', () => {
     expect(parseStagedActions({ actions: [] }, stageable)).toHaveProperty('error');
     expect(parseStagedActions({ summary: 's', actions: [] }, stageable)).toHaveProperty('error');

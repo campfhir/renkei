@@ -68,6 +68,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Models sometimes pass a nested array or object as its JSON text. Read it
+ * rather than reject a batch that is otherwise well formed.
+ */
+function jsonIfString(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
  * A `stage_actions` call's arguments → the batch, or the reason the call
  * cannot be staged as written (returned to the model as the tool's error
  * so it can correct itself). `stageable` is the set of act tools this run
@@ -81,16 +94,18 @@ export function parseStagedActions(
   if (!isRecord(input)) return { error: 'stage_actions needs {summary, actions}.' };
   const summary = typeof input.summary === 'string' ? input.summary.trim() : '';
   if (!summary) return { error: 'stage_actions needs a summary of what the batch does.' };
-  if (!Array.isArray(input.actions) || input.actions.length === 0) {
-    return { error: 'stage_actions needs at least one action.' };
+  const list = jsonIfString(input.actions);
+  if (!Array.isArray(list)) {
+    return { error: 'stage_actions needs "actions" as an array of {tool, args, reason}.' };
   }
-  if (input.actions.length > MAX_STAGED_ACTIONS) {
+  if (list.length === 0) return { error: 'stage_actions needs at least one action.' };
+  if (list.length > MAX_STAGED_ACTIONS) {
     return {
       error: `A batch holds at most ${MAX_STAGED_ACTIONS} actions — stage the first part, then the rest once you see how it went.`,
     };
   }
   const actions: StagedAction[] = [];
-  for (const [index, entry] of input.actions.entries()) {
+  for (const [index, entry] of list.entries()) {
     const at = `Action ${index + 1}`;
     if (!isRecord(entry)) return { error: `${at} must be {tool, args, reason}.` };
     const tool = typeof entry.tool === 'string' ? entry.tool.trim() : '';
@@ -100,7 +115,7 @@ export function parseStagedActions(
         error: `${at}: "${tool}" is not an action tool this agent can stage. Stageable tools: ${[...stageable].join(', ') || 'none'}.`,
       };
     }
-    const args = entry.args === undefined ? {} : entry.args;
+    const args = entry.args === undefined ? {} : jsonIfString(entry.args);
     if (!isRecord(args)) return { error: `${at}: args must be an object.` };
     const reason = typeof entry.reason === 'string' ? entry.reason.trim() : '';
     if (!reason) return { error: `${at} needs a reason — the person accepting it reads it.` };
