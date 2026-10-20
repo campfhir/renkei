@@ -114,6 +114,10 @@ async function seedChat(
     );
   }
   if (input.compactedAfter) {
+    // The prompt and tool definitions the chat's last turn measured.
+    await client.query('UPDATE chats SET request_overhead_tokens = 30000 WHERE id = $1', [
+      input.chatId,
+    ]);
     await client.query(
       `INSERT INTO chat_summaries (chat_id, content, through_seq, folded_count, created_by, created_at)\n       VALUES ($1, $2, 2, 2, 'user', NOW() + interval '1 minute')`,
       [input.chatId, chatKey.seal('A short summary of the earlier conversation.')]
@@ -177,12 +181,15 @@ test.describe('chat context meter', () => {
       await expect(page.getByTestId('context-meter')).toHaveCount(0);
 
       // A compaction newer than the last reply: its usage no longer describes
-      // the history, so the ring falls to the summary-sized estimate.
+      // the history, so the ring falls to the estimate: the chat's prompt and tools plus the summary.
       await page.goto(`/chat/${ids.foldedChatId}`);
       await expect(page.getByRole('heading', { level: 1, name: ids.foldedTitle })).toBeVisible();
       const reset = page.getByTestId('context-meter');
       await expect(reset).toBeVisible();
-      expect(Number(await reset.getAttribute('aria-valuenow'))).toBeLessThanOrEqual(5);
+      // 30k of prompt and tools plus a short summary: about 15% of 200k.
+      const resetPercent = Number(await reset.getAttribute('aria-valuenow'));
+      expect(resetPercent).toBeGreaterThanOrEqual(14);
+      expect(resetPercent).toBeLessThanOrEqual(17);
       await shot(page, testInfo, 'chat-context-meter-after-compaction');
     } finally {
       await cleanup(client, ids);

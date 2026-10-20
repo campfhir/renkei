@@ -204,6 +204,12 @@ describe('needsCompaction with a recorded context window', () => {
     expect(needsCompaction(stale.messages, stale.budget)).toBe(false);
   });
 
+  it('counts the chat’s own system prompt and tool definitions, not a flat allowance', () => {
+    const messages = small();
+    expect(needsCompaction(messages, budget)).toBe(false);
+    expect(needsCompaction(messages, { ...budget, overheadTokens: 190_000 })).toBe(true);
+  });
+
   it('never compacts when too few messages could be folded', () => {
     const messages = Array.from({ length: CHAT_COMPACT_KEEP_RECENT }, (_, i) => bigRow(i + 1, 50_000));
     expect(needsCompaction(messages, { ...budget, contextWindow: 32_000 })).toBe(false);

@@ -13,7 +13,7 @@ import { getProjectRow } from './projects';
 import { getActiveTurn, toTurnView } from './turns';
 import { listWidgetDecisions } from './widget-tools';
 import { loadQueuedSends } from './queued-sends';
-import { estimateRequestTokens, latestChatSummary } from './compaction';
+import { estimateRequestTokens, getRequestOverhead, latestChatSummary } from './compaction';
 import { widgetStateKeyOf } from './views';
 import type {
   AttachmentView,
@@ -51,7 +51,7 @@ export async function loadChatView(
   viewerSubject: string
 ): Promise<{ chat: ChatView; messages: ChatMessageView[] }> {
   const { chat } = access;
-  const [rows, active, project, owner, attachments, widgetDecisions, queue, summary] =
+  const [rows, active, project, owner, attachments, widgetDecisions, queue, summary, overhead] =
     await Promise.all([
     listMessages(db, chat.id, access.cipher),
     getActiveTurn(db, chat.id),
@@ -83,6 +83,7 @@ export async function loadChatView(
       ? loadQueuedSends(db, chat.id)
       : Promise.resolve([]),
     latestChatSummary(db, chat.id, access.cipher),
+    getRequestOverhead(db, chat.id),
   ]);
   const branches =
     project?.kind === 'code' && project.workspaceId
@@ -133,7 +134,8 @@ export async function loadChatView(
         ? Math.round(
             estimateRequestTokens(
               rows,
-              summary ? { createdAt: summary.createdAt, chars: summary.content.length } : null
+              summary ? { createdAt: summary.createdAt, chars: summary.content.length } : null,
+              overhead
             )
           )
         : null,

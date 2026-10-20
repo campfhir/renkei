@@ -44,7 +44,14 @@ import type { ContentCipher } from './content-crypto';
 import { projectCipherById } from './chat-keys';
 import { attachmentPromptBlocks } from './attachments';
 import { openProjectInstructions } from './projects';
-import { compactChat, latestChatSummary, needsCompaction } from './compaction';
+import {
+  compactChat,
+  getRequestOverhead,
+  latestChatSummary,
+  needsCompaction,
+  overheadTokensOf,
+  setRequestOverhead,
+} from './compaction';
 import { listMessages, insertMessage, type InsertedMessage } from './messages';
 import { createTurn, finishTurn, heartbeatTurn, suspendTurn } from './turns';
 import { isShuttingDown, onShutdown } from '@/lib/shutdown';
@@ -556,7 +563,10 @@ async function executeTurnBody(
     // unavailable model leaves every message as it was for the next turn's
     // check to retry — never a reason to fail the turn that triggered it.
     let rows = initialRows;
-    const priorSummary = await latestChatSummary(db, input.chat.id, input.cipher);
+    const [priorSummary, overheadTokens] = await Promise.all([
+      latestChatSummary(db, input.chat.id, input.cipher),
+      getRequestOverhead(db, input.chat.id),
+    ]);
     if (
       needsCompaction(rows, {
         contextWindow: input.llm.contextWindow ?? null,
@@ -564,6 +574,7 @@ async function executeTurnBody(
         summary: priorSummary
           ? { createdAt: priorSummary.createdAt, chars: priorSummary.content.length }
           : null,
+        overheadTokens,
       })
     ) {
       try {
@@ -738,6 +749,16 @@ async function executeTurnBody(
       now: new Date(),
     });
     const system = systemWith(chatSummary?.content ?? null);
+    const toolDefs = [...surface.tools, ...recalled, ...localTools.defs()];
+    // What this chat's requests carry besides its messages, kept for the
+    // context meter and the next turn's compaction check. Not worth failing
+    // a turn over.
+    void setRequestOverhead(db, input.chat.id, overheadTokensOf(system, toolDefs)).catch(
+      (error: unknown) =>
+        log('chat request overhead not stored: {message}', {
+          message: error instanceof Error ? error.message : String(error),
+        })
+    );
     // The provider turned the request down for size: fold the older history
     // now, rebuild both halves of the prompt that carry it, and let the
     // runner ask again. Null when there was nothing worth folding.
@@ -785,9 +806,7 @@ async function executeTurnBody(
     const outcome = await runChatTurn(
       {
         llm: input.llm,
-        tools: [...surface.tools, ...recalled, ...localTools.defs()].sort((a, b) =>
-          a.name.localeCompare(b.name)
-        ),
+        tools: [...toolDefs].sort((a, b) => a.name.localeCompare(b.name)),
         mcp: surface.mcp,
         localTools,
         localContext,
