@@ -13,6 +13,7 @@ import { getProjectRow } from './projects';
 import { getActiveTurn, toTurnView } from './turns';
 import { listWidgetDecisions } from './widget-tools';
 import { loadQueuedSends } from './queued-sends';
+import { estimateRequestTokens, getRequestOverhead, latestChatSummary } from './compaction';
 import { widgetStateKeyOf } from './views';
 import type {
   AttachmentView,
@@ -50,7 +51,8 @@ export async function loadChatView(
   viewerSubject: string
 ): Promise<{ chat: ChatView; messages: ChatMessageView[] }> {
   const { chat } = access;
-  const [rows, active, project, owner, attachments, widgetDecisions, queue] = await Promise.all([
+  const [rows, active, project, owner, attachments, widgetDecisions, queue, summary, overhead] =
+    await Promise.all([
     listMessages(db, chat.id, access.cipher),
     getActiveTurn(db, chat.id),
     chat.projectId ? getProjectRow(db, chat.projectId) : Promise.resolve(null),
@@ -80,6 +82,8 @@ export async function loadChatView(
     chat.ownerSubject === viewerSubject
       ? loadQueuedSends(db, chat.id)
       : Promise.resolve([]),
+    latestChatSummary(db, chat.id, access.cipher),
+    getRequestOverhead(db, chat.id),
   ]);
   const branches =
     project?.kind === 'code' && project.workspaceId
@@ -126,6 +130,15 @@ export async function loadChatView(
       updatedAt: chat.updatedAt.toISOString(),
       activeTurn: active ? toTurnView(active) : null,
       artifacts,
+      contextTokens: rows.some((row) => row.usage)
+        ? Math.round(
+            estimateRequestTokens(
+              rows,
+              summary ? { createdAt: summary.createdAt, chars: summary.content.length } : null,
+              overhead
+            )
+          )
+        : null,
       queue,
     },
     messages: rows.map((row) => {

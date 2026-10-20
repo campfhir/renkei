@@ -41,3 +41,17 @@ describe('parseModelPayload — data handling', () => {
     expect(parsed.settings).toEqual({});
   });
 });
+
+describe('parseModelPayload — context window', () => {
+  it('keeps a positive window as a whole number of tokens', () => {
+    const parsed = parseModelPayload({ ...base, contextWindow: 200000.9 });
+    expect('error' in parsed ? null : parsed.settings.contextWindow).toBe(200000);
+  });
+
+  it('stores nothing for a blank, zero, negative or non-numeric window', () => {
+    for (const contextWindow of [0, -5, '200000', null]) {
+      const parsed = parseModelPayload({ ...base, contextWindow });
+      expect('error' in parsed ? null : parsed.settings.contextWindow).toBeUndefined();
+    }
+  });
+});

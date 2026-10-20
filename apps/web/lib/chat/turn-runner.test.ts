@@ -734,6 +734,65 @@ describe('runChatTurn', () => {
     expect(fake.rows.get('m1')?.status).toBe('failed');
   });
 
+  it('compacts and asks again when the provider says the prompt is too long', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-ctx');
+    const systems: string[] = [];
+    let calls = 0;
+    const tooLongOnce: LlmProvider = {
+      async complete(request) {
+        systems.push(request.system);
+        calls += 1;
+        return calls === 1 ? err('context_length' as const, { message: 'too long' }) : ok(text('ok'));
+      },
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(tooLongOnce),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+        recoverFromContextOverflow: async () => ({
+          history: [{ role: 'user', content: [{ type: 'text', text: 'short' }] }],
+          system: 'be helpful; summary: …',
+        }),
+      },
+      inputFor('turn-ctx')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(systems).toEqual(['be helpful', 'be helpful; summary: …']);
+  });
+
+  it('fails with a plain message when the overflow cannot be compacted away', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-ctx-2');
+    const tooLong: LlmProvider = {
+      async complete() {
+        return err('context_length' as const, { message: 'too long' });
+      },
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(tooLong),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+        recoverFromContextOverflow: async () => null,
+      },
+      inputFor('turn-ctx-2')
+    );
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error).toMatch(/too long for the model's context window/);
+  });
+
   it('gives up after the iteration cap and the wall clock', async () => {
     const fake = fakeStore();
     const channel = openTurnChannel('turn-6');

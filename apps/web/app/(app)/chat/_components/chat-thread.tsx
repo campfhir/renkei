@@ -64,6 +64,7 @@ import { DialogFooter } from './chat-nav';
 import Composer, { type ComposerSubmit } from './composer';
 import MessageList from './message-list';
 import ModelSelect from './model-select';
+import ContextMeter from './context-meter';
 import ToolsPopover from './tools-popover';
 import ShareModal from './share-modal';
 import {
@@ -131,8 +132,10 @@ const COMPACT_MAX_PX = 640;
 const PANE_OPEN_KEY = 'code-pane:open';
 const PANE_RATIO_KEY = 'code-pane:ratio';
 const DEFAULT_RATIO = 0.7;
-const CHAT_MIN_PX = 320;
+const CHAT_MIN_PX = 400;
 const CODE_MIN_PX = 360;
+/** The resize handle between the panes (w-1). */
+const HANDLE_PX = 4;
 
 function readRatio(): number {
   try {
@@ -339,6 +342,9 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
   const [paneOpen, setPaneOpen] = useState(true);
   const [paneTab, setPaneTab] = useState<'chat' | 'code'>('chat');
   const [ratio, setRatio] = useState(DEFAULT_RATIO);
+  // The chat keeps its minimum width however the saved ratio and the window fall.
+  const codeRatio =
+    frameWidth !== null ? Math.min(ratio, 1 - (CHAT_MIN_PX + HANDLE_PX) / frameWidth) : ratio;
   useEffect(() => {
     if (!codeProjectId) return;
     try {
@@ -1020,7 +1026,7 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
       let next = ratio;
       const move = (moveEvent: PointerEvent) => {
         const min = CODE_MIN_PX / rect.width;
-        const max = 1 - CHAT_MIN_PX / rect.width;
+        const max = 1 - (CHAT_MIN_PX + HANDLE_PX) / rect.width;
         next = Math.min(max, Math.max(min, (moveEvent.clientX - rect.left) / rect.width));
         setRatio(next);
       };
@@ -1065,7 +1071,7 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
       {codePane && paneMode === 'split' && paneOpen ? (
         <>
           <div
-            style={{ width: `${Math.round(ratio * 1000) / 10}%` }}
+            style={{ width: `${Math.round(codeRatio * 1000) / 10}%` }}
             className="flex min-w-0 shrink-0 flex-col"
           >
             {codePane}
@@ -1361,14 +1367,17 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
                 onCancelEdit={() => setEditing(null)}
                 onStop={stop}
                 modelControl={
-                  <ModelSelect
-                    models={models}
-                    value={modelId}
-                    onChange={changeModel}
-                    thinking={thinking}
-                    onThinking={changeThinking}
-                    hasHistory={state.messages.length > 0}
-                  />
+                  <>
+                    <ModelSelect
+                      models={models}
+                      value={modelId}
+                      onChange={changeModel}
+                      thinking={thinking}
+                      onThinking={changeThinking}
+                      hasHistory={state.messages.length > 0}
+                    />
+                    <ContextMeter tokens={initialChat.contextTokens} model={currentModel} />
+                  </>
                 }
                 modeControl={
                   codeProjectId ? (

@@ -44,7 +44,14 @@ import type { ContentCipher } from './content-crypto';
 import { projectCipherById } from './chat-keys';
 import { attachmentPromptBlocks } from './attachments';
 import { openProjectInstructions } from './projects';
-import { compactChat, latestChatSummary, needsCompaction } from './compaction';
+import {
+  compactChat,
+  getRequestOverhead,
+  latestChatSummary,
+  needsCompaction,
+  overheadTokensOf,
+  setRequestOverhead,
+} from './compaction';
 import { listMessages, insertMessage, type InsertedMessage } from './messages';
 import { createTurn, finishTurn, heartbeatTurn, suspendTurn } from './turns';
 import { isShuttingDown, onShutdown } from '@/lib/shutdown';
@@ -554,7 +561,20 @@ async function executeTurnBody(
     // unavailable model leaves every message as it was for the next turn's
     // check to retry — never a reason to fail the turn that triggered it.
     let rows = initialRows;
-    if (needsCompaction(rows)) {
+    const [priorSummary, overheadTokens] = await Promise.all([
+      latestChatSummary(db, input.chat.id, input.cipher),
+      getRequestOverhead(db, input.chat.id),
+    ]);
+    if (
+      needsCompaction(rows, {
+        contextWindow: input.llm.contextWindow ?? null,
+        maxOutputTokens: input.llm.maxOutputTokens,
+        summary: priorSummary
+          ? { createdAt: priorSummary.createdAt, chars: priorSummary.content.length }
+          : null,
+        overheadTokens,
+      })
+    ) {
       try {
         const compacted = await compactChat(db, {
           chatId: input.chat.id,
@@ -681,29 +701,39 @@ async function executeTurnBody(
       discoveryTool ? [...baseLocalTools, discoveryTool] : baseLocalTools
     );
 
-    const history = buildHistory(
-      rows,
-      {
-        turnId: input.turnId,
-        llmModelId: input.llm.modelConfigId,
-        providerName: input.llm.providerName,
-      },
-      input.assistantMessage.id,
-      // A code chat's context is for coordinating: earlier turns' tool
-      // results are trimmed to their head (request-builder.ts), and the
-      // brief says to call again rather than recall.
-      { elideEarlierToolResults: project?.kind === 'code' }
-    );
+    const historyOf = (from: typeof rows) =>
+      buildHistory(
+        from,
+        {
+          turnId: input.turnId,
+          llmModelId: input.llm.modelConfigId,
+          providerName: input.llm.providerName,
+        },
+        input.assistantMessage.id,
+        // A code chat's context is for coordinating: earlier turns' tool
+        // results are trimmed to their head (request-builder.ts), and the
+        // brief says to call again rather than recall.
+        { elideEarlierToolResults: project?.kind === 'code' }
+      );
+    const history = historyOf(rows);
     // What earlier turns found through find_tools stays offered: the model
     // calls a tool it remembers whether or not its schema is in the request,
     // and only with the schema does it call it right.
     const recalled = recallDiscoveredTools(history, surface.discoverable);
-    const system = buildSystemPrompt({
+    const chartsAllowed = filesAllowed && (await sandboxChartsEnabled());
+    // The document road through sandbox_run_python: the same condition
+    // chat-local-tools.ts offers chat_write_file's pointer under.
+    const pythonAllowed =
+      filesAllowed &&
+      toolConfig.connectors.includes('sandbox') &&
+      sandboxConfig() !== null &&
+      (await sandboxScriptsServed().catch(() => false));
+    const systemWith = (summary: string | null) => buildSystemPrompt({
       personName: person?.displayName ?? person?.email ?? null,
       orgName: null,
       project: context.project ? { ...context.project, code: code?.prompt ?? null } : null,
       userMemoryText: context.userMemoryText,
-      chatSummary: chatSummary?.content ?? null,
+      chatSummary: summary,
       chatFiles: context.chatFiles,
       hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
       hasDiscoverableTools: discoveryTool !== null,
@@ -718,18 +748,54 @@ async function executeTurnBody(
         surface.discoverable.some((entry) => entry.def.name === 'outlook_search_users'),
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
       filesAllowed,
-      chartsAllowed: filesAllowed && (await sandboxChartsEnabled()),
-      // The document road through sandbox_run_python: the same condition
-      // chat-local-tools.ts offers chat_write_file's pointer under.
-      pythonAllowed:
-        filesAllowed &&
-        toolConfig.connectors.includes('sandbox') &&
-        sandboxConfig() !== null &&
-        (await sandboxScriptsServed().catch(() => false)),
+      chartsAllowed,
+      pythonAllowed,
       autoMode: auto,
       timeZone: input.timeZone ?? null,
       now: new Date(),
     });
+    const system = systemWith(chatSummary?.content ?? null);
+    const toolDefs = [...surface.tools, ...recalled, ...localTools.defs()];
+    // What this chat's requests carry besides its messages, kept for the
+    // context meter and the next turn's compaction check. Not worth failing
+    // a turn over.
+    void setRequestOverhead(db, input.chat.id, overheadTokensOf(system, toolDefs)).catch(
+      (error: unknown) =>
+        log('chat request overhead not stored: {message}', {
+          message: error instanceof Error ? error.message : String(error),
+        })
+    );
+    // The provider turned the request down for size: fold the older history
+    // now, rebuild both halves of the prompt that carry it, and let the
+    // runner ask again. Null when there was nothing worth folding.
+    const recoverFromContextOverflow = async () => {
+      try {
+        const compacted = await compactChat(db, {
+          chatId: input.chat.id,
+          llm: input.llm,
+          createdBy: 'auto',
+          cipher: input.cipher,
+          onProgress: (progress) =>
+            channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
+        });
+        if (!compacted) return null;
+        const fresh = await listMessages(db, input.chat.id, input.cipher);
+        const summary = await latestChatSummary(db, input.chat.id, input.cipher);
+        channel.emit({
+          type: 'compaction_progress',
+          turnId: input.turnId,
+          foldedSoFar: compacted.foldedCount,
+          totalToFold: compacted.foldedCount,
+          status: 'done',
+        });
+        return { history: historyOf(fresh), system: systemWith(summary?.content ?? null) };
+      } catch (error) {
+        log('chat context-overflow compaction failed: {message}', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
+    };
     log(
       'chat turn prepared in {preparedMs} ms',
       {
@@ -746,9 +812,7 @@ async function executeTurnBody(
     const outcome = await runChatTurn(
       {
         llm: input.llm,
-        tools: [...surface.tools, ...recalled, ...localTools.defs()].sort((a, b) =>
-          a.name.localeCompare(b.name)
-        ),
+        tools: [...toolDefs].sort((a, b) => a.name.localeCompare(b.name)),
         mcp: surface.mcp,
         localTools,
         localContext,
@@ -774,6 +838,7 @@ async function executeTurnBody(
             }
           : {}),
         suspendSignal,
+        recoverFromContextOverflow,
         channel,
         store,
         log,

@@ -65,6 +65,7 @@ interface ModelRow {
   baseUrl: string | null;
   settings: {
     maxOutputTokens?: number;
+    contextWindow?: number;
     temperature?: number;
     apiVersion?: string;
     reasoningEffort?: string;
@@ -85,6 +86,7 @@ interface ModelDraft {
   model: string;
   baseUrl: string;
   maxOutputTokens: string;
+  contextWindow: string;
   temperature: string;
   apiVersion: string;
   reasoningEffort: string;
@@ -117,6 +119,7 @@ const emptyDraft: ModelDraft = {
   model: '',
   baseUrl: '',
   maxOutputTokens: '',
+  contextWindow: '',
   temperature: '',
   apiVersion: '',
   reasoningEffort: '',
@@ -145,6 +148,8 @@ function draftOf(row: ModelRow): ModelDraft {
     baseUrl: row.baseUrl ?? '',
     maxOutputTokens:
       typeof row.settings?.maxOutputTokens === 'number' ? String(row.settings.maxOutputTokens) : '',
+    contextWindow:
+      typeof row.settings?.contextWindow === 'number' ? String(row.settings.contextWindow) : '',
     temperature:
       typeof row.settings?.temperature === 'number' ? String(row.settings.temperature) : '',
     apiVersion: typeof row.settings?.apiVersion === 'string' ? row.settings.apiVersion : '',
@@ -314,6 +319,7 @@ export default function ModelForms() {
       model: draft.model,
       baseUrl: draft.baseUrl || null,
       ...(draft.maxOutputTokens ? { maxOutputTokens: Number(draft.maxOutputTokens) } : {}),
+      ...(draft.contextWindow ? { contextWindow: Number(draft.contextWindow) } : {}),
       ...(draft.temperature ? { temperature: Number(draft.temperature) } : {}),
       ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
       ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
@@ -784,6 +790,25 @@ export default function ModelForms() {
                 onChange={(event) => setDraft({ ...draft, temperature: event.target.value })}
               />
             </div>
+          </div>
+
+          <div>
+            <label className={labelClass} htmlFor="model-context-window">
+              Context window (tokens) <span className="font-normal text-gray-500">(optional)</span>
+            </label>
+            <input
+              id="model-context-window"
+              className={inputClass}
+              type="number"
+              min={1}
+              value={draft.contextWindow}
+              placeholder="200000"
+              onChange={(event) => setDraft({ ...draft, contextWindow: event.target.value })}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              The most the model can read in one call. Chats show how much of it the conversation
+              uses; leave blank to show usage without a limit.
+            </p>
           </div>
 
           <div>

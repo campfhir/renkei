@@ -212,7 +212,7 @@ export default function VoiceMenu({
           // button, so it becomes a panel over the thread, as tall as its
           // content up to the screen, scrolling past that; the pickers'
           // lists open inside it.
-          className={`${embedded ? 'fixed inset-x-3 bottom-3 max-h-[calc(100dvh-5rem)] overflow-y-auto' : 'absolute bottom-full left-0 mb-1 w-96 max-sm:fixed max-sm:inset-x-3 max-sm:bottom-3 max-sm:mb-0 max-sm:max-h-[calc(100dvh-5rem)] max-sm:w-auto max-sm:overflow-y-auto'} z-40 rounded-lg border border-gray-200 bg-white p-2 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900`}
+          className={`${embedded ? 'fixed inset-x-3 bottom-3 max-h-[calc(100dvh-5rem)] overflow-y-auto sm:left-auto sm:w-96' : 'absolute bottom-full left-0 mb-1 w-96 max-sm:fixed max-sm:inset-x-3 max-sm:bottom-3 max-sm:mb-0 max-sm:max-h-[calc(100dvh-5rem)] max-sm:w-auto max-sm:overflow-y-auto'} z-40 rounded-lg border border-gray-200 bg-white p-2 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900`}
         >
           <div className="flex items-center justify-between px-2 pt-1 pb-1.5">
             {embedded ? (
