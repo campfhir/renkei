@@ -3010,10 +3010,12 @@ export async function registerOutlookTools(
       title: 'Outlook · Act — Change a calendar event',
       description:
         'Change an event on the connected user’s calendar: title, time, location, description, ' +
-        'or how it repeats. Attendees receive the update. For one occurrence of a recurring ' +
-        'event the change applies to that occurrence alone unless scope is "series"; a new ' +
-        'recurrence or stopRepeating always applies to the whole series. Acts as the user — ' +
-        'only change what they asked for.',
+        'how it repeats, or who is invited. Attendees receive the update. Adding or removing ' +
+        'attendees is organizer-only; add to the invite with addRequiredAttendees or ' +
+        'addOptionalAttendees, take people off it with removeAttendees. For one occurrence of a ' +
+        'recurring event the change applies to that occurrence alone unless scope is "series"; ' +
+        'a new recurrence or stopRepeating always applies to the whole series. Acts as the ' +
+        'user — only change what they asked for.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         eventId: z
@@ -3045,6 +3047,18 @@ export async function registerOutlookTools(
           .boolean()
           .describe('End the series: the event becomes a single event on its first occurrence')
           .optional(),
+        addRequiredAttendees: z
+          .array(z.string().min(1))
+          .describe('Email addresses to invite as required attendees (organizer only)')
+          .optional(),
+        addOptionalAttendees: z
+          .array(z.string().min(1))
+          .describe('Email addresses to invite as optional attendees (organizer only)')
+          .optional(),
+        removeAttendees: z
+          .array(z.string().min(1))
+          .describe('Email addresses to take off the invite (organizer only)')
+          .optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -3058,7 +3072,21 @@ export async function registerOutlookTools(
       if (repeatGiven && stopRepeating) {
         return errText('Give either a new recurrence or stopRepeating, not both.');
       }
-      const select = '$select=id,subject,type,seriesMasterId,start,end';
+      const listOf = (value: unknown): string[] =>
+        Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+      const invites = [
+        ...listOf(args.addRequiredAttendees).map((address) => ({ address, type: 'required' })),
+        ...listOf(args.addOptionalAttendees).map((address) => ({ address, type: 'optional' })),
+      ];
+      const removals = listOf(args.removeAttendees);
+      const inviteChange = invites.length > 0 || removals.length > 0;
+      const sameAddress = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+      if (
+        invites.some((invite) => removals.some((address) => sameAddress(invite.address, address)))
+      ) {
+        return errText('Give an address either to invite or to remove, not both.');
+      }
+      const select = '$select=id,subject,type,seriesMasterId,start,end,isOrganizer,attendees';
       const lookup = await graphGet(
         context,
         access.auth,
@@ -3088,6 +3116,48 @@ export async function registerOutlookTools(
       if (str(args.end)) patch.end = { dateTime: str(args.end), timeZone: timezone };
       if (str(args.body)) patch.body = { contentType: 'Text', content: str(args.body) };
       if (str(args.location)) patch.location = { displayName: str(args.location) };
+      // Graph replaces the whole attendees list on a PATCH, so the change is
+      // merged into the list as it stands, and only the organizer may make it.
+      const invitedNow: string[] = [];
+      const removedNow: string[] = [];
+      const notInvited: string[] = [];
+      if (inviteChange) {
+        if (base.isOrganizer !== true) {
+          return errText(
+            'Only the organizer can invite or remove attendees. Ask them to make the change.'
+          );
+        }
+        const current: Record<string, unknown>[] = Array.isArray(base.attendees)
+          ? base.attendees.map(rec)
+          : [];
+        const addressOf = (attendee: Record<string, unknown>) =>
+          str(rec(attendee.emailAddress).address);
+        const kept = current.flatMap((attendee) => {
+          const address = addressOf(attendee);
+          if (removals.some((removed) => sameAddress(removed, address))) {
+            removedNow.push(address);
+            return [];
+          }
+          const invite = invites.find((entry) => sameAddress(entry.address, address));
+          if (invite) invitedNow.push(address);
+          return [
+            {
+              emailAddress: rec(attendee.emailAddress),
+              type: invite ? invite.type : str(attendee.type) || 'required',
+            },
+          ];
+        });
+        const newcomers = invites
+          .filter((invite) => !current.some((a) => sameAddress(invite.address, addressOf(a))))
+          .map((invite) => {
+            invitedNow.push(invite.address);
+            return { emailAddress: { address: invite.address }, type: invite.type };
+          });
+        for (const address of removals) {
+          if (!current.some((a) => sameAddress(address, addressOf(a)))) notInvited.push(address);
+        }
+        patch.attendees = [...kept, ...newcomers];
+      }
       let repeats: string | null = null;
       if (stopRepeating) {
         patch.recurrence = null;
@@ -3106,8 +3176,8 @@ export async function registerOutlookTools(
       }
       if (Object.keys(patch).length === 0) {
         return errText(
-          'Nothing to change: give a new subject, start, end, body, location or recurrence, ' +
-            'or stopRepeating.'
+          'Nothing to change: give a new subject, start, end, body, location, recurrence, ' +
+            'stopRepeating, or attendees to invite or remove.'
         );
       }
 
@@ -3136,6 +3206,9 @@ export async function registerOutlookTools(
         ...textResult(
           `Updated "${subject}"${where} (${Object.keys(patch).join(', ')})` +
             (repeats ? `; ${repeats}` : '') +
+            (invitedNow.length > 0 ? `; invited: ${invitedNow.join(', ')}` : '') +
+            (removedNow.length > 0 ? `; removed: ${removedNow.join(', ')}` : '') +
+            (notInvited.length > 0 ? `; not on the invite: ${notInvited.join(', ')}` : '') +
             '. Attendees were sent the update.'
         ),
         _meta: actMeta({ id: `“${subject}”` }),

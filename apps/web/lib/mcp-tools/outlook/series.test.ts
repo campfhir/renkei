@@ -123,7 +123,16 @@ const SINGLE = {
   start: { dateTime: '2026-09-17T12:00:00', timeZone: 'America/Los_Angeles' },
   end: { dateTime: '2026-09-17T13:00:00', timeZone: 'America/Los_Angeles' },
   isOrganizer: true,
+  attendees: [
+    {
+      type: 'required',
+      emailAddress: { name: 'Rachel Cheng', address: 'rachel.cheng@nems.org' },
+      status: { response: 'accepted' },
+    },
+    { type: 'optional', emailAddress: { address: 'dev@nems.org' }, status: { response: 'none' } },
+  ],
 };
+const INVITED = { ...SINGLE, id: 'evt-invited', isOrganizer: false };
 
 let requests: { method: string; url: string; body: unknown }[] = [];
 
@@ -146,7 +155,9 @@ beforeEach(() => {
             ? MASTER
             : path.includes('/me/events/evt-occ-3')
               ? OCCURRENCE
-              : SINGLE;
+              : path.includes('/me/events/evt-invited')
+                ? INVITED
+                : SINGLE;
     return {
       ok: true,
       status: method === 'GET' ? 200 : 204,
@@ -295,5 +306,73 @@ describe('outlook_update_event', () => {
     expect(bad.isError).toBe(true);
     expect(text(bad)).toContain('recurrence.frequency');
     expect(requests.filter((request) => request.method === 'PATCH')).toHaveLength(0);
+  });
+});
+
+describe('outlook_update_event attendees', () => {
+  it('adds and removes invitees, sending the whole list back with the rest of it kept', async () => {
+    const result = await tool('outlook_update_event', {
+      eventId: 'evt-single',
+      addRequiredAttendees: ['new.person@nems.org'],
+      addOptionalAttendees: ['optional.person@nems.org'],
+      removeAttendees: ['Rachel.Cheng@nems.org'],
+    });
+    expect(result.isError).toBeFalsy();
+    expect(requests.map((request) => request.method)).toEqual(['GET', 'PATCH']);
+    expect(requests[1].body).toEqual({
+      attendees: [
+        { emailAddress: { address: 'dev@nems.org' }, type: 'optional' },
+        { emailAddress: { address: 'new.person@nems.org' }, type: 'required' },
+        { emailAddress: { address: 'optional.person@nems.org' }, type: 'optional' },
+      ],
+    });
+    expect(text(result)).toContain(
+      'invited: new.person@nems.org, optional.person@nems.org; removed: rachel.cheng@nems.org'
+    );
+  });
+
+  it('moves an existing invitee to the other kind without removing them', async () => {
+    await tool('outlook_update_event', {
+      eventId: 'evt-single',
+      addRequiredAttendees: ['DEV@nems.org'],
+    });
+    expect(requests[1].body).toEqual({
+      attendees: [
+        {
+          emailAddress: { name: 'Rachel Cheng', address: 'rachel.cheng@nems.org' },
+          type: 'required',
+        },
+        { emailAddress: { address: 'dev@nems.org' }, type: 'required' },
+      ],
+    });
+  });
+
+  it('says so when asked to remove someone who was never invited', async () => {
+    const result = await tool('outlook_update_event', {
+      eventId: 'evt-single',
+      removeAttendees: ['stranger@nems.org'],
+    });
+    expect(result.isError).toBeFalsy();
+    expect(text(result)).toContain('not on the invite: stranger@nems.org');
+  });
+
+  it('refuses to change the invite unless the user is the organizer', async () => {
+    const result = await tool('outlook_update_event', {
+      eventId: 'evt-invited',
+      addRequiredAttendees: ['new.person@nems.org'],
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('Only the organizer');
+    expect(requests.filter((request) => request.method === 'PATCH')).toHaveLength(0);
+  });
+
+  it('refuses an address both invited and removed, before calling Graph', async () => {
+    const result = await tool('outlook_update_event', {
+      eventId: 'evt-single',
+      addOptionalAttendees: ['dev@nems.org'],
+      removeAttendees: ['DEV@nems.org'],
+    });
+    expect(result.isError).toBe(true);
+    expect(requests).toHaveLength(0);
   });
 });
