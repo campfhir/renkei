@@ -8,7 +8,6 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { isHistoryChat } from '@/lib/code/active-chat';
 import { workspaceBranches } from '@/lib/code/branches';
 import { listAccessibleProjectIds, listGrantedResources } from './access';
 import { listProjectsById } from './projects';
@@ -67,12 +66,8 @@ function item(
   chat: ChatRow,
   via: ChatListItem['via'],
   ownerName: string | null,
-  project: {
-    name: string;
-    kind: 'chat' | 'code';
-    branch: string | null;
-    activeChatId: string | null;
-  } | null
+  project: { name: string; kind: 'chat' | 'code' } | null,
+  branch: string | null
 ): ChatListItem {
   return {
     id: chat.id,
@@ -80,8 +75,7 @@ function item(
     projectId: chat.projectId,
     projectName: project?.name ?? null,
     projectKind: project?.kind ?? null,
-    projectBranch: project?.branch ?? null,
-    history: isHistoryChat(project, chat.id),
+    projectBranch: branch,
     updatedAt: chat.updatedAt.toISOString(),
     lastMessageAt: chat.lastMessageAt ? chat.lastMessageAt.toISOString() : null,
     archived: chat.archivedAt !== null,
@@ -91,39 +85,32 @@ function item(
   };
 }
 
-/** A project's name, kind and (for a code project) checkout branch, by id. */
-async function projectMapFor(
-  db: Kysely<DB>,
+/** A project's name and kind, by id. */
+function projectMapFor(
   projects: Awaited<ReturnType<typeof listProjectsById>>
-): Promise<
-  Map<
-    string,
-    { name: string; kind: 'chat' | 'code'; branch: string | null; activeChatId: string | null }
-  >
-> {
-  // A code project's checkout branch, for the rows of its chats: one read
-  // of the worker's own table, never a worker call from the menu.
-  const branches = await workspaceBranches(
-    db,
-    projects.filter((project) => project.kind === 'code').map((project) => project.workspaceId)
-  );
+): Map<string, { name: string; kind: 'chat' | 'code' }> {
   return new Map(
-    projects.map((project) => [
-      project.id,
-      {
-        name: project.name,
-        kind: project.kind,
-        branch: project.workspaceId ? (branches.get(project.workspaceId) ?? null) : null,
-        activeChatId: project.activeChatId,
-      },
-    ])
+    projects.map((project) => [project.id, { name: project.name, kind: project.kind }])
   );
 }
 
-async function namesFor(
+/**
+ * The branch each code chat's worktree is on, for the rows of the menu:
+ * one read of the worker's own table, never a worker call from the menu.
+ * A chat with no worktree yet (no turn has run) names no branch.
+ */
+async function chatBranchesFor(
   db: Kysely<DB>,
-  subjects: string[]
-): Promise<Map<string, string | null>> {
+  chats: ChatRow[]
+): Promise<(chat: ChatRow) => string | null> {
+  const branches = await workspaceBranches(
+    db,
+    chats.map((chat) => chat.workspaceId)
+  );
+  return (chat) => (chat.workspaceId ? (branches.get(chat.workspaceId) ?? null) : null);
+}
+
+async function namesFor(db: Kysely<DB>, subjects: string[]): Promise<Map<string, string | null>> {
   const unique = [...new Set(subjects)];
   if (unique.length === 0) return new Map();
   const rows = await db
@@ -169,20 +156,27 @@ export async function loadChatSidebar(
     ...inProjects.map((chat) => chat.ownerSubject),
     ...projects.map((project) => project.ownerSubject),
   ]);
-  const projectsById = await projectMapFor(db, projects);
+  const projectsById = projectMapFor(projects);
+  const branchOf = await chatBranchesFor(db, [...owned, ...granted, ...inProjects]);
   const projectOf = (chat: ChatRow) =>
     chat.projectId ? (projectsById.get(chat.projectId) ?? null) : null;
   // "+ New" creates its chat up front; one nothing was said in yet is not
   // listed (nor is anyone else's), so abandoned starts never pile up here.
   const started = (chat: ChatRow) => chat.lastMessageAt !== null;
   const allChats: ChatListItem[] = [
-    ...owned.filter(started).map((chat) => item(chat, 'owner', null, projectOf(chat))),
+    ...owned
+      .filter(started)
+      .map((chat) => item(chat, 'owner', null, projectOf(chat), branchOf(chat))),
     ...granted
       .filter(started)
-      .map((chat) => item(chat, 'grant', names.get(chat.ownerSubject) ?? null, projectOf(chat))),
+      .map((chat) =>
+        item(chat, 'grant', names.get(chat.ownerSubject) ?? null, projectOf(chat), branchOf(chat))
+      ),
     ...inProjects
       .filter((chat) => started(chat) && !grantedIds.has(chat.id))
-      .map((chat) => item(chat, 'project', names.get(chat.ownerSubject) ?? null, projectOf(chat))),
+      .map((chat) =>
+        item(chat, 'project', names.get(chat.ownerSubject) ?? null, projectOf(chat), branchOf(chat))
+      ),
   ];
   const listItem = (project: (typeof projects)[number]): ProjectListItem => ({
     id: project.id,
@@ -228,9 +222,16 @@ export async function loadMoreOwnedChats(
     (chat) => chat.lastMessageAt !== null
   );
   const projects = await listProjectsById(db, projectIds);
-  const projectsById = await projectMapFor(db, projects);
+  const projectsById = projectMapFor(projects);
+  const branchOf = await chatBranchesFor(db, page);
   const chats = page.map((chat) =>
-    item(chat, 'owner', null, chat.projectId ? (projectsById.get(chat.projectId) ?? null) : null)
+    item(
+      chat,
+      'owner',
+      null,
+      chat.projectId ? (projectsById.get(chat.projectId) ?? null) : null,
+      branchOf(chat)
+    )
   );
   const cursor = hasMore ? rows[CHAT_SIDEBAR_PAGE_SIZE - 1] : rows[rows.length - 1];
   return { chats, nextBefore: hasMore && cursor ? cursor.updatedAt.toISOString() : null };

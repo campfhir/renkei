@@ -53,41 +53,39 @@ export async function loadChatView(
   const { chat } = access;
   const [rows, active, project, owner, attachments, widgetDecisions, queue, summary, overhead] =
     await Promise.all([
-    listMessages(db, chat.id, access.cipher),
-    getActiveTurn(db, chat.id),
-    chat.projectId ? getProjectRow(db, chat.projectId) : Promise.resolve(null),
-    chat.ownerSubject === viewerSubject
-      ? Promise.resolve(null)
-      : db
-          .selectFrom('identities')
-          .select(['display_name', 'email'])
-          .where('subject', '=', chat.ownerSubject)
-          .executeTakeFirst(),
-    db
-      .selectFrom('chat_attachments')
-      .select([
-        'id',
-        'filename',
-        'content_type',
-        'size_bytes',
-        'extract_status',
-        'message_id',
-        'origin',
-      ])
-      .where('chat_id', '=', chat.id)
-      .orderBy('created_at', 'asc')
-      .execute(),
-    listWidgetDecisions(db, chat.id),
-    // Only the owner sends, so only the owner has a queue to show.
-    chat.ownerSubject === viewerSubject
-      ? loadQueuedSends(db, chat.id)
-      : Promise.resolve([]),
-    latestChatSummary(db, chat.id, access.cipher),
-    getRequestOverhead(db, chat.id),
-  ]);
+      listMessages(db, chat.id, access.cipher),
+      getActiveTurn(db, chat.id),
+      chat.projectId ? getProjectRow(db, chat.projectId) : Promise.resolve(null),
+      chat.ownerSubject === viewerSubject
+        ? Promise.resolve(null)
+        : db
+            .selectFrom('identities')
+            .select(['display_name', 'email'])
+            .where('subject', '=', chat.ownerSubject)
+            .executeTakeFirst(),
+      db
+        .selectFrom('chat_attachments')
+        .select([
+          'id',
+          'filename',
+          'content_type',
+          'size_bytes',
+          'extract_status',
+          'message_id',
+          'origin',
+        ])
+        .where('chat_id', '=', chat.id)
+        .orderBy('created_at', 'asc')
+        .execute(),
+      listWidgetDecisions(db, chat.id),
+      // Only the owner sends, so only the owner has a queue to show.
+      chat.ownerSubject === viewerSubject ? loadQueuedSends(db, chat.id) : Promise.resolve([]),
+      latestChatSummary(db, chat.id, access.cipher),
+      getRequestOverhead(db, chat.id),
+    ]);
   const branches =
-    project?.kind === 'code' && project.workspaceId
-      ? await workspaceBranches(db, [project.workspaceId])
+    project?.kind === 'code' && chat.workspaceId
+      ? await workspaceBranches(db, [chat.workspaceId])
       : new Map<string, string>();
   const byMessage = new Map<string, AttachmentView[]>();
   const artifacts: AttachmentView[] = [];
@@ -114,8 +112,7 @@ export async function loadChatView(
       projectId: chat.projectId,
       projectName: project?.name ?? null,
       projectKind: project?.kind ?? null,
-      projectBranch: project?.workspaceId ? (branches.get(project.workspaceId) ?? null) : null,
-      projectActiveChatId: project?.kind === 'code' ? project.activeChatId : null,
+      projectBranch: chat.workspaceId ? (branches.get(chat.workspaceId) ?? null) : null,
       llmModelId: chat.llmModelId,
       toolConfig: chat.toolConfig,
       projectToolConfig: project?.toolConfig ?? null,

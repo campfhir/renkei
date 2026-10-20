@@ -17,6 +17,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import { mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test, expect as baseExpect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
@@ -27,6 +29,9 @@ const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const GB = 1_073_741_824;
 
 test.use({
+  // The mobile project's device descriptor asks for WebKit, which is not
+  // installed here; the pinned Chromium runs every project (AGENTS.md).
+  browserName: 'chromium',
   launchOptions: {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
     args: ['--no-sandbox'],
@@ -168,13 +173,49 @@ async function dbRows<T extends Record<string, unknown>>(
   }
 }
 
+/**
+ * The org limit and the admin's request list are one organization's, so the
+ * three Playwright projects cannot run this at the same time: whoever holds
+ * the lock directory runs, the others wait for it.
+ */
+const LOCK = path.join(tmpdir(), 'renkei-e2e-size-requests.lock');
+async function withOrgLock<T>(run: () => Promise<T>): Promise<T> {
+  const deadline = Date.now() + 600_000;
+  for (;;) {
+    try {
+      mkdirSync(LOCK);
+      break;
+    } catch {
+      if (Date.now() > deadline) rmSync(LOCK, { recursive: true, force: true });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    rmSync(LOCK, { recursive: true, force: true });
+  }
+}
+
 test('checkout limit: org setting, request, approve, deny', async ({ page }, testInfo) => {
+  // Up to three runs of the body in turn, the dev server compiling each route on its first hit.
+  test.setTimeout(720_000);
+  await withOrgLock(() => checkoutLimit(page, testInfo));
+});
+
+async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   // The dev server compiles each route on its first hit, which outlasts the default 5s.
-  test.setTimeout(240_000);
   const expect = baseExpect.configure({ timeout: 30_000 });
   const fixture = fixtureFor(testInfo.project.name);
   await seed(fixture);
   await signIn(page, fixture);
+  // The org limit is one shared setting behind a 60s server cache: an earlier
+  // project's run leaves its 12 GB in that cache. Putting the default back
+  // through the API invalidates it, whatever ran before.
+  const reset = await page.request.put(`/api/admin/org-settings`, {
+    data: { sandboxWorkspaceMaxBytes: 8 * GB },
+  });
+  expect(reset.ok()).toBe(true);
   const projectUrl = `/code/${fixture.projectId}`;
   const settingsUrl = `/admin/settings`;
   // Scoped to the main region: across a navigation the dev server can leave
@@ -183,7 +224,15 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   const limitText = page.getByRole('main').getByTestId('size-limit');
 
   // ── Default: 8 GB, with the way to ask for more ──
+  // The pages read the org settings through a cache of their own (the dev
+  // server holds one per route bundle, so the reset above does not reach it):
+  // read again until the previous project's 12 GB has aged out.
   await page.goto(projectUrl);
+  for (let tries = 0; tries < 15; tries += 1) {
+    if ((await limitText.textContent({ timeout: 30_000 })) === 'Checkout limit 8 GB.') break;
+    await page.waitForTimeout(5_000);
+    await page.reload();
+  }
   await expect(limitText).toHaveText('Checkout limit 8 GB.');
   await expect(page.getByTestId('size-request-pending')).toHaveCount(0);
   await shot(page, testInfo, '01-project-default');
@@ -221,7 +270,9 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
 
   // ── The admin approves less than was asked; the limit rises for the project ──
   await page.goto(settingsUrl);
-  const rows = page.getByTestId('size-request-row');
+  // One organization: the admin's list holds every project's requests, so the
+  // rows are this run's project's own.
+  const rows = page.getByTestId('size-request-row').filter({ hasText: fixture.projectName });
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText(fixture.projectName);
   await expect(rows.first()).toContainText('24 GB');
@@ -229,7 +280,7 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await shot(page, testInfo, '05-admin-pending');
   await rows.first().getByLabel('Approve up to (GB)').fill('20');
   await rows.first().getByRole('button', { name: 'Approve' }).click();
-  await expect(page.getByText('No requests waiting.')).toBeVisible();
+  await expect(rows).toHaveCount(0);
   await expect(page.getByTestId('size-requests')).toContainText('20 GB approved');
 
   await page.goto(projectUrl);
@@ -247,9 +298,9 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await expect(page.getByTestId('size-request-pending')).toBeVisible();
 
   await page.goto(settingsUrl);
-  await page.getByTestId('size-request-row').getByLabel('Note').fill('Prune build output first');
-  await page.getByTestId('size-request-row').getByRole('button', { name: 'Deny' }).click();
-  await expect(page.getByText('No requests waiting.')).toBeVisible();
+  await rows.getByLabel('Note').fill('Prune build output first');
+  await rows.getByRole('button', { name: 'Deny' }).click();
+  await expect(rows).toHaveCount(0);
 
   await page.goto(projectUrl);
   await expect(limitText).toHaveText('Checkout limit 20 GB.');
@@ -294,4 +345,4 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await expect(page.getByLabel('sandboxWorkspaceMaxGb')).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await shot(page, testInfo, '10-settings-mobile');
-});
+}

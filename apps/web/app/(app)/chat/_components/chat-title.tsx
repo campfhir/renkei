@@ -8,10 +8,10 @@
  * pencil is dropped in favor of the title bar's overflow menu, which has
  * its own Rename. Under the name, the project the chat sits in, when it
  * does — and, for a code project, the branch its checkout is on right
- * now, read-only (switching a code project's active chat to another
+ * now, read-only (switching a code chat's worktree to another
  * branch is "Switch branch" in the title bar's own overflow menu —
  * branch-switcher.tsx's `BranchPickerModal` — not anything rendered
- * here). A `tag` (a code project's "history") sits beside the name.
+ * here). An optional `tag` sits beside the name.
  */
 
 import { useEffect, useRef, useState } from 'react';

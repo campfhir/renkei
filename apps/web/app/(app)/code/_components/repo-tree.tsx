@@ -35,6 +35,7 @@
  * — so it rides a ref handle (`newFile()`) rather than a prop.
  */
 
+import { codeProjectUrl } from '@/lib/code/urls';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -88,6 +89,8 @@ const RepoTree = forwardRef<
   RepoTreeHandle,
   {
     projectId: string;
+    /** A chat's worktree to show instead of the project's base clone. */
+    chatId?: string | null;
     /** Open a file; without it the tree is a look. */
     onOpen?: ((path: string) => void) | null;
     /** The file open in the pane, highlighted. */
@@ -111,6 +114,7 @@ const RepoTree = forwardRef<
 >(function RepoTree(
   {
     projectId,
+    chatId = null,
     onOpen = null,
     selected = null,
     marks,
@@ -123,8 +127,8 @@ const RepoTree = forwardRef<
   },
   ref
 ) {
-  const base = `/api/code/projects/${projectId}/tree`;
-  const filesBase = `/api/code/projects/${projectId}/files`;
+  const base = `${codeProjectUrl(projectId, chatId)}/tree`;
+  const filesBase = `${codeProjectUrl(projectId, chatId)}/files`;
   const [listings, setListings] = useState<Record<string, Listing>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [source, setSource] = useState<Source | null>(null);

@@ -494,7 +494,6 @@ export interface ChatProjectMemories {
 }
 
 export interface ChatProjects {
-  active_chat_id: string | null;
   created_at: Generated<Timestamp>;
   description: string | null;
   id: Generated<string>;
@@ -525,6 +524,7 @@ export interface Chats {
   title: string | null;
   tool_config: Json | null;
   updated_at: Generated<Timestamp>;
+  workspace_id: string | null;
 }
 
 export interface ChatSubagentRuns {
@@ -1423,6 +1423,7 @@ export interface SandboxWorkspaces {
   expires_at: Timestamp;
   id: string;
   last_used_at: Generated<Timestamp>;
+  parent_id: string | null;
   provider: string;
   repo_full_name: string;
   size_bytes: Generated<Int8>;

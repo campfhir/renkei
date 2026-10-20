@@ -133,7 +133,7 @@ export function CodeRepoStrip({
               ? `The last clone failed: ${workspace.error ?? 'unknown reason'}. The next chat tries again.`
               : workspace.status === 'cloning'
                 ? 'Cloning on the sandbox worker; this page follows it.'
-                : `${bytes(workspace.sizeBytes)} on the sandbox · expires ${when(workspace.expiresAt)} unless used · chats in this project work here, and clone again if it has expired.`}
+                : `${bytes(workspace.sizeBytes)} on the sandbox · expires ${when(workspace.expiresAt)} unless used · each chat works in a worktree of it, and clones again if it has expired.`}
       </p>
       {code.enabled && workspace?.status === 'ready' ? (
         <SizeRequest

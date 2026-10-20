@@ -42,14 +42,8 @@ export interface ProjectRow {
   toolConfig: ChatToolConfig | null;
   /** A code project's repository; null on a chat project. */
   repo: ProjectRepo | null;
-  /** A code project's checkout on the sandbox worker, once cloned. */
+  /** A code project's base clone on the sandbox worker, once cloned; each chat works in a worktree of it (chats.workspace_id). */
   workspaceId: string | null;
-  /**
-   * A code project's one chat that may continue (lib/code/active-chat.ts);
-   * every other chat in it is history. Null on a chat project, and on a
-   * code project whose active chat was deleted or archived.
-   */
-  activeChatId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -66,7 +60,6 @@ const PROJECT_COLUMNS = [
   'repo_full_name',
   'repo_branch',
   'workspace_id',
-  'active_chat_id',
   'created_at',
   'updated_at',
 ] as const;
@@ -86,7 +79,6 @@ function rowOf(raw: {
   repo_full_name: string | null;
   repo_branch: string | null;
   workspace_id: string | null;
-  active_chat_id: string | null;
   created_at: Date;
   updated_at: Date;
 }): ProjectRow {
@@ -107,7 +99,6 @@ function rowOf(raw: {
           }
         : null,
     workspaceId: raw.workspace_id,
-    activeChatId: raw.kind === 'code' ? raw.active_chat_id : null,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   };
@@ -121,10 +112,7 @@ export function openProjectInstructions(
   return project.sealedInstructions ? openText(project.sealedInstructions, cipher) : null;
 }
 
-export async function getProjectRow(
-  db: Kysely<DB>,
-  projectId: string
-): Promise<ProjectRow | null> {
+export async function getProjectRow(db: Kysely<DB>, projectId: string): Promise<ProjectRow | null> {
   if (!isUuid(projectId)) return null;
   const raw = await db
     .selectFrom('chat_projects')
@@ -223,8 +211,6 @@ export interface ProjectPatch {
   repo?: ProjectRepo;
   /** The checkout on the worker: set when a clone starts, cleared when it is dropped. */
   workspaceId?: string | null;
-  /** The chat that may continue in a code project; null when none may. */
-  activeChatId?: string | null;
 }
 
 /**
@@ -267,7 +253,6 @@ export async function updateProject(
           }
         : {}),
       ...(patch.workspaceId !== undefined ? { workspace_id: patch.workspaceId } : {}),
-      ...(patch.activeChatId !== undefined ? { active_chat_id: patch.activeChatId } : {}),
       updated_at: sql<Date>`NOW()`,
     })
     .where('id', '=', projectId)

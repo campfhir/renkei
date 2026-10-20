@@ -192,10 +192,6 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
   );
   const isOwner = chat.role === 'owner';
   const running = activeTurnId !== null;
-  // A code project's chat that is no longer its active one is history:
-  // read by anyone, continued by no one (lib/code/active-chat.ts). The
-  // composer and the code pane's edits give way to a note saying so.
-  const history = chat.projectKind === 'code' && chat.projectActiveChatId !== chat.id;
 
   /*
     Voice, when the org has it: one speech queue for the thread (a reply
@@ -880,17 +876,17 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
   // a button away in the title bar.
   const codeTools = useCodeChatTools({
     projectId: codeProjectId,
-    canEdit: isOwner && !history,
+    chatId: chat.id,
+    canEdit: isOwner,
     running,
     messages: state.messages,
     onAsk:
-      isOwner && !history && !running && !sending
+      isOwner && !running && !sending
         ? (text) => submit({ text, attachments: [] })
         : null,
   });
-  // A new chat in the project: through the API, which says why when a
-  // code project's active chat is still replying; outside one, the page
-  // that creates it.
+  // A new chat in the project: through the API, which gives a code project's
+  // chat its own worktree; outside one, the page that creates it.
   const startNewChat = useCallback(async () => {
     if (!chat.projectId) {
       router.push(`/chat/new`);
@@ -950,7 +946,7 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
     // The title bar's own inline switcher (below) hides below `lg` for
     // want of room — this is its only path on a narrow screen, and works
     // at every width, the same way Rename lives beside the pencil below.
-    if (!history && isOwner) {
+    if (isOwner) {
       overflow.push({
         label: 'Switch branch',
         icon: ICONS.gitBranch,
@@ -1047,6 +1043,7 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
   const codePane = codeProjectId ? (
     <CodePane
       projectId={codeProjectId}
+      chatId={chat.id}
       pane={pane}
       layout={paneMode === 'tabs' ? 'tab' : 'split'}
       touch={touch}
@@ -1109,7 +1106,6 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
                   }
                 : null
             }
-            tag={history ? 'history' : null}
             canRename={isOwner}
             onRename={rename}
             /* No inline switcher here: the title bar has no reliable
@@ -1242,7 +1238,7 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
               turn={state.turn}
               compaction={state.compaction}
               promptActions={
-                isOwner && !history && !running && !sending
+                isOwner && !running && !sending
                   ? { onResend: setConfirmResend, onEdit: setEditing }
                   : null
               }
@@ -1320,38 +1316,7 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
               </div>
             ) : null}
 
-            {history ? (
-              <div
-                data-testid="chat-history-notice"
-                className="border-t border-gray-200 px-4 py-3 text-sm text-gray-600 dark:border-gray-800 dark:text-gray-400"
-              >
-                <p>
-                  <span className="font-medium text-gray-800 dark:text-gray-200">
-                    This chat is history.
-                  </span>{' '}
-                  {chat.projectActiveChatId
-                    ? 'The project has moved on to a newer chat; this one stays to read.'
-                    : 'The project has no active chat right now; this one stays to read.'}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {chat.projectActiveChatId ? (
-                    <Link
-                      href={`/chat/${chat.projectActiveChatId}`}
-                      className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-                    >
-                      Open the active chat
-                    </Link>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => void startNewChat()}
-                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-                  >
-                    Start a new chat
-                  </button>
-                </div>
-              </div>
-            ) : isOwner ? (
+            {isOwner ? (
               <Composer
                 chatId={chat.id}
                 disabled={sending || models.length === 0}
@@ -1554,6 +1519,7 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
       {manageDialog === 'branch' && codeProjectId ? (
         <BranchPickerModal
           projectId={codeProjectId}
+          chatId={chat.id}
           branch={branch}
           onClose={() => setManageDialog(null)}
           onSwitched={setBranchOverride}

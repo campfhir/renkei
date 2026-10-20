@@ -743,6 +743,101 @@ export async function cloneRepository(input: CloneInput): Promise<CloneOutcome> 
   return { ok: true, branch: branch || 'HEAD' };
 }
 
+export interface WorktreeInput {
+  /** The base clone's storage key; the new worktree lands beside it. */
+  baseStorageKey: string;
+  storageKey: string;
+  identity: ExecIdentity | null;
+  /** The branch the worktree starts on — new, so no other checkout holds it. */
+  branch: string;
+  /** The remote branch to start from; empty means the repository's default branch. */
+  startBranch?: string;
+  /** When given, the remote is fetched first so the worktree starts from where it is now, not from the clone. */
+  gitProxy?: GitProxy;
+}
+
+/**
+ * A `git worktree` of a base clone, on a branch of its own. It shares the
+ * clone's object store, so it is made in moments and costs only its
+ * working files; nothing a chat does in it touches the base's files or
+ * another worktree's.
+ *
+ * The base is left on a detached HEAD: git refuses to check one branch out
+ * in two worktrees, and a chat switching its worktree to the branch the
+ * clone happened to start on is the commonest thing it does.
+ */
+export async function addWorktree(input: WorktreeInput): Promise<CloneOutcome> {
+  await ensureCallerDirs(input.storageKey, input.identity);
+  const base = workspaceDir(input.baseStorageKey);
+  const dir = workspaceDir(input.storageKey);
+  const run: RunInput = {
+    cwd: base,
+    home: homeDir(input.baseStorageKey),
+    identity: input.identity,
+    env: {},
+    timeoutMs: CLONE_TIMEOUT_MS,
+    ...(input.gitProxy ? { gitProxy: input.gitProxy } : {}),
+  };
+  await runGit(run, ['checkout', '--detach']);
+  let start = 'HEAD';
+  if (input.gitProxy) {
+    const fetched = await runGit(run, ['fetch', '--no-tags', 'origin']);
+    const remote = `origin/${input.startBranch || 'HEAD'}`;
+    // A failed fetch (the remote is down) still gives a usable worktree, from the clone.
+    if (
+      fetched.exitCode === 0 &&
+      (await runGit(run, ['rev-parse', '--verify', remote])).exitCode === 0
+    ) {
+      start = remote;
+    }
+  }
+  // The branch outlives a worktree that was removed: asking again for the
+  // chat's branch checks the same work out, rather than failing on a name taken.
+  const exists =
+    (await runGit(run, ['rev-parse', '--verify', '--quiet', `refs/heads/${input.branch}`]))
+      .exitCode === 0;
+  const added = await runGit(
+    run,
+    exists
+      ? ['worktree', 'add', '--', dir, input.branch]
+      : ['worktree', 'add', '--no-track', '-b', input.branch, '--', dir, start]
+  );
+  if (added.exitCode !== 0) {
+    await rm(dir, { recursive: true, force: true });
+    return { ok: false, message: gitFailure(added, 'git worktree add failed') };
+  }
+  return { ok: true, branch: input.branch };
+}
+
+/**
+ * Take a worktree away: git's own removal from the base clone (so the
+ * base forgets it), then the directory regardless — the base may already
+ * be gone, and a worktree without one is only bytes.
+ */
+export async function removeWorktree(
+  baseStorageKey: string | null,
+  storageKey: string,
+  identity: ExecIdentity | null
+): Promise<void> {
+  if (!isCheckoutStorageKey(storageKey)) {
+    throw new Error(
+      `refusing to remove a workspace with a malformed storage key: ${JSON.stringify(storageKey)}`
+    );
+  }
+  if (baseStorageKey && (await checkoutExists(baseStorageKey))) {
+    const run: RunInput = {
+      cwd: workspaceDir(baseStorageKey),
+      home: homeDir(baseStorageKey),
+      identity,
+      env: {},
+      timeoutMs: 60_000,
+    };
+    await runGit(run, ['worktree', 'remove', '--force', '--', workspaceDir(storageKey)]);
+    await runGit(run, ['worktree', 'prune']);
+  }
+  await rm(workspaceDir(storageKey), { recursive: true, force: true });
+}
+
 /** Bytes under a checkout — `du`, which counts what the filesystem does. */
 export async function measureWorkspace(dir: string): Promise<number> {
   const measured = await runProcess(

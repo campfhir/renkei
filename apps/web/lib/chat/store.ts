@@ -23,6 +23,8 @@ export interface ChatRow {
   thinkingEnabled: boolean;
   /** See ChatView.autoMode. */
   autoMode: boolean;
+  /** A code chat's worktree on the sandbox worker (lib/code/projects.ts); null until its first turn makes one. */
+  workspaceId: string | null;
   lastMessageAt: Date | null;
   archivedAt: Date | null;
   createdAt: Date;
@@ -38,6 +40,7 @@ const CHAT_COLUMNS = [
   'tool_config',
   'thinking_enabled',
   'auto_mode',
+  'workspace_id',
   'last_message_at',
   'archived_at',
   'created_at',
@@ -56,6 +59,7 @@ type RawChat = {
   tool_config: unknown;
   thinking_enabled: boolean;
   auto_mode: boolean;
+  workspace_id: string | null;
   last_message_at: Date | null;
   archived_at: Date | null;
   created_at: Date;
@@ -72,6 +76,7 @@ function rowOf(raw: RawChat): ChatRow {
     toolConfig: parseToolConfig(raw.tool_config),
     thinkingEnabled: raw.thinking_enabled,
     autoMode: raw.auto_mode,
+    workspaceId: raw.workspace_id,
     lastMessageAt: raw.last_message_at,
     archivedAt: raw.archived_at,
     createdAt: raw.created_at,
@@ -79,10 +84,7 @@ function rowOf(raw: RawChat): ChatRow {
   };
 }
 
-export async function getChatRow(
-  db: Kysely<DB>,
-  chatId: string
-): Promise<ChatRow | null> {
+export async function getChatRow(db: Kysely<DB>, chatId: string): Promise<ChatRow | null> {
   if (!isUuid(chatId)) return null;
   const raw = await db
     .selectFrom('chats')
@@ -113,10 +115,7 @@ export async function listOwnedChats(
     limit?: number;
   } = {}
 ): Promise<ChatRow[]> {
-  let query = db
-    .selectFrom('chats')
-    .select(CHAT_COLUMNS)
-    .where('owner_subject', '=', ownerSubject);
+  let query = db.selectFrom('chats').select(CHAT_COLUMNS).where('owner_subject', '=', ownerSubject);
   if (!options.includeArchived) query = query.where('archived_at', 'is', null);
   if (options.since) query = query.where('updated_at', '>=', options.since);
   if (options.before) query = query.where('updated_at', '<', options.before);
@@ -163,10 +162,7 @@ export async function listProjectChats(
   return rows.map(rowOf);
 }
 
-export async function listChatsById(
-  db: Kysely<DB>,
-  chatIds: string[]
-): Promise<ChatRow[]> {
+export async function listChatsById(db: Kysely<DB>, chatIds: string[]): Promise<ChatRow[]> {
   const ids = chatIds.filter(isUuid);
   if (ids.length === 0) return [];
   const rows = await db

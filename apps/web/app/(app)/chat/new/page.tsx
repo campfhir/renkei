@@ -5,7 +5,6 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { isUuid } from '@/lib/uuid';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { createChat } from '@/lib/chat/store';
-import { createChatInProject } from '@/lib/code/active-chat';
 import { getProjectRow } from '@/lib/chat/projects';
 
 /**
@@ -23,7 +22,9 @@ import { getProjectRow } from '@/lib/chat/projects';
  * is busy, where the reply can be stopped; the buttons that call the API
  * directly say why instead.
  */
-export default async function NewChatPage({ searchParams }: {
+export default async function NewChatPage({
+  searchParams,
+}: {
   searchParams: Promise<{ project?: string }>;
 }) {
   const { project: requestedProjectId } = await searchParams;
@@ -54,14 +55,12 @@ export default async function NewChatPage({ searchParams }: {
     toolConfig: null,
     thinkingEnabled: false,
   };
-  if (!projectId) {
-    const chatId = await createChat(db, { ...input, projectId: null });
-    redirect(`/chat/${chatId}`);
-  }
-  const created = await createChatInProject(db, { ...input, projectId });
-  if (created.ok) redirect(`/chat/${created.val}`);
-  const project = await getProjectRow(db, projectId);
-  redirect(
-    project?.activeChatId ? `/chat/${project.activeChatId}` : `/code/${projectId}`
-  );
+  const project = projectId ? await getProjectRow(db, projectId) : null;
+  // A code project's chat starts in auto mode, in a worktree of its own.
+  const chatId = await createChat(db, {
+    ...input,
+    projectId,
+    autoMode: project?.kind === 'code',
+  });
+  redirect(`/chat/${chatId}`);
 }

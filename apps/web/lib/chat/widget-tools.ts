@@ -175,10 +175,7 @@ export async function recordWidgetModelContext(
   const text = input.text.trim().slice(0, MODEL_CONTEXT_MAX_CHARS);
   if (!text) return { ok: false, reason: 'failed' };
 
-  if (
-    input.stateKey &&
-    (await waitingOnSiblings(db, input.chatId, input.stateKey))
-  ) {
+  if (input.stateKey && (await waitingOnSiblings(db, input.chatId, input.stateKey))) {
     const appended = await appendWidgetModelContext(db, {
       chatId: input.chatId,
       text,
@@ -214,8 +211,7 @@ export async function recordWidgetModelContext(
     // the person had to repeat themselves once the reply finished.
     case 'ALREADY_RUNNING':
     case 'NO_MODEL':
-    case 'MODEL_ERROR':
-    case 'HISTORY': {
+    case 'MODEL_ERROR': {
       const appended = await appendWidgetModelContext(db, {
         chatId: input.chatId,
         text,

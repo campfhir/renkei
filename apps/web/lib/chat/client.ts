@@ -60,9 +60,8 @@ export const chatClient = {
     ),
 
   /**
-   * A new chat, in a project or not. In a code project the new chat
-   * becomes the project's active one — refused (409 `turn-running`) while
-   * the current active chat is mid-reply, with the reason in `error`.
+   * A new chat, in a project or not. In a code project each chat works
+   * in a worktree of its own, so any number may be open at once.
    */
   createChat: (input: { projectId?: string | null }) =>
     sendJsonFull<{ chatId: string; code?: string }>(`${base()}/chats`, 'POST', input),
@@ -82,8 +81,7 @@ export const chatClient = {
     }
   ) => sendJsonFull(`${base()}/chats/${chatId}`, 'PATCH', patch),
 
-  deleteChat: (chatId: string) =>
-    sendJsonFull(`${base()}/chats/${chatId}`, 'DELETE'),
+  deleteChat: (chatId: string) => sendJsonFull(`${base()}/chats/${chatId}`, 'DELETE'),
 
   moveChat: (chatId: string, projectId: string | null) =>
     sendJsonFull(`${base()}/chats/${chatId}/move`, 'POST', { projectId }),
@@ -92,11 +90,10 @@ export const chatClient = {
     chatId: string,
     input: { text: string; attachmentIds: string[]; llmModelId?: string | null; voice?: boolean }
   ) =>
-    sendJsonFull<StartedTurn & { code?: string }>(
-      `${base()}/chats/${chatId}/turns`,
-      'POST',
-      { ...input, timeZone: browserTimeZone() }
-    ),
+    sendJsonFull<StartedTurn & { code?: string }>(`${base()}/chats/${chatId}/turns`, 'POST', {
+      ...input,
+      timeZone: browserTimeZone(),
+    }),
 
   /** Replace the chat's held sends with `queue` — the whole list, so a stale write cannot resurrect a sent one. */
   saveQueue: (chatId: string, queue: QueuedSend[]) =>
@@ -171,13 +168,9 @@ export const chatClient = {
 
   /** Force a compaction pass now — /compact, or "compact this chat" picked from the prompt picker. */
   compact: (chatId: string) =>
-    sendJsonFull<{ turnId: string; code?: string }>(
-      `${base()}/chats/${chatId}/compact`,
-      'POST'
-    ),
+    sendJsonFull<{ turnId: string; code?: string }>(`${base()}/chats/${chatId}/compact`, 'POST'),
 
-  streamUrl: (chatId: string, turnId: string) =>
-    `${base()}/chats/${chatId}/turns/${turnId}/stream`,
+  streamUrl: (chatId: string, turnId: string) => `${base()}/chats/${chatId}/turns/${turnId}/stream`,
 
   models: () => getJson<{ models: ModelOption[] }>(`${base()}/models`),
 
@@ -194,15 +187,11 @@ export const chatClient = {
 
   /** Save (or, with null, clear) this person's default chat toolset. */
   /** Save or clear one of the person's defaults: for new chats, or for new code projects. */
-  setDefaultTools: (
-    connectors: string[] | null,
-    kind: 'chat' | 'code' = 'chat'
-  ) =>
-    sendJsonFull<{ userDefault: { connectors: string[] } | null }>(
-      `${base()}/tools`,
-      'PUT',
-      { userDefault: connectors ? { connectors } : null, kind }
-    ),
+  setDefaultTools: (connectors: string[] | null, kind: 'chat' | 'code' = 'chat') =>
+    sendJsonFull<{ userDefault: { connectors: string[] } | null }>(`${base()}/tools`, 'PUT', {
+      userDefault: connectors ? { connectors } : null,
+      kind,
+    }),
 
   uploadAttachment: async (
     home: { chatId: string } | { projectId: string },
@@ -253,8 +242,7 @@ export const chatClient = {
   deleteAttachment: (attachmentId: string) =>
     sendJsonFull(`${base()}/attachments/${attachmentId}`, 'DELETE'),
 
-  attachmentUrl: (attachmentId: string) =>
-    `${base()}/attachments/${attachmentId}`,
+  attachmentUrl: (attachmentId: string) => `${base()}/attachments/${attachmentId}`,
 
   grants: (kind: ResourceKind, resourceId: string) =>
     getJson<{ grants: GrantView[] }>(`${base()}/${grantPath(kind, resourceId)}`),
@@ -293,11 +281,11 @@ export const chatClient = {
     args: Record<string, unknown>,
     stateKey?: string
   ) =>
-    sendJsonFull<{ result: McpToolResult }>(
-      `${base()}/chats/${chatId}/widget/tool-call`,
-      'POST',
-      { name, arguments: args, ...(stateKey ? { stateKey } : {}) }
-    ),
+    sendJsonFull<{ result: McpToolResult }>(`${base()}/chats/${chatId}/widget/tool-call`, 'POST', {
+      name,
+      arguments: args,
+      ...(stateKey ? { stateKey } : {}),
+    }),
 
   /**
    * A card's decision, once it finishes (bridge.ts's `reportDecision`) —

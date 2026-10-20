@@ -54,10 +54,6 @@ test.beforeEach(async ({ browserName: _browser }, testInfo) => {
       `INSERT INTO chats (id, owner_subject, project_id, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, $3, $4, $5, NOW())`,
       [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle, MODEL_ID]
     );
-    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
-      ids.chatId,
-      ids.projectId,
-    ]);
   } finally {
     await client.end();
   }
@@ -81,10 +77,6 @@ test.beforeEach(async ({ browserName: _browser }, testInfo) => {
       `INSERT INTO chats (id, owner_subject, project_id, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, $3, $4, $5, NOW())`,
       [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle, MODEL_ID]
     );
-    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
-      ids.chatId,
-      ids.projectId,
-    ]);
     // A model with a window and one measured reply, so the context ring shows.
     await client.query(
       `UPDATE llm_model_configs SET settings = '{"contextWindow":200000}'::jsonb WHERE id = $1`,

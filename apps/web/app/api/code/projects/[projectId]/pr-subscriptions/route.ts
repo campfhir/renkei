@@ -48,27 +48,38 @@ interface SubscriptionView {
 }
 
 /**
- * The chat this subscription's auto-fix note (if any) would land in:
- * the project's active chat, when its own most recent PR is this one —
- * the common case of subscribing right after that chat pushed it.
- * There is no project-wide index of "which chat made which PR," so a
- * PR subscribed to from elsewhere in the project's history simply
- * carries no chat (the worker skips the note, still records the
- * outcome and still honors auto-merge).
+ * The chat this subscription's auto-fix note (if any) would land in: the
+ * person's own chat in the project whose most recent PR is this one — the
+ * common case of subscribing right after that chat pushed it. A PR
+ * subscribed to from elsewhere simply carries no chat (the worker skips
+ * the note, still records the outcome and still honors auto-merge).
  */
+/** How many of a person's recent chats in a project are searched for the one that opened a pull request. */
+const CHATS_SEARCHED = 10;
+
 async function chatForPr(
   db: Parameters<typeof listMessages>[0],
-  activeChatId: string | null,
+  projectId: string,
+  subject: string,
   prNumber: number
 ): Promise<string | null> {
-  if (!activeChatId) return null;
-  const rows = await listMessages(
-    db,
-    activeChatId,
-    await chatCipherById(db, activeChatId)
-  );
-  const pr = latestPrInTranscript(rows.map(toMessageView));
-  return pr?.number === prNumber ? activeChatId : null;
+  // Chats in the project run side by side now, so the chat that opened
+  // this pull request is looked for: the person's own, newest first.
+  const candidates = await db
+    .selectFrom('chats')
+    .select('id')
+    .where('project_id', '=', projectId)
+    .where('owner_subject', '=', subject)
+    .where('archived_at', 'is', null)
+    .orderBy('updated_at', 'desc')
+    .limit(CHATS_SEARCHED)
+    .execute();
+  for (const { id } of candidates) {
+    const rows = await listMessages(db, id, await chatCipherById(db, id));
+    const pr = latestPrInTranscript(rows.map(toMessageView));
+    if (pr?.number === prNumber) return id;
+  }
+  return null;
 }
 
 function prNumberFrom(value: unknown): number | null {
@@ -124,7 +135,7 @@ export async function POST(
   const autoFix = body.autoFix === true && watchPipelines;
   const autoMerge = body.autoMerge === true && watchPipelines;
 
-  const chatId = await chatForPr(db, project.activeChatId, prNumber);
+  const chatId = await chatForPr(db, projectId, session.subject, prNumber);
 
   await db
     .insertInto('pr_subscriptions')
@@ -141,16 +152,14 @@ export async function POST(
       status: 'active',
     })
     .onConflict((oc) =>
-      oc
-        .columns(['provider', 'repo_full_name', 'pr_number', 'subscriber_subject'])
-        .doUpdateSet({
-          chat_id: chatId,
-          watch_pipelines: watchPipelines,
-          auto_fix: autoFix,
-          auto_merge: autoMerge,
-          status: 'active',
-          updated_at: new Date(),
-        })
+      oc.columns(['provider', 'repo_full_name', 'pr_number', 'subscriber_subject']).doUpdateSet({
+        chat_id: chatId,
+        watch_pipelines: watchPipelines,
+        auto_fix: autoFix,
+        auto_merge: autoMerge,
+        status: 'active',
+        updated_at: new Date(),
+      })
     )
     .execute();
 

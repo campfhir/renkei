@@ -1,8 +1,7 @@
 /**
  * A project page's data: the project as the viewer may see it, its files,
  * its memory, the chats inside it (everyone's — the viewer's own open
- * normally, the others read-only; in a code project only the active one
- * open at all, the rest history), and the viewer's role.
+ * normally, the others read-only), and the viewer's role.
  */
 
 import type { Kysely } from 'kysely';
@@ -12,7 +11,6 @@ import { listAttachments, toAttachmentView } from './attachments';
 import { readProjectMemory } from './memory';
 import { getProjectRow, openProjectInstructions } from './projects';
 import { listProjectChats } from './store';
-import { isHistoryChat } from '@/lib/code/active-chat';
 import type { AttachmentView, ChatListItem, ChatToolConfigView } from './views';
 
 export interface ProjectView {
@@ -24,8 +22,6 @@ export interface ProjectView {
     toolConfig: ChatToolConfigView | null;
     ownerSubject: string;
     ownerName: string | null;
-    /** A code project's one chat that may continue; null otherwise (lib/code/active-chat.ts). */
-    activeChatId: string | null;
     createdAt: string;
     updatedAt: string;
   };
@@ -82,7 +78,6 @@ export async function loadProjectView(
       toolConfig: project.toolConfig,
       ownerSubject: project.ownerSubject,
       ownerName: names.get(project.ownerSubject) ?? null,
-      activeChatId: project.activeChatId,
       createdAt: project.createdAt.toISOString(),
       updatedAt: project.updatedAt.toISOString(),
     },
@@ -106,7 +101,6 @@ export async function loadProjectView(
       projectKind: project.kind,
       // The project page names the branch in its own repository section.
       projectBranch: null,
-      history: isHistoryChat(project, chat.id),
       updatedAt: chat.updatedAt.toISOString(),
       lastMessageAt: chat.lastMessageAt ? chat.lastMessageAt.toISOString() : null,
       archived: chat.archivedAt !== null,

@@ -9,10 +9,9 @@
  * the header, the chats first — what a developer opens the page for —
  * with the `rail` (pulls, commits, CI, services, environment) beside
  * them on a wide screen and below them on a narrow one, then the README
- * (folded to a preview), About, Memory and the danger zone. A code project has
- * one active chat and the rest are history (lib/code/active-chat.ts):
- * the list says which, and New chat there goes through the API so it can
- * say why when the active chat is still replying.
+ * (folded to a preview), About, Memory and the danger zone. Every chat in a
+ * code project works in a worktree of its own, so New chat there goes
+ * through the API and any number may be open at once.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -35,10 +34,10 @@ import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import ChatPrBadge from '../../code/_components/chat-pr-badge';
 import IssueCards from '../../code/_components/issue-cards';
 
-/** Previous chats a row bothers asking for a PR badge — the rest just don't show one. */
+/** Chats a row bothers asking for a PR badge — the rest just don't show one. */
 const PR_BADGE_ROW_LIMIT = 10;
-/** Previous chats a code project lists before "Show more" — the recent ones are the ones looked for. */
-const PREVIOUS_CHATS_SHOWN = 5;
+/** Chats a code project lists before "Show more" — the recent ones are the ones looked for. */
+const CHATS_SHOWN = 8;
 
 /** A code project's own token spend — this component stays generic to chat/chat_project too. */
 interface ChatTokenUsage {
@@ -108,13 +107,12 @@ export default function ProjectView({ initial, variant = 'chat', strip = null, r
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [startingChat, setStartingChat] = useState(false);
-  const [allPrevious, setAllPrevious] = useState(false);
+  const [allChats, setAllChats] = useState(false);
   const [readmeOpen, setReadmeOpen] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
 
-  // A code project's New chat: the new chat becomes the active one and
-  // the previous one history — unless the previous one is mid-reply, in
-  // which case the route says so and the page shows it here.
+  // A code project's New chat: another chat beside the others, with a
+  // worktree of its own on its first turn.
   const startNewChat = async () => {
     setStartingChat(true);
     setNewChatError(null);
@@ -240,7 +238,7 @@ export default function ProjectView({ initial, variant = 'chat', strip = null, r
     const chatSpend = usage?.byChat[chat.id];
     const tokens = chatSpend ? chatSpend.inputTokens + chatSpend.outputTokens : 0;
     return (
-      <li key={chat.id} data-history={chat.history ? 'true' : undefined}>
+      <li key={chat.id}>
         <Link
           href={`/chat/${chat.id}`}
           className="flex items-center gap-2 py-1.5 hover:underline"
@@ -267,10 +265,9 @@ export default function ProjectView({ initial, variant = 'chat', strip = null, r
       </li>
     );
   };
-  // A code project: the one chat that may continue, then the rest as
-  // history. A chat project: every chat, as it always was.
-  const activeChat = variant === 'code' ? (chats.find((chat) => !chat.history) ?? null) : null;
-  const previousChats = variant === 'code' ? chats.filter((chat) => chat.history) : chats;
+  // A code project: every chat works in a worktree of its own, newest
+  // first. A chat project: every chat, as it always was.
+  const latestChat = variant === 'code' ? (chats[0] ?? null) : null;
   const chatsSection = (
     <section className={sectionClass} {...chatsAnchor}>
       <div className="mb-2 flex items-center gap-2">
@@ -287,61 +284,43 @@ export default function ProjectView({ initial, variant = 'chat', strip = null, r
       {variant === 'code' ? (
         <>
           <p className="mb-2 text-xs text-gray-500">
-            One chat at a time works in the checkout. Starting a new chat makes the current one
-            history: still there to read, no longer continued.
+            Each chat works in a worktree of its own, on its own branch, so any number can run at
+            once without stepping on each other.
           </p>
-          <h3 className="mt-3 mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Active chat
-          </h3>
-          {activeChat ? (
-            <>
-              <ul
-                className="divide-y divide-gray-200 text-sm dark:divide-gray-800"
-                data-testid="project-active-chat"
-              >
-                {chatRow(activeChat, true)}
-              </ul>
-              <div className="mt-2">
-                <IssueCards projectId={project.id} chatId={activeChat.id} />
-              </div>
-            </>
-          ) : (
-            <p className="text-sm text-gray-500" data-testid="project-active-chat">
-              No active chat. Start a new chat to work in the checkout.
+          {chats.length === 0 ? (
+            <p className="text-sm text-gray-500" data-testid="project-chats-empty">
+              No chats yet. Start a new chat to work in the repository.
             </p>
+          ) : (
+            <ul
+              className="divide-y divide-gray-200 text-sm dark:divide-gray-800"
+              data-testid="project-code-chats"
+            >
+              {(allChats ? chats : chats.slice(0, CHATS_SHOWN)).map((chat, index) =>
+                chatRow(chat, index < PR_BADGE_ROW_LIMIT)
+              )}
+            </ul>
           )}
-          {previousChats.length > 0 ? (
-            <>
-              <h3 className="mt-3 mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Previous chats
-              </h3>
-              <ul
-                className="divide-y divide-gray-200 text-sm text-gray-600 dark:divide-gray-800 dark:text-gray-400"
-                data-testid="project-previous-chats"
-              >
-                {(allPrevious ? previousChats : previousChats.slice(0, PREVIOUS_CHATS_SHOWN)).map(
-                  (chat, index) => chatRow(chat, index < PR_BADGE_ROW_LIMIT)
-                )}
-              </ul>
-              {previousChats.length > PREVIOUS_CHATS_SHOWN ? (
-                <button
-                  type="button"
-                  onClick={() => setAllPrevious((value) => !value)}
-                  className="mt-1 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                >
-                  {allPrevious
-                    ? 'Show fewer'
-                    : `Show ${previousChats.length - PREVIOUS_CHATS_SHOWN} more`}
-                </button>
-              ) : null}
-            </>
+          {chats.length > CHATS_SHOWN ? (
+            <button
+              type="button"
+              onClick={() => setAllChats((value) => !value)}
+              className="mt-1 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              {allChats ? 'Show fewer' : `Show ${chats.length - CHATS_SHOWN} more`}
+            </button>
+          ) : null}
+          {latestChat ? (
+            <div className="mt-2">
+              <IssueCards projectId={project.id} chatId={latestChat.id} />
+            </div>
           ) : null}
         </>
       ) : chats.length === 0 ? (
         <p className="text-sm text-gray-500">No chats yet.</p>
       ) : (
         <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
-          {previousChats.map((chat) => chatRow(chat))}
+          {chats.map((chat) => chatRow(chat))}
         </ul>
       )}
     </section>

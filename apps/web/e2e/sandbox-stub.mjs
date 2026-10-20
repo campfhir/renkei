@@ -704,6 +704,7 @@ function handleWorkspaces(op, body, response) {
         id: randomUUID(),
         provider: body.provider,
         repoFullName: body.repoFullName,
+        parentId: null,
         branch: body.branch || '(default)',
         status: 'cloning',
         error: null,
@@ -728,6 +729,30 @@ function handleWorkspaces(op, body, response) {
           workspace.sizeBytes = 4_321_000;
         }
       }, CLONE_MS);
+      return json(response, 200, { workspace: wire(workspace) });
+    }
+    case 'worktree': {
+      // A worktree of a ready clone: a workspace of its own, ready at once,
+      // on the branch the chat asked for.
+      const base = scope.workspaces.get(body.baseId ?? '');
+      if (!base || base.parentId) return error(response, 404, 'not_found');
+      if (base.status !== 'ready') return error(response, 409, 'not_ready');
+      const existing = [...scope.workspaces.values()].find(
+        (candidate) => candidate.parentId === base.id && candidate.branch === body.branch
+      );
+      if (existing) return json(response, 200, { workspace: wire(existing) });
+      const now = new Date();
+      const workspace = {
+        ...base,
+        id: randomUUID(),
+        parentId: base.id,
+        branch: body.branch,
+        status: 'ready',
+        createdAt: now.toISOString(),
+        lastUsedAt: now.toISOString(),
+        files: new Map(),
+      };
+      scope.workspaces.set(workspace.id, workspace);
       return json(response, 200, { workspace: wire(workspace) });
     }
     case 'list':
@@ -929,6 +954,10 @@ function handleWorkspaces(op, body, response) {
       const workspace = scope.workspaces.get(body.id ?? '');
       if (!workspace) return error(response, 404, 'not_found');
       scope.workspaces.delete(workspace.id);
+      // A clone takes its worktrees with it.
+      for (const [id, candidate] of scope.workspaces) {
+        if (candidate.parentId === workspace.id) scope.workspaces.delete(id);
+      }
       return json(response, 200, {
         deleted: true,
         id: workspace.id,

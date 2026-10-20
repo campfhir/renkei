@@ -3,9 +3,8 @@
  *
  * Creating inside a project requires access to that project (any role —
  * members chat with the project's context); the chat itself is always
- * the creator's. In a code project the new chat becomes the project's
- * active chat and the previous one history (lib/code/active-chat.ts) —
- * refused with 409 `turn-running` while the active chat is mid-reply.
+ * the creator's. In a code project any number of chats may be open at
+ * once: each works in a worktree of its own (lib/code/turn.ts).
  */
 
 import type { NextRequest } from 'next/server';
@@ -14,22 +13,18 @@ import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { createChat } from '@/lib/chat/store';
+import { getProjectRow } from '@/lib/chat/projects';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { parseToolConfig } from '@/lib/chat/tool-config';
-import { createChatInProject } from '@/lib/code/active-chat';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   return NextResponse.json(await loadChatSidebar(db, session.subject));
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -38,12 +33,7 @@ export async function POST(
   let projectId: string | null = null;
   if (typeof body.projectId === 'string' && body.projectId) {
     if (!isUuid(body.projectId)) return jsonError(404, 'not-found', 'No such project');
-    const access = await resolveResourceAccess(
-      db,
-      session.subject,
-      'chat_project',
-      body.projectId
-    );
+    const access = await resolveResourceAccess(db, session.subject, 'chat_project', body.projectId);
     if (!access) return jsonError(404, 'not-found', 'No such project');
     projectId = body.projectId;
   }
@@ -56,17 +46,11 @@ export async function POST(
     toolConfig,
     thinkingEnabled: body.thinkingEnabled === true,
   };
-  if (!projectId) {
-    const chatId = await createChat(db, { ...input, projectId: null });
-    return NextResponse.json({ chatId }, { status: 201 });
-  }
-  const created = await createChatInProject(db, { ...input, projectId });
-  if (!created.ok) {
-    return jsonError(
-      409,
-      'turn-running',
-      'The active chat is still replying. Stop it or wait for it to finish, then start a new chat.'
-    );
-  }
-  return NextResponse.json({ chatId: created.val }, { status: 201 });
+  const project = projectId ? await getProjectRow(db, projectId) : null;
+  const chatId = await createChat(db, {
+    ...input,
+    projectId,
+    autoMode: project?.kind === 'code',
+  });
+  return NextResponse.json({ chatId }, { status: 201 });
 }

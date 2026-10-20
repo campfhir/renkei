@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Switching the active chat's project's checkout branch — the read-only
+ * Switching a code chat's worktree to another branch — the read-only
  * branch label in the chat's title bar (chat-title.tsx, rendered from
  * `project.branch` there, not by anything in this file) has a "Switch
  * branch" entry in the title bar's overflow menu, which opens
@@ -13,13 +13,11 @@
  * (a long branch name once rendered past its bounds, over the
  * transcript, and a wide viewport still narrows this column when the
  * code pane sits beside it), so the modal is the one way to switch, at
- * every width. A history chat gets no "Switch branch" entry at all,
- * since it can no longer send turns and switching a checkout nobody
- * can act on next is pointless. Both this and the project screen call
- * the same route (…/code/projects/[projectId]/branch), which refuses
+ * every width. It calls the chat's own route
+ * (…/code/projects/[projectId]/chats/[chatId]/branch), which refuses
  * mid-turn and dirty-tree switches with a clear reason — the project
- * screen itself carries no branch picker or mention of one, since it is
- * about the repository as a whole, not the checkout's current branch.
+ * screen carries no branch picker or mention of one, since it is about
+ * the repository as a whole, not any chat's branch.
  *
  * A switch refused for a dirty tree (branch/route.ts's 409 'dirty') used
  * to leave a person stuck — an error line with no way to actually clean
@@ -29,6 +27,7 @@
  * -fd on the sandbox), then the same switch retried automatically.
  */
 
+import { codeProjectUrl } from '@/lib/code/urls';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -164,11 +163,14 @@ function SwitchBlockedNotice({
  */
 export function BranchPickerModal({
   projectId,
+  chatId,
   branch,
   onClose,
   onSwitched,
 }: {
   projectId: string;
+  /** The chat whose worktree is switched. */
+  chatId: string;
   branch: string | null;
   onClose: () => void;
   /**
@@ -179,8 +181,8 @@ export function BranchPickerModal({
    */
   onSwitched?: (branch: string) => void;
 }) {
-  const base = `/api/code/projects/${projectId}/branch`;
-  const discardBase = `/api/code/projects/${projectId}/discard`;
+  const base = `${codeProjectUrl(projectId, chatId)}/branch`;
+  const discardBase = `${codeProjectUrl(projectId, chatId)}/discard`;
   const {
     branches,
     loadError,

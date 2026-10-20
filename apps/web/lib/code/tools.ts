@@ -82,6 +82,12 @@ export interface CodeToolBinding {
   /** The worker target the project's checkout and environment live under (lib/code/scope.ts). */
   target: SandboxTarget;
   workspaceId: string;
+  /**
+   * Where the tools read the checkout from, when it is not known yet at
+   * construction — a worktree made by the turn's first step, after the base
+   * clone settles. Absent, `workspaceId` is it.
+   */
+  workspaceRef?: { id: string };
   repoFullName: string;
   /** ATLASSIAN_BITBUCKET or GITHUB (@renkei/provider-grants) — which grant a push/pull asks. */
   repoProvider: string;
@@ -519,7 +525,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
   const { target } = binding;
   // Read at call time, not bound at construction: a recovery moves every
   // tool to the new checkout at once.
-  let workspaceId = binding.workspaceId;
+  const ref = binding.workspaceRef ?? { id: binding.workspaceId };
   const failed = (error: Parameters<typeof clientFailure>[0]): McpToolResult => ({
     ...errorResult(clientFailure(error).message),
     meta: checkoutLost(error) ? { [CHECKOUT_LOST_META]: true } : {},
@@ -531,7 +537,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
    * effort: a diff that cannot be had leaves the result as it was.
    */
   const fencedDiffOf = async (path: string): Promise<string> => {
-    const diff = await sbWorkspaceGitDiff(target, { id: workspaceId, paths: [path] });
+    const diff = await sbWorkspaceGitDiff(target, { id: ref.id, paths: [path] });
     if (!diff.ok || !diff.val.diff.trim()) return '';
     const clipped = clipOutput(diff.val.diff, TOOL_DIFF_MAX_CHARS);
     return `\n\n${DIFF_FENCE_OPEN}${clipped.text}${DIFF_FENCE_CLOSE}`;
@@ -539,7 +545,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
 
   /** What the working tree now has changed, after a command that may have changed it. */
   const changedFilesNote = async (): Promise<string> => {
-    const diff = await sbWorkspaceGitDiff(target, { id: workspaceId, statOnly: true });
+    const diff = await sbWorkspaceGitDiff(target, { id: ref.id, statOnly: true });
     if (!diff.ok || diff.val.files.length === 0) return '';
     const lines = diff.val.files
       .slice(0, 50)
@@ -565,7 +571,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       async execute() {
         // A probe, nothing more: the recovery wrapper around every tool
         // turns a "gone" answer into a clone and a second run of this.
-        const listed = await sbWorkspaceLs(target, { id: workspaceId, path: '' });
+        const listed = await sbWorkspaceLs(target, { id: ref.id, path: '' });
         if (!listed.ok) return failed(listed.err);
         return textResult(
           `The checkout of ${binding.repoFullName} is on the sandbox and usable (${listed.val.entries.length} entries at its root); nothing to clone.`
@@ -587,7 +593,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       },
       readOnly: true,
       async execute(input) {
-        const listed = await sbWorkspaceLs(target, { id: workspaceId, path: str(input.path) });
+        const listed = await sbWorkspaceLs(target, { id: ref.id, path: str(input.path) });
         if (!listed.ok) return failed(listed.err);
         if (listed.val.entries.length === 0)
           return textResult(`${listed.val.path || '.'} is empty.`);
@@ -622,7 +628,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       readOnly: true,
       async execute(input) {
         const found = await sbWorkspaceFind(target, {
-          id: workspaceId,
+          id: ref.id,
           glob: str(input.glob),
           ...(num(input.max) !== undefined ? { max: num(input.max) } : {}),
         });
@@ -660,7 +666,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       readOnly: true,
       async execute(input) {
         const found = await sbWorkspaceGrep(target, {
-          id: workspaceId,
+          id: ref.id,
           pattern: str(input.pattern),
           path: str(input.path),
           glob: str(input.glob),
@@ -703,7 +709,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       readOnly: true,
       async execute(input) {
         const read = await sbWorkspaceRead(target, {
-          id: workspaceId,
+          id: ref.id,
           path: str(input.path),
           ...(num(input.startLine) !== undefined ? { startLine: num(input.startLine) } : {}),
           ...(num(input.maxLines) !== undefined ? { maxLines: num(input.maxLines) } : {}),
@@ -740,7 +746,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       async execute(input, context) {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const written = await sbWorkspaceWrite(target, {
-          id: workspaceId,
+          id: ref.id,
           path: str(input.path),
           content: str(input.content),
         });
@@ -772,7 +778,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       async execute(input, context) {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const edited = await sbWorkspaceEdit(target, {
-          id: workspaceId,
+          id: ref.id,
           path: str(input.path),
           oldText: str(input.oldText),
           newText: str(input.newText),
@@ -819,7 +825,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         const ran = await sbWorkspaceExec(
           target,
           {
-            id: workspaceId,
+            id: ref.id,
             command: str(input.command),
             ...(timeout !== undefined ? { timeoutMs: timeout * 1000 } : {}),
           },
@@ -855,7 +861,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       readOnly: true,
       async execute(input) {
         const status = await sbWorkspaceGitStatus(target, {
-          id: workspaceId,
+          id: ref.id,
           diff: input.diff === true,
           ...(num(input.log) !== undefined ? { log: num(input.log) } : {}),
         });
@@ -912,7 +918,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         );
         const username = typeof credential === 'string' ? '' : credential.username;
         const committed = await sbWorkspaceGitCommit(target, {
-          id: workspaceId,
+          id: ref.id,
           message: str(input.message),
           ...(paths.length ? { paths } : {}),
           ...(str(input.newBranch) ? { newBranch: str(input.newBranch) } : {}),
@@ -956,7 +962,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         );
         if (typeof credential === 'string') return errorResult(credential);
         const pushed = await sbWorkspaceGitPush(target, {
-          id: workspaceId,
+          id: ref.id,
           gitProxy: credential.gitProxy,
           ...(str(input.branch) ? { branch: str(input.branch) } : {}),
         });
@@ -998,7 +1004,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         );
         if (typeof credential === 'string') return errorResult(credential);
         const pulled = await sbWorkspaceGitPull(target, {
-          id: workspaceId,
+          id: ref.id,
           gitProxy: credential.gitProxy,
           ...(str(input.branch) ? { branch: str(input.branch) } : {}),
         });
@@ -1036,9 +1042,9 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
   const recovery = recover
     ? {
         recover,
-        current: () => workspaceId,
+        current: () => ref.id,
         adopt: (id: string) => {
-          workspaceId = id;
+          ref.id = id;
         },
         attempts: 0,
         inFlight: null,

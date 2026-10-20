@@ -12,6 +12,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  addWorktree,
   checkoutExists,
   childEnvironment,
   cloneRepository,
@@ -29,6 +30,7 @@ import {
   readWorkspaceFile,
   removeWorkspace,
   removeWorkspaceFile,
+  removeWorktree,
   renameWorkspaceFile,
   runProcess,
   runShell,
@@ -308,6 +310,56 @@ describe('a cloned workspace', () => {
     expect(
       (await readFile(join(workspaceDir(storageKey), 'README.md'), 'utf8')).startsWith('# Demo')
     ).toBe(true);
+  });
+
+  it('gives each chat a worktree of its own that cannot step on the base or another', async () => {
+    const first = newWorkspaceStorageKey('subjecthash');
+    const second = newWorkspaceStorageKey('subjecthash');
+    const base = { baseStorageKey: storageKey, identity: null } as const;
+    expect(await addWorktree({ ...base, storageKey: first, branch: 'renkei/one' })).toEqual({
+      ok: true,
+      branch: 'renkei/one',
+    });
+    expect(await addWorktree({ ...base, storageKey: second, branch: 'renkei/two' })).toEqual({
+      ok: true,
+      branch: 'renkei/two',
+    });
+    // The same branch cannot be started twice.
+    const clash = await addWorktree({
+      ...base,
+      storageKey: 'subjecthash/clash',
+      branch: 'renkei/one',
+    });
+    expect(clash.ok).toBe(false);
+    await expect(stat(workspaceDir('subjecthash/clash'))).rejects.toThrow();
+
+    await writeFile(join(workspaceDir(first), 'only-in-one.txt'), 'x');
+    await expect(stat(join(workspaceDir(second), 'only-in-one.txt'))).rejects.toThrow();
+    await expect(stat(join(workspaceDir(storageKey), 'only-in-one.txt'))).rejects.toThrow();
+    expect(git(workspaceDir(first), 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('renkei/one');
+    // A commit in one worktree is on its branch alone.
+    git(workspaceDir(first), 'add', '-A');
+    git(workspaceDir(first), 'commit', '-m', 'only in one');
+    expect(git(workspaceDir(first), 'log', '--format=%s', '-1').trim()).toBe('only in one');
+    expect(git(workspaceDir(second), 'log', '--format=%s', '-1').trim()).not.toBe('only in one');
+    expect(git(workspaceDir(storageKey), 'log', '--format=%s', '-1').trim()).not.toBe('only in one');
+    expect(git(workspaceDir(storageKey), 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('HEAD'); // detached, so a worktree may check out main;
+
+    await removeWorktree(storageKey, first, null);
+    await removeWorktree(null, second, null);
+    expect(await checkoutExists(first)).toBe(false);
+    expect(await checkoutExists(second)).toBe(false);
+    expect(git(workspaceDir(storageKey), 'worktree', 'list', '--porcelain')).not.toContain(
+      'renkei/one'
+    );
+
+    // The chat's branch outlives its worktree: asking again checks the same work out.
+    const again = newWorkspaceStorageKey('subjecthash');
+    expect(await addWorktree({ ...base, storageKey: again, branch: 'renkei/one' })).toEqual({
+      ok: true,
+      branch: 'renkei/one',
+    });
+    await removeWorktree(storageKey, again, null);
   });
 
   it('reports a clone that fails without leaving a directory', async () => {
