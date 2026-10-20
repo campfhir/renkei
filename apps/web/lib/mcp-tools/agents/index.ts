@@ -87,6 +87,7 @@ import {
   friendlyToolName,
   isAlwaysApprovalTool,
   triggerVariableDescriptors,
+  type ApiTriggerInput,
   type QuestionField,
   type TriggerDraft,
 } from '@renkei/agents';
@@ -157,6 +158,49 @@ function textResult(text: string) {
 
 function errText(text: string) {
   return { content: [{ type: 'text' as const, text }], isError: true as const };
+}
+
+/** One API input's value, as a chat run may pass it — the same ceiling a call's state gets, far below it. */
+const MAX_RUN_INPUT_CHARS = 8_000;
+
+/** `{ name: text }` from a tool argument, or null when it is anything else. */
+function textRecordOf(raw: unknown): Record<string, string> | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const entries = Object.entries(raw);
+  return entries.every(([, value]) => typeof value === 'string')
+    ? Object.fromEntries(entries)
+    : null;
+}
+
+/**
+ * What is wrong with the inputs a chat run was given, or null when they fit
+ * the agent's API trigger: every declared input given, none unknown, each
+ * under the length cap. A missing input is named with its label, so the
+ * agent's owner can see what to ask the person for.
+ */
+function apiRunInputsIssue(
+  declared: ApiTriggerInput[],
+  given: Record<string, string>
+): string | null {
+  const passed = Object.keys(given);
+  const names = declared.map((input) => input.name);
+  const unknown = passed.filter((name) => !names.includes(name));
+  if (unknown.length > 0) {
+    return (
+      `Unknown input${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. ` +
+      (names.length > 0 ? `This agent takes ${names.join(', ')}.` : 'This agent takes no inputs.')
+    );
+  }
+  const missing = declared.filter((input) => !passed.includes(input.name));
+  if (missing.length > 0) {
+    return `Missing input${missing.length > 1 ? 's' : ''}: ${missing
+      .map((input) => `${input.name} (${input.label})`)
+      .join(', ')}.`;
+  }
+  const long = passed.find((name) => given[name].length > MAX_RUN_INPUT_CHARS);
+  return long === undefined
+    ? null
+    : `The ${long} input is longer than ${MAX_RUN_INPUT_CHARS} characters.`;
 }
 
 /** "1 entry" / "3 entries" — memory counts appear in three sentences. */
@@ -1431,21 +1475,29 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   server.registerTool(
     'agent_run_now',
     {
-      title: 'Agents · Act — Run a scheduled agent now',
+      title: 'Agents · Act — Run an agent now',
       description:
-        'Start a scheduled agent of yours (or one shared with you) immediately, without ' +
-        'waiting for its next ' +
-        'scheduled time — the "run it now" you would otherwise get by editing the schedule. ' +
-        'Deliberately narrow: the agent must be ON and must have an enabled schedule ' +
-        'trigger, so this can only bring forward work that already runs by itself. An agent ' +
-        'that is off, or that fires from an event, another agent, or an API key, is refused ' +
-        'with the reason. The schedule itself is left alone — the next scheduled run still ' +
-        'happens at its own time. If this agent already has a run queued or running, this ' +
-        'refuses and says so instead of piling a second one on — pass confirm: true to start ' +
-        'it anyway. Follow the run with agent_run_get.',
+        'Start an agent of yours (or one shared with you) immediately, without waiting for its ' +
+        'next scheduled time — the "run it now" you would otherwise get by editing the schedule ' +
+        'or calling its API. Two kinds of agent can be started this way, and only these: an ' +
+        'agent ON with an enabled schedule trigger (its schedule is left alone, and the next ' +
+        'scheduled run still happens at its own time), and an agent ON with an enabled API ' +
+        'trigger, which takes the inputs that trigger declares — pass them as `inputs`, keyed ' +
+        'by input name, and every declared one must be given. An agent with an API trigger is ' +
+        'started that way even if it also has a schedule. An agent that is off, or that fires ' +
+        'from an event or another agent, is refused with the reason. If this agent already has a ' +
+        'run queued or running, this refuses and says so instead of piling a second one on — ' +
+        'pass confirm: true to start it anyway. Follow the run with agent_run_get.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
+        inputs: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            'For an agent with an API trigger: the value of each declared input, by name ' +
+              '(agent_get lists them). Not used for a scheduled agent.'
+          ),
         confirm: z
           .boolean()
           .optional()
@@ -1479,6 +1531,26 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         );
       }
 
+      const inputs = args.inputs === undefined ? undefined : textRecordOf(args.inputs);
+      if (inputs === null) {
+        return errText('inputs must be an object of text values, keyed by input name.');
+      }
+
+      // An API trigger is started the way its own Run button starts it: a
+      // manual run carrying the inputs as trigger.* values, the same state a
+      // system call through the API would hand it. Taken before the schedule,
+      // so an agent with both still runs with the inputs it was given.
+      const apiInputs: ApiTriggerInput[] = [];
+      let hasApiTrigger = false;
+      let hasApiDraft = false;
+      for (const trigger of agent.triggers) {
+        if (trigger.draft.kind !== 'api') continue;
+        hasApiDraft = true;
+        if (!trigger.enabled) continue;
+        hasApiTrigger = true;
+        apiInputs.push(...trigger.draft.inputs);
+      }
+
       // Schedule rows only: the timezone comes from the same config the sweep
       // reads, so a manual run binds trigger.* exactly as a scheduled one does.
       const schedules: Array<{ timezone: string; enabled: boolean; nextRunAt: string | null }> = [];
@@ -1490,29 +1562,56 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           nextRunAt: trigger.nextRunAt,
         });
       }
-      if (schedules.length === 0) {
-        return errText(
-          [
-            `"${agent.name}" is not triggered by a schedule, and this tool only brings a ` +
-              'scheduled run forward.',
-            agent.triggers.length > 0
-              ? `It runs: ${agent.triggers
-                  .map(
-                    (trigger) =>
-                      `${triggerSummary(trigger.draft)}${trigger.enabled ? '' : ' (off)'}`
-                  )
-                  .join('; ')}.`
-              : 'It has no triggers at all — it only runs when someone starts it in Renkei.',
-          ].join('\n')
-        );
-      }
       const armed = schedules.find((schedule) => schedule.enabled);
-      if (!armed) {
-        return errText(
-          `"${agent.name}" has a schedule, but that trigger is switched off — so there is no ` +
-            'scheduled run to bring forward. Turn the schedule back on in the builder.'
-        );
+
+      let initialState: Record<string, unknown>;
+      let closing: string[];
+      if (hasApiTrigger) {
+        const issue = apiRunInputsIssue(apiInputs, inputs ?? {});
+        if (issue) return errText(issue);
+        initialState = inputs ?? {};
+        closing = [];
+      } else {
+        if (inputs !== undefined) {
+          return errText(
+            hasApiDraft
+              ? `"${agent.name}"'s API trigger is switched off, so there is no API run to start. ` +
+                  'Turn it back on in the builder.'
+              : `"${agent.name}" has no API trigger, so it takes no inputs. Start it without inputs.`
+          );
+        }
+        if (schedules.length === 0) {
+          return errText(
+            [
+              `"${agent.name}" is not triggered by a schedule or an API trigger, and this tool ` +
+                'only starts those.',
+              agent.triggers.length > 0
+                ? `It runs: ${agent.triggers
+                    .map(
+                      (trigger) =>
+                        `${triggerSummary(trigger.draft)}${trigger.enabled ? '' : ' (off)'}`
+                    )
+                    .join('; ')}.`
+                : 'It has no triggers at all — it only runs when someone starts it in Renkei.',
+            ].join('\n')
+          );
+        }
+        if (!armed) {
+          return errText(
+            `"${agent.name}" has a schedule, but that trigger is switched off — so there is no ` +
+              'scheduled run to bring forward. Turn the schedule back on in the builder.'
+          );
+        }
+        // The state matches what the sweep hands a scheduled run, so an agent
+        // reading trigger.scheduledFor behaves the same way it will tonight.
+        initialState = { scheduledFor: new Date().toISOString(), timezone: armed.timezone };
+        closing = [
+          armed.nextRunAt
+            ? `Its schedule is untouched: the next scheduled run is still ${armed.nextRunAt}.`
+            : 'Its schedule is untouched.',
+        ];
       }
+
       // Same sanity check the "Run now" button's confirm modal makes a
       // person answer: a run already queued or running for this agent is
       // not a reason to refuse forever, just a reason to ask first — an
@@ -1529,10 +1628,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         }
       }
 
-      // Recorded as the manual run it is (trigger_id stays null), while the
-      // state matches what the sweep hands a scheduled run, so an agent
-      // reading trigger.scheduledFor behaves the same way it will tonight.
-      const scheduledFor = new Date().toISOString();
+      // Recorded as the manual run it is (trigger_id stays null) — the owner
+      // started it, so it is not an externally triggered run for approvals.
       const result = await createAgentRun(db, agentJobsQueue().producer, {
         agentId: agent.id,
         ownerSubject: access.ownerSubject,
@@ -1541,23 +1638,22 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         triggerId: null,
         triggerKind: 'manual',
         triggeredBySubject: context.subject,
-        initialState: { scheduledFor, timezone: armed.timezone },
+        initialState,
       });
       if (!result.ok) {
         return errText(result.err.message ?? `The run could not be started (${result.err.type}).`);
       }
 
-      logger.info('agent_run_now started a scheduled agent by hand', {
+      logger.info('agent_run_now started an agent by hand', {
         component: 'mcp/tool',
         agentId: agent.id,
         runId: result.val.runId,
+        viaApiTrigger: hasApiTrigger,
       });
       return textResult(
         [
           `Started "${agent.name}" now — runId: ${result.val.runId}.`,
-          armed.nextRunAt
-            ? `Its schedule is untouched: the next scheduled run is still ${armed.nextRunAt}.`
-            : 'Its schedule is untouched.',
+          ...closing,
           'It is queued; agent_run_get on that runId shows how it went.',
         ].join('\n')
       );

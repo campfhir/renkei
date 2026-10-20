@@ -71,7 +71,7 @@ Two separate things, easy to conflate:
 
 ## Triggers, runs, chaining
 
-`triggers.ts`/`trigger-catalog.ts`/`trigger-filters.ts`/`recurrence.ts` describe what starts a run: an event match (fed by `apps/worker`'s domain-dispatch fan-out, `fanOutAgentEvents`), a schedule (`schedule-sweep.ts`, roughly every 30 seconds), an API key (`/api/agents/{id}/invoke`), another agent finishing (`finalize.ts`), or a person (`agent_run_now`, the Run button). Every start goes through `createAgentRun` (`runs.ts`): the cycle, chain-depth and daily-cap guards, then a `queued` row with the definition snapshot and a bare `{ runId }` job under ordering key `agent:{agentId}`.
+`triggers.ts`/`trigger-catalog.ts`/`trigger-filters.ts`/`recurrence.ts` describe what starts a run: an event match (fed by `apps/worker`'s domain-dispatch fan-out, `fanOutAgentEvents`), a schedule (`schedule-sweep.ts`, roughly every 30 seconds), an API key (`/api/agents/{id}/invoke`), another agent finishing (`finalize.ts`), or a person (the Run button, and `agent_run_now` from chat — which starts a scheduled agent, or an agent with an API trigger given its declared `inputs`; a chat run is allowed by a person first, like any act tool, and is recorded as a manual run). Every start goes through `createAgentRun` (`runs.ts`): the cycle, chain-depth and daily-cap guards, then a `queued` row with the definition snapshot and a bare `{ runId }` job under ordering key `agent:{agentId}`.
 
 A run that finishes `done` chains the agents triggered by it: the child starts with `parentSummary` — the parent's summary and `result`. `nothing_to_do` and quiet finishes chain nothing and notify no one; a failure emits `agents/run.failed` for the interactive worker's owner notification.
 
