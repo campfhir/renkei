@@ -218,6 +218,22 @@ describe('the card a builder draws', () => {
     expect((card.body as { body?: string }).body).toBe('Hi\nRead this & that');
   });
 
+  it('reads page HTML as text without parsing it, and decodes entities once', () => {
+    const card = (contentHtml: string) =>
+      (
+        buildPreviewCard(builderFor('sharepoint_create_page'), 'sharepoint_create_page', {
+          site: 'hr',
+          title: 'T',
+          contentHtml,
+        }).body as { body?: string }
+      ).body;
+    // An unclosed or doubled tag leaves nothing of itself behind.
+    expect(card('a<scr<script>ipt>b')).toBe('aipt>b');
+    expect(card('x <b onclick="1">y</b> z <br/>w')).toBe('x y z \nw');
+    // `&amp;lt;` is the text "&lt;", not "<".
+    expect(card('&amp;lt;b&amp;gt; &lt;i&gt;')).toBe('&lt;b&gt; <i>');
+  });
+
   it('never throws a card out of a missing optional argument', () => {
     for (const [name, build] of Object.entries(PREVIEW_BUILDERS)) {
       expect(() => buildPreviewCard(build, name, {})).not.toThrow();

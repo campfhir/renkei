@@ -361,21 +361,43 @@ function watch(args: Args, on: boolean, subtitle: string): PreviewSpec {
   };
 }
 
-/** Page HTML as the text a person would read, for a card that cannot render it. */
+/** Tags that end a line of text when closed or self-closed. */
+const BLOCK_TAGS = new Set(['p', 'div', 'li', 'tr', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', nbsp: ' ' };
+
+/**
+ * Page HTML as the text a person would read, for a card that cannot render
+ * it. A scanner rather than a chain of regular expressions: tags are
+ * dropped by walking the string once (so no input can leave half a tag
+ * behind), and entities are decoded in the same single pass over what is
+ * left (so `&amp;lt;` becomes `&lt;`, never `<`). The result goes onto the
+ * card through textContent and is never parsed as HTML.
+ */
 export function htmlText(html: string): string {
-  return clip(
-    html
-      .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, '\n')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim(),
-    6000
+  let out = '';
+  let index = 0;
+  while (index < html.length) {
+    const char = html.charAt(index);
+    if (char !== '<') {
+      out += char;
+      index += 1;
+      continue;
+    }
+    const end = html.indexOf('>', index);
+    if (end === -1) break;
+    const name = (
+      /^\/?\s*([a-zA-Z][a-zA-Z0-9]*)/.exec(html.slice(index + 1, end))?.[1] ?? ''
+    ).toLowerCase();
+    const closing = html.charAt(index + 1) === '/';
+    if (BLOCK_TAGS.has(name) && (closing || name === 'br')) out += '\n';
+    index = end + 1;
+  }
+  const decoded = out.replace(
+    /&(amp|lt|gt|nbsp);/g,
+    (_match, entity: string) => ENTITIES[entity] ?? ''
   );
+  return clip(decoded.replace(/\n{3,}/g, '\n\n').trim(), 6000);
 }
 
 const SHARE = 'File share';
