@@ -755,15 +755,16 @@ export async function measureWorkspace(dir: string): Promise<number> {
 }
 
 /**
- * A storage key names exactly one checkout: caller hash, checkout
- * id. Anything else (an empty key, one that climbs) would make the
+ * A storage key names exactly one checkout: `<caller hash>/<checkout
+ * id>`, the two segments `newWorkspaceStorageKey` joins. Anything else
+ * (an empty key, a bare caller hash, one that climbs) would make the
  * recursive removal below reach for a caller's whole directory or the
  * volume itself, so it is refused rather than trusted.
  */
 export function isCheckoutStorageKey(storageKey: string): boolean {
   const segments = storageKey.split('/');
   return (
-    segments.length === 3 &&
+    segments.length === 2 &&
     segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
   );
 }
