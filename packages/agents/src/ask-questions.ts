@@ -33,6 +33,12 @@ export const REPLY_FIELD = 'reply';
 /** The free box closing every batch. */
 export const ANYTHING_ELSE_FIELD = 'anything_else';
 
+/** The free-text choice every choice/multi question carries. */
+export const OTHER_LABEL = 'Something else';
+/** Options a model adds as a catch-all; the card's own replaces them. */
+const CATCH_ALL =
+  /^(something else|other|others|none of (these|the above)|other \(.*\)|something else.*)$/i;
+
 const ANSWER_TYPES = new Set(['text', 'longtext', 'choice', 'multi', 'number', 'date', 'yesno']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -127,7 +133,7 @@ function questionField(raw: unknown, index: number): FormNode | string {
   if (!ANSWER_TYPES.has(kind)) {
     return `answer.type is one of text, longtext, choice, multi, number, date, yesno.`;
   }
-  const options = Array.isArray(answer.options)
+  let options = Array.isArray(answer.options)
     ? [
         ...new Set(
           answer.options
@@ -144,6 +150,9 @@ function questionField(raw: unknown, index: number): FormNode | string {
     type = 'choice';
     fieldOptions = ['Yes', 'No'];
   } else if (kind === 'choice' || kind === 'multi') {
+    // The card always offers "Something else" with a box of its own; a
+    // catch-all the model listed itself folds into it.
+    options = options.filter((option) => !CATCH_ALL.test(option));
     if (options.length < 2) return `a ${kind} answer needs at least two options.`;
     if (options.length > MAX_OPTIONS) return `offer at most ${MAX_OPTIONS} options.`;
     type = kind;
@@ -165,6 +174,7 @@ function questionField(raw: unknown, index: number): FormNode | string {
     // Any question may be skipped: the agent decides what a blank means.
     required: false,
     ...(fieldOptions ? { options: fieldOptions } : {}),
+    ...(kind === 'choice' || kind === 'multi' ? { other: OTHER_LABEL } : {}),
     ...(context ? { context: context.slice(0, MAX_QUESTION_CONTEXT_CHARS) } : {}),
     ...(typeof answer.hint === 'string' && answer.hint.trim()
       ? { help: answer.hint.trim().slice(0, 500) }

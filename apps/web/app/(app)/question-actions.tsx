@@ -5,6 +5,8 @@ import { useRefresh } from '@/lib/use-refresh';
 import {
   REPLY_FIELD,
   checkQuestionAnswers,
+  otherAnswer,
+  otherAnswerText,
   flattenFormFields,
   type FormNode,
   type QuestionAnswerValue,
@@ -308,6 +310,15 @@ function FormFieldControl({
               </label>
             );
           })}
+          {field.other ? (
+            <OtherChoice
+              field={field}
+              controlId={controlId}
+              text={text}
+              picks={picks}
+              onChange={onChange}
+            />
+          ) : null}
         </fieldset>
       ) : (
         <input
@@ -331,6 +342,71 @@ function FormFieldControl({
         <p id={`${controlId}-help`} className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
           {field.help}
         </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A choice question's "Something else": one more radio (or checkbox) that,
+ * when picked, opens a box for the person's own answer — stored as
+ * "Something else: what they wrote" (otherAnswer), so the answer still
+ * travels as the one string (or one pick) the field binds.
+ */
+function OtherChoice({
+  field,
+  controlId,
+  text,
+  picks,
+  onChange,
+}: {
+  field: QuestionField;
+  controlId: string;
+  text: string;
+  picks: string[];
+  onChange: (value: QuestionAnswerValue) => void;
+}): React.ReactNode {
+  const other = field.other ?? '';
+  const many = field.type === 'multi';
+  const current = many
+    ? picks.find((pick) => otherAnswerText(field, pick) !== null)
+    : otherAnswerText(field, text) !== null
+      ? text
+      : undefined;
+  const checked = current !== undefined;
+  const own = current !== undefined ? (otherAnswerText(field, current) ?? '') : '';
+  const write = (next: string | null) => {
+    if (!many) {
+      onChange(next === null ? '' : otherAnswer(other, next));
+      return;
+    }
+    const rest = picks.filter((pick) => pick !== current);
+    onChange(next === null ? rest : [...rest, otherAnswer(other, next)]);
+  };
+  return (
+    <div>
+      <label className="flex cursor-pointer items-start gap-2 text-sm">
+        <input
+          type={many ? 'checkbox' : 'radio'}
+          name={controlId}
+          className="mt-0.5"
+          checked={checked}
+          onChange={() => write(checked && many ? null : own)}
+        />
+        <span>{other}</span>
+      </label>
+      {checked ? (
+        <div className="mt-1 pl-6">
+          <textarea
+            aria-label={`${other} — your answer`}
+            value={own}
+            rows={2}
+            maxLength={2_000}
+            autoFocus
+            onChange={(event) => write(event.target.value)}
+            className={`${CONTROL_CLASS} border-gray-300 dark:border-gray-700`}
+          />
+        </div>
       ) : null}
     </div>
   );

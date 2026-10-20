@@ -30,7 +30,8 @@ describe('askedQuestionsOf', () => {
         {
           question: 'Should the go-live status go on CIO-5, CIO-25 or CIO-26?',
           context: '837 lab orders on 10/19.',
-          answer: { type: 'choice', options: ['CIO-5', 'CIO-25', 'CIO-26', 'CIO-25'] },
+          // A catch-all the model listed folds into the card's own.
+          answer: { type: 'choice', options: ['CIO-5', 'CIO-25', 'CIO-26', 'CIO-25', 'Other'] },
         },
         { question: 'Does the SFTP work need a CIO-39 update?', answer: { type: 'yesno' } },
         { question: 'What else is still open?' },
@@ -55,8 +56,11 @@ describe('askedQuestionsOf', () => {
       label: 'Should the go-live status go on CIO-5, CIO-25 or CIO-26?',
       context: '837 lab orders on 10/19.',
       options: ['CIO-5', 'CIO-25', 'CIO-26'],
+      other: 'Something else',
     });
+    // Yes/no is a closed question: no "something else".
     expect(fields[1].options).toEqual(['Yes', 'No']);
+    expect(fields[1].other).toBeUndefined();
     expect(fields[3]).toMatchObject({ min: 0, help: 'per day' });
   });
 

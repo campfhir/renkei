@@ -303,8 +303,8 @@ export const ASK_PERSON_DEF: PromptToolDef = {
               type: 'object',
               description:
                 'How it is answered. Default: a long reply box. "choice"/"multi" need the ' +
-                'options (add "Something else" if the list may be incomplete; the anything-else ' +
-                'box takes the details).',
+                'options you know of; the card always adds a "Something else" choice with a box ' +
+                'for the person\'s own answer, so do not list one yourself.',
               properties: {
                 type: {
                   type: 'string',

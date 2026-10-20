@@ -62,6 +62,25 @@ export interface QuestionField {
    * shown between the question and its control (ask-questions.ts).
    */
   context?: string;
+  /**
+   * choice/multi: a free-text choice beside the options, labelled this
+   * ("Something else"). Picking it opens a box; the answer is stored as
+   * `${other}: what they wrote` (otherAnswer), so a reply that fits none
+   * of the options is never forced into one.
+   */
+  other?: string;
+}
+
+/** A choice field's free-text answer, as stored: "Something else: …". */
+export function otherAnswer(other: string, text: string): string {
+  return `${other}: ${text}`;
+}
+
+/** The text of a free-text answer, or null when `value` is one of the options. */
+export function otherAnswerText(field: Pick<QuestionField, 'other'>, value: string): string | null {
+  if (!field.other) return null;
+  const prefix = `${field.other}:`;
+  return value.startsWith(prefix) ? value.slice(prefix.length).trimStart() : null;
 }
 
 /** How many controls one form may carry. A form, not a questionnaire. */
@@ -95,6 +114,7 @@ export function isQuestionField(value: unknown): value is QuestionField {
     max?: unknown;
     help?: unknown;
     context?: unknown;
+    other?: unknown;
   } = value;
   if (typeof field.name !== 'string') return false;
   if (typeof field.label !== 'string') return false;
@@ -111,6 +131,7 @@ export function isQuestionField(value: unknown): value is QuestionField {
   if (field.max !== undefined && typeof field.max !== 'number') return false;
   if (field.help !== undefined && typeof field.help !== 'string') return false;
   if (field.context !== undefined && typeof field.context !== 'string') return false;
+  if (field.other !== undefined && typeof field.other !== 'string') return false;
   return true;
 }
 

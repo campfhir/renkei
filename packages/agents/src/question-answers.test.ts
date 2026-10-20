@@ -68,6 +68,43 @@ describe('checkQuestionAnswers', () => {
     expect(checkQuestionAnswers(many, { m: ['a', 'b', 'a'] }).values).toEqual({ m: ['a', 'b'] });
   });
 
+  it('takes a "something else" answer in its own words, but not an empty one', () => {
+    const one = [
+      field('c', {
+        type: 'choice',
+        required: false,
+        options: ['CIO-5', 'CIO-25'],
+        other: 'Something else',
+      }),
+    ];
+    expect(checkQuestionAnswers(one, { c: 'Something else:  A new CIO-41 issue ' }).values).toEqual(
+      {
+        c: 'Something else: A new CIO-41 issue',
+      }
+    );
+    expect(checkQuestionAnswers(one, { c: 'Something else: ' }).issues[0]?.message).toBe(
+      'Say what it is.'
+    );
+    // Without `other`, free text is still refused.
+    const closed = [field('c', { type: 'choice', required: false, options: ['a', 'b'] })];
+    expect(checkQuestionAnswers(closed, { c: 'Something else: x' }).ok).toBe(false);
+
+    const many = [
+      field('m', {
+        type: 'multi',
+        required: false,
+        options: ['Chem', 'Heme'],
+        other: 'Something else',
+      }),
+    ];
+    expect(checkQuestionAnswers(many, { m: ['Chem', 'Something else: Micro'] }).values).toEqual({
+      m: ['Chem', 'Something else: Micro'],
+    });
+    expect(checkQuestionAnswers(many, { m: ['Something else: a', 'Something else: b'] }).ok).toBe(
+      false
+    );
+  });
+
   it('takes a real calendar date only', () => {
     const fields = [field('d', { type: 'date', required: true })];
     expect(checkQuestionAnswers(fields, { d: '14/09/2026' }).ok).toBe(false);

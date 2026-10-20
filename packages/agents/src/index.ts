@@ -46,6 +46,8 @@ export {
   MAX_QUESTION_FIELD_OPTIONS,
   MAX_QUESTION_FIELD_OPTION_CHARS,
   isQuestionField,
+  otherAnswer,
+  otherAnswerText,
   parseQuestionFields,
   type QuestionField,
   type QuestionFieldType,
@@ -188,6 +190,7 @@ export {
 export {
   ANYTHING_ELSE_FIELD,
   MAX_ASKED_QUESTIONS,
+  OTHER_LABEL,
   REPLY_FIELD,
   answersForAgent,
   askedQuestionsOf,

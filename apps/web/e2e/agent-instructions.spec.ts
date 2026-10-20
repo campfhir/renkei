@@ -402,7 +402,8 @@ test('a question card asks a batch: each question with its evidence, answered or
       label: 'Should the ATLAS go-live status go on CIO-5, CIO-25 or CIO-26?',
       type: 'choice',
       required: false,
-      options: ['CIO-5', 'CIO-25', 'CIO-26', 'Something else'],
+      options: ['CIO-5', 'CIO-25', 'CIO-26'],
+      other: 'Something else',
       context: 'John Vo: "a great first day post go-live"; 837 lab orders on 10/19.',
     },
     {
@@ -447,7 +448,15 @@ test('a question card asks a batch: each question with its evidence, answered or
   await expect(card.getByText('Leave any question blank to skip it.')).toBeVisible();
   await shot(page, testInfo, '08-question-batch');
 
+  // "Something else" opens a box for an answer the options do not cover.
   await card.getByRole('radio', { name: 'CIO-25' }).check();
+  await expect(card.getByRole('textbox', { name: 'Something else — your answer' })).toHaveCount(0);
+  await card.getByRole('radio', { name: 'Something else' }).check();
+  const own = card.getByRole('textbox', { name: 'Something else — your answer' });
+  await expect(own).toBeVisible();
+  await card.getByRole('button', { name: 'Send the answers' }).click();
+  await expect(card.getByText('Say what it is.')).toBeVisible();
+  await own.fill('A new CIO-41 issue for the Azure cutover');
   await card.getByRole('textbox', { name: 'Anything else I should know?' }).fill('Kelvin owns the SFTP piece.');
   await card.getByRole('button', { name: 'Send the answers' }).click();
   await expect(card).toHaveCount(0, { timeout: 15_000 });
@@ -461,7 +470,7 @@ test('a question card asks a batch: each question with its evidence, answered or
   expect(stored.rows[0].status).toBe('answered');
   // Answered, skipped (absent), and the free note.
   expect(stored.rows[0].result.answers).toEqual({
-    q1: 'CIO-25',
+    q1: 'Something else: A new CIO-41 issue for the Azure cutover',
     anything_else: 'Kelvin owns the SFTP piece.',
   });
 
@@ -475,6 +484,8 @@ test('a question card asks a batch: each question with its evidence, answered or
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto('/');
   await expect(card.getByRole('radio', { name: 'CIO-26' })).toBeVisible({ timeout: 30_000 });
+  await card.getByRole('radio', { name: 'Something else' }).check();
+  await expect(card.getByRole('textbox', { name: 'Something else — your answer' })).toBeVisible();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
