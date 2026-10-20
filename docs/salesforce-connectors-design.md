@@ -154,6 +154,23 @@ marketing sync. So:
   narrow the query. Large data movement belongs to Bulk API 2.0 on the admin connector, not to
   chat.
 
+### Health and other sensitive records
+
+Some of what organizations keep in Salesforce is regulated — health and care programs, case
+management, donor financials — often on custom objects with free-text notes beside them.
+Anything a tool returns goes into a model's context and through the organization's LLM provider.
+The connector cannot make that decision for the organization, so it makes it explicit:
+
+- the object and field exclusion list and the _Restricted_ data-classification switch (see "Custom
+  objects and custom fields are first-class") are on the admin form from stage 1, not a later
+  nicety;
+- the admin form says, beside the CRM connector's switch, that record contents are sent to the
+  configured LLM provider, so turning it on for health data is a decision someone signs off on
+  (provider agreements such as a BAA are the organization's to have in place);
+- long free-text fields (notes on custom objects) are returned only when a tool asks for that
+  field by name, not in a record's default view, since that is where unstructured sensitive detail
+  ends up.
+
 ### No generic request tool, no anonymous Apex
 
 As with Mirth: there is no "call this REST path" tool on either connector. And `executeAnonymous`
@@ -228,21 +245,24 @@ for shares (its `person` slot shows the recipient, its group lists the folder's 
 
 **Records**
 
-| Tool                                             | Does                                                                                                     |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `salesforce_search`                              | SOSL across objects by text ("everything about Acme"), or one object with filters (parameterized search) |
-| `salesforce_query`                               | SOQL `SELECT`, one page at a time with a cursor, relationship and aggregate queries allowed              |
-| `salesforce_get_record`                          | One record with display values and labels (UI API), optionally named related lists                       |
-| `salesforce_list_related`                        | A related list of a record (a contact's opportunities, an account's cases), paged                        |
-| `salesforce_create_record`                       | Create one record; record type by name; picklist values checked against the record type before sending   |
-| `salesforce_update_record`                       | Update one record's fields; reads first so the result shows old → new                                    |
-| `salesforce_upsert_record`                       | Create-or-update by an external id field                                                                 |
-| `salesforce_update_records_preview` / `_confirm` | Many records, one change set (Composite sObject collections, all-or-none by default)                     |
-| `salesforce_delete_records_preview` / `_confirm` | Delete; the preview names cascade-deleted children (master-detail) from the describe                     |
-| `salesforce_change_owner_preview` / `_confirm`   | Reassign records; the preview names the new owner and what sharing changes                               |
-| `salesforce_log_activity`                        | A completed Task (call, email, meeting note) or an Event, related to the record(s) named                 |
-| `salesforce_create_task`                         | An open follow-up Task assigned to the person or a named user, with a due date                           |
-| `salesforce_add_note`                            | A Note (ContentNote) attached to a record                                                                |
+| Tool                                             | Does                                                                                                                          |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `salesforce_search`                              | SOSL across objects by text ("everything about Acme"), or one object with filters (parameterized search)                      |
+| `salesforce_query`                               | SOQL `SELECT`, one page at a time with a cursor, relationship and aggregate queries allowed                                   |
+| `salesforce_get_record`                          | One record with display values and labels (UI API), optionally named related lists                                            |
+| `salesforce_list_related`                        | A related list of a record (a contact's opportunities, an account's cases), paged                                             |
+| `salesforce_create_record`                       | Create one record; record type by name; picklist values checked against the record type before sending                        |
+| `salesforce_update_record`                       | Update one record's fields; reads first so the result shows old → new                                                         |
+| `salesforce_upsert_record`                       | Create-or-update by an external id field                                                                                      |
+| `salesforce_update_records_preview` / `_confirm` | Many records, one change set (Composite sObject collections, all-or-none by default)                                          |
+| `salesforce_delete_records_preview` / `_confirm` | Delete; the preview names cascade-deleted children (master-detail) from the describe                                          |
+| `salesforce_change_owner_preview` / `_confirm`   | Reassign records; the preview names the new owner and what sharing changes                                                    |
+| `salesforce_log_activity`                        | A completed Task (call, email, meeting note) or an Event, related to the record(s) named                                      |
+| `salesforce_create_task`                         | An open follow-up Task assigned to the person or a named user, with a due date                                                |
+| `salesforce_add_note`                            | A Note (ContentNote) attached to a record                                                                                     |
+| `salesforce_list_actions`                        | The quick actions the org built for an object or record ("Log a Call", "Close Case"), with their fields and predefined values |
+| `salesforce_run_action`                          | Run one of those quick actions on a record — the org's own sanctioned verb, same confirm rule as an update                    |
+| `salesforce_record_history`                      | Field history of a record (the object's `__History` table): who changed which tracked field, from what, to what, when         |
 
 ### Custom objects and custom fields are first-class
 
@@ -305,6 +325,32 @@ of custom objects and **values** of custom fields. It never adds a field, change
 values, or edits a validation rule — those change the object for everyone and go through the admin
 connector's change requests.
 
+### Writes meet the org's own automation
+
+An org that has been built out puts its process in the object: validation rules that gate a stage
+change, before-save flows that stamp dates, quick actions that are the sanctioned way to do a step.
+The record tools work with that rather than around it:
+
+- **The result is re-read after the write.** The old → new list on a create or update includes the
+  fields automation changed, not only the ones sent — "Stage → Site Visit; also set by the org:
+  Stage Last Changed 2026-10-20 14:02" — so nobody is surprised by a stamped date later.
+- **A blocked save names the missing field.** Salesforce's error carries the rule's message and the
+  field it is attached to (`fields` on the error). The tool returns both, and the model asks the
+  person for exactly that value ("When is the site visit scheduled?") instead of guessing a date
+  to get past the rule. It never writes a placeholder to satisfy a validation rule.
+- **The org's quick actions come first.** When an object has a quick action for what the person
+  asked ("log a call attempt"), the model is steered to `salesforce_run_action`, which sends only
+  that action's fields with its predefined values — the admin's definition of the step — rather
+  than a free-form update.
+- **Read-modify-write is conditional.** Updates computed from the current value (a call-attempt
+  counter plus one) send `If-Unmodified-Since` with the record's `LastModifiedDate`, so a colleague's
+  save in between is a conflict to re-read, not a lost update.
+- **Page visibility is not access.** Dynamic Forms hide fields on the record page by stage; the API
+  does not. The connector can write any field field-level security allows, at any stage, so the
+  org's validation rules — not the page layout — are what keep a stage's data in order. The
+  describe marks which fields the person can edit; it does not pretend to know the page's
+  visibility rules.
+
 Files (ContentVersion download and upload) use the sandbox scratch space the way OnBase and Jira
 attachments do ([`sandbox-connector-design.md`](./sandbox-connector-design.md)) and come in a
 later stage.
@@ -335,6 +381,12 @@ with the object named), describe it for the column and filter names, build the m
 package's validator (which refuses an unknown column, a grouping on a non-groupable field, a
 filter operator the column's type does not take), create it in the person's private folder, run
 it once, and show the first rows — so the person sees the report work before anyone else does.
+The builder covers what operational reports on a custom object actually use: groupings down (and
+across for a matrix), relative date filters ("rolling 90 days", "this quarter"), filter logic,
+**row-level formulas** (days between two milestone dates), **summary formulas** (enrolled ÷ total
+as a percentage), bucket fields, and sort order. Row-level and summary formulas are checked by
+Salesforce when the report is saved; the tool returns its error verbatim. (The exact
+`reportMetadata` keys for row-level formulas are to be confirmed against the pinned API version.)
 
 ### Sharing a report
 
@@ -502,46 +554,80 @@ SOAP fallback is the open seam to settle against a live org first.**
 
 **Proposals** (each creates a validated change request and returns its review link)
 
-| Tool                                        | Proposes                                                                                                                                                                                                                                                                                              |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `salesforce_admin_propose_object`           | A custom object: label, plural, API name, name field (text or auto-number), sharing model, features (activities, history, reports, search), with its first fields, a tab and a default layout                                                                                                         |
-| `salesforce_admin_propose_fields`           | New fields on an object — text, number, currency, percent, date/time, checkbox, email, phone, URL, long text, picklist (local or a global value set), multi-select, lookup, master-detail, formula, roll-up summary — with their placement on named layouts and their access in named permission sets |
-| `salesforce_admin_propose_field_changes`    | Label, help text, description, required, default, length; type changes only where Salesforce allows them without data loss, otherwise refused with the reason                                                                                                                                         |
-| `salesforce_admin_propose_picklist_changes` | Add, rename, deactivate, reorder values; per record type availability; global value sets                                                                                                                                                                                                              |
-| `salesforce_admin_propose_validation_rule`  | New or changed rule: formula, error message, error location, active. The formula is checked by the validation deploy, not by Renkei                                                                                                                                                                   |
-| `salesforce_admin_propose_record_type`      | A record type with its picklist value subsets, its layout per profile, and which permission sets get it                                                                                                                                                                                               |
-| `salesforce_admin_propose_layout_changes`   | Fields, sections and related lists added, moved or removed on a page layout                                                                                                                                                                                                                           |
-| `salesforce_admin_propose_app`              | A Lightning app with its tabs, navigation, and utility items, visible to named permission sets                                                                                                                                                                                                        |
-| `salesforce_admin_propose_permission_set`   | A new permission set or changes to one: object CRUD, field read/edit, tab, app and record type visibility                                                                                                                                                                                             |
-| `salesforce_admin_propose_assignments`      | Assign or remove permission sets (and permission set groups) for named users — data, not metadata, so it applies as one DML transaction rather than a deploy, but through the same review page                                                                                                        |
-| `salesforce_admin_propose_application`      | The whole of a small application in one request — objects, fields, relationships, validation rules, layouts, tabs, an app and a permission set — from a description, so "build me a volunteer-hours tracker" is one review page rather than nine                                                      |
-| `salesforce_admin_promote_change_request`   | An applied request re-proposed against another org (see Promote)                                                                                                                                                                                                                                      |
+| Tool                                        | Proposes                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `salesforce_admin_propose_object`           | A custom object: label, plural, API name, name field (text or auto-number), sharing model, features (activities, history, reports, search), with its first fields, a tab and a default layout                                                                                                                                                       |
+| `salesforce_admin_propose_fields`           | New fields on an object — text, number, currency, percent, date/time, checkbox, email, phone, URL, long text, picklist (local or a global value set), multi-select, lookup, master-detail, formula, roll-up summary — with field history tracking, their placement on named layouts and their access in named permission sets                       |
+| `salesforce_admin_propose_field_changes`    | Label, help text, description, required, default, length; type changes only where Salesforce allows them without data loss, otherwise refused with the reason                                                                                                                                                                                       |
+| `salesforce_admin_propose_picklist_changes` | Add, rename, deactivate, reorder values; per record type availability; global value sets                                                                                                                                                                                                                                                            |
+| `salesforce_admin_propose_validation_rule`  | New or changed rule: formula, error message, error location, active. The formula is checked by the validation deploy, not by Renkei                                                                                                                                                                                                                 |
+| `salesforce_admin_propose_record_type`      | A record type with its picklist value subsets, its layout per profile, and which permission sets get it                                                                                                                                                                                                                                             |
+| `salesforce_admin_propose_layout_changes`   | Fields, sections and related lists added, moved or removed on a page layout                                                                                                                                                                                                                                                                         |
+| `salesforce_admin_propose_path`             | A Path on a picklist field (`PathAssistant`): per stage, key fields and guidance text, per record type                                                                                                                                                                                                                                              |
+| `salesforce_admin_propose_quick_actions`    | Object-specific quick actions — _Update a Record_ and _Create a Record_ — with their fields, layout and predefined values, placed on the record page's action bar                                                                                                                                                                                   |
+| `salesforce_admin_propose_compact_layout`   | The highlights panel's fields and their order, and making it the object's primary compact layout                                                                                                                                                                                                                                                    |
+| `salesforce_admin_propose_record_page`      | A Lightning record page (`FlexiPage`) built from a structured description, not raw XML: Dynamic Forms field sections with visibility rules on field values, plus Highlights, Path, related lists and the activity timeline; cloned from the active page by default; activation per app, record type and profile on apply                            |
+| `salesforce_admin_propose_stamp_rules`      | Field-update automation of one narrow, reviewable shape — "when field X changes (to V, while condition C), set fields to now / a value, only if blank" — generated as one before-save record-triggered Flow (_Fast Field Updates_). The review page shows the rules as a table, not Flow XML. Checked against the object's validation rules (below) |
+| `salesforce_admin_propose_report_type`      | A custom report type: primary object, related objects (with or without), and its field layout — what reports on a new object are built on                                                                                                                                                                                                           |
+| `salesforce_admin_propose_app`              | A Lightning app with its tabs, navigation, and utility items, visible to named permission sets                                                                                                                                                                                                                                                      |
+| `salesforce_admin_propose_permission_set`   | A new permission set or changes to one: object CRUD, field read/edit, tab, app and record type visibility                                                                                                                                                                                                                                           |
+| `salesforce_admin_propose_assignments`      | Assign or remove permission sets (and permission set groups) for named users — data, not metadata, so it applies as one DML transaction rather than a deploy, but through the same review page                                                                                                                                                      |
+| `salesforce_admin_propose_application`      | The whole of a small application in one request — objects, fields, relationships, validation rules, layouts, tabs, an app and a permission set — from a description, so "build me a volunteer-hours tracker" is one review page rather than nine                                                                                                    |
+| `salesforce_admin_promote_change_request`   | An applied request re-proposed against another org (see Promote)                                                                                                                                                                                                                                                                                    |
 
 Field deletion is deliberately absent: a deleted custom field's data goes to Salesforce's
 deleted-fields list for 15 days and then for good, and dependent reports break silently. The tool
 answers "where is this field used" and links Setup; the deletion is the admin's, in Setup.
 
+### Checks Salesforce's dry run does not do
+
+A check-only deploy proves the metadata compiles and references resolve. It does not notice that
+two correct components contradict each other once Salesforce's order of execution runs them, and
+on a stage-driven object that is the most likely mistake. So proposals that add or change
+validation rules or stamp rules also run a small static check over the object's **active**
+validation rules and before-save stamp rules (read through the Tooling API), and the review page
+shows what it finds:
+
+- **A stamp that defeats a rule.** Before-save flows run before validation rules. A stamp rule
+  that sets field F when the stage becomes S, next to a validation rule requiring F when the stage
+  is S, means the rule can never fire — and F holds "the moment the stage changed", not the value
+  the rule was meant to make someone enter.
+- **A rule nothing can satisfy, or a stage nothing can reach,** where the formulas are simple
+  enough to read (`ISPICKVAL`, `ISBLANK`, `ISCHANGED`, `PRIORVALUE` over picklists and blanks):
+  a forward-only rule plus a required field that only a later stage makes visible, for instance.
+- **A terminal value without its rule,** when sibling values each have one (every outcome but one
+  requires a reason).
+
+These are warnings, not refusals: the admin may intend them. Anything the check cannot parse is
+reported as "not checked", never as clean.
+
 ### Admin scope picker
 
-| Option                         | Tools                                                                    | Default |
-| ------------------------------ | ------------------------------------------------------------------------ | ------- |
-| Read org configuration         | all reads                                                                | on      |
-| Propose objects and fields     | object, fields, field changes, picklists, validation rules, record types | on      |
-| Propose layouts, apps and tabs | layout changes, app                                                      | on      |
-| Propose permission sets        | permission set                                                           | on      |
-| Propose user access            | assignments                                                              | off     |
-| Propose whole applications     | application, promote                                                     | on      |
+| Option                          | Tools                                                                              | Default |
+| ------------------------------- | ---------------------------------------------------------------------------------- | ------- |
+| Read org configuration          | all reads                                                                          | on      |
+| Propose objects and fields      | object, fields, field changes, picklists, validation rules, record types           | on      |
+| Propose layouts, apps and tabs  | layout changes, record page, path, quick actions, compact layout, app, report type | on      |
+| Propose field-update automation | stamp rules                                                                        | on      |
+| Propose permission sets         | permission set                                                                     | on      |
+| Propose user access             | assignments                                                                        | off     |
+| Propose whole applications      | application, promote                                                               | on      |
 
 ## Not in this version
 
-- **Apex, triggers, Lightning Web Components, Flow authoring.** Generating code and Flow XML is
-  possible but the review page cannot honestly show a non-developer what a 300-line Flow does, and
-  production Apex needs tests that would themselves be generated. Flows are readable; activating
-  or deactivating an existing Flow version may come first, as a small, reviewable change.
+- **Apex, triggers, Lightning Web Components, and free-form Flow authoring.** Generating code
+  and Flow XML is possible but the review page cannot honestly show a non-developer what a
+  300-line Flow does, and production Apex needs tests that would themselves be generated. The one
+  exception is `salesforce_admin_propose_stamp_rules`' fixed shape, which reads as a table. Other
+  Flows are readable; activating or deactivating an existing version is a small change request.
 - **User management** — creating users, freezing, resetting passwords, licences. The ADManager
   Plus connector's territory in spirit; a stage of its own if wanted.
 - **Bulk data loads** (Bulk API 2.0) — imports and mass updates beyond Composite's 200 records,
-  on the admin connector, as change requests with a staged CSV.
+  on the admin connector, as change requests with a staged CSV; the next stage after this version,
+  since data migration is part of most rebuilds of an object. When old records
+  will not pass new rules, the load should run under a **bypass custom permission** the rules and
+  flows check (assigned to the loading admin for the load only), not with the rules switched off
+  org-wide while everyone else keeps working.
 - **Indexing** (and with it `verifyAccess` on `UserRecordAccess`).
 - **Files** on the CRM connector (ContentVersion through the scratch space).
 - **Gift entry batches** on NPSP and Nonprofit Cloud.
@@ -566,8 +652,11 @@ answers "where is this field used" and links Setup; the deletion is the admin's,
 5. **Admin reads and the change-request machinery.** Org registry, admin reads, the
    change-request table, validation on propose, the review page, apply with quick deploy.
 6. **Admin proposals.** Fields and picklists first (the most frequent chore), then objects,
-   validation rules, record types, layouts, permission sets, apps, assignments.
-7. **Whole applications and promotion.**
+   validation rules, record types, layouts, permission sets, apps, assignments; then Path, quick
+   actions, compact layouts, report types, stamp rules and record pages.
+7. **Whole applications and promotion.** Acceptance test: rebuilding a stage-driven custom
+   object end to end — fields, Path, record page, quick actions, stamp rules, validation rules,
+   report type and reports — in a sandbox, then promoted.
 
 Each stage adds tools and no new OAuth scopes — Salesforce's scopes are settled in stage 1 — so
 nobody reconnects between stages.
