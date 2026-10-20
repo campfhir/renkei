@@ -23,6 +23,7 @@ export type {
 } from './contract';
 export {
   transportErrorKind,
+  looksLikeContextOverflow,
   wireRequestCauseOf,
   maskCredentialHeaders,
   CREDENTIAL_HEADER_NAMES,

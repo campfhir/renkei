@@ -355,6 +355,14 @@ export interface TurnRunnerDeps {
    * Omitted, the turn only ever ends by finishing, canceling or crashing.
    */
   suspendSignal?: AbortSignal;
+  /**
+   * Called when the provider says the prompt did not fit the context window,
+   * before anything has streamed: compacts the chat and returns the rebuilt
+   * history and system prompt for one more try, or null when there was
+   * nothing to fold (the turn then fails with the overflow). The turn's own
+   * rows since the history was built are kept by the runner.
+   */
+  recoverFromContextOverflow?: () => Promise<{ history: LlmMessage[]; system: string } | null>;
   channel: TurnChannel;
   store: TurnStore;
   now?: () => number;
@@ -566,6 +574,8 @@ export function friendlyLlmError(kind: LlmErrorKind): string {
       return 'The model provider is overloaded right now. Try again in a moment.';
     case 'invalid_request':
       return 'The model rejected the request. If this keeps happening with one model, try another.';
+    case 'context_length':
+      return "This conversation is too long for the model's context window, and there was not enough older history to fold. Start a new chat, or pick a model with a larger window.";
     case 'timeout':
       return 'The model took too long to answer.';
     case 'network':
@@ -698,6 +708,11 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   let silentRetries = seed?.silentRetries ?? 0;
 
   const messages: LlmMessage[] = [...input.history];
+  // The prefix of `messages` that is prior turns' history, and the system
+  // prompt that goes with it: both are replaced when an overflow is recovered.
+  let historyLength = input.history.length;
+  let system = input.system;
+  let contextRecoveries = 0;
   let assistant = input.assistantMessage;
   let blocks: LlmContentBlock[] = [];
   let dirty = false;
@@ -1216,7 +1231,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         result = await streamOrComplete(
           llm.provider,
           {
-            system: input.system,
+            system,
             messages,
             tools: activeTools,
             ...(activeTools.length > 0 ? { toolChoice: 'auto' as const } : {}),
@@ -1230,6 +1245,26 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         );
         if (result.ok) break;
         if (result.err.type === 'aborted' || cancelRequested) break;
+        // The history outgrew the model's window (a model with no recorded
+        // window, or an estimate that ran short): fold the older part and ask
+        // again rather than failing the person's turn. Twice at most, so a
+        // turn whose own tool output is the bulk fails instead of looping.
+        if (
+          result.err.type === 'context_length' &&
+          blocks.length === 0 &&
+          deps.recoverFromContextOverflow &&
+          contextRecoveries < 2
+        ) {
+          contextRecoveries += 1;
+          const recovered = await deps.recoverFromContextOverflow();
+          if (recovered) {
+            messages.splice(0, historyLength, ...recovered.history);
+            historyLength = recovered.history.length;
+            system = recovered.system;
+            log('chat turn hit the context window; compacted and retrying', {});
+            continue;
+          }
+        }
         // Nothing reached the channel for this attempt (blocks is still
         // whatever startNextAssistant left it as — see MAX_MODEL_CALL_RETRIES),
         // the failure is the transport's own kind, and there is budget left:

@@ -216,10 +216,61 @@ function endsMidRound(unfolded: StoredMessage[], end: number): boolean {
   return next.blocks.some((block) => block.type === 'tool_result' && calls.has(block.toolUseId));
 }
 
-/** Whether a turn about to build its history should compact first. */
-export function needsCompaction(messages: StoredMessage[]): boolean {
+/** Rough characters per token for prose and tool output, for what no call has measured yet. */
+const CHARS_PER_TOKEN = 3.5;
+/** What the system prompt and tool schemas add to a request, absent a measured call. */
+const REQUEST_OVERHEAD_TOKENS = 8_000;
+/** A chat is compacted once the next request would fill this much of the room for input. */
+const CHAT_COMPACT_WINDOW_FRACTION = 0.85;
+
+/** What a model can hold, when the operator recorded it (llm_model_configs.settings). */
+export interface CompactionBudget {
+  /** Context window in tokens; null falls back to the character threshold. */
+  contextWindow: number | null;
+  /** Room the reply itself needs inside that window. */
+  maxOutputTokens: number;
+  /** When the newest summary was written; a measurement older than it predates the fold. */
+  summaryAt: Date | null;
+}
+
+/**
+ * Tokens the next request will carry. The last finished reply's usage is a
+ * measurement, not a guess — everything that call read, plus what it wrote —
+ * so only the rows added since are estimated. A measurement taken before
+ * the newest fold no longer describes the history, so that case (and a chat
+ * with no measured reply yet) estimates from the unfolded text alone.
+ */
+function estimateRequestTokens(unfolded: StoredMessage[], summaryAt: Date | null): number {
+  for (let index = unfolded.length - 1; index >= 0; index -= 1) {
+    const message = unfolded[index];
+    if (message.role !== 'assistant' || !message.usage || message.status !== 'complete') continue;
+    if (summaryAt !== null && message.createdAt <= summaryAt) break;
+    const since = unfolded
+      .slice(index + 1)
+      .reduce((sum, later) => sum + messageChars(later), 0);
+    return message.usage.inputTokens + message.usage.outputTokens + since / CHARS_PER_TOKEN;
+  }
+  const chars = unfolded.reduce((sum, message) => sum + messageChars(message), 0);
+  return REQUEST_OVERHEAD_TOKENS + chars / CHARS_PER_TOKEN;
+}
+
+/**
+ * Whether a turn about to build its history should compact first. With the
+ * model's context window known, it waits until the next request would use
+ * most of the room left after the reply — a large-window model is left
+ * alone, a small one is caught before it overflows. Without a window it
+ * falls back to the fixed character threshold. Either way a pass needs
+ * enough foldable messages to be worth its own model call.
+ */
+export function needsCompaction(messages: StoredMessage[], budget?: CompactionBudget): boolean {
   const unfolded = unfoldedOf(messages);
   if (foldCandidates(unfolded).length < CHAT_COMPACT_MIN_FOLD) return false;
+  if (budget?.contextWindow) {
+    const room = Math.max(budget.contextWindow - budget.maxOutputTokens, 0);
+    return (
+      estimateRequestTokens(unfolded, budget.summaryAt) > room * CHAT_COMPACT_WINDOW_FRACTION
+    );
+  }
   const chars = unfolded.reduce((sum, message) => sum + messageChars(message), 0);
   return chars > CHAT_COMPACT_CHAR_THRESHOLD;
 }

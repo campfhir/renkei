@@ -160,3 +160,49 @@ describe('foldCandidates', () => {
     expect(needsCompaction(folded)).toBe(false);
   });
 });
+
+describe('needsCompaction with a recorded context window', () => {
+  const count = CHAT_COMPACT_KEEP_RECENT + CHAT_COMPACT_MIN_FOLD;
+  const budget = { contextWindow: 200_000, maxOutputTokens: 4_096, summaryAt: null };
+  const small = () => Array.from({ length: count }, (_, i) => bigRow(i + 1, 100));
+  /** The newest reply carries what its call measured. */
+  const measured = (inputTokens: number, summaryAt: Date | null = null) => {
+    const messages = small();
+    messages[count - 1] = bigRow(count, 100, {
+      status: 'complete',
+      usage: { inputTokens, outputTokens: 500 },
+      createdAt: new Date(1_000),
+    });
+    return { messages, budget: { ...budget, summaryAt } };
+  };
+
+  it('leaves a large-window model alone past the old character threshold', () => {
+    const perMessage = Math.ceil(CHAT_COMPACT_CHAR_THRESHOLD / count) + 1;
+    const messages = Array.from({ length: count }, (_, i) => bigRow(i + 1, perMessage));
+    expect(needsCompaction(messages)).toBe(true);
+    expect(needsCompaction(messages, { ...budget, contextWindow: 1_000_000 })).toBe(false);
+  });
+
+  it('catches a small-window model well before the old threshold', () => {
+    const messages = Array.from({ length: count }, (_, i) => bigRow(i + 1, 5_000));
+    expect(needsCompaction(messages)).toBe(false);
+    expect(needsCompaction(messages, { ...budget, contextWindow: 32_000 })).toBe(true);
+  });
+
+  it('trusts the last reply’s measured usage over the text size', () => {
+    const near = measured(170_000);
+    expect(needsCompaction(near.messages, near.budget)).toBe(true);
+    const roomy = measured(100_000);
+    expect(needsCompaction(roomy.messages, roomy.budget)).toBe(false);
+  });
+
+  it('ignores a measurement taken before the newest fold', () => {
+    const stale = measured(170_000, new Date(2_000));
+    expect(needsCompaction(stale.messages, stale.budget)).toBe(false);
+  });
+
+  it('never compacts when too few messages could be folded', () => {
+    const messages = Array.from({ length: CHAT_COMPACT_KEEP_RECENT }, (_, i) => bigRow(i + 1, 50_000));
+    expect(needsCompaction(messages, { ...budget, contextWindow: 32_000 })).toBe(false);
+  });
+});

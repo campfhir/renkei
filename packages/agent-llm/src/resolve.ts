@@ -32,6 +32,8 @@ export interface ResolvedLlm {
   model: string;
   maxOutputTokens: number;
   temperature?: number;
+  /** The model's context window in tokens, when the operator recorded one (settings jsonb). */
+  contextWindow?: number;
   /** The operator's statement of where this model's data goes (settings jsonb); absent = unknown. */
   dataHandling?: LlmDataHandling;
 }
@@ -85,8 +87,12 @@ interface ModelRow {
   encrypted_secrets: string | null;
 }
 
-function settingsOf(row: ModelRow): { maxOutputTokens: number; temperature?: number } {
-  const settings: { maxOutputTokens?: unknown; temperature?: unknown } =
+function settingsOf(row: ModelRow): {
+  maxOutputTokens: number;
+  temperature?: number;
+  contextWindow?: number;
+} {
+  const settings: { maxOutputTokens?: unknown; temperature?: unknown; contextWindow?: unknown } =
     typeof row.settings === 'object' && row.settings !== null && !Array.isArray(row.settings)
       ? row.settings
       : {};
@@ -96,6 +102,9 @@ function settingsOf(row: ModelRow): { maxOutputTokens: number; temperature?: num
         ? Math.floor(settings.maxOutputTokens)
         : DEFAULT_MAX_OUTPUT_TOKENS,
     ...(typeof settings.temperature === 'number' ? { temperature: settings.temperature } : {}),
+    ...(typeof settings.contextWindow === 'number' && settings.contextWindow > 0
+      ? { contextWindow: Math.floor(settings.contextWindow) }
+      : {}),
   };
 }
 
