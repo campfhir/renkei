@@ -1,25 +1,28 @@
 /**
- * A preview card for every act tool that does not have one of its own.
+ * A bespoke preview card for every act tool.
  *
- * Chat does not offer the direct act tools (tool-surface.ts): an act reaches
+ * Chat does not offer the plain act tools (tool-surface.ts): an act reaches
  * a person's systems only after they press a card's button, so a model that
  * is told "send it" cannot send it past the card by calling the plain tool
  * instead of its `*_preview`. That only works if EVERY act tool has a
- * preview. The ones written by hand (Outlook mail, Jira issues, Webex,
- * Zoom, the pull-request and directory writes) have a card shaped to the
- * act; this fills in the rest — a Confluence page, a SharePoint document, a
- * Jira comment — with a generic one, so adding an act tool never reopens
- * the gap.
+ * preview. Some are written by hand next to their tools (Outlook mail, Jira
+ * issues, Webex, Zoom meetings, the pull-request merge and open, directory
+ * writes); every other act has a builder in `previews/` that draws it the
+ * way the thing looks — a comment, a status moving, a worklog, an issue
+ * link, an access change, a page, a file operation, a commit — on the
+ * act-preview card (mcp-widgets/src/act-card.ts). There is no fallback that
+ * prints the arguments: a tool without a builder gets no preview, and a
+ * test fails until it has one.
  *
  * ## What it registers
  *
- * For an eligible act tool `x`, once every module has registered (`flush`):
+ * For an eligible act tool `x` that has a builder, once every module has
+ * registered (`flush`):
  *
- *  - `x_preview` — same input schema as `x`, writes nothing; it renders the
- *    arguments as a card (the directory-action template, which is already a
- *    titled list of fields with a confirm and a cancel) whose confirm button
- *    calls `x_confirm`. Marked `renkei/preview-of: x` so the agent builder
- *    can leave it out: an agent has no card to press, and keeps `x`.
+ *  - `x_preview` — same input schema as `x`, writes nothing; it answers with
+ *    the builder's card, whose confirm button calls `x_confirm`. Marked
+ *    `renkei/preview-of: x` so the agent builder can leave it out: an agent
+ *    has no card to press, and keeps `x`.
  *  - `x_confirm` — app-only (widgets.ts's APP_ONLY_META), registered for the
  *    widget token alone (capability-gate.ts's `withAppOnlyGate`), running
  *    `x`'s own handler, so the confirm path IS the direct path. A card
@@ -38,11 +41,14 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
-import { ACT_OUTCOMES, connectorKeyForTool, type ActCategory } from '@renkei/tool-outcomes';
+import { connectorKeyForTool } from '@renkei/tool-outcomes';
+import type { ActCard } from '@/lib/mcp-widgets/src/act-card';
 import { isAppOnlyTool } from './capability-gate';
+import { PREVIEW_BUILDERS } from './previews';
+import type { PreviewBuilder } from './previews/card';
 import {
   APP_ONLY_META,
-  DIRECTORY_ACTION_PREVIEW_URI,
+  ACT_PREVIEW_URI,
   confirmGuard,
   newPreviewId,
   previewToolMeta,
@@ -65,11 +71,17 @@ export const PREVIEW_EXEMPT_CONNECTORS: readonly string[] = [
   'agents',
   'batch-jobs',
   'cards',
+  // Its acts write change requests and templates in Renkei, applied from
+  // Renkei's own review page; none changes Jira (jira-admin/propose-*.ts).
+  'jira-admin',
   'knowledge',
   'logs',
   'sandbox',
   'user-memory',
 ];
+
+/** Single tools that only write to Renkei: a suggestion on the feed, never to the provider. */
+export const PREVIEW_EXEMPT_TOOLS: readonly string[] = ['webex_capture_message'];
 
 /**
  * Direct tools whose hand-written preview is not named `<tool>_preview`:
@@ -102,81 +114,42 @@ export function needsPreview(name: string, config: RegisterToolArgs[1]): boolean
   if (config.annotations?.readOnlyHint === true) return false;
   if (isAppOnlyTool(config)) return false;
   if (TWIN_SUFFIX.test(name) || UPLOAD_PLUMBING.test(name)) return false;
+  if (PREVIEW_EXEMPT_TOOLS.includes(name)) return false;
   const connector = connectorKeyForTool(name);
   return connector === null || !PREVIEW_EXEMPT_CONNECTORS.includes(connector);
 }
 
-const MAX_FIELDS = 40;
-const MAX_VALUE = 600;
-
-const humanize = (key: string): string => {
-  const words = key
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[_-]+/g, ' ')
-    .trim()
-    .toLowerCase();
-  return words.charAt(0).toUpperCase() + words.slice(1);
-};
-
-function displayValue(value: unknown): string {
-  const text = typeof value === 'string' ? value : JSON.stringify(value);
-  const shown = text ?? String(value);
-  return shown.length > MAX_VALUE
-    ? `${shown.slice(0, MAX_VALUE)}… (${shown.length} characters)`
-    : shown;
-}
-
-/** One card row per argument the model supplied, in the order it supplied them. */
-export function previewFields(args: Record<string, unknown>): { label: string; value: string }[] {
-  return Object.entries(args)
-    .filter(([, value]) => value !== undefined && value !== null && value !== '')
-    .slice(0, MAX_FIELDS)
-    .map(([key, value]) => ({ label: humanize(key), value: displayValue(value) }));
-}
-
-const VERB: Record<ActCategory, string> = {
-  created: 'Create',
-  sent: 'Send',
-  updated: 'Update',
-  deleted: 'Delete',
-  scheduled: 'Schedule',
-  other: 'Confirm',
-};
-
-/** "Outlook · Act — Send an email" → what it does, and the system it does it in. */
-function titleParts(name: string, title: unknown): { what: string; system: string } {
-  const text = typeof title === 'string' ? title : '';
-  const [head, ...rest] = text.split(' — ');
-  const what = rest.join(' — ') || ACT_OUTCOMES[name]?.short || humanize(name);
-  const system = head && rest.length > 0 ? (head.split(' · ')[0] ?? '') : '';
-  return { what, system };
-}
-
+/**
+ * The card a builder draws for these arguments, ready to hand to the card
+ * bundle. The builder's `confirmWith` (for a tool with its own "preview,
+ * then confirm" step) is folded into the arguments the confirm button sends.
+ */
 export function buildPreviewCard(
+  builder: PreviewBuilder,
   name: string,
-  title: unknown,
   args: Record<string, unknown>
-): Record<string, unknown> {
-  const category = ACT_OUTCOMES[name]?.category ?? 'other';
-  const { what, system } = titleParts(name, title);
+): ActCard {
+  const { confirmWith, ...spec } = builder(args);
   return {
-    kind: 'directory_action',
+    ...spec,
+    kind: 'act',
     previewId: newPreviewId(),
-    action: VERB[category],
-    tone: category === 'deleted' || category === 'sent' ? 'caution' : 'neutral',
-    title: what,
-    ...(system ? { subtitle: system } : {}),
-    fields: previewFields(args),
     confirmTool: `${name}_confirm`,
-    confirmLabel: VERB[category],
-    confirmArgs: args,
+    confirmArgs: { ...args, ...confirmWith },
   };
+}
+
+/** "Outlook · Act — Send an email" → "Send an email". */
+function whatOf(name: string, title: unknown): string {
+  const text = typeof title === 'string' ? title : '';
+  const tail = text.split(' — ').slice(1).join(' — ');
+  return tail || name;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-export interface GenericPreviewServer {
+export interface ActPreviewServer {
   server: McpServer;
   /** Register the generated twins; call once, after every module has registered. */
   flush(): void;
@@ -188,7 +161,7 @@ export interface GenericPreviewServer {
  * no preview of their own. Registration order does not matter: the
  * decision waits until every name is known.
  */
-export function withGenericPreview(target: McpServer): GenericPreviewServer {
+export function withActPreviews(target: McpServer): ActPreviewServer {
   const registered = new Set<string>();
   const candidates: { name: string; config: RegisterToolArgs[1]; handler: RegisterToolArgs[2] }[] =
     [];
@@ -213,13 +186,18 @@ export function withGenericPreview(target: McpServer): GenericPreviewServer {
   const flush = () => {
     for (const { name, config, handler } of candidates) {
       if (previewTwinOf(name, registered) !== null) continue;
+      const builder = PREVIEW_BUILDERS[name];
+      // No card, no preview: the tool stays plain until one is written (the
+      // catalog test says which), rather than getting a card that prints
+      // its arguments.
+      if (builder === undefined) continue;
       const previewName = `${name}_preview`;
       const confirmName = `${name}_confirm`;
       if (registered.has(previewName) || registered.has(confirmName)) continue;
       registered.add(previewName);
       registered.add(confirmName);
       const hasInput = config.inputSchema !== undefined;
-      const what = titleParts(name, config.title).what;
+      const what = whatOf(name, config.title);
 
       // The SDK types a tool callback as a union over "has an input schema or
       // not", so a callback built here cannot be inferred across it; both
@@ -227,6 +205,20 @@ export function withGenericPreview(target: McpServer): GenericPreviewServer {
       // withKindStamp.
       const preview = async (...handlerArgs: unknown[]) => {
         const args = hasInput && isRecord(handlerArgs[0]) ? handlerArgs[0] : {};
+        let card: ActCard;
+        try {
+          card = buildPreviewCard(builder, name, args);
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `The preview could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
         return {
           content: [
             {
@@ -238,7 +230,7 @@ export function withGenericPreview(target: McpServer): GenericPreviewServer {
                 `how to proceed.`,
             },
           ],
-          structuredContent: buildPreviewCard(name, config.title, args),
+          structuredContent: card,
         };
       };
       const previewConfig: RegisterToolArgs[1] = {
@@ -248,7 +240,7 @@ export function withGenericPreview(target: McpServer): GenericPreviewServer {
           `until they confirm on the card, and the card does the acting. Same arguments as ` +
           `${name}. — ${config.description ?? what}`,
         annotations: { readOnlyHint: false },
-        _meta: { ...previewToolMeta(DIRECTORY_ACTION_PREVIEW_URI), [PREVIEW_OF_META_KEY]: name },
+        _meta: { ...previewToolMeta(ACT_PREVIEW_URI), [PREVIEW_OF_META_KEY]: name },
         inputSchema: config.inputSchema,
       };
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions

@@ -116,7 +116,7 @@ jest.mock('@/lib/mcp-tools/web-search', () => ({
 }));
 
 import { listAvailableTools, invalidateToolCatalogCache } from './tool-catalog';
-import { PREVIEW_EXEMPT_CONNECTORS, previewTwinOf } from './generic-preview';
+import { PREVIEW_EXEMPT_CONNECTORS, previewTwinOf } from './act-preview';
 
 // Granular scopes, not the classic `read:jira-work` pair: the Jira tools gate
 // on the granular catalog, so classic scopes would register nothing and the

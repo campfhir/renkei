@@ -38,7 +38,7 @@ import { ATLASSIAN, ATLASSIAN_JSM } from '@renkei/provider-grants';
 import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import { connectorKeyForTool } from '@/lib/mcp-tools/tool-connector';
-import { PREVIEW_OF_META_KEY } from '@/lib/mcp-tools/generic-preview';
+import { PREVIEW_OF_META_KEY } from '@/lib/mcp-tools/act-preview';
 import { resolveOutcomes, type ToolOutcomes } from '@/lib/mcp-tools/outcomes';
 import { resolveConnectorAvailability, registerRenkeiTools } from '@/lib/mcp-tools/registry';
 

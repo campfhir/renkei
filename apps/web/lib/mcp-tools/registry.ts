@@ -36,7 +36,7 @@ import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { registerAllTools } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
 import { withKindStamp } from '@/lib/mcp-tools/kind-stamp';
-import { withGenericPreview } from '@/lib/mcp-tools/generic-preview';
+import { withActPreviews } from '@/lib/mcp-tools/act-preview';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { registerCardTools, CARDS_CONNECTOR } from '@/lib/mcp-tools/cards';
 import { registerAgentTools, AGENTS_CONNECTOR } from '@/lib/mcp-tools/agents';
@@ -453,7 +453,7 @@ export async function registerRenkeiTools(
     never reaches a person's systems without a card. Registered once
     every module has run — see the flush at the end.
   */
-  const { server, flush: flushGenericPreviews } = withGenericPreview(withKindStamp(rawServer));
+  const { server, flush: flushGenericPreviews } = withActPreviews(withKindStamp(rawServer));
 
   const {
     webexAvailable,

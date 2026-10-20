@@ -32,7 +32,7 @@ import { HttpMcpClient, mintRunToken, revokeRunToken, type McpClient } from '@re
 import type { McpToolInfo } from '@renkei/mcp-client';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { logger } from '@/lib/logger';
-import { previewTwinOf } from '@/lib/mcp-tools/generic-preview';
+import { previewTwinOf } from '@/lib/mcp-tools/act-preview';
 import { internalMcpEndpoint } from './internal-origin';
 import { CHAT_ALWAYS_TOOLS, CHAT_CORE_CONNECTORS, type ChatToolConfig } from './tool-config';
 
