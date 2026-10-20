@@ -29,7 +29,7 @@ import {
 } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
-import { sandboxChartsEnabled, sandboxConfig } from '@renkei/sandbox-client';
+import { sandboxChartsEnabled, sandboxConfig, sandboxScriptsServed } from '@renkei/sandbox-client';
 import { isHistoryChat } from '@/lib/code/active-chat';
 import { CODE_TURN_LIMITS, codeProjectContext } from '@/lib/code/turn';
 import { CODE_DELEGATE_TOOL } from '@/lib/code/delegate';
@@ -472,9 +472,7 @@ async function executeTurnBody(
   // side wherever one does not feed another, and the whole is logged.
   const preparingSince = Date.now();
   try {
-    const project = input.chat.projectId
-      ? await getProjectRow(db, input.chat.projectId)
-      : null;
+    const project = input.chat.projectId ? await getProjectRow(db, input.chat.projectId) : null;
     // The project's content — instructions, memory, files — under its own key.
     const projectCipher = project ? await projectCipherById(db, project.id) : null;
     const defaultsKind = project?.kind === 'code' ? 'code' : 'chat';
@@ -721,6 +719,13 @@ async function executeTurnBody(
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
       filesAllowed,
       chartsAllowed: filesAllowed && (await sandboxChartsEnabled()),
+      // The document road through sandbox_run_python: the same condition
+      // chat-local-tools.ts offers chat_write_file's pointer under.
+      pythonAllowed:
+        filesAllowed &&
+        toolConfig.connectors.includes('sandbox') &&
+        sandboxConfig() !== null &&
+        (await sandboxScriptsServed().catch(() => false)),
       autoMode: auto,
       timeZone: input.timeZone ?? null,
       now: new Date(),
@@ -880,9 +885,7 @@ export async function chatPromptContext(
             code: null,
           }
         : null,
-    userMemoryText: project
-      ? null
-      : renderUserMemory(await readUserMemory(db, chat.ownerSubject)),
+    userMemoryText: project ? null : renderUserMemory(await readUserMemory(db, chat.ownerSubject)),
     chatFiles: files.filter((row) => row.chat_id === chat.id).map(shape),
   };
 }

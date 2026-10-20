@@ -57,6 +57,18 @@ describe('chat_write_file', () => {
     expect(def?.inputSchema.required).toEqual(['filename', 'content']);
   });
 
+  it('calls itself the simple road and points at sandbox_run_python only where scripts are on', () => {
+    const plain = fileTools()[0]!.def.description;
+    expect(plain).toMatch(/^Write a file for the person to keep\./);
+    expect(plain).not.toMatch(/sandbox_run_python/);
+    const steered = fileTools({ python: true })[0]!.def.description;
+    expect(steered).toMatch(/^Write a simple, text-only file/);
+    expect(steered).toMatch(/Use this only for a SIMPLE, text-only document/);
+    expect(steered).toMatch(/fonts, sizes, colours, alignment/);
+    expect(steered).toMatch(/sandbox_run_python instead/);
+    expect(steered).toMatch(/chat_attach_from_sandbox/);
+  });
+
   it('hands the content back as a document named and typed by its extension', async () => {
     const result = await tools.run(
       'chat_write_file',

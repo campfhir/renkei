@@ -324,7 +324,9 @@ export async function registerSandboxTools(
   server.registerTool(
     'sandbox_render_document',
     {
-      title: 'Sandbox · Act — Author a document from text, staged in your scratch space',
+      title: features.scripts
+        ? 'Sandbox · Act — Author a simple, text-only document from Markdown, staged in your scratch space'
+        : 'Sandbox · Act — Author a document from text, staged in your scratch space',
       description:
         'Turn text you write into a Word document, slide deck, PDF or workbook, staged in your ' +
         'scratch space — the way to author a document for another connector to file (a ' +
@@ -343,9 +345,10 @@ export async function registerSandboxTools(
         'such. ' +
         XLSX_FORMULA_GUIDE +
         (features.scripts
-          ? ' This renders text only. For a document richer than that — pictures or charts ' +
-            'embedded, a particular layout, a template filled, or an existing file updated in ' +
-            'place — write it with sandbox_run_python instead: ' +
+          ? ' Use this only for a SIMPLE, text-only document in the default look, which is all ' +
+            'it can render. For anything more — fonts, colours, alignment, text placed on a ' +
+            'slide, pictures or charts embedded, a particular layout, a template filled, or an ' +
+            'existing file updated in place — write it with sandbox_run_python instead: ' +
             DOCUMENT_SCRIPT_LINE.replace(/^This is also how to /, '').replace(/ $/, '')
           : ''),
       annotations: { readOnlyHint: false },

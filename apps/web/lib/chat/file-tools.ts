@@ -73,15 +73,22 @@ export function checkFilename(raw: unknown): FilenameCheck {
 export const KEPT_LINE =
   'It is under this chat’s Artifacts, where the person can download it or copy it to a network share; tell them so, and do not repeat the content.';
 
-/** What chat_write_file says about the Python road, where sandbox_run_python is on offer. */
+/**
+ * What chat_write_file says about the Python road, where sandbox_run_python
+ * is on offer: this tool is for the simple case, and anything styled or
+ * pictured goes the other way.
+ */
 export const PYTHON_DOCUMENT_LINE =
-  ' This renders text only. For a document richer than Markdown can express — a picture ' +
-  'placed in it (one from chat_generate_image, a chart from chat_write_chart, or an upload, ' +
-  'staged for the script with chat_attach_to_sandbox by its filename), a chart plotted from ' +
-  'the data, a particular layout, a template filled in, or a file the person gave you to ' +
-  'update in place with its formatting kept — write it with sandbox_run_python instead ' +
-  '(python-docx, python-pptx, reportlab, openpyxl, matplotlib are installed) and bring what ' +
-  'it writes under out/ back to the person with chat_attach_from_sandbox.';
+  ' Use this only for a SIMPLE, text-only document: plain headings, paragraphs, lists and ' +
+  'tables in the default look, which is all it can render. For anything more — fonts, sizes, ' +
+  'colours, alignment, text placed where you want it on a slide, slide backgrounds, cell ' +
+  'formatting, a picture placed in it (one from chat_generate_image, a chart from ' +
+  'chat_write_chart, or an upload, staged for the script with chat_attach_to_sandbox by its ' +
+  'filename), a chart plotted from the data, a particular layout, a template filled in, or a ' +
+  'file the person gave you to update in place with its formatting kept — write it with ' +
+  'sandbox_run_python instead (python-docx, python-pptx, reportlab, openpyxl, matplotlib are ' +
+  'installed) and bring what it writes under out/ back to the person with ' +
+  'chat_attach_from_sandbox.';
 
 export function fileTools(options: { python?: boolean } = {}): LocalTool[] {
   return [
@@ -89,7 +96,10 @@ export function fileTools(options: { python?: boolean } = {}): LocalTool[] {
       def: {
         name: 'chat_write_file',
         description:
-          'Write a file for the person to keep. It appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. ' +
+          (options.python
+            ? 'Write a simple, text-only file for the person to keep — a plain document in the default look, or a text format. '
+            : 'Write a file for the person to keep. ') +
+          'It appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. ' +
           'Pass the whole content as text, never base64; the extension decides what is made. ' +
           'Text formats (.csv, .tsv, .md, .txt, .json, .html, .xml, .yaml) are kept exactly as written. ' +
           'Document formats are rendered from your text: .docx (Word) and .pdf from Markdown — headings, paragraphs, bullet and numbered lists, tables, code blocks, quotes; ' +

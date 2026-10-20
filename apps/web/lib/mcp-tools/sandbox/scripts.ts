@@ -50,13 +50,17 @@ import { sbRunScript, clientFailure, type WireScriptResult } from '@/lib/sandbox
  */
 export const DOCUMENT_SCRIPT_LINE =
   'This is also how to AUTHOR a document richer than Markdown can express, or UPDATE an ' +
-  'existing one: a Word document, slide deck, PDF or workbook with pictures placed in it (a ' +
-  'staged image — a generated picture, a rendered chart, a screenshot — read from ' +
+  'existing one — prefer it over the Markdown renderers for anything but a simple, ' +
+  'text-only document: a Word document, slide deck, PDF or workbook with its look under your ' +
+  'control — fonts, sizes, colours, bold and italic, paragraph and cell alignment, text boxes ' +
+  'placed at exact positions on a slide, slide backgrounds, themes, number formats, cell ' +
+  'fills and borders, headers and footers — with pictures placed in it (a staged image — a ' +
+  'generated picture, a rendered chart, a screenshot — read from ' +
   `${SCRIPT_INPUT_DIR}/ and inserted with python-docx, python-pptx or reportlab), a chart ` +
-  'plotted from the data with matplotlib, a particular layout, a template filled in; or a ' +
-  'staged .docx, .pptx, .xlsx or .pdf — one pulled from a network share or handed to you — ' +
-  `opened, changed and saved under ${SCRIPT_OUTPUT_DIR}/ as the new version with its ` +
-  'formatting kept, then sent back where it came from. ';
+  'plotted from the data with matplotlib or a native PowerPoint/Excel chart, a particular ' +
+  'layout, a template filled in; or a staged .docx, .pptx, .xlsx or .pdf — one pulled from a ' +
+  `network share or handed to you — opened, changed and saved under ${SCRIPT_OUTPUT_DIR}/ ` +
+  'as the new version with its formatting kept, then sent back where it came from. ';
 
 /** What a result says when the run was not cut off from the network. */
 export const NETWORK_SHARED_NOTE =

@@ -144,11 +144,18 @@ in — and above all an **existing file updated in place** (a workbook
 pulled from a share with its formatting and formulas kept, a deck with
 one slide changed) are not the renderer's to do; they are
 `sandbox_run_python`'s, with the document libraries the image carries
-(see "`sandbox_run_python`" below). The three descriptions say so to the
-model — `sandbox_render_document` and `chat_write_file` point at the
-Python road where scripts are on, and `sandbox_run_python`'s names the
-toolkit — so the model that reaches for the text renderer first learns
-there is a richer one. The chat side of the same road is
+(see "`sandbox_run_python`" below): fonts, sizes and colours, alignment,
+text boxes placed at exact positions on a slide, slide backgrounds and
+themes, cell fills, borders and number formats, headers and footers,
+native charts. The descriptions steer, not merely mention: where scripts
+are on, `sandbox_render_document` and `chat_write_file` call themselves
+the road for a **simple, text-only document in the default look** and
+send everything else to `sandbox_run_python`, whose own description
+names the toolkit and says to prefer it; the chat's system prompt says
+the same (`request-builder.ts`, `pythonAllowed`). The tool keeps its
+name — `chat_write_file` is what people's stored permission rules and
+the e2e specs call it — and the simple case keeps its cheap, deterministic
+renderer; the steering is in the words. The chat side of the same road is
 `chat_attach_to_sandbox` / `chat_attach_from_sandbox` (`docs/chat.md`).
 
 ### Pictures: `chat_generate_image`, not bytes from a chat model
