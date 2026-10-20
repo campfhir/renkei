@@ -89,7 +89,7 @@ test.describe('issue cards', () => {
     const mobile = testInfo.project.name === 'mobile';
     await seedFixtures(ids);
     await page.route(
-      `**/api/tenant/**/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`,
+      `**/api/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`,
       async (route) => {
         await route.fulfill({
           status: 200,
@@ -131,7 +131,7 @@ test.describe('issue cards', () => {
     const ids = idsFor(testInfo.project.name);
     await seedFixtures(ids);
     await page.route(
-      `**/api/tenant/**/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`,
+      `**/api/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`,
       async (route) => {
         await route.fulfill({
           status: 200,
@@ -154,7 +154,7 @@ test.describe('issue cards', () => {
     const ids = idsFor(testInfo.project.name);
     await seedFixtures(ids);
     await page.route(
-      `**/api/tenant/**/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`,
+      `**/api/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`,
       async (route) => {
         await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
       }

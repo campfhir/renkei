@@ -27,6 +27,9 @@ const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const GB = 1_073_741_824;
 
 test.use({
+  // The mobile project's device descriptor asks for WebKit, which is not
+  // installed here; the pinned Chromium runs every project (AGENTS.md).
+  browserName: 'chromium',
   launchOptions: {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
     args: ['--no-sandbox'],
@@ -175,6 +178,13 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   const fixture = fixtureFor(testInfo.project.name);
   await seed(fixture);
   await signIn(page, fixture);
+  // The org limit is one shared setting behind a 60s server cache: an earlier
+  // project's run leaves its 12 GB in that cache. Putting the default back
+  // through the API invalidates it, whatever ran before.
+  const reset = await page.request.put(`/api/admin/org-settings`, {
+    data: { sandboxWorkspaceMaxBytes: 8 * GB },
+  });
+  expect(reset.ok()).toBe(true);
   const projectUrl = `/code/${fixture.projectId}`;
   const settingsUrl = `/admin/settings`;
   // Scoped to the main region: across a navigation the dev server can leave
@@ -221,7 +231,9 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
 
   // ── The admin approves less than was asked; the limit rises for the project ──
   await page.goto(settingsUrl);
-  const rows = page.getByTestId('size-request-row');
+  // One organization: the admin's list holds every project's requests, so the
+  // rows are this run's project's own.
+  const rows = page.getByTestId('size-request-row').filter({ hasText: fixture.projectName });
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText(fixture.projectName);
   await expect(rows.first()).toContainText('24 GB');
@@ -229,7 +241,7 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await shot(page, testInfo, '05-admin-pending');
   await rows.first().getByLabel('Approve up to (GB)').fill('20');
   await rows.first().getByRole('button', { name: 'Approve' }).click();
-  await expect(page.getByText('No requests waiting.')).toBeVisible();
+  await expect(rows).toHaveCount(0);
   await expect(page.getByTestId('size-requests')).toContainText('20 GB approved');
 
   await page.goto(projectUrl);
@@ -247,9 +259,9 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await expect(page.getByTestId('size-request-pending')).toBeVisible();
 
   await page.goto(settingsUrl);
-  await page.getByTestId('size-request-row').getByLabel('Note').fill('Prune build output first');
-  await page.getByTestId('size-request-row').getByRole('button', { name: 'Deny' }).click();
-  await expect(page.getByText('No requests waiting.')).toBeVisible();
+  await rows.getByLabel('Note').fill('Prune build output first');
+  await rows.getByRole('button', { name: 'Deny' }).click();
+  await expect(rows).toHaveCount(0);
 
   await page.goto(projectUrl);
   await expect(limitText).toHaveText('Checkout limit 20 GB.');

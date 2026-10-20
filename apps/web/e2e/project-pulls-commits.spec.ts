@@ -4,7 +4,7 @@
  * a call that would hit a real vendor/provider, GitHub here, is mocked
  * at the browser edge). Since these routes call GitHub server-side, not
  * from the browser, mocking the browser's request to our own
- * `/api/tenant/.../pulls|commits|actions|pr-summary` routes keeps the
+ * `/api/pulls|commits|actions|pr-summary` routes keeps the
  * real GitHub API entirely out of the loop — the server-side call never
  * happens once the browser's own request is intercepted.
  *
@@ -142,7 +142,7 @@ const LAST_RUN = {
 };
 
 async function mockRoutes(page: Page, ids: ReturnType<typeof idsFor>): Promise<void> {
-  await page.route(`**/api/tenant/**/code/projects/${ids.projectId}/pulls**`, async (route) => {
+  await page.route(`**/api/code/projects/${ids.projectId}/pulls**`, async (route) => {
     const url = new URL(route.request().url());
     if (url.searchParams.get('view') === 'summary') {
       await route.fulfill({
@@ -165,7 +165,7 @@ async function mockRoutes(page: Page, ids: ReturnType<typeof idsFor>): Promise<v
     });
   });
 
-  await page.route(`**/api/tenant/**/code/projects/${ids.projectId}/commits**`, async (route) => {
+  await page.route(`**/api/code/projects/${ids.projectId}/commits**`, async (route) => {
     const url = new URL(route.request().url());
     if (url.searchParams.get('view') === 'summary') {
       await route.fulfill({
@@ -186,7 +186,7 @@ async function mockRoutes(page: Page, ids: ReturnType<typeof idsFor>): Promise<v
     });
   });
 
-  await page.route(`**/api/tenant/**/code/projects/${ids.projectId}/actions**`, async (route) => {
+  await page.route(`**/api/code/projects/${ids.projectId}/actions**`, async (route) => {
     const url = new URL(route.request().url());
     if (url.searchParams.get('view') === 'summary') {
       await route.fulfill({
@@ -203,7 +203,7 @@ async function mockRoutes(page: Page, ids: ReturnType<typeof idsFor>): Promise<v
     });
   });
 
-  await page.route(`**/api/tenant/**/chat/chats/${ids.chatId}/pr-summary`, async (route) => {
+  await page.route(`**/api/chat/chats/${ids.chatId}/pr-summary`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

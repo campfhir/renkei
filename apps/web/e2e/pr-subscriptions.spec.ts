@@ -132,7 +132,7 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
 }
 
 async function mockPulls(page: Page, ids: ReturnType<typeof idsFor>): Promise<void> {
-  await page.route(`**/api/tenant/**/code/projects/${ids.projectId}/pulls**`, async (route) => {
+  await page.route(`**/api/code/projects/${ids.projectId}/pulls**`, async (route) => {
     const url = new URL(route.request().url());
     if (url.searchParams.get('view') === 'summary') {
       await route.fulfill({
