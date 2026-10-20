@@ -749,6 +749,8 @@ async function executeTurnBody(
           surface.tools.some((tool) => tool.name === 'outlook_search_users') ||
           surface.discoverable.some((entry) => entry.def.name === 'outlook_search_users'),
         hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
+        // The same condition chat-local-tools.ts offers the remember tools under.
+        canRemember: !readOnly,
         filesAllowed,
         chartsAllowed,
         pythonAllowed,
