@@ -36,6 +36,7 @@ import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { registerAllTools } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
 import { withKindStamp } from '@/lib/mcp-tools/kind-stamp';
+import { withGenericPreview } from '@/lib/mcp-tools/generic-preview';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { registerCardTools, CARDS_CONNECTOR } from '@/lib/mcp-tools/cards';
 import { registerAgentTools, AGENTS_CONNECTOR } from '@/lib/mcp-tools/agents';
@@ -446,7 +447,13 @@ export async function registerRenkeiTools(
     Registration is the only place that knows: `run-actions.ts` explains
     why nothing downstream can work it out, and asks for exactly this.
   */
-  const server = withKindStamp(rawServer);
+  /*
+    Every act tool that has no preview card of its own gets a generated
+    one (generic-preview.ts), so chat can offer previews alone and an act
+    never reaches a person's systems without a card. Registered once
+    every module has run — see the flush at the end.
+  */
+  const { server, flush: flushGenericPreviews } = withGenericPreview(withKindStamp(rawServer));
 
   const {
     webexAvailable,
@@ -766,4 +773,5 @@ export async function registerRenkeiTools(
     // so an admin's rotation or disable bites within the config cache TTL.
     registerWebSearchTools(withCapabilityGate(server, projection, WEB_SEARCH_CONNECTOR), context);
   }
+  flushGenericPreviews();
 }
