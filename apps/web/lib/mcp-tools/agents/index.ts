@@ -321,14 +321,14 @@ function nativeCapabilities(limits: { minutes: number; toolCalls: number }): str
       'and say in its instructions exactly what each change must contain. ' +
       'agent_approvals_list shows the batches waiting on you; agent_approval_decide answers one.',
     '- ASK A PERSON — with the agent-level `canAskQuestions: true` the agent gains a free ' +
-      '`ask_person` call: {message, form?, timeoutHours?}. It pauses the run behind one ' +
+      '`ask_person` call: {intro, questions?, timeoutHours?}. It pauses the run behind one ' +
       `question card (default wait ${APPROVAL_DEFAULT_TIMEOUT_HOURS}h, never more than ` +
-      `${DEFAULT_APPROVAL_WAIT_CAP_HOURS}h); \`form\` holds up to ${MAX_QUESTION_FIELDS} ` +
-      'fields ({kind:"field", name, label, type:"text"|"longtext"|"number"|"date"|"choice"|' +
-      '"multi", required, options?, min?, max?, help?, key?}), paragraphs ({kind:"paragraph", ' +
-      'text}) and one level of groups ({kind:"group", label, nodes}). The answer comes back as ' +
-      "the call's result. agent_questions_list shows the ones waiting on you, and " +
-      'agent_question_answer answers one.',
+      `${DEFAULT_APPROVAL_WAIT_CAP_HOURS}h). With only an intro the person answers in one ` +
+      `reply box; with up to ${MAX_QUESTION_FIELDS} questions ({question, context?, ` +
+      'answer?: {type: "longtext"|"text"|"choice"|"multi"|"yesno"|"number"|"date", options?}}) ' +
+      'each is answered or skipped on its own, and an "anything else?" box closes the card. The ' +
+      "answers come back as the call's result. agent_questions_list shows the ones waiting on " +
+      'you, and agent_question_answer answers one.',
     '- REMEMBER — a free `remember` call records one fact future runs need (what was already ' +
       'handled). Say so in the instructions when it matters ("remember which ticket you filed").',
     '- FINISH — the agent ends every run with `finish_run`: "done", "nothing_to_do" (quietly, ' +

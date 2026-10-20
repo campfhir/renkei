@@ -57,6 +57,11 @@ export interface QuestionField {
   max?: number;
   /** A line under the control — units, format, where to look it up. */
   help?: string;
+  /**
+   * What the person needs to answer — the evidence behind the question —
+   * shown between the question and its control (ask-questions.ts).
+   */
+  context?: string;
 }
 
 /** How many controls one form may carry. A form, not a questionnaire. */
@@ -89,6 +94,7 @@ export function isQuestionField(value: unknown): value is QuestionField {
     min?: unknown;
     max?: unknown;
     help?: unknown;
+    context?: unknown;
   } = value;
   if (typeof field.name !== 'string') return false;
   if (typeof field.label !== 'string') return false;
@@ -104,6 +110,7 @@ export function isQuestionField(value: unknown): value is QuestionField {
   if (field.min !== undefined && typeof field.min !== 'number') return false;
   if (field.max !== undefined && typeof field.max !== 'number') return false;
   if (field.help !== undefined && typeof field.help !== 'string') return false;
+  if (field.context !== undefined && typeof field.context !== 'string') return false;
   return true;
 }
 

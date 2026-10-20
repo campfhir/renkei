@@ -48,12 +48,11 @@ import {
   isExternallyTriggered,
   mergeOpenedDetail,
   parseAgentDefinition,
-  parseFormNodes,
+  askedQuestionsOf,
+  answersForAgent,
   parseStagedActions,
   parseStoredActions,
   parseStoredResults,
-  describeQuestionAnswer,
-  flattenFormFields,
   resolveTime,
   weekdayOf,
   sealedDetailOf,
@@ -522,40 +521,10 @@ function finishArgsOf(input: unknown): {
  * ask_person's arguments. Only `message` is required — a malformed `form`
  * degrades to a message-only question rather than refusing the call.
  */
-function askPersonArgsOf(
-  input: unknown
-): { message: string; form: FormNode[]; timeoutHours?: number } | null {
-  const args = argsOf(input);
-  const message = typeof args.message === 'string' ? args.message.trim() : '';
-  if (!message) return null;
-  return {
-    message,
-    form: parseFormNodes(args.form),
-    ...(typeof args.timeoutHours === 'number' && Number.isFinite(args.timeoutHours)
-      ? { timeoutHours: args.timeoutHours }
-      : {}),
-  };
-}
-
 function rememberArgsOf(input: unknown): { note: string } | null {
   const args = argsOf(input);
   const note = typeof args.note === 'string' ? stripToolResidue(args.note).trim() : '';
   return note ? { note } : null;
-}
-
-/** A question card's answers as the agent reads them: one line per field. */
-function answerTextOf(form: FormNode[], answers: Record<string, unknown>): string {
-  const lines: string[] = [];
-  for (const field of flattenFormFields(form)) {
-    const raw = answers[field.name];
-    const value: string | string[] | null = Array.isArray(raw)
-      ? raw.filter((entry): entry is string => typeof entry === 'string')
-      : typeof raw === 'string'
-        ? raw
-        : null;
-    if (value !== null) lines.push(describeQuestionAnswer(field, value));
-  }
-  return lines.join('\n') || 'Answered, with nothing filled in.';
 }
 
 /** A card's `result.answers` — the form reply keyed by field name. */
@@ -1443,17 +1412,21 @@ export function createAgentRunHandler(deps: EngineDeps) {
         }
 
         if (use.name === ASK_PERSON_TOOL && this.input.canAsk) {
-          const asked = askPersonArgsOf(use.input);
-          if (!asked) {
+          const asked = askedQuestionsOf(use.input);
+          if (!asked.ok) {
             await reply({
               type: 'tool_result',
               toolUseId: use.id,
-              content: 'ask_person needs at least {message}.',
+              content: asked.error,
               isError: true,
             });
             continue;
           }
-          await this.pauseForQuestion(row, use.id, asked);
+          await this.pauseForQuestion(row, use.id, {
+            message: asked.message,
+            form: asked.form,
+            ...(asked.timeoutHours !== undefined ? { timeoutHours: asked.timeoutHours } : {}),
+          });
           return 'paused';
         }
 
@@ -2358,7 +2331,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (card.status !== 'answered') {
         return 'The question was closed without an answer. Carry on without it, or finish if you cannot.';
       }
-      return `The owner answered:\n${untrustedBlock('answer', answerTextOf(pause.form, answersOf(card.result)))}`;
+      return `The owner answered:\n${untrustedBlock('answer', answersForAgent(pause.form, answersOf(card.result)))}`;
     }
 
     private async finalizeFrom(detail: TurnDetail): Promise<void> {

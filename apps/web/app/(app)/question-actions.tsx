@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
 import {
+  REPLY_FIELD,
   checkQuestionAnswers,
   flattenFormFields,
   type FormNode,
@@ -117,6 +118,11 @@ export default function QuestionActions({
           onChange={setField}
         />
       ))}
+      {fields.length > 1 && fields.every((field) => !field.required) ? (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Leave any question blank to skip it.
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => void submit()}
@@ -202,7 +208,15 @@ function FormFieldControl({
   onChange: (value: QuestionAnswerValue) => void;
 }): React.ReactNode {
   const controlId = `question-field-${field.name}`;
-  const describedBy = error ? `${controlId}-error` : field.help ? `${controlId}-help` : undefined;
+  const describedBy =
+    [
+      field.context ? `${controlId}-context` : null,
+      error ? `${controlId}-error` : field.help ? `${controlId}-help` : null,
+    ]
+      .filter(Boolean)
+      .join(' ') || undefined;
+  // A batch question (q1, q2, …) reads as a numbered question.
+  const numbered = /^q(\d+)$/.exec(field.name);
   const border = error
     ? 'border-red-400 dark:border-red-700'
     : 'border-gray-300 dark:border-gray-700';
@@ -213,6 +227,7 @@ function FormFieldControl({
   return (
     <div>
       <label htmlFor={choices ? undefined : controlId} className="block text-sm font-medium">
+        {numbered ? <span className="mr-1.5 text-gray-500">{numbered[1]}.</span> : null}
         {field.label}
         {field.required ? (
           <span className="ml-1 text-red-600 dark:text-red-400" aria-hidden="true">
@@ -220,12 +235,20 @@ function FormFieldControl({
           </span>
         ) : null}
       </label>
+      {field.context ? (
+        <p
+          id={`${controlId}-context`}
+          className="mt-0.5 whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-400"
+        >
+          {field.context}
+        </p>
+      ) : null}
 
       {field.type === 'longtext' ? (
         <textarea
           id={controlId}
           value={text}
-          rows={3}
+          rows={field.name === REPLY_FIELD ? 6 : 3}
           maxLength={10_000}
           required={field.required}
           aria-invalid={error ? true : undefined}

@@ -371,3 +371,104 @@ test('a staged batch: the run page and the card, accepted', async ({ page }, tes
     client.query(`DELETE FROM agent_jobs WHERE payload->>'runId' = $1`, [runId])
   );
 });
+
+test('a question card asks a batch: each question with its evidence, answered or skipped', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const fixture = fixtureFor(`question-${testInfo.project.name}`);
+  await seedPerson(fixture);
+  await signIn(page, fixture);
+
+  const agentId = uuidFrom(`agent-instructions-qagent:${fixture.name}`);
+  const runId = uuidFrom(`agent-instructions-qrun:${fixture.name}`);
+  const cardId = uuidFrom(`agent-instructions-qcard:${fixture.name}`);
+  const title = 'Portfolio Updater — has a question';
+  // The form askedQuestionsOf (@renkei/agents) builds from an intro and three questions.
+  const message = 'ATLAS Lab Harvest went live on Azure 10/17–10/19; two things need a home.';
+  const form = [
+    {
+      kind: 'field',
+      name: 'q1',
+      label: 'Should the ATLAS go-live status go on CIO-5, CIO-25 or CIO-26?',
+      type: 'choice',
+      required: false,
+      options: ['CIO-5', 'CIO-25', 'CIO-26', 'Something else'],
+      context: 'John Vo: "a great first day post go-live"; 837 lab orders on 10/19.',
+    },
+    {
+      kind: 'field',
+      name: 'q2',
+      label: 'Does the xCures SFTP / IP-allowlist work need a CIO-39 update?',
+      type: 'choice',
+      required: false,
+      options: ['Yes', 'No'],
+      context: 'SYS-2597, Kelvin, 10/19.',
+    },
+    {
+      kind: 'field',
+      name: 'anything_else',
+      label: 'Anything else I should know?',
+      type: 'longtext',
+      required: false,
+    },
+  ];
+  await withDb(async (client) => {
+    await client.query(
+      `INSERT INTO agents (id, owner_subject, name, instructions, tools, enabled, can_ask_questions)\n       VALUES ($1, $2, 'Portfolio Updater', '## Goal\n\nKeep CIO issues current.', '[]'::jsonb, false, true)`,
+      [agentId, fixture.subject]
+    );
+    await client.query(
+      `INSERT INTO agent_runs\n         (id, agent_id, owner_subject, trigger_kind, definition_snapshot, status, started_at, waiting_until, active_ms)\n       VALUES ($1, $2, $3, 'manual', '{}'::jsonb, 'waiting', NOW() - interval '1 minute', NOW() + interval '4 days', 9000)`,
+      [runId, agentId, fixture.subject]
+    );
+    await client.query(
+      `INSERT INTO actionable_items\n         (id, source, status, kind, title, summary, evidence, suggested_action, owner_subject,\n          created_by, created_by_agent_id, run_id, step_id, iteration, attempt)\n       VALUES ($1, 'agents', 'suggested', 'question', $2, $3, '[]'::jsonb, $4, $5, $5, $6, $7, 'turn', 0, 1)`,
+      [cardId, title, message, JSON.stringify({ message, form }), fixture.subject, agentId, runId]
+    );
+  });
+
+  await page.goto('/');
+  const card = page.getByRole('article', { name: title });
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  // Each question is numbered, a full sentence, with its own evidence beside it.
+  await expect(card.getByText('1.', { exact: true })).toBeVisible();
+  await expect(card.getByText('837 lab orders on 10/19.', { exact: false })).toBeVisible();
+  await expect(card.getByText('SYS-2597, Kelvin, 10/19.')).toBeVisible();
+  await expect(card.getByText('Leave any question blank to skip it.')).toBeVisible();
+  await shot(page, testInfo, '08-question-batch');
+
+  await card.getByRole('radio', { name: 'CIO-25' }).check();
+  await card.getByRole('textbox', { name: 'Anything else I should know?' }).fill('Kelvin owns the SFTP piece.');
+  await card.getByRole('button', { name: 'Send the answers' }).click();
+  await expect(card).toHaveCount(0, { timeout: 15_000 });
+
+  const stored = await withDb((client) =>
+    client.query<{ status: string; result: { answers: Record<string, unknown> } }>(
+      'SELECT status, result FROM actionable_items WHERE id = $1',
+      [cardId]
+    )
+  );
+  expect(stored.rows[0].status).toBe('answered');
+  // Answered, skipped (absent), and the free note.
+  expect(stored.rows[0].result.answers).toEqual({
+    q1: 'CIO-25',
+    anything_else: 'Kelvin owns the SFTP piece.',
+  });
+
+  // The same card at phone width, freshly raised.
+  await withDb((client) =>
+    client.query(
+      `UPDATE actionable_items SET status = 'suggested', result = NULL, archived_at = NULL, archived_by = NULL, decided_at = NULL, decided_by = NULL WHERE id = $1`,
+      [cardId]
+    )
+  );
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await page.goto('/');
+  await expect(card.getByRole('radio', { name: 'CIO-26' })).toBeVisible({ timeout: 30_000 });
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+  await shot(page, testInfo, '09-question-batch-mobile');
+});

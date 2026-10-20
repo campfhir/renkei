@@ -870,7 +870,7 @@ maybe('agent run engine', () => {
           ],
         });
       }
-      expect(resultFor(request, lastToolUseId(request))).toContain('Project: OPS');
+      expect(resultFor(request, lastToolUseId(request))).toContain('Q: Project\nA: OPS');
       return finish('done');
     });
     const h = harness(llm);
@@ -882,6 +882,59 @@ maybe('agent run engine', () => {
         status: 'answered',
         decided_at: sql`NOW()`,
         result: JSON.stringify({ answers: { project: 'OPS' } }),
+      })
+      .where('run_id', '=', runId)
+      .execute();
+    await h.handler({ payload: { runId } });
+    expect((await runOf(runId)).status).toBe('succeeded');
+  });
+
+  it('asks a batch of questions, each answered or skipped on its own', async () => {
+    const { runId } = await seedRun({ canAsk: true });
+    const llm = stubLlm((request, n) => {
+      if (n === 0) {
+        return call('ask_person', {
+          intro: 'ATLAS went live on Azure 10/17–10/19; two things need a home.',
+          questions: [
+            {
+              question: 'Should the ATLAS go-live status go on CIO-5, CIO-25 or CIO-26?',
+              context: '837 lab orders on 10/19; DigiPort testing still open.',
+              answer: { type: 'choice', options: ['CIO-5', 'CIO-25', 'CIO-26', 'Something else'] },
+            },
+            { question: 'Does the xCures SFTP work need a CIO-39 update?', answer: { type: 'yesno' } },
+          ],
+        });
+      }
+      const result = resultFor(request, lastToolUseId(request)) ?? '';
+      expect(result).toContain(
+        'Q: Should the ATLAS go-live status go on CIO-5, CIO-25 or CIO-26?\nA: CIO-25'
+      );
+      expect(result).toContain(
+        'Q: Does the xCures SFTP work need a CIO-39 update?\nA: (skipped — no answer given)'
+      );
+      expect(result).toContain('Also: Kelvin owns the SFTP piece.');
+      return finish('done');
+    });
+    const h = harness(llm);
+    await h.handler({ payload: { runId } });
+    const card = await db
+      .selectFrom('actionable_items')
+      .select(['suggested_action', 'summary'])
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(card.summary).toBe('ATLAS went live on Azure 10/17–10/19; two things need a home.');
+    const fields = JSON.stringify(card.suggested_action);
+    expect(fields).toContain('"name":"q1"');
+    expect(fields).toContain('"options":["Yes","No"]');
+    expect(fields).toContain('"name":"anything_else"');
+    await db
+      .updateTable('actionable_items')
+      .set({
+        status: 'answered',
+        decided_at: sql`NOW()`,
+        result: JSON.stringify({
+          answers: { q1: 'CIO-25', anything_else: 'Kelvin owns the SFTP piece.' },
+        }),
       })
       .where('run_id', '=', runId)
       .execute();

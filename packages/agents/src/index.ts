@@ -184,3 +184,12 @@ export {
   sealedDetailOf,
   splitDetailForSealing,
 } from './turn-detail';
+
+export {
+  ANYTHING_ELSE_FIELD,
+  MAX_ASKED_QUESTIONS,
+  REPLY_FIELD,
+  answersForAgent,
+  askedQuestionsOf,
+  type AskedQuestions,
+} from './ask-questions';

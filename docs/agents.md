@@ -60,7 +60,7 @@ The **approval sweep** (`approval-sweep.ts`) keeps waits honest: it expires card
 
 ## `ask_person` and questions
 
-`ask_person` is offered when the agent has `canAskQuestions` on. It pauses the run behind a `question` card (optionally a structured form, `question-form.ts`); the answer — validated by `question-answers.ts`, the same check behind the card UI, the answer API route and the MCP answer tool — comes back as the call's result, and the agent continues the same conversation. The clock is stopped while the question waits.
+`ask_person` is offered when the agent has `canAskQuestions` on. It pauses the run behind a `question` card. The model asks the way a colleague would (`ask-questions.ts`): an `intro` in plain sentences, and either nothing more — one question, answered in a single reply box — or a batch of `questions`, one complete sentence per decision with its evidence in `context` and its own answer control (a long reply box by default; text, choice, multi, yes/no, number or date when one fits). Every question may be skipped, a batch ends with an "anything else?" box, and the answers come back as question/answer pairs. The older `{message, form}` shape is still read for cards already waiting; the answer — validated by `question-answers.ts`, the same check behind the card UI, the answer API route and the MCP answer tool — comes back as the call's result, and the agent continues the same conversation. The clock is stopped while the question waits.
 
 ## Knowledge and memory
 
