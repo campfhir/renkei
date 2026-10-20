@@ -12,6 +12,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  checkoutExists,
   childEnvironment,
   cloneRepository,
   containedPath,
@@ -24,6 +25,7 @@ import {
   isCheckoutStorageKey,
   listDirectory,
   mkdirWorkspaceFile,
+  newWorkspaceStorageKey,
   readWorkspaceFile,
   removeWorkspace,
   removeWorkspaceFile,
@@ -163,15 +165,27 @@ describe('wrapCommand', () => {
 });
 
 describe('removing a checkout', () => {
-  it('accepts only a key that names exactly one checkout', () => {
-    expect(isCheckoutStorageKey('tenant/abc123/uuid')).toBe(true);
+  it('accepts the key newWorkspaceStorageKey produces: caller hash, checkout id', () => {
+    const key = newWorkspaceStorageKey('user:alice');
+    expect(key).toMatch(/^[0-9a-f]{64}\/[0-9a-f-]{36}$/);
+    expect(isCheckoutStorageKey(key)).toBe(true);
+    expect(isCheckoutStorageKey('abc123/uuid')).toBe(true);
+  });
+
+  it('refuses a key that names anything but exactly one checkout', () => {
     for (const bad of [
       '',
-      'tenant',
-      'tenant/abc123',
-      'tenant//uuid',
-      '../x/y',
+      'abc123',
+      'abc123/',
+      '/uuid',
+      'abc123//uuid',
+      '../uuid',
+      'abc123/..',
       'a/../b',
+      './uuid',
+      'abc123/.',
+      // The pre-single-organization shape, `<tenant>/<caller>/<checkout>`.
+      'tenant/abc123/uuid',
       'a/b/c/d',
       '/a/b',
     ]) {
@@ -181,8 +195,27 @@ describe('removing a checkout', () => {
 
   it('refuses a malformed key rather than reaching for more than one checkout', async () => {
     await expect(removeWorkspace('')).rejects.toThrow(/malformed storage key/);
-    await expect(removeWorkspace('tenant/abc123')).rejects.toThrow(/malformed storage key/);
-    await expect(removeWorkspace('tenant/abc123/uuid')).resolves.toBeUndefined();
+    await expect(removeWorkspace('abc123')).rejects.toThrow(/malformed storage key/);
+    await expect(removeWorkspace('abc123/../uuid')).rejects.toThrow(/malformed storage key/);
+    await expect(removeWorkspace('abc123/uuid')).resolves.toBeUndefined();
+  });
+
+  it('removes an expired checkout by its stored key and leaves the caller directory', async () => {
+    const key = newWorkspaceStorageKey('user:sweep');
+    const dir = workspaceDir(key);
+    await mkdir(join(dir, 'src'), { recursive: true });
+    await writeFile(join(dir, 'src', 'index.ts'), 'export {};\n');
+    const sibling = join(workspaceDir(newWorkspaceStorageKey('user:sweep')), 'keep.txt');
+    await mkdir(join(sibling, '..'), { recursive: true });
+    await writeFile(sibling, 'still here');
+    expect(await checkoutExists(key)).toBe(true);
+
+    await removeWorkspace(key);
+
+    expect(await checkoutExists(key)).toBe(false);
+    await expect(stat(dir)).rejects.toThrow();
+    await expect(readFile(sibling, 'utf8')).resolves.toBe('still here');
+    await expect(stat(join(dir, '..'))).resolves.toBeDefined();
   });
 });
 
@@ -254,7 +287,6 @@ describe('directory permissions under a restrictive umask', () => {
     }
     expect(await modeOf(getWorkspacesRoot())).toBe(0o711);
   });
-
 });
 
 describe('a cloned workspace', () => {

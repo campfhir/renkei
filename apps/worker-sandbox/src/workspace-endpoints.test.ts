@@ -218,7 +218,7 @@ describe('a checkout that vanished from disk', () => {
 
 describe('the sweep across instances', () => {
   it('removes only what is on this disk, leaves a fresh row for its own instance, drops an orphan', async () => {
-    const here = 'tenant-1/hash/ws-expired-here';
+    const here = 'hash/ws-expired-here';
     await mkdir(join(workspaceDir(here), 'src'), { recursive: true });
     const expired = (id: string, storageKey: string, expiredAgoMs: number) => ({
       ...readyWorkspace(),
@@ -228,8 +228,8 @@ describe('the sweep across instances', () => {
     });
     workspaceStore.listExpiredWorkspaces.mockResolvedValue([
       expired('ws-expired-here', here, 60_000),
-      expired('ws-elsewhere-fresh', 'tenant-1/hash/ws-elsewhere-fresh', 60_000),
-      expired('ws-elsewhere-orphan', 'tenant-1/hash/ws-elsewhere-orphan', ORPHAN_GRACE_MS + 60_000),
+      expired('ws-elsewhere-fresh', 'hash/ws-elsewhere-fresh', 60_000),
+      expired('ws-elsewhere-orphan', 'hash/ws-elsewhere-orphan', ORPHAN_GRACE_MS + 60_000),
     ]);
     workspaceStore.deleteWorkspaceById.mockResolvedValue(undefined);
     await createWorkspaceHandlers({
