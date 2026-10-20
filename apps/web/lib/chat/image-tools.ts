@@ -12,6 +12,17 @@
  * file's name. A shape the image model will not draw is retried at the
  * nearest size every model takes, then left to the model to choose.
  *
+ * The one picture the chat model may describe itself is an ILLUSTRATION
+ * for a document it is making — a cover, a figure, a picture for a slide
+ * — where the person asked for the document, not the picture, and their
+ * message would make no sense as a prompt. `illustration` carries that
+ * description; the result says the picture was drawn from the model's
+ * words, not the person's. A `prompt` the chat model passes is ignored,
+ * as it always was: the person's words are not the model's to rewrite.
+ * From the chat, the picture goes into the document by way of the
+ * sandbox (chat_attach_to_sandbox by its filename, then
+ * sandbox_run_python places it — sandbox-file-tools.ts).
+ *
  * A follow-up that builds on an earlier picture ("make it bluer") is an
  * EDIT: the chat model, which can see the conversation, names that picture
  * with `sourceImage` (a file in this chat, or "last"), and the tool sends it
@@ -47,7 +58,6 @@
 import {
   generateImage as callImagesApi,
   resolveImageModel,
-  type ImageErrorKind,
   type ImageModelConfig,
 } from '@renkei/agent-llm';
 import {
@@ -56,9 +66,16 @@ import {
   encodeGif,
   encodePng,
   extensionOf,
-  sanitizeBytes,
   type RgbaImage,
 } from '@renkei/document-render';
+import {
+  drawPicture,
+  failureMessage,
+  IMAGE_BACKGROUNDS,
+  IMAGE_QUALITIES,
+  nameForFormat,
+  STILL_EXTENSIONS,
+} from '@/lib/image/draw';
 import { checkFilename, KEPT_LINE } from './file-tools';
 import {
   animationSize,
@@ -86,10 +103,10 @@ export const IMAGE_TOOL_TIMEOUT_MS = 600_000;
 /** gpt-image's own limit; a longer message is refused rather than clipped, because the prompt is theirs. */
 export const IMAGE_PROMPT_MAX_CHARS = 32_000;
 
-const QUALITIES = ['low', 'medium', 'high'] as const;
-const BACKGROUNDS = ['auto', 'transparent'] as const;
+const QUALITIES = IMAGE_QUALITIES;
+const BACKGROUNDS = IMAGE_BACKGROUNDS;
 /** A model draws PNG or JPEG; an extension names which. A .gif is an animation of PNG frames. */
-const EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif'] as const;
+const EXTENSIONS = [...STILL_EXTENSIONS, 'gif'] as const;
 const DEFAULT_FILENAME = 'image.png';
 
 /** An animation's frame count: enough to move, few enough to stay cheap and inside the quota. */
@@ -129,36 +146,6 @@ function wholeWithin(value: unknown, min: number, max: number, fallback: number)
 
 function oneOf<T extends string>(allowed: readonly T[], value: unknown): T | undefined {
   return allowed.find((candidate) => candidate === value);
-}
-
-function failureMessage(
-  kind: ImageErrorKind,
-  detail: string | undefined,
-  tried: string,
-  edited: boolean
-): string {
-  const extra = detail ? ` (${detail.slice(0, 300)})` : '';
-  switch (kind) {
-    case 'content_filter':
-      return `The image model’s safety system refused this prompt or the picture it made. Tell the person, and offer to try a different description.${extra}`;
-    case 'rate_limit':
-      return `The image model is rate-limited right now (image generation has a low per-minute quota). Tell the person to try again in a minute.${extra}`;
-    case 'auth':
-      return `The image model rejected its credentials; an administrator needs to check the model’s key.${extra}`;
-    case 'timeout':
-      return `The image model took too long. Try a smaller size.${extra}`;
-    case 'aborted':
-      return 'Image generation was stopped.';
-    case 'invalid_request':
-      return (
-        `The image model rejected the request${tried ? ` (sizes tried: ${tried})` : ''}.${extra}` +
-        (edited
-          ? ' It may not support building on an earlier image: call again without sourceImage to draw a new one.'
-          : '')
-      );
-    default:
-      return `The image model could not be reached or failed.${extra}`;
-  }
 }
 
 export interface ImageToolOptions {
@@ -237,8 +224,12 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
       if (!made) return errorResult('Image generation did not run.');
       if (!made.ok) {
         return errorResult(
-          failureMessage(made.err.type, made.err.message, tried.join(', '), previous !== null) +
-            progress
+          failureMessage(
+            made.err.type,
+            made.err.message,
+            tried.join(', '),
+            previous !== null ? 'sourceImage' : null
+          ) + progress
         );
       }
       const pixels =
@@ -308,7 +299,10 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
         '“make it bluer”, “same bear but in winter”, “add a hat” — set sourceImage to that picture’s ' +
         'filename (or "last" for the one most recently drawn) so the image model changes that picture ' +
         'instead of starting over; leave it out for a brand-new picture. For a chart, graph or flowchart use chat_write_chart (it is exact); for a ' +
-        'document use chat_write_file. Each call makes one image (a .gif, one per frame) and may take up to a minute each; image generation ' +
+        'document use chat_write_file. The one picture you describe yourself is an illustration for a ' +
+        'document you are making (a cover, a figure, a picture for a slide) when the person asked for ' +
+        'the document rather than the picture: put your description in illustration, and leave it out ' +
+        'in every other case. Each call makes one image (a .gif, one per frame) and may take up to a minute each; image generation ' +
         'has a low per-minute quota, so do not call it in a burst. Describe the result in a sentence.',
       inputSchema: {
         type: 'object',
@@ -328,6 +322,15 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
             minimum: GIF_MIN_DELAY_MS,
             maximum: GIF_MAX_DELAY_MS,
             description: `.gif only: how long each frame shows, in milliseconds. Default: ${GIF_DEFAULT_DELAY_MS}.`,
+          },
+          illustration: {
+            type: 'string',
+            description:
+              'ONLY for a picture that will go inside a document you are making — a cover, a figure, a ' +
+              'picture for a slide — when the person asked for the document, not the picture: describe the ' +
+              'picture here, in detail, as the image model should draw it. Leave it out whenever the person ' +
+              'asked for a picture: their own message is then sent word for word, and nothing you write here ' +
+              'replaces it.',
           },
           sourceImage: {
             type: 'string',
@@ -362,8 +365,11 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
     },
     timeoutMs: IMAGE_TOOL_TIMEOUT_MS,
     async execute(input, context) {
-      // The person's words, untouched: this is the whole point of not taking a prompt.
-      const prompt = (context.userPrompt ?? '').trim();
+      // The person's words, untouched: this is the whole point of not taking
+      // a prompt. The one exception is an illustration for a document the
+      // model is making, which it describes itself — and the result says so.
+      const illustration = typeof input.illustration === 'string' ? input.illustration.trim() : '';
+      const prompt = illustration || (context.userPrompt ?? '').trim();
       if (!prompt) {
         return errorResult(
           'There is no message from the person to draw from. Ask them what image they want.'
@@ -373,17 +379,22 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
       const promptLimit = IMAGE_PROMPT_MAX_CHARS - (animated ? FRAME_LINE_RESERVE : 0);
       if (prompt.length > promptLimit) {
         return errorResult(
-          `The person’s message is ${prompt.length} characters; an image prompt can be at most ${promptLimit}. Ask them for a shorter description.`
+          illustration
+            ? `Your description is ${prompt.length} characters; an image prompt can be at most ${promptLimit}. Describe the picture more briefly.`
+            : `The person’s message is ${prompt.length} characters; an image prompt can be at most ${promptLimit}. Ask them for a shorter description.`
         );
       }
+      const described = illustration
+        ? ' Drawn from your own description, as an illustration for a document — not from the person’s words; say so when you mention it.'
+        : '';
       const name = checkFilename(
         typeof input.filename === 'string' && input.filename.trim()
           ? input.filename
           : DEFAULT_FILENAME
       );
       if (!name.ok) return errorResult(name.reason);
-      const extension = extensionOf(name.filename);
-      if (!extension || !oneOf(EXTENSIONS, extension)) {
+      const extension = oneOf(EXTENSIONS, extensionOf(name.filename) ?? '');
+      if (!extension) {
         return errorResult('filename must end in .png, .jpg or .jpeg — or .gif for an animation.');
       }
       const frames = wholeWithin(input.frames, GIF_MIN_FRAMES, GIF_MAX_FRAMES, GIF_DEFAULT_FRAMES);
@@ -424,10 +435,7 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
       const wantedSource = typeof input.sourceImage === 'string' ? input.sourceImage.trim() : null;
       let source: Extract<SourceLoad, { ok: true }>['image'] | null = null;
       if (wantedSource !== null && wantedSource !== '') {
-        const loaded = await loadSource(
-          { db: context.db, chatId: context.chatId },
-          wantedSource
-        );
+        const loaded = await loadSource({ db: context.db, chatId: context.chatId }, wantedSource);
         if (!loaded.ok) return errorResult(loaded.reason);
         source = loaded.image;
       }
@@ -447,86 +455,47 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
         });
       }
 
-      const quality = oneOf(QUALITIES, input.quality);
-      // A model that can choose for itself ('images') has a last resort; FLUX has none.
-      const ladder = sizeLadder(shape.size, config.surface !== 'flux');
-      let made: Awaited<ReturnType<typeof generate>> | null = null;
-      const tried: string[] = [];
-      for (const size of ladder) {
-        tried.push(size ?? 'auto');
-        made = await generate(config, {
-          prompt,
-          ...(size ? { size } : {}),
-          ...(quality ? { quality } : {}),
-          ...(background ? { background } : {}),
-          outputFormat: extension === 'png' ? 'png' : 'jpeg',
-          ...(source ? { image: source } : {}),
-          ...(context.signal ? { signal: context.signal } : {}),
-        });
-        // Only a rejected request is worth another size; anything else would fail the same way.
-        if (made.ok || made.err.type !== 'invalid_request') break;
-      }
-      if (!made) return errorResult('Image generation did not run.');
-      if (!made.ok) {
-        return errorResult(
-          failureMessage(
-            made.err.type,
-            made.err.message,
-            tried.length > 1 || shape.size ? tried.join(', ') : '',
-            source !== null
-          )
-        );
-      }
-
-      // The bytes decide the format, not the request: FLUX answers PNG whatever is asked.
-      const actual = made.val.mediaType === 'image/jpeg' ? 'jpg' : 'png';
-      const asked = extension === 'png' ? 'png' : 'jpg';
-      const filename =
-        actual === asked
-          ? name.filename
-          : `${name.filename.slice(0, name.filename.lastIndexOf('.'))}.${actual}`;
-      const renamed =
-        filename === name.filename
-          ? ''
-          : ` This model produces ${actual.toUpperCase()}, so it was saved as ${filename} rather than ${name.filename}.`;
-      // Untrusted bytes: rebuilt from the pixels, or refused.
-      const checked = sanitizeBytes(actual, made.val.bytes);
-      if (!checked.ok) {
-        return errorResult(
-          `The image model returned a file that is not a valid ${actual.toUpperCase()}, so it was not kept: ${checked.reason}`
-        );
-      }
-
-      const drawn =
-        checked.width && checked.height
-          ? formatSize({ width: checked.width, height: checked.height })
-          : null;
-      const wanted = shape.size ? formatSize(shape.size) : null;
-      const resized =
-        wanted && drawn && wanted !== drawn
-          ? ` The image model does not draw ${wanted}, so it was drawn at ${drawn} instead.`
-          : '';
+      const drawn = await drawPicture(generate, {
+        config,
+        prompt,
+        size: shape.size,
+        extension,
+        quality: oneOf(QUALITIES, input.quality),
+        background,
+        source,
+        sourceInputName: 'sourceImage',
+        signal: context.signal,
+      });
+      if (!drawn.ok) return errorResult(drawn.message);
+      const { picture } = drawn;
+      // Named by what came back: FLUX answers PNG whatever is asked.
+      const kept = nameForFormat(name.filename, picture.extension);
       // Counted once it is kept: a refused or failed call drew nothing.
       if (context.recordImageUsage) {
         await context.recordImageUsage({
           surface: config.surface ?? 'images',
           provider: 'openai',
           model: config.model,
-          imageBytes: checked.bytes.byteLength,
-          width: checked.width ?? null,
-          height: checked.height ?? null,
-          inputTokens: made.val.usage?.inputTokens ?? 0,
-          outputTokens: made.val.usage?.outputTokens ?? 0,
+          imageBytes: picture.bytes.byteLength,
+          width: picture.width,
+          height: picture.height,
+          inputTokens: picture.usage?.inputTokens ?? 0,
+          outputTokens: picture.usage?.outputTokens ?? 0,
         });
       }
+      const size =
+        picture.width && picture.height
+          ? `${formatSize({ width: picture.width, height: picture.height })} px, `
+          : '';
+      const notes = picture.notes.map((note) => ` ${note}`).join('');
       return textResult(
-        `Generated ${filename} with ${choice.label} (${checked.mediaType}, ${drawn ? `${drawn} px, ` : ''}${checked.bytes.byteLength} bytes)${source ? `, built on ${source.filename}` : ''}.${resized}${renamed} ${KEPT_LINE}`,
+        `Generated ${kept.filename} with ${choice.label} (${picture.mediaType}, ${size}${picture.bytes.byteLength} bytes)${source ? `, built on ${source.filename}` : ''}.${notes}${kept.renamed}${described} ${KEPT_LINE}`,
         {
           renkeiDocuments: [
             {
-              mediaType: checked.mediaType,
-              dataBase64: checked.bytes.toString('base64'),
-              title: filename,
+              mediaType: picture.mediaType,
+              dataBase64: picture.bytes.toString('base64'),
+              title: kept.filename,
             },
           ],
           // The model asked for it by shape; it does not need the pixels back.

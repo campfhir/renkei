@@ -540,23 +540,38 @@ RUN apt-get update && \
 # The interpreter behind sandbox_run_python (apps/worker-sandbox/src/
 # scripts.ts): a virtual environment of its own under /opt, apart from
 # the system Python the language servers and a workspace's own commands
-# use, holding the data libraries a script over a spreadsheet reaches
-# for — pandas (with numpy), openpyxl to read and write .xlsx, XlsxWriter
-# for a richer write. Pinned, readable and executable by every caller's
-# uid (a run is dropped to one), and never written to at run time: a
-# script cannot pip install into it — it has no network to install from
-# in any case, and pip itself goes, with the setuptools the venv seeded,
-# once the libraries are in — so what runs is the script and exactly
-# these libraries.
+# use, holding the libraries a script reaches for — the list is
+# SCRIPT_LIBRARIES in packages/connector-sandbox/src/scripts.ts, which
+# the worker probes at boot and the tool's description recites, so keep
+# the three together. The data libraries: pandas (with numpy), openpyxl
+# to read and write .xlsx, XlsxWriter for a richer write. The document
+# libraries, which let a script author a Word document, a slide deck, a
+# PDF or a workbook richer than the Markdown renderers can express — a
+# picture or a chart placed, a layout, a template filled — and update an
+# existing file in place: python-docx, python-pptx, reportlab, pypdf,
+# Pillow for the pictures themselves and matplotlib to plot data
+# (headless; the worker sets MPLBACKEND=Agg on every run). Pinned,
+# readable and executable by every caller's uid (a run is dropped to
+# one), and never written to at run time: a script cannot pip install
+# into it — it has no network to install from in any case, and pip itself
+# goes, with the setuptools the venv seeded, once the libraries are in —
+# so what runs is the script and exactly these libraries.
 # SANDBOX_PYTHON overrides the path; the worker checks the interpreter
 # and lists what it found at boot. pandas 2.3 and numpy 2.3 are the last
 # lines with wheels for bookworm's Python 3.11 (pandas 3 and numpy 2.5
-# need 3.12); a move to a newer base image lifts both together.
+# need 3.12), as are matplotlib 3.10 and Pillow 11; a move to a newer
+# base image lifts them together.
 ARG PANDAS_VERSION=2.3.2
 ARG NUMPY_VERSION=2.3.5
 ARG OPENPYXL_VERSION=3.1.5
 ARG XLSXWRITER_VERSION=3.2.9
 ARG PYTHON_DATEUTIL_VERSION=2.9.0.post0
+ARG PYTHON_DOCX_VERSION=1.2.0
+ARG PYTHON_PPTX_VERSION=1.0.2
+ARG REPORTLAB_VERSION=4.4.4
+ARG PYPDF_VERSION=6.1.3
+ARG PILLOW_VERSION=11.3.0
+ARG MATPLOTLIB_VERSION=3.10.7
 RUN python3 -m venv /opt/sandbox-python && \
     /opt/sandbox-python/bin/pip install --no-cache-dir --upgrade pip && \
     /opt/sandbox-python/bin/pip install --no-cache-dir \
@@ -564,10 +579,16 @@ RUN python3 -m venv /opt/sandbox-python && \
       "numpy==${NUMPY_VERSION}" \
       "openpyxl==${OPENPYXL_VERSION}" \
       "XlsxWriter==${XLSXWRITER_VERSION}" \
-      "python-dateutil==${PYTHON_DATEUTIL_VERSION}" && \
+      "python-dateutil==${PYTHON_DATEUTIL_VERSION}" \
+      "python-docx==${PYTHON_DOCX_VERSION}" \
+      "python-pptx==${PYTHON_PPTX_VERSION}" \
+      "reportlab==${REPORTLAB_VERSION}" \
+      "pypdf==${PYPDF_VERSION}" \
+      "Pillow==${PILLOW_VERSION}" \
+      "matplotlib==${MATPLOTLIB_VERSION}" && \
     /opt/sandbox-python/bin/python3 -m pip uninstall -y pip setuptools && \
     chmod -R a+rX /opt/sandbox-python && \
-    /opt/sandbox-python/bin/python3 -I -c "import pandas, numpy, openpyxl, xlsxwriter; print(pandas.__version__)"
+    MPLBACKEND=Agg /opt/sandbox-python/bin/python3 -I -c "import pandas, numpy, openpyxl, xlsxwriter, docx, pptx, reportlab, pypdf, PIL, matplotlib; print(pandas.__version__)"
 
 # Language servers for the code pane's editor (apps/worker-sandbox/src/
 # lsp-sessions.ts; the registry of what each language runs is

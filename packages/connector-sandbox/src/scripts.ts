@@ -53,6 +53,75 @@ export const SCRIPT_MAIN_FILE = 'main.py';
 export const SCRIPT_LANGUAGES = ['python'] as const;
 export type ScriptLanguage = (typeof SCRIPT_LANGUAGES)[number];
 
+/**
+ * The libraries the image's interpreter carries beside the standard
+ * library (docker/Dockerfile, target sandbox): what a script imports it
+ * as, what it is installed as, and what it is for. One list, three
+ * readers — the worker's boot-time probe (which imports each and logs
+ * what it found), the tool's description (which tells the model what it
+ * may reach for, by package name) and the design doc — so none drifts
+ * from the others.
+ *
+ * The data libraries came first (a spreadsheet matched against another).
+ * The document libraries are what let a script author a Word document, a
+ * slide deck, a PDF or a workbook richer than Markdown can express —
+ * pictures and charts placed, a layout, a template filled — and UPDATE
+ * an existing one in place, which the text renderers cannot do at all.
+ */
+export const SCRIPT_LIBRARIES: ReadonlyArray<{
+  /** The name `import` takes. */
+  module: string;
+  /** The name pip installs. */
+  package: string;
+  /** What a script reaches for it to do. */
+  use: string;
+}> = [
+  { module: 'pandas', package: 'pandas', use: 'tables — read, join, filter, pivot, total, write' },
+  { module: 'numpy', package: 'numpy', use: 'arrays and arithmetic under pandas' },
+  {
+    module: 'openpyxl',
+    package: 'openpyxl',
+    use: 'read, edit and write .xlsx — an existing workbook updated with its formatting and formulas kept',
+  },
+  {
+    module: 'xlsxwriter',
+    package: 'XlsxWriter',
+    use: 'write a new .xlsx with charts, formats and formulas',
+  },
+  {
+    module: 'docx',
+    package: 'python-docx',
+    use: 'read, edit and write Word .docx — headings, tables, pictures, styles; an existing document or template updated in place',
+  },
+  {
+    module: 'pptx',
+    package: 'python-pptx',
+    use: 'read, edit and write PowerPoint .pptx — slides, pictures, tables, native charts; an existing deck or template filled',
+  },
+  {
+    module: 'reportlab',
+    package: 'reportlab',
+    use: 'lay out a PDF — text, tables, images, drawings',
+  },
+  { module: 'pypdf', package: 'pypdf', use: 'read, merge, split, rotate and stamp existing PDFs' },
+  { module: 'PIL', package: 'Pillow', use: 'open, resize, crop, convert and compose images' },
+  {
+    module: 'matplotlib',
+    package: 'matplotlib',
+    use: 'plot data to a PNG or PDF (the Agg backend is preset)',
+  },
+  { module: 'dateutil', package: 'python-dateutil', use: 'parse dates' },
+];
+
+/** The libraries, one line, by the name a script installs and imports them under. */
+export function scriptLibrariesLine(): string {
+  return SCRIPT_LIBRARIES.map((library) =>
+    library.module === library.package.toLowerCase()
+      ? library.package
+      : `${library.package} (import ${library.module})`
+  ).join(', ');
+}
+
 // ─── Validation ─────────────────────────────────────────────────────────────
 
 export function validateScriptCode(

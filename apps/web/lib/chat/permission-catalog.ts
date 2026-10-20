@@ -24,6 +24,7 @@ import { compactionTools } from './compaction-tools';
 import { fileTools } from './file-tools';
 import { imageGenerationTool } from './image-tools';
 import { memoryTools } from './memory-tools';
+import { sandboxFileTools } from './sandbox-file-tools';
 import { userMemoryTools } from './user-memory-tools';
 import type { LocalTool } from './local-tools';
 import {
@@ -52,7 +53,8 @@ export function chatOwnActTools(): ActToolEntry[] {
   const imageTool = imageGenerationTool({ models: [{ id: '', label: '', model: '' }] });
   return dedupe([
     ...actNamesOf(compactionTools()),
-    ...actNamesOf(attachmentTools({ connectors: ['sandbox'] })),
+    ...actNamesOf(attachmentTools()),
+    ...actNamesOf(sandboxFileTools()),
     ...actNamesOf(fileTools()),
     ...actNamesOf(imageTool ? [imageTool] : []),
     ...actNamesOf(memoryTools()),

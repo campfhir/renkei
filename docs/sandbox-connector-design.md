@@ -137,6 +137,20 @@ argument is text either way — Markdown, CSV, JSON — never base64, so this
 does not reopen the no-bytes-as-arguments rule; it is what makes the rule
 possible for authored documents at all.
 
+What the renderer makes is deliberately plain: headings, paragraphs,
+lists, tables, code, a heading per slide. A document richer than that — a
+picture or a chart placed in it, a particular layout, a template filled
+in — and above all an **existing file updated in place** (a workbook
+pulled from a share with its formatting and formulas kept, a deck with
+one slide changed) are not the renderer's to do; they are
+`sandbox_run_python`'s, with the document libraries the image carries
+(see "`sandbox_run_python`" below). The three descriptions say so to the
+model — `sandbox_render_document` and `chat_write_file` point at the
+Python road where scripts are on, and `sandbox_run_python`'s names the
+toolkit — so the model that reaches for the text renderer first learns
+there is a richer one. The chat side of the same road is
+`chat_attach_to_sandbox` / `chat_attach_from_sandbox` (`docs/chat.md`).
+
 ### Pictures: `chat_generate_image`, not bytes from a chat model
 
 No chat model writes image bytes as a tool argument, here or anywhere. A
@@ -185,15 +199,29 @@ Such a row is never a chat model: the shared predicates (`chatModelsOnly` /
 agent's override and `resolveAgentLlm`, and it can never be saved as the
 default.
 
-Chats whose org has an enabled image row are offered `chat_generate_image`
-(chat only; org agents do not get it, since the MCP server cannot tell
-which model is calling). How it behaves:
+Chats whose org has an enabled image row are offered `chat_generate_image`;
+org agents get `sandbox_generate_image` (below). How the chat's behaves:
 
 - **The prompt is the person's own message, word for word.** The tool takes
   no prompt: the turn hands it the user's message (`LocalToolContext.userPrompt`,
   from `latestUserPrompt`), so what is drawn is what was asked. A message
   over 32,000 characters is refused, never clipped. The chat model chooses
   only the file's name, the shape and — for a follow-up — the source picture.
+  A `prompt` the chat model passes is ignored.
+- **The one picture the chat model may describe itself is an illustration
+  for a document.** When the person asked for a document — a brief with a
+  cover, a deck with a picture on a slide — their message is no prompt for
+  the picture, so the chat model describes it in `illustration` and the
+  tool draws from that instead; the result says the picture was drawn from
+  the model's own description, not the person's words, and tells it to say
+  so. The description of the input is emphatic that this is only for a
+  picture going into a document, never for a picture the person asked for.
+  From the chat the picture goes into the document by way of the sandbox:
+  `chat_attach_to_sandbox` stages it by its filename (the model has no
+  attachment id for a file it made moments ago), `sandbox_run_python`
+  places it (python-docx, python-pptx, reportlab), and
+  `chat_attach_from_sandbox` brings the document back under the chat's
+  Artifacts.
 - **Follow-ups build on the earlier picture.** The tool does not see earlier
   turns, but the chat model does: when the person's message refers to a
   picture already in the chat ("make it bluer", "same bear, but in
@@ -259,6 +287,30 @@ only as **rebuilt** output, never as given:
   embedded files, forms, encryption, object streams or the JBIG2/JPX
   decoders). No tool produces those today; they stand ready for any caller
   that must accept such bytes.
+
+The drawing itself — the size ladder, the rebuild, the failure in words
+the model can act on — is `apps/web/lib/image/draw.ts`, shared by both
+image tools; what each tool decides for itself is the prompt and where
+the picture goes.
+
+### `sandbox_generate_image` — a picture for an org agent, staged
+
+An org agent has no person's message to draw from, and nowhere but the
+scratch space to put a picture, so its tool differs from the chat's in
+exactly those two ways: the **prompt is the agent's own**, written for
+the document it is making (the result says "drawn from your prompt"),
+and the rebuilt PNG or JPEG is **staged** (`source: image`) rather than
+attached — from where `sandbox_run_python` places it in a document and
+`sandbox_send_to_upload` moves it anywhere a `*_request_*_upload` tool
+reaches. The shape, quality, background and size fallback are the chat
+tool's; `sourceFileId` names a staged PNG or JPEG to build on (read back
+and rebuilt first), the chat's `sourceImage` by another road. The image
+model is the caller's saved preference while the org offers it, else
+the org's first by name; every picture kept is counted in `image_usage`
+against the caller. Registered under `registerSandboxTools` only where
+the organization has an enabled image model (`sandboxImageModels`,
+`apps/web/lib/mcp-tools/sandbox/images.ts`) — closed, never open — and
+an act tool, so an agent's approval policy applies to spending.
 
 ## `sandbox_render_chart` — a chart from Mermaid text
 
@@ -665,8 +717,21 @@ over a person's data needs nothing a repository's test suite needs:
   variables, no user site, no script directory on the path — with an
   environment built from nothing plus Python's own switches, in a
   pinned virtual environment the image carries read-only under
-  `/opt/sandbox-python` (pandas, numpy, openpyxl, XlsxWriter). No pip,
-  no network to pip from.
+  `/opt/sandbox-python`. No pip, no network to pip from. What it
+  carries is `SCRIPT_LIBRARIES` (`packages/connector-sandbox/src/scripts.ts`)
+  — one list the Dockerfile installs, the worker probes at boot (logging
+  what it found and warning about what it did not) and the tool's
+  description recites: the data libraries (pandas, numpy, openpyxl,
+  XlsxWriter, python-dateutil) and the **document libraries** —
+  python-docx, python-pptx, reportlab, pypdf, Pillow, matplotlib (the
+  Agg backend is preset) — which are what let a script author a Word
+  document, a deck, a PDF or a workbook richer than Markdown can express
+  (a staged picture or chart placed in it, a plot from the data, a
+  layout, a template filled) and update an existing one in place:
+  `sandbox_fetch_from_fileshare` the workbook in, open it with openpyxl
+  under `in/`, change what the task asks, save it under `out/` with its
+  formatting kept, `fileshare_request_file_upload` +
+  `sandbox_send_to_upload` it back where it came from.
 - **What comes back.** Exit, both streams, the inputs' paths, and every
   regular file left directly in `out/` — not a directory, not a symlink,
   not a hidden file, not an empty one — staged through `stageBytes`
@@ -680,37 +745,38 @@ first where it costs nothing to take.
 
 ## Tool inventory
 
-| Tool                           | Kind | What it does                                                                                                                                                                                                   |
-| ------------------------------ | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sandbox_download_url`         | Act  | Fetch an `https://` URL into the scratch space (SSRF-guarded, byte-capped).                                                                                                                                    |
-| `sandbox_fetch_page`           | Read | Fetch an `https://` URL through the same guard and answer its readable text — a page's title, main content and links, or a PDF/Office file's extracted text — keeping nothing.                                 |
-| `sandbox_fetch_from_fileshare` | Act  | Pull a file from a connected SMB/SFTP share straight in, server-to-server.                                                                                                                                     |
-| `sandbox_render_document`      | Act  | Render Markdown/CSV/JSON text (never bytes) into a `.docx`/`.pptx`/`.pdf`/`.xlsx` — or stage a text format as written — with `@renkei/document-render` (also what `chat_write_file` uses).                     |
-| `sandbox_render_chart`         | Act  | Draw Mermaid text (a bar/line chart, pie, Gantt, flowchart, sequence diagram, …) as a PNG, SVG or one-page PDF in the worker's own Chromium, staged here (the chat's `chat_write_chart` renders the same way). |
-| `sandbox_run_python`           | Act  | Run Python the model wrote over copies of the caller's staged files — as their own uid, with no network, a memory and time ceiling — and stage back what it writes under `out/`.                               |
-| `webex_download_attachments`   | Act  | Pull a WebEx message's attachments straight in with the caller's own grant (registered by the WebEx connector, only where a worker is configured).                                                             |
-| `sandbox_list_files`           | Read | What's currently staged, with size and expiry.                                                                                                                                                                 |
-| `sandbox_stat_file`            | Read | Filename/content type of one staged file.                                                                                                                                                                      |
-| `sandbox_read_file`            | Read | Extracted text of a staged file (same extractor as `fileshare_read_file`).                                                                                                                                     |
-| `sandbox_delete_file`          | Act  | Remove a staged file ahead of its TTL.                                                                                                                                                                         |
-| `sandbox_send_to_upload`       | Act  | Forward a staged file's bytes into a pending `*_request_*_upload` slot.                                                                                                                                        |
-| `sandbox_browser_navigate`     | Act  | Open an `https://` URL in the caller's browser session; answers a snapshot.                                                                                                                                    |
-| `sandbox_browser_snapshot`     | Read | Re-read the open page (title, URL, text, `[eN]`-ref'd controls).                                                                                                                                               |
-| `sandbox_browser_click`        | Act  | Click an element by ref; answers the snapshot of wherever that led.                                                                                                                                            |
-| `sandbox_browser_type`         | Act  | Replace a field's text by ref — or fill it from a stored secret the model never sees — optionally pressing Enter.                                                                                              |
-| `sandbox_browser_list_secrets` | Read | The stored secrets' names, fields, hosts and lock state; never values.                                                                                                                                         |
-| `sandbox_browser_select`       | Act  | Choose option(s) of a `<select>` by ref.                                                                                                                                                                       |
-| `sandbox_browser_press_key`    | Act  | Press one key (Escape, Tab, PageDown, ...) in the page.                                                                                                                                                        |
-| `sandbox_browser_scroll`       | Act  | Scroll the page up/down by pixels, or bring one ref into view.                                                                                                                                                 |
-| `sandbox_browser_run`          | Act  | Execute up to 20 steps (type, select, scroll, wait, click, ...) in one round trip.                                                                                                                             |
-| `sandbox_browser_back`         | Act  | Browser history back.                                                                                                                                                                                          |
-| `sandbox_browser_screenshot`   | Act  | PNG of the open page, staged as a scratch-space file.                                                                                                                                                          |
-| `sandbox_browser_close`        | Act  | Close the caller's session (pages, cookies, history).                                                                                                                                                          |
-| `sandbox_crawl_plan`           | Read | Check a crawl's scope, or learn it from example URLs, and list the pages it would read; nothing is fetched.                                                                                                    |
-| `sandbox_browser_crawl`        | Act  | Start a background crawl of many pages within one approved scope (or re-crawl a saved recipe, or resume a stopped crawl).                                                                                      |
-| `sandbox_crawl_status`         | Read | A crawl's progress and page list, waiting up to 45 s; with nothing named, recent crawls and saved recipes.                                                                                                     |
-| `sandbox_crawl_read`           | Read | Crawled pages' main text and tables (as Markdown), several per call.                                                                                                                                           |
-| `sandbox_crawl_stop`           | Act  | Stop a crawl after its current page; resumable.                                                                                                                                                                |
+| Tool                           | Kind | What it does                                                                                                                                                                                                                                                                         |
+| ------------------------------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sandbox_download_url`         | Act  | Fetch an `https://` URL into the scratch space (SSRF-guarded, byte-capped).                                                                                                                                                                                                          |
+| `sandbox_fetch_page`           | Read | Fetch an `https://` URL through the same guard and answer its readable text — a page's title, main content and links, or a PDF/Office file's extracted text — keeping nothing.                                                                                                       |
+| `sandbox_fetch_from_fileshare` | Act  | Pull a file from a connected SMB/SFTP share straight in, server-to-server.                                                                                                                                                                                                           |
+| `sandbox_render_document`      | Act  | Render Markdown/CSV/JSON text (never bytes) into a `.docx`/`.pptx`/`.pdf`/`.xlsx` — or stage a text format as written — with `@renkei/document-render` (also what `chat_write_file` uses).                                                                                           |
+| `sandbox_render_chart`         | Act  | Draw Mermaid text (a bar/line chart, pie, Gantt, flowchart, sequence diagram, …) as a PNG, SVG or one-page PDF in the worker's own Chromium, staged here (the chat's `chat_write_chart` renders the same way).                                                                       |
+| `sandbox_run_python`           | Act  | Run Python the model wrote over copies of the caller's staged files — as their own uid, with no network, a memory and time ceiling — and stage back what it writes under `out/`; with the document libraries, how a richer document is authored or an existing one updated in place. |
+| `sandbox_generate_image`       | Act  | Draw a picture from the agent's own prompt with the org's image generation model, rebuilt from its pixels and staged here (the chat's `chat_generate_image` attaches the same drawing to the chat). Only where the org has an image model.                                           |
+| `webex_download_attachments`   | Act  | Pull a WebEx message's attachments straight in with the caller's own grant (registered by the WebEx connector, only where a worker is configured).                                                                                                                                   |
+| `sandbox_list_files`           | Read | What's currently staged, with size and expiry.                                                                                                                                                                                                                                       |
+| `sandbox_stat_file`            | Read | Filename/content type of one staged file.                                                                                                                                                                                                                                            |
+| `sandbox_read_file`            | Read | Extracted text of a staged file (same extractor as `fileshare_read_file`).                                                                                                                                                                                                           |
+| `sandbox_delete_file`          | Act  | Remove a staged file ahead of its TTL.                                                                                                                                                                                                                                               |
+| `sandbox_send_to_upload`       | Act  | Forward a staged file's bytes into a pending `*_request_*_upload` slot.                                                                                                                                                                                                              |
+| `sandbox_browser_navigate`     | Act  | Open an `https://` URL in the caller's browser session; answers a snapshot.                                                                                                                                                                                                          |
+| `sandbox_browser_snapshot`     | Read | Re-read the open page (title, URL, text, `[eN]`-ref'd controls).                                                                                                                                                                                                                     |
+| `sandbox_browser_click`        | Act  | Click an element by ref; answers the snapshot of wherever that led.                                                                                                                                                                                                                  |
+| `sandbox_browser_type`         | Act  | Replace a field's text by ref — or fill it from a stored secret the model never sees — optionally pressing Enter.                                                                                                                                                                    |
+| `sandbox_browser_list_secrets` | Read | The stored secrets' names, fields, hosts and lock state; never values.                                                                                                                                                                                                               |
+| `sandbox_browser_select`       | Act  | Choose option(s) of a `<select>` by ref.                                                                                                                                                                                                                                             |
+| `sandbox_browser_press_key`    | Act  | Press one key (Escape, Tab, PageDown, ...) in the page.                                                                                                                                                                                                                              |
+| `sandbox_browser_scroll`       | Act  | Scroll the page up/down by pixels, or bring one ref into view.                                                                                                                                                                                                                       |
+| `sandbox_browser_run`          | Act  | Execute up to 20 steps (type, select, scroll, wait, click, ...) in one round trip.                                                                                                                                                                                                   |
+| `sandbox_browser_back`         | Act  | Browser history back.                                                                                                                                                                                                                                                                |
+| `sandbox_browser_screenshot`   | Act  | PNG of the open page, staged as a scratch-space file.                                                                                                                                                                                                                                |
+| `sandbox_browser_close`        | Act  | Close the caller's session (pages, cookies, history).                                                                                                                                                                                                                                |
+| `sandbox_crawl_plan`           | Read | Check a crawl's scope, or learn it from example URLs, and list the pages it would read; nothing is fetched.                                                                                                                                                                          |
+| `sandbox_browser_crawl`        | Act  | Start a background crawl of many pages within one approved scope (or re-crawl a saved recipe, or resume a stopped crawl).                                                                                                                                                            |
+| `sandbox_crawl_status`         | Read | A crawl's progress and page list, waiting up to 45 s; with nothing named, recent crawls and saved recipes.                                                                                                                                                                           |
+| `sandbox_crawl_read`           | Read | Crawled pages' main text and tables (as Markdown), several per call.                                                                                                                                                                                                                 |
+| `sandbox_crawl_stop`           | Act  | Stop a crawl after its current page; resumable.                                                                                                                                                                                                                                      |
 
 `sandbox_render_chart`, the browser tools and `sandbox_run_python` exist
 only for an organization that has turned charts, the browser and scripts

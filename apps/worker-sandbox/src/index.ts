@@ -83,7 +83,7 @@ import {
   ensureWorkspacesRoot,
   verifyNetworkIsolation,
   verifyUidIsolation,
-  setDebugEnabled
+  setDebugEnabled,
 } from './workspaces';
 import { envSecretsEnabled } from './env-secrets';
 import { ScriptRunner, probePython, resolvePython } from './scripts';
@@ -102,7 +102,12 @@ import { createSecretResolver } from './secrets';
 import { logger, attachPersistentLogging } from './logger';
 import { configuredDirectory } from './configured-path';
 import type { SandboxCapabilities } from './features';
-import { DEFAULT_ORG_SETTINGS, getKeyDomain, getOrgSettings, watchLogLevel } from '@renkei/settings';
+import {
+  DEFAULT_ORG_SETTINGS,
+  getKeyDomain,
+  getOrgSettings,
+  watchLogLevel,
+} from '@renkei/settings';
 
 /**
  * The most a shutdown may take end to end. Inside the 30s stop grace
@@ -363,13 +368,25 @@ async function main(): Promise<void> {
           problem: problems.scripts,
         });
       }
+      if (probed.missing.length) {
+        // The tool tells the model what it may import (the list in
+        // @renkei/connector-sandbox); an interpreter without some of it
+        // answers those scripts with a traceback. Said here, once, so the
+        // operator knows the image is stale or SANDBOX_PYTHON points at the
+        // wrong interpreter.
+        logger.warn('scripts: {python} lacks {missing} — a script importing one of them fails', {
+          component: 'worker-sandbox/scripts',
+          python,
+          missing: probed.missing.join(', '),
+        });
+      }
       logger.info(
         'scripts available: {python} {version} with {libraries}; network {network}; memory {memory} bytes per run{removed}',
         {
           component: 'worker-sandbox/scripts',
           python,
           version: probed.version,
-          libraries: probed.libraries.length ? probed.libraries.join(', ') : 'no data libraries',
+          libraries: probed.libraries.length ? probed.libraries.join(', ') : 'no libraries',
           network:
             isolation.mode === 'netns'
               ? 'none per run (network namespace, as root)'

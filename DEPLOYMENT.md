@@ -568,9 +568,15 @@ the organization's **Allow scripts on the worker's network** setting:
 the verb is served for that organization, the tool's description tells
 the model the script has the worker's network, and every result says so
 too.
-The image carries the interpreter at `/opt/sandbox-python` (pandas,
-numpy, openpyxl, XlsxWriter, pinned in `docker/Dockerfile`);
-`SANDBOX_PYTHON` points at another. A run's directory is made under
+The image carries the interpreter at `/opt/sandbox-python` with the data
+libraries (pandas, numpy, openpyxl, XlsxWriter) and the document
+libraries a script authors or updates a Word document, a deck, a PDF or
+a workbook with (python-docx, python-pptx, reportlab, pypdf, Pillow,
+matplotlib), all pinned in `docker/Dockerfile` and listed in
+`SCRIPT_LIBRARIES` (`packages/connector-sandbox`); the worker probes the
+list at boot and warns about any it cannot import. `SANDBOX_PYTHON`
+points at another interpreter — one missing those libraries answers the
+scripts that import them with a traceback, so give it the same set. A run's directory is made under
 `SANDBOX_RUNS_DIR` (default `/runs`, no volume: nothing outlives its
 run) and its address space is capped at the organization's "Script
 memory" setting (admin → Settings → Sandbox, default 2 GB, read as each
@@ -1119,8 +1125,7 @@ longer rests on the trigger alone. A failed insert is logged at `warn`
 Agents stop being step plans: each is a structured instruction prompt and a
 tool selection, run autonomously inside two org limits — **active minutes
 per run** (`agentRunTimeoutMinutes`, default 30; waiting on a person does
-not count) and **tool calls per run** (`agentRunToolCallBudget`, default
-150) — and every change an agent makes is staged for acceptance and carried
+not count) and **tool calls per run** (`agentRunToolCallBudget`, default 150) — and every change an agent makes is staged for acceptance and carried
 out by the agents worker's action executor (docs/agents.md). The migration:
 
 - converts every agent's steps into instructions (the plan becomes a

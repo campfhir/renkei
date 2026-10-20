@@ -17,7 +17,10 @@
  *
  * sandbox_render_chart (./charts.ts) is the same door for a chart or a
  * diagram: Mermaid text the model wrote, drawn by the worker's own Chromium
- * into a PNG, an SVG or a PDF and staged here.
+ * into a PNG, an SVG or a PDF and staged here. sandbox_generate_image
+ * (./images.ts) is the door for a picture: the model's description, drawn
+ * by the organization's image generation model and staged here, so a
+ * script can place it in a document.
  *
  * sandbox_render_document is how an agent authors a Word document, a slide
  * deck, a PDF or a workbook: write Markdown or tabular text, stage the
@@ -41,7 +44,12 @@
  * else. It exists because matching one spreadsheet against another by a
  * key is work a model must not do by retyping text dumps; the
  * containment is the one code workspaces built, narrowed
- * (docs/sandbox-connector-design.md, "sandbox_run_python").
+ * (docs/sandbox-connector-design.md, "sandbox_run_python"). With the
+ * document libraries the image carries (python-docx, python-pptx,
+ * reportlab, pypdf, Pillow, matplotlib) it is also how a document richer
+ * than sandbox_render_document's Markdown comes to be — a picture or a
+ * chart placed, a template filled — and how an existing file pulled from
+ * a share is updated in place and sent back.
  *
  * The worker's code workspaces are deliberately NOT here: a repository is
  * worked in from a code project's chats through the code_* local tools
@@ -71,7 +79,8 @@ import { errText, fileLine, str, targetOf, textResult } from './shared';
 import { registerSandboxBrowserTools } from './browser';
 import { registerSandboxCrawlTools } from './crawl';
 import { registerSandboxChartTools } from './charts';
-import { registerSandboxScriptTools } from './scripts';
+import { registerSandboxImageTools, sandboxImageModels } from './images';
+import { DOCUMENT_SCRIPT_LINE, registerSandboxScriptTools } from './scripts';
 import { claimPendingUploadSlotByOwner } from '../upload-slots';
 import { completeUploadSlot, finalizeUploadSlot } from '@/lib/upload-executors';
 import { getDatabase } from '@renkei/db';
@@ -132,6 +141,10 @@ export async function registerSandboxTools(
   if (features.scripts) {
     registerSandboxScriptTools(server, context, { networkShared: features.scriptsNetworkShared });
   }
+  // A picture from the organization's image generation model, staged here
+  // for a script to place in a document — only where the org has such a
+  // model (see ./images.ts).
+  registerSandboxImageTools(server, context, { models: await sandboxImageModels() });
 
   server.registerTool(
     'sandbox_download_url',
@@ -328,7 +341,13 @@ export async function registerSandboxTools(
         '{"sheets":[{"name":…,"rows":[[…],…]}]} for several sheets, or Markdown tables (one ' +
         'sheet each, named by the heading above). Numbers and dates in a workbook are typed as ' +
         'such. ' +
-        XLSX_FORMULA_GUIDE,
+        XLSX_FORMULA_GUIDE +
+        (features.scripts
+          ? ' This renders text only. For a document richer than that — pictures or charts ' +
+            'embedded, a particular layout, a template filled, or an existing file updated in ' +
+            'place — write it with sandbox_run_python instead: ' +
+            DOCUMENT_SCRIPT_LINE.replace(/^This is also how to /, '').replace(/ $/, '')
+          : ''),
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         filename: z
