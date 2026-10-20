@@ -43,6 +43,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: null,
+    entries: [
+      {
+        kind: 'added',
+        title: 'Start an API-triggered agent from chat',
+        detail:
+          'Ask the chat to run an agent that has an API trigger, and it asks you to allow the run the same way it does for a scheduled agent — showing the inputs it will pass. You do not need to set a schedule. An agent with no schedule and no API trigger still cannot be started from chat.',
+      },
+    ],
+  },
+  {
     date: '2026-10-20',
     heading: 'Documents with real formatting, pictures in them, and chats that know their context',
     entries: [

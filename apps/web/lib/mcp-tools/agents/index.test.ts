@@ -1238,6 +1238,131 @@ describe('agent_run_now', () => {
     expect(result.content[0]?.text).toContain('runId: run-7');
     expect(runNowMock.createAgentRun).toHaveBeenCalledTimes(1);
   });
+
+  describe('an agent with an API trigger', () => {
+    /** An agent whose API trigger declares two inputs, and has no schedule. */
+    const API_AGENT = {
+      ...AGENT,
+      triggers: [
+        {
+          id: 'trigger-api',
+          draft: {
+            kind: 'api',
+            inputs: [
+              { name: 'ticket', label: 'Ticket number' },
+              { name: 'note', label: 'Note to add' },
+            ],
+          },
+          enabled: true,
+          lastFiredAt: null,
+          lastError: null,
+          nextRunAt: null,
+          keyHint: 'abcd',
+        },
+      ],
+    };
+
+    it('starts it as a manual run carrying the inputs, without a schedule', async () => {
+      accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(API_AGENT));
+      const handlers = registerAll({});
+
+      const result = await handlers.get('agent_run_now')!({
+        agentId: 'agent-1',
+        inputs: { ticket: 'INC-4411', note: 'Customer confirmed the fix' },
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0]?.text).toContain('runId: run-7');
+      expect(runNowMock.createAgentRun).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          agentId: 'agent-1',
+          triggerId: null,
+          triggerKind: 'manual',
+          triggeredBySubject: 'auth0|alice',
+          initialState: { ticket: 'INC-4411', note: 'Customer confirmed the fix' },
+        })
+      );
+    });
+
+    it('names the inputs it is still missing, with their labels', async () => {
+      accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(API_AGENT));
+      const handlers = registerAll({});
+
+      const result = await handlers.get('agent_run_now')!({
+        agentId: 'agent-1',
+        inputs: { ticket: 'INC-4411' },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain('Missing input: note (Note to add)');
+      expect(runNowMock.createAgentRun).not.toHaveBeenCalled();
+    });
+
+    it('refuses an input the trigger does not declare, and lists the ones it does', async () => {
+      accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(API_AGENT));
+      const handlers = registerAll({});
+
+      const result = await handlers.get('agent_run_now')!({
+        agentId: 'agent-1',
+        inputs: { ticket: 'INC-4411', note: 'ok', priority: 'high' },
+      });
+
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? '';
+      expect(text).toContain('Unknown input: priority');
+      expect(text).toContain('This agent takes ticket, note.');
+      expect(runNowMock.createAgentRun).not.toHaveBeenCalled();
+    });
+
+    it('refuses inputs that are not text, before anything is checked', async () => {
+      accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(API_AGENT));
+      const handlers = registerAll({});
+
+      const result = await handlers.get('agent_run_now')!({
+        agentId: 'agent-1',
+        inputs: { ticket: 42 },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain('object of text values');
+      expect(runNowMock.createAgentRun).not.toHaveBeenCalled();
+    });
+
+    it('refuses an agent with no API trigger when it is handed inputs', async () => {
+      accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(RUNNABLE));
+      const handlers = registerAll({});
+
+      const result = await handlers.get('agent_run_now')!({
+        agentId: 'agent-1',
+        inputs: { ticket: 'INC-4411' },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain('has no API trigger, so it takes no inputs');
+      expect(runNowMock.createAgentRun).not.toHaveBeenCalled();
+    });
+
+    it('does not start an API trigger that is switched off', async () => {
+      accessGrantsMock.resolveAgentAccess.mockResolvedValue(
+        ownerAccess({
+          ...API_AGENT,
+          triggers: [{ ...API_AGENT.triggers[0], enabled: false }],
+        })
+      );
+      const handlers = registerAll({});
+
+      const result = await handlers.get('agent_run_now')!({
+        agentId: 'agent-1',
+        inputs: { ticket: 'INC-4411', note: 'ok' },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain('API trigger is switched off');
+      expect(runNowMock.createAgentRun).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('sharing — a grantee reaches an agent someone else shared with them', () => {
