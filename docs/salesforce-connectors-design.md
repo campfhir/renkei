@@ -7,10 +7,10 @@ is, the as-built description belongs in a `salesforce` and a `salesforce-admin` 
 Two connectors, one vendor — the `jira`/`jira-admin`, `onbase`/`onbase-admin` and
 `microsoft`/`entra-developer` arrangement:
 
-| Connector          | Who it is for                                                         | What it does                                                                                                                      |
-| ------------------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `salesforce`       | Everyone who works in Salesforce as a CRM — sales, service, nonprofit | Find, read, create, update and delete records; log activity; read, run, author and share reports; read dashboards                 |
-| `salesforce-admin` | Salesforce administrators and app builders                            | Build applications: custom objects and fields, picklists, validation rules, record types, layouts, apps and tabs, permission sets |
+| Connector          | Who it is for                                                         | What it does                                                                                                                                     |
+| ------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `salesforce`       | Everyone who works in Salesforce as a CRM — sales, service, nonprofit | Find, read, create, update and delete records of standard and custom objects; log activity; read, run, author and share reports; read dashboards |
+| `salesforce-admin` | Salesforce administrators and app builders                            | Build applications: define custom objects and fields, picklists, validation rules, record types, layouts, apps and tabs, permission sets         |
 
 ## What they are for
 
@@ -243,6 +243,67 @@ for shares (its `person` slot shows the recipient, its group lists the folder's 
 | `salesforce_log_activity`                        | A completed Task (call, email, meeting note) or an Event, related to the record(s) named                 |
 | `salesforce_create_task`                         | An open follow-up Task assigned to the person or a named user, with a due date                           |
 | `salesforce_add_note`                            | A Note (ContentNote) attached to a record                                                                |
+
+### Custom objects and custom fields are first-class
+
+Most of the work in an org that has been built out is on its own custom objects — a
+`Volunteer_Shift__c`, a `Grant_Application__c`, a `Site_Visit__c` — and on custom fields added
+to the standard ones. None of the tools above has a list of "supported" objects: every record tool
+takes any object the person can access, standard or custom, the org's own or a managed package's
+(`npsp__…`, `pmdm__…`), and every field on it, custom fields included. Nothing about a custom
+object needs the admin connector except changing its _definition_ (below). What that takes in
+practice:
+
+- **Discovery.** `salesforce_list_objects` marks each object custom or standard and lists the
+  org's own unnamespaced custom objects first, with a `customOnly` filter, so "what objects do we
+  have?" answers with the org's own vocabulary rather than 400 standard objects.
+  `salesforce_describe_object` returns each custom field's **description and help text**: that is
+  where the admin who built `Stage_Gate__c` wrote what it means, and the model needs it to choose
+  the right field.
+- **Names both ways.** An object resolves by API name, label or plural label ("site visits" →
+  `Site_Visit__c`); a field by API name or label, on the object named; a relationship by its
+  `__r` name for queries and related lists (`salesforce_list_related` on `Grant__c`'s
+  `Applications__r`). A label that matches two objects or fields (an unmanaged `Program__c` and a
+  managed `pmdm__Program__c`) is refused naming both.
+- **Records without a useful name.** Custom objects often have an auto-number name (`SV-000412`).
+  A record still resolves by name when one is given, and otherwise by the fields of the object's
+  compact layout (UI API), which is how Salesforce itself identifies a record in a lookup — "the
+  site visit for Acme on 3 March" searches those fields. SOSL is used where the object allows
+  search; an object with search turned off falls back to a SOQL `LIKE` on its name and
+  compact-layout text fields. Results show the compact-layout fields beside the auto-number so
+  they read.
+- **Field types on write.** Values are checked against the describe before anything is sent, with
+  the reason refused named:
+  - lookup and master-detail by the target record's name or id, custom to custom included; a
+    master-detail parent is required on create, and changeable afterwards only when the field
+    allows reparenting;
+  - picklists and multi-selects against the record type's values, **dependent picklists** against
+    the controlling field's value (UI API `picklist-values` carries `controllerValues`);
+  - formula, roll-up summary and auto-number fields are read-only — the tool says which field
+    computes it rather than letting Salesforce's error do it;
+  - currency with `CurrencyIsoCode` in multi-currency orgs, date and date-time in the person's
+    time zone, geolocation compound fields, long and rich text (rich text is sent as the HTML
+    Salesforce stores, sanitized the way `email-sanitizer` does it), encrypted fields as
+    Salesforce masks them;
+  - external id fields (common on custom objects loaded from another system) for
+    `salesforce_upsert_record` and as a way to name a record.
+- **A fresh describe.** Descriptions are cached per org and person for ten minutes. The cache is
+  dropped for an object when a write fails with `INVALID_FIELD` or a picklist error, and when the
+  admin connector applies a change request touching that object, so a field an admin just built
+  is usable in CRM tools on the next call, not ten minutes later.
+- **Reports on custom objects** need no extra tools: custom report types appear in
+  `salesforce_list_report_types` like standard ones.
+- **Keeping some objects away from the model** (optional org setting). Salesforce's permissions
+  decide what a person can reach, but an org may want, say, `Case_Note__c` or a payroll object out
+  of chat even for people who can see it in Salesforce. An **object and field exclusion list** on
+  the admin form hides those from every CRM tool, and fields Salesforce data classification marks
+  _Restricted_ can be hidden with one switch. These only take things away; they never grant
+  anything Salesforce would refuse.
+
+The boundary with the admin connector: the CRM connector creates, updates and deletes **records**
+of custom objects and **values** of custom fields. It never adds a field, changes a picklist's
+values, or edits a validation rule — those change the object for everyone and go through the admin
+connector's change requests.
 
 Files (ContentVersion download and upload) use the sandbox scratch space the way OnBase and Jira
 attachments do ([`sandbox-connector-design.md`](./sandbox-connector-design.md)) and come in a
@@ -496,7 +557,8 @@ answers "where is this field used" and links Setup; the deletion is the admin's,
    package's API version and SOQL builder, `salesforce_check_access` and
    `salesforce_admin_check_access`.
 2. **CRM records.** Orientation, search, query, get, related, create, update, upsert, activities,
-   bulk update and delete pairs, change owner, API budget.
+   bulk update and delete pairs, change owner, API budget — exercised against the org's own custom
+   objects (auto-number names, custom lookups, dependent picklists) as much as standard ones.
 3. **Reports.** Find, describe, run (sync and async), export, report types, create, update, clone,
    delete, folders, share, subscribe, dashboards.
 4. **Nonprofit.** Model detection, constituent, giving summary, record gift, programs — built and
