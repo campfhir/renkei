@@ -127,11 +127,26 @@ async function seedRunningTurn(chatId: string): Promise<void> {
 async function worktreeOf(chatId: string): Promise<string> {
   const client = await db();
   try {
-    const { rows } = await client.query('SELECT workspace_id FROM chats WHERE id = $1', [chatId]);
-    return rows[0].workspace_id as string;
+    const { rows } = await client.query<{ workspace_id: string }>(
+      'SELECT workspace_id FROM chats WHERE id = $1',
+      [chatId]
+    );
+    return rows[0]!.workspace_id;
   } finally {
     await client.end();
   }
+}
+
+/** The entry paths of a tree listing's JSON. */
+function entryPaths(body: unknown): string[] {
+  if (typeof body !== 'object' || body === null || !('entries' in body)) return [];
+  const { entries } = body;
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry: unknown) =>
+    typeof entry === 'object' && entry !== null && 'path' in entry && typeof entry.path === 'string'
+      ? [entry.path]
+      : []
+  );
 }
 
 /** The page never scrolls sideways. */
@@ -226,7 +241,7 @@ test.describe('code project concurrent chats', () => {
     const names = async (chatId: string): Promise<string[]> => {
       const response = await tree(chatId);
       expect(response.ok()).toBe(true);
-      return ((await response.json()).entries as { path: string }[]).map((entry) => entry.path);
+      return entryPaths(await response.json());
     };
 
     const created = await page.request.post(
@@ -239,9 +254,7 @@ test.describe('code project concurrent chats', () => {
     expect(await names(ids.secondChatId)).not.toContain(file);
     // Nor in the project's base clone, which no chat edits.
     const base = await page.request.get(`/api/code/projects/${ids.projectId}/tree?path=`);
-    expect(((await base.json()).entries as { path: string }[]).map((e) => e.path)).not.toContain(
-      file
-    );
+    expect(entryPaths(await base.json())).not.toContain(file);
 
     // A chat that is not this project's is not reachable through it.
     const stranger = await page.request.get(
