@@ -116,6 +116,7 @@ jest.mock('@/lib/mcp-tools/web-search', () => ({
 }));
 
 import { listAvailableTools, invalidateToolCatalogCache } from './tool-catalog';
+import { PREVIEW_EXEMPT_CONNECTORS, previewTwinOf } from './act-preview';
 
 // Granular scopes, not the classic `read:jira-work` pair: the Jira tools gate
 // on the granular catalog, so classic scopes would register nothing and the
@@ -471,6 +472,64 @@ describe('listAvailableTools', () => {
     // classify either, even though `visibility` sits in the same `ui` meta.
     expect(widgetKindOf('jira_search_issues')).toBeNull();
     expect(widgetKindOf('jira_create_issue_confirm')).toBeNull();
+  });
+
+  it('gives every act tool a preview — hand-written or generated — so chat never has to offer it plain', async () => {
+    grants = {
+      atlassian: {
+        requested_scopes: [
+          'read:issue:jira',
+          'write:issue:jira',
+          'write:comment:jira',
+          'delete:issue:jira',
+          'read:user:jira',
+        ],
+        granted_scopes: null,
+      },
+      microsoft: {
+        requested_scopes: [
+          'Mail.Read',
+          'Mail.Send',
+          'Mail.ReadWrite',
+          'Calendars.ReadWrite',
+          'Sites.ReadWrite.All',
+          'Files.ReadWrite.All',
+        ],
+        granted_scopes: null,
+      },
+    };
+    const tools = await listAvailableTools('subject-1');
+    const names = new Set(tools.map((tool) => tool.name));
+    const unpreviewed = tools
+      .filter(
+        (tool) =>
+          tool.kind === 'act' &&
+          !tool.appOnly &&
+          !tool.name.endsWith('_preview') &&
+          !/_request_\w*upload$/.test(tool.name) &&
+          !PREVIEW_EXEMPT_CONNECTORS.includes(tool.connector ?? '') &&
+          previewTwinOf(tool.name, names) === null
+      )
+      .map((tool) => tool.name);
+    expect(unpreviewed).toEqual([]);
+    // The registration reaches past the hand-written ones: a Jira comment
+    // and an Outlook calendar write had no card until now.
+    expect(names).toContain('jira_add_comment_preview');
+    expect(names).toContain('outlook_create_event_preview');
+    // The hand-written ones are kept, not shadowed by a generated twin.
+    expect(names).not.toContain('outlook_reply_message_preview');
+    expect(names).not.toContain('jira_create_issue_preview_preview');
+  });
+
+  it('marks a generated preview with the tool it replaces, and its confirm app-only', async () => {
+    const tools = await listAvailableTools('subject-1');
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    expect(byName.get('jira_add_comment_preview')?.previewOf).toBe('jira_add_comment');
+    expect(byName.get('jira_add_comment_preview')?.widgetKind).toBe('approval');
+    expect(byName.get('jira_add_comment_confirm')?.appOnly).toBe(true);
+    // A hand-written preview is not "generated": agents are not told to avoid it.
+    expect(byName.get('jira_create_issue_preview')?.previewOf).toBeNull();
+    expect(byName.get('jira_add_comment')?.previewOf).toBeNull();
   });
 
   it('drops the fileshare act tools in org read-only mode, keeps the reads', async () => {

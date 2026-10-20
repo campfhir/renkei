@@ -29,7 +29,7 @@ export function ToolPicker({
 }) {
   const [filter, setFilter] = useState('');
   const chosen = useMemo(() => new Set(selected), [selected]);
-  const offered = useMemo(() => tools.filter((tool) => !tool.appOnly), [tools]);
+  const offered = useMemo(() => tools.filter((tool) => !tool.appOnly && !tool.previewOf), [tools]);
   const known = useMemo(() => new Set(offered.map((tool) => tool.name)), [offered]);
 
   const groups = useMemo(() => {

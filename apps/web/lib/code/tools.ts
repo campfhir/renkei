@@ -216,9 +216,14 @@ function withCheckoutRecovery(
   };
 }
 
-/** The tool name that opens a pull request on the project's git host. */
+/**
+ * The tool name that opens a pull request on the project's git host, with
+ * the preview a chat that shows a card first offers in its place (an
+ * auto-mode code chat is offered the plain tool; any other the preview).
+ */
 function prTool(provider: string): string {
-  return provider === GITHUB ? 'github_create_pull_request' : 'bitbucket_create_pull_request';
+  const tool = provider === GITHUB ? 'github_create_pull_request' : 'bitbucket_create_pull_request';
+  return `${tool} (or ${tool}_preview, where the chat is offered only previews)`;
 }
 
 function str(value: unknown): string {

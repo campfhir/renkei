@@ -32,6 +32,7 @@ import { HttpMcpClient, mintRunToken, revokeRunToken, type McpClient } from '@re
 import type { McpToolInfo } from '@renkei/mcp-client';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { logger } from '@/lib/logger';
+import { previewTwinOf } from '@/lib/mcp-tools/act-preview';
 import { internalMcpEndpoint } from './internal-origin';
 import { CHAT_ALWAYS_TOOLS, CHAT_CORE_CONNECTORS, type ChatToolConfig } from './tool-config';
 
@@ -45,6 +46,68 @@ import { CHAT_ALWAYS_TOOLS, CHAT_CORE_CONNECTORS, type ChatToolConfig } from './
  * out; that's a display count, not a gate.
  */
 const PREVIEW_SUFFIX = '_preview';
+
+/**
+ * How chat reaches the tools that act: through their preview card, never
+ * the plain tool. A card's confirm button is an app-only tool the model can
+ * never call, so the person pressing it is the only way an act reaches
+ * their systems — offering the plain tool next to its preview would let a
+ * model go around the card, whatever its prompt says.
+ *
+ * `directConnectors` are the exception: connectors whose plain tools stay
+ * offered (and whose previews are not), because the chat is an unattended
+ * code project in auto mode and those connectors are the work itself — the
+ * repository's host, the tracker, the wiki (auto-mode.ts). Every other
+ * connector in the same chat is still previewed.
+ *
+ * - `hidden`: names not offered at all — the plain tool of every previewed
+ *   act, and in a direct connector the preview that would only get in the
+ *   way.
+ * - `previewOnly`: the plain tools among them, each with the preview that
+ *   replaces it, for the runner to refuse a call made from memory and say
+ *   where to go instead.
+ *
+ * An act tool with no preview in the catalog (a platform-internal one —
+ * generic-preview.ts's PREVIEW_EXEMPT_CONNECTORS) is left as it is.
+ */
+export interface PreviewRouting {
+  hidden: ReadonlySet<string>;
+  previewOnly: ReadonlyMap<string, string>;
+  /**
+   * The previews of tools the person blocked: blocking `jira_delete_comment`
+   * in Preferences must close the card that would run it as well. Added to
+   * the tools the surface leaves out, and to the runner's refusals.
+   */
+  blockedPreviews: ReadonlySet<string>;
+}
+
+export function previewRouting(
+  catalog: ToolDescriptor[],
+  directConnectors: ReadonlySet<string> = new Set(),
+  blocked: ReadonlySet<string> = new Set()
+): PreviewRouting {
+  const names = new Set(catalog.map((descriptor) => descriptor.name));
+  const hidden = new Set<string>();
+  const previewOnly = new Map<string, string>();
+  const blockedPreviews = new Set<string>();
+  for (const tool of blocked) {
+    const twin = previewTwinOf(tool, names);
+    if (twin !== null) blockedPreviews.add(twin);
+  }
+  for (const descriptor of catalog) {
+    if (descriptor.kind !== 'act' || descriptor.appOnly) continue;
+    if (descriptor.name.endsWith(PREVIEW_SUFFIX)) continue;
+    const twin = previewTwinOf(descriptor.name, names);
+    if (twin === null) continue;
+    if (descriptor.connector !== null && directConnectors.has(descriptor.connector)) {
+      hidden.add(twin);
+    } else {
+      hidden.add(descriptor.name);
+      previewOnly.set(descriptor.name, twin);
+    }
+  }
+  return { hidden, previewOnly, blockedPreviews };
+}
 
 /** A tool not offered up front — find_tools searches these by name. */
 export interface DiscoverableTool {
@@ -72,7 +135,15 @@ export function partitionChatTools(
 ): PartitionedChatTools {
   const wanted = new Set(config.connectors);
   const core = new Set(CHAT_CORE_CONNECTORS);
-  const eagerByName = new Set(eagerExtras.tools ?? []);
+  // A previewed act's preview takes its place up front: the pull-request
+  // tools a code chat is told to use by name are offered as their previews.
+  const catalogNames = new Set(catalog.map((descriptor) => descriptor.name));
+  const eagerByName = new Set(
+    (eagerExtras.tools ?? []).flatMap((tool) => {
+      const twin = previewTwinOf(tool, catalogNames);
+      return twin === null ? [tool] : [tool, twin];
+    })
+  );
   const byName = new Map(mcpTools.map((tool) => [tool.name, tool]));
   const eager: LlmToolDef[] = [];
   const discoverable: DiscoverableTool[] = [];
@@ -136,9 +207,7 @@ export interface ConnectorOption {
 }
 
 /** The picker's data: connectors the person can offer, with tool counts. */
-export async function listChatConnectors(
-  subject: string
-): Promise<ConnectorOption[]> {
+export async function listChatConnectors(subject: string): Promise<ConnectorOption[]> {
   const catalog = await listAvailableTools(subject);
   const counts = new Map<string, number>();
   for (const descriptor of catalog) {
@@ -159,6 +228,10 @@ export interface ChatToolSurface {
   discoverable: DiscoverableTool[];
   /** The subset of `tools` and `discoverable` that only read — see readOnlyToolNames. */
   readOnlyTools: ReadonlySet<string>;
+  /** Plain act tools chat does not offer, by the preview that stands in for each (previewRouting). */
+  previewOnly: ReadonlyMap<string, string>;
+  /** Previews of blocked tools — refused like the tools themselves (previewRouting). */
+  blockedPreviews: ReadonlySet<string>;
   /**
    * The MCP Apps widget each tool's result renders as, by tool name —
    * from `tools/list`'s `_meta.ui.resourceUri` (widgets.ts's
@@ -185,16 +258,25 @@ export async function resolveChatToolSurface(
      * use. The runner still refuses a call to one made from memory.
      */
     excluded?: ReadonlySet<string>;
+    /**
+     * Connectors whose plain act tools are offered instead of their
+     * previews — see PreviewRouting. Empty unless the chat is a code
+     * project's in auto mode.
+     */
+    directConnectors?: ReadonlySet<string>;
     /** Offered up front beyond the core connectors — see partitionChatTools. */
     eager?: EagerExtras;
   }
 ): Promise<ChatToolSurface> {
   const catalog = await listAvailableTools(input.subject, { roles: input.roles });
   const excluded = input.excluded ?? new Set<string>();
+  const routing = previewRouting(catalog, input.directConnectors, excluded);
   const candidates = catalog.filter(
     (descriptor) =>
       !descriptor.appOnly &&
       !excluded.has(descriptor.name) &&
+      !routing.blockedPreviews.has(descriptor.name) &&
+      !routing.hidden.has(descriptor.name) &&
       (CHAT_ALWAYS_TOOLS.includes(descriptor.name) ||
         (descriptor.connector !== null && input.config.connectors.includes(descriptor.connector)))
   );
@@ -203,6 +285,8 @@ export async function resolveChatToolSurface(
       tools: [],
       discoverable: [],
       readOnlyTools: new Set(),
+      previewOnly: routing.previewOnly,
+      blockedPreviews: routing.blockedPreviews,
       widgetResourceUris: new Map(),
       mcp: null,
       release: async () => {},
@@ -246,6 +330,8 @@ export async function resolveChatToolSurface(
       tools: eager,
       discoverable,
       readOnlyTools: readOnlyToolNames(candidates, allOffered),
+      previewOnly: routing.previewOnly,
+      blockedPreviews: routing.blockedPreviews,
       widgetResourceUris,
       mcp,
       release,
@@ -262,6 +348,8 @@ export async function resolveChatToolSurface(
       tools: [],
       discoverable: [],
       readOnlyTools: new Set(),
+      previewOnly: routing.previewOnly,
+      blockedPreviews: routing.blockedPreviews,
       widgetResourceUris: new Map(),
       mcp: null,
       release: async () => {},

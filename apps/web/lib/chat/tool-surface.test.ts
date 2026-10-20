@@ -1,5 +1,6 @@
-import { partitionChatTools, readOnlyToolNames } from './tool-surface';
+import { partitionChatTools, previewRouting, readOnlyToolNames } from './tool-surface';
 import {
+  AUTO_DIRECT_CONNECTORS,
   CODE_PROJECT_CONNECTORS,
   CODE_PROJECT_DEFAULT_CONNECTORS,
   effectiveToolConfig,
@@ -18,6 +19,7 @@ function descriptor(
     title: null,
     description: 'd',
     appOnly: false,
+    previewOf: null,
     widgetKind: null,
     outcomes: { success: { label: 'ok' }, failures: [] },
     ...partial,
@@ -108,6 +110,94 @@ describe('partitionChatTools', () => {
     );
     expect(eager.map((tool) => tool.name)).toEqual(['sandbox_run']);
     expect(discoverable).toEqual([]);
+  });
+});
+
+describe('previewRouting', () => {
+  const act = (name: string, connector: string) => descriptor({ name, connector, kind: 'act' });
+  const catalog = [
+    act('outlook_send_mail', 'microsoft'),
+    act('outlook_send_mail_preview', 'microsoft'),
+    // The reply family's preview is not named after its direct tool.
+    act('outlook_reply_message', 'microsoft'),
+    act('outlook_reply_preview', 'microsoft'),
+    // Generated previews are in the catalog like hand-written ones.
+    act('confluence_create_page', 'atlassian-confluence'),
+    act('confluence_create_page_preview', 'atlassian-confluence'),
+    act('bitbucket_create_pull_request', 'atlassian-bitbucket'),
+    act('bitbucket_create_pull_request_preview', 'atlassian-bitbucket'),
+    // No preview in the catalog: a platform-internal act, left as it is.
+    act('card_create', 'cards'),
+    // A preview with no plain tool at all (a directory write) is never hidden.
+    act('entra_create_application_preview', 'entra-developer'),
+    act('outlook_send_draft_confirm', 'microsoft'),
+    descriptor({ name: 'outlook_list_messages', connector: 'microsoft' }),
+  ];
+
+  it('hides every plain act tool that has a preview, and says which preview replaces it', () => {
+    const { hidden, previewOnly } = previewRouting(catalog);
+    expect([...hidden].sort()).toEqual([
+      'bitbucket_create_pull_request',
+      'confluence_create_page',
+      'outlook_reply_message',
+      'outlook_send_mail',
+    ]);
+    expect(Object.fromEntries(previewOnly)).toEqual({
+      bitbucket_create_pull_request: 'bitbucket_create_pull_request_preview',
+      confluence_create_page: 'confluence_create_page_preview',
+      outlook_reply_message: 'outlook_reply_preview',
+      outlook_send_mail: 'outlook_send_mail_preview',
+    });
+  });
+
+  it('keeps the plain tools of a direct connector, and drops their previews instead', () => {
+    const { hidden, previewOnly } = previewRouting(catalog, new Set(AUTO_DIRECT_CONNECTORS));
+    // Auto mode in a code project: the repository's host and the wiki act
+    // unasked; mail is not code development, so it is still previewed.
+    expect([...hidden].sort()).toEqual([
+      'bitbucket_create_pull_request_preview',
+      'confluence_create_page_preview',
+      'outlook_reply_message',
+      'outlook_send_mail',
+    ]);
+    expect([...previewOnly.keys()].sort()).toEqual(['outlook_reply_message', 'outlook_send_mail']);
+  });
+
+  it('closes the preview of a tool the person blocked along with the tool', () => {
+    const { blockedPreviews } = previewRouting(
+      catalog,
+      new Set(),
+      new Set(['outlook_reply_message', 'confluence_create_page', 'card_create', 'no_such_tool'])
+    );
+    expect([...blockedPreviews].sort()).toEqual([
+      'confluence_create_page_preview',
+      'outlook_reply_preview',
+    ]);
+  });
+
+  it('never treats mail, chat, meetings or directories as code development', () => {
+    for (const connector of ['microsoft', 'webex', 'zoom', 'onedrive', 'sharepoint', 'admanager']) {
+      expect(AUTO_DIRECT_CONNECTORS).not.toContain(connector);
+    }
+  });
+
+  it('offers the preview of a previewed tool up front when the tool itself was an eager extra', () => {
+    const everything = [
+      act('bitbucket_create_pull_request', 'atlassian-bitbucket'),
+      act('bitbucket_create_pull_request_preview', 'atlassian-bitbucket'),
+      act('bitbucket_update_pull_request_preview', 'atlassian-bitbucket'),
+    ];
+    const { hidden } = previewRouting(everything);
+    const { eager, discoverable } = partitionChatTools(
+      everything.filter((tool) => !hidden.has(tool.name)),
+      everything.map((tool) => live(tool.name)),
+      { connectors: ['atlassian-bitbucket'] },
+      { tools: ['bitbucket_create_pull_request'] }
+    );
+    expect(eager.map((tool) => tool.name)).toEqual(['bitbucket_create_pull_request_preview']);
+    expect(discoverable.map((entry) => entry.def.name)).toEqual([
+      'bitbucket_update_pull_request_preview',
+    ]);
   });
 });
 

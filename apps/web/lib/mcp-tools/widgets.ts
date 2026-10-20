@@ -26,6 +26,7 @@ import {
   MEETING_PREVIEW_HTML,
   MEETING_PREVIEW_HASH,
 } from '@/lib/mcp-widgets/generated/meeting-preview';
+import { ACT_PREVIEW_HTML, ACT_PREVIEW_HASH } from '@/lib/mcp-widgets/generated/act-preview';
 import { ISSUE_PREVIEW_HTML, ISSUE_PREVIEW_HASH } from '@/lib/mcp-widgets/generated/issue-preview';
 import { RESULTS_LIST_HTML, RESULTS_LIST_HASH } from '@/lib/mcp-widgets/generated/results-list';
 import {
@@ -42,6 +43,7 @@ export const EMAIL_COMPOSE_URI = `ui://widget/email-compose.${EMAIL_COMPOSE_HASH
 export const CHAT_MESSAGE_URI = `ui://widget/chat-message.${CHAT_MESSAGE_HASH}.html`;
 export const MEETING_PREVIEW_URI = `ui://widget/meeting-preview.${MEETING_PREVIEW_HASH}.html`;
 export const ISSUE_PREVIEW_URI = `ui://widget/issue-preview.${ISSUE_PREVIEW_HASH}.html`;
+export const ACT_PREVIEW_URI = `ui://widget/act-preview.${ACT_PREVIEW_HASH}.html`;
 export const RESULTS_LIST_URI = `ui://widget/results-list.${RESULTS_LIST_HASH}.html`;
 export const DIRECTORY_ACTION_PREVIEW_URI = `ui://widget/directory-action-preview.${DIRECTORY_ACTION_PREVIEW_HASH}.html`;
 
@@ -136,6 +138,16 @@ const TEMPLATES: Array<{
     uri: ISSUE_PREVIEW_URI,
     description: 'Preview of a work item (Jira issue or JSM request) awaiting confirmation.',
     html: ISSUE_PREVIEW_HTML,
+  },
+  {
+    name: 'act_preview',
+    uri: ACT_PREVIEW_URI,
+    description:
+      'Preview of an action awaiting the user’s confirm or cancel — a comment, a status ' +
+      'change, a worklog, an issue link, an access change, a page, a file operation, a ' +
+      'commit, a calendar event and the other acts in lib/mcp-tools/previews, each drawn ' +
+      'the way the thing it changes looks.',
+    html: ACT_PREVIEW_HTML,
   },
   {
     name: 'results_list',

@@ -59,7 +59,12 @@ import { getProjectRow } from './projects';
 import { deriveTitle } from './titles';
 import { createOutboundRedactor } from './outbound-redaction';
 import { buildHistory, buildSystemPrompt } from './request-builder';
-import { CODE_PROJECT_EAGER_TOOLS, effectiveToolConfig, projectToolConfig } from './tool-config';
+import {
+  AUTO_DIRECT_CONNECTORS,
+  CODE_PROJECT_EAGER_TOOLS,
+  effectiveToolConfig,
+  projectToolConfig,
+} from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
 import { getChatToolPermissionPrefs } from './permission-prefs';
 import { resolveChatToolSurface } from './tool-surface';
@@ -516,6 +521,11 @@ async function executeTurnBody(
       config: toolConfig,
       ttlSeconds: Math.ceil((wallClockMs + permissionWaitMs) / 1000) + 15 * 60,
       excluded: denied,
+      // Acts go through preview cards, except a code project's code-work
+      // connectors when the chat is in auto mode (tool-surface.ts).
+      ...(project?.kind === 'code' && input.chat.autoMode && !(input.settings?.readOnly ?? false)
+        ? { directConnectors: new Set(AUTO_DIRECT_CONNECTORS) }
+        : {}),
       // A code chat is told to open the pull request by name: those tools
       // are offered up front rather than behind find_tools.
       ...(defaultsKind === 'code' ? { eager: { tools: CODE_PROJECT_EAGER_TOOLS } } : {}),
@@ -816,7 +826,9 @@ async function executeTurnBody(
         // auto mode, where nothing asks and only a blocked tool refuses.
         permissions: {
           alwaysAllowed: new Set(permissionPrefs.alwaysAllow),
-          denied,
+          // A blocked tool's preview card is blocked with it.
+          denied: new Set([...denied, ...surface.blockedPreviews]),
+          previewOnly: surface.previewOnly,
           ...(auto ? { allowAll: true } : {}),
         },
         ...(auto

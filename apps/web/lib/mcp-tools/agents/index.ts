@@ -653,8 +653,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // offer a tool the save would then refuse.
       const all = (await listAvailableTools(context.subject, { roles: context.roles })).filter(
         // Preview-card buttons: the model never sees them, so an author must
-        // not be told to give an agent one.
-        (tool) => !tool.appOnly
+        // not be told to give an agent one. Nor a generated preview (chat's
+        // stand-in for an act): an agent keeps the act itself.
+        (tool) => !tool.appOnly && !tool.previewOf
       );
       if (all.length === 0) {
         return textResult(
