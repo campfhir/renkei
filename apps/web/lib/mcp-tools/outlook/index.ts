@@ -615,6 +615,13 @@ interface DraftInfo {
   webLink: string;
 }
 
+/** A reply-family card's kind, as the Graph action that drafts it. */
+const REPLY_ACTIONS = new Map<string, 'createReply' | 'createReplyAll' | 'createForward'>([
+  ['reply', 'createReply'],
+  ['replyAll', 'createReplyAll'],
+  ['forward', 'createForward'],
+]);
+
 async function createDraftAction(
   context: MCPToolContext,
   auth: AuthedFetch,
@@ -2246,9 +2253,13 @@ export async function registerOutlookTools(
     `sends or discards from the card. If no card appeared in this client, tell the user the ` +
     `draft is in their Outlook Drafts folder.`;
 
-  const draftStructured = (kind: string, draft: DraftInfo) => ({
+  // `messageId` (reply-family only) is what lets the card edit the reply's
+  // own text: the confirm tool rebuilds the draft from that message rather
+  // than editing a body the quoted thread is part of.
+  const draftStructured = (kind: string, draft: DraftInfo, messageId?: string) => ({
     kind,
     draftId: draft.draftId,
+    ...(messageId ? { messageId } : {}),
     to: draft.to,
     cc: draft.cc,
     bcc: draft.bcc,
@@ -2389,7 +2400,7 @@ export async function registerOutlookTools(
         });
         return {
           ...textResult(previewResultText(created, preview.what)),
-          structuredContent: draftStructured(preview.kind, created),
+          structuredContent: draftStructured(preview.kind, created, messageId),
         };
       }
     );
@@ -2437,10 +2448,54 @@ export async function registerOutlookTools(
       });
       return {
         ...textResult(previewResultText(created, 'The forward')),
-        structuredContent: draftStructured('forward', created),
+        structuredContent: draftStructured('forward', created, messageId),
       };
     }
   );
+
+  /**
+   * Send a reply/forward whose own text the user edited on the card. The
+   * comment can't be swapped inside the draft — Graph's body is the comment
+   * and the quoted thread as one blob of HTML, which Exchange re-serializes
+   * — so a fresh draft is made from the same message with the new comment
+   * and the previewed draft's recipients, and sent. The previewed draft is
+   * deleted only once that send went out, so a failure leaves it in place
+   * for the card to retry.
+   */
+  const sendRebuiltReply = async (
+    authed: AuthedFetch,
+    draftId: string,
+    comment: string,
+    replyTo: Record<string, unknown>
+  ) => {
+    const messageId = str(replyTo.messageId);
+    const action = REPLY_ACTIONS.get(str(replyTo.kind));
+    if (!messageId || !action) return errText('replyTo is required to edit a reply');
+    if (!comment.trim() && action !== 'createForward') {
+      return errText('Write the reply, or discard it.');
+    }
+    const current = await graphGet(
+      context,
+      authed,
+      `/me/messages/${encodeURIComponent(draftId)}?$select=toRecipients,ccRecipients,bccRecipients`
+    );
+    if (!current.ok) return errText(current.error);
+    const rebuilt = await createDraftAction(context, authed, messageId, action, {
+      ...(comment.trim() ? { comment } : {}),
+      additionalTo: addressesOf(current.body.toRecipients),
+      cc: addressesOf(current.body.ccRecipients),
+      bcc: addressesOf(current.body.bccRecipients),
+    });
+    if (!rebuilt.ok) return errText(rebuilt.error);
+    const sent = await sendDraft(context, authed, rebuilt.draftId);
+    if (!sent.ok) return errText(sent.error);
+    await graphDelete(context, authed, `/me/messages/${encodeURIComponent(draftId)}`);
+    logger.info('outlook_send_draft_confirm sent an edited reply', {
+      component: 'mcp/tool',
+      draftId,
+    });
+    return textResult('Sent.');
+  };
 
   server.registerTool(
     'outlook_send_draft_confirm',
@@ -2459,8 +2514,19 @@ export async function registerOutlookTools(
             cc: z.array(z.string().min(1)).optional(),
             subject: z.string().optional(),
             body: z.string().describe(BODY_MARKDOWN_HINT).optional(),
+            comment: z
+              .string()
+              .describe(`A reply/forward's own text, edited on the card: ${REPLY_MARKDOWN_HINT}`)
+              .optional(),
           })
           .describe('Edits the user made on the card, PATCHed onto the draft before sending')
+          .optional(),
+        replyTo: z
+          .object({
+            messageId: z.string().min(1),
+            kind: z.enum(['reply', 'replyAll', 'forward']),
+          })
+          .describe('The message a reply/forward draft answers — needed to edit its comment')
           .optional(),
       }),
     },
@@ -2471,6 +2537,9 @@ export async function registerOutlookTools(
       if (!draftId) return errText('draftId is required');
 
       const overrides = rec(args.overrides);
+      if (typeof overrides.comment === 'string') {
+        return sendRebuiltReply(access.auth, draftId, overrides.comment, rec(args.replyTo));
+      }
       const to = Array.isArray(overrides.to) ? overrides.to.map(String).filter(Boolean) : null;
       const cc = Array.isArray(overrides.cc) ? overrides.cc.map(String).filter(Boolean) : null;
       if (to !== null && to.length === 0) return errText('No recipient to send to');

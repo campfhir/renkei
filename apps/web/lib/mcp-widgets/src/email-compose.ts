@@ -6,9 +6,11 @@
  * app-only outlook_send_draft_confirm; Discard runs
  * outlook_discard_draft_confirm and deletes the draft. A fresh compose
  * (kind 'compose') is editable — edits ride to the confirm tool as overrides
- * and are PATCHed onto the draft before it goes out. Reply/reply-all/forward
- * drafts are shown read-only: Graph's draft body carries the quoted thread,
- * and a body edit would replace the whole thing, quotes included.
+ * and are PATCHed onto the draft before it goes out. A reply/reply-all/
+ * forward keeps its recipients and subject as Graph set them, but its own
+ * text is editable too: Graph's draft body is that text and the quoted
+ * thread as one, so an edited comment goes to the confirm tool with the
+ * message it answers (`messageId`) and the draft is rebuilt from it.
  *
  * Bodies are Markdown. The editable textarea holds the Markdown source
  * (what the confirm tool renders on send); a read-only body shows the
@@ -83,6 +85,10 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   );
 
   const editable = kind === 'compose';
+  // Cards from before reply-family previews carried their message id stay
+  // read-only: without it the confirm tool cannot rebuild the draft.
+  const messageId = str(draft.messageId);
+  const commentEditable = !editable && messageId !== '';
   const to = strings(draft.to).join(', ');
   const cc = strings(draft.cc).join(', ');
   const bcc = strings(draft.bcc).join(', ');
@@ -93,7 +99,11 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   const toInput = editable ? inputField('To', to) : null;
   const ccInput = editable && cc ? inputField('Cc', cc) : null;
   const subjectInput = editable ? inputField('Subject', subject) : null;
-  const bodyInput = editable ? textField('Body', body) : null;
+  const bodyInput = editable
+    ? textField('Body', body)
+    : commentEditable
+      ? textField(kind === 'forward' ? 'Note' : 'Body', body)
+      : null;
 
   if (toInput) card.append(toInput.field);
   else card.append(readonlyField('To', to || '(auto-populated by reply)'));
@@ -109,11 +119,11 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     );
   } else {
     card.append(bodyHtml ? htmlField('Body', bodyHtml) : readonlyField('Body', body));
-    if (kind !== 'compose') {
-      card.append(
-        el('div', 'card-subtitle', 'The quoted thread below your text is included on send.')
-      );
-    }
+  }
+  if (kind !== 'compose') {
+    card.append(
+      el('div', 'card-subtitle', 'The quoted thread below your text is included on send.')
+    );
   }
 
   const discardButton = el('button', undefined, 'Discard');
@@ -131,9 +141,19 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
           body: bodyInput?.input.value ?? body,
         }
       : undefined;
+    // An unchanged reply goes out as previewed; only an edit rebuilds it.
+    const comment = commentEditable && bodyInput ? bodyInput.input.value : body;
+    const edited = commentEditable && comment.trim() !== body.trim();
+    if (edited && !comment.trim() && kind !== 'forward') {
+      throw new Error('Write the reply, or discard it.');
+    }
     const sent = await bridge.callTool(
       'outlook_send_draft_confirm',
-      { draftId, ...(overrides ? { overrides } : {}) },
+      {
+        draftId,
+        ...(overrides ? { overrides } : {}),
+        ...(edited ? { overrides: { comment }, replyTo: { messageId, kind } } : {}),
+      },
       stateKey
     );
     if (sent.isError) throw new Error(resultText(sent) || 'Send failed');

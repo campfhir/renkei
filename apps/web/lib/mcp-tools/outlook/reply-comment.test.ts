@@ -230,6 +230,8 @@ describe('outlook_reply_preview', () => {
     expect(result.structuredContent?.body).toBe(COMMENT);
     expect(result.structuredContent?.bodyHtml).toBe(COMMENT_HTML);
     expect(result.structuredContent?.kind).toBe('reply');
+    // What lets the card rebuild the draft when its text is edited.
+    expect(result.structuredContent?.messageId).toBe('msg-1');
     expect(result.structuredContent?.to).toEqual(['sravya@example.com']);
   });
 
@@ -300,6 +302,51 @@ describe('outlook_send_draft_confirm', () => {
     expect(requests[0].body).toEqual({
       body: { contentType: 'HTML', content: '<div><p>Edited <em>now</em></p></div>' },
     });
+  });
+});
+
+describe('outlook_send_draft_confirm, a reply edited on the card', () => {
+  it('rebuilds the draft from the message with the new text, sends it, then drops the preview', async () => {
+    const result = await outlookTool('outlook_send_draft_confirm', {
+      draftId: 'draft-old',
+      overrides: { comment: 'Edited *reply*' },
+      replyTo: { messageId: 'msg-1', kind: 'reply' },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(requests.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual(
+      [
+        'GET /v1.0/me/messages/draft-old',
+        'POST /v1.0/me/messages/msg-1/createReply',
+        'PATCH /v1.0/me/messages/draft-1',
+        'POST /v1.0/me/messages/draft-1/send',
+        'DELETE /v1.0/me/messages/draft-old',
+      ]
+    );
+    expect(requests[2].body).toEqual({
+      body: {
+        contentType: 'HTML',
+        content: QUOTED_HTML.replace('<body>', '<body><div><p>Edited <em>reply</em></p></div><br>'),
+      },
+    });
+  });
+
+  it('refuses an emptied reply and leaves the preview draft alone', async () => {
+    const result = await outlookTool('outlook_send_draft_confirm', {
+      draftId: 'draft-old',
+      overrides: { comment: '  ' },
+      replyTo: { messageId: 'msg-1', kind: 'reply' },
+    });
+    expect(result.isError).toBe(true);
+    expect(requests).toEqual([]);
+  });
+
+  it('needs the message the reply answers', async () => {
+    const result = await outlookTool('outlook_send_draft_confirm', {
+      draftId: 'draft-old',
+      overrides: { comment: 'Edited' },
+    });
+    expect(result.isError).toBe(true);
+    expect(requests).toEqual([]);
   });
 });
 
