@@ -182,11 +182,11 @@ async function archiveIdleChats(db: Kysely<DB>, orgRetentionDays: number): Promi
     `.execute(db);
     if (archived.rows.length === 0) continue;
     const chatIds = archived.rows.map((chat) => chat.id);
-    await db
-      .updateTable('chat_projects')
-      .set({ active_chat_id: null })
-      .where('active_chat_id', 'in', chatIds)
-      .execute();
+    await sql`
+      UPDATE chat_projects
+         SET active_chat_id = NULL
+       WHERE active_chat_id = ANY(${chatIds}::uuid[])
+    `.execute(db);
     logger.info('auto-archived {count} idle chat(s)', {
       component: 'worker-agents/chat-retention',
       count: chatIds.length,
