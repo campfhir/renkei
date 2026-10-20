@@ -192,7 +192,7 @@ surface.
 - metadata XML builders (`package.xml`, `CustomObject`, `CustomField`, `ValidationRule`,
   `RecordType`, `Layout` merges, `PermissionSet`, `CustomApplication`, `CustomTab`) and the deploy
   result parser;
-- the nonprofit model detector and field maps (below).
+- the describe helpers: the per-org relationship graph and path finding (below).
 
 Salesforce is internet SaaS, so there is no dedicated worker: HTTP runs in `apps/web` through the
 delegate's authenticated fetch, the Entra Developer arrangement. The admin connector's deploy
@@ -239,30 +239,83 @@ for shares (its `person` slot shows the recipient, its group lists the folder's 
 
 | Tool                         | Does                                                                                                                                                   |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `salesforce_check_access`    | Who the connection is (user, profile, role, org, edition, sandbox or not), which nonprofit model is installed, API usage today                         |
+| `salesforce_check_access`    | Who the connection is (user, profile, role, org, edition, sandbox or not), API usage today                                                             |
 | `salesforce_list_objects`    | The objects the person can see (describeGlobal, filtered to queryable and not system plumbing), label and API name                                     |
 | `salesforce_describe_object` | Fields (type, required, updateable, picklist values per record type, relationships), record types, child relationships — trimmed to what a model needs |
 
 **Records**
 
-| Tool                                             | Does                                                                                                                          |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `salesforce_search`                              | SOSL across objects by text ("everything about Acme"), or one object with filters (parameterized search)                      |
-| `salesforce_query`                               | SOQL `SELECT`, one page at a time with a cursor, relationship and aggregate queries allowed                                   |
-| `salesforce_get_record`                          | One record with display values and labels (UI API), optionally named related lists                                            |
-| `salesforce_list_related`                        | A related list of a record (a contact's opportunities, an account's cases), paged                                             |
-| `salesforce_create_record`                       | Create one record; record type by name; picklist values checked against the record type before sending                        |
-| `salesforce_update_record`                       | Update one record's fields; reads first so the result shows old → new                                                         |
-| `salesforce_upsert_record`                       | Create-or-update by an external id field                                                                                      |
-| `salesforce_update_records_preview` / `_confirm` | Many records, one change set (Composite sObject collections, all-or-none by default)                                          |
-| `salesforce_delete_records_preview` / `_confirm` | Delete; the preview names cascade-deleted children (master-detail) from the describe                                          |
-| `salesforce_change_owner_preview` / `_confirm`   | Reassign records; the preview names the new owner and what sharing changes                                                    |
-| `salesforce_log_activity`                        | A completed Task (call, email, meeting note) or an Event, related to the record(s) named                                      |
-| `salesforce_create_task`                         | An open follow-up Task assigned to the person or a named user, with a due date                                                |
-| `salesforce_add_note`                            | A Note (ContentNote) attached to a record                                                                                     |
-| `salesforce_list_actions`                        | The quick actions the org built for an object or record ("Log a Call", "Close Case"), with their fields and predefined values |
-| `salesforce_run_action`                          | Run one of those quick actions on a record — the org's own sanctioned verb, same confirm rule as an update                    |
-| `salesforce_record_history`                      | Field history of a record (the object's `__History` table): who changed which tracked field, from what, to what, when         |
+| Tool                                             | Does                                                                                                                                                                                                                               |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `salesforce_search`                              | SOSL across objects by text ("everything about Acme"), or one object with filters (parameterized search)                                                                                                                           |
+| `salesforce_query`                               | SOQL `SELECT`, one page at a time with a cursor, relationship and aggregate queries allowed                                                                                                                                        |
+| `salesforce_get_record`                          | One record with display values and labels (UI API); `include` takes parent paths (`Account.Owner`) and child relationships (`Contacts`, `Site_Visits__r`) to fetch in the same call                                                |
+| `salesforce_list_related`                        | Any child relationship of a record, standard or custom, paged, with filters and sort                                                                                                                                               |
+| `salesforce_find_relationship_path`              | How two objects connect — direct lookup, master-detail, through a junction object, or via a shared parent — from the describe graph, so "this account's site visits" finds the path the org actually built                         |
+| `salesforce_create_record`                       | Create one record; record type by name; picklist values checked against the record type; `parent` links it to a record by choosing the relationship field (refused, naming the fields, when there is more than one to that object) |
+| `salesforce_create_record_tree`                  | A parent with its children in one all-or-none call (sObject Tree), e.g. a record and its line items — preview + confirm, as a multi-record write                                                                                   |
+| `salesforce_relate_records`                      | Relate two records many-to-many by creating the junction record between them; the junction object is found from the describe, and refused naming the candidates when more than one connects them                                   |
+| `salesforce_update_record`                       | Update one record's fields; reads first so the result shows old → new                                                                                                                                                              |
+| `salesforce_upsert_record`                       | Create-or-update by an external id field                                                                                                                                                                                           |
+| `salesforce_update_records_preview` / `_confirm` | Many records, one change set (Composite sObject collections, all-or-none by default)                                                                                                                                               |
+| `salesforce_delete_records_preview` / `_confirm` | Delete; the preview names cascade-deleted children (master-detail) from the describe                                                                                                                                               |
+| `salesforce_change_owner_preview` / `_confirm`   | Reassign records; the preview names the new owner and what sharing changes                                                                                                                                                         |
+| `salesforce_log_activity`                        | A completed Task (call, email, meeting note) or an Event, related to the record(s) named                                                                                                                                           |
+| `salesforce_create_task`                         | An open follow-up Task assigned to the person or a named user, with a due date                                                                                                                                                     |
+| `salesforce_add_note`                            | A Note (ContentNote) attached to a record                                                                                                                                                                                          |
+| `salesforce_record_history`                      | Field history of a record (the object's `__History` table): who changed which tracked field, from what, to what, when                                                                                                              |
+
+### Instance-agnostic: the platform, not one org
+
+The connector knows **Salesforce**, not any one organization's Salesforce. It has no built-in
+knowledge of a particular org's objects, packages, processes or field meanings, and no tool that
+only makes sense in one org or one industry. Everything specific to an org — which objects exist,
+how they relate, which picklist values are valid, which fields are required, what a field means —
+is read from that org at run time (describe, UI API, the org's own validation errors), so the same
+tools work in a sales org, a service org, a nonprofit on NPSP or Nonprofit Cloud, or an org that is
+nearly all custom objects.
+
+An organization's **process** — "log a call attempt and bump the counter", "record a gift the way
+our development team does", "move a referral to its next stage" — belongs in a **prompt library**
+or an **agent's instructions** ([`chat.md`](./chat.md), [`agents.md`](./agents.md)), written by the
+people who own that process and built on the generic tools below. That keeps the connector small
+and universal, and lets each organization change its procedures without a Renkei release.
+
+### Salesforce fundamentals the tools encode
+
+What the tools do know is the platform's model, the same in every org:
+
+- **Objects, fields, records.** Standard objects, custom objects (`__c`), managed-package objects
+  (`ns__Obj__c`), and the system tables that hang off them — `__History`/`…History` (field
+  history), `__Share` (manual sharing), `__Feed`. Custom metadata types (`__mdt`) and external
+  objects (`__x`) are readable, not writable here; platform events (`__e`) are out of scope.
+- **Ids.** 15- and 18-character ids; the first three characters are the object's key prefix, so any
+  id resolves to its object through the describe without being told.
+- **Relationships.**
+  - _Lookup_ — optional, the child keeps its own owner and sharing.
+  - _Master-detail_ — the child's sharing and owner come from the parent, deleting the parent
+    deletes the children, and the parent can carry roll-up summaries.
+  - _Junction objects_ — two master-details make a many-to-many.
+  - _Polymorphic_ fields — an activity's `WhoId` (Lead or Contact) and `WhatId` (almost anything),
+    `OwnerId` (User or Queue) — resolved by the id's prefix.
+  - _Hierarchical_ (User to User) and self-relationships.
+  - Traversal both ways: child to parent by dotted path (`Account.Owner.Name`, up to five
+    levels), parent to child by relationship name (`Contacts`, `Site_Visits__r`), both read from
+    the describe rather than guessed from labels.
+- **Record types, picklists and dependent picklists** — which values are valid depends on the
+  record type and, for a dependent picklist, on the controlling field.
+- **Ownership and sharing.** An owner is a user or a queue; who else can see a record follows the
+  org's sharing model, which Salesforce enforces and the connector only reports.
+- **Activities.** Tasks and Events relate to any activity-enabled object, custom ones included,
+  through `WhatId`, and to people through `WhoId`.
+- **Notes and files** relate to records through `ContentDocumentLink`.
+- **Computed and protected fields.** Formula, roll-up summary and auto-number fields are
+  read-only; required, unique and external-id fields are marked in the describe.
+- **Deleted records** sit in the Recycle Bin for 15 days and are visible through `queryAll`.
+
+These are the concepts the tool descriptions use and the package's describe helpers model (a
+relationship graph per org and person, built from the describe and cached with it), so the model
+can say "the contacts on this account's open opportunities" without anyone teaching it that org.
 
 ### Custom objects and custom fields are first-class
 
@@ -328,8 +381,8 @@ connector's change requests.
 ### Writes meet the org's own automation
 
 An org that has been built out puts its process in the object: validation rules that gate a stage
-change, before-save flows that stamp dates, quick actions that are the sanctioned way to do a step.
-The record tools work with that rather than around it:
+change, before-save flows that stamp dates, duplicate rules, required fields. The record tools work
+with that rather than around it:
 
 - **The result is re-read after the write.** The old → new list on a create or update includes the
   fields automation changed, not only the ones sent — "Stage → Site Visit; also set by the org:
@@ -338,10 +391,6 @@ The record tools work with that rather than around it:
   field it is attached to (`fields` on the error). The tool returns both, and the model asks the
   person for exactly that value ("When is the site visit scheduled?") instead of guessing a date
   to get past the rule. It never writes a placeholder to satisfy a validation rule.
-- **The org's quick actions come first.** When an object has a quick action for what the person
-  asked ("log a call attempt"), the model is steered to `salesforce_run_action`, which sends only
-  that action's fields with its predefined values — the admin's definition of the step — rather
-  than a free-form update.
 - **Read-modify-write is conditional.** Updates computed from the current value (a call-attempt
   counter plus one) send `If-Unmodified-Since` with the record's `LastModifiedDate`, so a colleague's
   save in between is a conflict to re-read, not a lost update.
@@ -411,56 +460,19 @@ design point here that is easy to get wrong:
 "Send Pat a link" is a separate, cheaper ask: the tool returns the report's Lightning URL, and the
 chat can send it through WebEx or Outlook if those connectors are on.
 
-### Nonprofit orgs
-
-There are two nonprofit data models in the wild, and the connector must work on both without the
-model having to know which it is talking to:
-
-|                    | NPSP (Nonprofit Success Pack, a managed package)           | Nonprofit Cloud (Salesforce's newer industry model)                        |
-| ------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Detected by        | `npsp__` / `npe01__` / `npe03__` objects in describeGlobal | `GiftTransaction` in describeGlobal                                        |
-| Donor              | Contact, in a Household Account                            | Person Account                                                             |
-| Household          | Account (household record type)                            | Party Relationship Group                                                   |
-| A gift             | Opportunity (+ `npe01__OppPayment__c` payments)            | `GiftTransaction`                                                          |
-| Recurring          | `npe03__Recurring_Donation__c`                             | `GiftCommitment` + schedule                                                |
-| Fund / designation | `npsp__General_Accounting_Unit__c` + `npsp__Allocation__c` | `GiftDesignation` + `GiftTransactionDesignation`                           |
-| Programs           | Program Management Module (`pmdm__`), when installed       | `Program`, `ProgramEnrollment`, `BenefitAssignment`, `BenefitDisbursement` |
-
-Everything above works on either model unchanged — they are just objects. On top, a few
-model-aware tools whose field maps live in the package:
-
-- `salesforce_find_constituent` — a person by name, address or email, with their household and
-  its members.
-- `salesforce_giving_summary` — lifetime, this year, last gift, largest gift, recurring status, by
-  designation. NPSP reads its rollup fields on Contact and Account; Nonprofit Cloud aggregates
-  `GiftTransaction`. Both say which they used.
-- `salesforce_record_gift_preview` / `_confirm` — a one-off gift for a constituent, with
-  designation and campaign. Always preview + confirm (money, receipts and acknowledgement
-  letters hang off it). On NPSP it creates the Opportunity with its primary contact so NPSP's own
-  triggers create the payment and roll the totals; on Nonprofit Cloud it creates the
-  `GiftTransaction` and its designations.
-- `salesforce_list_program_enrollments` / `salesforce_record_service` — program participation and
-  service delivery, where PMM or Nonprofit Cloud Programs is present.
-
-Gift entry through NPSP's Data Import batches or Nonprofit Cloud's Gift Entry (which add donor
-matching and batch totals) is the better path for anything beyond one gift at a time; that is a
-later stage, and the exact processing calls must be confirmed against a live org of each model
-before it is built.
-
 ### Scope picker
 
 The CRM card's checkboxes narrow what registers, the Mirth permissions shape — Salesforce's own
 permissions still decide every call:
 
-| Option                              | Tools                                                                                                  | Default |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------ | ------- |
-| Read records                        | orientation, search, query, get, related                                                               | on      |
-| Create and update records           | create, update, upsert, log activity, task, note, bulk update                                          | on      |
-| Delete records                      | delete pair                                                                                            | off     |
-| Change record owners                | change owner pair                                                                                      | off     |
-| Read and run reports and dashboards | find, describe, run, export, folders, dashboards                                                       | on      |
-| Author and share reports            | create, update, clone, delete, share, subscribe                                                        | on      |
-| Nonprofit tools                     | constituent, giving summary, record gift, programs — registers only when a nonprofit model is detected | on      |
+| Option                              | Tools                                                                              | Default |
+| ----------------------------------- | ---------------------------------------------------------------------------------- | ------- |
+| Read records                        | orientation, search, query, get, related, relationship path, history               |
+| Create and update records           | create, record tree, relate, update, upsert, log activity, task, note, bulk update |
+| Delete records                      | delete pair                                                                        | off     |
+| Change record owners                | change owner pair                                                                  | off     |
+| Read and run reports and dashboards | find, describe, run, export, folders, dashboards                                   | on      |
+| Author and share reports            | create, update, clone, delete, share, subscribe                                    | on      |
 
 ## The admin connector (`salesforce-admin`)
 
@@ -630,7 +642,6 @@ reported as "not checked", never as clean.
   org-wide while everyone else keeps working.
 - **Indexing** (and with it `verifyAccess` on `UserRecordAccess`).
 - **Files** on the CRM connector (ContentVersion through the scratch space).
-- **Gift entry batches** on NPSP and Nonprofit Cloud.
 - **CRM Analytics, Data Cloud, Marketing Cloud, Experience Cloud** — separate products and APIs.
 - **Platform Events / Change Data Capture triggers** ("an opportunity closes" as an agent trigger).
   Attractive, and the trigger framework is ready for it, but it needs a subscriber process holding
@@ -643,18 +654,17 @@ reported as "not checked", never as clean.
    package's API version and SOQL builder, `salesforce_check_access` and
    `salesforce_admin_check_access`.
 2. **CRM records.** Orientation, search, query, get, related, create, update, upsert, activities,
-   bulk update and delete pairs, change owner, API budget — exercised against the org's own custom
-   objects (auto-number names, custom lookups, dependent picklists) as much as standard ones.
+   record trees, relating records, relationship paths, history, bulk update and delete pairs, change
+   owner, API budget — tested against more than one org shape (a standard sales org and one that is
+   mostly custom objects, with a managed package installed), so nothing org-specific creeps in.
 3. **Reports.** Find, describe, run (sync and async), export, report types, create, update, clone,
    delete, folders, share, subscribe, dashboards.
-4. **Nonprofit.** Model detection, constituent, giving summary, record gift, programs — built and
-   tested against one NPSP and one Nonprofit Cloud org.
-5. **Admin reads and the change-request machinery.** Org registry, admin reads, the
+4. **Admin reads and the change-request machinery.** Org registry, admin reads, the
    change-request table, validation on propose, the review page, apply with quick deploy.
-6. **Admin proposals.** Fields and picklists first (the most frequent chore), then objects,
+5. **Admin proposals.** Fields and picklists first (the most frequent chore), then objects,
    validation rules, record types, layouts, permission sets, apps, assignments; then Path, quick
    actions, compact layouts, report types, stamp rules and record pages.
-7. **Whole applications and promotion.** Acceptance test: rebuilding a stage-driven custom
+6. **Whole applications and promotion.** Acceptance test: rebuilding a stage-driven custom
    object end to end — fields, Path, record page, quick actions, stamp rules, validation rules,
    report type and reports — in a sandbox, then promoted.
 
@@ -673,4 +683,3 @@ nobody reconnects between stages.
    deployable form, settled against a live org in stage 5.
 4. **API version.** Pin to the release current when stage 1 starts, and verify the Folders
    (report sharing) resource paths and the report spreadsheet export against that version.
-5. **Gift entry processing calls** on NPSP and Nonprofit Cloud, before the batch stage.
