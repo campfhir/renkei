@@ -199,6 +199,37 @@ delegate's authenticated fetch, the Entra Developer arrangement. The admin conne
 needs a zip builder — the one new dependency, and it lives in the package so it is tested without
 a network.
 
+### Generic tools typed by the describe, not tools generated per object
+
+Mirth gets one generated tool per route because its API is fixed. A Salesforce org's API is not:
+every custom object is a new `/sobjects/{sObject}` resource. Generating `create_site_visit`,
+`update_site_visit`, … per object would tie the tool list to one org, run to hundreds of tools in a
+built-out org, and change whenever an admin adds an object. So the record tools stay generic — an
+`object` argument and a `fields` map — and the **describe** types them at call time: unknown
+fields, wrong types, read-only fields, invalid picklist values and missing required fields are
+refused before anything is sent, with the valid choices named. The describe (with the UI API for
+record-type picklists) is GA, versioned with the rest of the API, and answers per person, so it is
+the source of truth.
+
+**Salesforce's OpenAPI 3.0 generation for sObjects** (`POST /async/specifications/oas3`) was
+considered as that source and not chosen for the connector's core:
+
+- It is a **beta**, which Salesforce says not to build production integrations on, and an admin
+  must opt the org in (Setup → User Interface), so it cannot be assumed in an arbitrary org.
+- It only answers on the **latest** API version, which conflicts with pinning one version and
+  bumping it deliberately.
+- It is **asynchronous** (a locator to poll, results kept 48 hours) and large for a built-out org —
+  a build step, not something to call on a tool's path.
+- It covers the `sobjects` and `query` resources only — none of reports, the UI API, composite or
+  the Metadata API — and adds nothing to the describe it is generated from.
+
+Where it does fit is **handing the org's API to a developer**: an optional
+`salesforce_admin_export_openapi` (admin connector, when the org has the beta on) that generates
+the document for named objects, polls it, and stages it in the sandbox scratch space — for a code
+project building an integration against the org, or for a person to load into their own tools.
+That is a convenience on top, and nothing else depends on it. If it leaves beta and covers more of
+the API, it is worth revisiting as a cached per-org schema source.
+
 ### References resolve; ambiguity refuses
 
 Every tool takes a record as an id, or as an object plus a name ("Contact Jane Doe", "Account
@@ -562,6 +593,7 @@ SOAP fallback is the open seam to settle against a live org first.**
 | `salesforce_admin_list_flows`            | Flows on an object, trigger type, active version — read-only in this version                                                                                                         |
 | `salesforce_admin_audit_trail`           | Setup Audit Trail, filtered by section, person or date — "who changed this field?"                                                                                                   |
 | `salesforce_admin_compare_orgs`          | One object's metadata in two orgs, side by side — "what's in UAT that isn't in production?"                                                                                          |
+| `salesforce_admin_export_openapi`        | The org's OpenAPI 3.0 document for named objects (Salesforce's beta, when the org has it on), staged in the scratch space for a developer or a code project                          |
 | `salesforce_admin_list_change_requests`  | The person's requests, their validation and apply status                                                                                                                             |
 
 **Proposals** (each creates a validated change request and returns its review link)
