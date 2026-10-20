@@ -1371,7 +1371,7 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
                       onThinking={changeThinking}
                       hasHistory={state.messages.length > 0}
                     />
-                    <ContextMeter messages={state.messages} model={currentModel} />
+                    <ContextMeter tokens={initialChat.contextTokens} model={currentModel} />
                   </>
                 }
                 modeControl={

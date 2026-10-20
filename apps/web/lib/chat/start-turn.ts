@@ -561,7 +561,9 @@ async function executeTurnBody(
       needsCompaction(rows, {
         contextWindow: input.llm.contextWindow ?? null,
         maxOutputTokens: input.llm.maxOutputTokens,
-        summaryAt: priorSummary?.createdAt ?? null,
+        summary: priorSummary
+          ? { createdAt: priorSummary.createdAt, chars: priorSummary.content.length }
+          : null,
       })
     ) {
       try {

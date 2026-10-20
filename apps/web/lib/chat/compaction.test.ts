@@ -163,7 +163,7 @@ describe('foldCandidates', () => {
 
 describe('needsCompaction with a recorded context window', () => {
   const count = CHAT_COMPACT_KEEP_RECENT + CHAT_COMPACT_MIN_FOLD;
-  const budget = { contextWindow: 200_000, maxOutputTokens: 4_096, summaryAt: null };
+  const budget = { contextWindow: 200_000, maxOutputTokens: 4_096 };
   const small = () => Array.from({ length: count }, (_, i) => bigRow(i + 1, 100));
   /** The newest reply carries what its call measured. */
   const measured = (inputTokens: number, summaryAt: Date | null = null) => {
@@ -171,9 +171,12 @@ describe('needsCompaction with a recorded context window', () => {
     messages[count - 1] = bigRow(count, 100, {
       status: 'complete',
       usage: { inputTokens, outputTokens: 500 },
-      createdAt: new Date(1_000),
+      updatedAt: new Date(1_000),
     });
-    return { messages, budget: { ...budget, summaryAt } };
+    return {
+      messages,
+      budget: { ...budget, summary: summaryAt ? { createdAt: summaryAt, chars: 0 } : null },
+    };
   };
 
   it('leaves a large-window model alone past the old character threshold', () => {

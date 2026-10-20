@@ -1,9 +1,10 @@
 /**
  * The chat's context meter: how many tokens the conversation uses against
- * the model's recorded context window. No model is called — the chat is
- * seeded with an assistant reply carrying `usage`, the way a finished turn
- * leaves it. Three cases: a model with a window (bar + "used / limit"), a
- * model without one (the count alone), and a phone-width pass.
+ * the model's recorded context window, as a small ring. No model is called
+ * — the chat is seeded with an assistant reply carrying `usage`, the way a
+ * finished turn leaves it. Cases: a model with a window (the ring), a model
+ * without one (nothing shown), a compaction since the reply (the ring
+ * resets), and a phone-width pass.
  */
 
 import { createCipheriv, randomBytes } from 'node:crypto';
@@ -30,6 +31,10 @@ function idsFor(project: string) {
     openChatId: `cccccccc-cccc-4ccc-8ccc-cccccccccc${digit}4`,
     limitedTurnId: `cccccccc-cccc-4ccc-8ccc-cccccccccc${digit}5`,
     openTurnId: `cccccccc-cccc-4ccc-8ccc-cccccccccc${digit}6`,
+    foldedChatId: `cccccccc-cccc-4ccc-8ccc-cccccccccc${digit}7`,
+    foldedTurnId: `cccccccc-cccc-4ccc-8ccc-cccccccccc${digit}8`,
+    foldedModelId: `cccccccc-cccc-4ccc-8ccc-cccccccccc${digit}9`,
+    foldedTitle: `Context meter compacted (${digit})`,
     limitedTitle: `Context meter limited (${digit})`,
     openTitle: `Context meter open (${digit})`,
   };
@@ -46,7 +51,15 @@ function sealSecret(plaintext: string): string {
 
 async function seedChat(
   client: Client,
-  input: { modelId: string; chatId: string; turnId: string; title: string; contextWindow: number | null }
+  input: {
+    modelId: string;
+    chatId: string;
+    turnId: string;
+    title: string;
+    contextWindow: number | null;
+    /** A compaction ran after the reply: the summary is newer than the measured usage. */
+    compactedAfter?: boolean;
+  }
 ): Promise<void> {
   await client.query('DELETE FROM chats WHERE id = $1', [input.chatId]);
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [input.modelId]);
@@ -100,13 +113,19 @@ async function seedChat(
       ]
     );
   }
+  if (input.compactedAfter) {
+    await client.query(
+      `INSERT INTO chat_summaries (chat_id, content, through_seq, folded_count, created_by, created_at)\n       VALUES ($1, $2, 2, 2, 'user', NOW() + interval '1 minute')`,
+      [input.chatId, chatKey.seal('A short summary of the earlier conversation.')]
+    );
+  }
 }
 
 async function cleanup(client: Client, ids: Ids): Promise<void> {
-  for (const chatId of [ids.limitedChatId, ids.openChatId]) {
+  for (const chatId of [ids.limitedChatId, ids.openChatId, ids.foldedChatId]) {
     await client.query('DELETE FROM chats WHERE id = $1', [chatId]);
   }
-  for (const modelId of [ids.limitedModelId, ids.openModelId]) {
+  for (const modelId of [ids.limitedModelId, ids.openModelId, ids.foldedModelId]) {
     await client.query('DELETE FROM llm_model_configs WHERE id = $1', [modelId]);
   }
 }
@@ -132,23 +151,39 @@ test.describe('chat context meter', () => {
         contextWindow: null,
       });
 
+      await seedChat(client, {
+        modelId: ids.foldedModelId,
+        chatId: ids.foldedChatId,
+        turnId: ids.foldedTurnId,
+        title: ids.foldedTitle,
+        contextWindow: 200_000,
+        compactedAfter: true,
+      });
+
       await page.goto(`/chat/${ids.limitedChatId}`);
       await expect(page.getByRole('heading', { level: 1, name: ids.limitedTitle })).toBeVisible();
       const meter = page.getByTestId('context-meter');
-      await expect(meter.getByTestId('context-meter-text')).toHaveText('42k / 200k');
-      await expect(meter.getByRole('progressbar', { name: 'Context used' })).toHaveAttribute('aria-valuenow', '21');
-      await expect(meter).toHaveAttribute('title', /42,000 of 200,000 tokens \(21%\)/);
+      await expect(meter).toHaveAttribute('aria-valuenow', '21');
+      await expect(meter).toHaveAttribute('title', 'Context: 42k of 200k tokens (21%)');
       await shot(page, testInfo, 'chat-context-meter-limited');
 
       await page.setViewportSize({ width: 390, height: 844 });
       await expect(meter).toBeVisible();
       await shot(page, testInfo, 'chat-context-meter-limited-mobile');
 
+      // No recorded window: nothing to measure against, so nothing shown.
       await page.goto(`/chat/${ids.openChatId}`);
       await expect(page.getByRole('heading', { level: 1, name: ids.openTitle })).toBeVisible();
-      await expect(page.getByTestId('context-meter-text')).toHaveText('42k tokens');
-      await expect(page.getByRole('progressbar', { name: 'Context used' })).toHaveCount(0);
-      await shot(page, testInfo, 'chat-context-meter-no-limit');
+      await expect(page.getByTestId('context-meter')).toHaveCount(0);
+
+      // A compaction newer than the last reply: its usage no longer describes
+      // the history, so the ring falls to the summary-sized estimate.
+      await page.goto(`/chat/${ids.foldedChatId}`);
+      await expect(page.getByRole('heading', { level: 1, name: ids.foldedTitle })).toBeVisible();
+      const reset = page.getByTestId('context-meter');
+      await expect(reset).toBeVisible();
+      expect(Number(await reset.getAttribute('aria-valuenow'))).toBeLessThanOrEqual(5);
+      await shot(page, testInfo, 'chat-context-meter-after-compaction');
     } finally {
       await cleanup(client, ids);
       await client.end();

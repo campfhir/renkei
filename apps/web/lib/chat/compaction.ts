@@ -229,8 +229,8 @@ export interface CompactionBudget {
   contextWindow: number | null;
   /** Room the reply itself needs inside that window. */
   maxOutputTokens: number;
-  /** When the newest summary was written; a measurement older than it predates the fold. */
-  summaryAt: Date | null;
+  /** The newest summary, when there is one: a measurement older than it predates the fold. */
+  summary?: { createdAt: Date; chars: number } | null;
 }
 
 /**
@@ -240,18 +240,24 @@ export interface CompactionBudget {
  * the newest fold no longer describes the history, so that case (and a chat
  * with no measured reply yet) estimates from the unfolded text alone.
  */
-function estimateRequestTokens(unfolded: StoredMessage[], summaryAt: Date | null): number {
+export function estimateRequestTokens(
+  messages: StoredMessage[],
+  summary: { createdAt: Date; chars: number } | null
+): number {
+  const unfolded = unfoldedOf(messages);
+  const summaryAt = summary?.createdAt ?? null;
   for (let index = unfolded.length - 1; index >= 0; index -= 1) {
     const message = unfolded[index];
     if (message.role !== 'assistant' || !message.usage || message.status !== 'complete') continue;
-    if (summaryAt !== null && message.createdAt <= summaryAt) break;
+    // updatedAt, not createdAt: a reply row opens before a turn's own auto-compaction runs.
+    if (summaryAt !== null && message.updatedAt <= summaryAt) break;
     const since = unfolded
       .slice(index + 1)
       .reduce((sum, later) => sum + messageChars(later), 0);
     return message.usage.inputTokens + message.usage.outputTokens + since / CHARS_PER_TOKEN;
   }
   const chars = unfolded.reduce((sum, message) => sum + messageChars(message), 0);
-  return REQUEST_OVERHEAD_TOKENS + chars / CHARS_PER_TOKEN;
+  return REQUEST_OVERHEAD_TOKENS + (chars + (summary?.chars ?? 0)) / CHARS_PER_TOKEN;
 }
 
 /**
@@ -268,7 +274,8 @@ export function needsCompaction(messages: StoredMessage[], budget?: CompactionBu
   if (budget?.contextWindow) {
     const room = Math.max(budget.contextWindow - budget.maxOutputTokens, 0);
     return (
-      estimateRequestTokens(unfolded, budget.summaryAt) > room * CHAT_COMPACT_WINDOW_FRACTION
+      estimateRequestTokens(messages, budget.summary ?? null) >
+      room * CHAT_COMPACT_WINDOW_FRACTION
     );
   }
   const chars = unfolded.reduce((sum, message) => sum + messageChars(message), 0);
