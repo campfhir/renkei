@@ -339,6 +339,17 @@ describe('AnthropicProvider.complete', () => {
     });
   });
 
+  it('maps a prompt-too-long 400 to context_length, not a malformed request', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(400, {
+        error: { type: 'invalid_request_error', message: 'prompt is too long: 210000 tokens > 200000 maximum' },
+      })
+    );
+    const result = await provider.complete(request);
+    if (result.ok) throw new Error('expected error');
+    expect(result.err.type).toBe('context_length');
+  });
+
   it.each([
     [401, 'auth'],
     [403, 'auth'],

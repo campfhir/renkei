@@ -40,7 +40,7 @@ export default function ModelSelect({
   const thinkingOn = thinking && current?.supportsThinking === true;
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative min-w-0">
       <button
         type="button"
         onClick={() => setOpen((state) => !state)}
@@ -48,7 +48,7 @@ export default function ModelSelect({
         aria-expanded={open}
         aria-label="Model"
         {...modelAnchor}
-        className="flex max-w-[14rem] items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+        className="flex max-w-[14rem] min-w-0 items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
       >
         <span className="truncate">{current?.label ?? 'Choose a model'}</span>
         {thinkingOn ? (

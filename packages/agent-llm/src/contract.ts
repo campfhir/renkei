@@ -160,6 +160,8 @@ export type LlmErrorKind =
   | 'auth'
   | 'rate_limit'
   | 'invalid_request'
+  /** The prompt did not fit the model's context window — compacting the history and retrying can fix it. */
+  | 'context_length'
   | 'overloaded'
   | 'provider_error'
   | 'timeout'
@@ -235,6 +237,32 @@ const CREDENTIAL_FAILURE_PHRASES = [
   'unauthorized',
   'permission_error',
 ];
+
+/**
+ * Whether an error body is a provider saying the prompt is larger than the
+ * model's context window. Providers answer it as an ordinary 400, so only
+ * the body tells it apart from a malformed request — and only this kind is
+ * worth a compaction and a retry. Phrases are the ones the providers
+ * actually use: Anthropic's "prompt is too long: N tokens > M maximum",
+ * OpenAI's `context_length_exceeded` / "maximum context length", Azure's
+ * "exceeds the context window".
+ */
+const CONTEXT_OVERFLOW_PHRASES = [
+  'prompt is too long',
+  'context_length_exceeded',
+  'maximum context length',
+  'exceeds the context window',
+  'exceed the context window',
+  'input is too long',
+  'input exceeds the context',
+  'context length exceeded',
+];
+
+export function looksLikeContextOverflow(body: string): boolean {
+  if (!body) return false;
+  const haystack = body.toLowerCase();
+  return CONTEXT_OVERFLOW_PHRASES.some((phrase) => haystack.includes(phrase));
+}
 
 export function looksLikeCredentialFailure(body: string): boolean {
   if (!body) return false;

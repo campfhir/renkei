@@ -12,7 +12,12 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { summarizeWireRequest } from './wire-summary';
-import { isAzureHost, looksLikeCredentialFailure, transportErrorKind } from './contract';
+import {
+  isAzureHost,
+  looksLikeContextOverflow,
+  looksLikeCredentialFailure,
+  transportErrorKind,
+} from './contract';
 import { readSseEvents } from './sse-reader';
 import { createAccumulator } from './stream-accumulator';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -286,6 +291,7 @@ function errorKindOf(status: number, body = ''): LlmErrorKind {
   if (looksLikeCredentialFailure(body)) return 'auth';
   if (status === 401 || status === 403) return 'auth';
   if (status === 429) return 'rate_limit';
+  if (looksLikeContextOverflow(body)) return 'context_length';
   if (status === 400 || status === 413 || status === 422) return 'invalid_request';
   // 529 is Anthropic's own overload code; 502/503/504 are what a gateway
   // between us and it returns. All are worth retrying — the OpenAI adapter
@@ -297,6 +303,7 @@ function errorKindOf(status: number, body = ''): LlmErrorKind {
 /** A mid-stream `error` event's type → the taxonomy. */
 function streamErrorKindOf(type: unknown, message: string): LlmErrorKind {
   if (looksLikeCredentialFailure(message)) return 'auth';
+  if (looksLikeContextOverflow(message)) return 'context_length';
   switch (type) {
     case 'authentication_error':
     case 'permission_error':

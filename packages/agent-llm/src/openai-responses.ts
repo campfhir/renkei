@@ -37,7 +37,12 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { summarizeWireRequest } from './wire-summary';
-import { isAzureHost, looksLikeCredentialFailure, transportErrorKind } from './contract';
+import {
+  isAzureHost,
+  looksLikeContextOverflow,
+  looksLikeCredentialFailure,
+  transportErrorKind,
+} from './contract';
 import { readSseEvents } from './sse-reader';
 import { createAccumulator } from './stream-accumulator';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -167,6 +172,7 @@ function errorKindOf(status: number, body = ''): LlmErrorKind {
   if (looksLikeCredentialFailure(body)) return 'auth';
   if (status === 401 || status === 403) return 'auth';
   if (status === 429) return 'rate_limit';
+  if (looksLikeContextOverflow(body)) return 'context_length';
   if (status === 400 || status === 404 || status === 413 || status === 422) {
     return 'invalid_request';
   }

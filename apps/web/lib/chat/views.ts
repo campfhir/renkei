@@ -184,6 +184,12 @@ export interface ChatView {
   activeTurn: TurnView | null;
   /** Files tools produced in this chat, oldest first. */
   artifacts: AttachmentView[];
+  /**
+   * Tokens the chat's next request will carry (compaction.ts's estimate: the
+   * last reply's measured usage, or the summary plus unfolded text after a
+   * compaction). Null before any reply, and for a chat whose content is sealed.
+   */
+  contextTokens: number | null;
   /** The owner's messages waiting behind the running turn, in send order (queued-sends.ts). */
   queue: QueuedSend[];
 }
@@ -231,6 +237,8 @@ export interface ModelOption {
   isDefault: boolean;
   /** Anthropic models take a thinking budget; the OpenAI dialect does not. */
   supportsThinking: boolean;
+  /** Context window in tokens, as the admin recorded it; null when none was. */
+  contextWindow: number | null;
 }
 
 /**
