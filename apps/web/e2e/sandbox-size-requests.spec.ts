@@ -224,7 +224,15 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   const limitText = page.getByRole('main').getByTestId('size-limit');
 
   // ── Default: 8 GB, with the way to ask for more ──
+  // The pages read the org settings through a cache of their own (the dev
+  // server holds one per route bundle, so the reset above does not reach it):
+  // read again until the previous project's 12 GB has aged out.
   await page.goto(projectUrl);
+  for (let tries = 0; tries < 15; tries += 1) {
+    if ((await limitText.textContent({ timeout: 30_000 })) === 'Checkout limit 8 GB.') break;
+    await page.waitForTimeout(5_000);
+    await page.reload();
+  }
   await expect(limitText).toHaveText('Checkout limit 8 GB.');
   await expect(page.getByTestId('size-request-pending')).toHaveCount(0);
   await shot(page, testInfo, '01-project-default');
