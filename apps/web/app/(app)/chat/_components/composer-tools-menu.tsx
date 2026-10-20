@@ -53,7 +53,7 @@ export default function ComposerToolsMenu({
     'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800';
 
   return (
-    <div ref={ref} className="relative sm:hidden">
+    <div ref={ref} className="relative @min-[30rem]:hidden">
       <button
         type="button"
         onClick={() => {

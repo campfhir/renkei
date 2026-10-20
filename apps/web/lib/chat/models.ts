@@ -9,10 +9,19 @@ import type { DB } from '@renkei/db';
 import { chatModelsOnly, imageModelsOnly } from '@renkei/agent-llm';
 import type { ModelOption } from './views';
 
+/** The context window an admin recorded in a model's settings, if it is a usable number. */
+function contextWindowOf(settings: unknown): number | null {
+  if (typeof settings !== 'object' || settings === null || !('contextWindow' in settings)) {
+    return null;
+  }
+  const value: unknown = settings.contextWindow;
+  return typeof value === 'number' && value > 0 ? Math.floor(value) : null;
+}
+
 export async function listChatModels(db: Kysely<DB>): Promise<ModelOption[]> {
   const rows = await db
     .selectFrom('llm_model_configs')
-    .select(['id', 'label', 'provider', 'model', 'is_default'])
+    .select(['id', 'label', 'provider', 'model', 'is_default', 'settings'])
     .where('enabled', '=', true)
     // An image generation model cannot answer chat: never in the picker.
     .where(chatModelsOnly)
@@ -26,6 +35,7 @@ export async function listChatModels(db: Kysely<DB>): Promise<ModelOption[]> {
     model: row.model,
     isDefault: row.is_default,
     supportsThinking: row.provider === 'anthropic',
+    contextWindow: contextWindowOf(row.settings),
   }));
 }
 

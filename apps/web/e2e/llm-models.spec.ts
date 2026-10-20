@@ -239,6 +239,8 @@ test('admin: reasoning effort is free text — no fixed value list — and round
   // handful of values known when this form was written.
   const reasoningEffort = page.getByLabel('Reasoning effort');
   await reasoningEffort.fill('xhigh');
+  // The context window the chat's usage meter measures against.
+  await page.getByLabel('Context window (tokens)').fill('400000');
   await shot(page, testInfo, 'llm-models-reasoning-effort-freetext');
 
   await page.getByRole('button', { name: 'Save' }).click();
@@ -248,6 +250,7 @@ test('admin: reasoning effort is free text — no fixed value list — and round
   // shows the typed value still there, not stripped back to blank.
   await page.getByRole('button', { name: 'Edit' }).click();
   await expect(page.getByLabel('Reasoning effort')).toHaveValue('xhigh');
+  await expect(page.getByLabel('Context window (tokens)')).toHaveValue('400000');
 });
 
 test('admin: reasoning effort is offered for a Claude row too, with its own hint, and round-trips', async ({

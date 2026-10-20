@@ -45,13 +45,13 @@ const RECENT_BLOCK_MIN_CHARS = 2_000;
 export const RECENT_MESSAGES = 6;
 
 /**
- * The model's context window, in tokens: the operator's
- * `settings.contextWindowTokens` when set, else what the model family is
- * known to take, else a conservative default.
+ * The model's context window, in tokens: what the operator recorded on the
+ * model (`settings.contextWindow`, the admin model form), else what the
+ * model family is known to take, else a conservative default.
  */
 export function contextWindowOf(model: string, settings?: unknown): number {
   if (typeof settings === 'object' && settings !== null && !Array.isArray(settings)) {
-    const configured: unknown = Reflect.get(settings, 'contextWindowTokens');
+    const configured: unknown = Reflect.get(settings, 'contextWindow');
     if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) {
       return Math.floor(configured);
     }
@@ -64,6 +64,30 @@ export function contextWindowOf(model: string, settings?: unknown): number {
   if (/\bo[134](-|$)/.test(name)) return 200_000;
   if (/gpt-4o|gpt-4-turbo/.test(name)) return 128_000;
   return DEFAULT_CONTEXT_WINDOW_TOKENS;
+}
+
+/**
+ * When a conversation is folded into a summary — one rule for chat
+ * (apps/web/lib/chat/compaction.ts) and agent runs (apps/worker-agents):
+ * once the next request would fill this much of the room the window leaves
+ * after the reply. Below it nothing is summarized; fitMessages is only the
+ * last line for what a fold cannot shrink.
+ */
+export const COMPACT_WINDOW_FRACTION = 0.85;
+/**
+ * Characters per token for ESTIMATING a request's size where no call has
+ * measured it — a middle reading, for deciding when to fold. The budget
+ * fitMessages enforces uses the more conservative CHARS_PER_TOKEN.
+ */
+export const ESTIMATE_CHARS_PER_TOKEN = 3.5;
+
+/** Whether a request of `requestTokens` should be folded first, by COMPACT_WINDOW_FRACTION. */
+export function overCompactionThreshold(
+  requestTokens: number,
+  model: { contextWindow: number; maxOutputTokens: number }
+): boolean {
+  const room = Math.max(model.contextWindow - model.maxOutputTokens, 0);
+  return requestTokens > room * COMPACT_WINDOW_FRACTION;
 }
 
 /**

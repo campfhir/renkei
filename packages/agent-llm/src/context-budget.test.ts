@@ -33,7 +33,7 @@ const opening: LlmMessage = { role: 'user', content: [{ type: 'text', text: 'Do 
 
 describe('contextWindowOf', () => {
   it('takes the operator setting, then the model family, then a safe default', () => {
-    expect(contextWindowOf('anything', { contextWindowTokens: 32_000 })).toBe(32_000);
+    expect(contextWindowOf('anything', { contextWindow: 32_000 })).toBe(32_000);
     expect(contextWindowOf('claude-sonnet-5-5')).toBe(200_000);
     expect(contextWindowOf('claude-opus-5-5[1m]')).toBe(1_000_000);
     expect(contextWindowOf('gpt-4.1-mini')).toBe(1_000_000);

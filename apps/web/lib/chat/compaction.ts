@@ -54,7 +54,13 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei/agent-llm';
+import {
+  ESTIMATE_CHARS_PER_TOKEN as CHARS_PER_TOKEN,
+  overCompactionThreshold,
+  resolveAgentLlm,
+  type LlmContentBlock,
+  type ResolvedLlm,
+} from '@renkei/agent-llm';
 import { isHistoryChat } from '@/lib/code/active-chat';
 import { resolveChatAccess } from './access';
 import { attributeMessagesToSummary, listMessages, type StoredMessage } from './messages';
@@ -216,10 +222,92 @@ function endsMidRound(unfolded: StoredMessage[], end: number): boolean {
   return next.blocks.some((block) => block.type === 'tool_result' && calls.has(block.toolUseId));
 }
 
-/** Whether a turn about to build its history should compact first. */
-export function needsCompaction(messages: StoredMessage[]): boolean {
+/** What the system prompt and tool schemas add to a request, until a turn has measured them. */
+const REQUEST_OVERHEAD_TOKENS = 8_000;
+
+/** Tokens of a request's system prompt and tool definitions, from their serialized size. */
+export function overheadTokensOf(system: string, tools: unknown): number {
+  return Math.ceil((system.length + JSON.stringify(tools).length) / CHARS_PER_TOKEN);
+}
+
+export async function getRequestOverhead(db: Kysely<DB>, chatId: string): Promise<number | null> {
+  const row = await db
+    .selectFrom('chats')
+    .select('request_overhead_tokens')
+    .where('id', '=', chatId)
+    .executeTakeFirst();
+  return row?.request_overhead_tokens ?? null;
+}
+
+export async function setRequestOverhead(
+  db: Kysely<DB>,
+  chatId: string,
+  tokens: number
+): Promise<void> {
+  await db
+    .updateTable('chats')
+    .set({ request_overhead_tokens: tokens })
+    .where('id', '=', chatId)
+    .execute();
+}
+
+/** What a model can hold, when the operator recorded it (llm_model_configs.settings). */
+export interface CompactionBudget {
+  /** Context window in tokens; null falls back to the character threshold. */
+  contextWindow: number | null;
+  /** Room the reply itself needs inside that window. */
+  maxOutputTokens: number;
+  /** The newest summary, when there is one: a measurement older than it predates the fold. */
+  summary?: { createdAt: Date; chars: number } | null;
+  /** System prompt plus tool definitions as the chat's last turn built them; null = unknown. */
+  overheadTokens?: number | null;
+}
+
+/**
+ * Tokens the next request will carry. The last finished reply's usage is a
+ * measurement, not a guess — everything that call read, plus what it wrote —
+ * so only the rows added since are estimated. A measurement taken before
+ * the newest fold no longer describes the history, so that case (and a chat
+ * with no measured reply yet) estimates from the unfolded text alone.
+ */
+export function estimateRequestTokens(
+  messages: StoredMessage[],
+  summary: { createdAt: Date; chars: number } | null,
+  overheadTokens: number | null = null
+): number {
+  const unfolded = unfoldedOf(messages);
+  const summaryAt = summary?.createdAt ?? null;
+  for (let index = unfolded.length - 1; index >= 0; index -= 1) {
+    const message = unfolded[index];
+    if (message.role !== 'assistant' || !message.usage || message.status !== 'complete') continue;
+    // updatedAt, not createdAt: a reply row opens before a turn's own auto-compaction runs.
+    if (summaryAt !== null && message.updatedAt <= summaryAt) break;
+    const since = unfolded.slice(index + 1).reduce((sum, later) => sum + messageChars(later), 0);
+    return message.usage.inputTokens + message.usage.outputTokens + since / CHARS_PER_TOKEN;
+  }
+  const chars = unfolded.reduce((sum, message) => sum + messageChars(message), 0);
+  return (
+    (overheadTokens ?? REQUEST_OVERHEAD_TOKENS) + (chars + (summary?.chars ?? 0)) / CHARS_PER_TOKEN
+  );
+}
+
+/**
+ * Whether a turn about to build its history should compact first. With the
+ * model's context window known, it waits until the next request would use
+ * most of the room left after the reply — a large-window model is left
+ * alone, a small one is caught before it overflows. Without a window it
+ * falls back to the fixed character threshold. Either way a pass needs
+ * enough foldable messages to be worth its own model call.
+ */
+export function needsCompaction(messages: StoredMessage[], budget?: CompactionBudget): boolean {
   const unfolded = unfoldedOf(messages);
   if (foldCandidates(unfolded).length < CHAT_COMPACT_MIN_FOLD) return false;
+  if (budget?.contextWindow) {
+    return overCompactionThreshold(
+      estimateRequestTokens(messages, budget.summary ?? null, budget.overheadTokens ?? null),
+      { contextWindow: budget.contextWindow, maxOutputTokens: budget.maxOutputTokens }
+    );
+  }
   const chars = unfolded.reduce((sum, message) => sum + messageChars(message), 0);
   return chars > CHAT_COMPACT_CHAR_THRESHOLD;
 }
@@ -358,8 +446,7 @@ export async function compactChat(
   db: Kysely<DB>,
   input: CompactChatInput
 ): Promise<CompactChatResult | null> {
-  const messages =
-    input.messages ?? (await listMessages(db, input.chatId, input.cipher));
+  const messages = input.messages ?? (await listMessages(db, input.chatId, input.cipher));
   const unfolded = unfoldedOf(messages);
   const candidates = foldCandidates(unfolded);
   const calls = callsById(unfolded);
@@ -370,8 +457,7 @@ export async function compactChat(
   input.onProgress?.({ foldedSoFar: 0, totalToFold: total });
   if (candidates.length < CHAT_COMPACT_MIN_FOLD) return null;
 
-  let runningSummary =
-    (await latestChatSummary(db, input.chatId, input.cipher))?.content ?? null;
+  let runningSummary = (await latestChatSummary(db, input.chatId, input.cipher))?.content ?? null;
   for (let start = 0; start < candidates.length; start += CHAT_COMPACT_BATCH_MESSAGES) {
     const batch = candidates.slice(start, start + CHAT_COMPACT_BATCH_MESSAGES);
     runningSummary = await foldBatch(input.llm, runningSummary, batch, calls);

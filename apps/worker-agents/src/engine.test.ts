@@ -967,7 +967,7 @@ maybe('agent run engine', () => {
       return main <= 7 ? call('jira_get_issue', { issueKey: `PROJ-${main}` }) : finish('done');
     });
     // A small window: the conversation budget is the 40 000-character floor.
-    llm.contextWindowTokens = 20_000;
+    llm.contextWindow = 20_000;
     const h = harness(llm, () => text(read));
     await h.handler({ payload: { runId } });
 

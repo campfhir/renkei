@@ -37,6 +37,7 @@ jest.mock('@/lib/chat/models', () => ({
       model: 'claude-haiku-4-5',
       isDefault: false,
       supportsThinking: true,
+      contextWindow: null,
     },
     {
       id: 'm-best',
@@ -45,6 +46,7 @@ jest.mock('@/lib/chat/models', () => ({
       model: 'claude-opus-5-5',
       isDefault: true,
       supportsThinking: true,
+      contextWindow: null,
     },
   ]),
 }));

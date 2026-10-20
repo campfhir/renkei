@@ -149,7 +149,9 @@ export default function Composer({
   const attachAnchor = useCoachAnchor('chat-attach');
   const promptAnchor = useCoachAnchor('chat-prompt');
   const voiceAnchor = useCoachAnchor('chat-voice');
-  // A phone's row in a code project is out of room; fold the tools into one.
+  // A code project's row runs out of room in a narrow column — a phone, or a
+  // chat beside the code pane — so the tools fold into one menu below 30rem of
+  // the composer's own width (a container query, not the window's).
   const foldTools = Boolean(modeControl) && Boolean(dictation || voicePanel);
 
   // Dictation: one recorder while the microphone is on; each utterance
@@ -361,7 +363,7 @@ export default function Composer({
   };
 
   return (
-    <div className="shrink-0 border-t border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-900/60">
+    <div className="@container shrink-0 border-t border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-900/60">
       {editing ? (
         <div className="mb-2 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
           <Icon path={ICONS.pencil} className="h-3.5 w-3.5 shrink-0" />
@@ -605,7 +607,7 @@ export default function Composer({
             {...promptAnchor}
             disabled={disabled}
             className={`rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 ${
-              foldTools ? 'max-sm:hidden' : ''
+              foldTools ? '@max-[30rem]:hidden' : ''
             }`}
           >
             <Icon path={ICONS.sparkle} className="h-5 w-5" />
@@ -629,7 +631,7 @@ export default function Composer({
               onVoiceOpen={onVoiceOpen}
             />
           ) : null}
-          {foldTools ? <div className="contents max-sm:hidden">{voiceControl}</div> : voiceControl}
+          {foldTools ? <div className="contents @max-[30rem]:hidden">{voiceControl}</div> : voiceControl}
           {dictation ? (
             <button
               type="button"
@@ -640,7 +642,7 @@ export default function Composer({
               title={dictating ? 'Stop dictating' : 'Dictate: speak into the box'}
               disabled={disabled}
               className={`flex items-center justify-center rounded-md p-1.5 disabled:opacity-40 ${
-                foldTools ? 'max-sm:hidden ' : ''
+                foldTools ? '@max-[30rem]:hidden ' : ''
               }${
                 dictating
                   ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/40'

@@ -520,6 +520,7 @@ export interface Chats {
   llm_model_id: string | null;
   owner_subject: string;
   project_id: string | null;
+  request_overhead_tokens: number | null;
   thinking_enabled: Generated<boolean>;
   title: string | null;
   tool_config: Json | null;

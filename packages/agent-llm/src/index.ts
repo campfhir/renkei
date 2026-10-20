@@ -23,6 +23,7 @@ export type {
 } from './contract';
 export {
   transportErrorKind,
+  looksLikeContextOverflow,
   wireRequestCauseOf,
   maskCredentialHeaders,
   CREDENTIAL_HEADER_NAMES,
@@ -83,13 +84,16 @@ export {
 
 export {
   CHARS_PER_TOKEN,
+  COMPACT_WINDOW_FRACTION,
   DEFAULT_CONTEXT_WINDOW_TOKENS,
+  ESTIMATE_CHARS_PER_TOKEN,
   MIN_TRANSCRIPT_CHARS,
   RECENT_MESSAGES,
   blockChars,
   contextWindowOf,
   fitMessages,
   messagesChars,
+  overCompactionThreshold,
   transcriptBudgetChars,
   type FitResult,
 } from './context-budget';

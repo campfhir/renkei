@@ -36,6 +36,8 @@ export interface ModelPayload {
   baseUrl: string | null;
   settings: {
     maxOutputTokens?: number;
+    /** The model's context window in tokens; the chat's usage meter reads it. */
+    contextWindow?: number;
     temperature?: number;
     apiVersion?: string;
     reasoningEffort?: string;
@@ -70,6 +72,7 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
     model?: unknown;
     baseUrl?: unknown;
     maxOutputTokens?: unknown;
+    contextWindow?: unknown;
     temperature?: unknown;
     apiVersion?: unknown;
     reasoningEffort?: unknown;
@@ -110,6 +113,9 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
     settings: {
       ...(typeof payload.maxOutputTokens === 'number' && payload.maxOutputTokens > 0
         ? { maxOutputTokens: Math.floor(payload.maxOutputTokens) }
+        : {}),
+      ...(typeof payload.contextWindow === 'number' && payload.contextWindow > 0
+        ? { contextWindow: Math.floor(payload.contextWindow) }
         : {}),
       ...(typeof payload.temperature === 'number' ? { temperature: payload.temperature } : {}),
       ...(typeof payload.apiVersion === 'string' && payload.apiVersion.trim()

@@ -102,9 +102,12 @@ import {
 } from '@renkei/agents/run-prompts';
 import {
   resolveAgentLlm,
+  ESTIMATE_CHARS_PER_TOKEN,
+  blockChars,
   contextWindowOfLlm,
   fitMessages,
   messagesChars,
+  overCompactionThreshold,
   transcriptBudgetChars,
   maskCredentialHeaders,
   phiCoveredModelRefusal,
@@ -579,11 +582,44 @@ function latestCompaction(turns: readonly TurnRow[]): { summary: string; through
   return latest;
 }
 
-/** A "your request is longer than the model takes" refusal, in any provider's words. */
-function isContextOverflow(message: string | undefined): boolean {
-  return /prompt is too long|too many tokens|context length|context window|maximum context|input is too long|exceeds the (maximum|context)|token limit/i.test(
-    message ?? ''
+/** Characters of one stored turn as the provider reads it. */
+function turnChars(turn: TurnRow): number {
+  const blocks = [...(turn.detail.assistant ?? []), ...(turn.detail.results ?? [])];
+  return (
+    (turn.detail.opening?.length ?? 0) + blocks.reduce((sum, block) => sum + blockChars(block), 0)
   );
+}
+
+/**
+ * Tokens the next request will carry — the same reading chat's
+ * estimateRequestTokens takes. The latest model call's usage is a
+ * measurement of everything it read plus what it wrote, so only what came
+ * after it (its tool results, any later turn) is estimated. A call made
+ * before the newest fold measured a conversation that no longer exists,
+ * so then — and before any call at all — the whole request is estimated
+ * from its characters.
+ */
+export function estimateRunRequestTokens(turns: readonly TurnRow[], requestChars: number): number {
+  // The turn the newest fold was made on: calls before it predate the fold.
+  let foldAt: { through: number; attempt: number } | null = null;
+  for (const turn of turns) {
+    const fold = turn.detail.compaction;
+    if (fold && fold.through > (foldAt?.through ?? 0)) {
+      foldAt = { through: fold.through, attempt: turn.attempt };
+    }
+  }
+  const ordered = [...turns].sort((a, b) => a.attempt - b.attempt);
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const turn = ordered[index];
+    const call = turn.detail.modelCalls?.at(-1);
+    if (!call) continue;
+    if (foldAt && turn.attempt < foldAt.attempt) break;
+    const since =
+      (turn.detail.results ?? []).reduce((sum, block) => sum + blockChars(block), 0) +
+      ordered.slice(index + 1).reduce((sum, later) => sum + turnChars(later), 0);
+    return call.inputTokens + call.outputTokens + since / ESTIMATE_CHARS_PER_TOKEN;
+  }
+  return requestChars / ESTIMATE_CHARS_PER_TOKEN;
 }
 
 function toolUsesOf(blocks: LlmContentBlock[] | undefined): ToolUseBlock[] {
@@ -1321,23 +1357,37 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const budget = this.transcriptBudget();
       let foldUsage: UsageTotals | null = null;
       let conversation = this.messagesOf(turns);
-      if (messagesChars(conversation) > budget) {
+      // Fold when the next request would fill most of the window — the
+      // rule chat uses (overCompactionThreshold), on the run's measured
+      // usage where there is one.
+      const fixedChars = this.systemPrompt().length + JSON.stringify(this.input.offered).length;
+      if (
+        overCompactionThreshold(
+          estimateRunRequestTokens(turns, messagesChars(conversation) + fixedChars),
+          { contextWindow: contextWindowOfLlm(llm), maxOutputTokens: llm.maxOutputTokens }
+        ) ||
+        messagesChars(conversation) > budget
+      ) {
         foldUsage = await this.compact(row, turns);
         if (foldUsage) conversation = this.messagesOf(turns);
       }
+      // Documents ride only on the turn they arrived in: this call sees
+      // them, a conversation rebuilt later reads their text alone.
+      const attachments = this.pendingAttachments;
+      this.pendingAttachments = [];
       // Whatever is left over budget — a single turn too big on its own —
       // is cut to fit (fitMessages); the stored turns keep everything.
-      const messages = fitMessages(conversation, budget).messages;
-      const tail = messages[messages.length - 1];
-      if (this.pendingAttachments.length > 0 && tail?.role === 'user') {
-        // Documents ride only on the turn they arrived in: this call sees
-        // them, a conversation rebuilt later reads their text alone.
-        messages[messages.length - 1] = {
-          ...tail,
-          content: [...tail.content, ...this.pendingAttachments],
-        };
-      }
-      this.pendingAttachments = [];
+      const fitted = (history: LlmMessage[], chars: number): LlmMessage[] => {
+        const messages = fitMessages(history, chars).messages;
+        const tail = messages[messages.length - 1];
+        if (attachments.length > 0 && tail?.role === 'user') {
+          messages[messages.length - 1] = {
+            ...tail,
+            content: [...tail.content, ...attachments],
+          };
+        }
+        return messages;
+      };
       const startedAt = now();
       const request = (sent: LlmMessage[]) =>
         llm.provider.complete({
@@ -1351,18 +1401,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
         });
-      let completion = await request(messages);
-      if (
-        !completion.ok &&
-        completion.err.type === 'invalid_request' &&
-        isContextOverflow(completion.err.message)
-      ) {
-        // The estimate was optimistic for this model: once more, at half.
+      let completion = await request(fitted(conversation, budget));
+      if (!completion.ok && completion.err.type === 'context_length') {
+        // The estimate ran short for this model (the provider's own
+        // context_length, chat's overflow recovery): fold what has not been
+        // folded yet, then once more at half the budget.
         logger.warn('run {runId}: the model refused the request as too long; retrying smaller', {
           component: 'worker-agents/engine',
           runId: this.runRow.id,
         });
-        completion = await request(fitMessages(messages, Math.floor(budget / 2)).messages);
+        if (!foldUsage) {
+          foldUsage = await this.compact(row, turns);
+          if (foldUsage) conversation = this.messagesOf(turns);
+        }
+        completion = await request(fitted(conversation, Math.floor(budget / 2)));
       }
       if (!completion.ok) {
         const kind = completion.err.type;

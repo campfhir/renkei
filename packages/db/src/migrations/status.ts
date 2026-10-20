@@ -180,6 +180,7 @@ export const EXPECTED_MIGRATIONS = [
   '154-explicit-groups-claim',
   '155-instruction-agents',
   '156-sandbox-crawls',
+  '157-chat-request-overhead',
 ];
 
 export interface MigrationStatus {
