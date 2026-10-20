@@ -318,6 +318,7 @@ describe('outlook_send_draft_confirm, a reply edited on the card', () => {
         'GET /v1.0/me/messages/draft-old',
         'POST /v1.0/me/messages/msg-1/createReply',
         'PATCH /v1.0/me/messages/draft-1',
+        'PATCH /v1.0/me/messages/draft-1',
         'POST /v1.0/me/messages/draft-1/send',
         'DELETE /v1.0/me/messages/draft-old',
       ]
@@ -327,6 +328,20 @@ describe('outlook_send_draft_confirm, a reply edited on the card', () => {
         contentType: 'HTML',
         content: QUOTED_HTML.replace('<body>', '<body><div><p>Edited <em>reply</em></p></div><br>'),
       },
+    });
+  });
+
+  it('keeps the card’s recipients and subject exactly, removals included', async () => {
+    await outlookTool('outlook_send_draft_confirm', {
+      draftId: 'draft-old',
+      overrides: { comment: 'Edited', to: ['pat@example.com'], subject: 'RE: Moved' },
+      replyTo: { messageId: 'msg-1', kind: 'reply' },
+    });
+    // Graph's reply goes to sravya@; the card took her off and put pat@ on.
+    expect(requests[3].body).toEqual({
+      toRecipients: [{ emailAddress: { address: 'pat@example.com' } }],
+      ccRecipients: [],
+      subject: 'RE: Moved',
     });
   });
 

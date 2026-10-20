@@ -2457,16 +2457,17 @@ export async function registerOutlookTools(
    * Send a reply/forward whose own text the user edited on the card. The
    * comment can't be swapped inside the draft — Graph's body is the comment
    * and the quoted thread as one blob of HTML, which Exchange re-serializes
-   * — so a fresh draft is made from the same message with the new comment
-   * and the previewed draft's recipients, and sent. The previewed draft is
-   * deleted only once that send went out, so a failure leaves it in place
-   * for the card to retry.
+   * — so a fresh draft is made from the same message with the new comment,
+   * given the card's recipients and subject exactly (the previewed draft's
+   * where the card sent none), and sent. The previewed draft is deleted
+   * only once that send went out, so a failure leaves it for a retry.
    */
   const sendRebuiltReply = async (
     authed: AuthedFetch,
     draftId: string,
     comment: string,
-    replyTo: Record<string, unknown>
+    replyTo: Record<string, unknown>,
+    edits: { to: string[] | null; cc: string[] | null; subject: string }
   ) => {
     const messageId = str(replyTo.messageId);
     const action = REPLY_ACTIONS.get(str(replyTo.kind));
@@ -2477,16 +2478,36 @@ export async function registerOutlookTools(
     const current = await graphGet(
       context,
       authed,
-      `/me/messages/${encodeURIComponent(draftId)}?$select=toRecipients,ccRecipients,bccRecipients`
+      `/me/messages/${encodeURIComponent(draftId)}?$select=subject,toRecipients,ccRecipients,bccRecipients`
     );
     if (!current.ok) return errText(current.error);
+    const to = edits.to ?? addressesOf(current.body.toRecipients);
+    const cc = edits.cc ?? addressesOf(current.body.ccRecipients);
+    const bcc = addressesOf(current.body.bccRecipients);
+    const subject = edits.subject || str(current.body.subject);
     const rebuilt = await createDraftAction(context, authed, messageId, action, {
       ...(comment.trim() ? { comment } : {}),
-      additionalTo: addressesOf(current.body.toRecipients),
-      cc: addressesOf(current.body.ccRecipients),
-      bcc: addressesOf(current.body.bccRecipients),
+      additionalTo: to,
+      cc,
+      bcc,
     });
     if (!rebuilt.ok) return errText(rebuilt.error);
+    // Graph re-adds the people a reply goes to; the card's list is the one
+    // to keep, removals included.
+    const exact = await graphPatch(
+      context,
+      authed,
+      `/me/messages/${encodeURIComponent(rebuilt.draftId)}`,
+      {
+        toRecipients: to.map(recipientOf),
+        ccRecipients: cc.map(recipientOf),
+        ...(subject && subject !== rebuilt.subject ? { subject } : {}),
+      }
+    );
+    if (!exact.ok) {
+      await graphDelete(context, authed, `/me/messages/${encodeURIComponent(rebuilt.draftId)}`);
+      return errText(exact.error);
+    }
     const sent = await sendDraft(context, authed, rebuilt.draftId);
     if (!sent.ok) return errText(sent.error);
     await graphDelete(context, authed, `/me/messages/${encodeURIComponent(draftId)}`);
@@ -2537,12 +2558,16 @@ export async function registerOutlookTools(
       if (!draftId) return errText('draftId is required');
 
       const overrides = rec(args.overrides);
-      if (typeof overrides.comment === 'string') {
-        return sendRebuiltReply(access.auth, draftId, overrides.comment, rec(args.replyTo));
-      }
       const to = Array.isArray(overrides.to) ? overrides.to.map(String).filter(Boolean) : null;
       const cc = Array.isArray(overrides.cc) ? overrides.cc.map(String).filter(Boolean) : null;
       if (to !== null && to.length === 0) return errText('No recipient to send to');
+      if (typeof overrides.comment === 'string') {
+        return sendRebuiltReply(access.auth, draftId, overrides.comment, rec(args.replyTo), {
+          to,
+          cc,
+          subject: str(overrides.subject),
+        });
+      }
       const patch: Record<string, unknown> = {
         ...(to !== null ? { toRecipients: to.map(recipientOf) } : {}),
         ...(cc !== null ? { ccRecipients: cc.map(recipientOf) } : {}),

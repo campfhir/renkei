@@ -1,10 +1,10 @@
 /**
  * Email preview cards in one chat: discarding the first must leave the
  * next one fully editable — its To, Subject and Body are a live form, not
- * the receipt the discarded card shows. And a reply card's own text is
- * editable too (it used to be shown read-only, which read as exactly this
- * bug): an edit goes to the confirm tool with the message it answers, so
- * the draft is rebuilt around the quoted thread.
+ * the receipt the discarded card shows. And a reply card is just as
+ * editable (it used to be shown read-only, which read as exactly this
+ * bug): an edited text goes to the confirm tool with the message it
+ * answers, so the draft is rebuilt around the quoted thread.
  *
  * Seeded the way widget-card.spec.ts seeds its chats (sealed rows, the
  * real built email-compose bundle, the real decision and model-context
@@ -275,7 +275,7 @@ test('a card already on the page stays editable after another card is discarded'
   }
 });
 
-test('a reply card’s own text is editable, and an edit is sent with the message it answers', async ({
+test('a reply card is editable — recipients, subject and text — and an edit is sent with the message it answers', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
@@ -293,8 +293,9 @@ test('a reply card’s own text is editable, and an edit is sent with the messag
     await expect(
       frame.getByText('The quoted thread below your text is included on send.')
     ).toBeVisible(COLD);
-    // Recipients and subject stay as Graph set them; the text is the person's.
-    await expect(frame.locator('input')).toHaveCount(0);
+    // A reply is as editable as a new email: recipients, subject and text.
+    await frame.locator('input').first().fill('vendor@example.com, ap@example.com');
+    await frame.locator('input').nth(1).fill('RE: Invoice 1042 — paid');
     const body = frame.locator('textarea');
     await expect(body).toHaveValue(reply.body);
     await body.fill('Thanks — paid today.');
@@ -319,7 +320,11 @@ test('a reply card’s own text is editable, and an edit is sent with the messag
         name: 'outlook_send_draft_confirm',
         arguments: {
           draftId: reply.draftId,
-          overrides: { comment: 'Thanks — paid today.' },
+          overrides: {
+            to: ['vendor@example.com', 'ap@example.com'],
+            subject: 'RE: Invoice 1042 — paid',
+            comment: 'Thanks — paid today.',
+          },
           replyTo: { messageId: reply.replyTo, kind: 'reply' },
         },
         stateKey: `renkei-email:${reply.draftId}`,
