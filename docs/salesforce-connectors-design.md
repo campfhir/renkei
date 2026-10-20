@@ -199,36 +199,47 @@ delegate's authenticated fetch, the Entra Developer arrangement. The admin conne
 needs a zip builder — the one new dependency, and it lives in the package so it is tested without
 a network.
 
-### Generic tools typed by the describe, not tools generated per object
+### Built on the core REST resources
 
-Mirth gets one generated tool per route because its API is fixed. A Salesforce org's API is not:
-every custom object is a new `/sobjects/{sObject}` resource. Generating `create_site_visit`,
-`update_site_visit`, … per object would tie the tool list to one org, run to hundreds of tools in a
-built-out org, and change whenever an admin adds an object. So the record tools stay generic — an
-`object` argument and a `fields` map — and the **describe** types them at call time: unknown
-fields, wrong types, read-only fields, invalid picklist values and missing required fields are
-refused before anything is sent, with the valid choices named. The describe (with the UI API for
-record-type picklists) is GA, versioned with the rest of the API, and answers per person, so it is
-the source of truth.
+The CRM connector's record work runs on a small, stable part of Salesforce's REST API — the
+sObject, Query and Search resources and the two composite resources that batch sObject writes —
+rather than on a spread of API families. These exist in every org with API access, behave the same
+for standard and custom objects, and are the resources Salesforce's own sObjects OpenAPI document
+describes. Reports are the one exception: authoring and sharing them is only possible through the
+Reports and Dashboards REST API, so the report tools use it.
 
-**Salesforce's OpenAPI 3.0 generation for sObjects** (`POST /async/specifications/oas3`) was
-considered as that source and not chosen for the connector's core:
+| Resource                                                              | Used for                                                                                                                                                                                                                                                                               |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /sobjects` (describe global)                                     | `salesforce_list_objects`; key prefix → object for any id                                                                                                                                                                                                                              |
+| `GET /sobjects/{sObject}/describe`                                    | `salesforce_describe_object`, and typing every write: fields, types, required, updateable, picklist values, dependent picklists (`controllerName` + each value's `validFor`), relationships both ways, record types; the relationship graph behind `salesforce_find_relationship_path` |
+| `GET /sobjects/{sObject}/describe/layouts/{recordTypeId}`             | Which picklist values a record type allows (`recordTypeMappings`)                                                                                                                                                                                                                      |
+| `GET /sobjects/{sObject}/describe/compactLayouts`                     | The fields that identify a record of the object (auto-number names, see below)                                                                                                                                                                                                         |
+| `GET /sobjects/{sObject}/{id}`                                        | Reading a record by id where no relationships are wanted                                                                                                                                                                                                                               |
+| `POST /sobjects/{sObject}`, `PATCH`/`DELETE /sobjects/{sObject}/{id}` | Create, update, delete one record; `PATCH` with `If-Unmodified-Since` for read-modify-write                                                                                                                                                                                            |
+| `PATCH /sobjects/{sObject}/{externalIdField}/{value}`                 | `salesforce_upsert_record`, and naming a record by external id                                                                                                                                                                                                                         |
+| `GET /sobjects/{sObject}/updated`, `/deleted`                         | `salesforce_list_changes` — which records of an object changed or were deleted in a window ("what changed on site visits since Monday")                                                                                                                                                |
+| `GET /sobjects/{sObject}/{id}/{blobField}`                            | File download (`ContentVersion.VersionData`)                                                                                                                                                                                                                                           |
+| `GET /query`, `/queryAll`, `nextRecordsUrl`                           | `salesforce_query`; `salesforce_get_record` with `include` (one SOQL: the fields, parent paths, and child subqueries, with `toLabel()` and `FORMAT()` for display values); related lists; field history (`…__History`); deleted records                                                |
+| `GET /search` (SOSL)                                                  | `salesforce_search`, and the name fallback when resolving a record                                                                                                                                                                                                                     |
+| `/composite/sobjects` (sObject Collections)                           | Up to 200 records created, updated or deleted in one all-or-none call                                                                                                                                                                                                                  |
+| `/composite/tree/{sObject}` (sObject Tree)                            | `salesforce_create_record_tree` — a parent and its children together                                                                                                                                                                                                                   |
+| `GET /limits`                                                         | API usage in `salesforce_check_access`, beside the `Sforce-Limit-Info` header every response carries                                                                                                                                                                                   |
 
-- It is a **beta**, which Salesforce says not to build production integrations on, and an admin
-  must opt the org in (Setup → User Interface), so it cannot be assumed in an arbitrary org.
-- It only answers on the **latest** API version, which conflicts with pinning one version and
-  bumping it deliberately.
-- It is **asynchronous** (a locator to poll, results kept 48 hours) and large for a built-out org —
-  a build step, not something to call on a tool's path.
-- It covers the `sobjects` and `query` resources only — none of reports, the UI API, composite or
-  the Metadata API — and adds nothing to the describe it is generated from.
+Activities, notes, files, owners and history need no other API: Tasks, Events, ContentNote,
+ContentVersion and ContentDocumentLink are sObjects like any other, history tables are queried, and
+an owner change is an update. The tools are generic — an `object` argument and a `fields` map —
+and the describe types them at call time: unknown fields, wrong types, read-only fields, invalid
+picklist values and missing required fields are refused before anything is sent, with the valid
+choices named.
 
-Where it does fit is **handing the org's API to a developer**: an optional
-`salesforce_admin_export_openapi` (admin connector, when the org has the beta on) that generates
-the document for named objects, polls it, and stages it in the sandbox scratch space — for a code
-project building an integration against the org, or for a person to load into their own tools.
-That is a convenience on top, and nothing else depends on it. If it leaves beta and covers more of
-the API, it is worth revisiting as a cached per-org schema source.
+Salesforce's **sObjects OpenAPI 3.0 document** (`POST /async/specifications/oas3`, beta) describes
+exactly these resources with the org's own objects in them. It is the build reference: generate it
+from a developer org and commit it beside the other vendor specs in this folder
+(`salesforce-sobjects-open-api-spec.json`), and the package's request and response types follow
+it. At run time the describe stays the source, since the document needs an admin to turn the beta
+on, answers only on the latest API version, and is generated asynchronously. For developers working
+against a particular org, `salesforce_admin_export_openapi` generates and stages that org's
+document (when the org has the beta on).
 
 ### References resolve; ambiguity refuses
 
@@ -276,25 +287,27 @@ for shares (its `person` slot shows the recipient, its group lists the folder's 
 
 **Records**
 
-| Tool                                             | Does                                                                                                                                                                                                                               |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `salesforce_search`                              | SOSL across objects by text ("everything about Acme"), or one object with filters (parameterized search)                                                                                                                           |
-| `salesforce_query`                               | SOQL `SELECT`, one page at a time with a cursor, relationship and aggregate queries allowed                                                                                                                                        |
-| `salesforce_get_record`                          | One record with display values and labels (UI API); `include` takes parent paths (`Account.Owner`) and child relationships (`Contacts`, `Site_Visits__r`) to fetch in the same call                                                |
-| `salesforce_list_related`                        | Any child relationship of a record, standard or custom, paged, with filters and sort                                                                                                                                               |
-| `salesforce_find_relationship_path`              | How two objects connect — direct lookup, master-detail, through a junction object, or via a shared parent — from the describe graph, so "this account's site visits" finds the path the org actually built                         |
-| `salesforce_create_record`                       | Create one record; record type by name; picklist values checked against the record type; `parent` links it to a record by choosing the relationship field (refused, naming the fields, when there is more than one to that object) |
-| `salesforce_create_record_tree`                  | A parent with its children in one all-or-none call (sObject Tree), e.g. a record and its line items — preview + confirm, as a multi-record write                                                                                   |
-| `salesforce_relate_records`                      | Relate two records many-to-many by creating the junction record between them; the junction object is found from the describe, and refused naming the candidates when more than one connects them                                   |
-| `salesforce_update_record`                       | Update one record's fields; reads first so the result shows old → new                                                                                                                                                              |
-| `salesforce_upsert_record`                       | Create-or-update by an external id field                                                                                                                                                                                           |
-| `salesforce_update_records_preview` / `_confirm` | Many records, one change set (Composite sObject collections, all-or-none by default)                                                                                                                                               |
-| `salesforce_delete_records_preview` / `_confirm` | Delete; the preview names cascade-deleted children (master-detail) from the describe                                                                                                                                               |
-| `salesforce_change_owner_preview` / `_confirm`   | Reassign records; the preview names the new owner and what sharing changes                                                                                                                                                         |
-| `salesforce_log_activity`                        | A completed Task (call, email, meeting note) or an Event, related to the record(s) named                                                                                                                                           |
-| `salesforce_create_task`                         | An open follow-up Task assigned to the person or a named user, with a due date                                                                                                                                                     |
-| `salesforce_add_note`                            | A Note (ContentNote) attached to a record                                                                                                                                                                                          |
-| `salesforce_record_history`                      | Field history of a record (the object's `__History` table): who changed which tracked field, from what, to what, when                                                                                                              |
+| Tool                                                  | Does                                                                                                                                                                                                                               |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `salesforce_search`                                   | SOSL across objects by text ("everything about Acme"), or within named objects                                                                                                                                                     |
+| `salesforce_query`                                    | SOQL `SELECT`, one page at a time with a cursor, relationship and aggregate queries allowed                                                                                                                                        |
+| `salesforce_get_record`                               | One record with labels and display values; `include` takes parent paths (`Account.Owner`) and child relationships (`Contacts`, `Site_Visits__r`) to fetch in the same call                                                         |
+| `salesforce_list_related`                             | Any child relationship of a record, standard or custom, paged, with filters and sort                                                                                                                                               |
+| `salesforce_find_relationship_path`                   | How two objects connect — direct lookup, master-detail, through a junction object, or via a shared parent — from the describe graph, so "this account's site visits" finds the path the org actually built                         |
+| `salesforce_create_record`                            | Create one record; record type by name; picklist values checked against the record type; `parent` links it to a record by choosing the relationship field (refused, naming the fields, when there is more than one to that object) |
+| `salesforce_create_record_tree`                       | A parent with its children in one all-or-none call (sObject Tree), e.g. a record and its line items — preview + confirm, as a multi-record write                                                                                   |
+| `salesforce_relate_records`                           | Relate two records many-to-many by creating the junction record between them; the junction object is found from the describe, and refused naming the candidates when more than one connects them                                   |
+| `salesforce_update_record`                            | Update one record's fields; reads first so the result shows old → new                                                                                                                                                              |
+| `salesforce_upsert_record`                            | Create-or-update by an external id field                                                                                                                                                                                           |
+| `salesforce_update_records_preview` / `_confirm`      | Many records, one change set (Composite sObject collections, all-or-none by default)                                                                                                                                               |
+| `salesforce_delete_records_preview` / `_confirm`      | Delete; the preview names cascade-deleted children (master-detail) from the describe                                                                                                                                               |
+| `salesforce_change_owner_preview` / `_confirm`        | Reassign records; the preview names the new owner and what sharing changes                                                                                                                                                         |
+| `salesforce_log_activity`                             | A completed Task (call, email, meeting note) or an Event, related to the record(s) named                                                                                                                                           |
+| `salesforce_create_task`                              | An open follow-up Task assigned to the person or a named user, with a due date                                                                                                                                                     |
+| `salesforce_add_note`                                 | A Note (ContentNote) attached to a record                                                                                                                                                                                          |
+| `salesforce_record_history`                           | Field history of a record (the object's `__History` table): who changed which tracked field, from what, to what, when                                                                                                              |
+| `salesforce_list_changes`                             | Records of an object updated or deleted in a time window (the sObject `updated`/`deleted` resources), with names                                                                                                                   |
+| `salesforce_download_file` / `salesforce_attach_file` | A record's files to and from the scratch space (below)                                                                                                                                                                             |
 
 ### Instance-agnostic: the platform, not one org
 
@@ -302,7 +315,7 @@ The connector knows **Salesforce**, not any one organization's Salesforce. It ha
 knowledge of a particular org's objects, packages, processes or field meanings, and no tool that
 only makes sense in one org or one industry. Everything specific to an org — which objects exist,
 how they relate, which picklist values are valid, which fields are required, what a field means —
-is read from that org at run time (describe, UI API, the org's own validation errors), so the same
+is read from that org at run time (describe, the org's own validation errors), so the same
 tools work in a sales org, a service org, a nonprofit on NPSP or Nonprofit Cloud, or an org that is
 nearly all custom objects.
 
@@ -371,7 +384,7 @@ practice:
   managed `pmdm__Program__c`) is refused naming both.
 - **Records without a useful name.** Custom objects often have an auto-number name (`SV-000412`).
   A record still resolves by name when one is given, and otherwise by the fields of the object's
-  compact layout (UI API), which is how Salesforce itself identifies a record in a lookup — "the
+  compact layout (`describe/compactLayouts`), which is how Salesforce itself identifies a record in a lookup — "the
   site visit for Acme on 3 March" searches those fields. SOSL is used where the object allows
   search; an object with search turned off falls back to a SOQL `LIKE` on its name and
   compact-layout text fields. Results show the compact-layout fields beside the auto-number so
@@ -382,7 +395,7 @@ practice:
     master-detail parent is required on create, and changeable afterwards only when the field
     allows reparenting;
   - picklists and multi-selects against the record type's values, **dependent picklists** against
-    the controlling field's value (UI API `picklist-values` carries `controllerValues`);
+    the controlling field's value (the describe's `controllerName` and each value's `validFor`);
   - formula, roll-up summary and auto-number fields are read-only — the tool says which field
     computes it rather than letting Salesforce's error do it;
   - currency with `CurrencyIsoCode` in multi-currency orgs, date and date-time in the person's
@@ -431,9 +444,11 @@ with that rather than around it:
   describe marks which fields the person can edit; it does not pretend to know the page's
   visibility rules.
 
-Files (ContentVersion download and upload) use the sandbox scratch space the way OnBase and Jira
-attachments do ([`sandbox-connector-design.md`](./sandbox-connector-design.md)) and come in a
-later stage.
+Files move through the sandbox scratch space the way OnBase and Jira attachments do
+([`sandbox-connector-design.md`](./sandbox-connector-design.md)): `salesforce_download_file` reads
+`ContentVersion.VersionData` through the blob resource into a scratch file, and
+`salesforce_attach_file` inserts a `ContentVersion` (multipart) from a scratch file and links it to
+the records named with `ContentDocumentLink`.
 
 **Reports and dashboards**
 
@@ -496,14 +511,14 @@ chat can send it through WebEx or Outlook if those connectors are on.
 The CRM card's checkboxes narrow what registers, the Mirth permissions shape — Salesforce's own
 permissions still decide every call:
 
-| Option                              | Tools                                                                              | Default |
-| ----------------------------------- | ---------------------------------------------------------------------------------- | ------- |
-| Read records                        | orientation, search, query, get, related, relationship path, history               |
-| Create and update records           | create, record tree, relate, update, upsert, log activity, task, note, bulk update |
-| Delete records                      | delete pair                                                                        | off     |
-| Change record owners                | change owner pair                                                                  | off     |
-| Read and run reports and dashboards | find, describe, run, export, folders, dashboards                                   | on      |
-| Author and share reports            | create, update, clone, delete, share, subscribe                                    | on      |
+| Option                              | Tools                                                                                           | Default |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------- | ------- |
+| Read records                        | orientation, search, query, get, related, relationship path, history, changes, file download    |
+| Create and update records           | create, record tree, relate, update, upsert, log activity, task, note, attach file, bulk update |
+| Delete records                      | delete pair                                                                                     | off     |
+| Change record owners                | change owner pair                                                                               | off     |
+| Read and run reports and dashboards | find, describe, run, export, folders, dashboards                                                | on      |
+| Author and share reports            | create, update, clone, delete, share, subscribe                                                 | on      |
 
 ## The admin connector (`salesforce-admin`)
 
@@ -673,7 +688,6 @@ reported as "not checked", never as clean.
   flows check (assigned to the loading admin for the load only), not with the rules switched off
   org-wide while everyone else keeps working.
 - **Indexing** (and with it `verifyAccess` on `UserRecordAccess`).
-- **Files** on the CRM connector (ContentVersion through the scratch space).
 - **CRM Analytics, Data Cloud, Marketing Cloud, Experience Cloud** — separate products and APIs.
 - **Platform Events / Change Data Capture triggers** ("an opportunity closes" as an agent trigger).
   Attractive, and the trigger framework is ready for it, but it needs a subscriber process holding
@@ -686,7 +700,7 @@ reported as "not checked", never as clean.
    package's API version and SOQL builder, `salesforce_check_access` and
    `salesforce_admin_check_access`.
 2. **CRM records.** Orientation, search, query, get, related, create, update, upsert, activities,
-   record trees, relating records, relationship paths, history, bulk update and delete pairs, change
+   record trees, relating records, relationship paths, history, changes, files, bulk update and delete pairs, change
    owner, API budget — tested against more than one org shape (a standard sales org and one that is
    mostly custom objects, with a managed package installed), so nothing org-specific creeps in.
 3. **Reports.** Find, describe, run (sync and async), export, report types, create, update, clone,
