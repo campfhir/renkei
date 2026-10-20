@@ -61,6 +61,9 @@ import {
   type LlmToolDef,
   type LlmUsage,
   type ResolvedLlm,
+  contextWindowOfLlm,
+  fitMessages,
+  transcriptBudgetChars,
 } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { randomUUID } from 'node:crypto';
@@ -1218,6 +1221,19 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       };
 
       stage = 'model';
+      // One turn can outgrow the model on its own — a dozen long reads in
+      // a row — and the chat's compaction only folds between turns. What
+      // is sent is fitted to the model's window (again after an overflow
+      // recovery swaps the history in); what is kept is untouched.
+      const fitted = () =>
+        fitMessages(
+          messages,
+          transcriptBudgetChars({
+            contextWindowTokens: contextWindowOfLlm(llm),
+            maxOutputTokens: llm.maxOutputTokens + (input.thinkingBudget ?? 0),
+            fixedChars: system.length + JSON.stringify(activeTools).length,
+          })
+        ).messages;
       // Assigned unconditionally on every loop entry below, before any
       // break — never read until after that first assignment has run.
       let result!: Awaited<ReturnType<typeof streamOrComplete>>;
@@ -1232,7 +1248,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           llm.provider,
           {
             system,
-            messages,
+            messages: fitted(),
             tools: activeTools,
             ...(activeTools.length > 0 ? { toolChoice: 'auto' as const } : {}),
             maxTokens: llm.maxOutputTokens,

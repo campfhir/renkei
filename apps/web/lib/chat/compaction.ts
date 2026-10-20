@@ -54,7 +54,13 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei/agent-llm';
+import {
+  ESTIMATE_CHARS_PER_TOKEN as CHARS_PER_TOKEN,
+  overCompactionThreshold,
+  resolveAgentLlm,
+  type LlmContentBlock,
+  type ResolvedLlm,
+} from '@renkei/agent-llm';
 import { isHistoryChat } from '@/lib/code/active-chat';
 import { resolveChatAccess } from './access';
 import { attributeMessagesToSummary, listMessages, type StoredMessage } from './messages';
@@ -216,12 +222,8 @@ function endsMidRound(unfolded: StoredMessage[], end: number): boolean {
   return next.blocks.some((block) => block.type === 'tool_result' && calls.has(block.toolUseId));
 }
 
-/** Rough characters per token for prose and tool output, for what no call has measured yet. */
-const CHARS_PER_TOKEN = 3.5;
 /** What the system prompt and tool schemas add to a request, until a turn has measured them. */
 const REQUEST_OVERHEAD_TOKENS = 8_000;
-/** A chat is compacted once the next request would fill this much of the room for input. */
-const CHAT_COMPACT_WINDOW_FRACTION = 0.85;
 
 /** Tokens of a request's system prompt and tool definitions, from their serialized size. */
 export function overheadTokensOf(system: string, tools: unknown): number {
@@ -301,10 +303,9 @@ export function needsCompaction(messages: StoredMessage[], budget?: CompactionBu
   const unfolded = unfoldedOf(messages);
   if (foldCandidates(unfolded).length < CHAT_COMPACT_MIN_FOLD) return false;
   if (budget?.contextWindow) {
-    const room = Math.max(budget.contextWindow - budget.maxOutputTokens, 0);
-    return (
-      estimateRequestTokens(messages, budget.summary ?? null, budget.overheadTokens ?? null) >
-      room * CHAT_COMPACT_WINDOW_FRACTION
+    return overCompactionThreshold(
+      estimateRequestTokens(messages, budget.summary ?? null, budget.overheadTokens ?? null),
+      { contextWindow: budget.contextWindow, maxOutputTokens: budget.maxOutputTokens }
     );
   }
   const chars = unfolded.reduce((sum, message) => sum + messageChars(message), 0);

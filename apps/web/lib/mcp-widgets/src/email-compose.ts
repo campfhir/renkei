@@ -4,11 +4,12 @@
  * Rendered by the outlook_*_preview tools: their handler has already created
  * a real Graph draft, and this card shows exactly that draft. Send runs the
  * app-only outlook_send_draft_confirm; Discard runs
- * outlook_discard_draft_confirm and deletes the draft. A fresh compose
- * (kind 'compose') is editable — edits ride to the confirm tool as overrides
- * and are PATCHed onto the draft before it goes out. Reply/reply-all/forward
- * drafts are shown read-only: Graph's draft body carries the quoted thread,
- * and a body edit would replace the whole thing, quotes included.
+ * outlook_discard_draft_confirm and deletes the draft. Every card is
+ * editable — edits ride to the confirm tool as overrides and are PATCHed
+ * onto the draft before it goes out. A reply/reply-all/forward's own text
+ * is the exception to PATCHing: Graph's draft body is that text and the
+ * quoted thread as one, so an edited comment goes to the confirm tool with
+ * the message it answers (`messageId`) and the draft is rebuilt from it.
  *
  * Bodies are Markdown. The editable textarea holds the Markdown source
  * (what the confirm tool renders on send); a read-only body shows the
@@ -82,7 +83,12 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     el('div', 'card-subtitle', 'Review before it goes out — nothing is sent until you confirm.')
   );
 
-  const editable = kind === 'compose';
+  const compose = kind === 'compose';
+  // A reply's own text is rebuilt around the quoted thread from the message
+  // it answers; a card from before previews carried that id keeps its text
+  // read-only (its recipients and subject are still a plain PATCH).
+  const messageId = str(draft.messageId);
+  const commentEditable = !compose && messageId !== '';
   const to = strings(draft.to).join(', ');
   const cc = strings(draft.cc).join(', ');
   const bcc = strings(draft.bcc).join(', ');
@@ -90,18 +96,19 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   const body = str(draft.body);
   const bodyHtml = str(draft.bodyHtml);
 
-  const toInput = editable ? inputField('To', to) : null;
-  const ccInput = editable && cc ? inputField('Cc', cc) : null;
-  const subjectInput = editable ? inputField('Subject', subject) : null;
-  const bodyInput = editable ? textField('Body', body) : null;
+  const toInput = inputField('To', to);
+  const ccInput = cc ? inputField('Cc', cc) : null;
+  const subjectInput = inputField('Subject', subject);
+  const bodyInput = compose
+    ? textField('Body', body)
+    : commentEditable
+      ? textField(kind === 'forward' ? 'Note' : 'Body', body)
+      : null;
 
-  if (toInput) card.append(toInput.field);
-  else card.append(readonlyField('To', to || '(auto-populated by reply)'));
+  card.append(toInput.field);
   if (ccInput) card.append(ccInput.field);
-  else if (cc) card.append(readonlyField('Cc', cc));
   if (bcc) card.append(readonlyField('Bcc', bcc));
-  if (subjectInput) card.append(subjectInput.field);
-  else card.append(readonlyField('Subject', subject));
+  card.append(subjectInput.field);
   if (bodyInput) {
     card.append(bodyInput.field);
     card.append(
@@ -109,11 +116,11 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     );
   } else {
     card.append(bodyHtml ? htmlField('Body', bodyHtml) : readonlyField('Body', body));
-    if (kind !== 'compose') {
-      card.append(
-        el('div', 'card-subtitle', 'The quoted thread below your text is included on send.')
-      );
-    }
+  }
+  if (kind !== 'compose') {
+    card.append(
+      el('div', 'card-subtitle', 'The quoted thread below your text is included on send.')
+    );
   }
 
   const discardButton = el('button', undefined, 'Discard');
@@ -123,30 +130,54 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   root.append(card);
 
   footer.run(sendButton, async () => {
-    const overrides = editable
-      ? {
-          to: splitAddresses(toInput?.input.value ?? ''),
-          cc: ccInput ? splitAddresses(ccInput.input.value) : [],
-          subject: subjectInput?.input.value ?? subject,
+    const finalTo = splitAddresses(toInput.input.value);
+    const finalCc = ccInput ? splitAddresses(ccInput.input.value) : [];
+    const finalSubject = subjectInput.input.value;
+    let args: Record<string, unknown>;
+    if (compose) {
+      args = {
+        overrides: {
+          to: finalTo,
+          cc: finalCc,
+          subject: finalSubject,
           body: bodyInput?.input.value ?? body,
-        }
-      : undefined;
+        },
+      };
+    } else {
+      // A reply goes out as previewed unless something on it changed; only
+      // a changed text needs the draft rebuilt (`replyTo`).
+      const comment = bodyInput ? bodyInput.input.value : body;
+      const textEdited = commentEditable && comment.trim() !== body.trim();
+      if (textEdited && !comment.trim() && kind !== 'forward') {
+        throw new Error('Write the reply, or discard it.');
+      }
+      const overrides = {
+        ...(finalTo.join(', ') !== to ? { to: finalTo } : {}),
+        ...(ccInput && finalCc.join(', ') !== cc ? { cc: finalCc } : {}),
+        ...(finalSubject.trim() !== subject.trim() ? { subject: finalSubject } : {}),
+        ...(textEdited ? { comment } : {}),
+      };
+      args = {
+        ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
+        ...(textEdited ? { replyTo: { messageId, kind } } : {}),
+      };
+    }
+    if (finalTo.length === 0) throw new Error('Add someone to send it to.');
     const sent = await bridge.callTool(
       'outlook_send_draft_confirm',
-      { draftId, ...(overrides ? { overrides } : {}) },
+      { draftId, ...args },
       stateKey
     );
     if (sent.isError) throw new Error(resultText(sent) || 'Send failed');
-    const finalTo = overrides ? overrides.to.join(', ') : to || 'the original recipients';
-    const finalSubject = overrides ? overrides.subject : subject;
+    const sentTo = finalTo.join(', ');
     finishDone({
       icon: 'sent',
       ...(parseLinks(resultText(sent)).length > 0 ? { links: parseLinks(resultText(sent)) } : {}),
       headline: 'Sent',
-      detail: `To ${finalTo}${finalSubject ? ` — “${finalSubject}”` : ''}`,
+      detail: `To ${sentTo}${finalSubject ? ` — “${finalSubject}”` : ''}`,
     });
     bridge.updateModelContext(
-      `The user reviewed the ${KIND_TITLES[kind] ?? 'email'} preview and sent it to ${finalTo}.`,
+      `The user reviewed the ${KIND_TITLES[kind] ?? 'email'} preview and sent it to ${sentTo}.`,
       stateKey
     );
   });

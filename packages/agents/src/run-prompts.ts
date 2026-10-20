@@ -262,28 +262,63 @@ export const ASK_PERSON_DEF: PromptToolDef = {
   name: ASK_PERSON_TOOL,
   description:
     'Pause and ask the owner something, instead of guessing or failing for lack of it. The ' +
-    'answer (or a note that nobody answered in time) comes back as this call’s result; your ' +
-    'clock is stopped while you wait. Put every question you have right now into ONE call — ' +
-    'group and paragraph entries in form let several questions share one readable card. Free.',
+    'answers (or a note that nobody answered in time) come back as this call’s result; your ' +
+    'clock is stopped while you wait. Ask everything you need right now in ONE call, the way a ' +
+    'colleague would: say in "intro" what you are working on and what you found, in plain ' +
+    'conversational sentences. Then either (a) leave out "questions" when it is one question, ' +
+    'or a few related ones a person would rather answer in a sentence or two — they get one ' +
+    'reply box; or (b) list "questions" when you need separate decisions — each one complete ' +
+    'sentence with the evidence behind it in "context", answered on its own (a long reply box ' +
+    'unless a choice, yes/no, number or date fits better). Every question may be skipped, and a ' +
+    'batch always ends with an "anything else?" box. Never ask what you can look up yourself. Free.',
   inputSchema: {
     type: 'object',
     properties: {
-      message: {
+      intro: {
         type: 'string',
-        description: 'Plain prose: what you need and why, shown above any form fields.',
+        description:
+          'Conversational prose shown first: what you are doing, what you found, what you need ' +
+          'and why. With no "questions", this IS the question and gets one reply box.',
       },
-      form: {
+      questions: {
         type: 'array',
         description:
-          'Optional structure beyond the open question in message — at most 40 entries total ' +
-          "(a group's members count toward that). Each entry is one of: " +
-          '{kind:"field", name, label, type: "text"|"longtext"|"number"|"choice"|"multi"|"date", ' +
-          'required, options?, min?, max?, help?, key?} — an answerable control, "key" being the ' +
-          "destination's own field id (e.g. a Jira custom field) when the answer is headed " +
-          'somewhere specific; {kind:"paragraph", text} — context with nothing to answer; or ' +
-          '{kind:"group", label, nodes} — one level of fields/paragraphs clustered under a ' +
-          'heading (groups do not nest). A two-option "choice" reads as yes/no buttons.',
-        items: { type: 'object' },
+          'Separate decisions, at most 10, each answered on its own. Use one per decision, never ' +
+          'several decisions in one question.',
+        items: {
+          type: 'object',
+          properties: {
+            question: {
+              type: 'string',
+              description:
+                'The question itself, as you would ask it out loud — one complete sentence that ' +
+                'makes sense on its own, e.g. "Should the ATLAS go-live status go on CIO-5, ' +
+                'CIO-25 or CIO-26, or somewhere else?" Not a form label like "Issue key".',
+            },
+            context: {
+              type: 'string',
+              description: 'The evidence a person needs to answer this one: what you saw, where.',
+            },
+            answer: {
+              type: 'object',
+              description:
+                'How it is answered. Default: a long reply box. "choice"/"multi" need the ' +
+                'options you know of; the card always adds a "Something else" choice with a box ' +
+                'for the person\'s own answer, so do not list one yourself.',
+              properties: {
+                type: {
+                  type: 'string',
+                  enum: ['longtext', 'text', 'choice', 'multi', 'yesno', 'number', 'date'],
+                },
+                options: { type: 'array', items: { type: 'string' } },
+                hint: { type: 'string', description: 'A short line under the box: format, units.' },
+                min: { type: 'number' },
+                max: { type: 'number' },
+              },
+            },
+          },
+          required: ['question'],
+        },
       },
       timeoutHours: {
         type: 'number',
@@ -291,7 +326,7 @@ export const ASK_PERSON_DEF: PromptToolDef = {
           'How long to wait for an answer before treating it as unanswered. Default 96 (4 days).',
       },
     },
-    required: ['message'],
+    required: ['intro'],
   },
 };
 

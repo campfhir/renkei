@@ -46,6 +46,8 @@ export {
   MAX_QUESTION_FIELD_OPTIONS,
   MAX_QUESTION_FIELD_OPTION_CHARS,
   isQuestionField,
+  otherAnswer,
+  otherAnswerText,
   parseQuestionFields,
   type QuestionField,
   type QuestionFieldType,
@@ -184,3 +186,25 @@ export {
   sealedDetailOf,
   splitDetailForSealing,
 } from './turn-detail';
+
+export {
+  ANYTHING_ELSE_FIELD,
+  MAX_ASKED_QUESTIONS,
+  OTHER_LABEL,
+  REPLY_FIELD,
+  answersForAgent,
+  askedQuestionsOf,
+  type AskedQuestions,
+} from './ask-questions';
+
+export {
+  RUN_COMPACTION_SYSTEM,
+  RUN_KEEP_RECENT_TURNS,
+  RUN_SUMMARY_MAX_CHARS,
+  foldBatches,
+  foldRequestText,
+  renderTurnForFold,
+  summaryOpening,
+  type FoldBlock,
+  type FoldTurn,
+} from './run-compaction';
