@@ -16,7 +16,7 @@
  * a row found that way shows the matching line under its title.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -388,12 +388,23 @@ function ChatRow({ chat, projects, snippet, active, onDeleted }: {
 }) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  // The menu opens below its row, or above it when there is no room below:
+  // the sidebar is pinned to the bottom of the window, so a menu past that
+  // edge would only grow the sidebar's scroll area.
+  const [menuUp, setMenuUp] = useState(false);
   const [dialog, setDialog] = useState<'rename' | 'move' | 'share' | 'delete' | null>(null);
   const [title, setTitle] = useState(chat.title ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuPanelRef = useRef<HTMLDivElement>(null);
   useDismiss(menuOpen, menuRef, () => setMenuOpen(false));
+  // Measured before paint, so a menu that flips never shows in the wrong place.
+  useLayoutEffect(() => {
+    const panel = menuPanelRef.current;
+    if (!menuOpen || !panel) return;
+    setMenuUp(panel.getBoundingClientRect().bottom > window.innerHeight);
+  }, [menuOpen]);
   const isOwner = chat.via === 'owner';
   const mark = kindOf(chat);
   // A chat in a code project belongs to its repository: it is not moved
@@ -474,13 +485,21 @@ function ChatRow({ chat, projects, snippet, active, onDeleted }: {
           <button
             type="button"
             aria-label="Chat actions"
-            onClick={() => setMenuOpen((value) => !value)}
+            onClick={() => {
+              // Each open starts below and is measured again, so a menu that
+              // flipped up last time is not left up where there is room below.
+              setMenuUp(false);
+              setMenuOpen((value) => !value);
+            }}
             className="rounded p-1 text-gray-400 opacity-0 hover:bg-gray-200 hover:text-gray-700 focus:opacity-100 group-hover:opacity-100 dark:hover:bg-gray-800 dark:hover:text-gray-200"
           >
             <Icon path={ICONS.moreHorizontal} className="h-4 w-4" strokeWidth={2.4} />
           </button>
           {menuOpen ? (
-            <div className="absolute right-0 z-40 mt-1 w-40 overflow-hidden rounded-md border border-gray-200 bg-white text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900">
+            <div
+              ref={menuPanelRef}
+              className={`absolute right-0 z-40 w-40 overflow-hidden rounded-md border border-gray-200 bg-white text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900 ${menuUp ? 'bottom-full mb-1' : 'mt-1'}`}
+            >
               {actions.map((item) => (
                 <button
                   key={item}
