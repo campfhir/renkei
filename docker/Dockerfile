@@ -559,8 +559,11 @@ RUN apt-get update && \
 # SANDBOX_PYTHON overrides the path; the worker checks the interpreter
 # and lists what it found at boot. pandas 2.3 and numpy 2.3 are the last
 # lines with wheels for bookworm's Python 3.11 (pandas 3 and numpy 2.5
-# need 3.12), as are matplotlib 3.10 and Pillow 11; a move to a newer
-# base image lifts them together.
+# need 3.12), as is matplotlib 3.10; a move to a newer base image lifts
+# them together. Pillow and pypdf are kept at their newest: the image
+# scan (CI's Trivy step) fails the build on a HIGH advisory against
+# either, and both ship a steady stream of parser fixes — Pillow's
+# current wheels are manylinux_2_28, which bookworm's glibc satisfies.
 ARG PANDAS_VERSION=2.3.2
 ARG NUMPY_VERSION=2.3.5
 ARG OPENPYXL_VERSION=3.1.5
@@ -569,8 +572,8 @@ ARG PYTHON_DATEUTIL_VERSION=2.9.0.post0
 ARG PYTHON_DOCX_VERSION=1.2.0
 ARG PYTHON_PPTX_VERSION=1.0.2
 ARG REPORTLAB_VERSION=4.4.4
-ARG PYPDF_VERSION=6.1.3
-ARG PILLOW_VERSION=11.3.0
+ARG PYPDF_VERSION=6.21.1
+ARG PILLOW_VERSION=13.0.0
 ARG MATPLOTLIB_VERSION=3.10.7
 RUN python3 -m venv /opt/sandbox-python && \
     /opt/sandbox-python/bin/pip install --no-cache-dir --upgrade pip && \
