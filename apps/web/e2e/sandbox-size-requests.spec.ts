@@ -17,6 +17,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import { mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test, expect as baseExpect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
@@ -171,9 +173,38 @@ async function dbRows<T extends Record<string, unknown>>(
   }
 }
 
+/**
+ * The org limit and the admin's request list are one organization's, so the
+ * three Playwright projects cannot run this at the same time: whoever holds
+ * the lock directory runs, the others wait for it.
+ */
+const LOCK = path.join(tmpdir(), 'renkei-e2e-size-requests.lock');
+async function withOrgLock<T>(run: () => Promise<T>): Promise<T> {
+  const deadline = Date.now() + 600_000;
+  for (;;) {
+    try {
+      mkdirSync(LOCK);
+      break;
+    } catch {
+      if (Date.now() > deadline) rmSync(LOCK, { recursive: true, force: true });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    rmSync(LOCK, { recursive: true, force: true });
+  }
+}
+
 test('checkout limit: org setting, request, approve, deny', async ({ page }, testInfo) => {
+  // Up to three runs of the body in turn, the dev server compiling each route on its first hit.
+  test.setTimeout(720_000);
+  await withOrgLock(() => checkoutLimit(page, testInfo));
+});
+
+async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   // The dev server compiles each route on its first hit, which outlasts the default 5s.
-  test.setTimeout(240_000);
   const expect = baseExpect.configure({ timeout: 30_000 });
   const fixture = fixtureFor(testInfo.project.name);
   await seed(fixture);
@@ -306,4 +337,4 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await expect(page.getByLabel('sandboxWorkspaceMaxGb')).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await shot(page, testInfo, '10-settings-mobile');
-});
+}
