@@ -39,6 +39,8 @@ export const SEALED_DETAIL_FIELDS = [
   /** finish_run's result. */
   'result',
   'toolCalls',
+  /** A run compaction made on this turn: the summary and the turns it covers. */
+  'compaction',
 ] as const;
 
 /** The envelope field a sealed detail carries. */

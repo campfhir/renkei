@@ -225,6 +225,20 @@ function TurnDetail({ turn, batches }: { turn: AttemptView; batches: ActionBatch
           <p className="mt-0.5 whitespace-pre-wrap break-words">{detail.opening}</p>
         </details>
       ) : null}
+      {isRecord(detail.compaction) &&
+      typeof detail.compaction.summary === 'string' &&
+      typeof detail.compaction.through === 'number' ? (
+        <div
+          data-testid="turn-compaction"
+          className="rounded border border-dashed border-gray-300 p-2 dark:border-gray-700"
+        >
+          <p className="font-medium">
+            {detail.compaction.through === 1 ? 'Turn 1' : `Turns 1–${detail.compaction.through}`}{' '}
+            folded into notes to fit the model&rsquo;s context
+          </p>
+          <ClampedText label="" text={detail.compaction.summary} />
+        </div>
+      ) : null}
       {typeof detail.llmSummary === 'string' && detail.llmSummary ? (
         <ClampedText label="" text={detail.llmSummary} />
       ) : null}

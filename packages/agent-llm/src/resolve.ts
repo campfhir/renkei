@@ -18,6 +18,7 @@ import { decrypt, loadKeyring } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmProvider } from './contract';
+import { contextWindowOf } from './context-budget';
 import { IMAGE_SURFACES, type ImageModelConfig, type ImageSurface } from './images';
 import { AnthropicProvider } from './anthropic';
 import { OpenAiProvider } from './openai';
@@ -226,6 +227,11 @@ export async function resolveAgentLlm(
   };
   cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
   return ok(resolved);
+}
+
+/** A resolved model's context window: the recorded one, else inferred from its name. */
+export function contextWindowOfLlm(llm: Pick<ResolvedLlm, 'model' | 'contextWindow'>): number {
+  return llm.contextWindow ?? contextWindowOf(llm.model);
 }
 
 export interface ResolvedImageModel {

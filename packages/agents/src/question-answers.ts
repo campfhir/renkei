@@ -22,7 +22,10 @@
  */
 
 import { isValidDateString } from './recurrence';
-import { type QuestionField } from './question-field';
+import { otherAnswer, otherAnswerText, type QuestionField } from './question-field';
+
+/** The longest free-text answer a choice's "something else" box keeps. */
+const OTHER_MAX_CHARS = 2_000;
 
 /** The longest a single text answer may be. */
 export const MAX_QUESTION_ANSWER_CHARS = 10_000;
@@ -130,6 +133,15 @@ export function checkQuestionAnswers(fields: QuestionField[], raw: unknown): Que
           if (field.required) fail('Pick one.');
           break;
         }
+        const own = otherAnswerText(field, text);
+        if (own !== null) {
+          if (!own.trim()) {
+            fail('Say what it is.');
+            break;
+          }
+          values[field.name] = otherAnswer(field.other ?? '', own.trim().slice(0, OTHER_MAX_CHARS));
+          break;
+        }
         if (!options.includes(text)) {
           fail('Pick one of the choices offered.');
           break;
@@ -150,11 +162,24 @@ export function checkQuestionAnswers(fields: QuestionField[], raw: unknown): Que
           if (field.required) fail('Pick at least one.');
           break;
         }
-        if (picks.some((pick) => !options.includes(pick))) {
+        const owns = picks.filter((pick) => otherAnswerText(field, pick) !== null);
+        if (
+          owns.length > 1 ||
+          picks.some((pick) => !options.includes(pick) && !owns.includes(pick))
+        ) {
           fail('Pick from the choices offered.');
           break;
         }
-        values[field.name] = picks;
+        const own = owns.length === 1 ? (otherAnswerText(field, owns[0]) ?? '').trim() : null;
+        if (own === '') {
+          fail('Say what it is.');
+          break;
+        }
+        values[field.name] = picks.map((pick) =>
+          pick === owns[0] && own !== null
+            ? otherAnswer(field.other ?? '', own.slice(0, OTHER_MAX_CHARS))
+            : pick
+        );
         break;
       }
       default: {
