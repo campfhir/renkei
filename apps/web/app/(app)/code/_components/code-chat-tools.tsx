@@ -20,6 +20,7 @@
  * when the checkout changes.
  */
 
+import { codeProjectUrl } from '@/lib/code/urls';
 import {
   useCallback,
   useEffect,
@@ -107,12 +108,15 @@ export interface CodeChatToolsHandle {
  */
 export function useCodeChatTools({
   projectId,
+  chatId,
   canEdit,
   running,
   messages,
   onAsk,
 }: {
   projectId: string | null;
+  /** The chat whose worktree the tools show. */
+  chatId: string;
   /** The person may change the environment and ask the chat to act. */
   canEdit: boolean;
   /** A turn is in flight: the counts refresh when it ends. */
@@ -122,7 +126,9 @@ export function useCodeChatTools({
   /** Sends a message to the chat as the person — the pull request ask. */
   onAsk: ((text: string) => Promise<boolean>) | null;
 }): CodeChatToolsHandle {
-  const base = `/api/code/projects/${projectId ?? ''}`;
+  const base = codeProjectUrl(projectId ?? '', chatId);
+  // The environment belongs to the project, not to a chat's worktree.
+  const envBase = codeProjectUrl(projectId ?? '');
   const [stat, setStat] = useState<{ added: number; deleted: number; files: number } | null>(null);
   // Closed, or open — on the working tree, or on one commit's diff.
   const [changes, setChanges] = useState<{ open: boolean; commit: string | null }>({
@@ -183,7 +189,7 @@ export function useCodeChatTools({
         />
       ) : null}
       {envOpen ? (
-        <EnvironmentModal base={base} canEdit={canEdit} onClose={() => setEnvOpen(false)} />
+        <EnvironmentModal base={envBase} canEdit={canEdit} onClose={() => setEnvOpen(false)} />
       ) : null}
       {filesOpen ? (
         <AddFilesModal

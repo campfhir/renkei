@@ -30,19 +30,19 @@ import { codeProjectTarget } from '@/lib/code/scope';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId);
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { chatId });
   if (!ready.ok) return ready.response;
-  const { project } = ready.context;
+  const { project, workspaceId } = ready.context;
   if (!(await sandboxWorkspacesEnabled())) {
     return NextResponse.json({ available: [], ready: false });
   }
   const target = codeProjectTarget(projectId);
   const [languages, workspace] = await Promise.all([
     sbLspLanguages(target),
-    projectWorkspace(project),
+    projectWorkspace(project, workspaceId),
   ]);
   return NextResponse.json({
     available: languages.ok ? languages.val : [],
@@ -52,16 +52,16 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId);
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { chatId });
   if (!ready.ok) return ready.response;
-  const { project } = ready.context;
+  const { workspaceId } = ready.context;
   if (!(await sandboxWorkspacesEnabled())) {
     return jsonError(503, 'unavailable', 'Code workspaces are not enabled on this deployment.');
   }
-  if (!project.workspaceId) {
+  if (!workspaceId) {
     return jsonError(409, 'not-cloned', 'Send a message so a chat clones the repository first.');
   }
   let body: unknown;
@@ -78,7 +78,7 @@ export async function POST(
     return jsonError(400, 'invalid', 'A client id is required.');
   }
   const opened = await sbLspOpen(codeProjectTarget(projectId), {
-    id: project.workspaceId,
+    id: workspaceId,
     server,
     clientId,
   });

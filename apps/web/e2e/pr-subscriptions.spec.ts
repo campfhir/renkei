@@ -97,10 +97,6 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
       `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
       [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
     );
-    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
-      ids.chatId,
-      ids.projectId,
-    ]);
 
     // PR #91 arrives already subscribed, with a recorded outcome — the
     // "seeded pr_pipeline_events row via direct DB insert" the plan calls

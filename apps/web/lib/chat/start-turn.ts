@@ -30,7 +30,6 @@ import {
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { sandboxChartsEnabled, sandboxConfig, sandboxScriptsServed } from '@renkei/sandbox-client';
-import { isHistoryChat } from '@/lib/code/active-chat';
 import { CODE_TURN_LIMITS, codeProjectContext } from '@/lib/code/turn';
 import { CODE_DELEGATE_TOOL } from '@/lib/code/delegate';
 import { chatDelegateTool } from './chat-delegate';
@@ -146,8 +145,6 @@ const THINKING_MAX = 16_000;
 export type StartTurnError =
   | 'NOT_FOUND'
   | 'FORBIDDEN'
-  /** A code project's chat that is no longer its active one (lib/code/active-chat.ts). */
-  | 'HISTORY'
   | 'EMPTY'
   | 'TOO_LONG'
   | 'ALREADY_RUNNING'
@@ -221,13 +218,6 @@ export async function startChatTurn(
       : []),
   ];
   if (!text && extraBlocks.length === 0) return err('EMPTY' as const);
-  // A code project's history chat is read-only, its owner's or not: the
-  // project's checkout is the active chat's to work in.
-  if (chat.projectId) {
-    const project = await getProjectRow(db, chat.projectId);
-    if (isHistoryChat(project, chat.id)) return err('HISTORY' as const);
-  }
-
   const requestedModel =
     input.llmModelId !== undefined && input.llmModelId !== null && isUuid(input.llmModelId)
       ? input.llmModelId
@@ -545,6 +535,7 @@ async function executeTurnBody(
       project?.kind === 'code'
         ? codeProjectContext(db, project, {
             subject: input.session.subject,
+            chat: { id: input.chat.id, workspaceId: input.chat.workspaceId },
             // Auto mode's sub-agents run long (delegate.ts).
             auto: input.chat.autoMode && !readOnly,
           })
@@ -728,32 +719,33 @@ async function executeTurnBody(
       toolConfig.connectors.includes('sandbox') &&
       sandboxConfig() !== null &&
       (await sandboxScriptsServed().catch(() => false));
-    const systemWith = (summary: string | null) => buildSystemPrompt({
-      personName: person?.displayName ?? person?.email ?? null,
-      orgName: null,
-      project: context.project ? { ...context.project, code: code?.prompt ?? null } : null,
-      userMemoryText: context.userMemoryText,
-      chatSummary: summary,
-      chatFiles: context.chatFiles,
-      hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
-      hasDiscoverableTools: discoveryTool !== null,
-      hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
-      voice: input.voice === true,
-      hasDelegate: delegate !== null,
-      // outlook_search_users is a `microsoft` tool, not a core connector, so
-      // it is almost always in `discoverable` rather than offered up front —
-      // the brief has to work whichever bucket it is in.
-      hasDirectory:
-        surface.tools.some((tool) => tool.name === 'outlook_search_users') ||
-        surface.discoverable.some((entry) => entry.def.name === 'outlook_search_users'),
-      hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
-      filesAllowed,
-      chartsAllowed,
-      pythonAllowed,
-      autoMode: auto,
-      timeZone: input.timeZone ?? null,
-      now: new Date(),
-    });
+    const systemWith = (summary: string | null) =>
+      buildSystemPrompt({
+        personName: person?.displayName ?? person?.email ?? null,
+        orgName: null,
+        project: context.project ? { ...context.project, code: code?.prompt ?? null } : null,
+        userMemoryText: context.userMemoryText,
+        chatSummary: summary,
+        chatFiles: context.chatFiles,
+        hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
+        hasDiscoverableTools: discoveryTool !== null,
+        hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
+        voice: input.voice === true,
+        hasDelegate: delegate !== null,
+        // outlook_search_users is a `microsoft` tool, not a core connector, so
+        // it is almost always in `discoverable` rather than offered up front —
+        // the brief has to work whichever bucket it is in.
+        hasDirectory:
+          surface.tools.some((tool) => tool.name === 'outlook_search_users') ||
+          surface.discoverable.some((entry) => entry.def.name === 'outlook_search_users'),
+        hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
+        filesAllowed,
+        chartsAllowed,
+        pythonAllowed,
+        autoMode: auto,
+        timeZone: input.timeZone ?? null,
+        now: new Date(),
+      });
     const system = systemWith(chatSummary?.content ?? null);
     const toolDefs = [...surface.tools, ...recalled, ...localTools.defs()];
     // What this chat's requests carry besides its messages, kept for the

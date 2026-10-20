@@ -7,8 +7,7 @@
  * never touched one. Fetched per row rather than carried in the
  * project's own initial data, since it means reading that chat's own
  * transcript — capped by the caller to the rows actually worth asking
- * (the active chat plus the most recent previous ones), not every
- * history chat a project has ever had.
+ * (the most recent chats), not every chat a project has ever had.
  */
 
 import { useEffect, useState } from 'react';

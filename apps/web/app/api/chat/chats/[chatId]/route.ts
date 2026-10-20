@@ -13,9 +13,9 @@ import {
 } from '@/lib/chat/route-support';
 import { resolveChatAccess } from '@/lib/chat/access';
 import { loadChatView } from '@/lib/chat/chat-view';
-import { deleteChat, updateChat, type ChatPatch } from '@/lib/chat/store';
+import { deleteChat, getChatForOwner, updateChat, type ChatPatch } from '@/lib/chat/store';
+import { deleteChatWorktree } from '@/lib/code/projects';
 import { parseToolConfig } from '@/lib/chat/tool-config';
-import { releaseActiveChat } from '@/lib/code/active-chat';
 
 const TITLE_MAX_CHARS = 200;
 
@@ -62,9 +62,6 @@ export async function PATCH(
 
   const updated = await updateChat(db, session.subject, chatId, patch);
   if (!updated) return jsonError(404, 'not-found', 'No such chat');
-  // Archiving a code project's active chat leaves the project with none
-  // until the next new chat; unarchiving does not bring it back.
-  if (patch.archived === true) await releaseActiveChat(db, chatId);
   return NextResponse.json({ ok: true });
 }
 
@@ -76,7 +73,10 @@ export async function DELETE(
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
+  const chat = await getChatForOwner(db, session.subject, chatId);
   const deleted = await deleteChat(db, session.subject, chatId);
   if (!deleted) return jsonError(404, 'not-found', 'No such chat');
+  // A code chat's worktree goes with it; what this misses the worker's sweep takes.
+  if (chat?.projectId) await deleteChatWorktree(chat.projectId, chat.workspaceId);
   return NextResponse.json({ ok: true });
 }

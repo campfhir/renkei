@@ -43,6 +43,7 @@ import {
   READ_MAX_BYTES,
   WORKSPACE_DEFAULT_MAX_BYTES,
   WORKSPACE_MAX_PER_SUBJECT,
+  WORKTREE_MAX_PER_SUBJECT,
   UPLOAD_MAX_BYTES,
   WRITE_MAX_CHARS,
   clipOutput,
@@ -73,6 +74,7 @@ import {
 } from './env-secrets';
 import {
   WorkspacePathError,
+  addWorktree,
   callerDirExists,
   checkoutExists,
   cloneRepository,
@@ -88,6 +90,7 @@ import {
   readWorkspaceFile,
   orphanedByNow,
   removeWorkspace,
+  removeWorktree,
   removeWorkspaceFile,
   renameWorkspaceFile,
   workerInstance,
@@ -152,6 +155,7 @@ export function workspaceWire(summary: SandboxWorkspaceSummary) {
     id: summary.id,
     provider: summary.provider,
     repoFullName: summary.repoFullName,
+    parentId: summary.parentId,
     branch: summary.branch,
     status: summary.status,
     error: summary.error,
@@ -424,6 +428,76 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     sendJson(response, 200, { workspace: workspaceWire(row) });
   }
 
+  /**
+   * A worktree of a ready base clone, for one chat: a row of its own the
+   * verbs address by id like any checkout, on a new branch, ready when this
+   * answers — adding a worktree is a local git operation, not a clone.
+   * The same chat asking again gets the worktree it has, when the caller
+   * names one (`branch`) already present.
+   */
+  async function worktree(
+    target: store.WorkspaceTarget,
+    body: Body,
+    response: ServerResponse
+  ): Promise<void> {
+    const ref = validateGitRef(body.branch);
+    if (!ref.ok) return sendError(response, 400, 'bad_request', ref.message);
+    const baseId = str(body.baseId);
+    const base = baseId ? await store.getWorkspace(db, target, baseId) : undefined;
+    if (!base || base.parentId) {
+      return sendError(response, 404, 'not_found', 'No such base checkout to make a worktree of.');
+    }
+    if (base.status !== 'ready' || !(await checkoutExists(base.storageKey))) {
+      return sendError(response, 409, 'not_ready', 'The base checkout is not ready.');
+    }
+    const existing = (await store.listWorktrees(db, target, base.id)).find(
+      (candidate) => candidate.status === 'ready' && candidate.branch === ref.ref
+    );
+    if (existing && (await checkoutExists(existing.storageKey))) {
+      return sendJson(response, 200, { workspace: workspaceWire(existing) });
+    }
+    if (
+      (await store.countWorkspaces(db, target, { worktrees: true })) >= WORKTREE_MAX_PER_SUBJECT
+    ) {
+      return sendError(
+        response,
+        429,
+        'workspace_limit',
+        `At most ${WORKTREE_MAX_PER_SUBJECT} worktrees at once — delete one first.`
+      );
+    }
+    let startBranch = '';
+    if (str(body.startBranch)) {
+      const start = validateGitRef(body.startBranch);
+      if (!start.ok) return sendError(response, 400, 'bad_request', start.message);
+      startBranch = start.ref;
+    }
+    const storageKey = newWorkspaceStorageKey(target.subject);
+    const gitProxy = parseGitProxy(body.gitProxy);
+    const outcome = await addWorktree({
+      baseStorageKey: base.storageKey,
+      storageKey,
+      identity: identityFor(target),
+      branch: ref.ref,
+      startBranch,
+      ...(gitProxy ? { gitProxy } : {}),
+    });
+    if (!outcome.ok) return sendError(response, 409, 'worktree_failed', outcome.message);
+    const row = await store.insertWorkspace(db, {
+      ...target,
+      provider: base.provider,
+      repoFullName: base.repoFullName,
+      branch: outcome.branch,
+      storageKey,
+      parentId: base.id,
+      status: 'ready',
+    });
+    await store.touchWorkspace(db, row.id, {
+      sizeBytes: await measureWorkspace(workspaceDir(storageKey)),
+    });
+    sendJson(response, 200, { workspace: workspaceWire(row) });
+  }
+
   async function list(target: store.WorkspaceTarget, response: ServerResponse): Promise<void> {
     const rows = await store.listWorkspaces(db, target);
     sendJson(response, 200, { workspaces: rows.map(workspaceWire) });
@@ -448,7 +522,17 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const id = str(body.id);
     const deleted = id ? await store.deleteWorkspace(db, target, id) : undefined;
     if (!deleted) return sendError(response, 404, 'not_found');
-    await removeWorkspace(deleted.storageKey);
+    if (deleted.parentId) {
+      const base = await store.getWorkspace(db, target, deleted.parentId);
+      await removeWorktree(base?.storageKey ?? null, deleted.storageKey, identityFor(target));
+    } else {
+      // A base clone takes its worktrees with it: they cannot work without it.
+      for (const child of await store.listWorktrees(db, target, deleted.id)) {
+        await store.deleteWorkspaceById(db, child.id);
+        await removeWorktree(null, child.storageKey, identityFor(target));
+      }
+      await removeWorkspace(deleted.storageKey);
+    }
     sendJson(response, 200, { deleted: true, id: deleted.id, repoFullName: deleted.repoFullName });
   }
 
@@ -1554,6 +1638,8 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     switch (op) {
       case 'clone':
         return clone(target, body, response);
+      case 'worktree':
+        return worktree(target, body, response);
       case 'list':
         return list(target, response);
       case 'get':
@@ -1591,7 +1677,20 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     for (const workspace of expired) {
       try {
         if (await checkoutExists(workspace.storageKey)) {
-          await removeWorkspace(workspace.storageKey);
+          if (workspace.parentId) {
+            const base = await store.getWorkspaceById(db, workspace.parentId);
+            await removeWorktree(
+              base?.storageKey ?? null,
+              workspace.storageKey,
+              identityFor(workspace)
+            );
+          } else {
+            for (const child of await store.listWorktreesOf(db, workspace.id)) {
+              await removeWorktree(null, child.storageKey, identityFor(child));
+              await store.deleteWorkspaceById(db, child.id);
+            }
+            await removeWorkspace(workspace.storageKey);
+          }
         } else if (!orphanedByNow(workspace.expiresAt)) {
           continue;
         }

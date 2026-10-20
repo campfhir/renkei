@@ -78,11 +78,6 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
       `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
       [ids.codeChatId, E2E_SUBJECT, ids.projectId, ids.codeChatTitle]
     );
-    // The project's active chat — a history chat takes no turn (lib/code/active-chat.ts).
-    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
-      ids.codeChatId,
-      ids.projectId,
-    ]);
     for (const [chatId, turnId] of [
       [ids.chatId, ids.turnId],
       [ids.codeChatId, ids.codeTurnId],

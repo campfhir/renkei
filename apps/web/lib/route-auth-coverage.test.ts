@@ -26,7 +26,7 @@
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 
 const APP_DIR = join(__dirname, '..', 'app');
 
@@ -61,8 +61,7 @@ const NON_SESSION_AUTH: Record<string, string> = {
   'api/agents/optimize/[optimizationId]/run/route.ts':
     'agent-worker bearer (resolveAccessToken, application "agent"); the token names the ' +
     'owner whose run history the analysis may read, and the row is read under that subject',
-  'api/mcp/oauth/token/route.ts':
-    'OAuth token endpoint: client secret + PKCE code_verifier',
+  'api/mcp/oauth/token/route.ts': 'OAuth token endpoint: client secret + PKCE code_verifier',
   'api/oauth/callback/route.ts':
     'single-use OAuth state row bound to the pending authorization, to the starting ' +
     'browser (connect_state_ cookie) and to its session subject (lib/connect-flow-binding.ts)',
@@ -91,10 +90,8 @@ const PUBLIC: Record<string, string> = {
     'and the page redirects home once a provider exists',
   'api/auth/oidc/login/route.ts': 'starts the OIDC redirect — the thing that creates sessions',
   // Protocol discovery documents. Public by specification.
-  'api/mcp/.well-known/oauth-authorization-server/route.ts':
-    'RFC 8414 metadata, public by spec',
-  'api/mcp/.well-known/oauth-protected-resource/route.ts':
-    'RFC 9728 metadata, public by spec',
+  'api/mcp/.well-known/oauth-authorization-server/route.ts': 'RFC 8414 metadata, public by spec',
+  'api/mcp/.well-known/oauth-protected-resource/route.ts': 'RFC 9728 metadata, public by spec',
   'api/mcp/oauth/register/route.ts': 'RFC 7591 dynamic client registration',
   'api/oauth/register/route.ts': 'RFC 7591 dynamic client registration',
   // Operational.
@@ -137,6 +134,23 @@ function keyOf(file: string): string {
   return relative(APP_DIR, file).split(sep).join('/');
 }
 
+/**
+ * A route file that only re-exports another route's handlers
+ * (`export { GET } from '../files/route'`, the chat-scoped addresses of a
+ * code project's pane routes) answers for them: the guard it carries is
+ * the target's, which is read here too.
+ */
+function sourceWithReExports(file: string): string {
+  const source = readFileSync(file, 'utf8');
+  const targets = [...source.matchAll(/export\s*\{[^}]*\}\s*from\s*'(\.[^']+)'/g)].map(
+    (match) => match[1]!
+  );
+  return [
+    source,
+    ...targets.map((target) => readFileSync(`${resolve(dirname(file), target)}.ts`, 'utf8')),
+  ].join('\n');
+}
+
 describe('every HTTP entry point makes an auth decision', () => {
   const files = walk(APP_DIR).sort();
 
@@ -147,7 +161,7 @@ describe('every HTTP entry point makes an auth decision', () => {
   });
 
   it.each(files.map((file) => [keyOf(file), file]))('%s', (key, file) => {
-    const source = readFileSync(file, 'utf8');
+    const source = sourceWithReExports(file);
     const hasSessionGuard = SESSION_GUARDS.some((guard) => source.includes(guard));
     const exempt =
       key in NON_SESSION_AUTH || key in PUBLIC || key in REDIRECT_ONLY || key in GUARDED_BY_ACTION;

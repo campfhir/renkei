@@ -28,14 +28,13 @@ const MAX_PATHS = 200;
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId, { write: true });
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { write: true, chatId });
   if (!ready.ok) return ready.response;
-  const { session, project } = ready.context;
-  if (!project.workspaceId)
-    return jsonError(409, 'not-cloned', 'There is no checkout to commit in yet.');
+  const { session, project, workspaceId } = ready.context;
+  if (!workspaceId) return jsonError(409, 'not-cloned', 'There is no checkout to commit in yet.');
 
   const body = await readJsonBody(request);
   const message = typeof body.message === 'string' ? body.message.trim() : '';
@@ -78,7 +77,7 @@ export async function POST(
   ]);
   const username = typeof credential === 'string' ? '' : credential.username;
   const committed = await sbWorkspaceGitCommit(codeProjectTarget(projectId), {
-    id: project.workspaceId,
+    id: workspaceId,
     message,
     ...(paths.length ? { paths } : {}),
     ...(newBranch ? { newBranch } : {}),

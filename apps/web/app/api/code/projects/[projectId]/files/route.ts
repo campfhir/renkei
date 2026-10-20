@@ -70,12 +70,12 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId);
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { chatId });
   if (!ready.ok) return ready.response;
-  const { db, session, access, project } = ready.context;
+  const { db, session, access, project, workspaceId } = ready.context;
   const path = validateWorkspacePath(new URL(request.url).searchParams.get('path'));
   if (!path.ok || !path.path)
     return jsonError(400, 'invalid', path.ok ? 'Say which file.' : path.message);
@@ -89,9 +89,9 @@ export async function GET(
   });
 
   const workspace = (await sandboxWorkspacesEnabled()) ? await projectWorkspace(project) : null;
-  if (workspace?.status === 'ready' && project.workspaceId) {
+  if (workspace?.status === 'ready' && workspaceId) {
     const read = await sbWorkspaceRead(codeProjectTarget(projectId), {
-      id: project.workspaceId,
+      id: workspaceId,
       path: path.path,
     });
     if (!read.ok) {
@@ -158,13 +158,13 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId, { write: true });
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { write: true, chatId });
   if (!ready.ok) return ready.response;
-  const { session, project } = ready.context;
-  if (!project.workspaceId)
+  const { session, project, workspaceId } = ready.context;
+  if (!workspaceId)
     return jsonError(409, 'not-cloned', 'Clone the repository before adding files to it.');
 
   const path = validateWorkspacePath(new URL(request.url).searchParams.get('path'), {
@@ -184,7 +184,7 @@ export async function PUT(
   if (ifMatch !== null) {
     // The guard: the file as it is now must be the file as it was read.
     // A file that is gone or binary now is as much a change as new text.
-    const current = await sbWorkspaceRead(target, { id: project.workspaceId, path: path.path });
+    const current = await sbWorkspaceRead(target, { id: workspaceId, path: path.path });
     const etag = current.ok ? etagOf(current.val.text) : '';
     if (etag !== ifMatch.replace(/^"|"$/g, '')) {
       return NextResponse.json(
@@ -200,7 +200,7 @@ export async function PUT(
   }
 
   const written = await sbWorkspaceUpload(target, {
-    id: project.workspaceId,
+    id: workspaceId,
     path: path.path,
     bytes,
   });
@@ -222,13 +222,13 @@ export async function PUT(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId, { write: true });
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { write: true, chatId });
   if (!ready.ok) return ready.response;
-  const { session, project } = ready.context;
-  if (!project.workspaceId)
+  const { session, project, workspaceId } = ready.context;
+  if (!workspaceId)
     return jsonError(409, 'not-cloned', 'Clone the repository before creating files in it.');
 
   const body = await readJsonBody(request);
@@ -242,13 +242,17 @@ export async function POST(
     return jsonError(
       400,
       'invalid',
-      path.ok ? (isFolder ? 'Say where the folder goes.' : 'Say where the file goes.') : path.message
+      path.ok
+        ? isFolder
+          ? 'Say where the folder goes.'
+          : 'Say where the file goes.'
+        : path.message
     );
 
   const target = codeProjectTarget(projectId);
 
   if (isFolder) {
-    const made = await sbWorkspaceMkdir(target, { id: project.workspaceId, path: path.path });
+    const made = await sbWorkspaceMkdir(target, { id: workspaceId, path: path.path });
     if (!made.ok) {
       const failure = clientFailure(made.err);
       return jsonError(failure.status, 'create', failure.message);
@@ -265,11 +269,11 @@ export async function POST(
   }
 
   // Never silently overwrite — "New file" means new.
-  const existing = await sbWorkspaceRead(target, { id: project.workspaceId, path: path.path });
+  const existing = await sbWorkspaceRead(target, { id: workspaceId, path: path.path });
   if (existing.ok) return jsonError(409, 'exists', `${path.path} already exists.`);
 
   const written = await sbWorkspaceWrite(target, {
-    id: project.workspaceId,
+    id: workspaceId,
     path: path.path,
     content: '',
   });
@@ -289,23 +293,27 @@ export async function POST(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId, { write: true });
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { write: true, chatId });
   if (!ready.ok) return ready.response;
-  const { session, project } = ready.context;
-  if (!project.workspaceId)
+  const { session, project, workspaceId } = ready.context;
+  if (!workspaceId)
     return jsonError(409, 'not-cloned', 'There is no checkout to remove files from.');
 
   const path = validateWorkspacePath(new URL(request.url).searchParams.get('path'), {
     forWrite: true,
   });
   if (!path.ok || !path.path)
-    return jsonError(400, 'invalid', path.ok ? 'Say which file or folder to remove.' : path.message);
+    return jsonError(
+      400,
+      'invalid',
+      path.ok ? 'Say which file or folder to remove.' : path.message
+    );
 
   const target = codeProjectTarget(projectId);
-  const removed = await sbWorkspaceRemove(target, { id: project.workspaceId, path: path.path });
+  const removed = await sbWorkspaceRemove(target, { id: workspaceId, path: path.path });
   if (!removed.ok) {
     const failure = clientFailure(removed.err);
     return jsonError(failure.status, 'remove', failure.message);
@@ -324,26 +332,29 @@ export async function DELETE(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId, { write: true });
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { write: true, chatId });
   if (!ready.ok) return ready.response;
-  const { session, project } = ready.context;
-  if (!project.workspaceId)
-    return jsonError(409, 'not-cloned', 'There is no checkout to rename files in.');
+  const { session, project, workspaceId } = ready.context;
+  if (!workspaceId) return jsonError(409, 'not-cloned', 'There is no checkout to rename files in.');
 
   const body = await readJsonBody(request);
   const from = validateWorkspacePath(body.from, { forWrite: true });
   if (!from.ok || !from.path)
-    return jsonError(400, 'invalid', from.ok ? 'Say which file or folder to rename.' : from.message);
+    return jsonError(
+      400,
+      'invalid',
+      from.ok ? 'Say which file or folder to rename.' : from.message
+    );
   const to = validateWorkspacePath(body.to, { forWrite: true });
   if (!to.ok || !to.path)
     return jsonError(400, 'invalid', to.ok ? 'Say the new name or location.' : to.message);
 
   const target = codeProjectTarget(projectId);
   const moved = await sbWorkspaceMove(target, {
-    id: project.workspaceId,
+    id: workspaceId,
     from: from.path,
     to: to.path,
   });

@@ -18,6 +18,7 @@
  * marked the same way.
  */
 
+import { codeProjectUrl } from '@/lib/code/urls';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getJson } from '@/lib/fetch-json';
 import type { ChatNote } from '@/lib/code/note-text';
@@ -145,7 +146,7 @@ export function useCodePane({
   /** Tell the chat what was done to the checkout (a note row). */
   onNote: (note: ChatNote) => void;
 }): CodePaneHandle {
-  const base = `/api/code/projects/${projectId ?? ''}`;
+  const base = codeProjectUrl(projectId ?? '', chatId);
   const [tabs, setTabs] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, CodePaneFile>>({});
