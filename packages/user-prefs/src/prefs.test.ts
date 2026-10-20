@@ -27,6 +27,11 @@ import {
   type DeliveryPrefs,
   DEFAULT_IMAGE_PREFS,
   parseImagePrefs,
+  DEFAULT_CHAT_ARCHIVE_PREFS,
+  effectiveArchiveDays,
+  isChatArchiveDays,
+  parseChatArchivePrefs,
+  CHAT_ARCHIVE_MAX_DAYS,
 } from './prefs';
 
 const prefs = (over: Partial<NotificationPrefs> = {}): NotificationPrefs => ({
@@ -458,5 +463,62 @@ describe('parseCoachMarkPrefs', () => {
     expect(parseCoachMarkPrefs({ autoStart: false })).toEqual({ autoStart: false });
     expect(parseCoachMarkPrefs({ autoStart: true })).toEqual({ autoStart: true });
     expect(parseCoachMarkPrefs({ autoStart: 'no' })).toEqual({ autoStart: true });
+  });
+});
+
+describe('parseChatArchivePrefs', () => {
+  it('defaults to never archiving', () => {
+    expect(DEFAULT_CHAT_ARCHIVE_PREFS).toEqual({ afterDays: null });
+    expect(parseChatArchivePrefs(undefined)).toEqual({ afterDays: null });
+    expect(parseChatArchivePrefs(null)).toEqual({ afterDays: null });
+  });
+
+  it('keeps a whole number of days from 1 up to the ceiling', () => {
+    expect(parseChatArchivePrefs({ afterDays: 30 })).toEqual({ afterDays: 30 });
+    expect(parseChatArchivePrefs({ afterDays: 1 })).toEqual({ afterDays: 1 });
+    expect(parseChatArchivePrefs({ afterDays: CHAT_ARCHIVE_MAX_DAYS })).toEqual({
+      afterDays: CHAT_ARCHIVE_MAX_DAYS,
+    });
+  });
+
+  it('reads anything else as never rather than inventing a window', () => {
+    for (const afterDays of [0, -3, 2.5, '30', CHAT_ARCHIVE_MAX_DAYS + 1, null, NaN]) {
+      expect(parseChatArchivePrefs({ afterDays })).toEqual({ afterDays: null });
+    }
+  });
+});
+
+describe('isChatArchiveDays', () => {
+  it('accepts exactly the whole days the field allows', () => {
+    expect(isChatArchiveDays(1)).toBe(true);
+    expect(isChatArchiveDays(CHAT_ARCHIVE_MAX_DAYS)).toBe(true);
+    expect(isChatArchiveDays(0)).toBe(false);
+    expect(isChatArchiveDays(CHAT_ARCHIVE_MAX_DAYS + 1)).toBe(false);
+    expect(isChatArchiveDays(7.5)).toBe(false);
+    expect(isChatArchiveDays(null)).toBe(false);
+  });
+});
+
+describe('effectiveArchiveDays', () => {
+  it('is off when the person has not chosen a window', () => {
+    expect(effectiveArchiveDays({ afterDays: null }, 365)).toBeNull();
+    expect(effectiveArchiveDays({ afterDays: null }, 0)).toBeNull();
+  });
+
+  it('caps the window at the org retention, so archiving comes before pruning', () => {
+    expect(effectiveArchiveDays({ afterDays: 400 }, 365)).toBe(365);
+    expect(effectiveArchiveDays({ afterDays: 30 }, 365)).toBe(30);
+    expect(effectiveArchiveDays({ afterDays: 365 }, 365)).toBe(365);
+  });
+
+  it('caps nothing when the org keeps every chat', () => {
+    expect(effectiveArchiveDays({ afterDays: 3_000 }, 0)).toBe(3_000);
+  });
+
+  it('follows a lowered org retention without touching the preference', () => {
+    const prefs = { afterDays: 200 };
+    expect(effectiveArchiveDays(prefs, 365)).toBe(200);
+    expect(effectiveArchiveDays(prefs, 90)).toBe(90);
+    expect(prefs).toEqual({ afterDays: 200 });
   });
 });

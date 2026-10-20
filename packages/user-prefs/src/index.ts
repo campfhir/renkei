@@ -32,6 +32,10 @@ import {
   IMAGE_KEY,
   parseImagePrefs,
   type ImagePrefs,
+  CHAT_ARCHIVE_KEY,
+  DEFAULT_CHAT_ARCHIVE_PREFS,
+  parseChatArchivePrefs,
+  type ChatArchivePrefs,
   parseCoachMarkPrefs,
   type CoachMarkPrefs,
   parseConnectorPrefs,
@@ -449,5 +453,68 @@ export async function setCoachMarkPrefs(
   if (!written.ok) return written;
 
   coachMarkCache.delete(cacheKey(subject));
+  return ok();
+}
+
+const chatArchiveCache = new Map<string, { value: ChatArchivePrefs; expiresAt: number }>();
+
+/**
+ * How long this person's chats may sit untouched before they are archived.
+ * Same cache and `fresh` discipline as the image preference: the preferences
+ * page that saves it passes `fresh`. Never fails loudly: a database problem
+ * reads as "never archive", which is the default.
+ */
+export async function getChatArchivePrefs(
+  subject: string,
+  options: { fresh?: boolean } = {}
+): Promise<ChatArchivePrefs> {
+  const key = cacheKey(subject);
+  const cached = chatArchiveCache.get(key);
+  if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return DEFAULT_CHAT_ARCHIVE_PREFS;
+
+  const rowResult = await wrapAsync(
+    () =>
+      dbResult.val
+        .selectFrom('user_preferences')
+        .select('value')
+        .where('subject', '=', subject)
+        .where('key', '=', CHAT_ARCHIVE_KEY)
+        .executeTakeFirst(),
+    'DB_ERROR' as const
+  );
+  if (!rowResult.ok) return DEFAULT_CHAT_ARCHIVE_PREFS;
+
+  const value = parseChatArchivePrefs(rowResult.val?.value);
+  chatArchiveCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  return value;
+}
+
+/** Replace this person's chat archive preference wholesale. */
+export async function setChatArchivePrefs(
+  subject: string,
+  prefs: ChatArchivePrefs
+): Promise<Result<void, 'DB_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+
+  const now = new Date().toISOString();
+  const value = JSON.stringify(prefs);
+  const written = await wrapAsync(
+    () =>
+      dbResult.val
+        .insertInto('user_preferences')
+        .values({ subject, key: CHAT_ARCHIVE_KEY, value, updated_at: now })
+        .onConflict((oc) =>
+          oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
+        )
+        .execute(),
+    'DB_ERROR' as const
+  );
+  if (!written.ok) return written;
+
+  chatArchiveCache.delete(cacheKey(subject));
   return ok();
 }

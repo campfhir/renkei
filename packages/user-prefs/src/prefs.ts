@@ -631,3 +631,56 @@ export function parseCoachMarkPrefs(stored: unknown): CoachMarkPrefs {
   const raw: Record<string, unknown> = { ...stored };
   return { autoStart: boolOr(raw.autoStart, DEFAULT_COACH_MARK_PREFS.autoStart) };
 }
+
+/**
+ * Whether a person's chats are archived on their own once they have sat
+ * untouched for a while. Off (null) by default: archiving hides a chat from
+ * the list, so it has to be a choice someone makes, not something that
+ * happens to them. Archiving is reversible — unarchive brings the chat back
+ * with its messages — which is why the sweep can act on it without asking.
+ */
+export const CHAT_ARCHIVE_KEY = 'chat_archive';
+
+/** The longest idle period a person can pick; past this, retention decides. */
+export const CHAT_ARCHIVE_MAX_DAYS = 3_650;
+
+export interface ChatArchivePrefs {
+  /** Days a chat may go untouched before it is archived. Null = never. */
+  afterDays: number | null;
+}
+
+export const DEFAULT_CHAT_ARCHIVE_PREFS: ChatArchivePrefs = { afterDays: null };
+
+/** A whole number of days a person can choose: 1 up to the ceiling. */
+export function isChatArchiveDays(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= CHAT_ARCHIVE_MAX_DAYS
+  );
+}
+
+/** Survives whatever jsonb hands back; anything unrecognisable is the default. */
+export function parseChatArchivePrefs(stored: unknown): ChatArchivePrefs {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) {
+    return DEFAULT_CHAT_ARCHIVE_PREFS;
+  }
+  const days: unknown = Reflect.get(stored, 'afterDays');
+  return { afterDays: isChatArchiveDays(days) ? days : null };
+}
+
+/**
+ * The idle period the sweep actually applies. The org's chat retention is a
+ * ceiling: with a retention window set, the person's number is capped at it,
+ * so a chat is archived before the org would prune it, never after. Retention
+ * of 0 (keep everything) caps nothing. Read at sweep time, so lowering the
+ * org's retention later takes effect without touching anyone's preference.
+ */
+export function effectiveArchiveDays(
+  prefs: ChatArchivePrefs,
+  orgRetentionDays: number
+): number | null {
+  if (prefs.afterDays === null) return null;
+  return orgRetentionDays > 0 ? Math.min(prefs.afterDays, orgRetentionDays) : prefs.afterDays;
+}

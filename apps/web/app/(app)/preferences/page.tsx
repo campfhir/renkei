@@ -1,7 +1,14 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { getImagePrefs, getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
+import { getOrgSettings } from '@renkei/settings';
+import {
+  CHAT_ARCHIVE_MAX_DAYS,
+  getChatArchivePrefs,
+  getImagePrefs,
+  getNotificationPrefs,
+  getThemePrefs,
+} from '@renkei/user-prefs';
 import { actsByConnector, ACT_CATEGORIES } from '@renkei/tool-outcomes';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -21,6 +28,7 @@ import ToolPermissionsForm from './tool-permissions-form';
 import ThemeForm from './theme-form';
 import VoiceForm from './voice-form';
 import ImageModelForm from './image-model-form';
+import ChatArchiveForm from './chat-archive-form';
 import EncryptionKeySection from './encryption-key-section';
 
 /**
@@ -47,6 +55,8 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     imagePrefs,
     imageModels,
     keyStatus,
+    chatArchive,
+    org,
   ] = await Promise.all([
     getNotificationPrefs(session.subject, { fresh: true }),
     getThemePrefs(session.subject, { fresh: true }),
@@ -75,6 +85,8 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     // Managed until they say otherwise; a missing row reads as managed too.
     // The delegate answers; unreachable, and the section is left out.
     keyStatusView(session),
+    getChatArchivePrefs(session.subject, { fresh: true }),
+    getOrgSettings(),
   ]);
 
   const chatToolOptions = chatConnectors.map((option) => ({
@@ -149,6 +161,17 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
           <ImageModelForm initial={imagePrefs} models={imageModels} />
         </div>
       ) : null}
+      <div className="mb-6">
+        <ChatArchiveForm
+          initial={chatArchive}
+          retentionDays={org.ok ? org.val.chatRetentionDays : 0}
+          maxDays={
+            org.ok && org.val.chatRetentionDays > 0
+              ? Math.min(org.val.chatRetentionDays, CHAT_ARCHIVE_MAX_DAYS)
+              : CHAT_ARCHIVE_MAX_DAYS
+          }
+        />
+      </div>
       {keyStatus ? (
         <div className="mb-6">
           <EncryptionKeySection initial={keyStatus} />
