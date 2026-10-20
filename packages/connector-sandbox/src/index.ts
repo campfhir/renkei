@@ -305,6 +305,8 @@ export {
   SCRIPT_OUTPUT_DIR,
   SCRIPT_MAIN_FILE,
   SCRIPT_LANGUAGES,
+  SCRIPT_LIBRARIES,
+  scriptLibrariesLine,
   validateScriptCode,
   scriptTimeoutMs,
   validateInputFileIds,

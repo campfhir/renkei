@@ -26,8 +26,13 @@ import type { TurnStore } from './turn-runner';
 import type { AttachmentView } from './views';
 import type { ContentCipher } from './content-crypto';
 
-/** A tool's file beyond this is not kept; the model saw what it saw. */
-const ARTIFACT_MAX_BYTES = 25_000_000;
+/**
+ * A tool's file beyond this is not kept; the model saw what it saw. A
+ * tool that reads bytes back from somewhere else to hand over
+ * (chat_attach_from_sandbox) checks against it first, so it can say why
+ * rather than hand over nothing.
+ */
+export const ARTIFACT_MAX_BYTES = 25_000_000;
 
 export function createTurnStore(
   db: Kysely<DB>,

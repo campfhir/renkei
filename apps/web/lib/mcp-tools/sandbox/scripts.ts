@@ -35,10 +35,32 @@ import {
   SCRIPT_OUTPUT_DIR,
   SCRIPT_OUTPUT_MAX_CHARS,
   clipOutput,
+  scriptLibrariesLine,
 } from '@renkei/connector-sandbox';
 import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
 import { sbRunScript, clientFailure, type WireScriptResult } from '@/lib/sandbox/service-client';
+
+/**
+ * The one paragraph both document tools point at: what a script can make
+ * of a document that the Markdown renderers cannot. Said in
+ * sandbox_run_python's own description, and — shorter — in
+ * sandbox_render_document's and chat_write_file's, so the model that
+ * reaches for the text renderer first learns there is a richer road.
+ */
+export const DOCUMENT_SCRIPT_LINE =
+  'This is also how to AUTHOR a document richer than Markdown can express, or UPDATE an ' +
+  'existing one — prefer it over the Markdown renderers for anything but a simple, ' +
+  'text-only document: a Word document, slide deck, PDF or workbook with its look under your ' +
+  'control — fonts, sizes, colours, bold and italic, paragraph and cell alignment, text boxes ' +
+  'placed at exact positions on a slide, slide backgrounds, themes, number formats, cell ' +
+  'fills and borders, headers and footers — with pictures placed in it (a staged image — a ' +
+  'generated picture, a rendered chart, a screenshot — read from ' +
+  `${SCRIPT_INPUT_DIR}/ and inserted with python-docx, python-pptx or reportlab), a chart ` +
+  'plotted from the data with matplotlib or a native PowerPoint/Excel chart, a particular ' +
+  'layout, a template filled in; or a staged .docx, .pptx, .xlsx or .pdf — one pulled from a ' +
+  `network share or handed to you — opened, changed and saved under ${SCRIPT_OUTPUT_DIR}/ ` +
+  'as the new version with its formatting kept, then sent back where it came from. ';
 
 /** What a result says when the run was not cut off from the network. */
 export const NETWORK_SHARED_NOTE =
@@ -111,8 +133,8 @@ export function registerSandboxScriptTools(
         'and answered by id, ready for sandbox_send_to_upload or sandbox_read_file. Print what ' +
         'you want to see; stdout and stderr come back (up to maxChars, the middle of long output ' +
         'omitted), so print a summary and a sample rather than every row. ' +
-        'pandas, numpy, openpyxl (read and write .xlsx) and XlsxWriter are installed; the ' +
-        'standard library beyond that. ' +
+        DOCUMENT_SCRIPT_LINE +
+        `Installed: ${scriptLibrariesLine()}; the standard library beyond that. ` +
         (options.networkShared
           ? 'On this deployment the script HAS the sandbox worker’s network access (the organization ' +
             'chose to run scripts without network isolation): it can reach any host the worker ' +

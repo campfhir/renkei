@@ -82,6 +82,12 @@ export interface SystemPromptInput {
   /** chat_write_chart is among the tools (a file store plus a chart renderer): the brief names it. */
   chartsAllowed?: boolean;
   /**
+   * sandbox_run_python is among the tools with the sandbox's document
+   * libraries (a file store, the sandbox in the toolset, scripts on): the
+   * brief sends anything but a simple document that way.
+   */
+  pythonAllowed?: boolean;
+  /**
    * Auto mode (auto-mode.ts): the turn works unattended, its tools run
    * unasked, and the model ends the task with task_complete — the brief
    * says so, right after the project it works in.
@@ -333,6 +339,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
       'To hand the person a file, write it with chat_write_file; it appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. You write text and the extension decides the file: .csv, .md, .txt, .json and other text formats are kept as written; .docx and .pdf are rendered from your Markdown; .pptx from Markdown with a # or ## heading per slide; .xlsx from CSV, JSON sheets or Markdown tables, where a cell starting with = is a live formula. So an Excel workbook, a Word document, a PDF or a slide deck is yours to make — write the content, never bytes or base64. A file another tool hands back (a screenshot, a mail attachment) is kept there the same way.' +
         (input.chartsAllowed
           ? ' For a chart or a diagram — a bar or line chart, a pie, a Gantt plan, a flowchart, a sequence diagram — write Mermaid text to chat_write_chart, which draws it as a PNG (or an SVG or a PDF) and keeps it the same way; never draw one in a code block when the person wants an image.'
+          : '') +
+        (input.pythonAllowed
+          ? ' chat_write_file renders only a simple, text-only document in the default look. For anything more — fonts, colours, alignment, text placed where you want it on a slide, slide backgrounds, cell formatting, a picture or chart placed in the document, a layout, a template filled in, or a file the person gave you to update in place with its formatting kept — write the document with sandbox_run_python instead (python-docx, python-pptx, reportlab, openpyxl and matplotlib are installed there): stage any picture it needs with chat_attach_to_sandbox by its filename, have the script save the result under out/, and bring it to the person with chat_attach_from_sandbox. Prefer that road unless the document is genuinely simple.'
           : '')
     );
   } else {

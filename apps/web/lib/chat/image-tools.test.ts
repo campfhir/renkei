@@ -113,7 +113,7 @@ describe('chat_generate_image — offering', () => {
     expect(def.description).toMatch(/sourceImage to that picture’s filename/);
   });
 
-  it('takes no prompt and no model from the chat model — only the shape, name and look', () => {
+  it('takes no prompt and no model from the chat model — only the shape, name and look, and a document’s illustration', () => {
     const properties = Object.keys(tool(returning()).def.inputSchema.properties ?? {});
     expect(properties.sort()).toEqual([
       'aspectRatio',
@@ -121,11 +121,73 @@ describe('chat_generate_image — offering', () => {
       'filename',
       'frameDelayMs',
       'frames',
+      'illustration',
       'quality',
       'size',
       'sourceImage',
     ]);
     expect(tool(returning()).def.inputSchema.required).toEqual([]);
+  });
+});
+
+describe('chat_generate_image — an illustration for a document', () => {
+  it('draws from the chat model’s own description when it names one, and says so', async () => {
+    const generate = returning();
+    const result = await tool(generate).execute(
+      {
+        filename: 'cover.png',
+        illustration: '  A calm watercolour of a lighthouse at dawn, no text  ',
+        size: '1536x1024',
+      },
+      context()
+    );
+    expect(result.isError).toBe(false);
+    expect(generate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ prompt: 'A calm watercolour of a lighthouse at dawn, no text' })
+    );
+    expect(result.content[0]?.text).toMatch(
+      /Drawn from your own description, as an illustration for a document/
+    );
+    expect(documentsOf(result.meta)[0]?.title).toBe('cover.png');
+  });
+
+  it('falls back to the person’s words when the description is blank, saying nothing of it', async () => {
+    const generate = returning();
+    const result = await tool(generate).execute(
+      { filename: 'a.png', illustration: '   ' },
+      context()
+    );
+    expect(generate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ prompt: USER_TEXT })
+    );
+    expect(result.content[0]?.text).not.toMatch(/own description/);
+  });
+
+  it('needs no message from the person for an illustration, but refuses one too long', async () => {
+    const generate = returning();
+    const none = await tool(generate).execute(
+      { filename: 'a.png', illustration: 'A red circle' },
+      context({ userPrompt: undefined })
+    );
+    expect(none.isError).toBe(false);
+    const long = await tool(generate).execute(
+      { filename: 'a.png', illustration: 'x'.repeat(32_001) },
+      context()
+    );
+    expect(long.isError).toBe(true);
+    expect(long.content[0]?.text).toMatch(/Your description is 32001 characters/);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('describes the illustration to the model as a document’s, never a picture the person asked for', () => {
+    const def = tool(returning()).def;
+    expect(def.description).toMatch(/illustration for a document/);
+    const property = (def.inputSchema.properties as Record<string, { description: string }>)
+      .illustration!;
+    expect(property.description).toMatch(/ONLY for a picture that will go inside a document/);
+    expect(property.description).toMatch(/Leave it out whenever the person asked for a picture/);
   });
 });
 

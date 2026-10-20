@@ -10,7 +10,8 @@
  * project memory tools; a chat in a project, no personal memory or recall
  * tools either, since a project is self-contained and does not reach
  * outside itself; no attachments, no attachment tools; no file store, no
- * writing; no chart renderer, no charts — so the model is never offered a
+ * writing; no chart renderer, no charts; no sandbox in the toolset, no
+ * doors to it (sandbox-file-tools.ts) — so the model is never offered a
  * verb that can only fail.
  */
 
@@ -18,7 +19,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { LocalTool, LocalToolContext } from './local-tools';
 import type { ChatToolConfig } from './tool-config';
-import { sandboxChartsEnabled } from '@renkei/sandbox-client';
+import { sandboxChartsEnabled, sandboxConfig, sandboxScriptsServed } from '@renkei/sandbox-client';
 import { attachmentTools } from './attachment-tools';
 import { compactionTools } from './compaction-tools';
 import { chartTools } from './chart-tools';
@@ -27,6 +28,7 @@ import { memoryTools } from './memory-tools';
 import { mockupTools } from './mockup-tools';
 import { userMemoryTools } from './user-memory-tools';
 import { recallTools } from './recall-tools';
+import { sandboxFileTools } from './sandbox-file-tools';
 import { getImagePrefs } from '@renkei/user-prefs';
 import { imageGenerationTool } from './image-tools';
 import { listImageModels } from './models';
@@ -58,9 +60,17 @@ export async function chatLocalTools(
     )
     .limit(1)
     .executeTakeFirst();
-  if (hasFiles) tools.push(...attachmentTools(toolConfig));
+  if (hasFiles) tools.push(...attachmentTools());
   if (filesAllowed) {
-    tools.push(...fileTools());
+    // The two doors between the chat's files and the sandbox
+    // (sandbox-file-tools.ts): offered whenever the chat has the sandbox
+    // and the deployment runs one, whether or not the chat has files yet —
+    // a picture drawn or a document written THIS turn is a file to stage.
+    const sandbox = toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null;
+    // Where scripts run, chat_write_file says where a richer document comes from.
+    const python = sandbox && (await sandboxScriptsServed().catch(() => false));
+    tools.push(...fileTools({ python }));
+    if (sandbox) tools.push(...sandboxFileTools());
     // A picture comes from an image generation model, never a chat one;
     // without one in the org the tool is simply not offered. A failed
     // lookup costs the turn this one tool, not the turn.

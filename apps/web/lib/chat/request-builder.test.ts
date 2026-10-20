@@ -504,6 +504,31 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toMatch(/\.xlsx from CSV/);
     expect(prompt).toMatch(/never bytes or base64/);
     expect(prompt).not.toMatch(/Do not produce files/);
+    expect(prompt).not.toMatch(/sandbox_run_python/);
+  });
+
+  it('sends anything but a simple document down the Python road when scripts are on', () => {
+    const prompt = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      project: null,
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: true,
+      filesAllowed: true,
+      pythonAllowed: true,
+      now: new Date('2026-09-04T10:00:00Z'),
+    });
+    expect(prompt).toMatch(/chat_write_file renders only a simple, text-only document/);
+    expect(prompt).toMatch(/fonts, colours, alignment/);
+    expect(prompt).toMatch(/write the document with sandbox_run_python instead/);
+    expect(prompt).toMatch(/chat_attach_to_sandbox by its filename/);
+    expect(prompt).toMatch(/chat_attach_from_sandbox/);
+    expect(prompt).toMatch(/Prefer that road unless the document is genuinely simple/);
   });
 });
 

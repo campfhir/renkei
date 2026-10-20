@@ -62,6 +62,7 @@ import {
   SCRIPT_MAX_OUTPUT_FILES,
   SCRIPT_MAX_PROCESSES,
   SCRIPT_OUTPUT_DIR,
+  SCRIPT_LIBRARIES,
   inputNamesFor,
   outputMediaType,
   validateOutputName,
@@ -171,29 +172,46 @@ export async function resolvePython(configured: string | undefined): Promise<str
   return null;
 }
 
-/** What `python3 --version` and the data libraries say, for the boot log and the tool's description. */
+/**
+ * What `python3 --version` and the libraries say, for the boot log: each
+ * of SCRIPT_LIBRARIES is imported under its module name and reported
+ * under its package name with its version, so an operator reading the
+ * log sees the toolkit a script actually has — and a library the image
+ * should carry but does not (a stale image, SANDBOX_PYTHON pointed at
+ * another interpreter) is missing from the line.
+ */
 export async function probePython(
   python: string
-): Promise<{ version: string; libraries: string[] } | null> {
+): Promise<{ version: string; libraries: string[]; missing: string[] } | null> {
+  const names = SCRIPT_LIBRARIES.map(
+    (library) => `(${JSON.stringify(library.package)}, ${JSON.stringify(library.module)})`
+  ).join(', ');
   const probe = await runProcess(
-    { cwd: '/', home: '/', identity: null, env: {}, timeoutMs: 30_000 },
+    { cwd: '/', home: '/', identity: null, env: { MPLBACKEND: 'Agg' }, timeoutMs: 60_000 },
     python,
     [
       '-I',
       '-c',
       'import sys, importlib\n' +
         'print(sys.version.split()[0])\n' +
-        'for name in ("pandas", "numpy", "openpyxl", "xlsxwriter", "dateutil"):\n' +
+        `for name, module in (${names},):\n` +
         '    try:\n' +
-        '        module = importlib.import_module(name)\n' +
-        '        print(name, getattr(module, "__version__", ""))\n' +
+        '        found = importlib.import_module(module)\n' +
+        '        print("+", name, getattr(found, "__version__", ""))\n' +
         '    except Exception:\n' +
-        '        pass\n',
+        '        print("-", name)\n',
     ]
   );
   if (probe.exitCode !== 0) return null;
   const [version = '', ...rest] = probe.stdout.trim().split('\n');
-  return { version, libraries: rest.map((line) => line.trim()).filter(Boolean) };
+  const libraries: string[] = [];
+  const missing: string[] = [];
+  for (const raw of rest) {
+    const line = raw.trim();
+    if (line.startsWith('+ ')) libraries.push(line.slice(2).trim());
+    else if (line.startsWith('- ')) missing.push(line.slice(2).trim());
+  }
+  return { version, libraries, missing };
 }
 
 function shellQuote(value: string): string {
@@ -525,4 +543,3 @@ export class ScriptRunner {
     return { outputs, skipped };
   }
 }
-

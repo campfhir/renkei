@@ -43,6 +43,251 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-20',
+    heading: 'Documents with real formatting, pictures in them, and chats that know their context',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Documents with fonts, colours, layouts and pictures',
+        detail:
+          'Ask the chat or an agent for a Word document, a slide deck, a PDF or a workbook that is more than plain headings and paragraphs — a chosen font and colour scheme, text placed where you want it on a slide, a slide background, cell formatting, a picture or a chart placed in the page, a template filled in — and it writes the document with Python on the sandbox worker, which now carries python-docx, python-pptx, reportlab, pypdf, Pillow and matplotlib. Needs the organization’s Python scripts switch under Settings → Sandbox; the simple, text-only document is still made the quick way.',
+      },
+      {
+        kind: 'added',
+        title: 'Update a file in place',
+        detail:
+          'A workbook, document, deck or PDF pulled from a network share, or attached to a chat, can be opened, changed and saved as a new version with its formatting, formulas and styles kept — then sent back where it came from, or handed to you under the chat’s Artifacts.',
+      },
+      {
+        kind: 'added',
+        title: 'Pictures drawn for your documents',
+        detail:
+          'When you ask for a document with a cover, an illustration or a picture on a slide, the chat describes the picture to the image model itself and places it in the document; the reply says the picture came from its own description rather than your words. Agents can now generate pictures too, into their scratch space, for the documents they make.',
+      },
+      {
+        kind: 'added',
+        title: 'Files a script makes land under the chat’s Artifacts',
+        detail:
+          'What a Python script writes in the chat’s sandbox — a document, a workbook, a converted file — can now be brought back into the chat, where you download it or copy it to a network share like any other file. In the other direction, a picture or chart the chat just made can be handed to the sandbox by name.',
+      },
+      {
+        kind: 'added',
+        title: 'A context meter in every chat',
+        detail:
+          'A small ring beside the composer shows how much of the model’s context window the next message will use, in chats, project chats and code project chats. It appears when an admin has recorded a context window for the model (admin → LLM models) and resets after a compaction.',
+      },
+      {
+        kind: 'changed',
+        title: 'Chats compact before they overflow, and recover when they do',
+        detail:
+          'Auto-compaction now watches the model’s actual context window rather than a fixed count, folding the conversation when the next request would fill it. A “prompt too long” error compacts the chat and retries instead of failing the turn.',
+      },
+      {
+        kind: 'changed',
+        title: 'Code project chat keeps its width beside the code pane',
+        detail:
+          'The chat column next to the code pane no longer collapses below 400 pixels, and the composer folds its tool buttons by its own width rather than the window’s.',
+      },
+      {
+        kind: 'changed',
+        title: 'Agents ask questions the way a colleague would',
+        detail:
+          'An agent’s question card is either a conversation — a plain message with one reply box — or a batch of separate questions, each a complete sentence with its evidence and its own answer control (text, a choice, several choices, yes/no, a number or a date). Every question can be skipped, every choice offers “Something else” with a box of your own, and a batch ends with “Anything else I should know?”.',
+      },
+      {
+        kind: 'changed',
+        title: 'Long agent runs stay inside the model’s context',
+        detail:
+          'An agent run that grows past what its model can hold folds its earlier turns into notes — progress, exact facts, what changed and how it went, questions and answers, dead ends — and carries on. The run page shows where a fold happened.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Email replies and forwards are editable on the card',
+        detail:
+          'To, Cc, Subject and the reply’s own text can be edited on every email card before sending. Discarding one card no longer leaves the next one read-only.',
+      },
+    ],
+  },
+  {
+    date: '2026-10-18',
+    heading: 'Agents rebuilt around instructions',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'An agent is instructions and a tool selection, not a step plan',
+        detail:
+          'Agents no longer walk a plan of steps, branches and loops. You write what the agent is for — goal, context, approach, tools, actions, when it is done, rules — and pick the tools it may use; it works toward the goal on its own, choosing its calls and retrying as it judges. Existing agents were converted automatically, with their steps turned into a numbered approach; runs that were in flight at the upgrade were cancelled.',
+      },
+      {
+        kind: 'added',
+        title: 'Changes are staged as one batch to accept or decline',
+        detail:
+          'An agent cannot change anything itself. It proposes an ordered batch of actions, each with its reason, and you accept or decline the batch as a whole with an optional comment; accepted batches run in order and stop at the first failure. An agent can be set to accept its own batches, but a high-impact tool, or an organization policy that requires approval, still waits for a person.',
+      },
+      {
+        kind: 'changed',
+        title: 'Hard limits on a run',
+        detail:
+          'A run gets 30 minutes of active time by default (waiting on a person does not count) and 150 tool calls, both set under admin → Settings → Agents. The old step and attempt limits are gone.',
+      },
+      {
+        kind: 'added',
+        title: 'Drafting knows every tool you have',
+        detail:
+          'Drafting an agent lists every tool available to its owner, checks that the instructions only name tools in the selection, and turns on questions when the instructions have the agent ask mid-run.',
+      },
+      {
+        kind: 'added',
+        title: 'Agents can send out read-only sub-agents',
+        detail:
+          'An agent can hand a self-contained investigation to a sub-agent that works over the read tools the agent names and reports back — up to three at a time and ten per run, each counted against the run’s budget.',
+      },
+      {
+        kind: 'added',
+        title: 'Crawl a section of a website in one approved step',
+        detail:
+          'Instead of approving one page visit at a time, an agent (or a chat) plans a crawl — one site, the pages named or a pattern to follow, how deep — and the sandbox reads the pages in the background, keeping each page’s main text and tables. A crawl can be saved as a recipe to run again, and a stopped one resumes where it was.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Agents see staged results in full',
+        detail:
+          'A page or document an agent read through a staged action came back cut at 4,000 characters, which made long pages look like they ended early. Staged results are now kept whole up to the same limit as a direct read, a cut says so plainly, and the run page shows every tool result in full.',
+      },
+      {
+        kind: 'changed',
+        title: 'The day of the week, and your time zone',
+        detail:
+          'The date and time tools name the weekday, and the chat is told your time zone so “next Tuesday” and “this afternoon” resolve to the right moment.',
+      },
+    ],
+  },
+  {
+    date: '2026-10-09',
+    heading: 'One organization per deployment, and settings instead of environment variables',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'One organization per deployment',
+        detail:
+          'Renkei now runs one organization per deployment. Addresses lose their organization segment, and a fresh deployment shows a first-run setup page for the identity provider, gated by a setup secret the operator sets in the environment. Existing data, keys and sessions keep working after the upgrade; see the deployment guide before migrating.',
+      },
+      {
+        kind: 'added',
+        title: 'The organization has a name',
+        detail:
+          'Admins set the organization’s name under Settings; it shows wherever the organization is named, including the consent page.',
+      },
+      {
+        kind: 'changed',
+        title: 'Sandbox features are switches under Settings',
+        detail:
+          'The browser, charts, code workspaces, services, Python scripts and whether scripts may use the worker’s network are now organization settings under Settings → Sandbox, rather than variables in the deployment. The script memory ceiling, service memory and process limits, log level and the AD Manager product name moved there too, and apply without a restart.',
+      },
+      {
+        kind: 'added',
+        title: 'A consent page when an application connects',
+        detail:
+          'When Claude Code, Cursor, an editor or another MCP client connects to Renkei, a page names the application, where its access would go and as whom it would act, and asks you to allow or deny; it warns when the application registered itself in the last hour. Clients must use PKCE, and new organizations start with self-registration of clients turned off (admin → Settings → MCP clients).',
+      },
+      {
+        kind: 'changed',
+        title: 'Group membership is never assumed',
+        detail:
+          'A person is in exactly the groups their sign-in token names under the configured claim, and in none when no claim is configured; a connector restricted to an audience is closed to everyone until a claim is set. Deployments that relied on the conventional “groups” claim keep it, now as a visible setting under Settings → Identity.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Connect tests a new Mirth, AD Manager or file share credential again',
+        detail:
+          'Testing a connection with a credential you had typed but not yet saved failed with a missing-credential error. The typed credential is used for the test.',
+      },
+    ],
+  },
+  {
+    date: '2026-10-08',
+    heading: 'Your own encryption key, security hardening, and Python over your files',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Every chat is sealed under its own key, held by the people who may open it',
+        detail:
+          'Each chat has a data key of its own, wrapped for each person who may read it and opened under that person’s key. Sharing a chat rewraps its key for the person you share with; unsharing forgets that wrapping; deleting the chat deletes the key. Connector credentials are sealed under their owner’s key the same way. You enrol your key when you sign in, approve a new device by typing a short code, and can rotate it; an operator can shred a person’s key.',
+      },
+      {
+        kind: 'changed',
+        title: 'Mail, calendar and To Do are read live, never indexed',
+        detail:
+          'Outlook mail, calendar and To Do tasks have left the knowledge index. Every read goes to Microsoft with your own access at the moment you ask.',
+      },
+      {
+        kind: 'changed',
+        title: 'Sessions time out, and an operator can sign everyone out',
+        detail:
+          'A session idle for 12 hours (an organization setting) ends; signing in again picks up where you were. Operators have “Sign out everywhere” on the Access page.',
+      },
+      {
+        kind: 'changed',
+        title: 'Agent actions can require approval by policy',
+        detail:
+          'An organization setting makes an agent’s acting steps wait for approval — by default for runs started from outside, such as a webhook — and a fixed list of high-impact tools always does. Anything an agent reads from a trigger or a tool is marked as untrusted content it must not take instructions from.',
+      },
+      {
+        kind: 'added',
+        title: 'Models declare how they handle data',
+        detail:
+          'Each model records where it runs, what it retains and whether a business associate agreement covers it, with a warning badge when it does not. An organization setting refuses uncovered models for the connectors that carry patient data, in chat and in agents. Every read of patient data through Mirth, OnBase or a file share is written to an append-only access trail.',
+      },
+      {
+        kind: 'added',
+        title: 'Host keys and transport security on connectors',
+        detail:
+          'An SFTP file share verifies the server’s host key — pinned by an admin or trusted on first use — and refuses a change. Turning transport security off for Mirth, AD Manager or OnBase is refused for production labels and public hosts, audited, and shown with a banner.',
+      },
+      {
+        kind: 'changed',
+        title: 'Logs are kept 90 days and chats a year by default',
+        detail:
+          'Organizations that never set a retention keep logs 90 days and chats 365 days; setting either to 0 still keeps them forever.',
+      },
+      {
+        kind: 'added',
+        title: 'Run Python over the files in your sandbox',
+        detail:
+          'Ask the chat to match two spreadsheets by a key column, filter or total thousands of rows, or convert a file, and it writes a Python script that runs on the sandbox worker over copies of your staged files — as you, with no network, under a memory and time ceiling — and stages back what it writes. The script does the matching, so a value cannot land on the wrong row. Turned on per organization under Settings → Sandbox.',
+      },
+      {
+        kind: 'fixed',
+        title: 'The browser reads long pages in full',
+        detail:
+          'A long passage on a page — a job description, a policy — was cut at a thousand characters in the browser’s view. It is now read line by line as the page shows it, so the whole text comes back.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Blank cells and rows keep their place in spreadsheets',
+        detail:
+          'Reading a workbook as text no longer shifts a row’s values left past an empty cell, and a workbook made from CSV keeps a blank line as an empty row.',
+      },
+    ],
+  },
+  {
+    date: '2026-10-06',
+    entries: [
+      {
+        kind: 'added',
+        title: 'JSM Ops maintenance windows',
+        detail:
+          'Ask for a maintenance window and the chat lists the planned and active ones, the alert sources a window would silence, creates one for a period after you confirm the preview, and cancels one that is still ahead.',
+      },
+      {
+        kind: 'changed',
+        title: 'Typing while a reply runs shows Send, not Stop',
+        detail:
+          'While a reply is running, the composer shows Stop only when the box is empty. As soon as you type or attach something the blue send button returns, and pressing it queues your message behind the reply instead of stopping it.',
+      },
+    ],
+  },
+  {
     date: '2026-10-01',
     heading: 'Image generation, sub-agents, and code project refinements',
     entries: [
