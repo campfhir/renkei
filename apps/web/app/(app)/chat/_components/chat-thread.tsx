@@ -64,6 +64,7 @@ import { DialogFooter } from './chat-nav';
 import Composer, { type ComposerSubmit } from './composer';
 import MessageList from './message-list';
 import ModelSelect from './model-select';
+import ContextMeter from './context-meter';
 import ToolsPopover from './tools-popover';
 import ShareModal from './share-modal';
 import {
@@ -1361,14 +1362,17 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
                 onCancelEdit={() => setEditing(null)}
                 onStop={stop}
                 modelControl={
-                  <ModelSelect
-                    models={models}
-                    value={modelId}
-                    onChange={changeModel}
-                    thinking={thinking}
-                    onThinking={changeThinking}
-                    hasHistory={state.messages.length > 0}
-                  />
+                  <>
+                    <ModelSelect
+                      models={models}
+                      value={modelId}
+                      onChange={changeModel}
+                      thinking={thinking}
+                      onThinking={changeThinking}
+                      hasHistory={state.messages.length > 0}
+                    />
+                    <ContextMeter messages={state.messages} model={currentModel} />
+                  </>
                 }
                 modeControl={
                   codeProjectId ? (

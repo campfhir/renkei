@@ -231,6 +231,8 @@ export interface ModelOption {
   isDefault: boolean;
   /** Anthropic models take a thinking budget; the OpenAI dialect does not. */
   supportsThinking: boolean;
+  /** Context window in tokens, as the admin recorded it; null when none was. */
+  contextWindow: number | null;
 }
 
 /**
