@@ -174,6 +174,15 @@ function turnLines(attempt: AttemptView, seen: SeenValues): string[] {
       '```'
     );
   }
+  const fold: Record<string, unknown> | null =
+    typeof detail.compaction === 'object' && detail.compaction !== null
+      ? { ...detail.compaction }
+      : null;
+  if (fold && str(fold.summary) && typeof fold.through === 'number') {
+    const span = fold.through === 1 ? 'turn 1' : `turns 1–${fold.through}`;
+    lines.push(`Folded ${span} into notes to fit the model's context:`);
+    lines.push('```text', str(fold.summary), '```');
+  }
   if (str(detail.llmSummary)) lines.push(`Model said: ${str(detail.llmSummary)}`);
   if (str(detail.finish)) lines.push(`Finished: ${str(detail.finish)}`);
   if (str(detail.result)) lines.push(`Result: ${str(detail.result)}`);

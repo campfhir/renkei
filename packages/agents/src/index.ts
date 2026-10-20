@@ -193,3 +193,15 @@ export {
   askedQuestionsOf,
   type AskedQuestions,
 } from './ask-questions';
+
+export {
+  RUN_COMPACTION_SYSTEM,
+  RUN_KEEP_RECENT_TURNS,
+  RUN_SUMMARY_MAX_CHARS,
+  foldBatches,
+  foldRequestText,
+  renderTurnForFold,
+  summaryOpening,
+  type FoldBlock,
+  type FoldTurn,
+} from './run-compaction';

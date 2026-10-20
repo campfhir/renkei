@@ -18,6 +18,7 @@ import { decrypt, loadKeyring } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmProvider } from './contract';
+import { contextWindowOf } from './context-budget';
 import { IMAGE_SURFACES, type ImageModelConfig, type ImageSurface } from './images';
 import { AnthropicProvider } from './anthropic';
 import { OpenAiProvider } from './openai';
@@ -31,6 +32,12 @@ export interface ResolvedLlm {
   providerName: string;
   model: string;
   maxOutputTokens: number;
+  /**
+   * The model's context window in tokens (context-budget.ts,
+   * contextWindowOf). Optional for callers that build one by hand;
+   * `contextWindowOfLlm` fills it in.
+   */
+  contextWindowTokens?: number;
   temperature?: number;
   /** The operator's statement of where this model's data goes (settings jsonb); absent = unknown. */
   dataHandling?: LlmDataHandling;
@@ -213,10 +220,18 @@ export async function resolveAgentLlm(
     providerName: row.provider,
     model: row.model,
     ...settingsOf(row),
+    contextWindowTokens: contextWindowOf(row.model, row.settings),
     dataHandling: dataHandlingOf(row.settings),
   };
   cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
   return ok(resolved);
+}
+
+/** A resolved model's context window, known or inferred from its name. */
+export function contextWindowOfLlm(
+  llm: Pick<ResolvedLlm, 'model' | 'contextWindowTokens'>
+): number {
+  return llm.contextWindowTokens ?? contextWindowOf(llm.model);
 }
 
 export interface ResolvedImageModel {

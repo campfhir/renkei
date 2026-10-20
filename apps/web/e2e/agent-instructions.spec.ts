@@ -312,6 +312,11 @@ test('a staged batch: the run page and the card, accepted', async ({ page }, tes
               content: `<untrusted source="tool:jira_search_issues">\n${longResult}\n</untrusted>`,
             },
           ],
+          // A fold made on this turn: the run outgrew its model earlier.
+          compaction: {
+            summary: 'NOTES: OPS-7 and OPS-8 are new and unanswered; next, propose replies.',
+            through: 3,
+          },
           pause: { kind: 'actions', toolUseId: 'tu_1', batchId },
         }),
       ]
@@ -330,6 +335,10 @@ test('a staged batch: the run page and the card, accepted', async ({ page }, tes
   await expect(page.getByRole('heading', { name: 'Run' })).toBeVisible();
   await expect(page.getByTestId('turn-heading').first()).toHaveText('Turn 1');
   await expect(page.getByText('Two new tickets need a reply; proposing both comments.')).toBeVisible();
+  // The fold shows where it happened, its notes readable.
+  const fold = page.getByTestId('turn-compaction');
+  await expect(fold).toContainText("Turns 1–3 folded into notes to fit the model’s context");
+  await expect(fold).toContainText('OPS-7 and OPS-8 are new and unanswered');
   // The tool result is the whole of what the agent read, not the preview.
   const showAll = page.getByText(`Show all (${longResult.length.toLocaleString()} characters)`);
   await expect(showAll).toBeVisible();

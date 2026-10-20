@@ -50,6 +50,12 @@ import {
   parseAgentDefinition,
   askedQuestionsOf,
   answersForAgent,
+  RUN_COMPACTION_SYSTEM,
+  RUN_KEEP_RECENT_TURNS,
+  RUN_SUMMARY_MAX_CHARS,
+  foldBatches,
+  foldRequestText,
+  summaryOpening,
   parseStagedActions,
   parseStoredActions,
   parseStoredResults,
@@ -96,6 +102,10 @@ import {
 } from '@renkei/agents/run-prompts';
 import {
   resolveAgentLlm,
+  contextWindowOfLlm,
+  fitMessages,
+  messagesChars,
+  transcriptBudgetChars,
   maskCredentialHeaders,
   phiCoveredModelRefusal,
   wireRequestCauseOf,
@@ -138,15 +148,8 @@ export const TURN_STEP_ID = 'turn';
  * is bounded by TOOL_RESULT_CHARS.
  */
 const PREVIEW_CHARS = 2_000;
-/**
- * How much conversation the model is sent. Past this, the oldest tool
- * results are elided to a short head (the rows keep them whole): a long
- * run of 150 calls would otherwise outgrow any model's context.
- */
-const TRANSCRIPT_CHARS = 400_000;
-/** Results in the most recent turns are never elided. */
-const KEEP_RECENT_TURNS = 3;
-const ELIDED_HEAD_CHARS = 600;
+/** A sub-agent's system prompt and tool list, generously: its budget's fixed part. */
+const SUB_AGENT_FIXED_CHARS = 60_000;
 const TOKEN_SLACK_SECONDS = 15 * 60;
 /** Parents walked to find a chained run's root trigger — past any org's chain depth. */
 const MAX_CHAIN_WALK = 10;
@@ -294,6 +297,12 @@ interface TurnDetail {
   toolCalls?: ToolCallRecord[];
   modelCalls?: ModelCallRecord[];
   usage?: UsageTotals;
+  /**
+   * Made on this turn when the conversation outgrew the model: the turns
+   * up to `through` folded into `summary` (run-compaction.ts). Every later
+   * call is sent the run's opening, the summary, then the turns after.
+   */
+  compaction?: { summary: string; through: number };
 }
 
 interface TurnRow {
@@ -370,7 +379,7 @@ function emptyUsage(): UsageTotals {
   };
 }
 
-function addUsage(totals: UsageTotals, usage: LlmUsage): void {
+function addUsage(totals: UsageTotals, usage: LlmUsage | UsageTotals): void {
   totals.inputTokens += usage.inputTokens;
   totals.outputTokens += usage.outputTokens;
   if (typeof usage.cacheReadInputTokens === 'number') {
@@ -551,45 +560,34 @@ function turnDetailOf(value: unknown): TurnDetail {
     results: Array.isArray(detail.results) ? detail.results : undefined,
     toolCalls: Array.isArray(detail.toolCalls) ? detail.toolCalls : undefined,
     modelCalls: Array.isArray(detail.modelCalls) ? detail.modelCalls : undefined,
+    compaction:
+      isRecord(detail.compaction) &&
+      typeof detail.compaction.summary === 'string' &&
+      typeof detail.compaction.through === 'number'
+        ? { summary: detail.compaction.summary, through: detail.compaction.through }
+        : undefined,
   };
+}
+
+/** The latest fold any turn made, or null when the run was never compacted. */
+function latestCompaction(turns: readonly TurnRow[]): { summary: string; through: number } | null {
+  let latest: { summary: string; through: number } | null = null;
+  for (const turn of turns) {
+    const fold = turn.detail.compaction;
+    if (fold && (!latest || fold.through > latest.through)) latest = fold;
+  }
+  return latest;
+}
+
+/** A "your request is longer than the model takes" refusal, in any provider's words. */
+function isContextOverflow(message: string | undefined): boolean {
+  return /prompt is too long|too many tokens|context length|context window|maximum context|input is too long|exceeds the (maximum|context)|token limit/i.test(
+    message ?? ''
+  );
 }
 
 function toolUsesOf(blocks: LlmContentBlock[] | undefined): ToolUseBlock[] {
   return (blocks ?? []).filter((block): block is ToolUseBlock => block.type === 'tool_use');
-}
-
-/**
- * The conversation the model is sent, elided to fit: oldest tool results
- * outside the most recent turns are cut to a short head once the whole
- * transcript passes TRANSCRIPT_CHARS. Deterministic, so consecutive turns
- * elide the same results and the prompt cache keeps what it can.
- */
-export function fitTranscript(messages: LlmMessage[], maxChars = TRANSCRIPT_CHARS): LlmMessage[] {
-  const sizeOf = (message: LlmMessage) =>
-    message.content.reduce((sum, block) => {
-      if (block.type === 'text') return sum + block.text.length;
-      if (block.type === 'tool_result') return sum + block.content.length;
-      if (block.type === 'tool_use') return sum + JSON.stringify(block.input ?? {}).length;
-      return sum;
-    }, 0);
-  let total = messages.reduce((sum, message) => sum + sizeOf(message), 0);
-  if (total <= maxChars) return messages;
-  const keepFrom = Math.max(0, messages.length - KEEP_RECENT_TURNS * 2);
-  return messages.map((message, index) => {
-    if (index >= keepFrom || total <= maxChars || message.role !== 'user') return message;
-    return {
-      ...message,
-      content: message.content.map((block) => {
-        if (block.type !== 'tool_result' || total <= maxChars) return block;
-        if (block.content.length <= ELIDED_HEAD_CHARS) return block;
-        total -= block.content.length - ELIDED_HEAD_CHARS;
-        return {
-          ...block,
-          content: `${block.content.slice(0, ELIDED_HEAD_CHARS)}\n… [earlier result elided to keep the conversation within the model's limits; call the tool again if you need it whole]`,
-        };
-      }),
-    };
-  });
 }
 
 export function createAgentRunHandler(deps: EngineDeps) {
@@ -1185,8 +1183,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
     private messagesOf(turns: TurnRow[]): LlmMessage[] {
       const messages: LlmMessage[] = [];
       let pending: LlmContentBlock[] = [];
-      turns.forEach((turn, index) => {
-        const isLast = index === turns.length - 1;
+      // After a fold: the run's opening, the summary, then the turns after it.
+      const fold = latestCompaction(turns);
+      const opening = turns[0]?.detail.opening;
+      const visible = fold ? turns.filter((turn) => turn.attempt > fold.through) : turns;
+      if (fold) {
+        if (opening) pending.push({ type: 'text', text: opening });
+        pending.push({ type: 'text', text: summaryOpening(fold.summary, fold.through) });
+      }
+      visible.forEach((turn, index) => {
+        const isLast = index === visible.length - 1;
         if (turn.detail.opening) pending.push({ type: 'text', text: turn.detail.opening });
         if (!turn.detail.assistant) return;
         if (pending.length > 0) messages.push({ role: 'user', content: pending });
@@ -1227,6 +1233,84 @@ export function createAgentRunHandler(deps: EngineDeps) {
       );
     }
 
+    /** Characters of conversation one request may carry, from the model's window. */
+    private transcriptBudget(): number {
+      const { llm } = this.input;
+      return transcriptBudgetChars({
+        contextWindowTokens: contextWindowOfLlm(llm),
+        maxOutputTokens: llm.maxOutputTokens,
+        fixedChars: this.systemPrompt().length + JSON.stringify(this.input.offered).length,
+      });
+    }
+
+    /**
+     * Fold the turns before the recent few into a summary the run's own
+     * model writes (run-compaction.ts), kept on `row`. Answers the fold's
+     * token usage, or null when there was nothing old enough to fold or
+     * the folding call failed — the request is then cut to fit instead,
+     * which loses more but never stops the run.
+     */
+    private async compact(row: TurnRow, turns: TurnRow[]): Promise<UsageTotals | null> {
+      const { llm } = this.input;
+      const prior = latestCompaction(turns);
+      const done = turns.filter(
+        (turn) =>
+          turn.id !== row.id && turn.detail.assistant && turn.attempt > (prior?.through ?? 0)
+      );
+      const foldable = done.slice(0, Math.max(0, done.length - RUN_KEEP_RECENT_TURNS));
+      if (foldable.length === 0) return null;
+      const usage = emptyUsage();
+      const startedAt = now();
+      let summary = prior?.summary ?? null;
+      for (const batch of foldBatches(
+        foldable.map((turn) => ({
+          attempt: turn.attempt,
+          ...(turn.detail.opening ? { opening: turn.detail.opening } : {}),
+          ...(turn.detail.assistant ? { assistant: turn.detail.assistant } : {}),
+          ...(turn.detail.results ? { results: turn.detail.results } : {}),
+        }))
+      )) {
+        const folded = await llm.provider.complete({
+          system: RUN_COMPACTION_SYSTEM,
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: foldRequestText(summary, batch) }] },
+          ],
+          tools: [],
+          maxTokens: Math.min(llm.maxOutputTokens, 8_000),
+        });
+        if (!folded.ok) {
+          const kind = folded.err.type;
+          if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
+            throw new TransientFailure(`compaction model ${kind}`);
+          }
+          logger.warn('run {runId}: compaction failed ({kind}); cutting to fit instead', {
+            component: 'worker-agents/engine',
+            runId: this.runRow.id,
+            kind,
+          });
+          return null;
+        }
+        addUsage(usage, folded.val.usage);
+        const text = folded.val.content
+          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+          .join('\n')
+          .trim();
+        if (text) summary = clip(text, RUN_SUMMARY_MAX_CHARS);
+      }
+      await recordUsage(this.runRow, usage, llm, now() - startedAt);
+      if (!summary) return usage;
+      const through = foldable[foldable.length - 1].attempt;
+      row.detail.compaction = { summary, through };
+      await this.writeTurn(row, 'running');
+      logger.info('run {runId}: folded turns {from}–{through} into a summary', {
+        component: 'worker-agents/engine',
+        runId: this.runRow.id,
+        from: foldable[0].attempt,
+        through,
+      });
+      return usage;
+    }
+
     /** One model call into `row`. 'idle' when the reply called no tool. */
     private async callModel(
       row: TurnRow,
@@ -1234,7 +1318,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
       finishOnly: boolean
     ): Promise<'ok' | 'idle'> {
       const { llm } = this.input;
-      const messages = fitTranscript(this.messagesOf(turns));
+      const budget = this.transcriptBudget();
+      let foldUsage: UsageTotals | null = null;
+      let conversation = this.messagesOf(turns);
+      if (messagesChars(conversation) > budget) {
+        foldUsage = await this.compact(row, turns);
+        if (foldUsage) conversation = this.messagesOf(turns);
+      }
+      // Whatever is left over budget — a single turn too big on its own —
+      // is cut to fit (fitMessages); the stored turns keep everything.
+      const messages = fitMessages(conversation, budget).messages;
       const tail = messages[messages.length - 1];
       if (this.pendingAttachments.length > 0 && tail?.role === 'user') {
         // Documents ride only on the turn they arrived in: this call sees
@@ -1246,17 +1339,31 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
       this.pendingAttachments = [];
       const startedAt = now();
-      const completion = await llm.provider.complete({
-        system: this.systemPrompt(),
-        messages,
-        // The tool list never changes within a run: it heads the cached
-        // prefix. Exhaustion is expressed through tool_choice alone.
-        tools: this.input.offered,
-        toolChoice: finishOnly ? { name: FINISH_RUN_TOOL } : 'any',
-        promptCache: true,
-        maxTokens: llm.maxOutputTokens,
-        ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
-      });
+      const request = (sent: LlmMessage[]) =>
+        llm.provider.complete({
+          system: this.systemPrompt(),
+          messages: sent,
+          // The tool list never changes within a run: it heads the cached
+          // prefix. Exhaustion is expressed through tool_choice alone.
+          tools: this.input.offered,
+          toolChoice: finishOnly ? { name: FINISH_RUN_TOOL } : 'any',
+          promptCache: true,
+          maxTokens: llm.maxOutputTokens,
+          ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
+        });
+      let completion = await request(messages);
+      if (
+        !completion.ok &&
+        completion.err.type === 'invalid_request' &&
+        isContextOverflow(completion.err.message)
+      ) {
+        // The estimate was optimistic for this model: once more, at half.
+        logger.warn('run {runId}: the model refused the request as too long; retrying smaller', {
+          component: 'worker-agents/engine',
+          runId: this.runRow.id,
+        });
+        completion = await request(fitMessages(messages, Math.floor(budget / 2)).messages);
+      }
       if (!completion.ok) {
         const kind = completion.err.type;
         logger.error('model error in run {runId}: {kind} {message}', {
@@ -1275,6 +1382,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
       const usage = emptyUsage();
       addUsage(usage, completion.val.usage);
+      // The fold's own calls were recorded as they happened; the turn's
+      // totals include them.
+      if (foldUsage) addUsage(usage, foldUsage);
       const modelCall: ModelCallRecord = {
         durationMs: now() - startedAt,
         stopReason: completion.val.stopReason,
@@ -1758,7 +1868,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
         const turnStartedAt = now();
         const completion = await llm.provider.complete({
           system,
-          messages: fitTranscript(messages),
+          messages: fitMessages(
+            messages,
+            transcriptBudgetChars({
+              contextWindowTokens: contextWindowOfLlm(llm),
+              maxOutputTokens: llm.maxOutputTokens,
+              fixedChars: SUB_AGENT_FIXED_CHARS,
+            })
+          ).messages,
           // Once told to wrap up, it can only answer.
           tools: wrapUp ? [] : defs,
           ...(wrapUp ? {} : { toolChoice: 'auto' as const }),

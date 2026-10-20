@@ -20,13 +20,23 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB, type Json } from '@renkei/db';
 import { ok } from '@campfhir/safe-functions/helpers';
-import type { LlmRequest, LlmResponse, ResolvedLlm } from '@renkei/agent-llm';
-import { mergeOpenedDetail, sealedDetailOf, type AgentDefinition } from '@renkei/agents';
+import {
+  messagesChars,
+  type LlmRequest,
+  type LlmResponse,
+  type ResolvedLlm,
+} from '@renkei/agent-llm';
+import {
+  RUN_COMPACTION_SYSTEM,
+  mergeOpenedDetail,
+  sealedDetailOf,
+  type AgentDefinition,
+} from '@renkei/agents';
 import { setOrgSettings } from '@renkei/settings';
 import { resumeAgentRun } from '@renkei/agents/runs';
 import type { QueueMessageInput, QueueProducer } from '@renkei/queue';
 import { MessageReleased } from '@renkei/worker-loop';
-import { createAgentRunHandler, fitTranscript, TURN_STEP_ID, type FinalizedRun } from './engine';
+import { createAgentRunHandler, TURN_STEP_ID, type FinalizedRun } from './engine';
 import { createActionsHandler } from './actions';
 import type { McpClient, McpToolResult } from './mcp-client';
 
@@ -942,6 +952,44 @@ maybe('agent run engine', () => {
     expect((await runOf(runId)).status).toBe('succeeded');
   });
 
+  it('folds older turns into a summary when the conversation outgrows the model', async () => {
+    const { runId } = await seedRun();
+    const read = `${'r'.repeat(12_000)}`;
+    const llm = stubLlm((request) => {
+      if (request.system === RUN_COMPACTION_SYSTEM) {
+        return {
+          content: [{ type: 'text', text: 'NOTES: read PROJ-1 to PROJ-4; next, finish.' }],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 100, outputTokens: 20 },
+        };
+      }
+      const main = llm.requests.filter((sent) => sent.system !== RUN_COMPACTION_SYSTEM).length;
+      return main <= 7 ? call('jira_get_issue', { issueKey: `PROJ-${main}` }) : finish('done');
+    });
+    // A small window: the conversation budget is the 40 000-character floor.
+    llm.contextWindowTokens = 20_000;
+    const h = harness(llm, () => text(read));
+    await h.handler({ payload: { runId } });
+
+    expect((await runOf(runId)).status).toBe('succeeded');
+    const folds = llm.requests.filter((sent) => sent.system === RUN_COMPACTION_SYSTEM);
+    expect(folds.length).toBeGreaterThanOrEqual(1);
+    const mains = llm.requests.filter((sent) => sent.system !== RUN_COMPACTION_SYSTEM);
+    // Every request the run sent fitted the model's budget.
+    for (const sent of mains) expect(messagesChars(sent.messages)).toBeLessThanOrEqual(40_000);
+    // After the fold: the opening, then the notes, and not the folded turns.
+    const last = mains[mains.length - 1];
+    const first = JSON.stringify(last.messages[0].content);
+    expect(first).toContain('Your notes on turns 1–');
+    expect(first).toContain('NOTES: read PROJ-1 to PROJ-4');
+    expect(JSON.stringify(last.messages)).not.toContain('"issueKey":"PROJ-1"');
+    // The fold is kept on its turn, sealed with the rest of the run's content.
+    const turns = await turnsOf(runId);
+    const withFold = turns.map((turn) => unsealed(turn.detail).compaction).filter(Boolean);
+    expect(withFold[0]).toMatchObject({ summary: 'NOTES: read PROJ-1 to PROJ-4; next, finish.' });
+    expect(JSON.stringify(turns.map((turn) => turn.detail))).not.toContain('NOTES:');
+  });
+
   it('resumes a failed run with the owner’s guidance and a fresh budget', async () => {
     const { runId, agentId } = await seedRun();
     const failing = stubLlm(() => finish('failed'));
@@ -989,26 +1037,3 @@ maybe('agent run engine', () => {
   });
 });
 
-describe('fitTranscript', () => {
-  it('elides the oldest tool results first, keeping recent turns whole', () => {
-    const big = 'x'.repeat(10_000);
-    const messages = Array.from({ length: 10 }, (_, index) =>
-      index % 2 === 0
-        ? {
-            role: 'user' as const,
-            content: [{ type: 'tool_result' as const, toolUseId: `t${index}`, content: big }],
-          }
-        : { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'ok' }] }
-    );
-    const fitted = fitTranscript(messages, 30_000);
-    const sizes = fitted.map((message) =>
-      message.content.reduce(
-        (sum, block) => sum + (block.type === 'tool_result' ? block.content.length : 0),
-        0
-      )
-    );
-    expect(sizes[0]).toBeLessThan(1_000);
-    expect(sizes[8]).toBe(10_000);
-    expect(fitTranscript(messages, 1_000_000)).toBe(messages);
-  });
-});

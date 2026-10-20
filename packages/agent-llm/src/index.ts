@@ -59,6 +59,7 @@ export {
 } from './data-handling';
 export {
   chatModelsOnly,
+  contextWindowOfLlm,
   imageModelsOnly,
   imageSurfaceOf,
   invalidateLlmCache,
@@ -79,3 +80,16 @@ export {
   type ImageUsage,
   type ImageSurface,
 } from './images';
+
+export {
+  CHARS_PER_TOKEN,
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  MIN_TRANSCRIPT_CHARS,
+  RECENT_MESSAGES,
+  blockChars,
+  contextWindowOf,
+  fitMessages,
+  messagesChars,
+  transcriptBudgetChars,
+  type FitResult,
+} from './context-budget';
