@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { LoadingRegion, SkeletonCards } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { parseTokenCount } from '@/lib/format-tokens';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -311,6 +312,11 @@ export default function ModelForms() {
   };
 
   const submit = async () => {
+    const contextWindow = draft.contextWindow.trim() ? parseTokenCount(draft.contextWindow) : null;
+    if (draft.contextWindow.trim() && contextWindow === null) {
+      setFormError('Context window must be a token count, such as 200k or 1m.');
+      return;
+    }
     setSaving(true);
     setFormError(null);
     const payload = {
@@ -319,7 +325,7 @@ export default function ModelForms() {
       model: draft.model,
       baseUrl: draft.baseUrl || null,
       ...(draft.maxOutputTokens ? { maxOutputTokens: Number(draft.maxOutputTokens) } : {}),
-      ...(draft.contextWindow ? { contextWindow: Number(draft.contextWindow) } : {}),
+      ...(contextWindow !== null ? { contextWindow } : {}),
       ...(draft.temperature ? { temperature: Number(draft.temperature) } : {}),
       ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
       ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
@@ -799,15 +805,15 @@ export default function ModelForms() {
             <input
               id="model-context-window"
               className={inputClass}
-              type="number"
-              min={1}
+              type="text"
+              inputMode="numeric"
               value={draft.contextWindow}
-              placeholder="200000"
+              placeholder="200k"
               onChange={(event) => setDraft({ ...draft, contextWindow: event.target.value })}
             />
             <p className="mt-1 text-xs text-gray-500">
-              The most the model can read in one call. Chats show how much of it the conversation
-              uses; leave blank to show usage without a limit.
+              The most the model can read in one call — type 200k, 1m or 200000. Chats show how much
+              of it the conversation uses; leave blank to show usage without a limit.
             </p>
           </div>
 

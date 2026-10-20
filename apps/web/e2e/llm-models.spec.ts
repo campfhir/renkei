@@ -80,7 +80,12 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
     await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
-      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
+      [
+        fixture.sessionId,
+        fixture.subject,
+        ['renkei-user', 'renkei-operator'],
+        new Date(Date.now() + 24 * 3_600_000),
+      ]
     );
     await client.query(
       `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
@@ -438,4 +443,48 @@ test('admin: data handling — residency, retention and the BAA flag round-trip 
 
   await page.setViewportSize(MOBILE_VIEWPORT);
   await shot(page, testInfo, 'llm-models-data-handling-04-mobile-edit');
+});
+
+test('admin: context window takes a typed count — 200k, 1m — and refuses what is not one', async ({
+  page,
+}, testInfo) => {
+  // Its own tenant, same reasoning as the specs above.
+  const fixture = fixtureFor(`${testInfo.project.name}-context-window`);
+  await seedTenant(fixture);
+  await signIn(page, fixture);
+
+  await page.goto(`/admin/llm-models`);
+  await page.getByRole('button', { name: '+ Add a model' }).click();
+  await page.getByLabel('Display name').fill('Long Context');
+  await page.getByLabel('Model id').fill('claude-sonnet-5');
+  await page.getByLabel('API key').fill('sk-ant-e2e-fake-key');
+
+  // Not a number field: the suffixes people actually write are accepted.
+  const contextWindow = page.getByLabel('Context window (tokens)');
+  await expect(contextWindow).toHaveAttribute('placeholder', '200k');
+  await contextWindow.fill('lots');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(
+    page.getByText('Context window must be a token count, such as 200k or 1m.')
+  ).toBeVisible();
+  await shot(page, testInfo, 'llm-models-context-window-01-refused');
+
+  await contextWindow.fill('1m');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Long Context')).toBeVisible();
+
+  // Stored as the whole count, shown back as a plain number to edit.
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByLabel('Context window (tokens)')).toHaveValue('1000000');
+  await page.getByLabel('Context window (tokens)').fill('200k');
+  await page.getByRole('button', { name: 'Save' }).click();
+  // The form closes once the list has reloaded; until then the old row
+  // (with its old count) is still on screen and Edit would reopen that.
+  await expect(page.getByLabel('Context window (tokens)')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByLabel('Context window (tokens)')).toHaveValue('200000');
+  await shot(page, testInfo, 'llm-models-context-window-02-saved');
+
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await shot(page, testInfo, 'llm-models-context-window-03-mobile');
 });
