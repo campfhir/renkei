@@ -80,19 +80,19 @@ export const GLYPH_ONLY = new Set([
   // Voice is the chat speaking and listening through an org-provisioned
   // speech service; drawing that vendor's mark would name the wrong thing.
   'voice',
-  // No shipped GitHub mark yet (the README's marks are sourced from
-  // Wikimedia Commons entries recorded there as public domain; nothing
-  // suitable was vetted for this connector) — the built-in glyph renders
-  // until one is added the same way.
-  'github',
   // Same reasoning for ADManager Plus: no ManageEngine mark has been
   // vetted for this connector yet — the built-in glyph renders until one
   // is added the same way.
   'admanager',
-  // Same for Salesforce: no Salesforce mark has been vetted for this
-  // connector yet — the built-in glyph renders until one is added the same way.
-  'salesforce',
 ]);
+
+/**
+ * Marks drawn in black, which vanish on a dark card: they render inverted in
+ * dark mode. An SVG loaded through <img> cannot see the page's theme (it is
+ * the `data-theme` attribute, not the system setting), so the page inverts
+ * it rather than the file switching itself.
+ */
+export const INVERT_ON_DARK = new Set(['github']);
 
 /** Explicit prop, then the known-mismatch table, then the key itself. */
 export function resolveLogoFile(capabilityKey: string, logo?: string): string {
