@@ -12,6 +12,7 @@ import {
   standInViolations,
   tokenEndpointFor,
   STAND_IN_ENV,
+  type ProviderSpec,
 } from './providers';
 
 function withEnv<T>(patch: Record<string, string | undefined>, run: () => T): T {
@@ -177,5 +178,24 @@ describe('standInViolations', () => {
     );
     expect(standInViolations({ NODE_ENV: 'production' })).toEqual([]);
     expect(Object.values(STAND_IN_ENV)).toHaveLength(4);
+  });
+});
+
+describe('a dynamic (MCP server) provider', () => {
+  const spec: ProviderSpec = {
+    connector: 'mcp:x',
+    tokenEndpoint: 'https://auth.example/token',
+    hosts: [],
+    origins: ['https://mcp.example', 'http://127.0.0.1:9000'],
+    clientAuth: 'none',
+    adapter: () => null,
+  };
+
+  it("sends the token only to the server's own origin", () => {
+    expect(hostAllowed(spec, new URL('https://mcp.example/mcp'))).toBe(true);
+    expect(hostAllowed(spec, new URL('http://127.0.0.1:9000/mcp'))).toBe(true);
+    expect(hostAllowed(spec, new URL('https://mcp.example.evil.test/mcp'))).toBe(false);
+    expect(hostAllowed(spec, new URL('https://auth.example/token'))).toBe(false);
+    expect(hostAllowed(spec, new URL('http://mcp.example/mcp'))).toBe(false);
   });
 });

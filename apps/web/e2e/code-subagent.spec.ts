@@ -100,11 +100,6 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
       resourceId: ids.chatId,
       ownerSubject: E2E_SUBJECT,
     });
-    // The project's active chat — a history chat takes no turn (lib/code/active-chat.ts).
-    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
-      ids.chatId,
-      ids.projectId,
-    ]);
     await client.query(
       `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n       VALUES ($1, $2, 'anthropic', 'claude-haiku-4-5', $3, TRUE, FALSE)`,
       [ids.fastModelId, ids.fastModelLabel, secretbox('{"apiKey":"e2e"}')]

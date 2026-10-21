@@ -72,6 +72,14 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
+      // A stand-in remote MCP server with its own OAuth (e2e/mcp-stub.mjs):
+      // dynamic registration, PKCE, both transports, one open endpoint.
+      command: 'node e2e/mcp-stub.mjs',
+      url: 'http://127.0.0.1:8093/health',
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
+    },
+    {
       // The delegate (apps/worker-delegate): the one process that holds a
       // key. Chat pages, connector credentials and the own-key preferences
       // all go through it, so the specs run the real one against the dev

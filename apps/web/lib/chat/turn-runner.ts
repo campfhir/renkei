@@ -279,6 +279,14 @@ export interface TurnPermissions {
    * of an earlier turn — refused without asking, and said so.
    */
   denied?: ReadonlySet<string>;
+  /**
+   * Act tools chat does not offer because a preview card stands in front of
+   * them, by that preview (tool-surface.ts's PreviewRouting). Like `denied`
+   * the surface never offers them, so a call can only come from the model's
+   * memory of an earlier turn or an external guess — refused, and told which
+   * preview to call, so the card is never skipped.
+   */
+  previewOnly?: ReadonlyMap<string, string>;
 }
 
 /** What the model is told in place of a result for a call that was not made. */
@@ -286,6 +294,8 @@ export const PERMISSION_DENIED_RESULT =
   'The person declined this tool call, so it was not made. Do not retry it or work around it; tell them what you were going to do and ask how they would like to proceed.';
 export const PERMISSION_TIMEOUT_RESULT =
   'Nobody allowed this tool call in time, so it was not made. Tell the person what you were going to do; they can ask again when they are ready.';
+export const previewOnlyResult = (preview: string) =>
+  `This tool is not available in chat: it acts only after the person confirms on a preview card. Call ${preview} instead and let them decide from the card; do not repeat its contents in your reply.`;
 export const PERMISSION_BLOCKED_RESULT =
   'The person has blocked this tool in their preferences, so it cannot be used in this chat. Do not retry it or work around it; tell them what you were going to do and let them decide.';
 /**
@@ -683,6 +693,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   const widgetResourceUris = deps.widgetResourceUris ?? new Map<string, string>();
   const alwaysAllowed = new Set(deps.permissions?.alwaysAllowed ?? []);
   const denied = deps.permissions?.denied ?? new Set<string>();
+  const previewOnly = deps.permissions?.previewOnly ?? new Map<string, string>();
   const needsPermission = (name: string) =>
     deps.permissions !== undefined &&
     deps.permissions.allowAll !== true &&
@@ -1477,9 +1488,10 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       const produced: ArtifactFile[] = [];
       // Calls the person did not allow, or whose own arguments never
       // finished streaming: answered with a refusal, never run.
-      const refused = new Map<string, 'deny' | 'timeout' | 'blocked' | 'truncated'>();
+      const refused = new Map<string, 'deny' | 'timeout' | 'blocked' | 'truncated' | 'preview'>();
       for (const use of toolUses) {
         if (denied.has(use.name)) refused.set(use.id, 'blocked');
+        else if (previewOnly.has(use.name)) refused.set(use.id, 'preview');
         else if (truncatedToolIds.has(use.id)) refused.set(use.id, 'truncated');
       }
       const runTool = async (use: (typeof toolUses)[number]): Promise<McpToolResult> => {
@@ -1503,9 +1515,11 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
                     ? PERMISSION_DENIED_RESULT
                     : refusal === 'blocked'
                       ? PERMISSION_BLOCKED_RESULT
-                      : refusal === 'truncated'
-                        ? TOOL_CALL_TRUNCATED_RESULT
-                        : PERMISSION_TIMEOUT_RESULT,
+                      : refusal === 'preview'
+                        ? previewOnlyResult(previewOnly.get(use.name) ?? 'its preview tool')
+                        : refusal === 'truncated'
+                          ? TOOL_CALL_TRUNCATED_RESULT
+                          : PERMISSION_TIMEOUT_RESULT,
               },
             ],
             isError: true,

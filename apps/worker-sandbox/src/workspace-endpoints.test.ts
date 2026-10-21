@@ -17,6 +17,9 @@ jest.mock('./workspace-store', () => ({
   deleteWorkspace: jest.fn(),
   listExpiredWorkspaces: jest.fn(),
   deleteWorkspaceById: jest.fn(),
+  getWorkspaceById: jest.fn(),
+  listWorktrees: jest.fn(),
+  listWorktreesOf: jest.fn(),
 }));
 
 jest.mock('./env-secrets-store', () => ({
@@ -70,6 +73,7 @@ function readyWorkspace() {
     repoFullName: 'acme/demo',
     branch: 'main',
     storageKey: STORAGE_KEY,
+    parentId: null,
     status: 'ready',
     error: null,
     sizeBytes: 10,
@@ -232,6 +236,7 @@ describe('the sweep across instances', () => {
       expired('ws-elsewhere-orphan', 'hash/ws-elsewhere-orphan', ORPHAN_GRACE_MS + 60_000),
     ]);
     workspaceStore.deleteWorkspaceById.mockResolvedValue(undefined);
+    workspaceStore.listWorktreesOf.mockResolvedValue([]);
     await createWorkspaceHandlers({
       db: {} as Kysely<DB>,
       capable: true,
@@ -891,5 +896,43 @@ describe('language servers over the wire', () => {
       },
     });
     expect(gone.status).toBe(404);
+  });
+});
+
+describe('a worktree of a base checkout', () => {
+  it('is refused on another worktree, a missing base or a bad branch name', async () => {
+    workspaceStore.getWorkspace.mockResolvedValueOnce({ ...readyWorkspace(), parentId: 'ws-base' });
+    const onWorktree = await post(enabledBase, 'workspaces/worktree', {
+      ...TARGET,
+      baseId: 'ws-1',
+      branch: 'renkei/a',
+    });
+    expect(onWorktree.status).toBe(404);
+
+    workspaceStore.getWorkspace.mockResolvedValueOnce(undefined);
+    const missing = await post(enabledBase, 'workspaces/worktree', {
+      ...TARGET,
+      baseId: 'nope',
+      branch: 'renkei/a',
+    });
+    expect(missing.status).toBe(404);
+
+    const bad = await post(enabledBase, 'workspaces/worktree', {
+      ...TARGET,
+      baseId: 'ws-1',
+      branch: '--force',
+    });
+    expect(bad.status).toBe(400);
+  });
+
+  it('is not made while the base is still cloning', async () => {
+    workspaceStore.getWorkspace.mockResolvedValueOnce({ ...readyWorkspace(), status: 'cloning' });
+    const result = await post(enabledBase, 'workspaces/worktree', {
+      ...TARGET,
+      baseId: 'ws-1',
+      branch: 'renkei/a',
+    });
+    expect(result.status).toBe(409);
+    expect(result.json.error.type).toBe('not_ready');
   });
 });

@@ -23,6 +23,9 @@ import { createHash } from 'node:crypto';
 /** Workspaces one (tenantId, subject) may hold at once. */
 export const WORKSPACE_MAX_PER_SUBJECT = 3;
 
+/** Worktrees one subject may hold at once — one per chat working in a code project, apart from the clones above. */
+export const WORKTREE_MAX_PER_SUBJECT = 50;
+
 /** A checkout's lifetime since its last use; the worker's sweep removes it after. */
 export const WORKSPACE_TTL_MS = 7 * 24 * 60 * 60_000; // 7 days
 
@@ -164,6 +167,8 @@ export interface SandboxWorkspaceSummary {
   provider: string;
   /** `workspace/repo`, as the provider names it. */
   repoFullName: string;
+  /** The base clone a worktree hangs off; null for a clone. */
+  parentId: string | null;
   branch: string;
   status: WorkspaceStatus;
   /** Why the clone failed, when it did. */

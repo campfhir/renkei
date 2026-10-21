@@ -75,6 +75,11 @@ const PREFIXES: [string, string][] = [
 export function connectorKeyForTool(tool: string): string | null {
   const exact = EXACT[tool];
   if (exact) return exact;
+  // A remote MCP server's tool: `<slug>__<tool>` (connector-mcp's
+  // namespacedToolName). Its capability key is `mcp-<slug>`. No built-in
+  // tool name carries a double underscore, so this cannot shadow one.
+  const mcp = /^([a-z][a-z0-9_]{0,31}?)__./.exec(tool);
+  if (mcp) return `mcp-${mcp[1]}`;
   for (const [prefix, key] of PREFIXES) {
     if (tool.startsWith(prefix)) return key;
   }

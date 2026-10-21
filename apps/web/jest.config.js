@@ -38,6 +38,8 @@ export default {
       '<rootDir>/../../packages/connector-mistral-ocr/src/index.ts',
     '^@renkei/connector-onbase$': '<rootDir>/../../packages/connector-onbase/src/index.ts',
     '^@renkei/connector-salesforce$': '<rootDir>/../../packages/connector-salesforce/src/index.ts',
+    '^@renkei/connector-mcp$': '<rootDir>/../../packages/connector-mcp/src/index.ts',
+    '^@renkei/connector-mcp/pure$': '<rootDir>/../../packages/connector-mcp/src/pure.ts',
     '^@renkei/connector-mirth$': '<rootDir>/../../packages/connector-mirth/src/index.ts',
     '^@renkei/connector-mirth/pure$': '<rootDir>/../../packages/connector-mirth/src/pure.ts',
     '^@renkei/connector-admanager$': '<rootDir>/../../packages/connector-admanager/src/index.ts',

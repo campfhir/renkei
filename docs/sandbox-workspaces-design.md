@@ -29,41 +29,52 @@ repository on it, kept apart from ordinary chats:
   chats in the app menu — marked with the Code glyph and naming the
   project beneath the title, so they are told apart from ordinary chats
   and from chats in chat projects at a glance.
-- **One active chat.** Because the project has one checkout on one
-  branch (below), only one chat at a time works in it:
-  `chat_projects.active_chat_id` (migration 119,
-  `apps/web/lib/code/active-chat.ts`). Starting a new chat makes it the
-  active one and every earlier chat _history_ — still listed, still
-  readable by anyone who could read it before, but with no composer: a
-  send, a resend, a compaction or an edit from the code pane in a history
-  chat is refused (409 `chat-history`), and the chat says so with a link
-  to the active chat and a way to start a new one. A new chat is refused
-  (409 `turn-running`) while the active chat's reply is still running in
-  the checkout: stop it or let it finish first. Deleting or archiving the
-  active chat leaves the project with none until the next new chat;
-  unarchiving does not bring it back. The project page lists the active
-  chat first and the rest under _Previous chats_; the menu tags them
-  _history_. What a history chat found, tried or decided is reachable from
-  the active chat through `chat_recall_chats`
-  (`apps/web/lib/chat/recall-tools.ts`), which in a project sees the
-  project's own chats and nothing outside it — the project is the tool's
-  context, never the model's input. Chat projects are untouched: their
-  chats are independent conversations sharing context, and any number may
-  run at once.
+- **A worktree per chat.** Any number of chats in a project work at once.
+  The project's clone is its **base**, which no chat edits; each chat
+  works in a `git worktree` of it, on a branch of its own
+  (`renkei/<last 12 hex of the chat id>`), made on the chat's first turn —
+  or earlier, by its owner's first write from the code pane — and recorded
+  on `chats.workspace_id` (migration 158; `lib/code/worktree.ts`,
+  `startChatWorktree` in `lib/code/projects.ts`, the worker's `worktree`
+  verb). It is a `sandbox_workspaces` row of its own (`parent_id` names the
+  base), so every worker verb already addresses it by id; it shares the
+  clone's object store, so making one takes moments and costs only its
+  working files. The remote is fetched first with the chatting person's
+  grant, so the chat starts from where the default branch is now, not from
+  the clone; without a usable grant it starts from the clone. Edits,
+  uncommitted files, branch switches and `code_run` in one chat are
+  invisible to the others; work travels between them as it does between
+  people — committed, pushed, merged. A new chat is never refused for
+  another's running reply. The base is left on a detached `HEAD` so any
+  worktree may check out the branch the clone began on. Deleting a chat
+  deletes its worktree (best effort; the worker's sweep takes what that
+  misses); deleting or re-cloning the project takes every worktree of it,
+  and a chat whose worktree is gone is given a new one on its next turn
+  (the branch outlives the worktree, so the work committed there is checked
+  out again). Previous chats stay listed and readable and are no different
+  from the latest — `chat_recall_chats`
+  (`apps/web/lib/chat/recall-tools.ts`) still reaches what another chat
+  found, tried or decided, in the project's own chats and nothing outside
+  it. The code pane's routes are reached through the chat
+  (`/api/code/projects/[projectId]/chats/[chatId]/files`, `/tree`, `/diff`,
+  `/commit`, `/push`, `/discard`, `/branch`, `/lsp`): anyone who can read
+  the project may look in a chat's worktree, only the chat's owner changes
+  it; the project-level addresses of the same routes work on the base clone.
+  Chat projects are untouched.
 
 In such a chat the model has the `code_*` tools (below) bound to the
-project's checkout and a brief in its system prompt on how to work in
+chat's worktree and a brief in its system prompt on how to work in
 one; Jira, Confluence and the rest of the person's connectors are there
 beside them as always, so "fix PROJ-123 and open a PR" is one
 conversation. The tools exist nowhere else — not in other chats, not on
-the MCP surface — because they name no workspace: the project is the
-workspace.
+the MCP surface — because they name no workspace: the chat's worktree is
+the workspace.
 
-The checkout and the environment belong to the **project**, not to
-whoever is chatting: the worker scopes them by the subject
-`code-project:<id>`, so every member works in one checkout with one
-environment, and the worker's per-caller isolation becomes per-project
-isolation. What is personal is the credential: a push or pull spends the
+The clone and the environment belong to the **project**, not to
+whoever is chatting: the worker scopes them — and every worktree of the
+clone — by the subject `code-project:<id>`, so every member works from one
+clone with one environment, and the worker's per-caller isolation becomes
+per-project isolation. What is personal is the credential: a push or pull spends the
 chatting person's own Bitbucket grant, and a commit is authored as them.
 
 ## The tools
@@ -293,7 +304,8 @@ knows it, else a no-reply address on their Bitbucket username.
 
 | Bound                            | Value                                                 |
 | -------------------------------- | ----------------------------------------------------- |
-| Checkouts per project            | 1 (a new clone replaces it)                           |
+| Clones per project               | 1 (a new clone replaces it, and takes its worktrees)  |
+| Worktrees per project            | one per chat (50 per project at once)                 |
 | Lifetime since last use          | 7 days (the worker's sweep)                           |
 | Checkout size                    | 8 GB (org setting; per-project approval may raise it) |
 | Default clone depth              | 100 commits (`depth: 0` for all)                      |

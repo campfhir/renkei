@@ -1,5 +1,6 @@
 /**
- * One directory of the project's repository, for the tree on its page:
+ * One directory of the project's repository, for the tree on its page — or,
+ * under `/chats/[chatId]/`, of that chat's worktree:
  * entries with kind and size, directories first. From the checkout on
  * the sandbox once there is one (`source: 'checkout'` — what the chats
  * actually work in, uncommitted changes included); before that, from
@@ -18,33 +19,33 @@ import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
 import { bitbucketAuthFor, listSource as listBitbucketSource } from '@/lib/code/bitbucket-browse';
 import { githubAuthFor, listSource as listGitHubSource } from '@/lib/code/github-browse';
+import { resolveChatScope } from '@/lib/code/route-access';
 import { projectWorkspace } from '@/lib/code/projects';
 import { codeProjectTarget } from '@/lib/code/scope';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
+  const { projectId, chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveResourceAccess(db, session.subject, 'chat_project', projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   const project = await getProjectRow(db, projectId);
   if (!project || project.kind !== 'code' || !project.repo)
     return jsonError(404, 'not-found', 'No such project');
   const path = new URL(request.url).searchParams.get('path') ?? '';
+  const scope = await resolveChatScope(db, session.subject, project, chatId, { write: false });
+  if (!scope.ok) return scope.response;
 
-  const workspace = (await sandboxWorkspacesEnabled()) ? await projectWorkspace(project) : null;
-  if (workspace?.status === 'ready' && project.workspaceId) {
+  const workspace = (await sandboxWorkspacesEnabled())
+    ? await projectWorkspace(project, scope.workspaceId)
+    : null;
+  if (workspace?.status === 'ready' && scope.workspaceId) {
     const listed = await sbWorkspaceLs(codeProjectTarget(projectId), {
-      id: project.workspaceId,
+      id: scope.workspaceId,
       path,
     });
     if (!listed.ok) {

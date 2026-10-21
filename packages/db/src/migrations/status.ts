@@ -181,7 +181,9 @@ export const EXPECTED_MIGRATIONS = [
   '155-instruction-agents',
   '156-sandbox-crawls',
   '157-chat-request-overhead',
-  '158-pending-signin-connector',
+  '158-chat-worktrees',
+  '159-mcp-servers',
+  '160-pending-signin-connector',
 ];
 
 export interface MigrationStatus {

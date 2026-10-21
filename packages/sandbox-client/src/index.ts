@@ -774,6 +774,8 @@ export interface WireWorkspace {
   id: string;
   provider: string;
   repoFullName: string;
+  /** The base clone a worktree hangs off; null for a clone. */
+  parentId: string | null;
   branch: string;
   status: 'cloning' | 'ready' | 'failed';
   error: string | null;
@@ -797,6 +799,7 @@ function workspaceOf(value: unknown): WireWorkspace | null {
     id,
     provider: str(value.provider),
     repoFullName,
+    parentId: optStr(value.parentId) ?? null,
     branch: str(value.branch),
     status,
     error: optStr(value.error) ?? null,
@@ -868,6 +871,22 @@ export async function sbWorkspaceClone(
   }
 ): Promise<ClientResult<WireWorkspace>> {
   const result = await workspaceCall('clone', target, input);
+  if (!result.ok) return result;
+  const workspace = isRecord(result.val) ? workspaceOf(result.val.workspace) : null;
+  return workspace ? { ok: true, val: workspace } : malformed();
+}
+
+/**
+ * A worktree of a ready base clone, on a new branch of its own — one per
+ * chat working in a code project. Asked again for the same branch it
+ * answers the worktree it already made. With a git proxy the remote is
+ * fetched first so the branch starts where the remote is now.
+ */
+export async function sbWorkspaceWorktree(
+  target: SandboxTarget,
+  input: { baseId: string; branch: string; startBranch?: string; gitProxy?: GitProxy }
+): Promise<ClientResult<WireWorkspace>> {
+  const result = await workspaceCall('worktree', target, input);
   if (!result.ok) return result;
   const workspace = isRecord(result.val) ? workspaceOf(result.val.workspace) : null;
   return workspace ? { ok: true, val: workspace } : malformed();

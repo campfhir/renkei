@@ -99,6 +99,20 @@ export const CODE_PROJECT_EAGER_TOOLS: readonly string[] = [
   'github_get_workflow_job_log',
 ];
 
+/**
+ * The connectors whose plain act tools an auto-mode code chat is offered
+ * instead of their preview cards: the repository's host, the tracker, the
+ * wiki and the knowledge and sandbox the work reads and writes — the code
+ * default plus the git hosts every code project carries. Auto mode accepts
+ * their acts unasked (auto-mode.ts), and a card nobody is there to press
+ * would only stall it. Every other connector a code chat has (mail, chat
+ * messages, meetings, documents, directories) is not code development, so
+ * even in auto mode its acts go through a preview card a person decides.
+ */
+export const AUTO_DIRECT_CONNECTORS: readonly string[] = [
+  ...new Set([...CODE_PROJECT_CONNECTORS, ...CODE_PROJECT_DEFAULT_CONNECTORS]),
+];
+
 /** Which default a chat falls back to: an ordinary chat's, or a code project's. */
 export type ToolDefaultsKind = 'chat' | 'code';
 

@@ -432,6 +432,27 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     togglable: true,
   },
   {
+    // The FAMILY, not a registered key: each MCP server an admin lists gets
+    // its own capability key (`mcp-<prefix>`, mcp_servers.slug) and its own
+    // `<prefix>__*` tools, so there is nothing to switch off under 'mcp' —
+    // a server is switched off on its own row, and a person connects each
+    // one from the "MCP servers" section of the connectors page. This entry
+    // is what puts the list on the admin catalog, with the servers
+    // many-per-tenant in mcp_servers (docs/mcp-connector-design.md).
+    capabilityKey: 'mcp',
+    configKey: 'mcp',
+    label: 'MCP servers',
+    summary:
+      'Remote MCP servers your organization lists — each one signs people in itself, and its ' +
+      'tools are listed live and reached through find_tools by the server’s name.',
+    toolPrefix: '<server>__*',
+    category: 'integration',
+    keywords: ['mcp', 'model context protocol', 'remote tools', 'server', 'plugin', 'sse'],
+    grantProviders: [],
+    userConnectable: false,
+    togglable: false,
+  },
+  {
     capabilityKey: 'admanager',
     // No connector_configs row: instances are many-per-tenant rows in
     // admanager_instances (per domain, per site…), and each person

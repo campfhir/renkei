@@ -44,7 +44,7 @@ import {
   grantRow,
   hostAllowed,
   providerConfig,
-  providerSpec,
+  resolveProviderSpec,
   salesforceOrgOfGrant,
   tokenEndpointFor,
   type ProviderSpec,
@@ -205,7 +205,7 @@ export class Grants {
   ): Promise<
     { ok: true; grant: ProviderGrant; spec: ProviderSpec } | { ok: false; error: GrantError }
   > {
-    const spec = providerSpec(provider);
+    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
     if (!spec) return { ok: false, error: 'unknown_provider' };
     const row = await grantRow(this.db, provider, by);
     if (!row) return { ok: false, error: 'NO_GRANT' };
@@ -292,7 +292,7 @@ export class Grants {
         'the grant needs a provider and a subject, accountId or pending handle'
       );
     }
-    const spec = providerSpec(provider);
+    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
     if (!spec) return fail('unknown_provider');
     let url: URL;
     try {
@@ -314,7 +314,9 @@ export class Grants {
     let token: string;
     let retryWithRefresh = false;
     let extraHosts: string[] = [];
-    if (pendingHandle) {
+    if (spec.anonymous) {
+      token = '';
+    } else if (pendingHandle) {
       const pending = this.takePending(pendingHandle, provider, false);
       if (!pending) return fail('NO_PENDING');
       token = pending.accessToken;
@@ -354,7 +356,7 @@ export class Grants {
         if (typeof value === 'string' && !FORBIDDEN_REQUEST_HEADERS.has(name.toLowerCase()))
           headers.set(name, value);
       }
-      headers.set('authorization', `Bearer ${bearer}`);
+      if (bearer) headers.set('authorization', `Bearer ${bearer}`);
       return this.fetchImpl(target, {
         method: hopMethod,
         headers,
@@ -441,7 +443,7 @@ export class Grants {
     const fail = (type: GrantError, message?: string): void =>
       sendJson(response, statusForGrantError(type), { error: { type, message } });
     const provider = str(body.provider);
-    const spec = providerSpec(provider);
+    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
     if (!spec || !isRecord(body.form)) return fail(spec ? 'bad_request' : 'unknown_provider');
     const form = new URLSearchParams();
     for (const [key, value] of Object.entries(body.form)) {
@@ -467,8 +469,8 @@ export class Grants {
       tokens = answer.val;
     } else {
       const config = await providerConfig(spec, this.encryptionKey);
-      // Salesforce names which of its registered orgs the code is for; its
-      // token endpoint and (when the org has its own app) credentials follow.
+      // Salesforce names which of its connectors (orgs) the code is for; that
+      // connector's own token endpoint and credentials follow.
       const org = str(body.org) || undefined;
       const credentials = spec.credentialsFor?.(config, org) ?? {
         clientId: clientIdOf(config),
@@ -480,7 +482,8 @@ export class Grants {
         config,
         str(body.directoryTenantId) || org || undefined
       );
-      if (!clientId || !clientSecret || !endpoint) return fail('NOT_CONFIGURED');
+      if (!clientId || !endpoint || (!clientSecret && spec.clientAuth !== 'none'))
+        return fail('NOT_CONFIGURED');
       const headers: Record<string, string> = {
         'content-type': 'application/x-www-form-urlencoded',
         accept: 'application/json',
@@ -489,7 +492,7 @@ export class Grants {
         headers.authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`;
       } else {
         form.set('client_id', clientId);
-        form.set('client_secret', clientSecret);
+        if (spec.clientAuth !== 'none') form.set('client_secret', clientSecret);
       }
       if (!form.has('grant_type')) form.set('grant_type', 'authorization_code');
       let upstream: Response;
@@ -561,7 +564,7 @@ export class Grants {
     const accountId = str(body.accountId);
     const displayName = str(body.displayName);
     if (!provider || !handle || !subject || !accountId) return fail('bad_request');
-    const spec = providerSpec(provider);
+    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
     if (!spec) return fail('unknown_provider');
     const pending = this.takePending(handle, provider, true);
     if (!pending) return fail('NO_PENDING');
@@ -612,7 +615,7 @@ export class Grants {
     const provider = str(body.provider);
     const accountId = str(body.accountId);
     if (!provider || !accountId) return sendJson(response, 400, { error: { type: 'bad_request' } });
-    const spec = providerSpec(provider);
+    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
     if (!spec) return sendJson(response, 404, { error: { type: 'unknown_provider' } });
 
     // Best effort at the provider while we still hold the token; deleting
@@ -653,6 +656,30 @@ export class Grants {
             });
             revokedAtProvider = answer.ok;
           }
+        } else if (spec.revocationEndpoint) {
+          const config = await providerConfig(spec, this.encryptionKey);
+          const form = new URLSearchParams({
+            token: grant.refreshToken || grant.accessToken,
+            client_id: clientIdOf(config),
+          });
+          const secret = clientSecretOf(config);
+          if (secret && spec.clientAuth === 'body') form.set('client_secret', secret);
+          const answer = await this.fetchImpl(spec.revocationEndpoint, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/x-www-form-urlencoded',
+              ...(secret && spec.clientAuth === 'basic'
+                ? {
+                    authorization: `Basic ${Buffer.from(
+                      `${encodeURIComponent(clientIdOf(config))}:${encodeURIComponent(secret)}`
+                    ).toString('base64')}`,
+                  }
+                : {}),
+            },
+            body: form.toString(),
+            signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+          });
+          revokedAtProvider = answer.ok;
         } else if (provider === ONBASE || provider === ONBASE_ADMIN) {
           const token = grant.refreshToken || grant.accessToken;
           const answer = await onbaseWorkerCall('revoke', {

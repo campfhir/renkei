@@ -21,28 +21,28 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId, { write: true });
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { write: true, chatId });
   if (!ready.ok) return ready.response;
-  const { db, session, project } = ready.context;
-  if (!project.workspaceId)
+  const { db, session, project, workspaceId, chat } = ready.context;
+  if (!workspaceId)
     return jsonError(409, 'not-cloned', 'There is no checkout to discard changes on.');
 
-  if (project.activeChatId) {
-    const running = await getActiveTurn(db, project.activeChatId);
+  if (chat) {
+    const running = await getActiveTurn(db, chat.id);
     if (running) {
       return jsonError(
         409,
         'turn-running',
-        'The active chat is mid-turn — its tool calls are working on this checkout right now. Wait for it to finish before discarding changes.'
+        'The chat is mid-turn — its tool calls are working in this worktree right now. Wait for it to finish before discarding changes.'
       );
     }
   }
 
   const target = codeProjectTarget(projectId);
-  const discarded = await sbWorkspaceGitDiscard(target, { id: project.workspaceId });
+  const discarded = await sbWorkspaceGitDiscard(target, { id: workspaceId });
   if (!discarded.ok) {
     const failure = clientFailure(discarded.err);
     return jsonError(failure.status, 'discard', failure.message);

@@ -107,7 +107,8 @@ function escapeRegExp(text: string): string {
 function toolCatalogLines(tools: ToolDescriptor[]): string[] {
   const byConnector = new Map<string, ToolDescriptor[]>();
   for (const tool of tools) {
-    if (tool.appOnly) continue;
+    // Card buttons, and chat-only previews: an agent has no card to press.
+    if (tool.appOnly || tool.previewOf) continue;
     const key = tool.connector ?? 'other';
     byConnector.set(key, [...(byConnector.get(key) ?? []), tool]);
   }
@@ -452,7 +453,7 @@ export async function draftAgentFromProse(
   const settings = await getOrgSettings();
   const org = settings.ok ? settings.val : DEFAULT_ORG_SETTINGS;
 
-  const validTools = new Set(tools.filter((tool) => !tool.appOnly).map((tool) => tool.name));
+  const validTools = new Set(tools.filter((tool) => !tool.appOnly && !tool.previewOf).map((tool) => tool.name));
   const system = draftSystemPrompt({
     tools,
     triggerVars: options.triggerVars ?? [],

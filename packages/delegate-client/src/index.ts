@@ -521,4 +521,6 @@ export {
   type GrantDescription,
   type GrantOpError,
   type GrantRef,
+  type McpPrepareFailure,
+  type McpPrepared,
 } from './api';

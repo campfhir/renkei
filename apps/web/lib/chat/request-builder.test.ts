@@ -723,6 +723,37 @@ describe('buildSystemPrompt with user memory', () => {
     });
     expect(inProject).not.toContain('Prefers concise answers');
   });
+
+  it('tells the model to save notes unprompted only when it can', () => {
+    const base = {
+      personName: null,
+      orgName: null,
+      project: null,
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: true,
+      now: new Date('2026-09-04T00:00:00Z'),
+    };
+    const own = buildSystemPrompt({ ...base, canRemember: true });
+    expect(own).toContain('Without being asked, save a note with chat_memory_remember');
+    expect(own).not.toContain('project_memory_remember');
+
+    const inProject = buildSystemPrompt({
+      ...base,
+      project: { name: 'Launch', instructions: null, memoryText: null, files: [] },
+      canRemember: true,
+    });
+    expect(inProject).toContain('Without being asked, save a note with project_memory_remember');
+    expect(inProject).not.toContain('chat_memory_remember');
+
+    expect(buildSystemPrompt({ ...base, canRemember: false })).not.toContain('_memory_remember');
+    expect(buildSystemPrompt(base)).not.toContain('_memory_remember');
+  });
 });
 
 describe('buildSystemPrompt in auto mode', () => {

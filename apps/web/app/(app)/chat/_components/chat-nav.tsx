@@ -448,15 +448,6 @@ function ChatRow({ chat, projects, snippet, active, onDeleted }: {
                 archived
               </span>
             ) : null}
-            {chat.history ? (
-              <span
-                data-testid="chat-history-tag"
-                title="A previous chat in its code project: readable, no longer continued"
-                className="shrink-0 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-              >
-                history
-              </span>
-            ) : null}
           </span>
           {chat.projectName ? (
             <span className="block truncate text-[11px] font-normal leading-tight text-gray-500">

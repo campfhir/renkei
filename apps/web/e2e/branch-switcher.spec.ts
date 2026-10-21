@@ -1,14 +1,13 @@
 /**
- * Switching a code project's checkout branch — the active chat's title
+ * Switching a code chat's worktree to another branch — the chat's title
  * bar, through "Switch branch" in its overflow menu, which opens
  * branch-switcher.tsx's `BranchPickerModal`. There is no other picker:
  * the title bar has no reliable room for an inline one (a wide viewport
  * still narrows this column when the code pane sits beside it), so the
  * modal is the one path at every width, and the project screen carries
  * no branch picker, or mention of a branch, at all — it is about the
- * repository as a whole. A history chat keeps the plain read-only
- * label with no "Switch branch" entry, since it can no longer send
- * turns.
+ * repository as a whole. Every chat in a project has its own worktree
+ * and so its own switcher.
  *
  * Own tenant fixtures under the shared e2e/seed.ts tenant (AGENTS.md:
  * fine to share the tenant when nothing races on uniqueness or an
@@ -21,6 +20,7 @@ import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
+import { giveChatWorktree } from './worktree';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
@@ -35,12 +35,12 @@ test.use({
 function idsFor(project: string) {
   const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
   return {
-    projectId: `77777777-7777-4777-8777-7777777777${digit}1`,
-    activeChatId: `77777777-7777-4777-8777-7777777777${digit}2`,
-    historyChatId: `77777777-7777-4777-8777-7777777777${digit}3`,
+    projectId: `9c9c9c9c-9c9c-49c9-89c9-9c9c9c9c9c${digit}1`,
+    activeChatId: `9c9c9c9c-9c9c-49c9-89c9-9c9c9c9c9c${digit}2`,
+    otherChatId: `9c9c9c9c-9c9c-49c9-89c9-9c9c9c9c9c${digit}3`,
     projectName: `Branch switcher project (${digit})`,
     activeChatTitle: `Active chat (${digit})`,
-    historyChatTitle: `History chat (${digit})`,
+    otherChatTitle: `Other chat (${digit})`,
   };
 }
 
@@ -54,7 +54,7 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
     await client.query('DELETE FROM chats WHERE id = ANY($1)', [
-      [ids.activeChatId, ids.historyChatId],
+      [ids.activeChatId, ids.otherChatId],
     ]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query(
@@ -67,12 +67,8 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     );
     await client.query(
       `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.historyChatId, E2E_SUBJECT, ids.projectId, ids.historyChatTitle]
+      [ids.otherChatId, E2E_SUBJECT, ids.projectId, ids.otherChatTitle]
     );
-    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
-      ids.activeChatId,
-      ids.projectId,
-    ]);
   } finally {
     await client.end();
   }
@@ -124,6 +120,9 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
       workspace.id,
       ids.projectId,
     ]);
+    for (const chatId of [ids.activeChatId, ids.otherChatId]) {
+      await giveChatWorktree(client, { projectId: ids.projectId, baseId: workspace.id, chatId });
+    }
   } finally {
     await client.end();
   }
@@ -133,7 +132,7 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
     await client.query('DELETE FROM chats WHERE id = ANY($1)', [
-      [ids.activeChatId, ids.historyChatId],
+      [ids.activeChatId, ids.otherChatId],
     ]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
   } finally {
@@ -143,7 +142,7 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
 
 /** The branch route, mocked: `feature/x` is offered and switching to it succeeds. */
 async function mockBranchRoute(page: Page, projectId: string): Promise<void> {
-  await page.route(`**/api/tenant/**/code/projects/${projectId}/branch`, async (route) => {
+  await page.route(`**/api/code/projects/${projectId}/chats/*/branch`, async (route) => {
     if (route.request().method() === 'GET') {
       await route.fulfill({
         status: 200,
@@ -180,7 +179,7 @@ async function mockBranchRoute(page: Page, projectId: string): Promise<void> {
  */
 async function mockDirtyThenCleanBranchRoute(page: Page, projectId: string): Promise<void> {
   let attempted = 0;
-  await page.route(`**/api/tenant/**/code/projects/${projectId}/branch`, async (route) => {
+  await page.route(`**/api/code/projects/${projectId}/chats/*/branch`, async (route) => {
     if (route.request().method() === 'GET') {
       await route.fulfill({
         status: 200,
@@ -218,7 +217,7 @@ async function mockDirtyThenCleanBranchRoute(page: Page, projectId: string): Pro
       body: JSON.stringify({ branch }),
     });
   });
-  await page.route(`**/api/tenant/**/code/projects/${projectId}/discard`, async (route) => {
+  await page.route(`**/api/code/projects/${projectId}/chats/*/discard`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -253,7 +252,7 @@ test.describe('branch switcher', () => {
     await cleanFixtures(idsFor(testInfo.project.name));
   });
 
-  test('the project screen carries no branch mention; the active chat switches through its overflow menu, a history chat stays read-only', async ({
+  test('the project screen carries no branch mention; each chat switches its own worktree through its overflow menu', async ({
     page,
   }, testInfo) => {
     const ids = idsFor(testInfo.project.name);
@@ -285,7 +284,7 @@ test.describe('branch switcher', () => {
     await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
     const chatBranch = main.locator('[data-testid="chat-branch"]');
     await expect(chatBranch).toBeVisible();
-    await expect(chatBranch).toContainText('main');
+    await expect(chatBranch).toContainText('renkei/');
     await expect(chatBranch.getByRole('button')).toHaveCount(0);
     await main.getByRole('button', { name: 'More', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Switch branch' }).click();
@@ -297,16 +296,14 @@ test.describe('branch switcher', () => {
     await expect(chatBranch).toContainText('feature/x');
     await shot(page, testInfo, 'branch-switcher-chat-switched.png');
 
-    // ── A history chat: the plain read-only label, no switcher and no
-    //    "Switch branch" entry — it can no longer send turns ──
-    await page.goto(`/chat/${ids.historyChatId}`);
-    await expect(page.getByRole('heading', { name: ids.historyChatTitle })).toBeVisible();
-    const historyBranch = main.locator('[data-testid="chat-branch"]');
-    await expect(historyBranch).toBeVisible();
-    await expect(historyBranch.getByRole('button')).toHaveCount(0);
+    // ── Another chat in the same project has its own worktree, so its own
+    //    label and its own "Switch branch" entry ──
+    await page.goto(`/chat/${ids.otherChatId}`);
+    await expect(page.getByRole('heading', { name: ids.otherChatTitle })).toBeVisible();
+    await expect(main.locator('[data-testid="chat-branch"]')).toBeVisible();
     await main.getByRole('button', { name: 'More', exact: true }).click();
-    await expect(page.getByRole('menuitem', { name: 'Switch branch' })).toHaveCount(0);
-    await shot(page, testInfo, 'branch-switcher-history-readonly.png');
+    await expect(page.getByRole('menuitem', { name: 'Switch branch' })).toBeVisible();
+    await shot(page, testInfo, 'branch-switcher-other-chat.png');
   });
 
   test('a dirty checkout is refused with a clear reason, and discarding lets the switch through', async ({
@@ -323,7 +320,7 @@ test.describe('branch switcher', () => {
     await page.goto(`/chat/${ids.activeChatId}`);
     await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
     const chatBranch = main.locator('[data-testid="chat-branch"]');
-    await expect(chatBranch).toContainText('main');
+    await expect(chatBranch).toContainText('renkei/');
     await main.getByRole('button', { name: 'More', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Switch branch' }).click();
     const branchModal = page.getByRole('dialog', { name: 'Switch branch' });

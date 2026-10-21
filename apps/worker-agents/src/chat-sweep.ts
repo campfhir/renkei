@@ -14,6 +14,13 @@
  * — which is why this never touches a blob; an empty chat someone
  * uploaded into waits for the org's retention like any other.
  *
+ * Auto-archive: a person's chat_archive preference archives their chats
+ * once they have sat untouched for that long. It runs ahead of retention
+ * in the same sweep, and its window is capped at the org's retention, so
+ * a chat is archived before it can be pruned, never after. An archived
+ * code project chat releases its project's active slot, as archiving by
+ * hand does. Skipped while the chat has a reply running.
+ *
  * Retention: the org's chatRetentionDays (0 = keep). Bytes go before rows
  * — an attachment whose object could not be deleted keeps its row so a
  * later sweep can try again, and nothing in the store is ever orphaned
@@ -31,6 +38,7 @@ import type { DB } from '@renkei/db';
 import { resolveTenantBlobStore, type BlobStore } from '@renkei/blob-store';
 import { getOrgSettings } from '@renkei/settings';
 import { delegateClient } from '@renkei/delegate-client';
+import { CHAT_ARCHIVE_KEY, effectiveArchiveDays, parseChatArchivePrefs } from '@renkei/user-prefs';
 import { logger } from './logger';
 
 export const CHAT_JANITOR_INTERVAL_MS = 5 * 60_000;
@@ -98,6 +106,9 @@ export function createChatRetentionSweep(
   return async function sweep(): Promise<void> {
     await deleteAbandonedChats(db);
     const settings = await getOrgSettings();
+    // Archiving runs ahead of pruning: a chat a person has set to archive
+    // is archived before retention can delete it.
+    await archiveIdleChats(db, settings.ok ? settings.val.chatRetentionDays : 0);
     if (settings.ok && settings.val.chatRetentionDays > 0) {
       const days = settings.val.chatRetentionDays;
       const expired = await db
@@ -141,6 +152,46 @@ async function deleteAbandonedChats(db: Kysely<DB>): Promise<void> {
     component: 'worker-agents/chat-retention',
     count: deleted.rows.length,
   });
+}
+
+/**
+ * Archive each person's chats that have sat untouched past their own window
+ * (capped at the org's retention). Same activity clock as retention —
+ * `updated_at` — so the two never disagree about what "idle" means. A chat
+ * with a reply running is left alone.
+ */
+async function archiveIdleChats(db: Kysely<DB>, orgRetentionDays: number): Promise<void> {
+  const rows = await db
+    .selectFrom('user_preferences')
+    .select(['subject', 'value'])
+    .where('key', '=', CHAT_ARCHIVE_KEY)
+    .execute();
+  for (const row of rows) {
+    const days = effectiveArchiveDays(parseChatArchivePrefs(row.value), orgRetentionDays);
+    if (days === null) continue;
+    const archived = await sql<{ id: string }>`
+      UPDATE chats c
+         SET archived_at = NOW()
+       WHERE c.owner_subject = ${row.subject}
+         AND c.archived_at IS NULL
+         AND c.updated_at < NOW() - make_interval(days => ${days})
+         AND NOT EXISTS (
+           SELECT 1 FROM chat_turns t WHERE t.chat_id = c.id AND t.status = 'running'
+         )
+       RETURNING c.id
+    `.execute(db);
+    if (archived.rows.length === 0) continue;
+    const chatIds = archived.rows.map((chat) => chat.id);
+    await sql`
+      UPDATE chat_projects
+         SET active_chat_id = NULL
+       WHERE active_chat_id = ANY(${chatIds}::uuid[])
+    `.execute(db);
+    logger.info('auto-archived {count} idle chat(s)', {
+      component: 'worker-agents/chat-retention',
+      count: chatIds.length,
+    });
+  }
 }
 
 /** Chats whose attachment bytes are gone (or never existed); the rest wait. */

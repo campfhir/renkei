@@ -117,6 +117,26 @@ export interface GrantDescription {
   subject: string | null;
 }
 
+/** What a remote MCP server's connect flow needs, from `mcp/prepare`. */
+export type McpPrepared =
+  | { authMode: 'none'; open: boolean }
+  | {
+      authMode: 'oauth';
+      authorizationEndpoint: string;
+      clientId: string;
+      scope: string;
+      resource: string;
+      supportsPkce: boolean;
+    };
+
+export type McpPrepareFailure =
+  | 'DISCOVERY_FAILED'
+  | 'NEEDS_CLIENT'
+  | 'REGISTRATION_FAILED'
+  | 'unknown_server'
+  | 'DELEGATE_UNCONFIGURED'
+  | 'DELEGATE_UNREACHABLE';
+
 export type GrantOpError =
   | 'DELEGATE_UNCONFIGURED'
   | 'DELEGATE_UNREACHABLE'
@@ -287,6 +307,49 @@ export class DelegateGrants {
       grantedScopes: Array.isArray(value.grantedScopes) ? stringsOf(value.grantedScopes) : null,
       metadata: isRecord(value.metadata) ? value.metadata : {},
       subject: typeof value.subject === 'string' ? value.subject : null,
+    });
+  }
+
+  /**
+   * Discovery and client registration for a remote MCP server, run by the
+   * delegate (the process that dials MCP servers and holds their client
+   * secrets). Answers what the authorize redirect needs; nothing secret.
+   */
+  async mcpPrepare(input: {
+    serverId: string;
+    redirectUri: string;
+    /** Discover again even when the row already has metadata. */
+    refresh?: boolean;
+  }): Promise<Result<McpPrepared, McpPrepareFailure>> {
+    const answer = await this.transport.call('mcp/prepare', { ...input });
+    if (!answer.ok) {
+      const known: McpPrepareFailure[] = [
+        'NEEDS_CLIENT',
+        'REGISTRATION_FAILED',
+        'unknown_server',
+        'DELEGATE_UNCONFIGURED',
+        'DELEGATE_UNREACHABLE',
+      ];
+      return err(known.find((type) => type === answer.err.type) ?? 'DISCOVERY_FAILED', {
+        message: answer.err.message,
+      });
+    }
+    const value = answer.val;
+    if (value.authMode === 'none') return ok({ authMode: 'none', open: value.open === true });
+    if (
+      typeof value.authorizationEndpoint !== 'string' ||
+      typeof value.clientId !== 'string' ||
+      typeof value.resource !== 'string'
+    ) {
+      return err('DISCOVERY_FAILED');
+    }
+    return ok({
+      authMode: 'oauth',
+      authorizationEndpoint: value.authorizationEndpoint,
+      clientId: value.clientId,
+      scope: typeof value.scope === 'string' ? value.scope : '',
+      resource: value.resource,
+      supportsPkce: value.supportsPkce !== false,
     });
   }
 

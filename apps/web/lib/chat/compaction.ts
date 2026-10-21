@@ -61,11 +61,9 @@ import {
   type LlmContentBlock,
   type ResolvedLlm,
 } from '@renkei/agent-llm';
-import { isHistoryChat } from '@/lib/code/active-chat';
 import { resolveChatAccess } from './access';
 import { attributeMessagesToSummary, listMessages, type StoredMessage } from './messages';
 import { openText, sealText, type ContentCipher } from './content-crypto';
-import { getProjectRow } from './projects';
 import { createTurn, finishTurn } from './turns';
 import { openTurnChannel } from './turn-events';
 import { logger } from '@/lib/logger';
@@ -495,13 +493,7 @@ export async function compactChat(
 }
 
 export type StartCompactionError =
-  | 'NOT_FOUND'
-  | 'FORBIDDEN'
-  | 'HISTORY'
-  | 'ALREADY_RUNNING'
-  | 'NO_MODEL'
-  | 'MODEL_ERROR'
-  | 'DB_ERROR';
+  'NOT_FOUND' | 'FORBIDDEN' | 'ALREADY_RUNNING' | 'NO_MODEL' | 'MODEL_ERROR' | 'DB_ERROR';
 
 export interface StartedCompactionTurn {
   turnId: string;
@@ -528,11 +520,6 @@ export async function startCompactionTurn(
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   const chat = access.chat;
-  // A code project's history chat takes no turn of any kind (lib/code/active-chat.ts).
-  if (chat.projectId) {
-    const project = await getProjectRow(db, chat.projectId);
-    if (isHistoryChat(project, chat.id)) return err('HISTORY' as const);
-  }
 
   const llmResult = await resolveAgentLlm(db, chat.llmModelId ?? null);
   if (!llmResult.ok) {

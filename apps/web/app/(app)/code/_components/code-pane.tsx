@@ -19,6 +19,7 @@
  * work is seen through, so what is here is what the chat sees.
  */
 
+import { codeProjectUrl } from '@/lib/code/urls';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import Modal from '@/components/modal';
@@ -59,6 +60,7 @@ const iconButton =
 
 export default function CodePane({
   projectId,
+  chatId,
   pane,
   layout,
   touch,
@@ -72,6 +74,8 @@ export default function CodePane({
   onClose,
 }: {
   projectId: string;
+  /** The chat whose worktree the pane shows and edits. */
+  chatId: string;
   pane: CodePaneHandle;
   /** Beside the chat, or the Code tab. */
   layout: 'split' | 'tab';
@@ -95,7 +99,7 @@ export default function CodePane({
   /** Close the pane (beside the chat only). */
   onClose: () => void;
 }) {
-  const base = `/api/code/projects/${projectId}`;
+  const base = codeProjectUrl(projectId, chatId);
   const repoTreeRef = useRef<RepoTreeHandle>(null);
   const newFileAnchor = useCoachAnchor('code-tree-new-file');
   const [treeOpen, setTreeOpen] = useState(true);
@@ -276,6 +280,7 @@ export default function CodePane({
       <RepoTree
         ref={repoTreeRef}
         projectId={projectId}
+        chatId={chatId}
         onOpen={openFile}
         selected={pane.active}
         marks={marks}

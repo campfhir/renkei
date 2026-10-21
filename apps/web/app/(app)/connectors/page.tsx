@@ -14,6 +14,7 @@ import SalesforceConnector, { SalesforceOrphanedConnections } from './salesforce
 import HylandConnector from './hyland-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
+import McpServersConnector from './mcp-servers-connector';
 import MirthConnector from './mirth-connector';
 import AdManagerConnector from './admanager-connector';
 import SandboxSecrets from './sandbox-secrets';
@@ -21,6 +22,12 @@ import { AddConnectorButton, RemovableProducts } from './catalog-controls';
 import type { CatalogItem } from './add-connector-modal';
 import { listSharesWithConnection } from '@renkei/connector-fileshares';
 import { listInstancesWithConnection } from '@renkei/connector-mirth';
+import {
+  connectedServerIds,
+  getToolLists,
+  listServers,
+  mcpCapabilityKey,
+} from '@renkei/connector-mcp';
 import { listInstancesWithConnection as listAdManagerInstancesWithConnection } from '@renkei/connector-admanager';
 import { sandboxBrowserEnabled, sbSecretsList } from '@/lib/sandbox/service-client';
 import {
@@ -274,6 +281,30 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     connected: catalog.connected.has(entry.capabilityKey),
   }));
 
+  // Remote MCP servers: the admin's list, every enabled one in this
+  // person's audience. The server owns sign-in, so "connected" is simply
+  // whether this person holds a grant on it.
+  const audienceAllows = await resolveAudienceAllows(db, session.subject);
+  const mcpServerRows = await listServers(db);
+  const mcpConnected = await connectedServerIds(db, session.subject);
+  const mcpToolLists = await getToolLists(db, session.subject);
+  const mcpServerViews =
+    mcpServerRows.ok && mcpConnected.ok
+      ? mcpServerRows.val
+          .filter((server) => server.enabled && audienceAllows(mcpCapabilityKey(server.slug)))
+          .map((server) => ({
+            id: server.id,
+            slug: server.slug,
+            name: server.name,
+            host: new URL(server.url).host,
+            transport: server.transport,
+            authMode: server.authMode,
+            context: server.context,
+            connected: mcpConnected.val.includes(server.id),
+            toolCount: mcpToolLists.ok ? (mcpToolLists.val.get(server.id)?.tools.length ?? 0) : 0,
+          }))
+      : [];
+
   const microsoftKeys = ['microsoft', 'sharepoint', 'onedrive'].filter((key) => shown.has(key));
   const atlassianShown =
     jiraShown ||
@@ -292,7 +323,8 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     hylandShown ||
     shown.has('fileshares') ||
     shown.has('mirth') ||
-    shown.has('admanager');
+    shown.has('admanager') ||
+    mcpServerViews.length > 0;
 
   /**
    * Each card, tagged with whether it has something a person added but
@@ -602,6 +634,16 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
           <RemovableProducts products={removable(catalog, ['admanager'])} />
         </>
       ),
+    });
+  }
+
+  if (mcpServerViews.length > 0) {
+    cards.push({
+      key: 'mcp-servers',
+      needsAttention: mcpServerViews.some(
+        (server) => server.authMode === 'oauth' && !server.connected
+      ),
+      node: <McpServersConnector servers={mcpServerViews} />,
     });
   }
 

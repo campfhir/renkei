@@ -12,6 +12,13 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { readConnectorConfigCached, type ConnectorConfig } from '@renkei/connector-config';
 import {
+  getServer,
+  getSealedClientSecret,
+  serverIdOfProvider,
+  tokenClientAuth,
+} from '@renkei/connector-mcp';
+import { decrypt } from '@renkei/crypto';
+import {
   ATLASSIAN,
   ATLASSIAN_ADMIN,
   ATLASSIAN_BITBUCKET,
@@ -20,6 +27,7 @@ import {
   AtlassianAdapter,
   BitbucketAdapter,
   ENTRA_DEVELOPER,
+  GenericOAuthAdapter,
   GITHUB,
   GitHubAdapter,
   MICROSOFT,
@@ -75,7 +83,19 @@ export interface ProviderSpec {
     org?: string
   ): { clientId: string; clientSecret: string };
   /** How the token endpoint wants the client authenticated at exchange time. */
-  clientAuth: 'body' | 'basic';
+  clientAuth: 'body' | 'basic' | 'none';
+  /**
+   * Exact origins a request may go to, in addition to `hosts`. A dynamic
+   * provider (a remote MCP server) knows its one origin from its row, and
+   * may be a loopback http origin in development.
+   */
+  origins?: readonly string[];
+  /** The app registration, when it is not a `connector_configs` row (an MCP server's own). */
+  staticConfig?: ConnectorConfig;
+  /** An open server (no authorization): requests go out with no credential at all. */
+  anonymous?: boolean;
+  /** Where a disconnect may revoke the token, when the provider offers one. */
+  revocationEndpoint?: string;
   adapter(config: ConnectorConfig | null, grant: ProviderGrant | null): ProviderAdapter | null;
 }
 
@@ -230,6 +250,53 @@ export const PROVIDERS: Readonly<Record<string, ProviderSpec>> = {
   },
 };
 
+/**
+ * The spec for any provider, including the dynamic ones: `mcp:<server id>`
+ * is built from that server's row — its origin is the only host its token
+ * may reach, and the token endpoint and client came out of its own
+ * authorization discovery (docs/mcp-connector-design.md). A disabled or
+ * unknown server has no spec, so nothing of it is dialed.
+ */
+export async function resolveProviderSpec(
+  db: Kysely<DB>,
+  encryptionKey: Buffer,
+  provider: string
+): Promise<ProviderSpec | null> {
+  const fixed = providerSpec(provider);
+  if (fixed) return fixed;
+  const serverId = serverIdOfProvider(provider);
+  if (!serverId) return null;
+  const read = await getServer(db, serverId);
+  if (!read.ok || !read.val || !read.val.enabled) return null;
+  const server = read.val;
+  let secret = '';
+  const sealed = await getSealedClientSecret(db, serverId);
+  if (sealed.ok && sealed.val) {
+    const opened = decrypt(sealed.val, encryptionKey);
+    if (opened.ok) secret = opened.val;
+  }
+  const oauth = server.oauth;
+  const clientAuth = tokenClientAuth(oauth?.tokenAuthMethods ?? [], secret !== '');
+  const origin = new URL(server.url).origin;
+  return {
+    connector: provider,
+    tokenEndpoint: oauth?.tokenEndpoint ?? null,
+    hosts: [],
+    origins: [origin],
+    anonymous: server.authMode === 'none',
+    clientAuth,
+    revocationEndpoint: oauth?.revocationEndpoint ?? undefined,
+    staticConfig: {
+      connector: provider,
+      enabled: true,
+      settings: { clientId: server.clientId ?? '' },
+      secrets: secret ? { clientSecret: secret } : {},
+    },
+    adapter: () =>
+      oauth ? new GenericOAuthAdapter(provider, oauth.tokenEndpoint, secret, clientAuth) : null,
+  };
+}
+
 export function providerSpec(provider: string): ProviderSpec | null {
   return Object.prototype.hasOwnProperty.call(PROVIDERS, provider) ? PROVIDERS[provider] : null;
 }
@@ -287,6 +354,7 @@ export function hostAllowed(
   extraHosts: readonly string[] = []
 ): boolean {
   if (provider && standInOrigin(provider) === url.origin) return true;
+  if (spec.origins?.includes(url.origin)) return true;
   if (url.protocol !== 'https:') return false;
   const host = url.hostname.toLowerCase();
   if (url.port === '' && extraHosts.some((allowed) => host === allowed.toLowerCase())) return true;
@@ -300,6 +368,7 @@ export async function providerConfig(
   spec: ProviderSpec,
   encryptionKey: Buffer
 ): Promise<ConnectorConfig | null> {
+  if (spec.staticConfig) return spec.staticConfig;
   const result = await readConnectorConfigCached(spec.connector, encryptionKey);
   return result.ok ? result.val : null;
 }

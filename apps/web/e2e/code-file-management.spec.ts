@@ -23,6 +23,7 @@ import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
+import { giveChatWorktree } from './worktree';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
@@ -63,10 +64,6 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
       `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
       [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
     );
-    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
-      ids.chatId,
-      ids.projectId,
-    ]);
   } finally {
     await client.end();
   }
@@ -112,6 +109,11 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
       workspace.id,
       ids.projectId,
     ]);
+    await giveChatWorktree(client, {
+      projectId: ids.projectId,
+      baseId: workspace.id,
+      chatId: ids.chatId,
+    });
   } finally {
     await client.end();
   }

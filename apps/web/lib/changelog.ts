@@ -43,6 +43,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: null,
+    entries: [
+      {
+        kind: 'changed',
+        title: 'Chat shows a preview before anything is sent, created or changed',
+        detail:
+          'When the chat wants to act in Jira, Confluence, Outlook, SharePoint, OneDrive, Webex, Zoom, GitHub, Bitbucket or any other connected system, it now shows you a card with what it is about to do, and nothing happens until you press the button. Every action has one, not only email and tickets. Agents are unchanged, and so is a code project in auto mode: its repository, tracker and wiki actions still run without asking, while mail, messages and documents in the same chat still wait for your card.',
+      },
+      {
+        kind: 'added',
+        title: 'Start an API-triggered agent from chat',
+        detail:
+          'Ask the chat to run an agent that has an API trigger, and it asks you to allow the run the same way it does for a scheduled agent — showing the inputs it will pass. You do not need to set a schedule. An agent with no schedule and no API trigger still cannot be started from chat.',
+      },
+    ],
+  },
+  {
     date: '2026-10-20',
     heading: 'Documents with real formatting, pictures in them, and chats that know their context',
     entries: [

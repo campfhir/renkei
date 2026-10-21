@@ -15,6 +15,7 @@ import path from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
+import { giveChatWorktree } from './worktree';
 import { keyFor, sealForSubject } from './keys';
 
 test.use({
@@ -72,12 +73,6 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
       `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
       [ids.seededChatId, E2E_SUBJECT, ids.seededProjectId, ids.seededChatTitle]
     );
-    // The one chat in the project is its active chat, as starting it
-    // through the app would have left it (lib/code/active-chat.ts).
-    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
-      ids.seededChatId,
-      ids.seededProjectId,
-    ]);
   } finally {
     await client.end();
   }
@@ -258,6 +253,11 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
       workspace.id,
       ids.seededProjectId,
     ]);
+    await giveChatWorktree(client, {
+      projectId: ids.seededProjectId,
+      baseId: workspace.id,
+      chatId: ids.seededChatId,
+    });
   } finally {
     await client.end();
   }
@@ -733,7 +733,7 @@ test.describe('code projects', () => {
     // on-demand compile can outrun the default assertion timeout.
     const tree = main.getByRole('tree', { name: 'Files' });
     await expect(tree.getByText('package.json')).toBeVisible({ timeout: 20_000 });
-    await expect(main.locator('[data-testid="pane-branch"]')).toContainText('main');
+    await expect(main.locator('[data-testid="pane-branch"]')).toContainText('renkei/');
     const back = main.getByRole('link', { name: 'Back to project' });
     await expect(back).toHaveAttribute('href', `/code/${ids.seededProjectId}`);
     expect((await back.boundingBox())!.x).toBeLessThan((await tree.boundingBox())!.x);
@@ -802,11 +802,11 @@ test.describe('code projects', () => {
     await expect(done.getByText(/Committed c0ffee/)).toBeVisible();
     await expect(done.getByText('not pushed')).toBeVisible();
     await done.getByRole('button', { name: 'Push branch' }).click();
-    await expect(done.getByText(/pushed to origin\/main/)).toBeVisible();
+    await expect(done.getByText(/pushed to origin\/renkei\//)).toBeVisible();
     await shot('code-pane-desktop-pushed.png');
     await done.getByRole('button', { name: 'Done' }).click();
     await expect(main.getByText(/You committed c0ffee/)).toBeVisible();
-    await expect(main.getByText(/You pushed main/)).toBeVisible();
+    await expect(main.getByText(/You pushed renkei\//)).toBeVisible();
 
     // ── Hidden, the chat takes the whole column back and the back arrow
     //    returns to its title bar; shown again, it comes back with its tabs ──

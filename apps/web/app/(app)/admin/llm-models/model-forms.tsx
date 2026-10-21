@@ -806,7 +806,6 @@ export default function ModelForms() {
               id="model-context-window"
               className={inputClass}
               type="text"
-              inputMode="numeric"
               value={draft.contextWindow}
               placeholder="200k"
               onChange={(event) => setDraft({ ...draft, contextWindow: event.target.value })}

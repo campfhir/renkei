@@ -22,6 +22,7 @@ import {
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
+import { resolveChatScope } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 
 /** A commit is asked for by its hash, or a prefix of it — never a ref. */
@@ -29,22 +30,20 @@ const COMMIT_SHA = /^[0-9a-f]{4,40}$/i;
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
+  const { projectId, chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveResourceAccess(db, session.subject, 'chat_project', projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   const project = await getProjectRow(db, projectId);
   if (!project || project.kind !== 'code') return jsonError(404, 'not-found', 'No such project');
-  if (!(await sandboxWorkspacesEnabled()) || !project.workspaceId) {
+  const scope = await resolveChatScope(db, session.subject, project, chatId, { write: false });
+  if (!scope.ok) return scope.response;
+  const workspaceId = scope.workspaceId;
+  if (!(await sandboxWorkspacesEnabled()) || !workspaceId) {
     return NextResponse.json({
       branch: project.repo?.branch ?? '',
       diff: '',
@@ -66,7 +65,7 @@ export async function GET(
     if (!COMMIT_SHA.test(commit))
       return jsonError(400, 'invalid', 'A commit is named by its hash.');
     const shown = await sbWorkspaceGitShow(target, {
-      id: project.workspaceId,
+      id: workspaceId,
       commit,
       context,
       ...(statOnly ? { statOnly: true } : {}),
@@ -90,7 +89,7 @@ export async function GET(
     return NextResponse.json({ ...shown.val, available: true });
   }
   const result = await sbWorkspaceGitDiff(target, {
-    id: project.workspaceId,
+    id: workspaceId,
     context,
     ...(path ? { paths: [path] } : {}),
     ...(statOnly ? { statOnly: true } : {}),

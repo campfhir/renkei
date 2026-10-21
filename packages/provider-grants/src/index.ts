@@ -40,6 +40,7 @@ export {
   OnBaseAdminAdapter,
   type OnBaseRefresh,
 } from './onbase';
+export { GenericOAuthAdapter } from './generic-oauth';
 export { MICROSOFT, ENTRA_DEVELOPER, MicrosoftAdapter } from './microsoft';
 export {
   SALESFORCE,

@@ -32,10 +32,10 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId);
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { chatId });
   if (!ready.ok) return ready.response;
   const { session, project } = ready.context;
   const origin = await getOrigin(request);
@@ -52,13 +52,13 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
-  const { projectId } = await params;
-  const ready = await codeProjectContext(request, projectId, { write: true });
+  const { projectId, chatId } = await params;
+  const ready = await codeProjectContext(request, projectId, { write: true, chatId });
   if (!ready.ok) return ready.response;
-  const { db, session, project } = ready.context;
-  if (!project.workspaceId)
+  const { db, session, project, workspaceId, chat } = ready.context;
+  if (!workspaceId)
     return jsonError(409, 'not-cloned', 'There is no checkout to switch branches on yet.');
 
   const body = await readJsonBody(request);
@@ -67,19 +67,19 @@ export async function POST(
   const ref = validateGitRef(branchInput);
   if (!ref.ok) return jsonError(400, 'invalid', ref.message);
 
-  if (project.activeChatId) {
-    const running = await getActiveTurn(db, project.activeChatId);
+  if (chat) {
+    const running = await getActiveTurn(db, chat.id);
     if (running) {
       return jsonError(
         409,
         'turn-running',
-        'The active chat is mid-turn — its tool calls are working on this checkout right now. Wait for it to finish before switching branches.'
+        'The chat is mid-turn — its tool calls are working in this worktree right now. Wait for it to finish before switching branches.'
       );
     }
   }
 
   const target = codeProjectTarget(projectId);
-  const status = await sbWorkspaceGitStatus(target, { id: project.workspaceId });
+  const status = await sbWorkspaceGitStatus(target, { id: workspaceId });
   if (!status.ok) {
     const failure = clientFailure(status.err);
     return jsonError(failure.status, 'status', failure.message);
@@ -103,7 +103,7 @@ export async function POST(
   );
   if (typeof credential === 'string') return jsonError(409, 'git-credential', credential);
   const pulled = await sbWorkspaceGitPull(target, {
-    id: project.workspaceId,
+    id: workspaceId,
     gitProxy: credential.gitProxy,
     branch: ref.ref,
   });

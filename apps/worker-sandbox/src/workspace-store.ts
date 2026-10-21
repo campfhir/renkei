@@ -30,6 +30,7 @@ const COLUMNS = [
   'repo_full_name',
   'branch',
   'storage_key',
+  'parent_id',
   'status',
   'error',
   'size_bytes',
@@ -49,6 +50,7 @@ function toStored(row: {
   repo_full_name: string;
   branch: string;
   storage_key: string;
+  parent_id: string | null;
   status: string;
   error: string | null;
   size_bytes: string | number | bigint;
@@ -63,6 +65,7 @@ function toStored(row: {
     repoFullName: row.repo_full_name,
     branch: row.branch,
     storageKey: row.storage_key,
+    parentId: row.parent_id,
     status: statusOf(row.status),
     error: row.error,
     sizeBytes: Number(row.size_bytes),
@@ -83,6 +86,10 @@ export async function insertWorkspace(
     repoFullName: string;
     branch: string;
     storageKey: string;
+    /** A worktree's base clone. */
+    parentId?: string;
+    /** A worktree is made by the request that asks for it: ready at once. */
+    status?: WorkspaceStatus;
   }
 ): Promise<StoredWorkspace> {
   const row = await db
@@ -94,7 +101,8 @@ export async function insertWorkspace(
       repo_full_name: input.repoFullName,
       branch: input.branch,
       storage_key: input.storageKey,
-      status: 'cloning',
+      parent_id: input.parentId ?? null,
+      status: input.status ?? 'cloning',
       expires_at: expiryFromNow(),
     })
     .returning(COLUMNS)
@@ -115,11 +123,17 @@ export async function listWorkspaces(
   return rows.map(toStored);
 }
 
-export async function countWorkspaces(db: Kysely<DB>, target: WorkspaceTarget): Promise<number> {
+/** Clones (`worktrees: false`) or worktrees (`true`) the caller holds; the two are capped apart. */
+export async function countWorkspaces(
+  db: Kysely<DB>,
+  target: WorkspaceTarget,
+  options: { worktrees?: boolean } = {}
+): Promise<number> {
   const row = await db
     .selectFrom('sandbox_workspaces')
     .select((eb) => eb.fn.countAll<string>().as('count'))
     .where('subject', '=', target.subject)
+    .where('parent_id', options.worktrees ? 'is not' : 'is', null)
     .executeTakeFirst();
   return row?.count ? Number(row.count) : 0;
 }
@@ -157,12 +171,38 @@ export async function setWorkspaceStatus(
     .execute();
 }
 
-/** Any use extends the lifetime: a workspace someone is working in is not stale. */
+/** The worktrees hanging off a base clone. */
+export async function listWorktrees(
+  db: Kysely<DB>,
+  target: WorkspaceTarget,
+  parentId: string
+): Promise<StoredWorkspace[]> {
+  const rows = await db
+    .selectFrom('sandbox_workspaces')
+    .select(COLUMNS)
+    .where('subject', '=', target.subject)
+    .where('parent_id', '=', parentId)
+    .execute();
+  return rows.map(toStored);
+}
+
+/**
+ * Any use extends the lifetime: a workspace someone is working in is not
+ * stale — and neither is the base clone a worktree hangs off, which the
+ * worktree cannot outlive.
+ */
 export async function touchWorkspace(
   db: Kysely<DB>,
   id: string,
   input: { sizeBytes?: number; branch?: string } = {}
 ): Promise<void> {
+  await db
+    .updateTable('sandbox_workspaces')
+    .set({ expires_at: expiryFromNow() })
+    .where((eb) =>
+      eb('id', '=', eb.selectFrom('sandbox_workspaces').select('parent_id').where('id', '=', id))
+    )
+    .execute();
   await db
     .updateTable('sandbox_workspaces')
     .set({
@@ -205,4 +245,30 @@ export async function listExpiredWorkspaces(
 
 export async function deleteWorkspaceById(db: Kysely<DB>, id: string): Promise<void> {
   await db.deleteFrom('sandbox_workspaces').where('id', '=', id).execute();
+}
+
+/** A workspace by id alone — the sweep's lookup of a worktree's base, across callers. */
+export async function getWorkspaceById(
+  db: Kysely<DB>,
+  id: string
+): Promise<StoredWorkspace | undefined> {
+  const row = await db
+    .selectFrom('sandbox_workspaces')
+    .select(COLUMNS)
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return row ? toStored(row) : undefined;
+}
+
+/** A base clone's worktrees by its id alone, for the sweep. */
+export async function listWorktreesOf(
+  db: Kysely<DB>,
+  parentId: string
+): Promise<StoredWorkspace[]> {
+  const rows = await db
+    .selectFrom('sandbox_workspaces')
+    .select(COLUMNS)
+    .where('parent_id', '=', parentId)
+    .execute();
+  return rows.map(toStored);
 }

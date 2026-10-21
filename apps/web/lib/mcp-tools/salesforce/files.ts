@@ -134,9 +134,10 @@ function stagedName(version: FileVersion, ordinal: number): string {
 export function registerFileTools(
   server: McpServer,
   context: MCPToolContext,
-  auth: SalesforceAuth
+  auth: SalesforceAuth,
+  sandboxAvailable: boolean = sandboxConfig() !== null
 ): void {
-  if (sandboxConfig() === null) return;
+  if (!sandboxAvailable) return;
 
   server.registerTool(
     'salesforce_download_file',

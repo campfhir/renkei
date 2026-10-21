@@ -37,10 +37,7 @@ interface GitHubIssueCard {
   url: string;
 }
 
-async function lookupJira(
-  subject: string,
-  key: string
-): Promise<JiraCard | null> {
+async function lookupJira(subject: string, key: string): Promise<JiraCard | null> {
   const access = await resolveAtlassianUserAccess(subject, ATLASSIAN);
   if (typeof access === 'string') return null;
   try {
