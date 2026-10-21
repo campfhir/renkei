@@ -89,6 +89,7 @@ const MANAGE_ELSEWHERE: Record<string, () => string> = {
   fileshares: () => '/admin/file-shares',
   mirth: () => '/admin/mirth',
   admanager: () => '/admin/admanager',
+  mcp: () => '/admin/mcp',
 };
 
 function build(): ConnectorDefinition[] {

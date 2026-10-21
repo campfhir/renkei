@@ -162,6 +162,32 @@ describe('chat_delegate', () => {
     ]);
   });
 
+  it('reaches a remote MCP server’s read tools through its own find_tools, never its acts', () => {
+    const server = { name: 'Acme Docs', context: 'Insurance claims.' };
+    const lookup = { connector: 'mcp-acme', server, def: def('acme__lookup') };
+    const file = { connector: 'mcp-acme', server, def: def('acme__file') };
+    const { client } = mcpClient();
+    // Only an MCP read behind find_tools is enough to have an errand to hand off.
+    expect(
+      chatDelegateTool({
+        surface: {
+          tools: [],
+          discoverable: [lookup, file],
+          readOnlyTools: new Set(['acme__lookup']),
+          mcp: client,
+        },
+        localTools: [],
+      })
+    ).not.toBeNull();
+    // An MCP server that only has acts gives a sub-agent nothing to read with.
+    expect(
+      chatDelegateTool({
+        surface: { tools: [], discoverable: [file], readOnlyTools: new Set(), mcp: client },
+        localTools: [],
+      })
+    ).toBeNull();
+  });
+
   it('is not offered at all when there is nothing to read with', () => {
     expect(
       chatDelegateTool({

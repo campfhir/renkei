@@ -17,6 +17,8 @@ export default {
     '^@renkei/connector-config$': '<rootDir>/../../packages/connector-config/src/index.ts',
     '^@renkei/connector-mirth$': '<rootDir>/../../packages/connector-mirth/src/index.ts',
     '^@renkei/connector-admanager$': '<rootDir>/../../packages/connector-admanager/src/index.ts',
+    '^@renkei/connector-mcp$': '<rootDir>/../../packages/connector-mcp/src/index.ts',
+    '^@renkei/connector-sandbox$': '<rootDir>/../../packages/connector-sandbox/src/index.ts',
     '^@renkei/connector-fileshares$': '<rootDir>/../../packages/connector-fileshares/src/index.ts',
   },
   // kysely's published build is ESM-only; ts-jest (allowJs) transforms it to

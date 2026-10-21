@@ -41,7 +41,8 @@ const MATCH_LINE = /^- ([^\s:]+):/gm;
 function connectorSummaryOf(discoverable: DiscoverableTool[]): string {
   const counts = new Map<string, number>();
   for (const entry of discoverable) {
-    counts.set(entry.connector, (counts.get(entry.connector) ?? 0) + 1);
+    const label = entry.server ? `${entry.server.name} (MCP server)` : entry.connector;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   return [...counts.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
@@ -154,7 +155,10 @@ export function findToolsTool(discoverable: DiscoverableTool[]): LocalTool | nul
         .map((entry) => ({
           entry,
           score: scoreOf(
-            `${entry.connector} ${entry.def.name} ${entry.def.description}`.toLowerCase(),
+            // A remote MCP server is found by its name and by what its admin
+            // said it is for, as well as by its tools' own words.
+            `${entry.connector} ${entry.def.name} ${entry.def.description} ` +
+              `${entry.server?.name ?? ''} ${entry.server?.context ?? ''}`.toLowerCase(),
             terms
           ),
         }))
@@ -167,8 +171,20 @@ export function findToolsTool(discoverable: DiscoverableTool[]): LocalTool | nul
         );
       }
       const matches: LlmToolDef[] = scored.map((row) => row.entry.def);
+      // What an admin wrote about each matched server, once per server, so
+      // the model knows what the server is for before it picks a tool.
+      const aboutServers = [
+        ...new Map(
+          scored.flatMap((row) =>
+            row.entry.server?.context ? [[row.entry.connector, row.entry.server] as const] : []
+          )
+        ).values(),
+      ]
+        .map((server) => `About ${server.name}: ${server.context}`)
+        .join('\n');
       return textResult(
-        `Found ${matches.length} tool(s), now callable:\n` +
+        (aboutServers ? `${aboutServers}\n\n` : '') +
+          `Found ${matches.length} tool(s), now callable:\n` +
           matches
             .map((tool) => {
               const params = summarizeInputSchema(tool.inputSchema);

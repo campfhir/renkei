@@ -28,6 +28,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { LlmToolDef } from '@renkei/agent-llm';
+import { listServers, slugOfCapabilityKey } from '@renkei/connector-mcp';
 import { HttpMcpClient, mintRunToken, revokeRunToken, type McpClient } from '@renkei/mcp-client';
 import type { McpToolInfo } from '@renkei/mcp-client';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
@@ -113,6 +114,23 @@ export function previewRouting(
 export interface DiscoverableTool {
   connector: string;
   def: LlmToolDef;
+  /**
+   * For a remote MCP server's tool: the server's name and the context its
+   * admin wrote for it. Searched by find_tools beside the tool's own words,
+   * so "claims" finds a server the admin described as the claims system.
+   */
+  server?: { name: string; context: string };
+}
+
+/**
+ * A remote MCP server's tools are always among a chat's candidates (never
+ * core, so never offered up front): the person chose to connect the server,
+ * and find_tools by its name or description is how the model reaches it.
+ * Switching one off is the org's (`enabled`, audiences) or the person's
+ * (disconnect, hide a tool) — not a per-chat toggle.
+ */
+export function isMcpServerConnector(connector: string | null): boolean {
+  return connector !== null && slugOfCapabilityKey(connector) !== null;
 }
 
 export interface PartitionedChatTools {
@@ -150,7 +168,13 @@ export function partitionChatTools(
   for (const descriptor of catalog) {
     if (descriptor.appOnly) continue;
     const always = CHAT_ALWAYS_TOOLS.includes(descriptor.name);
-    if (!always && (!descriptor.connector || !wanted.has(descriptor.connector))) continue;
+    if (
+      !always &&
+      (!descriptor.connector ||
+        !(wanted.has(descriptor.connector) || isMcpServerConnector(descriptor.connector)))
+    ) {
+      continue;
+    }
     const live = byName.get(descriptor.name);
     if (!live) continue;
     const def: LlmToolDef = {
@@ -214,6 +238,8 @@ export async function listChatConnectors(subject: string): Promise<ConnectorOpti
     if (descriptor.appOnly || descriptor.name.endsWith(PREVIEW_SUFFIX)) continue;
     if (!descriptor.connector) continue;
     if (CHAT_ALWAYS_TOOLS.includes(descriptor.name)) continue;
+    // Remote MCP servers are not picked per chat (isMcpServerConnector).
+    if (isMcpServerConnector(descriptor.connector)) continue;
     counts.set(descriptor.connector, (counts.get(descriptor.connector) ?? 0) + 1);
   }
   return [...counts.entries()]
@@ -243,6 +269,26 @@ export interface ChatToolSurface {
   mcp: McpClient | null;
   /** Revokes the turn's token; safe to call more than once. */
   release(): Promise<void>;
+}
+
+/**
+ * Names and admin context onto the remote MCP servers' discoverable tools.
+ * Read once per turn that has any; a failed read leaves the tools
+ * discoverable by their own words, which is the honest fallback.
+ */
+async function attachServerContext(
+  db: Kysely<DB>,
+  discoverable: DiscoverableTool[]
+): Promise<void> {
+  if (!discoverable.some((entry) => isMcpServerConnector(entry.connector))) return;
+  const servers = await listServers(db);
+  if (!servers.ok) return;
+  const bySlug = new Map(servers.val.map((server) => [server.slug, server]));
+  for (const entry of discoverable) {
+    const slug = slugOfCapabilityKey(entry.connector);
+    const server = slug ? bySlug.get(slug) : undefined;
+    if (server) entry.server = { name: server.name, context: server.context };
+  }
 }
 
 export async function resolveChatToolSurface(
@@ -278,6 +324,7 @@ export async function resolveChatToolSurface(
       !routing.blockedPreviews.has(descriptor.name) &&
       !routing.hidden.has(descriptor.name) &&
       (CHAT_ALWAYS_TOOLS.includes(descriptor.name) ||
+        isMcpServerConnector(descriptor.connector) ||
         (descriptor.connector !== null && input.config.connectors.includes(descriptor.connector)))
   );
   if (candidates.length === 0) {
@@ -317,6 +364,7 @@ export async function resolveChatToolSurface(
       input.config,
       input.eager ?? {}
     );
+    await attachServerContext(db, discoverable);
     const allOffered = [...eager, ...discoverable.map((entry) => entry.def)];
     const offeredNames = new Set(allOffered.map((tool) => tool.name));
     const widgetResourceUris = new Map(

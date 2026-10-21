@@ -70,6 +70,20 @@ describe('partitionChatTools', () => {
     expect(discoverable[1].def.inputSchema).toEqual({ type: 'object' });
   });
 
+  it('makes a connected MCP server’s tools discoverable whatever the chat’s toolset says', () => {
+    const { eager, discoverable } = partitionChatTools(
+      [
+        descriptor({ name: 'whoami', connector: 'jira' }),
+        descriptor({ name: 'acme__lookup', connector: 'mcp-acme' }),
+      ],
+      [live('whoami'), live('acme__lookup')],
+      { connectors: [] }
+    );
+    expect(eager.map((tool) => tool.name)).toEqual(['whoami']);
+    expect(discoverable.map((entry) => entry.def.name)).toEqual(['acme__lookup']);
+    expect(discoverable[0].connector).toBe('mcp-acme');
+  });
+
   it('offers only whoami for an empty toolset', () => {
     const { eager, discoverable } = partitionChatTools(
       [descriptor({ name: 'whoami' }), descriptor({ name: 'jira_search_issues' })],
