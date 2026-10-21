@@ -34,6 +34,7 @@ import {
   type SalesforceAccess,
 } from './client';
 import { describeObject, resolveObject, resolveOwner, resolveRecord } from './schema';
+import { sfQueryPolicy } from './policy';
 import { prepareWrite, blocked, display } from './writes';
 import { fieldsField, objectField, recordField } from './fields';
 
@@ -65,7 +66,7 @@ async function resolveMany(
     ...new Set(['Id', 'LastModifiedDate', ...(nameField ? [nameField.name] : []), ...fields]),
   ];
   if (describe.fields.some((f) => f.name === 'RecordTypeId')) select.push('RecordTypeId');
-  const current = await sfQuery(
+  const current = await sfQueryPolicy(
     context,
     access,
     `SELECT ${[...new Set(select)].join(', ')} FROM ${describe.name} WHERE Id IN (${ids

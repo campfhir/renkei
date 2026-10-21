@@ -898,9 +898,14 @@ differs from the text above:
   the org in the confirm's arguments.
 - **`salesforce_create_record_tree` is a preview + confirm pair**, as the confirm table says for
   multi-record writes; the tools table above names it as one tool.
-- **Files are not built yet** (`salesforce_download_file` / `salesforce_attach_file`), nor the
-  object and field exclusion list, the data-classification switch, or the long-text rule beyond
-  `get_record`'s default view. They come before the connector is turned on for sensitive data.
+- **Files and the data policy are built** (the `salesforce` section of `connectors.md`). Two
+  differences from the text above: `salesforce_attach_file` sends `VersionData` base64 in JSON
+  rather than multipart, which caps a file at about 37.5 MB (under every org's attachment cap so
+  far); and the exclusion list, the Restricted switch and its help text live on each connector,
+  since each org has its own objects. The query check refuses a hidden field by its bare name
+  wherever it appears, so a same-named field on another object is refused too — the safe
+  direction. A compound field (`BillingAddress`) must be listed itself to keep it out of a
+  model-written SELECT; describes and whole-record reads already drop it with any of its parts.
 - **The scope gate fails closed.** `withScopeGate` passes every tool through when the capability
   list is undefined; the Salesforce module passes an empty list instead, so a grant without
   recorded capabilities registers nothing.

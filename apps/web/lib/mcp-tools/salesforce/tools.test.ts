@@ -7,7 +7,10 @@
  * what the org's automation changed; that a validation rule's field comes
  * back to ask the person about; that bulk work and deletes are cards whose
  * confirm acts on resolved ids, all or none; that report runs carry their
- * scope and per-run changes; and that reads stop at the org's API budget.
+ * scope and per-run changes; that reads stop at the org's API budget; that
+ * what a connector keeps away from the model (hidden objects and fields,
+ * the Restricted switch) never comes back from any of them; and that files
+ * move between the org and the scratch space without passing the model.
  */
 
 jest.mock('@/lib/logger', () => ({
@@ -17,6 +20,12 @@ jest.mock('@/lib/logger', () => ({
 jest.mock('@renkei/provider-grants', () => ({
   SALESFORCE: 'salesforce',
   readSalesforceMetadata: (metadata: Record<string, unknown>) => metadata,
+}));
+jest.mock('@/lib/sandbox/service-client', () => ({
+  sandboxConfig: () => ({ url: 'http://sandbox.test', key: 'k' }),
+  sbWriteFile: jest.fn(),
+  sbReadFile: jest.fn(),
+  clientFailure: () => ({ message: 'sandbox failure' }),
 }));
 jest.mock('../widgets', () => ({
   APP_ONLY_META: { ui: { visibility: ['app'] } },
@@ -35,6 +44,12 @@ import { salesforceScopeFor } from './scopes';
 import { resetApiUsage } from './client';
 import { invalidateDescribe } from './schema';
 import { ALL_SALESFORCE_SCOPES } from '@/lib/salesforce-scopes';
+import { EMPTY_POLICY, type DataPolicy } from '@renkei/connector-salesforce';
+import { resetClassifications } from './policy';
+
+const sandbox = jest.requireMock<{ sbWriteFile: jest.Mock; sbReadFile: jest.Mock }>(
+  '@/lib/sandbox/service-client'
+);
 
 type ToolResult = {
   content: { type: string; text?: string }[];
@@ -50,6 +65,9 @@ const VISIT = 'a01000000000001AAA';
 const VISIT_2 = 'a01000000000002AAA';
 const USER = '005000000000001AAA';
 
+/** The connector's data policy for the test at hand. */
+let policy: DataPolicy;
+
 const stubAuth: SalesforceAuth = {
   kind: 'oauth',
   resolve: async () => ({
@@ -62,6 +80,7 @@ const stubAuth: SalesforceAuth = {
     connector: 'production',
     connectorName: 'Production',
     sandbox: false,
+    policy,
   }),
 };
 
@@ -213,6 +232,14 @@ function fakeOrg(method: string, path: string, query: string, body: unknown): Re
           queryable: true,
         },
         {
+          name: 'Case_Note__c',
+          label: 'Case Note',
+          labelPlural: 'Case Notes',
+          keyPrefix: 'a02',
+          custom: true,
+          queryable: true,
+        },
+        {
           name: 'Site_Visit__History',
           label: 'Site Visit History',
           keyPrefix: null,
@@ -303,7 +330,7 @@ const fetchSpy = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
     typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
   );
   const headers = Object.fromEntries(new Headers(init?.headers).entries());
-  const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+  const body = typeof init?.body === 'string' && init.body ? JSON.parse(init.body) : undefined;
   requests.push({
     method: init?.method ?? 'GET',
     path: url.pathname,
@@ -355,8 +382,12 @@ beforeEach(() => {
     RecordTypeId: null,
     LastModifiedDate: '2026-10-20T10:00:00.000+0000',
   };
+  policy = EMPTY_POLICY;
   resetApiUsage();
+  resetClassifications();
   invalidateDescribe();
+  sandbox.sbWriteFile.mockReset();
+  sandbox.sbReadFile.mockReset();
   global.fetch = fetchSpy as unknown as typeof fetch;
 });
 
@@ -584,5 +615,280 @@ describe('reports', () => {
     expect(text(result)).toContain('Date range: CREATED_DATE: last quarter');
     expect(text(result)).toContain('For this run only:');
     expect(text(result)).toContain('Completed: Record Count 12');
+  });
+});
+
+describe('what the connector keeps away from the model', () => {
+  const queries = () =>
+    sent('GET', '/query').map((r) => new URLSearchParams(r.query).get('q') ?? '');
+
+  it('hides an object from listings, describes, record lookups and queries', async () => {
+    policy = { ...EMPTY_POLICY, excludedObjects: ['Case_Note__c'] };
+    const listed = await call('salesforce_list_objects');
+    expect(text(listed)).toContain('Site_Visit__c');
+    expect(text(listed)).not.toContain('Case_Note__c');
+
+    for (const result of [
+      await call('salesforce_describe_object', { object: 'Case_Note__c' }),
+      await call('salesforce_get_record', { record: 'a02000000000001AAA' }),
+      await call('salesforce_query', { soql: 'SELECT Id FROM Case_Note__c' }),
+      await call('salesforce_query', {
+        soql: 'SELECT Id, (SELECT Id FROM Case_Notes__r) FROM Account WHERE Id IN (SELECT Account__c FROM Case_Note__c)',
+      }),
+    ]) {
+      expect(result.isError).toBe(true);
+    }
+    expect(queries().some((q) => /Case_Note__c/.test(q))).toBe(false);
+  });
+
+  it('hides a listed field from describes, whole-record reads, queries, writes and write receipts', async () => {
+    policy = { ...EMPTY_POLICY, excludedFields: ['Site_Visit__c.Stage_Changed__c'] };
+    const described = await call('salesforce_describe_object', { object: 'Site_Visit__c' });
+    expect(text(described)).toContain('Stage__c');
+    expect(text(described)).not.toContain('Stage_Changed__c');
+
+    // A whole-record read names the describe's fields instead of FIELDS(ALL),
+    // and what comes back is scrubbed by type besides.
+    override = (method, path, query) => {
+      const q = new URLSearchParams(query).get('q') ?? '';
+      if (method === 'GET' && path === `${V}/query` && /^SELECT Id, Name, Account__c/.test(q)) {
+        return answer(200, {
+          totalSize: 1,
+          done: true,
+          records: [
+            {
+              attributes: { type: 'Site_Visit__c' },
+              Id: VISIT,
+              Name: 'SV-0001',
+              Stage_Changed__c: '2026-10-21T14:02:00.000+0000',
+            },
+          ],
+        });
+      }
+      return undefined;
+    };
+    const record = await call('salesforce_get_record', { record: VISIT });
+    expect(record.isError).toBeUndefined();
+    expect(text(record)).toContain('SV-0001');
+    expect(text(record)).not.toContain('Stage_Changed__c');
+    expect(queries().some((q) => /FIELDS\(ALL\)/.test(q))).toBe(false);
+    override = null;
+
+    const filtered = await call('salesforce_query', {
+      soql: 'SELECT Id FROM Site_Visit__c WHERE Stage_Changed__c = LAST_N_DAYS:7',
+    });
+    expect(filtered.isError).toBe(true);
+    expect(text(filtered)).toContain('stage_changed__c');
+
+    const write = await call('salesforce_update_record', {
+      object: 'Site_Visit__c',
+      record: VISIT,
+      fields: { Stage_Changed__c: '2026-10-21T00:00:00Z' },
+    });
+    expect(write.isError).toBe(true);
+
+    // The org's automation still stamps the hidden field; the receipt does not say so.
+    const update = await call('salesforce_update_record', {
+      object: 'Site_Visit__c',
+      record: VISIT,
+      fields: { Stage__c: 'Completed' },
+    });
+    expect(update.isError).toBeUndefined();
+    expect(text(update)).toContain('Stage (Stage__c): Scheduled → Completed');
+    expect(text(update)).not.toContain('Stage_Changed__c');
+  });
+
+  it('hides fields classified Restricted, and refuses the object when the classification cannot be read', async () => {
+    policy = { ...EMPTY_POLICY, hideRestricted: true };
+    override = (method, path, query) => {
+      const q = new URLSearchParams(query).get('q') ?? '';
+      if (method === 'GET' && path === `${V}/query` && /FROM FieldDefinition/.test(q)) {
+        return /'Site_Visit__c'/.test(q)
+          ? answer(200, {
+              totalSize: 2,
+              done: true,
+              records: [
+                { QualifiedApiName: 'Visit_Date__c', SecurityClassification: 'Restricted' },
+                { QualifiedApiName: 'Stage__c', SecurityClassification: 'Internal' },
+              ],
+            })
+          : answer(400, [{ errorCode: 'INVALID_TYPE', message: 'no FieldDefinition access' }]);
+      }
+      return undefined;
+    };
+    const described = await call('salesforce_describe_object', { object: 'Site_Visit__c' });
+    expect(text(described)).toContain('Stage__c');
+    expect(text(described)).not.toContain('Visit_Date__c');
+
+    const account = await call('salesforce_describe_object', { object: 'Account' });
+    expect(account.isError).toBe(true);
+    expect(text(account)).toContain('could not be read');
+  });
+
+  it('refuses a report with a hidden column', async () => {
+    policy = { ...EMPTY_POLICY, excludedFields: ['Site_Visit__c.Visit_Date__c'] };
+    const REPORT = '00O000000000002AAA';
+    override = (method, path) =>
+      method === 'GET' && path === `${V}/analytics/reports/${REPORT}/describe`
+        ? answer(200, {
+            reportMetadata: {
+              name: 'Visits',
+              reportType: { type: 'CustomEntity$Site_Visit__c' },
+              detailColumns: ['Site_Visit__c.Name', 'Site_Visit__c.Visit_Date__c'],
+            },
+          })
+        : undefined;
+    const run = await call('salesforce_run_report', { report: REPORT });
+    expect(run.isError).toBe(true);
+    expect(text(run)).toContain('Site_Visit__c.Visit_Date__c');
+    expect(sent('GET', `/analytics/reports/${REPORT}`)).toHaveLength(0);
+  });
+});
+
+describe('files', () => {
+  const DOC = '069000000000001AAA';
+  const VERSION = '068000000000001AAA';
+
+  it('stages a record’s files in the scratch space, bytes server to server', async () => {
+    override = (method, path, query) => {
+      const q = new URLSearchParams(query).get('q') ?? '';
+      if (
+        method === 'GET' &&
+        path === `${V}/query` &&
+        /FROM ContentDocumentLink WHERE LinkedEntityId/.test(q)
+      )
+        return answer(200, { totalSize: 1, done: true, records: [{ ContentDocumentId: DOC }] });
+      if (
+        method === 'GET' &&
+        path === `${V}/query` &&
+        /FROM ContentVersion WHERE ContentDocumentId IN/.test(q)
+      ) {
+        return answer(200, {
+          totalSize: 1,
+          done: true,
+          records: [
+            {
+              Id: VERSION,
+              ContentDocumentId: DOC,
+              Title: 'Visit photo',
+              FileExtension: 'png',
+              ContentSize: 4,
+            },
+          ],
+        });
+      }
+      if (method === 'GET' && path === `${V}/sobjects/ContentVersion/${VERSION}/VersionData`) {
+        return new Response(new Uint8Array([137, 80, 78, 71]), {
+          status: 200,
+          headers: { 'content-type': 'image/png', 'content-length': '4' },
+        });
+      }
+      return undefined;
+    };
+    sandbox.sbWriteFile.mockResolvedValue({
+      ok: true,
+      val: {
+        id: 'f-1',
+        filename: 'Visit photo.png',
+        sizeBytes: 4,
+        createdAt: '2026-10-21T00:00:00Z',
+        expiresAt: '2026-10-22T00:00:00Z',
+      },
+    });
+    const result = await call('salesforce_download_file', { record: VISIT });
+    expect(result.isError).toBeUndefined();
+    expect(sandbox.sbWriteFile).toHaveBeenCalledWith(
+      { subject: 'subject-1' },
+      {
+        filename: 'Visit photo.png',
+        contentType: 'image/png',
+        source: `salesforce:production:${VERSION}`,
+      },
+      new Uint8Array([137, 80, 78, 71])
+    );
+    expect(text(result)).toContain('1 of 1 file(s) staged');
+  });
+
+  it('refuses a file attached to a hidden object’s record', async () => {
+    policy = { ...EMPTY_POLICY, excludedObjects: ['Case_Note__c'] };
+    override = (method, path, query) => {
+      const q = new URLSearchParams(query).get('q') ?? '';
+      if (
+        method === 'GET' &&
+        path === `${V}/query` &&
+        /FROM ContentVersion WHERE ContentDocumentId = /.test(q)
+      ) {
+        return answer(200, {
+          totalSize: 1,
+          done: true,
+          records: [
+            {
+              Id: VERSION,
+              ContentDocumentId: DOC,
+              Title: 'Note',
+              FileExtension: 'pdf',
+              ContentSize: 9,
+            },
+          ],
+        });
+      }
+      if (
+        method === 'GET' &&
+        path === `${V}/query` &&
+        /FROM ContentDocumentLink WHERE ContentDocumentId/.test(q)
+      ) {
+        return answer(200, {
+          totalSize: 2,
+          done: true,
+          records: [{ LinkedEntityId: ACCOUNT }, { LinkedEntityId: 'a02000000000001AAA' }],
+        });
+      }
+      return undefined;
+    };
+    const result = await call('salesforce_download_file', { file: DOC });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('Case_Note__c');
+    expect(sent('GET', `/sobjects/ContentVersion/${VERSION}/VersionData`)).toHaveLength(0);
+    expect(sandbox.sbWriteFile).not.toHaveBeenCalled();
+  });
+
+  it('attaches a staged file to a record and shares it to another', async () => {
+    sandbox.sbReadFile.mockResolvedValue({
+      ok: true,
+      val: {
+        filename: 'consent.pdf',
+        contentType: 'application/pdf',
+        bytes: new Uint8Array([1, 2, 3]),
+      },
+    });
+    override = (method, path, query) => {
+      const q = new URLSearchParams(query).get('q') ?? '';
+      if (method === 'POST' && path === `${V}/sobjects/ContentVersion`)
+        return answer(201, { id: VERSION, success: true });
+      if (method === 'GET' && path === `${V}/query` && /FROM ContentVersion WHERE Id = /.test(q))
+        return answer(200, { totalSize: 1, done: true, records: [{ ContentDocumentId: DOC }] });
+      if (method === 'POST' && path === `${V}/sobjects/ContentDocumentLink`)
+        return answer(201, { id: '06A000000000001AAA', success: true });
+      return undefined;
+    };
+    const result = await call('salesforce_attach_file', {
+      fileId: 'f-1',
+      record: VISIT,
+      alsoOn: [{ record: ACCOUNT }],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(sent('POST', '/sobjects/ContentVersion')[0].body).toEqual({
+      Title: 'consent',
+      PathOnClient: 'consent.pdf',
+      VersionData: Buffer.from([1, 2, 3]).toString('base64'),
+      FirstPublishLocationId: VISIT,
+    });
+    expect(sent('POST', '/sobjects/ContentDocumentLink')[0].body).toEqual({
+      ContentDocumentId: DOC,
+      LinkedEntityId: ACCOUNT,
+      ShareType: 'V',
+      Visibility: 'InternalUsers',
+    });
+    expect(text(result)).toContain('Shared to Account Acme');
   });
 });

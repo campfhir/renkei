@@ -9,6 +9,10 @@
  * of a record's default view and returned only when asked for by name:
  * that is where unstructured, often sensitive detail ends up
  * (docs/salesforce-connectors-design.md, "Health and other sensitive records").
+ *
+ * What the connector keeps away from the model (policy.ts) never comes
+ * back: describes are filtered in schema.ts, and model-written SOQL, search
+ * hits and whole-record reads go through the policy's query helpers.
  */
 
 import { z } from 'zod';
@@ -17,6 +21,7 @@ import {
   checkSelectQuery,
   findByNameOrLabel,
   findRelationshipPaths,
+  isEmptyPolicy,
   isSalesforceId,
   isSoqlIdentifier,
   isSystemObject,
@@ -54,6 +59,7 @@ import {
   resolveRecordType,
 } from './schema';
 import { limitField, objectField, recordField } from './fields';
+import { hiddenFields, scrubbed, sfQueryPolicy } from './policy';
 
 /** A long text area: kept out of a record's default view (see the header). */
 export function isLongText(describe: DescribeSObject, field: string): boolean {
@@ -268,7 +274,8 @@ export function registerRecordReadTools(
       }
       const result = await sfGet(context, access, `/parameterizedSearch/?${params.toString()}`);
       if (!result.ok) return errText(result.error);
-      const hits = recs(rec(result.body).searchRecords);
+      const hits = await scrubbed(context, access, recs(rec(result.body).searchRecords));
+      if (typeof hits === 'string') return errText(hits);
       if (hits.length === 0) return textResult(`Nothing matches "${args.text}".`);
       const lines = hits.map((hit) => {
         const type = str(rec(hit.attributes).type);
@@ -315,7 +322,7 @@ export function registerRecordReadTools(
       } else {
         return errText('Give a SOQL query, or a cursor from a previous page.');
       }
-      const page = await sfQuery(context, access, target);
+      const page = await sfQueryPolicy(context, access, target);
       if (!page.ok) return errText(page.error);
       return textResult(
         [
@@ -365,8 +372,14 @@ export function registerRecordReadTools(
       const named = (args.fields ?? []).map((f) => f.trim()).filter(Boolean);
       const bad = named.filter((f) => !isSoqlIdentifier(f));
       if (bad.length > 0) return errText(`Not field names: ${bad.join(', ')}`);
+      // FIELDS(ALL) would bring back what the connector hides; with a
+      // policy in force, the (filtered) describe's fields are named instead.
       const select =
-        named.length > 0 ? ['Id', ...named.filter((f) => f !== 'Id')] : ['FIELDS(ALL)'];
+        named.length > 0
+          ? ['Id', ...named.filter((f) => f !== 'Id')]
+          : isEmptyPolicy(access.policy)
+            ? ['FIELDS(ALL)']
+            : describe.fields.map((field) => field.name);
       const relationships = [];
       for (const relationship of args.children ?? []) {
         const rel = (describe.childRelationships ?? []).find(
@@ -379,7 +392,7 @@ export function registerRecordReadTools(
         }
         relationships.push(rel);
       }
-      const result = await sfQuery(
+      const result = await sfQueryPolicy(
         context,
         access,
         `SELECT ${select.join(', ')} FROM ${describe.name} WHERE Id = ${soqlString(id)} LIMIT 1`
@@ -455,7 +468,7 @@ export function registerRecordReadTools(
         if (!/^\/services\/data\/v[\d.]+\/query\/[A-Za-z0-9-]+$/.test(args.cursor)) {
           return errText('That is not a cursor this tool returned.');
         }
-        const page = await sfQuery(context, access, args.cursor);
+        const page = await sfQueryPolicy(context, access, args.cursor);
         if (!page.ok) return errText(page.error);
         return textResult(
           [
@@ -491,7 +504,7 @@ export function registerRecordReadTools(
       const select = [
         ...new Set(['Id', ...(nameField ? [nameField.name] : []), ...extra, 'CreatedDate']),
       ];
-      const page = await sfQuery(
+      const page = await sfQueryPolicy(
         context,
         access,
         `SELECT ${select.join(', ')} FROM ${child.name} WHERE ${rel.field} = ${soqlString(parent.id)} ORDER BY CreatedDate DESC LIMIT ${args.limit ?? 25}`
@@ -574,12 +587,16 @@ export function registerRecordReadTools(
         `SELECT Field, OldValue, NewValue, CreatedDate, CreatedBy.Name FROM ${table} WHERE ${parentField} = ${soqlString(found.id)} ORDER BY CreatedDate DESC LIMIT ${args.limit ?? 50}`
       );
       if (!page.ok) return errText(page.error);
-      if (page.records.length === 0)
+      // A hidden field's history is as hidden as its value.
+      const hidden = await hiddenFields(context, access, describe.name);
+      if (typeof hidden === 'string') return errText(hidden);
+      const rows = page.records.filter((row) => !hidden.has(str(row.Field).toLowerCase()));
+      if (rows.length === 0)
         return textResult(`No tracked changes on ${describe.label} ${found.name}.`);
       const label = (field: string) =>
         describe.fields.find((f) => f.name === field)?.label ?? field;
       return textResult(
-        page.records
+        rows
           .map(
             (row) =>
               `${str(row.CreatedDate)} — ${str(rec(row.CreatedBy).Name) || 'someone'}: ${label(str(row.Field))} ` +

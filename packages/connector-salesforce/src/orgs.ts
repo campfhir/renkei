@@ -16,6 +16,7 @@
  */
 
 import { parseMyDomain } from './api';
+import { policyFromSettings, validatePolicy, type DataPolicy } from './policy';
 
 export interface SalesforceOrg {
   /** Stable key, unique among the connectors: what tools, grants and URLs name. */
@@ -30,6 +31,8 @@ export interface SalesforceOrg {
   clientId: string;
   /** Renkei's capability ceiling for this connector — a person can narrow it, never widen it. */
   scopes: string[];
+  /** What this connector keeps away from the model (policy.ts). */
+  policy: DataPolicy;
 }
 
 export const MAX_ORGS = 20;
@@ -80,6 +83,7 @@ export function orgsFromSettings(settings: unknown): SalesforceOrg[] {
       enabled: org.enabled !== false,
       clientId,
       scopes: stringList(org.scopes),
+      policy: policyFromSettings(org),
     });
   }
   return orgs;
@@ -139,6 +143,8 @@ export function validateOrg(
   }
   const clash = rest.find((org) => org.host === domain.host);
   if (clash) return { ok: false, error: `${domain.host} is already the ${clash.name} connector.` };
+  const policy = validatePolicy(entry);
+  if (!policy.ok) return policy;
   return {
     ok: true,
     org: {
@@ -150,6 +156,7 @@ export function validateOrg(
       enabled: entry.enabled !== false,
       clientId,
       scopes: stringList(entry.scopes),
+      policy: policy.policy,
     },
   };
 }

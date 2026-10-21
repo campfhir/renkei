@@ -25,7 +25,7 @@
 
 import type { Kysely } from 'kysely';
 import { getDatabase, type DB } from '@renkei/db';
-import { dataPath } from '@renkei/connector-salesforce';
+import { dataPath, type DataPolicy } from '@renkei/connector-salesforce';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { listSalesforceConnections } from '@/lib/salesforce-grants';
 import { chooseConnection, orgCall } from './org-choice';
@@ -55,6 +55,8 @@ export interface SalesforceAccess {
   connector: string;
   connectorName: string;
   sandbox: boolean;
+  /** What this connector keeps away from the model (policy.ts). */
+  policy: DataPolicy;
 }
 
 /** What the request wrapper needs of its caller — an MCPToolContext satisfies it. */
@@ -107,6 +109,7 @@ export async function resolveSalesforceAccess(
     connector: choice.org.key,
     connectorName: choice.org.name,
     sandbox: choice.org.sandbox,
+    policy: choice.org.policy,
   };
 }
 
@@ -304,14 +307,101 @@ export async function sfRequest(
   return { ok: true, status: response.status, body: parsed };
 }
 
+/**
+ * A binary resource (a file version's VersionData) as bytes, refused past
+ * `maxBytes` — on the declared length first, so an oversized file is never
+ * held in memory, then on the bytes, since Content-Length is optional.
+ */
+export async function sfDownload(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  path: string,
+  maxBytes: number
+): Promise<{ ok: true; bytes: Uint8Array; contentType: string } | { ok: false; error: string }> {
+  const url = `${access.instanceUrl}${dataPath(path)}`;
+  let response: Response;
+  try {
+    response = await access.auth(url, {
+      method: 'GET',
+      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const host = new URL(access.instanceUrl).hostname;
+    return {
+      ok: false,
+      error: isTimeoutError(error)
+        ? `${host} timed out after ${REQUEST_TIMEOUT_MS}ms`
+        : `Could not reach ${host}`,
+    };
+  }
+  const refused = refusalTextOf(response, LABEL);
+  if (refused) return { ok: false, error: refused };
+  const usage = parseLimitInfo(response.headers.get('sforce-limit-info'));
+  if (usage && access.orgId) usageByOrg.set(access.orgId, { ...usage, at: Date.now() });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    let parsed: unknown = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      // The status decides.
+    }
+    logger.warn('Salesforce download non-OK response', {
+      component: 'salesforce/fetch',
+      subject: context.subject,
+      path,
+      status: response.status,
+    });
+    return { ok: false, error: describeStatus(response.status, errorsOf(parsed)) };
+  }
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    return {
+      ok: false,
+      error: `${declared} bytes is over this org’s ${maxBytes}-byte file limit.`,
+    };
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer().catch(() => new ArrayBuffer(0)));
+  if (bytes.byteLength > maxBytes) {
+    return {
+      ok: false,
+      error: `${bytes.byteLength} bytes is over this org’s ${maxBytes}-byte file limit.`,
+    };
+  }
+  const contentType = (response.headers.get('content-type') ?? '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  return { ok: true, bytes, contentType };
+}
+
 export const sfGet = (
   context: SalesforceCallContext,
   access: SalesforceAccess,
   path: string
 ): Promise<SalesforceResult> => sfRequest(context, access, 'GET', path);
 
-/** One SOQL page: the records with their `attributes` dropped, and the cursor to the next. */
+/**
+ * One SOQL page: the records with their `attributes` dropped, and the
+ * cursor to the next. Not filtered by the connector's data policy — for
+ * queries the tools build themselves from a describe (already filtered);
+ * a model-written query goes through policy.ts's sfQueryPolicy.
+ */
 export async function sfQuery(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  soqlOrCursor: string
+): Promise<
+  | { ok: true; records: Record<string, unknown>[]; totalSize: number; next: string | null }
+  | { ok: false; error: string }
+> {
+  const page = await sfQueryRaw(context, access, soqlOrCursor);
+  return page.ok ? { ...page, records: page.records.map(stripAttributes) } : page;
+}
+
+/** sfQuery with each record's `attributes` (its type) kept. */
+export async function sfQueryRaw(
   context: SalesforceCallContext,
   access: SalesforceAccess,
   soqlOrCursor: string
@@ -327,7 +417,7 @@ export async function sfQuery(
   const body = rec(result.body);
   return {
     ok: true,
-    records: recs(body.records).map(stripAttributes),
+    records: recs(body.records),
     totalSize: typeof body.totalSize === 'number' ? body.totalSize : 0,
     next:
       body.done === false && typeof body.nextRecordsUrl === 'string' ? body.nextRecordsUrl : null,

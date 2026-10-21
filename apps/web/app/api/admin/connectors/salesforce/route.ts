@@ -1,7 +1,9 @@
 /**
  * Org-admin management of the Salesforce connectors (lib/salesforce-app.ts):
  * one per Salesforce org — production, each sandbox — each with its own My
- * Domain, consumer key and secret, on/off switch and capability ceiling.
+ * Domain, consumer key and secret, on/off switch and capability ceiling,
+ * and what it keeps away from the model (hidden objects and fields, and the
+ * Restricted-classification switch — @renkei/connector-salesforce policy.ts).
  *
  * GET lists them, reporting only whether a secret is stored — secrets never
  * leave the server. PUT adds one (no `key`) or saves one (`key`), merging a
@@ -73,6 +75,9 @@ async function save(
       enabled: org.enabled,
       clientId: org.clientId,
       scopes: org.scopes.join(' '),
+      excludedObjects: org.policy.excludedObjects,
+      excludedFields: org.policy.excludedFields,
+      hideRestricted: org.policy.hideRestricted,
     })),
   };
   const written = await setConnectorConfig(
@@ -103,6 +108,9 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
       enabled: org.enabled,
       clientId: org.clientId,
       scopes: org.scopes.join(' '),
+      excludedObjects: org.policy.excludedObjects,
+      excludedFields: org.policy.excludedFields,
+      hideRestricted: org.policy.hideRestricted,
       hasClientSecret: Boolean(loaded.config?.secrets[orgSecretName(org.key)]),
     })),
   });

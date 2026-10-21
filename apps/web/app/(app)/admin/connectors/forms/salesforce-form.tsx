@@ -27,6 +27,9 @@ interface SalesforceConnectorRow {
   enabled: boolean;
   clientId: string;
   scopes: string;
+  excludedObjects: string[];
+  excludedFields: string[];
+  hideRestricted: boolean;
   hasClientSecret: boolean;
 }
 
@@ -162,6 +165,8 @@ function ConnectorSummary({
         <dd className="break-all font-mono text-xs">{connector.clientId}</dd>
         <dt className="text-gray-500 dark:text-gray-400">People may let Renkei</dt>
         <dd>{capabilities.join(', ') || 'nothing'}</dd>
+        <dt className="text-gray-500 dark:text-gray-400">Kept from the assistant</dt>
+        <dd className="break-words">{keptAway(connector)}</dd>
       </dl>
       <button
         type="button"
@@ -173,6 +178,16 @@ function ConnectorSummary({
       </button>
     </Card>
   );
+}
+
+/** The connector's hidden objects and fields, in one line. */
+function keptAway(connector: SalesforceConnectorRow): string {
+  const parts = [
+    ...connector.excludedObjects.map((name) => `${name} (object)`),
+    ...connector.excludedFields,
+    ...(connector.hideRestricted ? ['fields classified Restricted or Mission Critical'] : []),
+  ];
+  return parts.join(', ') || 'nothing';
 }
 
 function ConnectorEditor({
@@ -192,6 +207,11 @@ function ConnectorEditor({
   const [clientId, setClientId] = useState(existing?.clientId ?? '');
   const [clientSecret, setClientSecret] = useState('');
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
+  const [excludedObjects, setExcludedObjects] = useState(
+    (existing?.excludedObjects ?? []).join('\n')
+  );
+  const [excludedFields, setExcludedFields] = useState((existing?.excludedFields ?? []).join('\n'));
+  const [hideRestricted, setHideRestricted] = useState(existing?.hideRestricted ?? false);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(defaultChecked);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -229,6 +249,9 @@ function ConnectorEditor({
       ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
       enabled,
       scopes: scopesOfOptions(SALESFORCE_SCOPE_OPTIONS, checkedIds).join(' '),
+      excludedObjects,
+      excludedFields,
+      hideRestricted,
     });
     setBusy(false);
     if (failure) {
@@ -344,6 +367,56 @@ function ConnectorEditor({
             tool may do. Record contents are sent to your organization&apos;s configured model
             provider; decide that before turning this on for sensitive records.
           </p>
+        </fieldset>
+        <fieldset className="space-y-3">
+          <legend className={labelClass}>Kept away from the assistant</legend>
+          <p className={hintClass}>
+            Objects and fields no Salesforce tool reads, queries, searches, reports on or writes in
+            this org — even for people who can see them in Salesforce. Use it for what should not
+            reach your model provider: case notes, health or payroll objects. It only takes things
+            away.
+          </p>
+          <div>
+            <label htmlFor={`${idBase}-excluded-objects`} className={labelClass}>
+              Hidden objects
+            </label>
+            <textarea
+              id={`${idBase}-excluded-objects`}
+              rows={2}
+              value={excludedObjects}
+              onChange={(e) => setExcludedObjects(e.target.value)}
+              placeholder="Case_Note__c"
+              className={`${inputClass} font-mono`}
+            />
+            <p className={hintClass}>API names, one per line.</p>
+          </div>
+          <div>
+            <label htmlFor={`${idBase}-excluded-fields`} className={labelClass}>
+              Hidden fields
+            </label>
+            <textarea
+              id={`${idBase}-excluded-fields`}
+              rows={2}
+              value={excludedFields}
+              onChange={(e) => setExcludedFields(e.target.value)}
+              placeholder="Contact.Diagnosis__c"
+              className={`${inputClass} font-mono`}
+            />
+            <p className={hintClass}>Object.Field API names, one per line.</p>
+          </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={hideRestricted}
+              onChange={(e) => setHideRestricted(e.target.checked)}
+            />
+            <span>
+              Hide every field this org&apos;s data classification marks Restricted or Mission
+              Critical (Setup → Data Classification). If Salesforce cannot say how a field is
+              classified, the object is not shown at all.
+            </span>
+          </label>
         </fieldset>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />

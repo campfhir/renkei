@@ -51,6 +51,7 @@ import {
   resolveRecord,
   resolveRecordType,
 } from './schema';
+import { hiddenFields } from './policy';
 import { SYSTEM_FIELDS, resolveRef } from './records';
 import { fieldsField, objectField, recordField, recordRefField } from './fields';
 
@@ -150,7 +151,7 @@ function forgetSchemaOn(result: SalesforceResult, access: SalesforceAccess, obje
   }
 }
 
-/** The whole record as Salesforce holds it now. */
+/** The record as Salesforce holds it now, less what the connector hides. */
 async function readRecord(
   context: MCPToolContext,
   access: SalesforceAccess,
@@ -165,6 +166,13 @@ async function readRecord(
   if (!result.ok) return result.error;
   const record = rec(result.body);
   delete record.attributes;
+  // The whole record includes what the connector hides; it goes before the
+  // record is compared or shown.
+  const hidden = await hiddenFields(context, access, object);
+  if (typeof hidden === 'string') return hidden;
+  for (const key of Object.keys(record)) {
+    if (hidden.has(key.toLowerCase())) delete record[key];
+  }
   return record;
 }
 

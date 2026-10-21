@@ -2,7 +2,8 @@
  * @renkei/connector-salesforce — the pure Salesforce logic both Salesforce
  * connectors share: the pinned API version and the org host, record ids,
  * SOQL safety, checking writes against the describe, relationship paths
- * between objects, and report runs shaped for reading.
+ * between objects, report runs shaped for reading, and what a connector
+ * keeps away from the model.
  *
  * Deliberately dependency- and I/O-free (the connector-onbase shape):
  * Salesforce is internet SaaS, so HTTP happens in apps/web through the
@@ -63,3 +64,20 @@ export {
   type ShapedReportRun,
   type ReportGroupRow,
 } from './reports';
+export {
+  EMPTY_POLICY,
+  HIDDEN_CLASSIFICATIONS,
+  MAX_EXCLUSIONS,
+  policyFromSettings,
+  validatePolicy,
+  isEmptyPolicy,
+  isObjectHidden,
+  hiddenFieldsOf,
+  soqlIdentifierParts,
+  soqlFromNames,
+  policyRefusalForQuery,
+  recordTypesIn,
+  scrubRecords,
+  reportNamesHidden,
+  type DataPolicy,
+} from './policy';

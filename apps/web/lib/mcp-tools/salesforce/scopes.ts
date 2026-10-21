@@ -21,6 +21,7 @@ export function salesforceScopeFor(toolName: string): string[] {
     case 'salesforce_find_relationship_path':
     case 'salesforce_record_history':
     case 'salesforce_list_changes':
+    case 'salesforce_download_file':
       return ['sf-records-read'];
 
     case 'salesforce_create_record':
@@ -30,6 +31,7 @@ export function salesforceScopeFor(toolName: string): string[] {
     case 'salesforce_log_activity':
     case 'salesforce_create_task':
     case 'salesforce_add_note':
+    case 'salesforce_attach_file':
     case 'salesforce_create_record_tree_preview':
     case 'salesforce_create_record_tree_confirm':
     case 'salesforce_update_records_preview':

@@ -244,13 +244,31 @@ test('salesforce: one connector per org — register, connect a sandbox, disconn
   });
   await shot(page, testInfo, 'salesforce-01-registered');
 
-  // Editing keeps the stored secret when the field is left blank.
+  // Editing keeps the stored secret when the field is left blank — and
+  // this is where the org keeps objects and fields away from the assistant.
   await form.getByRole('button', { name: 'Edit UAT' }).click();
   await expect(form.locator('#salesforce-uat-client-secret')).toHaveAttribute(
     'placeholder',
     'Stored — leave blank to keep'
   );
-  await form.getByRole('button', { name: 'Cancel' }).click();
+  await form.locator('#salesforce-uat-excluded-objects').fill('Case_Note__c');
+  // A field without its object is refused by the route.
+  await form.locator('#salesforce-uat-excluded-fields').fill('Diagnosis__c');
+  await form.getByRole('button', { name: 'Save' }).click();
+  await expect(form.getByText(/Hidden fields are Object\.Field API names/)).toBeVisible({
+    timeout: 30_000,
+  });
+  await form.locator('#salesforce-uat-excluded-fields').fill('Contact.Diagnosis__c');
+  await form
+    .getByRole('checkbox', { name: /Hide every field this org.s data classification/ })
+    .check();
+  await shot(page, testInfo, 'salesforce-01b-kept-away');
+  await form.getByRole('button', { name: 'Save' }).click();
+  await expect(
+    form.getByText(
+      'Case_Note__c (object), Contact.Diagnosis__c, fields classified Restricted or Mission Critical'
+    )
+  ).toBeVisible({ timeout: 30_000 });
 
   const stored = await withDb((client) =>
     client.query<{
@@ -262,6 +280,9 @@ test('salesforce: one connector per org — register, connect a sandbox, disconn
           sandbox: boolean;
           clientId: string;
           scopes: string;
+          excludedObjects?: string[];
+          excludedFields?: string[];
+          hideRestricted?: boolean;
         }[];
       };
     }>(`SELECT enabled, settings FROM connector_configs WHERE connector = 'salesforce'`)
@@ -275,6 +296,12 @@ test('salesforce: one connector per org — register, connect a sandbox, disconn
   expect(orgs[1]?.scopes.split(' ').sort()).toEqual(
     ['sf-records-read', 'sf-records-write', 'sf-reports'].sort()
   );
+  expect([orgs[1]?.excludedObjects, orgs[1]?.excludedFields, orgs[1]?.hideRestricted]).toEqual([
+    ['Case_Note__c'],
+    ['Contact.Diagnosis__c'],
+    true,
+  ]);
+  expect(orgs[0]?.hideRestricted).toBe(false);
 
   // --- The person sees one card per org, and connects the sandbox. ---
   await page.goto('/connectors');

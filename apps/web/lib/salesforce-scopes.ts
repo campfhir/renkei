@@ -29,10 +29,10 @@ export const SALESFORCE_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'salesforce_check_access, salesforce_list_objects, salesforce_describe_object, ' +
       'salesforce_search, salesforce_query, salesforce_get_record, salesforce_list_related, ' +
-      'salesforce_find_relationship_path, salesforce_record_history, salesforce_list_changes — ' +
-      'any standard or custom object the person can see.',
+      'salesforce_find_relationship_path, salesforce_record_history, salesforce_list_changes, ' +
+      'salesforce_download_file (into the scratch space) — any standard or custom object the person can see.',
     userHint:
-      'Find and read records — standard and custom objects, their related records and history — with your own Salesforce access.',
+      'Find and read records — standard and custom objects, their related records, history and files — with your own Salesforce access.',
     group: 'records',
     defaultChecked: true,
   },
@@ -43,10 +43,10 @@ export const SALESFORCE_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'salesforce_create_record, salesforce_update_record, salesforce_upsert_record, ' +
       'salesforce_relate_records, salesforce_log_activity, salesforce_create_task, ' +
-      'salesforce_add_note, and the salesforce_update_records and salesforce_create_record_tree ' +
+      'salesforce_add_note, salesforce_attach_file, and the salesforce_update_records and salesforce_create_record_tree ' +
       'preview/confirm pairs for many records at once (org read-only mode disables these regardless).',
     userHint:
-      'Create and update records, log calls and tasks, and add notes. Changing many records at once is a card you confirm first.',
+      'Create and update records, log calls and tasks, add notes and attach files. Changing many records at once is a card you confirm first.',
     group: 'records',
     defaultChecked: true,
   },

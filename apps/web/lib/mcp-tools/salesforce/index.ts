@@ -28,6 +28,7 @@ import { registerRecordReadTools } from './records';
 import { registerWriteTools } from './writes';
 import { registerBulkTools } from './bulk';
 import { registerReportTools } from './reports';
+import { registerFileTools } from './files';
 import { registerOrgTools } from './orgs';
 import { orgCall, orgField } from './org-choice';
 
@@ -49,6 +50,7 @@ export function registerSalesforceTools(
   registerWriteTools(server, context, auth);
   registerBulkTools(server, context, auth);
   registerReportTools(server, context, auth);
+  registerFileTools(server, context, auth);
 }
 
 type RegisterToolArgs = Parameters<McpServer['registerTool']>;

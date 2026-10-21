@@ -5,7 +5,7 @@
  * chosen connection's own capabilities do not cover is refused.
  */
 
-import type { SalesforceOrg } from '@renkei/connector-salesforce';
+import { EMPTY_POLICY, type SalesforceOrg } from '@renkei/connector-salesforce';
 import type { SalesforceConnection } from '@/lib/salesforce-grants';
 import { chooseConnection } from './org-choice';
 
@@ -18,6 +18,7 @@ const org = (key: string, sandbox: boolean, enabled = true): SalesforceOrg => ({
   enabled,
   clientId: `${key}-client`,
   scopes: ['sf-records-read', 'sf-records-write'],
+  policy: EMPTY_POLICY,
 });
 const connection = (connector: string, scopes: string[]): SalesforceConnection => ({
   accountId: `00D/${connector}`,

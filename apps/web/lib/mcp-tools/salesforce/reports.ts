@@ -10,13 +10,23 @@
  * total, and whether Salesforce truncated anything. A comparison ("this
  * quarter against last") is the same report run twice with a different
  * filter for that run only; nothing is saved.
+ *
+ * A report carries its own column names, outside any describe, so the
+ * connector's data policy (policy.ts) is checked against the report's
+ * definition before it is described or run: a report on a hidden object,
+ * or with a hidden field among its columns, groupings or filters, is
+ * refused whole rather than shown with holes. A dashboard component whose
+ * report is refused shows no values.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import {
   instanceStatus,
+  isEmptyPolicy,
+  isObjectHidden,
   isSalesforceId,
+  reportNamesHidden,
   shapeReportRun,
   soqlContains,
   soqlString,
@@ -40,6 +50,8 @@ import {
   type SalesforceAccess,
 } from './client';
 import { limitField } from './fields';
+import { hiddenFields } from './policy';
+import { globalDescribe } from './schema';
 
 const reportField = z
   .string()
@@ -132,6 +144,73 @@ async function resolveReport(
     ].join('\n');
   }
   return `No report named "${input}" is visible to you; salesforce_find_reports searches by part of the name.`;
+}
+
+/**
+ * Why the connector's data policy keeps this report definition away from
+ * the model, or null. `extra` is run-time filter columns.
+ */
+async function policyRefusalForReport(
+  context: MCPToolContext,
+  access: SalesforceAccess,
+  metadata: Record<string, unknown>,
+  extra: string[] = []
+): Promise<string | null> {
+  const policy = access.policy;
+  if (isEmptyPolicy(policy)) return null;
+  const reportType = str(rec(metadata.reportType).type);
+  const typeObjects = reportType.split(/[$.]/).filter(Boolean);
+  const hiddenType = typeObjects.find((part) => isObjectHidden(policy, part));
+  if (hiddenType) {
+    return `Your organization keeps ${hiddenType} away from the assistant, so this report cannot be used here.`;
+  }
+  const names = [
+    ...strings(metadata.detailColumns),
+    ...strings(metadata.aggregates),
+    ...recs(metadata.groupingsDown).map((g) => str(g.name)),
+    ...recs(metadata.groupingsAcross).map((g) => str(g.name)),
+    ...recs(metadata.reportFilters).map((f) => str(f.column)),
+    str(rec(metadata.standardDateFilter).column),
+    ...extra,
+  ].filter(Boolean);
+  const hidden = reportNamesHidden(policy, names);
+  if (policy.hideRestricted) {
+    // Custom report columns are Object.Field API names; the Restricted
+    // switch's fields are found through the object they name.
+    const objects = await globalDescribe(context, access);
+    if (typeof objects === 'string') return objects;
+    const known = new Map(objects.map((o) => [o.name.toLowerCase(), o.name]));
+    for (const name of names) {
+      const parts = name.replace(/^[a-z]!/i, '').split('.');
+      if (parts.length < 2) continue;
+      const object = known.get(parts[parts.length - 2].toLowerCase());
+      if (!object) continue;
+      const restricted = await hiddenFields(context, access, object);
+      if (typeof restricted === 'string') return restricted;
+      if (restricted.has(parts[parts.length - 1].toLowerCase()) && !hidden.includes(name)) {
+        hidden.push(name);
+      }
+    }
+  }
+  if (hidden.length === 0) return null;
+  return `Your organization keeps some of this report’s columns away from the assistant (${hidden.join(', ')}), so it cannot be used here.`;
+}
+
+/** The report's definition, checked against the data policy: null when it may be used. */
+async function reportGate(
+  context: MCPToolContext,
+  access: SalesforceAccess,
+  reportId: string,
+  extra: string[] = []
+): Promise<string | null> {
+  if (isEmptyPolicy(access.policy)) return null;
+  const described = await sfGet(
+    context,
+    access,
+    `/analytics/reports/${encodeURIComponent(reportId)}/describe`
+  );
+  if (!described.ok) return described.error;
+  return policyRefusalForReport(context, access, rec(rec(described.body).reportMetadata), extra);
 }
 
 /** The report's metadata with this run's changes applied, or null when there are none. */
@@ -340,6 +419,8 @@ export function registerReportTools(
       if (!result.ok) return errText(result.error);
       const body = rec(result.body);
       const metadata = rec(body.reportMetadata);
+      const refused = await policyRefusalForReport(context, access, metadata);
+      if (refused) return errText(refused);
       const extended = rec(body.reportExtendedMetadata);
       const typeMeta = rec(body.reportTypeMetadata);
       const aggregateInfo = rec(extended.aggregateColumnInfo);
@@ -402,6 +483,13 @@ export function registerReportTools(
       if (typeof access === 'string') return errText(access);
       const report = await resolveReport(context, access, args.report);
       if (typeof report === 'string') return errText(report);
+      const refused = await reportGate(
+        context,
+        access,
+        report.id,
+        (args.addFilters ?? []).map((f) => f.column).concat(args.dateRange?.column ?? [])
+      );
+      if (refused) return errText(refused);
       const changed = await runMetadata(context, access, report.id, args);
       if (typeof changed === 'string') return errText(changed);
       const path = `/analytics/reports/${encodeURIComponent(report.id)}?includeDetails=${args.includeDetails ? 'true' : 'false'}`;
@@ -441,6 +529,13 @@ export function registerReportTools(
       if (typeof access === 'string') return errText(access);
       const report = await resolveReport(context, access, args.report);
       if (typeof report === 'string') return errText(report);
+      const refused = await reportGate(
+        context,
+        access,
+        report.id,
+        (args.addFilters ?? []).map((f) => f.column).concat(args.dateRange?.column ?? [])
+      );
+      if (refused) return errText(refused);
       const changed = await runMetadata(context, access, report.id, args);
       if (typeof changed === 'string') return errText(changed);
       if (!changed) {
@@ -501,6 +596,8 @@ export function registerReportTools(
       if (typeof access === 'string') return errText(access);
       const report = await resolveReport(context, access, args.report);
       if (typeof report === 'string') return errText(report);
+      const refused = await reportGate(context, access, report.id);
+      if (refused) return errText(refused);
       if (!args.instanceId) {
         const list = await sfGet(
           context,
@@ -637,6 +734,11 @@ export function registerReportTools(
         const title = str(component.header) || str(component.title) || 'Component';
         const reportId = str(component.reportId);
         lines.push(`\n▸ ${title}${reportId ? ` (report ${reportId})` : ''}`);
+        const refused = reportId ? await reportGate(context, access, reportId) : null;
+        if (refused) {
+          lines.push(`  ${refused}`);
+          continue;
+        }
         const status = rec(own?.status);
         if (str(status.dataStatus) && str(status.dataStatus) !== 'DATA') {
           lines.push(`  ${str(status.dataStatus).toLowerCase()}`);

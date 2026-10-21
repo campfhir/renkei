@@ -5,10 +5,18 @@
  * people) — and turning what a person said into ids: an object by API name
  * or label, a record by id, external id or name, a user or queue for an
  * owner. Ambiguity is refused with the candidates named, never guessed.
+ *
+ * Both describes come back through the connector's data policy (policy.ts):
+ * a hidden object is not listed and cannot be described, and a described
+ * object has its hidden fields and its child relationships to hidden
+ * objects taken out — so no tool that works from a describe can name them.
+ * The cache holds Salesforce's answer; the policy is applied on every read,
+ * so an admin's change applies at once.
  */
 
 import {
   findByNameOrLabel,
+  isObjectHidden,
   isSalesforceId,
   keyPrefix,
   nameFieldOf,
@@ -27,6 +35,7 @@ import {
   type SalesforceAccess,
   type SalesforceCallContext,
 } from './client';
+import { hiddenFields, objectRefusal } from './policy';
 
 const TTL_MS = 10 * 60_000;
 
@@ -58,7 +67,17 @@ export function invalidateDescribe(access?: SalesforceAccess, object?: string): 
   }
 }
 
+/** The org's objects visible to the person, less those the connector hides. */
 export async function globalDescribe(
+  context: SalesforceCallContext,
+  access: SalesforceAccess
+): Promise<GlobalSObject[] | string> {
+  const objects = await fetchGlobalDescribe(context, access);
+  if (typeof objects === 'string') return objects;
+  return objects.filter((object) => !isObjectHidden(access.policy, object.name));
+}
+
+async function fetchGlobalDescribe(
   context: SalesforceCallContext,
   access: SalesforceAccess
 ): Promise<GlobalSObject[] | string> {
@@ -83,7 +102,45 @@ export async function globalDescribe(
   return objects;
 }
 
+/** An object's describe, less what the connector hides; a hidden object is refused. */
 export async function describeObject(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  apiName: string
+): Promise<DescribeSObject | string> {
+  if (isObjectHidden(access.policy, apiName)) return objectRefusal(apiName);
+  const describe = await fetchDescribe(context, access, apiName);
+  if (typeof describe === 'string') return describe;
+  // The describe's own name, not what was asked: Salesforce resolves case.
+  if (isObjectHidden(access.policy, describe.name)) return objectRefusal(describe.name);
+  const hidden = await hiddenFields(context, access, describe.name);
+  if (typeof hidden === 'string') return hidden;
+  const children = (describe.childRelationships ?? []).filter(
+    (rel) => !isObjectHidden(access.policy, rel.childSObject)
+  );
+  if (hidden.size === 0 && children.length === (describe.childRelationships ?? []).length) {
+    return describe;
+  }
+  // A compound field (BillingAddress) goes with any of its parts, and its
+  // parts with it.
+  const compounds = new Set(
+    describe.fields
+      .filter((field) => field.compoundFieldName && hidden.has(field.name.toLowerCase()))
+      .map((field) => (field.compoundFieldName ?? '').toLowerCase())
+  );
+  return {
+    ...describe,
+    fields: describe.fields.filter(
+      (field) =>
+        !hidden.has(field.name.toLowerCase()) &&
+        !compounds.has(field.name.toLowerCase()) &&
+        !(field.compoundFieldName && hidden.has(field.compoundFieldName.toLowerCase()))
+    ),
+    childRelationships: children,
+  };
+}
+
+async function fetchDescribe(
   context: SalesforceCallContext,
   access: SalesforceAccess,
   apiName: string
@@ -170,6 +227,7 @@ export async function resolveObject(
   access: SalesforceAccess,
   input: string
 ): Promise<DescribeSObject | string> {
+  if (isObjectHidden(access.policy, input.trim())) return objectRefusal(input.trim());
   const objects = await globalDescribe(context, access);
   if (typeof objects === 'string') return objects;
   const found = findByNameOrLabel(objects, input);
@@ -191,6 +249,23 @@ export async function resolveObject(
     return `No object "${input}" is visible to your Salesforce user${close.length ? ` — did you mean ${close.join(', ')}?` : '. salesforce_list_objects lists them.'}`;
   }
   return describeObject(context, access, found.value.name);
+}
+
+/**
+ * The hidden object an id belongs to, or null — for ids that arrive from
+ * Salesforce rather than through a describe (a file's linked records).
+ */
+export async function hiddenObjectOfId(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  id: string
+): Promise<string | null | { error: string }> {
+  if (access.policy.excludedObjects.length === 0) return null;
+  const objects = await fetchGlobalDescribe(context, access);
+  if (typeof objects === 'string') return { error: objects };
+  const prefix = keyPrefix(id);
+  const match = objects.find((o) => o.keyPrefix === prefix);
+  return match && isObjectHidden(access.policy, match.name) ? match.name : null;
 }
 
 /** The object an id belongs to, from its key prefix. */
