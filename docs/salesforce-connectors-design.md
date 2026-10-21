@@ -184,7 +184,13 @@ surface.
 
 `packages/connector-salesforce`, dependency-light and I/O-free (the `connector-onbase` shape):
 
-- the pinned API version (one constant; bumped deliberately, never "latest");
+- the pinned API version — **v68.0** (Winter '27, generally available October 2026) — one
+  constant, every request built as `/services/data/v68.0/…`; bumped deliberately once a year or so
+  after reading that release's notes, never the REST `latest` alias. Salesforce ships three
+  releases a year (Spring '27 is expected to be v69.0) and supports old versions for years, so a
+  pin is safe; preview sandboxes running the next release still answer v68.0. The one place that
+  needs the newest version is the sObjects OpenAPI generation, which answers only on the latest —
+  it is a build-time reference, so it does not move the pin;
 - id helpers (15 ↔ 18-character conversion, key-prefix to object via a describe cache);
 - **SOQL safety**: a builder that escapes string literals (`\'`, `\\`, `\n`…) and validates
   identifiers against the describe, used by every tool that composes a query from arguments;
@@ -832,5 +838,6 @@ nobody reconnects between stages.
    use it at all.
 3. **The SOAP fallback for metadata reads** — which types the Tooling API cannot read in a
    deployable form, settled against a live org in stage 5.
-4. **API version.** Pin to the release current when stage 1 starts, and verify the Folders
-   (report sharing) resource paths and the report spreadsheet export against that version.
+4. **API version — decided: v68.0** (Winter '27). Still to verify against it: the folder
+   resource paths, report spreadsheet export, the row-level formula keys and the dashboard
+   create/save shape.
