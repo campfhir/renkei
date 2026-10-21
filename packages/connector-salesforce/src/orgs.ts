@@ -37,16 +37,26 @@ export interface SalesforceOrg {
 
 export const MAX_ORGS = 20;
 
-/** A key from a name: lower-case letters, digits and dashes. */
+/**
+ * A key from a name: lower-case letters and digits, runs of anything else
+ * one dash, no dash at either end. Built in one pass rather than with
+ * /^-+|-+$/, which backtracks on a long run of dashes.
+ */
 export function orgKeyOf(name: string): string {
-  return (
-    name
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'org'
-  );
+  let key = '';
+  let pendingDash = false;
+  for (const ch of name.toLowerCase()) {
+    if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
+      const next = pendingDash && key ? `-${ch}` : ch;
+      // At most 40 characters, and never ending in a dash.
+      if (key.length + next.length > 40) break;
+      key += next;
+      pendingDash = false;
+    } else {
+      pendingDash = true;
+    }
+  }
+  return key || 'org';
 }
 
 /** The secret name a connector's consumer secret is stored under. */

@@ -103,14 +103,21 @@ export class SalesforceAdapter implements ProviderAdapter {
   }
 }
 
+/** The origin without trailing slashes — a loop, not /\/+$/, which backtracks on long runs. */
+function withoutTrailingSlashes(origin: string): string {
+  let end = origin.length;
+  while (end > 0 && origin.charAt(end - 1) === '/') end -= 1;
+  return origin.slice(0, end);
+}
+
 /** The token endpoint of an org, from its My Domain origin. */
 export function salesforceTokenEndpoint(myDomainOrigin: string): string {
-  return `${myDomainOrigin.replace(/\/+$/, '')}/services/oauth2/token`;
+  return `${withoutTrailingSlashes(myDomainOrigin)}/services/oauth2/token`;
 }
 
 /** The revoke endpoint of an org, from its My Domain origin. */
 export function salesforceRevokeEndpoint(myDomainOrigin: string): string {
-  return `${myDomainOrigin.replace(/\/+$/, '')}/services/oauth2/revoke`;
+  return `${withoutTrailingSlashes(myDomainOrigin)}/services/oauth2/revoke`;
 }
 
 /**

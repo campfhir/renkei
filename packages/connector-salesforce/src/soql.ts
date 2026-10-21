@@ -62,11 +62,18 @@ export interface CheckedQuery {
  * string literals, so a LIMIT inside a subquery or a quoted 'LIMIT' does not
  * count.
  */
+/** Trailing semicolons and whitespace off — a loop, not /;+\s*$/, which backtracks on long runs. */
+function withoutTrailingSemicolons(query: string): string {
+  let end = query.length;
+  while (end > 0 && (query.charAt(end - 1) === ';' || /\s/.test(query.charAt(end - 1)))) end -= 1;
+  return query.slice(0, end);
+}
+
 export function checkSelectQuery(
   input: string,
   defaultLimit: number
 ): { ok: true; value: CheckedQuery } | { ok: false; error: string } {
-  const query = input.trim().replace(/;+\s*$/, '');
+  const query = withoutTrailingSemicolons(input.trim());
   if (!/^select\s/i.test(query)) {
     return { ok: false, error: 'Only a SOQL SELECT query can be run.' };
   }

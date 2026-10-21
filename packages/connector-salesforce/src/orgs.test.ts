@@ -109,5 +109,12 @@ describe('Salesforce connectors (one per org)', () => {
       org: { key: 'production', name: 'Live' },
     });
     expect(orgKeyOf('  Full Copy #2 ')).toBe('full-copy-2');
+    expect(orgKeyOf('--UAT--')).toBe('uat');
+    expect(orgKeyOf('!!!')).toBe('org');
+    expect(orgKeyOf(`${'a'.repeat(39)} b`)).toBe('a'.repeat(39));
+    // A long run of dashes is where /^-+|-+$/ backtracked.
+    const started = Date.now();
+    orgKeyOf(`${'-'.repeat(50_000)}x`);
+    expect(Date.now() - started).toBeLessThan(200);
   });
 });

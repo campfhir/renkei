@@ -102,6 +102,14 @@ describe('endpoints and metadata', () => {
     );
   });
 
+  it('trims any run of trailing slashes in linear time', () => {
+    expect(salesforceTokenEndpoint('https://acme.my.salesforce.com///')).toBe(ENDPOINT);
+    // A long run of slashes not at the end is where /\/+$/ backtracked.
+    const started = Date.now();
+    salesforceTokenEndpoint(`https://acme.my.salesforce.com${'/'.repeat(50_000)}x`);
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
   it('reads metadata defensively', () => {
     expect(
       readSalesforceMetadata({ orgId: '00D', userId: '005', instanceUrl: 'x', username: 7 })

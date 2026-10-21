@@ -25,6 +25,17 @@ describe('isSoqlIdentifier', () => {
 });
 
 describe('checkSelectQuery', () => {
+  it('drops trailing semicolons and space, in linear time', () => {
+    expect(checkSelectQuery('SELECT Id FROM Account ; ;  ', 10)).toEqual({
+      ok: true,
+      value: { query: 'SELECT Id FROM Account LIMIT 10', limited: true },
+    });
+    // A long run of semicolons not at the end is where /;+\s*$/ backtracked.
+    const started = Date.now();
+    checkSelectQuery(`SELECT Id FROM Account${';'.repeat(50_000)}x`, 10);
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
   it('appends a top-level LIMIT when none is given', () => {
     expect(checkSelectQuery('SELECT Id FROM Account', 200)).toEqual({
       ok: true,
