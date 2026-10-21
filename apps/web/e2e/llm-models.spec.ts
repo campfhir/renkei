@@ -485,6 +485,13 @@ test('admin: context window takes a typed count — 200k, 1m — and refuses wha
   await expect(page.getByLabel('Context window (tokens)')).toHaveValue('200000');
   await shot(page, testInfo, 'llm-models-context-window-02-saved');
 
+  // A phone's numeric keypad has no "k" or "m", so the field must not ask for it.
   await page.setViewportSize(MOBILE_VIEWPORT);
+  await expect(page.getByLabel('Context window (tokens)')).not.toHaveAttribute(
+    'inputmode',
+    'numeric'
+  );
+  await page.getByLabel('Context window (tokens)').fill('1m');
+  await expect(page.getByLabel('Context window (tokens)')).toHaveValue('1m');
   await shot(page, testInfo, 'llm-models-context-window-03-mobile');
 });
