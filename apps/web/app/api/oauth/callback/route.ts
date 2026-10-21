@@ -51,6 +51,9 @@ import {
   type ExchangeOutcome,
   type GrantOpError,
 } from '@renkei/delegate-client';
+import { getServer, serverIdOfProvider } from '@renkei/connector-mcp';
+import { refreshToolList } from '@/lib/mcp-servers/remote';
+import { ensureWatching } from '@/lib/mcp-servers/watch';
 import { getGitHubApp } from '@/lib/github-app';
 import { getOnBaseApp } from '@/lib/onbase-app';
 import { getOrigin } from '@/lib/get-origin';
@@ -185,10 +188,7 @@ function exchangeFailed(
 }
 
 /** The delegate could not seal the grant (the handle expired, or the row would not store). */
-function storeFailed(
-  label: string,
-  error: { type: GrantOpError; message?: string }
-): NextResponse {
+function storeFailed(label: string, error: { type: GrantOpError; message?: string }): NextResponse {
   logger.error('Failed to store {label} grant: {reason}', {
     component: 'auth/oauth',
     label,
@@ -311,24 +311,13 @@ async function handleCallback(
       return NextResponse.json({ error: 'State expired' }, { status: 400 });
     }
 
-
     // Dispatch on the provider the authorize step recorded. Null predates
     // the column and means Atlassian — the only provider that existed then.
     if (pendingSignIn.provider === 'webex-user') {
-      return handleWebexUserCallback(
-        request,
-        pendingSignIn.subject,
-        code,
-        pendingSignIn.scopes
-      );
+      return handleWebexUserCallback(request, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     if (pendingSignIn.provider === 'atlassian-jsm') {
-      return handleAtlassianJsmCallback(
-        request,
-        pendingSignIn.subject,
-        code,
-        pendingSignIn.scopes
-      );
+      return handleAtlassianJsmCallback(request, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     if (pendingSignIn.provider === 'atlassian-confluence') {
       return handleAtlassianConfluenceCallback(
@@ -355,20 +344,10 @@ async function handleCallback(
       );
     }
     if (pendingSignIn.provider === 'github') {
-      return handleGitHubCallback(
-        request,
-        pendingSignIn.subject,
-        code,
-        pendingSignIn.scopes
-      );
+      return handleGitHubCallback(request, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     if (pendingSignIn.provider === 'microsoft') {
-      return handleMicrosoftCallback(
-        request,
-        pendingSignIn.subject,
-        code,
-        pendingSignIn.scopes
-      );
+      return handleMicrosoftCallback(request, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     if (pendingSignIn.provider === 'entra-developer') {
       // A SEPARATE Entra app registration from 'microsoft' above — see
@@ -409,6 +388,19 @@ async function handleCallback(
       );
     }
 
+    // A remote MCP server: its own authorization server issued the code.
+    const mcpServerId = serverIdOfProvider(pendingSignIn.provider ?? '');
+    if (mcpServerId) {
+      return handleMcpServerCallback(
+        request,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes,
+        pendingSignIn.code_verifier,
+        mcpServerId
+      );
+    }
+
     logger.debug('Jira callback', { component: 'auth/oauth' });
 
     // The org's Atlassian app registration, from connector config: the
@@ -428,12 +420,7 @@ async function handleCallback(
     }
 
     logger.debug('Exchanging code for tokens', { component: 'auth/oauth' });
-    const connect = await exchangeAtlassianCode(
-      'Jira',
-      ATLASSIAN,
-      code,
-      atlassianApp.redirectUri
-    );
+    const connect = await exchangeAtlassianCode('Jira', ATLASSIAN, code, atlassianApp.redirectUri);
     if (connect instanceof NextResponse) return connect;
     const { handle, pending, resources } = connect;
 
@@ -676,10 +663,7 @@ async function callerJiraGrant(
 }
 
 /** The cloud id recorded on any prior grant of the given Atlassian providers in this tenant. */
-async function priorCloudId(
-  db: Kysely<DB>,
-  providers: string[]
-): Promise<string | null> {
+async function priorCloudId(db: Kysely<DB>, providers: string[]): Promise<string | null> {
   const prior = await db
     .selectFrom('provider_grants')
     .select('metadata')
@@ -937,8 +921,7 @@ async function handleAtlassianAdminCallback(
   // read:jira-user lets /myself answer with the real name; the code's
   // claims and the borrowed Jira identity stand behind it.
   const myself = await atlassianMyself(pending, cloudId);
-  const accountId =
-    myself?.accountId ?? (await atlassianAccountIdOffline(db, subject, code));
+  const accountId = myself?.accountId ?? (await atlassianAccountIdOffline(db, subject, code));
   if (!accountId) {
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
@@ -1276,13 +1259,7 @@ async function handleMicrosoftCallback(
     );
   }
 
-  const exchanged = await exchangeMicrosoftCode(
-    'Microsoft',
-    app,
-    MICROSOFT,
-    code,
-    requestedScopes
-  );
+  const exchanged = await exchangeMicrosoftCode('Microsoft', app, MICROSOFT, code, requestedScopes);
   if (exchanged instanceof NextResponse) return exchanged;
   const { handle, oid, tid, upn, displayName, email } = exchanged;
 
@@ -1634,6 +1611,89 @@ async function handleZoomCallback(
 }
 
 /* -------------------------------- OnBase -------------------------------- */
+
+/**
+ * Complete the connect flow of a remote MCP server. The server's own
+ * authorization server issued the code, the delegate (which registered
+ * Renkei there) exchanges it, and the tokens are sealed as the person's
+ * grant under `mcp:<server id>`. The MCP authorization flow carries no
+ * identity claim, so the grant is keyed by the person themselves — one
+ * connection per person per server.
+ */
+async function handleMcpServerCallback(
+  request: NextRequest,
+  subject: string | null,
+  code: string,
+  requestedScopes: string | null,
+  codeVerifier: string | null,
+  serverId: string
+): Promise<NextResponse> {
+  if (!subject || !codeVerifier) {
+    return NextResponse.json({ error: 'Start the connection again' }, { status: 400 });
+  }
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  const server = await getServer(dbResult.val, serverId);
+  if (!server.ok || !server.val || !server.val.enabled) {
+    return NextResponse.json({ error: 'That MCP server is no longer available' }, { status: 404 });
+  }
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  const provider = `mcp:${serverId}`;
+  const label = server.val.name;
+
+  const exchanged = await delegateGrants().exchange({
+    provider,
+    form: {
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: `${originResult.val}/api/oauth/callback`,
+      code_verifier: codeVerifier,
+      resource: server.val.url,
+    },
+  });
+  if (!exchanged.ok) return exchangeFailed(label, exchanged.err);
+  logExchanged(label, exchanged.val);
+
+  const idClaims = exchanged.val.idToken ? decodeJwtPayload(exchanged.val.idToken) : null;
+  const displayName =
+    (typeof idClaims?.name === 'string' && idClaims.name) ||
+    (typeof idClaims?.email === 'string' && idClaims.email) ||
+    label;
+  const stored = await delegateGrants().commit({
+    provider,
+    handle: exchanged.val.handle,
+    subject,
+    accountId: subject,
+    displayName,
+    clientId: server.val.clientId ?? '',
+    requestedScopes: (requestedScopes ?? '').split(/\s+/).filter(Boolean),
+    grantedScopes: exchanged.val.scope?.split(/\s+/).filter(Boolean),
+    metadata: { serverUrl: server.val.url },
+  });
+  if (!stored.ok) return storeFailed(label, stored.err);
+
+  // The first listing, so the tools are there the moment the person lands
+  // back on the page. A failure is not fatal: the cache refills on demand.
+  const listed = await refreshToolList(dbResult.val, server.val, subject);
+  if (!listed.ok) {
+    logger.warn('MCP tools could not be listed right after connecting: {reason}', {
+      component: 'auth/oauth',
+      server: server.val.slug,
+      reason: listed.reason,
+    });
+  }
+  ensureWatching(dbResult.val, server.val, subject);
+  logger.info('{label} grant stored', { component: 'auth/oauth', label, subject });
+  recordAuditEvent({
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: `mcp-${server.val.slug}`,
+  });
+  invalidateToolCatalogCache(subject);
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
+}
 
 /** Which of the two Hyland connectors handleOnBaseCallback is completing. */
 interface OnBaseCallbackSpec {

@@ -1004,6 +1004,30 @@ export interface MirthInstanceConnections {
   username: string;
 }
 
+export interface McpServers {
+  auth_mode: Generated<string>;
+  client_id: string | null;
+  context: Generated<string>;
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  encrypted_client_secret: string | null;
+  id: Generated<string>;
+  name: string;
+  oauth: Json | null;
+  scopes: string | null;
+  slug: string;
+  transport: Generated<string>;
+  updated_at: Generated<Timestamp>;
+  url: string;
+}
+
+export interface McpUserToolLists {
+  fetched_at: Generated<Timestamp>;
+  server_id: string;
+  subject: string;
+  tools: Generated<Json>;
+}
+
 export interface MirthInstances {
   allow_insecure_http: Generated<boolean>;
   base_url: string;
@@ -1643,6 +1667,8 @@ export interface DB {
   log_attr_blob: LogAttrBlob;
   logs: Logs;
   mail_bulk_jobs: MailBulkJobs;
+  mcp_servers: McpServers;
+  mcp_user_tool_lists: McpUserToolLists;
   mirth_instance_connections: MirthInstanceConnections;
   mirth_instances: MirthInstances;
   oauth_access_tokens: OauthAccessTokens;

@@ -66,6 +66,15 @@ import { oauthBitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import { registerGitHubTools, GITHUB_MCP_CONNECTOR } from '@/lib/mcp-tools/github';
 import { oauthGitHubAuth } from '@/lib/mcp-tools/github/github-auth';
 import { resolveToolExposure } from '@renkei/connector-fileshares';
+import {
+  connectedServerIds,
+  getToolLists,
+  listServers,
+  mcpCapabilityKey,
+} from '@renkei/connector-mcp';
+import { isStale, refreshInBackground } from '@/lib/mcp-servers/remote';
+import { ensureWatching } from '@/lib/mcp-servers/watch';
+import { registerMcpServerTools, type McpServerRegistration } from '@/lib/mcp-tools/mcp-servers';
 import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tools/fileshares';
 import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
 import { resolveToolExposure as resolveMirthExposure } from '@renkei/connector-mirth';
@@ -144,6 +153,54 @@ export interface ConnectorAvailability {
   sandboxAvailable: boolean;
   /** Org-wide, like knowledge: provisioned when an admin configured the web-search connector. */
   webSearchAvailable: boolean;
+  /**
+   * The remote MCP servers this caller can use, each with the tool list
+   * cached for them. One capability key per server (`mcp-<slug>`): a server
+   * is provisioned when the org enabled it and the caller either connected
+   * it or it needs no sign-in. Their tools were listed over the network
+   * earlier (mcp-servers/remote.ts); nothing here dials a server.
+   */
+  mcpServers: McpServerRegistration[];
+}
+
+/**
+ * The caller's remote MCP servers with their cached tools. A connected
+ * server whose list is missing or stale is refreshed in the background —
+ * never awaited, since this runs on every tools request.
+ */
+async function resolveMcpServers(
+  db: Kysely<DB>,
+  subject: string
+): Promise<McpServerRegistration[]> {
+  const servers = await listServers(db);
+  if (!servers.ok) return [];
+  const enabled = servers.val.filter((server) => server.enabled);
+  if (enabled.length === 0) return [];
+  const [connected, lists] = await Promise.all([
+    connectedServerIds(db, subject),
+    getToolLists(db, subject),
+  ]);
+  if (!connected.ok || !lists.ok) return [];
+  const connectedIds = new Set(connected.val);
+  const entries: McpServerRegistration[] = [];
+  for (const server of enabled) {
+    if (server.authMode === 'oauth' && !connectedIds.has(server.id)) continue;
+    const cached = lists.val.get(server.id);
+    if (!cached || isStale(cached.fetchedAt)) refreshInBackground(db, server, subject);
+    // Where the server announces tool changes, hear them (watch.ts); where
+    // it does not, the stale check above is the whole mechanism.
+    ensureWatching(db, server, subject);
+    if (!cached) continue;
+    entries.push({
+      id: server.id,
+      slug: server.slug,
+      name: server.name,
+      url: server.url,
+      transport: server.transport,
+      tools: cached.tools,
+    });
+  }
+  return entries;
 }
 
 async function grantRow(
@@ -313,6 +370,8 @@ export async function resolveConnectorAvailability(
   // registers for everyone — there is no per-user account to grant.
   const webSearchAvailable = await webSearchConfigured();
 
+  const mcpServers = await resolveMcpServers(db, subject);
+
   return {
     knowledgeAvailable,
     webexAvailable,
@@ -344,6 +403,7 @@ export async function resolveConnectorAvailability(
     onbaseAdminAvailable,
     sandboxAvailable,
     webSearchAvailable,
+    mcpServers,
   };
 }
 
@@ -388,6 +448,9 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.onbaseAdminAvailable ? [ONBASE_ADMIN_MCP_CONNECTOR] : []),
     ...(availability.sandboxAvailable ? [SANDBOX_MCP_CONNECTOR] : []),
     ...(availability.webSearchAvailable ? [WEB_SEARCH_CONNECTOR] : []),
+    // One key per remote server — dynamic, so it is not in
+    // REGISTERED_CONNECTOR_KEYS (which lists the fixed ones).
+    ...availability.mcpServers.map((entry) => mcpCapabilityKey(entry.slug)),
   ];
 }
 
@@ -772,6 +835,15 @@ export async function registerRenkeiTools(
     // key serve every caller, and the tool re-resolves that config per call
     // so an admin's rotation or disable bites within the config cache TTL.
     registerWebSearchTools(withCapabilityGate(server, projection, WEB_SEARCH_CONNECTOR), context);
+  }
+  // Remote MCP servers: each its own capability key, so the org can switch
+  // one off, scope it to an audience, or the person hide a tool, per server.
+  for (const entry of availability.mcpServers) {
+    registerMcpServerTools(
+      withCapabilityGate(server, projection, mcpCapabilityKey(entry.slug)),
+      context,
+      entry
+    );
   }
   flushGenericPreviews();
 }

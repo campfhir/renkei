@@ -30,6 +30,7 @@
     "@renkei/connector-config": "workspace:*",
     "@renkei/connector-fileshares": "workspace:*",
     "@renkei/connector-microsoft": "workspace:*",
+    "@renkei/connector-mcp": "workspace:*",
     "@renkei/connector-mirth": "workspace:*",
     "@renkei/connector-mistral-ocr": "workspace:*",
     "@renkei/connector-onbase": "workspace:*",

@@ -38,6 +38,8 @@
  *   - `file_shares`      — which shares exist for the tenant
  *   - `file_share_connections` — this caller's per-share credentials and opt-ins
  *   - `identities`       — the caller's email, captured by search_knowledge's closure
+ *   - `mcp_servers`      — which remote MCP servers exist and how to reach them
+ *   - `mcp_user_tool_lists` — this caller's cached tools for each of them
  *
  * Tenant-wide tables are read tenant-wide on purpose: a share added for
  * anyone, or a setting changed by an admin, should retire every cached
@@ -57,10 +59,7 @@ import type { DB } from '@renkei/db';
  * single-use handlers. It means "reuse whatever is cached", and the next
  * successful request corrects it.
  */
-export async function toolSurfaceVersion(
-  db: Kysely<DB>,
-  subject: string
-): Promise<string> {
+export async function toolSurfaceVersion(db: Kysely<DB>, subject: string): Promise<string> {
   try {
     const row = await sql<{ version: string | null }>`
       SELECT to_char(MAX(t), 'YYYYMMDDHH24MISS.US') AS version FROM (
@@ -77,6 +76,11 @@ export async function toolSurfaceVersion(
           WHERE subject = ${subject}
         UNION ALL
         SELECT MAX(updated_at) FROM identities
+          WHERE subject = ${subject}
+        UNION ALL
+        SELECT MAX(updated_at) FROM mcp_servers
+        UNION ALL
+        SELECT MAX(fetched_at) FROM mcp_user_tool_lists
           WHERE subject = ${subject}
       ) AS sources
     `.execute(db);
