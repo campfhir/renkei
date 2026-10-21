@@ -1,6 +1,7 @@
 /**
  * Connector marks, as the admin connector list shows them: the shipped
- * Salesforce, GitHub and Mirth Connect SVGs load as images (not the
+ * Salesforce, GitHub and Mirth Connect SVGs, and Renkei's own mark on its
+ * built-in surfaces, load as images (not the
  * built-in fallback glyph, which is what a missing or malformed file
  * silently degrades to), and GitHub's near-black mark is inverted on a dark
  * page only (lib/connector-logos.ts, INVERT_ON_DARK).
@@ -88,6 +89,12 @@ test('connector marks: shipped SVGs load, and GitHub inverts on dark only', asyn
     ['Salesforce', 'salesforce'],
     ['GitHub', 'github'],
     ['Mirth Connect', 'mirth'],
+    ['Renkei cards', 'renkei'],
+    ['Renkei agents', 'renkei'],
+    ['Renkei batch jobs', 'renkei'],
+    ['Renkei logs', 'renkei'],
+    ['Renkei memory', 'renkei'],
+    ['Renkei sandbox', 'renkei'],
   ] as const) {
     const row = page.locator('li').filter({ has: page.getByRole('link', { name, exact: true }) });
     const mark = row.locator(`img[src="/connector-logos/${file}.svg"]`);

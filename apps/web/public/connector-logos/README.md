@@ -45,6 +45,7 @@ Ratios below are measured from each file's `viewBox`, not estimated.
 | `webex.svg`      | `Cisco Webex logo - Brandlogos.net.svg`                                                                                | 2.64  |
 | `zoom.svg`       | _record source_                                                                                                        | 1.00  |
 | `directory.svg`  | **ours** — original artwork, not a vendor mark                                                                         | 1.00  |
+| `renkei.svg`     | **ours** — the Renkei mark (`app/icon.svg`), cropped square; worn by Renkei's built-in surfaces via `LOGO_FILE`        | 1.00  |
 | `onbase.svg`     | **ours** — vector recreation of the official OnBase app icon (Hyland), supplied in-session; not a Commons asset        | 1.00  |
 | `salesforce.svg` | `Salesforce.com logo.svg` (PD-textlogo)                                                                                | 1.43  |
 | `github.svg`     | `Octicons-mark-github.svg` — **MIT**, © 2018 GitHub Inc. (not PD; see below)                                           | 1.00  |
@@ -83,7 +84,14 @@ on a dark card. It is not recoloured: `INVERT_ON_DARK` in
 through `<img>` cannot see the page's `data-theme` and so cannot switch
 itself.
 
-`directory.svg` is the one other file here we drew. It marks the "Enterprise
+`renkei.svg` is Renkei's own mark — the same path and gradient as
+`app/icon.svg` and `components/renkei-mark.tsx`, with the viewBox cropped
+square for a connector slot. The built-in surfaces (cards, agents, batch
+jobs, logs, memory, the sandbox) map to it in `LOGO_FILE`; change the mark
+in all three places together. Knowledge, web search, voice and the OCR stage
+keep their own glyphs, which say what each does.
+
+`directory.svg` is the other file here we drew. It marks the "Enterprise
 directory" panel — a Renkei bundle of Graph people/group scopes, not a
 Microsoft product — so there is no vendor mark to use. Microsoft's own would
 have been the obvious choice and is the one that cannot work: the Microsoft

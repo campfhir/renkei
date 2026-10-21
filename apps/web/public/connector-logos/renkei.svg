@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="80 -20 240 240" role="img" aria-label="Renkei">
+  <!-- The Renkei mark: the same path and gradient as app/icon.svg and
+       components/renkei-mark.tsx, cropped square for a connector slot. -->
+  <defs>
+    <linearGradient id="renkei" x1="0" y1="0.15" x2="1" y2="0.85">
+      <stop offset="0" stop-color="#5FE8E0"/>
+      <stop offset="0.5" stop-color="#2FC8F0"/>
+      <stop offset="1" stop-color="#2C7BE5"/>
+    </linearGradient>
+  </defs>
+  <path d="M100 100C100 40 160 40 200 100C240 160 300 160 300 100C300 40 240 40 200 100C160 160 100 160 100 100Z" fill="none" stroke="url(#renkei)" stroke-width="22" stroke-linecap="round"/>
+</svg>
