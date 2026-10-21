@@ -58,7 +58,9 @@ import {
   sbWorkspaceGitStatus,
   sbWorkspaceGrep,
   sbWorkspaceLs,
+  sbWorkspaceMove,
   sbWorkspaceRead,
+  sbWorkspaceRemove,
   sbWorkspaceWrite,
   type SandboxTarget,
 } from '@renkei/sandbox-client';
@@ -798,16 +800,72 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
     },
     {
       def: {
+        name: 'code_delete_file',
+        description:
+          'Delete one file, or one folder with everything under it, from the checkout. Deleting is ' +
+          'as ordinary as writing — stale files, generated output, a module the change retires — ' +
+          'and git tracks the removal like any other change. Nothing under .git.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: pathProperty('File or folder path relative to the repository root.'),
+          },
+          required: ['path'],
+        },
+      },
+      async execute(input, context) {
+        if (context.readOnly) return errorResult('The organization is in read-only mode.');
+        const removed = await sbWorkspaceRemove(target, { id: ref.id, path: str(input.path) });
+        if (!removed.ok) return failed(removed.err);
+        return textResult(`Deleted ${removed.val.path}.` + (await changedFilesNote()));
+      },
+    },
+    {
+      def: {
+        name: 'code_move_file',
+        description:
+          'Rename or move one file or folder within the checkout (parent directories of the ' +
+          'destination are created). Refuses when the destination already exists. Nothing under .git.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            from: pathProperty('The path to move, relative to the repository root.'),
+            to: pathProperty('Where it goes, relative to the repository root.'),
+          },
+          required: ['from', 'to'],
+        },
+      },
+      async execute(input, context) {
+        if (context.readOnly) return errorResult('The organization is in read-only mode.');
+        const moved = await sbWorkspaceMove(target, {
+          id: ref.id,
+          from: str(input.from),
+          to: str(input.to),
+        });
+        if (!moved.ok) return failed(moved.err);
+        return textResult(
+          `Moved ${moved.val.from} to ${moved.val.to}.` + (await changedFilesNote())
+        );
+      },
+    },
+    {
+      def: {
         name: 'code_run',
         description:
           'Run a bash command in the repository’s root — the project’s own commands: install ' +
           'dependencies, run tests, build, lint, a script. It runs on the sandbox worker with the ' +
-          'project’s environment variables set (their values never appear in output). Answers the ' +
-          `exit code and both streams, up to maxChars (default ${EXEC_OUTPUT_DEFAULT_CHARS}) with the ` +
-          'middle of long output omitted. A command is killed at timeoutSeconds (default 120, max ' +
-          `${EXEC_MAX_TIMEOUT_MS / 1000}) — for a slow install or test suite, say so. Not for reading ` +
-          'or editing files (the dedicated tools are cheaper and safer), and git has its own tools: ' +
-          'code_git_status, code_git_commit, code_git_push, code_git_pull.',
+          'project’s environment variables set (their values never appear in output). The worker has ' +
+          'the internet (package registries, documentation, APIs), Python 3 with pip and venv, Node ' +
+          'and pnpm, Go, Rust, Java and a C toolchain, so installing what the work needs and writing ' +
+          'a script that generates or rewrites files — in Python or any of these — are ordinary ways ' +
+          'to work; a script a later run can repeat is the way to make many files the same way. ' +
+          `Answers the exit code and both streams, up to maxChars (default ${EXEC_OUTPUT_DEFAULT_CHARS}) ` +
+          'with the middle of long output omitted, then the files the working tree now has changed. ' +
+          `A command is killed at timeoutSeconds (default 120, max ${EXEC_MAX_TIMEOUT_MS / 1000}) — ` +
+          'for a slow install or test suite, say so. For one file, the dedicated tools are cheaper ' +
+          'and safer than a command: code_read_file, code_write_file, code_edit_file, code_delete_file, ' +
+          'code_move_file. Git has its own: code_git_status, code_git_commit, code_git_push, ' +
+          'code_git_pull.',
         inputSchema: {
           type: 'object',
           properties: {

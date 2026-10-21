@@ -462,6 +462,8 @@ describe('buildSystemPrompt', () => {
     expect(ready).toContain('code project on the repository acme/billing (branch main)');
     expect(ready).toContain('NPM_TOKEN');
     expect(ready).toContain('code_edit_file');
+    expect(ready).toContain('code_delete_file and code_move_file');
+    expect(ready).toContain('write a script');
     expect(ready).toContain('never ask for a secret');
 
     const cloning = buildSystemPrompt({

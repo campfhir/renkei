@@ -23,6 +23,8 @@ describe('spokenActivity', () => {
     expect(spokenActivity('code_clone')).toBe('Cloning the repository');
     expect(spokenActivity('code_grep')).toBe('Searching the code');
     expect(spokenActivity('code_edit_file')).toBe('Editing a file');
+    expect(spokenActivity('code_delete_file')).toBe('Deleting a file');
+    expect(spokenActivity('code_move_file')).toBe('Moving a file');
   });
 
   it('names the chat own tools as what they mean', () => {
