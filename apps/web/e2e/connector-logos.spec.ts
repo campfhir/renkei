@@ -142,7 +142,8 @@ test('connector marks: shipped SVGs load, and GitHub inverts on dark only', asyn
   });
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('img[src="/connector-logos/salesforce.svg"]')).toBeVisible();
+  // Salesforce and Salesforce Admin both wear it.
+  await expect(page.locator('img[src="/connector-logos/salesforce.svg"]').first()).toBeVisible();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );

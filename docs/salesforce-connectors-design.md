@@ -910,6 +910,26 @@ differs from the text above:
   list is undefined; the Salesforce module passes an empty list instead, so a grant without
   recorded capabilities registers nothing.
 
+## As built (admin connector, first slice)
+
+The admin connector's foundation and its first two proposals are built; the as-built description
+is the `salesforce-admin` section of [`connectors.md`](./connectors.md). Where it differs from the
+text above:
+
+- **Production writes are per connector** (`productionChanges` on each admin connector, off by
+  default), not one org-wide setting: an organization with two production orgs can allow one.
+- **Field access is granted as data.** A new field's access in named permission sets is inserted
+  as `FieldPermissions` rows after the deploy succeeds, rather than deployed as `PermissionSet`
+  metadata, which replaces a permission set whole. A grant that fails leaves the request
+  `partial`; the deploy itself is all or nothing. Required fields get no grant (Salesforce makes
+  them visible to everyone and refuses one).
+- **Layout placement is not built yet**: new fields land on no page layout, and the review page
+  says nothing about layouts.
+- **The dependency list is on `get_field`**, not on the review page, for now.
+- **The check that compares the package with live metadata** is per kind: a new field must still
+  be absent (`FieldDefinition`), a new rule absent, a changed rule unchanged since it was read
+  (a hash of its Tooling `Metadata`).
+
 ## Open questions
 
 1. **Single-record writes direct, or preview + confirm?** This doc says direct (receipt in the

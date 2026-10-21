@@ -457,6 +457,28 @@ export interface ChatMessages {
   usage: Json | null;
 }
 
+export interface SalesforceAdminChangeRequests {
+  agent_id: string | null;
+  applied_at: Timestamp | null;
+  applied_by: string | null;
+  cancelled_at: Timestamp | null;
+  connector_key: string;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  instance_url: string;
+  kind: string;
+  org_id: string;
+  payload: Json;
+  reason: string | null;
+  results: Json | null;
+  status: Generated<string>;
+  subject: string;
+  title: string;
+  updated_at: Generated<Timestamp>;
+  validation: Json | null;
+}
+
 export interface SandboxSizeRequests {
   created_at: Generated<Timestamp>;
   decided_at: Timestamp | null;
@@ -1694,6 +1716,7 @@ export interface DB {
   resource_access_grants: ResourceAccessGrants;
   resource_key_grants: ResourceKeyGrants;
   resource_keys: ResourceKeys;
+  salesforce_admin_change_requests: SalesforceAdminChangeRequests;
   sandbox_crawl_pages: SandboxCrawlPages;
   sandbox_crawl_recipes: SandboxCrawlRecipes;
   sandbox_crawls: SandboxCrawls;

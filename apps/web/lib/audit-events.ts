@@ -139,7 +139,8 @@ export type AuditAction =
    * however it ended (details.status), since a partial apply changed Jira
    * too.
    */
-  | 'jira_admin.change_applied';
+  | 'jira_admin.change_applied'
+  | 'salesforce_admin.change_applied';
 
 export interface AuditEventInput {
   /** OIDC subject of who did it. */

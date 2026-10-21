@@ -26,6 +26,13 @@ import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
 /** The CRM connector's grant provider. */
 export const SALESFORCE = 'salesforce';
 
+/**
+ * The admin connector's grant provider: its own grants, on its own External
+ * Client Apps (one per org), so building in an org is connected — and
+ * revoked — separately from working its records.
+ */
+export const SALESFORCE_ADMIN = 'salesforce-admin';
+
 /** How long a Salesforce access token is assumed to live; see the header. */
 export const SALESFORCE_SESSION_SECONDS = 3600;
 

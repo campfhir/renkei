@@ -30,6 +30,7 @@ import {
   ONBASE,
   ONBASE_ADMIN,
   SALESFORCE,
+  SALESFORCE_ADMIN,
   ZOOM,
   salesforceRevokeEndpoint,
   silentLogger,
@@ -641,7 +642,7 @@ export class Grants {
             });
             revokedAtProvider = answer.ok;
           }
-        } else if (provider === SALESFORCE) {
+        } else if (provider === SALESFORCE || provider === SALESFORCE_ADMIN) {
           const org = salesforceOrgOfGrant(await providerConfig(spec, this.encryptionKey), grant);
           const origin = org?.myDomain;
           if (origin) {

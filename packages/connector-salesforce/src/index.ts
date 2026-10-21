@@ -29,6 +29,7 @@ export {
   orgForInstance,
   findOrg,
   validateOrg,
+  takesChanges,
   type SalesforceOrg,
 } from './orgs';
 export {
@@ -81,3 +82,25 @@ export {
   reportNamesHidden,
   type DataPolicy,
 } from './policy';
+export {
+  METADATA_NAMESPACE,
+  FIELD_TYPES,
+  isDeveloperName,
+  developerNameOf,
+  checkFieldSpec,
+  checkValidationRuleSpec,
+  xmlEscape,
+  fieldXml,
+  validationRuleXml,
+  packageXml,
+  objectFileXml,
+  buildObjectChildrenPackage,
+  parseDeployResult,
+  type FieldType,
+  type FieldSpec,
+  type PicklistValueSpec,
+  type ValidationRuleSpec,
+  type PackageMember,
+  type DeployFailure,
+  type DeployOutcome,
+} from './metadata';

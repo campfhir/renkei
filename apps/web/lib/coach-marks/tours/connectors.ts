@@ -281,6 +281,41 @@ export const CONNECTOR_TOURS: CoachMarkTour[] = [
     ],
   },
   {
+    id: 'connect-salesforce-admin',
+    area: 'Connectors',
+    version: 1,
+    title: 'Connecting Salesforce Admin',
+    description:
+      'Build in a Salesforce org — fields and validation rules as change requests that Salesforce validates and you apply.',
+    startPath: '/connectors',
+    autoStart: false,
+    requires: ['card-salesforce-admin'],
+    audience: 'everyone',
+    steps: [
+      {
+        id: 'card',
+        title: 'Building in Salesforce',
+        target: 'card-salesforce-admin',
+        placement: 'auto',
+        body: 'Read how an org is built and propose changes to it — new fields, validation rules. Every change is a change request: Salesforce validates it with a deploy that changes nothing, and it reaches the org only when you apply it in Renkei.',
+      },
+      {
+        id: 'scopes',
+        title: 'What Renkei may do',
+        target: 'salesforce-admin-scopes',
+        placement: 'auto',
+        body: 'Reading the org’s setup and proposing changes are separate choices. Your own Setup permissions in Salesforce still decide what a change may do.',
+      },
+      {
+        id: 'connect',
+        title: 'Connect',
+        target: 'salesforce-admin-connect',
+        placement: 'auto',
+        body: 'Sign in on the org’s Salesforce page and come back connected. Each org — a sandbox, production — is connected separately.',
+      },
+    ],
+  },
+  {
     id: 'connect-bitbucket',
     area: 'Connectors',
     version: 1,

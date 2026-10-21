@@ -50,8 +50,10 @@ import { ENTRA_DEVELOPER_CONNECTOR } from '@/lib/entra-developer-app';
 import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
 import { GITHUB_CONNECTOR } from '@/lib/github-app';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
-import { usableSalesforceCeiling } from '@/lib/salesforce-scopes';
 import { listSalesforceConnections } from '@/lib/salesforce-grants';
+import { SALESFORCE_ADMIN_KIND, SALESFORCE_CRM_KIND } from '@/lib/salesforce-kinds';
+import { takesChanges } from '@renkei/connector-salesforce';
+import { countPendingChangeRequests as countSalesforceAdminChanges } from '@/lib/salesforce-admin/change-requests';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
 import { DEFAULT_ENTRA_DEVELOPER_SCOPES } from '@/lib/entra-developer-scopes';
@@ -240,13 +242,23 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
   const githubCeiling = ceilingFrom(settingsOf(GITHUB_CONNECTOR), DEFAULT_GITHUB_SCOPES);
   // One card per Salesforce connector (org) the admin switched on, each
-  // connected separately; plus any connection to an org since removed.
-  const salesforceConnectors = shown.has('salesforce')
-    ? (await listSalesforceConnectors()).filter((org) => org.enabled)
-    : [];
-  const salesforceConnections = shown.has('salesforce')
-    ? await listSalesforceConnections(db, session.subject, await listSalesforceConnectors())
-    : [];
+  // connected separately; plus any connection to an org since removed —
+  // for the CRM and the admin connector alike, each on its own grants.
+  const salesforceKinds = await Promise.all(
+    [SALESFORCE_CRM_KIND, SALESFORCE_ADMIN_KIND]
+      .filter((kind) => shown.has(kind.key))
+      .map(async (kind) => {
+        const all = await listSalesforceConnectors(kind);
+        return {
+          kind,
+          connectors: all.filter((org) => org.enabled),
+          connections: await listSalesforceConnections(db, session.subject, all, kind.provider),
+        };
+      })
+  );
+  const salesforcePending = shown.has(SALESFORCE_ADMIN_KIND.key)
+    ? await countSalesforceAdminChanges(db, session.subject)
+    : new Map<string, number>();
 
   // The caller's own grants, one query, mapped by provider — connection
   // state, and the scopes they previously authorized (seeding the picker on
@@ -320,6 +332,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     shown.has('zoom') ||
     shown.has('github') ||
     shown.has('salesforce') ||
+    shown.has('salesforce-admin') ||
     hylandShown ||
     shown.has('fileshares') ||
     shown.has('mirth') ||
@@ -530,38 +543,43 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     });
   }
 
-  for (const [index, org] of salesforceConnectors.entries()) {
-    const connection = salesforceConnections.find((c) => c.connector === org.key);
-    cards.push({
-      key: `salesforce:${org.key}`,
-      needsAttention: connection === undefined,
-      node: (
-        <>
-          <SalesforceConnector
-            connectorKey={org.key}
-            name={org.name}
-            sandbox={org.sandbox}
-            orgHost={org.host}
-            connected={connection !== undefined}
-            displayName={connection?.displayName ?? null}
-            username={connection?.username ?? null}
-            ceiling={usableSalesforceCeiling(org.scopes.join(' '))}
-            priorScopes={connection?.requestedScopes ?? null}
-          />
-          {index === salesforceConnectors.length - 1 && (
-            <RemovableProducts products={removable(catalog, ['salesforce'])} />
-          )}
-        </>
-      ),
-    });
-  }
-  const orphaned = salesforceConnections.filter((c) => c.connector === null);
-  if (orphaned.length > 0) {
-    cards.push({
-      key: 'salesforce:removed',
-      needsAttention: true,
-      node: <SalesforceOrphanedConnections connections={orphaned} />,
-    });
+  for (const { kind, connectors, connections } of salesforceKinds) {
+    for (const [index, org] of connectors.entries()) {
+      const connection = connections.find((c) => c.connector === org.key);
+      cards.push({
+        key: `${kind.key}:${org.key}`,
+        needsAttention: connection === undefined,
+        node: (
+          <>
+            <SalesforceConnector
+              kind={kind}
+              connectorKey={org.key}
+              name={org.name}
+              sandbox={org.sandbox}
+              orgHost={org.host}
+              connected={connection !== undefined}
+              displayName={connection?.displayName ?? null}
+              username={connection?.username ?? null}
+              ceiling={kind.ceiling(org.scopes.join(' '))}
+              priorScopes={connection?.requestedScopes ?? null}
+              pendingChanges={salesforcePending.get(org.key) ?? 0}
+              takesChanges={takesChanges(org)}
+            />
+            {index === connectors.length - 1 && (
+              <RemovableProducts products={removable(catalog, [kind.key])} />
+            )}
+          </>
+        ),
+      });
+    }
+    const orphaned = connections.filter((c) => c.connector === null);
+    if (orphaned.length > 0) {
+      cards.push({
+        key: `${kind.key}:removed`,
+        needsAttention: true,
+        node: <SalesforceOrphanedConnections kind={kind} connections={orphaned} />,
+      });
+    }
   }
 
   if (hylandShown) {

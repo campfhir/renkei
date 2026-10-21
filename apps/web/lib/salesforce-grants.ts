@@ -21,15 +21,17 @@ export interface SalesforceConnection {
   requestedScopes: string[];
 }
 
+/** `provider` is the connector type's grant provider: the CRM's by default, or `salesforce-admin`. */
 export async function listSalesforceConnections(
   db: Kysely<DB>,
   subject: string,
-  connectors: readonly SalesforceOrg[]
+  connectors: readonly SalesforceOrg[],
+  provider: string = SALESFORCE
 ): Promise<SalesforceConnection[]> {
   const rows = await db
     .selectFrom('provider_grants')
     .select(['provider_account_id', 'display_name', 'metadata', 'requested_scopes'])
-    .where('provider', '=', SALESFORCE)
+    .where('provider', '=', provider)
     .where('subject', '=', subject)
     .execute();
   return rows.map((row) => {

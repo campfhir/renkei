@@ -445,6 +445,23 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     short: 'Proposed a field for a space for your review',
   },
 
+  // ---- Salesforce Admin ------------------------------------------------
+  // Its own capability key ('salesforce-admin'). As for Jira Administration,
+  // a proposal changes nothing in the org: a change request waits for its
+  // owner's review, validated by Salesforce, and the receipt links it.
+  salesforce_admin_propose_fields: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed new Salesforce fields for your review',
+    short: 'Proposed new fields for your review',
+  },
+  salesforce_admin_propose_validation_rule: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed a Salesforce validation rule for your review',
+    short: 'Proposed a validation rule for your review',
+  },
+
   // ---- Jira Service Management -----------------------------------------
   // Same capability key as Jira ('jira'), so these appear in the same
   // preferences group. Their wording says "service request" precisely so

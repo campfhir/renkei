@@ -37,6 +37,7 @@ import {
   OnBaseAdapter,
   OnBaseAdminAdapter,
   SALESFORCE,
+  SALESFORCE_ADMIN,
   SalesforceAdapter,
   readSalesforceMetadata,
   salesforceTokenEndpoint,
@@ -234,6 +235,8 @@ export const PROVIDERS: Readonly<Record<string, ProviderSpec>> = {
     adapter: (config) => (secretOf(config) ? new ZoomAdapter(secretOf(config)) : null),
   },
   [SALESFORCE]: salesforce(SALESFORCE),
+  // The admin connector: its own config row and External Client Apps, the same host rules.
+  [SALESFORCE_ADMIN]: salesforce(SALESFORCE_ADMIN),
   [ONBASE]: {
     connector: ONBASE,
     tokenEndpoint: null,

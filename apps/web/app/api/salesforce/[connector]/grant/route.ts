@@ -1,65 +1,9 @@
-/**
- * Disconnect the caller from one Salesforce connector (org). Subject-scoped:
- * the session decides whose connection goes, never a parameter — the
- * connector key only says which of their connections. The delegate revokes
- * the refresh token at that org before deleting its copy, so a disconnected
- * connection is gone in Salesforce too. Works for a connector an admin has
- * switched off or removed as well, so nobody is left holding a grant.
- */
+/** Disconnect from one salesforce connector (org): lib/salesforce-connect-grant.ts. */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
-import { getSessionFromRequest } from '@/lib/session';
-import { recordAuditEvent } from '@/lib/audit-events';
-import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
-import { SALESFORCE } from '@renkei/provider-grants';
-import { delegateGrants } from '@renkei/delegate-client';
-import { listSalesforceConnectors } from '@/lib/salesforce-app';
-import { listSalesforceConnections } from '@/lib/salesforce-grants';
+import type { NextRequest } from 'next/server';
+import { disconnectSalesforce } from '@/lib/salesforce-connect-grant';
+import { SALESFORCE_CRM_KIND } from '@/lib/salesforce-kinds';
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ connector: string }> }
-): Promise<NextResponse> {
-  const { connector } = await params;
-  const session = await getSessionFromRequest(request);
-  if (!session) {
-    return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  }
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-
-  const connections = await listSalesforceConnections(
-    dbResult.val,
-    session.subject,
-    await listSalesforceConnectors()
-  );
-  // `-` names connections to an org that is no longer a connector (removed
-  // by an admin): a person can still revoke them. No key can be `-`.
-  const wanted = connector === '-' ? null : connector;
-  const mine = connections.filter((connection) => connection.connector === wanted);
-  if (mine.length === 0) {
-    return NextResponse.json({ message: 'Nothing to disconnect' });
-  }
-
-  for (const connection of mine) {
-    const revoked = await delegateGrants().revoke({
-      provider: SALESFORCE,
-      accountId: connection.accountId,
-    });
-    if (!revoked.ok) {
-      return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
-    }
-  }
-  recordAuditEvent({
-    actorSubject: session.subject,
-    action: 'connector.disconnected',
-    targetKind: 'connector',
-    targetLabel: `${SALESFORCE}:${connector}`,
-  });
-  invalidateToolCatalogCache(session.subject);
-  return NextResponse.json({ message: 'Salesforce disconnected' });
+export function DELETE(request: NextRequest, context: { params: Promise<{ connector: string }> }) {
+  return disconnectSalesforce(SALESFORCE_CRM_KIND, request, context);
 }
