@@ -23,6 +23,12 @@ describe('names', () => {
     expect(isValidSlug('a__b')).toBe(false);
   });
 
+  it('trims underscores from both ends, and stays fast on a long run of them', () => {
+    expect(slugify('__Acme  Docs__')).toBe('acme_docs');
+    expect(slugify('a' + '_'.repeat(200_000) + '!')).toBe('a');
+    expect(slugify('!!!')).toBe('');
+  });
+
   it('namespaces and splits tool names, within the 64 character limit', () => {
     expect(namespacedToolName('acme', 'search docs')).toBe('acme__search_docs');
     expect(namespacedToolName('acme', 'x'.repeat(100)).length).toBe(64);

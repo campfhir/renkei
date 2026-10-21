@@ -36,15 +36,23 @@ export const MCP_AUTH_MODES: readonly McpAuthMode[] = ['oauth', 'none'];
 
 export const MAX_SLUG_LENGTH = 32;
 
+/**
+ * Trim underscores from both ends by scanning, not by regex: a pattern like
+ * `/_+$/` backtracks quadratically on a long run of underscores in the
+ * middle of a name, and the name is typed by a person.
+ */
+function trimUnderscores(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 95) start += 1;
+  while (end > start && value.charCodeAt(end - 1) === 95) end -= 1;
+  return value.slice(start, end);
+}
+
 /** A tool-name-safe slug from a display name: lowercase letters, digits, underscore. */
 export function slugify(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, MAX_SLUG_LENGTH)
-    .replace(/_+$/g, '');
-  return slug;
+  const joined = name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  return trimUnderscores(trimUnderscores(joined).slice(0, MAX_SLUG_LENGTH));
 }
 
 export function isValidSlug(slug: string): boolean {
