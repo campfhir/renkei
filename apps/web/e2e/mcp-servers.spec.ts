@@ -253,6 +253,31 @@ test('an admin lists a server, a person connects it through the server’s own s
     await expect(connected.getByText('Look up an insurance policy by number.')).toBeVisible();
     await shot(page, testInfo, 'mcp-04-connected-tools');
 
+    // The server announces a change: the cached list follows with nobody
+    // pressing Refresh (the watch opened when the person connected).
+    const serverId = (
+      await client.query<{ id: string }>('SELECT id FROM mcp_servers WHERE slug = $1', [SLUG])
+    ).rows[0].id;
+    await fetch(`${STUB}/__tools`, { method: 'POST' });
+    await expect
+      .poll(
+        async () => {
+          const answer = await page.request.get(`/api/mcp-servers/${serverId}/tools`);
+          return (await answer.json()).tools.length;
+        },
+        { timeout: 30_000 }
+      )
+      .toBe(3);
+    await page.reload();
+    await expect(
+      page
+        .getByRole('main')
+        .getByTestId(`mcp-server-${SLUG}`)
+        .getByRole('button', { name: 'Tools (3)' })
+    ).toBeVisible(COLD);
+    await shot(page, testInfo, 'mcp-04b-list-changed');
+    await fetch(`${STUB}/__reset`);
+
     // The grant is the person's, sealed in the delegate — one row, no token column to read.
     const grants = await client.query(
       `SELECT provider FROM provider_grants WHERE subject = $1 AND provider LIKE 'mcp:%'`,
@@ -301,7 +326,8 @@ test('an admin lists a server, a person connects it through the server’s own s
     await page.goto('/connectors');
     const again = page.getByRole('main').getByTestId(`mcp-server-${SLUG}`);
     await again.getByRole('button', { name: 'Refresh tools' }).click();
-    await expect(again.getByRole('button', { name: 'Tools (2)' })).toBeVisible(COLD);
+    // Refreshed from the server (which is back to two tools): the list opens on them.
+    await expect(again.getByRole('listitem')).toHaveCount(2, COLD);
     await again.getByRole('button', { name: 'Disconnect' }).click();
     await expect(again.getByRole('link', { name: 'Connect' })).toBeVisible(COLD);
     const left = await client.query(
@@ -351,6 +377,23 @@ test('the legacy SSE transport and an open server work the same way', async ({
     await expect(legacyConnected.getByText('connected')).toBeVisible(COLD);
     // The tool list came over the SSE stream.
     await expect(legacyConnected.getByRole('button', { name: 'Tools (2)' })).toBeVisible();
+
+    // The legacy stream carries the change notice too.
+    const legacyId = (
+      await client.query<{ id: string }>('SELECT id FROM mcp_servers WHERE slug = $1', [
+        'e2e_legacy',
+      ])
+    ).rows[0].id;
+    await fetch(`${STUB}/__tools`, { method: 'POST' });
+    await expect
+      .poll(
+        async () => {
+          const answer = await page.request.get(`/api/mcp-servers/${legacyId}/tools`);
+          return (await answer.json()).tools.length;
+        },
+        { timeout: 30_000 }
+      )
+      .toBe(3);
 
     // The open server needs no connect: its tools are listed on first sight.
     const open = page.getByRole('main').getByTestId('mcp-server-e2e_open');

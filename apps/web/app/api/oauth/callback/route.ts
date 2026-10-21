@@ -53,6 +53,7 @@ import {
 } from '@renkei/delegate-client';
 import { getServer, serverIdOfProvider } from '@renkei/connector-mcp';
 import { refreshToolList } from '@/lib/mcp-servers/remote';
+import { ensureWatching } from '@/lib/mcp-servers/watch';
 import { getGitHubApp } from '@/lib/github-app';
 import { getOnBaseApp } from '@/lib/onbase-app';
 import { getOrigin } from '@/lib/get-origin';
@@ -1682,6 +1683,7 @@ async function handleMcpServerCallback(
       reason: listed.reason,
     });
   }
+  ensureWatching(dbResult.val, server.val, subject);
   logger.info('{label} grant stored', { component: 'auth/oauth', label, subject });
   recordAuditEvent({
     actorSubject: subject,

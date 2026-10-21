@@ -43,7 +43,10 @@ Two limits are deliberate:
 
 ## Tools: listed live, found by name
 
-What a server lists can differ per person, and registering tools performs no I/O (`registry.ts`), so each person's `tools/list` is cached in `mcp_user_tool_lists` — refreshed when they connect, when they press **Refresh tools**, in the background when a cached list is over 15 minutes old, and after a call fails (a tool the server no longer lists is the usual cause). Nothing awaits a network call on the tools request path.
+What a server lists can differ per person, and registering tools performs no I/O (`registry.ts`), so each person's `tools/list` is cached in `mcp_user_tool_lists` and kept current two ways. Nothing awaits a network call on the tools request path.
+
+- **Push, where the server supports it.** If the server advertises `tools.listChanged` at initialize, Renkei holds its notification stream (a GET on the Streamable HTTP endpoint, or the legacy SSE stream itself) and refreshes the list the moment `notifications/tools/list_changed` arrives (`lib/mcp-servers/watch.ts`, `watchToolListChanges` in the client). A watch is one long-lived request through the delegate per person and server in the web process, so it lasts only while wanted: started when the person connects or their tool surface is resolved, dropped after 30 idle minutes, on a sign-in failure, on disconnect, or when the server is disabled, moved or deleted, and reconnected with backoff when the stream drops. Each replica watches for itself; refreshing is idempotent.
+- **Timer and on demand, otherwise.** A server that does not advertise the capability (or offers no stream) is not watched, and is not asked again for an hour. The fallback is the whole mechanism for it: refresh when the person connects, on **Refresh tools**, in the background when a cached list is over 15 minutes old, and after a call fails (a tool the server no longer lists is the usual cause).
 
 Each cached tool is registered as `<slug>__<tool>` under the capability key `mcp-<slug>` (`lib/mcp-tools/mcp-servers`):
 
@@ -62,7 +65,6 @@ Because `mcp-<slug>` is a capability key, the existing gates apply per server: t
 ## Not done / follow-ups
 
 - No per-server audience screen: `connectorAudiences` already accepts `mcp-<slug>` keys and the connectors page honours them, but the audience editor lists only catalog entries.
-- Tool-list-changed notifications are not subscribed to; the TTL and on-demand refresh stand in.
-- A server's resources and prompts are not surfaced; tools only.
+- Only tools are supported for now. A server's resources and prompts (and their own list-changed notices) are not surfaced; the client and watch are shaped so they can be added.
 - Acts have no preview card. Cards are drawn per known tool; a generic card that merely prints arguments is exactly what `act-preview.ts` rules out.
 - A registration is made for one redirect URI. If the deployment's public address changes, clear the client ID in the form (Remove the stored secret) and Check again to register afresh.

@@ -73,6 +73,7 @@ import {
   mcpCapabilityKey,
 } from '@renkei/connector-mcp';
 import { isStale, refreshInBackground } from '@/lib/mcp-servers/remote';
+import { ensureWatching } from '@/lib/mcp-servers/watch';
 import { registerMcpServerTools, type McpServerRegistration } from '@/lib/mcp-tools/mcp-servers';
 import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tools/fileshares';
 import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
@@ -186,6 +187,9 @@ async function resolveMcpServers(
     if (server.authMode === 'oauth' && !connectedIds.has(server.id)) continue;
     const cached = lists.val.get(server.id);
     if (!cached || isStale(cached.fetchedAt)) refreshInBackground(db, server, subject);
+    // Where the server announces tool changes, hear them (watch.ts); where
+    // it does not, the stale check above is the whole mechanism.
+    ensureWatching(db, server, subject);
     if (!cached) continue;
     entries.push({
       id: server.id,

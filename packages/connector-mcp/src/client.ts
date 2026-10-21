@@ -52,7 +52,11 @@ export interface McpCallResult {
   structuredContent?: unknown;
 }
 
+export const TOOLS_LIST_CHANGED = 'notifications/tools/list_changed';
+
 export interface McpRemoteSession {
+  /** Whether the server said, at initialize, that it announces tool list changes. */
+  readonly toolsListChanged: boolean;
   listTools(): Promise<McpListedTool[]>;
   callTool(name: string, args: Record<string, unknown>): Promise<McpCallResult>;
   close(): Promise<void>;
@@ -126,6 +130,18 @@ function unwrap(response: RpcResponse): unknown {
   return response.result;
 }
 
+/** The method of a JSON-RPC notification (a message with no id), else null. */
+function notificationMethod(data: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  const message = asRecord(parsed);
+  return message.id === undefined && typeof message.method === 'string' ? message.method : null;
+}
+
 function authHeaderFailure(response: Response): never {
   throw new McpAuthRequired(
     resourceMetadataFromChallenge(response.headers.get('www-authenticate'))
@@ -134,6 +150,7 @@ function authHeaderFailure(response: Response): never {
 
 abstract class BaseSession implements McpRemoteSession {
   protected nextId = 1;
+  toolsListChanged = false;
   constructor(protected readonly options: OpenSessionOptions) {}
 
   protected get timeoutMs(): number {
@@ -145,11 +162,13 @@ abstract class BaseSession implements McpRemoteSession {
   abstract close(): Promise<void>;
 
   async initialize(): Promise<void> {
-    await this.request('initialize', {
+    const result = await this.request('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: { name: this.options.clientName ?? 'renkei', version: '1.0.0' },
     });
+    const tools = asRecord(asRecord(asRecord(result).capabilities).tools);
+    this.toolsListChanged = tools.listChanged === true;
     await this.notify('notifications/initialized');
   }
 
@@ -257,6 +276,35 @@ class StreamableHttpSession extends BaseSession {
     await response.body?.cancel().catch(() => undefined);
   }
 
+  /**
+   * The server-to-client stream (a GET on the same endpoint), calling
+   * `onNotification` for each notification until it ends or `signal`
+   * aborts. False when the server offers no such stream (405).
+   */
+  async listen(onNotification: (method: string) => void, signal: AbortSignal): Promise<boolean> {
+    const headers = this.headers();
+    delete headers['content-type'];
+    headers.accept = 'text/event-stream';
+    const response = await this.options.fetch(this.options.url, {
+      method: 'GET',
+      headers,
+      signal,
+    });
+    if (response.status === 401) authHeaderFailure(response);
+    if (response.status === 405 || response.status === 404) {
+      await response.body?.cancel().catch(() => undefined);
+      return false;
+    }
+    if (!response.ok || !response.body) {
+      throw new McpRemoteError(`The MCP server answered ${response.status} to the stream.`);
+    }
+    for await (const event of sseEvents(response.body)) {
+      const method = notificationMethod(event.data);
+      if (method) onNotification(method);
+    }
+    return true;
+  }
+
   async close(): Promise<void> {
     if (!this.sessionId) return;
     try {
@@ -278,6 +326,18 @@ class SseSession extends BaseSession {
   private ready!: Promise<string>;
   private readonly waiting = new Map<number, (value: RpcResponse) => void>();
   private streamError: Error | null = null;
+  /** Called for each notification the stream carries. */
+  onNotification: (method: string) => void = () => undefined;
+  /** Settles when the event stream has ended, however it ended. */
+  readonly ended: Promise<void>;
+  private markEnded: () => void = () => undefined;
+
+  constructor(options: OpenSessionOptions) {
+    super(options);
+    this.ended = new Promise<void>((resolve) => {
+      this.markEnded = resolve;
+    });
+  }
 
   async open(): Promise<void> {
     let response: Response;
@@ -320,6 +380,8 @@ class SseSession extends BaseSession {
                 this.waiting.get(parsed.id)?.(parsed);
                 this.waiting.delete(parsed.id);
               }
+              const method = notificationMethod(event.data);
+              if (method) this.onNotification(method);
             }
           }
           this.streamError = new McpRemoteError('The MCP event stream closed.');
@@ -328,6 +390,7 @@ class SseSession extends BaseSession {
         } finally {
           clearTimeout(timer);
           reject(this.streamError ?? new McpRemoteError('The MCP event stream closed.'));
+          this.markEnded();
         }
       })();
     });
@@ -404,6 +467,57 @@ export async function withMcpSession<T>(
   const session = await openMcpSession(options);
   try {
     return await run(session);
+  } finally {
+    await session.close();
+  }
+}
+
+export interface WatchOptions extends OpenSessionOptions {
+  signal: AbortSignal;
+  /** Called each time the server says its tool list changed. */
+  onChange: () => void;
+}
+
+/**
+ * Hold the server's notification stream and call `onChange` whenever it
+ * announces `notifications/tools/list_changed`. 'unsupported' when the
+ * server did not advertise `tools.listChanged` (or offers no stream), so
+ * the caller falls back to refreshing on a timer and on demand; 'ended'
+ * when the stream closed (reconnect, if still wanted). Never opens more
+ * than one connection.
+ */
+export async function watchToolListChanges(
+  options: WatchOptions
+): Promise<'unsupported' | 'ended'> {
+  const { signal, onChange } = options;
+  const onNotification = (method: string): void => {
+    if (method === TOOLS_LIST_CHANGED) onChange();
+  };
+  if (options.transport === 'sse') {
+    const session = new SseSession(options);
+    const stop = (): void => void session.close();
+    signal.addEventListener('abort', stop, { once: true });
+    try {
+      await session.open();
+      await session.initialize();
+      if (!session.toolsListChanged) return 'unsupported';
+      session.onNotification = onNotification;
+      await session.ended;
+      return 'ended';
+    } finally {
+      signal.removeEventListener('abort', stop);
+      await session.close();
+    }
+  }
+  const session = new StreamableHttpSession(options);
+  try {
+    await session.initialize();
+    if (!session.toolsListChanged) return 'unsupported';
+    const streamed = await session.listen(onNotification, signal);
+    return streamed ? 'ended' : 'unsupported';
+  } catch (error) {
+    if (signal.aborted) return 'ended';
+    throw error;
   } finally {
     await session.close();
   }

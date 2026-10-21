@@ -34,7 +34,7 @@ const refreshTokens = new Map();
 const sseSessions = new Map();
 const state = { registrations: 0, tokensIssued: 0, refreshes: 0, calls: [] };
 
-const TOOLS = [
+const BASE_TOOLS = [
   {
     name: 'lookup_policy',
     description: 'Look up an insurance policy by number.',
@@ -55,6 +55,25 @@ const TOOLS = [
     },
   },
 ];
+
+const CHANGED_TOOL = {
+  name: 'search_claims',
+  description: 'Search claims by free text.',
+  inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+  annotations: { readOnlyHint: true },
+};
+let TOOLS = [...BASE_TOOLS];
+/** Open Streamable HTTP GET streams, to push notifications to. */
+const listeners = new Set();
+
+function announceToolChange() {
+  const frame = `event: message\ndata: ${JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'notifications/tools/list_changed',
+  })}\n\n`;
+  for (const res of listeners) res.write(frame);
+  for (const session of sseSessions.values()) session.res.write(frame);
+}
 
 function json(res, status, body, headers = {}) {
   res.writeHead(status, { 'content-type': 'application/json', ...headers });
@@ -88,7 +107,7 @@ function rpc(message, who) {
     case 'initialize':
       return reply({
         protocolVersion: '2025-06-18',
-        capabilities: { tools: {} },
+        capabilities: { tools: { listChanged: true } },
         serverInfo: { name: 'e2e-mcp-stub', version: '1.0.0' },
       });
     case 'tools/list':
@@ -116,7 +135,14 @@ const server = createServer(async (req, res) => {
     state.tokensIssued = 0;
     state.refreshes = 0;
     state.calls = [];
+    TOOLS = [...BASE_TOOLS];
     return json(res, 200, { ok: true });
+  }
+  // A spec changes what the server offers; connected clients are told.
+  if (url.pathname === '/__tools' && req.method === 'POST') {
+    TOOLS = [...BASE_TOOLS, CHANGED_TOOL];
+    announceToolChange();
+    return json(res, 200, { tools: TOOLS.length });
   }
 
   // ── discovery ──────────────────────────────────────────────────────────
@@ -213,6 +239,14 @@ const server = createServer(async (req, res) => {
     if (req.method === 'DELETE') {
       res.writeHead(200);
       return res.end();
+    }
+    // The server-to-client stream, for notifications.
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+      res.write(': open\n\n');
+      listeners.add(res);
+      req.on('close', () => listeners.delete(res));
+      return;
     }
     if (req.method !== 'POST') {
       res.writeHead(405);

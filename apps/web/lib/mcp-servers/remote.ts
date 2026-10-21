@@ -32,8 +32,12 @@ import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 const NEEDS_CONNECT = new Set(['NO_GRANT', 'GRANT_REVOKED', 'REFRESH_FAILED', 'GRANT_UNREADABLE']);
 
 /** A fetch for one person on one server, with the delegate's refusals made legible. */
-export function mcpFetchFor(server: Pick<McpServer, 'id'>, subject: string): McpFetch {
-  const fetcher: AuthedFetch = grantFetch({ provider: mcpProvider(server.id), subject });
+export function mcpFetchFor(
+  server: Pick<McpServer, 'id'>,
+  subject: string,
+  options: { timeoutMs?: number } = {}
+): McpFetch {
+  const fetcher: AuthedFetch = grantFetch({ provider: mcpProvider(server.id), subject }, options);
   return async (url, init) => {
     const response = await fetcher(url, init);
     const refusal = delegateRefusal(response);

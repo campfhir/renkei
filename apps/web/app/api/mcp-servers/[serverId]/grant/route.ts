@@ -13,6 +13,7 @@ import { clearToolList, getServer, mcpProvider } from '@renkei/connector-mcp';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+import { stopWatching } from '@/lib/mcp-servers/watch';
 import { logger } from '@/lib/logger';
 
 export async function DELETE(
@@ -46,6 +47,7 @@ export async function DELETE(
     });
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
+  stopWatching(serverId, session.subject);
   await clearToolList(db, serverId, session.subject);
   const server = await getServer(db, serverId);
   recordAuditEvent({
