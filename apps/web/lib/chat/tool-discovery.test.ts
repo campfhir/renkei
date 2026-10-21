@@ -133,6 +133,44 @@ describe('findToolsTool', () => {
   });
 });
 
+describe('findToolsTool with remote MCP servers', () => {
+  const claimsLookup: DiscoverableTool = {
+    connector: 'mcp-acme',
+    server: { name: 'Acme Docs', context: 'Insurance claims and policy documents.' },
+    def: {
+      name: 'acme__lookup',
+      description: '[Acme Docs] Look something up.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+  };
+  const claimsFile: DiscoverableTool = {
+    ...claimsLookup,
+    def: { ...claimsLookup.def, name: 'acme__file', description: '[Acme Docs] File a thing.' },
+  };
+
+  it('names the server, not its capability key, in the description', () => {
+    const tool = findToolsTool([claimsLookup, claimsFile, jiraSearch]);
+    expect(tool?.def.description).toContain('Acme Docs (MCP server) (2)');
+    expect(tool?.def.description).not.toContain('mcp-acme');
+  });
+
+  it('is found by the server’s name, surfacing every one of its tools', async () => {
+    const tools = createLocalToolSet([findToolsTool([claimsLookup, claimsFile, jiraSearch])!]);
+    const result = await tools.run(FIND_TOOLS_NAME, { query: 'acme' }, context);
+    expect(result.meta.discoveredTools).toHaveLength(2);
+  });
+
+  it('is found by what the admin wrote about it, and says what it is for', async () => {
+    const tools = createLocalToolSet([findToolsTool([claimsLookup, claimsFile, jiraSearch])!]);
+    const result = await tools.run(FIND_TOOLS_NAME, { query: 'insurance policy' }, context);
+    expect(result.meta.discoveredTools).toHaveLength(2);
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('About Acme Docs: Insurance claims and policy documents.');
+    // The context appears once per server, not once per tool.
+    expect(text.match(/About Acme Docs/g)).toHaveLength(1);
+  });
+});
+
 describe('recallDiscoveredTools', () => {
   const catalog = [jiraSearch, jiraCreate, sharepointSearch, outlookFindMeetingTimes];
 

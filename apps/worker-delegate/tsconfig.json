@@ -49,6 +49,12 @@
       ],
       "@renkei/connector-fileshares": [
         "../../packages/connector-fileshares/src/index.ts"
+      ],
+      "@renkei/connector-mcp": [
+        "../../packages/connector-mcp/src/index.ts"
+      ],
+      "@renkei/connector-sandbox": [
+        "../../packages/connector-sandbox/src/index.ts"
       ]
     }
   },

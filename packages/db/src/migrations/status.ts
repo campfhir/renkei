@@ -182,6 +182,7 @@ export const EXPECTED_MIGRATIONS = [
   '156-sandbox-crawls',
   '157-chat-request-overhead',
   '158-chat-worktrees',
+  '159-mcp-servers',
 ];
 
 export interface MigrationStatus {

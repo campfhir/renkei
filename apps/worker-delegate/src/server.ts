@@ -78,6 +78,7 @@ import { verifySession, withKeyRequestScope, type KeyRequestScope } from '@renke
 import { AccessLog, outcomeOf, PERSISTED_OPS } from './access-log';
 import { callerMayRun } from './callers';
 import { sendError } from './errors';
+import { McpPreparer } from './mcp';
 import { Grants, type DelegateLogger, silentDelegateLogger } from './grants';
 import { Forwarder } from './forward';
 import { GitTickets, type GitDialer } from './git';
@@ -194,6 +195,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
   const { db } = deps;
   const logger = deps.logger ?? silentDelegateLogger;
   const grants = new Grants(db, deps.encryptionKey, logger, deps.fetchImpl);
+  const mcp = new McpPreparer(db, deps.encryptionKey, deps.fetchImpl);
   const forwarder = new Forwarder(db, grants, deps.fetchImpl);
   const git = new GitTickets(db, grants, deps.gitDialer);
   const access = new AccessLog(db, logger);
@@ -283,11 +285,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     'keys/status': async (body, response) => {
       const subject = str(body.subject);
       if (!subject) return sendError(response, 'bad_request');
-      const status = await delegationStatus(
-        db,
-        subject,
-        str(body.sessionId) || undefined
-      );
+      const status = await delegationStatus(db, subject, str(body.sessionId) || undefined);
       sendJson(response, 200, {
         ...status,
         enrolledAt: iso(status.enrolledAt),
@@ -499,6 +497,8 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     'grant/revoke': (body, response) => grants.revoke(body, response),
     'grant/delete': (body, response) => grants.deleteOp(body, response),
     'grant/git-ticket': (body, response) => git.issue(body, response),
+    // Discovery and client registration for a remote MCP server's connect flow.
+    'mcp/prepare': (body, response) => mcp.prepare(body, response),
   };
 
   const scopeFor = (context: CallContext): KeyRequestScope => ({

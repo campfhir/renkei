@@ -140,9 +140,7 @@ async function resolveJsmGrant(
   };
 }
 
-const handler = async (
-  request: NextRequest
-): Promise<Response> => {
+const handler = async (request: NextRequest): Promise<Response> => {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -263,7 +261,8 @@ const handler = async (
       // the tool catalog lists it for them. Leaving it out here served that
       // caller the connect-Jira stub instead, and a chat — which offers only
       // what the catalog AND this endpoint both return — silently lost it.
-      availability.webSearchAvailable;
+      availability.webSearchAvailable ||
+      availability.mcpServers.length > 0;
 
     if (grants.length === 0 && !anyOtherConnector) {
       // Nothing connected at all — serve only the jira_connect pointer.

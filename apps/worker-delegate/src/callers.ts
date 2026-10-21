@@ -49,6 +49,7 @@ export const WEB_ONLY_OPS: ReadonlySet<string> = new Set([
   'grant/revoke',
   'grant/commit',
   'oauth/exchange',
+  'mcp/prepare',
   'grant/git-ticket',
 ]);
 
