@@ -1,8 +1,11 @@
 /**
  * The Salesforce branch of the shared connect callback: the code is traded
- * with the PKCE verifier the authorize step stored, a token minted for any
- * org but the configured one is refused before anything is stored, and the
- * grant is keyed `<orgId>/<userId>` (a sandbox keeps production's user ids).
+ * with the PKCE verifier the authorize step stored, at the token endpoint of
+ * the connector (org) the flow was started for; a token minted for any org
+ * but that connector's is refused before anything is stored, and the grant
+ * is keyed `<orgId>/<userId>` (a sandbox keeps production's user ids) with
+ * the connector's key on its metadata. An earlier connection to the same
+ * connector as someone else is revoked.
  * Nothing here reaches Salesforce or the delegate: both are stubbed.
  */
 
@@ -20,7 +23,8 @@ jest.mock('@/lib/connect-flow-binding', () => ({
 jest.mock('@/lib/get-origin', () => ({
   getOrigin: async () => ({ ok: true, val: 'https://renkei.example' }),
 }));
-jest.mock('@/lib/salesforce-app', () => ({ getSalesforceApp: jest.fn() }));
+jest.mock('@/lib/salesforce-app', () => ({ getSalesforceConnector: jest.fn() }));
+jest.mock('@/lib/salesforce-grants', () => ({ listSalesforceConnections: jest.fn() }));
 jest.mock('@/lib/mcp-tools/common', () => ({ cacheUserDisplayName: jest.fn() }));
 jest.mock('@/lib/mcp-tools/tool-catalog', () => ({ invalidateToolCatalogCache: jest.fn() }));
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
@@ -35,16 +39,19 @@ const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
 const delegate = jest.requireMock<{ delegateGrants: jest.Mock; grantFetch: jest.Mock }>(
   '@renkei/delegate-client'
 );
-const { getSalesforceApp: mockApp } = jest.requireMock<{ getSalesforceApp: jest.Mock }>(
-  '@/lib/salesforce-app'
-);
+const { getSalesforceConnector: mockConnector } = jest.requireMock<{
+  getSalesforceConnector: jest.Mock;
+}>('@/lib/salesforce-app');
+const { listSalesforceConnections: mockConnections } = jest.requireMock<{
+  listSalesforceConnections: jest.Mock;
+}>('@/lib/salesforce-grants');
 
 const SUBJECT = 'ada@example.com';
 const STATE = '0b6c7d8e-1f2a-4b3c-8d4e-5f6a7b8c9d0e';
 const ORG = '00D000000000062EAA';
 const USER = '005000000000001AAA';
 
-function stubDb(codeVerifier: string | null) {
+function stubDb(codeVerifier: string | null, connectorKey: string | null = 'uat') {
   const db = {
     selectFrom: () => {
       const chain = {
@@ -56,6 +63,7 @@ function stubDb(codeVerifier: string | null) {
           provider: 'salesforce',
           scopes: 'sf-records-read sf-reports',
           code_verifier: codeVerifier,
+          connector_key: connectorKey,
         }),
       };
       return chain;
@@ -80,7 +88,8 @@ function stubDelegate(instanceUrl: string) {
     },
   });
   const commit = jest.fn().mockResolvedValue({ ok: true, val: { accountId: `${ORG}/${USER}` } });
-  delegate.delegateGrants.mockReturnValue({ exchange, commit });
+  const revoke = jest.fn().mockResolvedValue({ ok: true, val: undefined });
+  delegate.delegateGrants.mockReturnValue({ exchange, commit, revoke });
   delegate.grantFetch.mockReturnValue(
     async () =>
       new Response(JSON.stringify({ name: 'Ada Admin', preferred_username: 'ada@acme.org' }), {
@@ -88,7 +97,7 @@ function stubDelegate(instanceUrl: string) {
         headers: { 'content-type': 'application/json' },
       })
   );
-  return { exchange, commit };
+  return { exchange, commit, revoke };
 }
 
 function callback(): NextRequest {
@@ -98,19 +107,32 @@ function callback(): NextRequest {
 beforeEach(() => {
   jest.clearAllMocks();
   mockGetSession.mockResolvedValue({ id: 's', subject: SUBJECT, roles: [], expiresAt: new Date() });
-  mockApp.mockResolvedValue({
-    clientId: 'sf-client',
-    clientSecret: 'sf-secret',
-    myDomain: 'https://acme.my.salesforce.com',
-    scopes: 'sf-records-read sf-records-write sf-reports',
-    redirectUri: 'https://renkei.example/api/oauth/callback',
-  });
+  mockConnections.mockResolvedValue([]);
+  mockConnector.mockImplementation(async (_origin: string, key: string) =>
+    key === 'uat'
+      ? {
+          key: 'uat',
+          name: 'UAT',
+          myDomain: 'https://acme--uat.sandbox.my.salesforce.com',
+          host: 'acme--uat.sandbox.my.salesforce.com',
+          sandbox: true,
+          enabled: true,
+          clientId: 'sf-uat-client',
+          clientSecret: 'sf-uat-secret',
+          scopes: ['sf-records-read', 'sf-records-write', 'sf-reports'],
+          ceiling: ['sf-records-read', 'sf-records-write', 'sf-reports'],
+          redirectUri: 'https://renkei.example/api/oauth/callback',
+        }
+      : null
+  );
 });
 
 describe('GET /api/oauth/callback — Salesforce', () => {
   it('exchanges with the PKCE verifier and stores the grant keyed by org and user', async () => {
     stubDb('the-verifier');
-    const { exchange, commit } = stubDelegate('https://acme.my.salesforce.com');
+    const { exchange, commit, revoke } = stubDelegate(
+      'https://acme--uat.sandbox.my.salesforce.com'
+    );
 
     const response = await GET(callback());
 
@@ -118,6 +140,7 @@ describe('GET /api/oauth/callback — Salesforce', () => {
     expect(response.headers.get('location')).toBe('https://renkei.example/connectors');
     expect(exchange).toHaveBeenCalledWith({
       provider: 'salesforce',
+      org: 'uat',
       form: {
         grant_type: 'authorization_code',
         code: 'the-code',
@@ -133,20 +156,52 @@ describe('GET /api/oauth/callback — Salesforce', () => {
         subject: SUBJECT,
         accountId: `${ORG}/${USER}`,
         displayName: 'Ada Admin',
+        clientId: 'sf-uat-client',
         requestedScopes: ['sf-records-read', 'sf-reports'],
         metadata: {
           orgId: ORG,
           userId: USER,
-          instanceUrl: 'https://acme.my.salesforce.com',
+          instanceUrl: 'https://acme--uat.sandbox.my.salesforce.com',
           username: 'ada@acme.org',
+          connector: 'uat',
         },
       })
     );
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
+  it('revokes an earlier connection to the same connector as someone else', async () => {
+    stubDb('the-verifier');
+    const { revoke } = stubDelegate('https://acme--uat.sandbox.my.salesforce.com');
+    mockConnections.mockResolvedValue([
+      { accountId: `${ORG}/005000000000002AAA`, connector: 'uat' },
+      { accountId: `${ORG}/${USER}`, connector: 'uat' },
+    ]);
+
+    const response = await GET(callback());
+
+    expect(response.status).toBe(307);
+    expect(revoke).toHaveBeenCalledTimes(1);
+    expect(revoke).toHaveBeenCalledWith({
+      provider: 'salesforce',
+      accountId: `${ORG}/005000000000002AAA`,
+    });
+  });
+
+  it('refuses a flow for a connector that is no longer set up', async () => {
+    stubDb('the-verifier', 'gone');
+    const { exchange } = stubDelegate('https://acme--uat.sandbox.my.salesforce.com');
+
+    const response = await GET(callback());
+
+    expect(response.status).toBe(503);
+    expect(exchange).not.toHaveBeenCalled();
   });
 
   it('refuses a token from another org and stores nothing', async () => {
     stubDb('the-verifier');
-    const { commit } = stubDelegate('https://someone-else.my.salesforce.com');
+    // Production's token on the UAT connector's flow: the wrong org.
+    const { commit } = stubDelegate('https://acme.my.salesforce.com');
 
     const response = await GET(callback());
 
@@ -159,7 +214,7 @@ describe('GET /api/oauth/callback — Salesforce', () => {
 
   it('refuses a pending flow with no PKCE verifier before any exchange', async () => {
     stubDb(null);
-    const { exchange } = stubDelegate('https://acme.my.salesforce.com');
+    const { exchange } = stubDelegate('https://acme--uat.sandbox.my.salesforce.com');
 
     const response = await GET(callback());
 

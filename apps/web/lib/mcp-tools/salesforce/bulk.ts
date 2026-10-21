@@ -206,6 +206,7 @@ export function registerBulkTools(
         confirmTool: 'salesforce_update_records_confirm',
         confirmLabel: `Change ${resolved.length} record${resolved.length === 1 ? '' : 's'}`,
         confirmArgs: {
+          org: access.connector,
           object: describe.name,
           updates: resolved.map((entry) => ({ id: entry.id, fields: entry.values })),
         },
@@ -316,7 +317,11 @@ export function registerBulkTools(
         ],
         confirmTool: 'salesforce_delete_records_confirm',
         confirmLabel: `Delete ${found.length}`,
-        confirmArgs: { object: describe.name, ids },
+        confirmArgs: {
+          org: access.connector,
+          object: describe.name,
+          ids,
+        },
       });
     }
   );
@@ -413,6 +418,7 @@ export function registerBulkTools(
         confirmTool: 'salesforce_change_owner_confirm',
         confirmLabel: `Reassign ${found.length}`,
         confirmArgs: {
+          org: access.connector,
           object: describe.name,
           ids: found.map((entry) => entry.id),
           ownerId: owner.id,
@@ -555,6 +561,7 @@ export function registerBulkTools(
         confirmTool: 'salesforce_create_record_tree_confirm',
         confirmLabel: `Create ${total + 1} records`,
         confirmArgs: {
+          org: access.connector,
           object: describe.name,
           fields: parent.values,
           children: children.map((group) => ({

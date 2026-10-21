@@ -697,39 +697,58 @@ describeDb('worker-delegate', () => {
     expect((await op('grant/describe', grant)).status).toBe(404);
   });
 
-  it("keeps a Salesforce token to the org's own My Domain: exchange, identity, commit, proxy, revoke", async () => {
+  it("keeps a Salesforce token to its own connector's org: exchange, identity, commit, proxy, revoke", async () => {
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
     if (!key.ok) throw new Error('bad key');
+    const PROD = 'acme-e2e.my.salesforce.com';
+    const UAT = 'acme-e2e--uat.sandbox.my.salesforce.com';
     const configured = await setConnectorConfig(
       SALESFORCE,
       {
         enabled: true,
-        settings: { clientId: 'sf-client', myDomain: 'https://acme-e2e.my.salesforce.com' },
-        secrets: { clientSecret: 'sf-secret' },
+        // Two Salesforce connectors, one per org, each its own app.
+        settings: {
+          orgs: [
+            { key: 'production', name: 'Production', myDomain: PROD, clientId: 'prod-client' },
+            { key: 'uat', name: 'UAT', myDomain: UAT, sandbox: true, clientId: 'uat-client' },
+          ],
+        },
+        secrets: { 'clientSecret:production': 'prod-secret', 'clientSecret:uat': 'uat-secret' },
       },
       key.val
     );
     expect(configured.ok).toBe(true);
     invalidateConnectorConfigCache(SALESFORCE);
+    const proxy = (grant: Record<string, unknown>, target: string) =>
+      fetch(`${base}/v1/api`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${API_KEY}`,
+          'x-delegate-grant': JSON.stringify(grant),
+          'x-delegate-url': target,
+          'x-delegate-method': 'GET',
+        },
+      });
     try {
-      // The code is traded at the org's own token endpoint, and the answer's
-      // instance and identity URLs are relayed — never the tokens.
+      // The code is traded at the sandbox's own token endpoint, with the
+      // sandbox's own app; the answer's instance and identity URLs are
+      // relayed — never the tokens.
       scriptedAnswers.push(
         () =>
           new Response(
             JSON.stringify({
-              access_token: '00D!sf_access',
-              refresh_token: 'sf_refresh',
-              instance_url: 'https://acme-e2e.my.salesforce.com',
-              id: 'https://login.salesforce.com/id/00D000000000062EAA/005000000000001AAA',
+              access_token: '00D!uat_access',
+              refresh_token: 'uat_refresh',
+              instance_url: `https://${UAT}`,
+              id: 'https://test.salesforce.com/id/00D000000000063EAA/005000000000001AAA',
               issued_at: '1760000000000',
-              token_type: 'Bearer',
             }),
             { status: 200, headers: { 'content-type': 'application/json' } }
           )
       );
       const exchanged = await op('oauth/exchange', {
         provider: SALESFORCE,
+        org: 'uat',
         form: {
           code: 'the-code',
           redirect_uri: 'https://renkei.example/api/oauth/callback',
@@ -738,28 +757,29 @@ describeDb('worker-delegate', () => {
       });
       expect(exchanged.status).toBe(200);
       const tokenCall = upstreamCalls.at(-1);
-      expect(tokenCall?.url).toBe('https://acme-e2e.my.salesforce.com/services/oauth2/token');
+      expect(tokenCall?.url).toBe(`https://${UAT}/services/oauth2/token`);
       expect(tokenCall?.body).toContain('code_verifier=v');
-      expect(tokenCall?.body).toContain('client_secret=sf-secret');
-      expect(exchanged.json.instanceUrl).toBe('https://acme-e2e.my.salesforce.com');
-      expect(exchanged.json.identityUrl).toMatch(/\/id\/00D000000000062EAA\/005000000000001AAA$/);
-      expect(JSON.stringify(exchanged.json)).not.toContain('sf_access');
+      expect(tokenCall?.body).toContain('client_id=uat-client');
+      expect(tokenCall?.body).toContain('client_secret=uat-secret');
+      expect(exchanged.json.instanceUrl).toBe(`https://${UAT}`);
+      expect(JSON.stringify(exchanged.json)).not.toContain('uat_access');
       const handle = String(exchanged.json.handle);
 
-      // The identity call rides the pending handle to the org's host.
-      const identity = await fetch(`${base}/v1/api`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${API_KEY}`,
-          'x-delegate-grant': JSON.stringify({ provider: SALESFORCE, pending: handle }),
-          'x-delegate-url': 'https://acme-e2e.my.salesforce.com/services/oauth2/userinfo',
-          'x-delegate-method': 'GET',
-        },
-      });
+      // The identity call rides the pending handle to the sandbox — and
+      // only the sandbox, though production is registered too.
+      const identity = await proxy(
+        { provider: SALESFORCE, pending: handle },
+        `https://${UAT}/services/oauth2/userinfo`
+      );
       expect(identity.status).toBe(200);
-      expect(upstreamCalls.at(-1)?.authorization).toBe('Bearer 00D!sf_access');
+      expect(upstreamCalls.at(-1)?.authorization).toBe('Bearer 00D!uat_access');
+      const crossed = await proxy(
+        { provider: SALESFORCE, pending: handle },
+        `https://${PROD}/services/oauth2/userinfo`
+      );
+      expect(crossed.status).toBe(403);
 
-      const accountId = '00D000000000062EAA/005000000000001AAA';
+      const accountId = '00D000000000063EAA/005000000000001AAA';
       const committed = await op('grant/commit', {
         provider: SALESFORCE,
         handle,
@@ -767,49 +787,39 @@ describeDb('worker-delegate', () => {
         accountId,
         displayName: 'Ada Admin',
         requestedScopes: ['sf-records-read'],
-        metadata: { orgId: '00D000000000062EAA', userId: '005000000000001AAA' },
+        metadata: {
+          orgId: '00D000000000063EAA',
+          userId: '005000000000001AAA',
+          instanceUrl: `https://${UAT}`,
+          connector: 'uat',
+        },
       });
       expect(committed.status).toBe(200);
 
-      const grant = { provider: SALESFORCE, subject: owner };
-      const proxied = await fetch(`${base}/v1/api`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${API_KEY}`,
-          'x-delegate-grant': JSON.stringify(grant),
-          'x-delegate-url': 'https://acme-e2e.my.salesforce.com/services/data/v68.0/sobjects',
-          'x-delegate-method': 'GET',
-        },
-      });
+      const grant = { provider: SALESFORCE, accountId };
+      const proxied = await proxy(grant, `https://${UAT}/services/data/v68.0/sobjects`);
       expect(proxied.status).toBe(200);
-      expect(upstreamCalls.at(-1)?.authorization).toBe('Bearer 00D!sf_access');
+      expect(upstreamCalls.at(-1)?.authorization).toBe('Bearer 00D!uat_access');
 
-      // Another org — even another Salesforce My Domain — never gets the token.
+      // Another org — production included — never gets the sandbox's token.
       for (const elsewhere of [
+        `https://${PROD}/services/data/v68.0/sobjects`,
         'https://other-org.my.salesforce.com/services/data/v68.0/sobjects',
-        'https://acme-e2e.my.salesforce.com.evil.example/x',
+        `https://${UAT}.evil.example/x`,
         'https://login.salesforce.com/services/oauth2/userinfo',
       ]) {
-        const refused = await fetch(`${base}/v1/api`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${API_KEY}`,
-            'x-delegate-grant': JSON.stringify(grant),
-            'x-delegate-url': elsewhere,
-            'x-delegate-method': 'GET',
-          },
-        });
+        const refused = await proxy(grant, elsewhere);
         expect(refused.status).toBe(403);
         expect(refused.headers.get('x-delegate-error')).toBe('host_not_allowed');
       }
 
-      // Disconnect revokes the refresh token at the org, then deletes the grant.
+      // Disconnect revokes the refresh token at the sandbox, then deletes the grant.
       const revoked = await op('grant/revoke', { provider: SALESFORCE, accountId });
       expect(revoked.status).toBe(200);
       expect(revoked.json.revokedAtProvider).toBe(true);
       const revokeCall = upstreamCalls.at(-1);
-      expect(revokeCall?.url).toBe('https://acme-e2e.my.salesforce.com/services/oauth2/revoke');
-      expect(revokeCall?.body).toBe('token=sf_refresh');
+      expect(revokeCall?.url).toBe(`https://${UAT}/services/oauth2/revoke`);
+      expect(revokeCall?.body).toBe('token=uat_refresh');
       expect((await op('grant/describe', grant)).status).toBe(404);
     } finally {
       scriptedAnswers.length = 0;

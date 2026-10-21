@@ -69,6 +69,11 @@ jest.mock('@renkei/db', () => ({
             const row = grants[provider];
             return row ? { provider_account_id: 'acct-1', ...row } : undefined;
           },
+          // Every grant of a provider (Salesforce: one per connected org).
+          execute: async () => {
+            const row = grants[provider];
+            return row ? [{ provider_account_id: 'acct-1', ...row }] : [];
+          },
         };
         return chain;
       },

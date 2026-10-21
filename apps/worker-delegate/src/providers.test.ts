@@ -5,7 +5,7 @@
  */
 
 import type { ConnectorConfig } from '@renkei/connector-config';
-import { GITHUB, SALESFORCE } from '@renkei/provider-grants';
+import { GITHUB, SALESFORCE, type ProviderGrant } from '@renkei/provider-grants';
 import {
   hostAllowed,
   providerSpec,
@@ -56,37 +56,106 @@ describe('hostAllowed', () => {
   });
 });
 
-describe('Salesforce: hosts and token endpoint from the app registration', () => {
+describe('Salesforce: one host per org, from the app registration', () => {
   const spec = providerSpec(SALESFORCE);
-  if (!spec?.configHosts) throw new Error('salesforce spec missing');
-  const config = (myDomain: string): ConnectorConfig => ({
+  if (!spec?.hostsFor) throw new Error('salesforce spec missing');
+  const config: ConnectorConfig = {
     connector: SALESFORCE,
     enabled: true,
-    settings: { clientId: 'c', myDomain },
-    secrets: { clientSecret: 's' },
+    settings: {
+      orgs: [
+        {
+          key: 'production',
+          name: 'Production',
+          myDomain: 'acme.my.salesforce.com',
+          clientId: 'prod-key',
+        },
+        {
+          key: 'uat',
+          name: 'UAT',
+          myDomain: 'acme--uat.sandbox.my.salesforce.com',
+          sandbox: true,
+          clientId: 'uat-key',
+        },
+        {
+          key: 'old',
+          name: 'Old',
+          myDomain: 'acme--old.sandbox.my.salesforce.com',
+          clientId: 'old-key',
+          enabled: false,
+        },
+      ],
+    },
+    secrets: { 'clientSecret:production': 'prod-secret', 'clientSecret:uat': 'uat-secret' },
+  };
+  const grantIn = (instanceUrl: string): ProviderGrant => ({
+    provider: SALESFORCE,
+    accountId: '00D/005',
+    clientId: 'prod-key',
+    displayName: 'Ada',
+    accessToken: 'a',
+    refreshToken: 'r',
+    expiresAt: new Date().toISOString(),
+    requestedScopes: [],
+    grantedScopes: null,
+    metadata: { instanceUrl },
+    subject: 'ada',
   });
 
-  it("allows exactly the org's My Domain host, never a suffix", () => {
-    const hosts = spec.configHosts?.(config('acme.my.salesforce.com')) ?? [];
-    expect(hosts).toEqual(['acme.my.salesforce.com']);
-    const allowed = (url: string): boolean => hostAllowed(spec, new URL(url), SALESFORCE, hosts);
-    expect(allowed('https://acme.my.salesforce.com/services/data/v68.0/sobjects')).toBe(true);
-    expect(allowed('https://other.my.salesforce.com/services/data')).toBe(false);
-    expect(allowed('https://x.acme.my.salesforce.com/')).toBe(false);
-    expect(allowed('http://acme.my.salesforce.com/')).toBe(false);
-    expect(allowed('https://acme.my.salesforce.com:8443/')).toBe(false);
+  it("allows a grant's own org host alone, never another org's", () => {
+    const uatHosts =
+      spec.hostsFor?.(config, grantIn('https://acme--uat.sandbox.my.salesforce.com'), null) ?? [];
+    expect(uatHosts).toEqual(['acme--uat.sandbox.my.salesforce.com']);
+    const allowed = (url: string): boolean => hostAllowed(spec, new URL(url), SALESFORCE, uatHosts);
+    expect(
+      allowed('https://acme--uat.sandbox.my.salesforce.com/services/data/v68.0/sobjects')
+    ).toBe(true);
+    // Production is registered too, but this token is the sandbox's.
+    expect(allowed('https://acme.my.salesforce.com/services/data/v68.0/sobjects')).toBe(false);
+    expect(allowed('https://other.my.salesforce.com/')).toBe(false);
+    expect(allowed('http://acme--uat.sandbox.my.salesforce.com/')).toBe(false);
+    expect(allowed('https://acme--uat.sandbox.my.salesforce.com:8443/')).toBe(false);
   });
 
-  it('allows nothing when no My Domain is set, or it is not one', () => {
-    expect(spec.configHosts?.(null)).toEqual([]);
-    expect(spec.configHosts?.(config('login.salesforce.com'))).toEqual([]);
+  it('allows nothing for a grant or pending token from an org that is not registered', () => {
+    expect(spec.hostsFor?.(config, grantIn('https://removed.my.salesforce.com'), null)).toEqual([]);
+    expect(spec.hostsFor?.(config, null, 'https://stranger.my.salesforce.com')).toEqual([]);
+    expect(spec.hostsFor?.(config, null, 'https://acme.my.salesforce.com')).toEqual([
+      'acme.my.salesforce.com',
+    ]);
+    expect(spec.hostsFor?.(null, null, null)).toEqual([]);
   });
 
-  it("trades codes at the org's own token endpoint", () => {
-    expect(tokenEndpointFor(spec, config('https://acme.my.salesforce.com/'))).toBe(
+  it("trades codes at the chosen org's endpoint with that org's own app", () => {
+    expect(tokenEndpointFor(spec, config, 'uat')).toBe(
+      'https://acme--uat.sandbox.my.salesforce.com/services/oauth2/token'
+    );
+    expect(tokenEndpointFor(spec, config, 'production')).toBe(
       'https://acme.my.salesforce.com/services/oauth2/token'
     );
-    expect(tokenEndpointFor(spec, null)).toBeNull();
+    // No connector named, or one switched off: no endpoint.
+    expect(tokenEndpointFor(spec, config)).toBeNull();
+    expect(tokenEndpointFor(spec, config, 'old')).toBeNull();
+    expect(spec.credentialsFor?.(config, 'uat')).toEqual({
+      clientId: 'uat-key',
+      clientSecret: 'uat-secret',
+    });
+    expect(spec.credentialsFor?.(config, 'production')).toEqual({
+      clientId: 'prod-key',
+      clientSecret: 'prod-secret',
+    });
+  });
+
+  it('refreshes at the endpoint of the org the grant belongs to', () => {
+    expect(
+      spec.adapter(config, grantIn('https://acme--uat.sandbox.my.salesforce.com'))
+    ).not.toBeNull();
+    expect(spec.adapter(config, grantIn('https://removed.my.salesforce.com'))).toBeNull();
+    // A switched-off connector neither refreshes nor carries its grants' tokens.
+    expect(spec.adapter(config, grantIn('https://acme--old.sandbox.my.salesforce.com'))).toBeNull();
+    expect(
+      spec.hostsFor?.(config, grantIn('https://acme--old.sandbox.my.salesforce.com'), null)
+    ).toEqual([]);
   });
 });
 

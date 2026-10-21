@@ -45,7 +45,7 @@ import {
   hostAllowed,
   providerConfig,
   providerSpec,
-  salesforceOrigin,
+  salesforceOrgOfGrant,
   tokenEndpointFor,
   type ProviderSpec,
 } from './providers';
@@ -157,6 +157,8 @@ export function statusForGrantError(type: GrantError): number {
 
 interface Pending {
   provider: string;
+  /** The API host the token answer named (Salesforce's instance_url); null elsewhere. */
+  instanceUrl: string | null;
   accessToken: string;
   refreshToken: string;
   expiresAt: Date;
@@ -298,13 +300,11 @@ export class Grants {
     } catch {
       return fail('bad_request', 'x-delegate-url is not a URL');
     }
-    // A provider on the customer's own host (Salesforce) names it in its app
-    // registration; read fresh (behind the config cache) so a changed My
-    // Domain takes effect without a restart.
-    const extraHosts = spec.configHosts
-      ? spec.configHosts(await providerConfig(spec, this.encryptionKey))
-      : [];
-    if (!hostAllowed(spec, url, provider, extraHosts))
+    // A provider on the customer's own hosts (Salesforce: one My Domain per
+    // org) can only say which host is allowed once it knows whose token
+    // this is, so its check waits for the grant below; everyone else's is
+    // here, before anything is opened.
+    if (!spec.hostsFor && !hostAllowed(spec, url, provider))
       return fail('host_not_allowed', `${url.hostname} is not ${provider}`);
 
     const body = await readBody(request, MAX_REQUEST_BYTES);
@@ -313,16 +313,35 @@ export class Grants {
     // The token: a pending exchange's, or the stored grant's (refreshed if due).
     let token: string;
     let retryWithRefresh = false;
+    let extraHosts: string[] = [];
     if (pendingHandle) {
       const pending = this.takePending(pendingHandle, provider, false);
       if (!pending) return fail('NO_PENDING');
       token = pending.accessToken;
+      if (spec.hostsFor) {
+        extraHosts = spec.hostsFor(
+          await providerConfig(spec, this.encryptionKey),
+          null,
+          pending.instanceUrl
+        );
+      }
     } else {
       const access = await this.access(provider, { subject, accountId });
       if (!access.ok) return fail(access.error);
       token = access.grant.accessToken;
       retryWithRefresh = Boolean(access.grant.refreshToken);
+      if (spec.hostsFor) {
+        // The org the grant was minted in, read fresh (behind the config
+        // cache) so a removed org stops at once.
+        extraHosts = spec.hostsFor(
+          await providerConfig(spec, this.encryptionKey),
+          access.grant,
+          null
+        );
+      }
     }
+    if (spec.hostsFor && !hostAllowed(spec, url, provider, extraHosts))
+      return fail('host_not_allowed', `${url.hostname} is not this ${provider} grant's org`);
 
     const send = async (
       bearer: string,
@@ -448,9 +467,19 @@ export class Grants {
       tokens = answer.val;
     } else {
       const config = await providerConfig(spec, this.encryptionKey);
-      const clientId = clientIdOf(config);
-      const clientSecret = clientSecretOf(config);
-      const endpoint = tokenEndpointFor(spec, config, str(body.directoryTenantId) || undefined);
+      // Salesforce names which of its registered orgs the code is for; its
+      // token endpoint and (when the org has its own app) credentials follow.
+      const org = str(body.org) || undefined;
+      const credentials = spec.credentialsFor?.(config, org) ?? {
+        clientId: clientIdOf(config),
+        clientSecret: clientSecretOf(config),
+      };
+      const { clientId, clientSecret } = credentials;
+      const endpoint = tokenEndpointFor(
+        spec,
+        config,
+        str(body.directoryTenantId) || org || undefined
+      );
       if (!clientId || !clientSecret || !endpoint) return fail('NOT_CONFIGURED');
       const headers: Record<string, string> = {
         'content-type': 'application/x-www-form-urlencoded',
@@ -492,6 +521,7 @@ export class Grants {
     this.sweepPending();
     this.pending.set(handle, {
       provider,
+      instanceUrl: typeof tokens.instance_url === 'string' ? tokens.instance_url : null,
       accessToken: refreshed.accessToken,
       refreshToken: refreshed.refreshToken,
       expiresAt: refreshed.expiresAt,
@@ -609,7 +639,8 @@ export class Grants {
             revokedAtProvider = answer.ok;
           }
         } else if (provider === SALESFORCE) {
-          const origin = salesforceOrigin(await providerConfig(spec, this.encryptionKey));
+          const org = salesforceOrgOfGrant(await providerConfig(spec, this.encryptionKey), grant);
+          const origin = org?.myDomain;
           if (origin) {
             // Revoking the refresh token ends every access token minted from it.
             const answer = await this.fetchImpl(salesforceRevokeEndpoint(origin), {

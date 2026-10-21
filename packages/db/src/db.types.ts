@@ -1140,6 +1140,7 @@ export interface PrSubscriptions {
 
 export interface PendingOidcSignin {
   code_verifier: string | null;
+  connector_key: string | null;
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
   id: string;

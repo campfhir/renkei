@@ -234,6 +234,8 @@ export class DelegateGrants {
     provider: string;
     form: Record<string, string>;
     directoryTenantId?: string;
+    /** Which of a provider's registered connectors the code is for (Salesforce: the org). */
+    org?: string;
   }): Promise<Result<ExchangeOutcome, GrantOpError>> {
     const answer = await this.transport.call('oauth/exchange', { ...input });
     if (!answer.ok) return err(grantOpError(answer.err.type), { message: answer.err.message });

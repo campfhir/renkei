@@ -521,14 +521,14 @@ permissions still decide every call:
 
 ### Orgs: production and its sandboxes
 
-An admin builds in a sandbox and promotes to production, so the admin connector holds more than
-one org. A `salesforce_admin_orgs` table (the `mirth_instances` shape, but OAuth rather than
-password): name, My Domain URL, whether it is production, and optionally its own consumer key and
-secret (a sandbox refreshed from production usually carries production's ECA, so the default is
-"same as production"). The org admin registers sandboxes on the admin form; each person connects
-each org separately on the card, and each connection is its own grant (account id
+An admin builds in a sandbox and promotes to production, so the admin connector covers more than
+one org — the same way the CRM connector does (as built, below): **one connector per org, all of
+the same type**, each self-contained — its own name, My Domain, consumer key and secret, switch and
+capability ceiling, nothing inherited from production (a refreshed sandbox that carries
+production's ECA is registered with the same key and secret, typed in again). Each person connects
+each org separately on its own card, and each connection is its own grant (account id
 `<orgId>/<userId>`, see Auth). Every `salesforce_admin_*` tool takes the `org` that
-`salesforce_admin_list_orgs` reports, by name or id.
+`salesforce_admin_list_orgs` reports, by name or key.
 
 **Production writes are an org setting**: _off_ (sandboxes only — the safe default),
 _change requests_ (the rule below), with no third option. Sandbox writes always use change
@@ -873,10 +873,29 @@ differs from the text above:
   refresh-and-retry on a 401 covers an org whose timeout is shorter still. No form field.
 - **The API budget is a fixed 80%** for read tools, not an org setting yet. `check_access`
   answers over budget, since it is how a person sees the usage.
-- **Host pinning reads the app registration, not the grant.** The CRM connector has one org, so
-  the delegate pins its token to the configured My Domain (`configHosts`), which also covers the
-  callback's identity call before any grant exists. The admin connector's sandboxes will need
-  the per-grant form described under "Host pinning is per grant".
+- **One connector per org, of the same type.** An organization adds a Salesforce connector for
+  each org people work in — production and each sandbox — on `/admin/connectors/salesforce`, a
+  list kept as `settings.orgs` on the `salesforce` config row (`orgsFromSettings`,
+  `validateOrg` in `packages/connector-salesforce/src/orgs.ts`, at most 20). Each is
+  self-contained: a name (its key is derived from it and kept on rename), its My Domain, its own
+  consumer key and secret (sealed as `clientSecret:<key>`), its own switch and ceiling. No two
+  share a name or a host. The connectors page shows one card per connector (a Sandbox badge on
+  sandboxes); connect and disconnect are `/api/salesforce/<key>/authorize|grant`, the pending
+  row carries `connector_key` (migration 158), and the callback trades the code at that
+  connector's token endpoint with its credentials, refuses a token for any other org, stores
+  `metadata.connector`, and revokes the person's earlier grant to the same connector as someone
+  else. Connections to a connector an admin removed stay revocable from a "removed orgs" card.
+- **Host pinning is per grant**, as designed: `ProviderSpec.hostsFor(config, grant, pending)`
+  returns the one host of the grant's connector (or, before the commit, of the pending exchange's
+  connector) and nothing when that connector is switched off; the delegate checks it after
+  resolving the grant, so a sandbox token never reaches production's host or the reverse.
+- **One tool family, an `org` argument.** Every `salesforce_*` tool takes an optional `org` (a
+  connector's name or key); `salesforce_list_orgs` lists them and the person's connection to
+  each. With no `org`, a person connected to one org gets it, connected to several gets the one
+  production org, and otherwise the tool refuses and names the orgs — never a guess about where
+  a write lands. Registration takes the union of a person's connections' capabilities; each call
+  is checked against the capabilities of the connection it runs on. Preview + confirm pairs carry
+  the org in the confirm's arguments.
 - **`salesforce_create_record_tree` is a preview + confirm pair**, as the confirm table says for
   multi-record writes; the tools table above names it as one tool.
 - **Files are not built yet** (`salesforce_download_file` / `salesforce_attach_file`), nor the

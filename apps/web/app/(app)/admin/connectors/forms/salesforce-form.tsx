@@ -19,80 +19,43 @@ import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 
 /* ----------------------------------------------------------------------- */
 
-interface SalesforceConfig {
-  configured: boolean;
+interface SalesforceConnectorRow {
+  key: string;
+  name: string;
+  myDomain: string;
+  sandbox: boolean;
   enabled: boolean;
-  clientId: string | null;
-  myDomain: string | null;
-  scopes: string | null;
+  clientId: string;
+  scopes: string;
   hasClientSecret: boolean;
 }
 
+interface SalesforceConfig {
+  configured: boolean;
+  enabled: boolean;
+  connectors: SalesforceConnectorRow[];
+}
+
+const URL_BASE = `/api/admin/connectors/salesforce`;
+
+function defaultChecked(): Set<string> {
+  return new Set(
+    SALESFORCE_SCOPE_OPTIONS.filter((option) => option.defaultChecked).map((o) => o.id)
+  );
+}
+
 /**
- * The Salesforce CRM app — an External Client App the organization creates
- * in its own Salesforce org. The capability boxes are Renkei's own ceiling
+ * The Salesforce connectors — one per Salesforce org the organization works
+ * in (production, each sandbox), all of the same type and each
+ * self-contained: its own External Client App, My Domain, switch and
+ * ceiling. The capability boxes are Renkei's own ceiling
  * (salesforce-scopes.ts): Salesforce's OAuth scopes cannot tell a read from
- * a delete, so the narrowing is ours, and the person's own Salesforce
+ * a delete, so the narrowing is ours, and each person's Salesforce
  * permissions still decide every call.
  */
 export function SalesforceForm({ origin }: { origin: string | null }) {
-  const url = `/api/admin/connectors/salesforce`;
-  const [state, reload] = useConnectorConfig<SalesforceConfig>(url);
-  const [clientId, setClientId] = useState('');
-  const [myDomain, setMyDomain] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(
-    () =>
-      new Set(SALESFORCE_SCOPE_OPTIONS.filter((option) => option.defaultChecked).map((o) => o.id))
-  );
-  const [enabled, setEnabled] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!state.data) return;
-    setClientId(state.data.clientId ?? '');
-    setMyDomain(state.data.myDomain ?? '');
-    if (state.data.configured && state.data.scopes) {
-      const stored = new Set(state.data.scopes.split(/\s+/));
-      const matching = SALESFORCE_SCOPE_OPTIONS.filter((option) => optionWithin(option, stored));
-      if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
-    }
-    setEnabled(state.data.configured ? state.data.enabled : true);
-  }, [state.data]);
-
-  function toggleOption(optionId: string, on: boolean) {
-    setCheckedIds((current) => {
-      const next = new Set(current);
-      if (on) next.add(optionId);
-      else next.delete(optionId);
-      return next;
-    });
-  }
-
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setNotice(null);
-    setError(null);
-    const failure = await putJson(url, {
-      clientId: clientId.trim(),
-      myDomain: myDomain.trim(),
-      // Blank means keep the stored secret — omit it from the payload.
-      ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
-      enabled,
-      scopes: scopesOfOptions(SALESFORCE_SCOPE_OPTIONS, checkedIds).join(' '),
-    });
-    setBusy(false);
-    if (failure) {
-      setError(failure);
-      return;
-    }
-    setClientSecret('');
-    setNotice('Saved');
-    reload();
-  }
+  const [state, reload] = useConnectorConfig<SalesforceConfig>(URL_BASE);
+  const [editing, setEditing] = useState<string | null>(null);
 
   if (state.loading)
     return (
@@ -109,32 +72,219 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
       </Card>
     );
   }
-  const config = state.data;
+  const connectors = state.data?.connectors ?? [];
 
   return (
+    <div className="space-y-4">
+      <Card title="Salesforce" status={null}>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Add a Salesforce connector for <strong>each Salesforce org</strong> people work in — your
+          production org, and each sandbox. Each is its own connector: in that org, create an{' '}
+          <strong>External Client App</strong> (Setup → External Client App Manager) with the
+          callback URL <CallbackUrl origin={origin} />, the scopes{' '}
+          <code className="font-mono text-xs">api</code>,{' '}
+          <code className="font-mono text-xs">refresh_token</code> and{' '}
+          <code className="font-mono text-xs">id</code>, and <strong>Require PKCE</strong>, then add
+          its consumer key and secret here. People connect each org separately, and Salesforce
+          applies each person&apos;s own access in that org on every call.
+        </p>
+        {connectors.length === 0 && (
+          <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+            No Salesforce connectors yet. Start with your production org.
+          </p>
+        )}
+      </Card>
+
+      {connectors.map((connector) =>
+        editing === connector.key ? (
+          <ConnectorEditor
+            key={connector.key}
+            existing={connector}
+            onDone={() => {
+              setEditing(null);
+              reload();
+            }}
+            onCancel={() => setEditing(null)}
+          />
+        ) : (
+          <ConnectorSummary
+            key={connector.key}
+            connector={connector}
+            onEdit={() => setEditing(connector.key)}
+          />
+        )
+      )}
+
+      {editing === '__new__' ? (
+        <ConnectorEditor
+          existing={null}
+          isFirst={connectors.length === 0}
+          onDone={() => {
+            setEditing(null);
+            reload();
+          }}
+          onCancel={() => setEditing(null)}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setEditing('__new__')}
+          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+        >
+          {connectors.length === 0 ? 'Add your production org' : 'Add a Salesforce org'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ConnectorSummary({
+  connector,
+  onEdit,
+}: {
+  connector: SalesforceConnectorRow;
+  onEdit: () => void;
+}) {
+  const capabilities = SALESFORCE_SCOPE_OPTIONS.filter((option) =>
+    optionWithin(option, new Set(connector.scopes.split(/\s+/)))
+  ).map((option) => option.label);
+  return (
     <Card
-      title="Salesforce"
+      title={`Salesforce · ${connector.name}`}
+      status={<StatusPill configured={connector.hasClientSecret} enabled={connector.enabled} />}
+    >
+      <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-[10rem_1fr]">
+        <dt className="text-gray-500 dark:text-gray-400">My Domain</dt>
+        <dd className="break-words font-mono text-xs">{connector.myDomain}</dd>
+        <dt className="text-gray-500 dark:text-gray-400">Kind</dt>
+        <dd>{connector.sandbox ? 'Sandbox' : 'Production'}</dd>
+        <dt className="text-gray-500 dark:text-gray-400">Consumer key</dt>
+        <dd className="break-all font-mono text-xs">{connector.clientId}</dd>
+        <dt className="text-gray-500 dark:text-gray-400">People may let Renkei</dt>
+        <dd>{capabilities.join(', ') || 'nothing'}</dd>
+      </dl>
+      <button
+        type="button"
+        onClick={onEdit}
+        aria-label={`Edit ${connector.name}`}
+        className="mt-3 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+      >
+        Edit
+      </button>
+    </Card>
+  );
+}
+
+function ConnectorEditor({
+  existing,
+  isFirst = false,
+  onDone,
+  onCancel,
+}: {
+  existing: SalesforceConnectorRow | null;
+  isFirst?: boolean;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(existing?.name ?? (isFirst ? 'Production' : ''));
+  const [myDomain, setMyDomain] = useState(existing?.myDomain ?? '');
+  const [sandbox, setSandbox] = useState(existing?.sandbox ?? !isFirst);
+  const [clientId, setClientId] = useState(existing?.clientId ?? '');
+  const [clientSecret, setClientSecret] = useState('');
+  const [enabled, setEnabled] = useState(existing?.enabled ?? true);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(defaultChecked);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+
+  useEffect(() => {
+    if (!existing?.scopes) return;
+    const stored = new Set(existing.scopes.split(/\s+/));
+    const matching = SALESFORCE_SCOPE_OPTIONS.filter((option) => optionWithin(option, stored));
+    if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
+  }, [existing?.scopes]);
+
+  function toggleOption(optionId: string, on: boolean) {
+    setCheckedIds((current) => {
+      const next = new Set(current);
+      if (on) next.add(optionId);
+      else next.delete(optionId);
+      return next;
+    });
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    setError(null);
+    const failure = await putJson(URL_BASE, {
+      ...(existing ? { key: existing.key } : {}),
+      name: name.trim(),
+      myDomain: myDomain.trim(),
+      sandbox,
+      clientId: clientId.trim(),
+      // Blank means keep the stored secret — omit it from the payload.
+      ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
+      enabled,
+      scopes: scopesOfOptions(SALESFORCE_SCOPE_OPTIONS, checkedIds).join(' '),
+    });
+    setBusy(false);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    setClientSecret('');
+    setNotice('Saved');
+    onDone();
+  }
+
+  async function remove() {
+    if (!existing) return;
+    setBusy(true);
+    const response = await fetch(`${URL_BASE}?key=${encodeURIComponent(existing.key)}`, {
+      method: 'DELETE',
+    }).catch(() => null);
+    setBusy(false);
+    if (!response?.ok) {
+      setError('Could not remove it');
+      return;
+    }
+    onDone();
+  }
+
+  const idBase = `salesforce-${existing?.key ?? 'new'}`;
+  return (
+    <Card
+      title={existing ? `Salesforce · ${existing.name}` : 'New Salesforce connector'}
       status={
-        <StatusPill configured={config?.configured ?? false} enabled={config?.enabled ?? false} />
+        existing ? (
+          <StatusPill configured={existing.hasClientSecret} enabled={existing.enabled} />
+        ) : null
       }
     >
-      <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
-        An <strong>External Client App</strong> you create in your own Salesforce org (Setup →
-        External Client App Manager), through which each person lets Renkei work in Salesforce as
-        them. Enable OAuth with the callback URL <CallbackUrl origin={origin} />, the scopes{' '}
-        <code className="font-mono text-xs">api</code>,{' '}
-        <code className="font-mono text-xs">refresh_token</code> and{' '}
-        <code className="font-mono text-xs">id</code>, and <strong>Require PKCE</strong>; then paste
-        its consumer key and secret here. Salesforce applies each person&apos;s own access — object
-        and field permissions, sharing, validation rules — on every call.
-      </p>
       <form onSubmit={(e) => void save(e)} className="space-y-3">
         <div>
-          <label htmlFor="salesforce-my-domain" className={labelClass}>
+          <label htmlFor={`${idBase}-name`} className={labelClass}>
+            Name
+          </label>
+          <input
+            id={`${idBase}-name`}
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Production, UAT, Full Copy…"
+            className={inputClass}
+          />
+          <p className={hintClass}>What people and the tools call this org.</p>
+        </div>
+        <div>
+          <label htmlFor={`${idBase}-domain`} className={labelClass}>
             My Domain
           </label>
           <input
-            id="salesforce-my-domain"
+            id={`${idBase}-domain`}
             required
             value={myDomain}
             onChange={(e) => setMyDomain(e.target.value)}
@@ -142,17 +292,23 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
             className={`${inputClass} font-mono`}
           />
           <p className={hintClass}>
-            Your org&apos;s My Domain (Setup → My Domain), not{' '}
-            <code className="font-mono text-xs">login.salesforce.com</code>. Sign-in, tokens and
-            every API call go to this address alone, and a connection from any other org is refused.
+            This org&apos;s My Domain (Setup → My Domain) — a sandbox&apos;s looks like{' '}
+            <code className="font-mono text-xs">acme--uat.sandbox.my.salesforce.com</code>. Not{' '}
+            <code className="font-mono text-xs">login.salesforce.com</code> or{' '}
+            <code className="font-mono text-xs">test.salesforce.com</code>. Sign-in, tokens and
+            every API call for this connector go to this address alone.
           </p>
         </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={sandbox} onChange={(e) => setSandbox(e.target.checked)} />
+          This is a sandbox
+        </label>
         <div>
-          <label htmlFor="salesforce-client-id" className={labelClass}>
+          <label htmlFor={`${idBase}-client-id`} className={labelClass}>
             Consumer key
           </label>
           <input
-            id="salesforce-client-id"
+            id={`${idBase}-client-id`}
             required
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
@@ -160,24 +316,21 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
           />
         </div>
         <div>
-          <label htmlFor="salesforce-client-secret" className={labelClass}>
+          <label htmlFor={`${idBase}-client-secret`} className={labelClass}>
             Consumer secret
           </label>
           <input
-            id="salesforce-client-secret"
+            id={`${idBase}-client-secret`}
             type="password"
-            required={!config?.hasClientSecret}
+            required={!existing?.hasClientSecret}
             value={clientSecret}
             onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={config?.hasClientSecret ? 'Stored — leave blank to keep' : ''}
+            placeholder={existing?.hasClientSecret ? 'Stored — leave blank to keep' : ''}
             className={`${inputClass} font-mono`}
           />
-          {config?.hasClientSecret && (
-            <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
-          )}
         </div>
         <fieldset>
-          <legend className={labelClass}>What people may let Renkei do</legend>
+          <legend className={labelClass}>What people may let Renkei do in this org</legend>
           <ScopePicker
             groups={SALESFORCE_SCOPE_GROUPS}
             options={SALESFORCE_SCOPE_OPTIONS}
@@ -186,10 +339,10 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
           />
           <p className={hintClass}>
             This is the ceiling: people can narrow it when they connect, never widen it. Salesforce
-            itself grants the whole API to a connection, so these boxes are Renkei&apos;s own limit
-            on which tools it offers — and each person&apos;s Salesforce permissions still decide
-            what any tool may do. Record contents are sent to your organization&apos;s configured
-            model provider; decide that before turning this on for sensitive records.
+            grants the whole API to a connection, so these boxes are Renkei&apos;s own limit on
+            which tools it offers — each person&apos;s Salesforce permissions still decide what any
+            tool may do. Record contents are sent to your organization&apos;s configured model
+            provider; decide that before turning this on for sensitive records.
           </p>
         </fieldset>
         <label className="flex items-center gap-2 text-sm">
@@ -197,6 +350,39 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
           Enabled
         </label>
         <SaveRow busy={busy} notice={notice} error={error} />
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" onClick={onCancel} className="text-sm underline">
+            Cancel
+          </button>
+          {existing &&
+            (confirmingRemove ? (
+              <span className="flex flex-wrap items-center gap-2 text-sm">
+                Remove {existing.name}? Everyone&apos;s connection to this org stops working.
+                <button
+                  type="button"
+                  onClick={() => void remove()}
+                  className="rounded-md bg-red-600 px-2 py-1 text-white"
+                >
+                  Yes, remove
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingRemove(false)}
+                  className="underline"
+                >
+                  Keep it
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmingRemove(true)}
+                className="text-sm text-red-700 underline dark:text-red-300"
+              >
+                Remove this connector
+              </button>
+            ))}
+        </div>
       </form>
     </Card>
   );

@@ -7,6 +7,10 @@
  */
 export function salesforceScopeFor(toolName: string): string[] {
   switch (toolName) {
+    // Which orgs exist and which the person connected: no capability needed.
+    case 'salesforce_list_orgs':
+      return [];
+
     case 'salesforce_check_access':
     case 'salesforce_list_objects':
     case 'salesforce_describe_object':

@@ -1,14 +1,16 @@
 /**
- * Salesforce, end to end in a browser: an operator registers the org's
- * External Client App through the real admin form and save route (a
- * login.salesforce.com address is refused — it must be the org's own My
- * Domain), a person finds the Salesforce card on the connectors page,
- * narrows Renkei's capabilities in the live picker, and the authorize route
- * turns that into a PKCE consent redirect to the org's own My Domain — with
- * the fixed Salesforce scopes, and the narrowing recorded on the pending row
- * rather than sent. Then a simulated completed connect (the row the OAuth
- * callback would write) shows who is connected to which org, and the real
- * disconnect route takes it away.
+ * Salesforce, end to end in a browser, with one connector per org: an
+ * operator adds the production org and a UAT sandbox through the real admin
+ * list and save route (a login.salesforce.com address is refused — each must
+ * be the org's own My Domain), a person finds one card per org on the
+ * connectors page, narrows Renkei's capabilities on the sandbox's card, and
+ * that connector's authorize route turns it into a PKCE consent redirect to
+ * the sandbox's own My Domain with the sandbox's own consumer key — the
+ * fixed Salesforce scopes sent, the narrowing and the connector recorded on
+ * the pending row. Then a simulated completed connect (the row the OAuth
+ * callback would write) shows the sandbox connected and production not, and
+ * the real disconnect route takes the sandbox connection away. Finally the
+ * operator removes the sandbox connector and its card goes.
  *
  * Nothing here reaches Salesforce: the authorize route is read with
  * redirects off (the Location header is the assertion), and the connect is
@@ -16,7 +18,8 @@
  *
  * Own person, and only its own connector_configs row: connector configs are
  * organization-wide and shared by every spec in a run, so this one writes
- * and clears `salesforce` alone (AGENTS.md, "Isolate what you create").
+ * and clears `salesforce` alone (AGENTS.md, "Isolate what you create") —
+ * run its projects one at a time (--workers=1) for that reason.
  *
  * Runs on the pinned Chromium only; "mobile" is a resized viewport, per AGENTS.md.
  */
@@ -29,7 +32,8 @@ import { enrollForE2E } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
-const MY_DOMAIN = 'acme-e2e.my.salesforce.com';
+const PRODUCTION = 'acme-e2e.my.salesforce.com';
+const UAT = 'acme-e2e--uat.sandbox.my.salesforce.com';
 
 test.use({
   launchOptions: {
@@ -84,11 +88,10 @@ async function seedPerson(fixture: Fixture): Promise<void> {
         new Date(Date.now() + 24 * 3_600_000),
       ]
     );
-    await client.query(`INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`, [
-      fixture.subject,
-      fixture.subject,
-      'E2E Tester',
-    ]);
+    await client.query(
+      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Tester']
+    );
     await client.query(
       `INSERT INTO user_preferences (subject, key, value) VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
@@ -103,14 +106,14 @@ async function seedPerson(fixture: Fixture): Promise<void> {
   });
 }
 
-/** The row the OAuth callback writes once Salesforce sends the person back. */
-async function connectSalesforce(fixture: Fixture): Promise<void> {
+/** The row the OAuth callback writes once the UAT sandbox sends the person back. */
+async function connectUat(fixture: Fixture): Promise<void> {
   await withDb((client) =>
     client.query(
       `INSERT INTO provider_grants
          (provider, provider_account_id, subject, client_id, display_name,
           encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)
-       VALUES ('salesforce', $1, $2, 'e2e-sf-client', 'Ada Admin',
+       VALUES ('salesforce', $1, $2, 'e2e-uat-client', 'Ada Admin',
                'not-a-real-token', 'not-a-real-token', $3, $4, $5)`,
       [
         `00D000000000062EAA/005000000000001AAA-${fixture.subject}`,
@@ -120,8 +123,9 @@ async function connectSalesforce(fixture: Fixture): Promise<void> {
         {
           orgId: '00D000000000062EAA',
           userId: '005000000000001AAA',
-          instanceUrl: `https://${MY_DOMAIN}`,
+          instanceUrl: `https://${UAT}`,
           username: 'ada@acme.org',
+          connector: 'uat',
         },
       ]
     )
@@ -158,114 +162,191 @@ test.afterEach(async ({}, testInfo) => {
   });
 });
 
-test('salesforce: register the org app, connect with narrowed capabilities, disconnect', async ({
+async function addOrg(
+  page: Page,
+  values: { name?: string; domain: string; clientId: string; secret: string }
+): Promise<void> {
+  const form = page.locator('[data-coach="admin-connector-form"]');
+  if (values.name !== undefined) await form.locator('#salesforce-new-name').fill(values.name);
+  await form.locator('#salesforce-new-domain').fill(values.domain);
+  await form.locator('#salesforce-new-client-id').fill(values.clientId);
+  await form.locator('#salesforce-new-client-secret').fill(values.secret);
+  await form.getByRole('button', { name: 'Save' }).click();
+}
+
+test('salesforce: one connector per org — register, connect a sandbox, disconnect, remove', async ({
   page,
 }, testInfo) => {
+  // Room for the config cache's TTL at the end (see the last step).
+  test.setTimeout(180_000);
   const fixture = fixtureFor(testInfo.project.name);
   await seedPerson(fixture);
   await signIn(page, fixture);
 
-  // --- The operator registers the org's External Client App. ---
+  // --- The operator adds the production org. ---
   await page.goto('/admin/connectors/salesforce');
   await expect(page.getByRole('heading', { name: 'Salesforce', level: 1 })).toBeVisible();
   const form = page.locator('[data-coach="admin-connector-form"]');
-  await expect(form.getByText('External Client App')).toBeVisible();
+  await expect(form.getByText('No Salesforce connectors yet.')).toBeVisible();
+  await form.getByRole('button', { name: 'Add your production org' }).click();
+  // The first connector is named Production and is not a sandbox.
+  await expect(form.locator('#salesforce-new-name')).toHaveValue('Production');
+  await expect(form.getByRole('checkbox', { name: 'This is a sandbox' })).not.toBeChecked();
   // Deleting and reassigning start off; nobody can grant what the org holds back.
   await expect(form.getByRole('checkbox', { name: /Delete records/ })).not.toBeChecked();
   await expect(form.getByRole('checkbox', { name: /Change record owners/ })).not.toBeChecked();
 
   // The generic login host is refused: it must be the org's own My Domain.
-  await form.getByLabel('My Domain').fill('login.salesforce.com');
-  await form.getByLabel('Consumer key').fill('e2e-sf-client');
-  await form.getByLabel('Consumer secret').fill('e2e-sf-secret');
-  await form.getByRole('button', { name: 'Save' }).click();
+  await addOrg(page, {
+    domain: 'login.salesforce.com',
+    clientId: 'e2e-sf-client',
+    secret: 'e2e-sf-secret',
+  });
   // The route's refusal, not the field's hint (which also names login.salesforce.com).
-  await expect(form.getByText(/must be the org’s own My Domain/)).toBeVisible({ timeout: 30_000 });
+  await expect(form.getByText(/My Domain must be the org’s own/)).toBeVisible({ timeout: 30_000 });
   const refusedSave = await withDb((client) =>
     client.query(`SELECT 1 FROM connector_configs WHERE connector = 'salesforce'`)
   );
   expect(refusedSave.rowCount).toBe(0);
 
-  await form.getByLabel('My Domain').fill(`https://${MY_DOMAIN}/lightning/page/home`);
-  await form.getByRole('button', { name: 'Save' }).click();
-  await expect(form.getByText('Saved')).toBeVisible({ timeout: 30_000 });
+  await addOrg(page, {
+    domain: `https://${PRODUCTION}/lightning/page/home`,
+    clientId: 'e2e-sf-client',
+    secret: 'e2e-sf-secret',
+  });
+  await expect(form.getByRole('heading', { name: 'Salesforce · Production' })).toBeVisible({
+    timeout: 30_000,
+  });
+  // Stored normalized to the org's origin.
+  await expect(form.getByText(`https://${PRODUCTION}`, { exact: true })).toBeVisible();
+
+  // --- Then a UAT sandbox: its own connector, its own app. ---
+  await form.getByRole('button', { name: 'Add a Salesforce org' }).click();
+  await expect(form.getByRole('checkbox', { name: 'This is a sandbox' })).toBeChecked();
+  // Two connectors cannot share an org.
+  await addOrg(page, {
+    name: 'UAT',
+    domain: PRODUCTION,
+    clientId: 'e2e-uat-client',
+    secret: 'e2e-uat-secret',
+  });
+  await expect(form.getByText(/is already the Production connector/)).toBeVisible({
+    timeout: 30_000,
+  });
+  await addOrg(page, {
+    name: 'UAT',
+    domain: UAT,
+    clientId: 'e2e-uat-client',
+    secret: 'e2e-uat-secret',
+  });
+  await expect(form.getByRole('heading', { name: 'Salesforce · UAT' })).toBeVisible({
+    timeout: 30_000,
+  });
   await shot(page, testInfo, 'salesforce-01-registered');
 
-  await page.reload();
-  await expect(form.getByLabel('Consumer secret')).toHaveAttribute(
+  // Editing keeps the stored secret when the field is left blank.
+  await form.getByRole('button', { name: 'Edit UAT' }).click();
+  await expect(form.locator('#salesforce-uat-client-secret')).toHaveAttribute(
     'placeholder',
     'Stored — leave blank to keep'
   );
-  // Stored normalized to the org's origin, with the default ceiling.
-  await expect(form.getByLabel('My Domain')).toHaveValue(`https://${MY_DOMAIN}`);
+  await form.getByRole('button', { name: 'Cancel' }).click();
+
   const stored = await withDb((client) =>
-    client.query<{ enabled: boolean; settings: { myDomain?: string; scopes?: string } }>(
-      `SELECT enabled, settings FROM connector_configs WHERE connector = 'salesforce'`
-    )
+    client.query<{
+      enabled: boolean;
+      settings: {
+        orgs?: {
+          key: string;
+          myDomain: string;
+          sandbox: boolean;
+          clientId: string;
+          scopes: string;
+        }[];
+      };
+    }>(`SELECT enabled, settings FROM connector_configs WHERE connector = 'salesforce'`)
   );
   expect(stored.rows[0]?.enabled).toBe(true);
-  expect(stored.rows[0]?.settings.myDomain).toBe(`https://${MY_DOMAIN}`);
-  expect(stored.rows[0]?.settings.scopes?.split(' ').sort()).toEqual(
+  const orgs = stored.rows[0]?.settings.orgs ?? [];
+  expect(orgs.map((org) => [org.key, org.myDomain, org.sandbox, org.clientId])).toEqual([
+    ['production', `https://${PRODUCTION}`, false, 'e2e-sf-client'],
+    ['uat', `https://${UAT}`, true, 'e2e-uat-client'],
+  ]);
+  expect(orgs[1]?.scopes.split(' ').sort()).toEqual(
     ['sf-records-read', 'sf-records-write', 'sf-reports'].sort()
   );
 
-  // --- The person connects from the Salesforce card. ---
+  // --- The person sees one card per org, and connects the sandbox. ---
   await page.goto('/connectors');
-  const card = page.locator('[data-coach="card-salesforce"]');
-  await expect(card.getByRole('heading', { name: 'Salesforce' })).toBeVisible();
-  await expect(card.getByText('Not connected')).toBeVisible();
-  await expect(card.getByText(MY_DOMAIN)).toBeVisible();
+  const cards = page.locator('[data-coach="card-salesforce"]');
+  await expect(cards).toHaveCount(2);
+  const production = cards.filter({
+    has: page.getByRole('heading', { name: /Salesforce · Production/ }),
+  });
+  const uat = cards.filter({ has: page.getByRole('heading', { name: /Salesforce · UAT/ }) });
+  await expect(production.getByText('Not connected')).toBeVisible();
+  await expect(production.getByText(PRODUCTION)).toBeVisible();
+  await expect(production.getByText('Sandbox', { exact: true })).toHaveCount(0);
+  await expect(uat.getByText('Sandbox', { exact: true })).toBeVisible();
+  await expect(uat.getByText(UAT)).toBeVisible();
 
-  await card.getByText(/What Renkei may do/).click();
+  await uat.getByText(/What Renkei may do/).click();
   // What the org held back is not offered.
-  await expect(card.getByRole('checkbox', { name: /Delete records/ })).toHaveCount(0);
-  const connect = card.getByRole('link', { name: 'Connect Salesforce' });
+  await expect(uat.getByRole('checkbox', { name: /Delete records/ })).toHaveCount(0);
+  const connect = uat.getByRole('link', { name: 'Connect Salesforce · UAT' });
   await expect(connect).toHaveAttribute('href', /sf-records-write/);
-  await card.getByRole('checkbox', { name: /Create and update records/ }).uncheck();
+  await uat.getByRole('checkbox', { name: /Create and update records/ }).uncheck();
   await expect(connect).not.toHaveAttribute('href', /sf-records-write/);
   await shot(page, testInfo, 'salesforce-02-narrowed');
 
-  // The authorize route sends the person to the org's own My Domain, with
-  // PKCE and Salesforce's fixed scopes; the narrowing stays with Renkei.
+  // The sandbox's authorize route sends the person to the sandbox's own My
+  // Domain with its own consumer key, PKCE and Salesforce's fixed scopes;
+  // the narrowing and the connector stay with Renkei.
   const href = await connect.getAttribute('href');
-  expect(href).toMatch(/^\/api\/salesforce\/authorize/);
+  expect(href).toMatch(/^\/api\/salesforce\/uat\/authorize/);
   const authorize = await page.request.get(href ?? '', { maxRedirects: 0 });
   expect([302, 307]).toContain(authorize.status());
   const consent = new URL(authorize.headers()['location'] ?? '');
-  expect(consent.origin + consent.pathname).toBe(`https://${MY_DOMAIN}/services/oauth2/authorize`);
-  expect(consent.searchParams.get('client_id')).toBe('e2e-sf-client');
+  expect(consent.origin + consent.pathname).toBe(`https://${UAT}/services/oauth2/authorize`);
+  expect(consent.searchParams.get('client_id')).toBe('e2e-uat-client');
   expect(consent.searchParams.get('scope')).toBe('api refresh_token id');
   expect(consent.searchParams.get('code_challenge_method')).toBe('S256');
   expect(consent.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
   const pending = await withDb((client) =>
-    client.query<{ scopes: string; code_verifier: string | null }>(
-      `SELECT scopes, code_verifier FROM pending_oidc_signin WHERE state = $1`,
+    client.query<{ scopes: string; code_verifier: string | null; connector_key: string | null }>(
+      `SELECT scopes, code_verifier, connector_key FROM pending_oidc_signin WHERE state = $1`,
       [consent.searchParams.get('state')]
     )
   );
   expect(pending.rows[0]?.scopes.split(' ').sort()).toEqual(['sf-records-read', 'sf-reports']);
   expect(pending.rows[0]?.code_verifier).toBeTruthy();
+  expect(pending.rows[0]?.connector_key).toBe('uat');
 
-  // A capability beyond the org's ceiling is refused, not silently dropped.
+  // A capability beyond the connector's ceiling is refused, not silently
+  // dropped; so is a connector that does not exist.
   const widened = await page.request.get(
-    '/api/salesforce/authorize?scopes=sf-records-read+sf-records-delete',
+    '/api/salesforce/uat/authorize?scopes=sf-records-read+sf-records-delete',
     { maxRedirects: 0 }
   );
   expect(widened.status()).toBe(400);
+  const unknown = await page.request.get('/api/salesforce/full-copy/authorize', {
+    maxRedirects: 0,
+  });
+  expect(unknown.status()).toBe(503);
 
-  // --- Connected: the callback's row, then the real disconnect route. ---
-  await connectSalesforce(fixture);
+  // --- Connected to UAT only: the callback's row, then the real disconnect route. ---
+  await connectUat(fixture);
   await page.reload();
-  await expect(card).toHaveCount(1);
-  await expect(card.getByText('Connected', { exact: true })).toBeVisible();
-  await expect(card.getByText('Ada Admin')).toBeVisible();
-  await expect(card.getByText('(ada@acme.org)')).toBeVisible();
+  await expect(uat.getByText('Connected', { exact: true })).toBeVisible();
+  await expect(uat.getByText('Ada Admin')).toBeVisible();
+  await expect(uat.getByText('(ada@acme.org)')).toBeVisible();
+  await expect(production.getByText('Not connected')).toBeVisible();
   await shot(page, testInfo, 'salesforce-03-connected');
 
-  await card.getByRole('button', { name: 'Disconnect Salesforce' }).click();
-  await expect(card.getByText(/revoked in Salesforce too/)).toBeVisible();
-  await card.getByRole('button', { name: 'Yes, disconnect' }).click();
-  await expect(card.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
+  await uat.getByRole('button', { name: 'Disconnect Salesforce · UAT' }).click();
+  await expect(uat.getByText(/Your other Salesforce connections are not affected/)).toBeVisible();
+  await uat.getByRole('button', { name: 'Yes, disconnect' }).click();
+  await expect(uat.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
   const remaining = await withDb((client) =>
     client.query(`SELECT 1 FROM provider_grants WHERE subject = $1`, [fixture.subject])
   );
@@ -273,11 +354,34 @@ test('salesforce: register the org app, connect with narrowed capabilities, disc
 
   // Mobile: a resized Chromium viewport, not a device descriptor.
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await expect(card.getByRole('heading', { name: 'Salesforce' })).toBeVisible();
-  await expect(card.getByRole('link', { name: 'Connect Salesforce' })).toBeVisible();
+  await expect(uat.getByRole('heading', { name: /Salesforce · UAT/ })).toBeVisible();
+  await expect(uat.getByRole('link', { name: 'Connect Salesforce · UAT' })).toBeVisible();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
   expect(overflow).toBeLessThanOrEqual(0);
   await shot(page, testInfo, 'salesforce-04-mobile');
+
+  // --- The operator removes the sandbox connector; its card goes. ---
+  await page.goto('/admin/connectors/salesforce');
+  await form.getByRole('button', { name: 'Edit UAT' }).click();
+  await form.getByRole('button', { name: 'Remove this connector' }).click();
+  await form.getByRole('button', { name: 'Yes, remove' }).click();
+  await expect(form.getByRole('heading', { name: 'Salesforce · UAT' })).toHaveCount(0, {
+    timeout: 30_000,
+  });
+  await expect(form.getByRole('heading', { name: 'Salesforce · Production' })).toBeVisible();
+  const overflowAdmin = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+  );
+  expect(overflowAdmin).toBeLessThanOrEqual(0);
+  await shot(page, testInfo, 'salesforce-05-admin-mobile');
+  // The connectors page reads the config through a 60-second cache
+  // (@renkei/connector-config), which a save in another module instance
+  // does not clear, so the card goes within that TTL rather than at once.
+  await expect(async () => {
+    await page.goto('/connectors');
+    await expect(cards).toHaveCount(1, { timeout: 2_000 });
+  }).toPass({ timeout: 90_000, intervals: [5_000] });
+  await expect(cards.getByRole('heading', { name: /Salesforce · Production/ })).toBeVisible();
 });

@@ -273,11 +273,23 @@ export async function resolveConnectorAvailability(
   // so, as for GitHub, what the person asked for in Renkei's own picker is
   // the narrowing. The token is opaque, so granted is null and requested
   // is the answer.
-  const salesforceGrantRow = await grantRow(db, SALESFORCE, subject);
-  const salesforceAvailable = salesforceGrantRow !== undefined;
-  const salesforceScopes = salesforceGrantRow
-    ? narrowedScopes(salesforceGrantRow.requested_scopes, salesforceGrantRow.granted_scopes)
-    : [];
+  //
+  // A person can hold one connection per Salesforce connector (production,
+  // each sandbox), so registration takes the union of their connections'
+  // capabilities; each call is then checked against the one connection it
+  // runs on (salesforce/org-choice.ts).
+  const salesforceGrantRows = await db
+    .selectFrom('provider_grants')
+    .select(['requested_scopes', 'granted_scopes'])
+    .where('provider', '=', SALESFORCE)
+    .where('subject', '=', subject)
+    .execute();
+  const salesforceAvailable = salesforceGrantRows.length > 0;
+  const salesforceScopes = [
+    ...new Set(
+      salesforceGrantRows.flatMap((row) => narrowedScopes(row.requested_scopes, row.granted_scopes))
+    ),
+  ];
 
   // File shares are the one connector with no provider_grants row: the
   // caller's own stored connections stand in for the OAuth grant, and the

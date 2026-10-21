@@ -46,7 +46,8 @@ import {
   SALESFORCE,
 } from '@renkei/provider-grants';
 import { parseIdentityUrl, salesforceAccountId, sameOrg, to18 } from '@renkei/connector-salesforce';
-import { getSalesforceApp } from '@/lib/salesforce-app';
+import { getSalesforceConnector } from '@/lib/salesforce-app';
+import { listSalesforceConnections } from '@/lib/salesforce-grants';
 import {
   delegateGrants,
   grantFetch,
@@ -188,10 +189,7 @@ function exchangeFailed(
 }
 
 /** The delegate could not seal the grant (the handle expired, or the row would not store). */
-function storeFailed(
-  label: string,
-  error: { type: GrantOpError; message?: string }
-): NextResponse {
+function storeFailed(label: string, error: { type: GrantOpError; message?: string }): NextResponse {
   logger.error('Failed to store {label} grant: {reason}', {
     component: 'auth/oauth',
     label,
@@ -258,7 +256,7 @@ async function handleCallback(
     // provider's token endpoint the code must be exchanged at.
     const pendingSignIn = await db
       .selectFrom('pending_oidc_signin')
-      .select(['expires_at', 'subject', 'provider', 'scopes', 'code_verifier'])
+      .select(['expires_at', 'subject', 'provider', 'scopes', 'code_verifier', 'connector_key'])
       .where('state', '=', state)
       .executeTakeFirst();
 
@@ -314,24 +312,13 @@ async function handleCallback(
       return NextResponse.json({ error: 'State expired' }, { status: 400 });
     }
 
-
     // Dispatch on the provider the authorize step recorded. Null predates
     // the column and means Atlassian — the only provider that existed then.
     if (pendingSignIn.provider === 'webex-user') {
-      return handleWebexUserCallback(
-        request,
-        pendingSignIn.subject,
-        code,
-        pendingSignIn.scopes
-      );
+      return handleWebexUserCallback(request, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     if (pendingSignIn.provider === 'atlassian-jsm') {
-      return handleAtlassianJsmCallback(
-        request,
-        pendingSignIn.subject,
-        code,
-        pendingSignIn.scopes
-      );
+      return handleAtlassianJsmCallback(request, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     if (pendingSignIn.provider === 'atlassian-confluence') {
       return handleAtlassianConfluenceCallback(
@@ -358,20 +345,10 @@ async function handleCallback(
       );
     }
     if (pendingSignIn.provider === 'github') {
-      return handleGitHubCallback(
-        request,
-        pendingSignIn.subject,
-        code,
-        pendingSignIn.scopes
-      );
+      return handleGitHubCallback(request, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     if (pendingSignIn.provider === 'microsoft') {
-      return handleMicrosoftCallback(
-        request,
-        pendingSignIn.subject,
-        code,
-        pendingSignIn.scopes
-      );
+      return handleMicrosoftCallback(request, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     if (pendingSignIn.provider === 'entra-developer') {
       // A SEPARATE Entra app registration from 'microsoft' above — see
@@ -391,7 +368,8 @@ async function handleCallback(
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes,
-        pendingSignIn.code_verifier
+        pendingSignIn.code_verifier,
+        pendingSignIn.connector_key
       );
     }
     if (pendingSignIn.provider === 'zoom') {
@@ -440,12 +418,7 @@ async function handleCallback(
     }
 
     logger.debug('Exchanging code for tokens', { component: 'auth/oauth' });
-    const connect = await exchangeAtlassianCode(
-      'Jira',
-      ATLASSIAN,
-      code,
-      atlassianApp.redirectUri
-    );
+    const connect = await exchangeAtlassianCode('Jira', ATLASSIAN, code, atlassianApp.redirectUri);
     if (connect instanceof NextResponse) return connect;
     const { handle, pending, resources } = connect;
 
@@ -688,10 +661,7 @@ async function callerJiraGrant(
 }
 
 /** The cloud id recorded on any prior grant of the given Atlassian providers in this tenant. */
-async function priorCloudId(
-  db: Kysely<DB>,
-  providers: string[]
-): Promise<string | null> {
+async function priorCloudId(db: Kysely<DB>, providers: string[]): Promise<string | null> {
   const prior = await db
     .selectFrom('provider_grants')
     .select('metadata')
@@ -949,8 +919,7 @@ async function handleAtlassianAdminCallback(
   // read:jira-user lets /myself answer with the real name; the code's
   // claims and the borrowed Jira identity stand behind it.
   const myself = await atlassianMyself(pending, cloudId);
-  const accountId =
-    myself?.accountId ?? (await atlassianAccountIdOffline(db, subject, code));
+  const accountId = myself?.accountId ?? (await atlassianAccountIdOffline(db, subject, code));
   if (!accountId) {
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
@@ -1288,13 +1257,7 @@ async function handleMicrosoftCallback(
     );
   }
 
-  const exchanged = await exchangeMicrosoftCode(
-    'Microsoft',
-    app,
-    MICROSOFT,
-    code,
-    requestedScopes
-  );
+  const exchanged = await exchangeMicrosoftCode('Microsoft', app, MICROSOFT, code, requestedScopes);
   if (exchanged instanceof NextResponse) return exchanged;
   const { handle, oid, tid, upn, displayName, email } = exchanged;
 
@@ -1513,22 +1476,25 @@ async function handleEntraDeveloperCallback(
 /* ------------------------------ Salesforce ------------------------------ */
 
 /**
- * Complete the OAuth flow for the Salesforce CRM app: the code is traded at
- * the org's own token endpoint with the PKCE verifier the authorize step
- * stored. The token answer names the org it was minted for (instance_url)
- * and who granted it (the identity URL, `…/id/<orgId>/<userId>`); a token
- * from any org but the configured one is refused here, before anything is
- * stored — the delegate would refuse to send it anywhere else anyway, and a
- * grant nothing can use is not a connection. The account id is
- * `<orgId>/<userId>`: a sandbox keeps production's user ids, so a user id
- * alone would collide across orgs. The display name comes from userinfo.
+ * Complete a connect to one Salesforce connector (one org): the code is
+ * traded at that org's own token endpoint, with that connector's app and
+ * the PKCE verifier the authorize step stored. The token answer names the
+ * org it was minted for (instance_url) and who granted it (the identity
+ * URL, `…/id/<orgId>/<userId>`); a token from any org but this connector's
+ * is refused here, before anything is stored — the delegate would refuse to
+ * send it anywhere else anyway, and a grant nothing can use is not a
+ * connection. The account id is `<orgId>/<userId>` (a sandbox keeps
+ * production's user ids), the metadata names the connector, and a person
+ * reconnecting the same connector — as another Salesforce user, say —
+ * replaces their earlier connection to it rather than holding two.
  */
 async function handleSalesforceCallback(
   request: NextRequest,
   subject: string | null,
   code: string,
   requestedScopes: string | null,
-  codeVerifier: string | null
+  codeVerifier: string | null,
+  connectorKey: string | null
 ): Promise<NextResponse> {
   if (!subject) {
     logger.error('Salesforce pending flow has no subject; cannot assign grant owner', {
@@ -1539,8 +1505,10 @@ async function handleSalesforceCallback(
       { status: 400 }
     );
   }
-  if (!codeVerifier) {
-    logger.error('Salesforce pending flow carries no code_verifier', { component: 'auth/oauth' });
+  if (!codeVerifier || !connectorKey) {
+    logger.error('Salesforce pending flow carries no code_verifier or connector', {
+      component: 'auth/oauth',
+    });
     return NextResponse.json({ error: 'Start the Salesforce connection again' }, { status: 400 });
   }
 
@@ -1548,20 +1516,21 @@ async function handleSalesforceCallback(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getSalesforceApp(originResult.val);
-  if (!app) {
+  const connector = await getSalesforceConnector(originResult.val, connectorKey);
+  if (!connector) {
     return NextResponse.json(
-      { error: 'Salesforce integration not configured for this organization' },
+      { error: 'That Salesforce connector is not set up, or is switched off' },
       { status: 503 }
     );
   }
 
   const exchanged = await delegateGrants().exchange({
     provider: SALESFORCE,
+    org: connector.key,
     form: {
       grant_type: 'authorization_code',
       code,
-      redirect_uri: app.redirectUri,
+      redirect_uri: connector.redirectUri,
       code_verifier: codeVerifier,
     },
   });
@@ -1569,16 +1538,17 @@ async function handleSalesforceCallback(
   logExchanged('Salesforce', exchanged.val);
   const { handle, instanceUrl, identityUrl } = exchanged.val;
 
-  if (!instanceUrl || !sameOrg(instanceUrl, app.myDomain)) {
-    logger.warn('Salesforce token is for a different org than the one configured; refusing', {
+  if (!instanceUrl || !sameOrg(instanceUrl, connector.myDomain)) {
+    logger.warn('Salesforce token is for a different org than the connector; refusing', {
       component: 'auth/oauth',
       instanceUrl,
-      myDomain: app.myDomain,
+      connector: connector.key,
+      myDomain: connector.myDomain,
     });
     return NextResponse.json(
       {
         error: 'That Salesforce login belongs to a different org',
-        error_description: `Sign in to ${new URL(app.myDomain).hostname} and connect again.`,
+        error_description: `Sign in to ${connector.host} (${connector.name}) and connect again.`,
       },
       { status: 403 }
     );
@@ -1592,33 +1562,55 @@ async function handleSalesforceCallback(
   }
   const orgId = to18(identity.orgId);
   const userId = to18(identity.userId);
+  const accountId = salesforceAccountId(orgId, userId);
 
   // Who granted this, in words: name and username for the card.
   const pending = grantFetch({ provider: SALESFORCE, pending: handle });
-  const infoResponse = await pendingGet(pending, `${app.myDomain}/services/oauth2/userinfo`);
+  const infoResponse = await pendingGet(pending, `${connector.myDomain}/services/oauth2/userinfo`);
   const info = infoResponse.ok ? await jsonRecord(infoResponse) : null;
-  const username =
-    typeof info?.preferred_username === 'string' ? info.preferred_username : userId;
+  const username = typeof info?.preferred_username === 'string' ? info.preferred_username : userId;
   const displayName = typeof info?.name === 'string' && info.name ? info.name : username;
 
   const stored = await delegateGrants().commit({
     provider: SALESFORCE,
     handle,
     subject,
-    accountId: salesforceAccountId(orgId, userId),
+    accountId,
     displayName,
-    clientId: app.clientId,
-    requestedScopes: (requestedScopes || app.scopes).split(' '),
-    metadata: { orgId, userId, instanceUrl: app.myDomain, username },
+    clientId: connector.clientId,
+    requestedScopes: (requestedScopes || connector.ceiling.join(' ')).split(' '),
+    metadata: {
+      orgId,
+      userId,
+      instanceUrl: connector.myDomain,
+      username,
+      connector: connector.key,
+    },
   });
   if (!stored.ok) return storeFailed('Salesforce', stored.err);
 
-  logger.info('Salesforce grant stored', { component: 'auth/oauth', subject });
+  // One connection per person per connector: an earlier one to this org as
+  // someone else goes (revoked at Salesforce too).
+  const dbResult = getDatabase();
+  if (dbResult.ok) {
+    const earlier = (await listSalesforceConnections(dbResult.val, subject, [connector])).filter(
+      (connection) => connection.connector === connector.key && connection.accountId !== accountId
+    );
+    for (const connection of earlier) {
+      await delegateGrants().revoke({ provider: SALESFORCE, accountId: connection.accountId });
+    }
+  }
+
+  logger.info('Salesforce grant stored', {
+    component: 'auth/oauth',
+    subject,
+    connector: connector.key,
+  });
   recordAuditEvent({
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
-    targetLabel: SALESFORCE,
+    targetLabel: `${SALESFORCE}:${connector.key}`,
   });
   invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));

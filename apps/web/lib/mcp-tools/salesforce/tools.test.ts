@@ -59,6 +59,9 @@ const stubAuth: SalesforceAuth = {
     userId: USER,
     instanceUrl: ORIGIN,
     username: 'ada@acme.org',
+    connector: 'production',
+    connectorName: 'Production',
+    sandbox: false,
   }),
 };
 
@@ -371,8 +374,9 @@ describe('registration', () => {
     expect(readOnly.has('salesforce_update_record')).toBe(false);
     expect(readOnly.has('salesforce_delete_records_preview')).toBe(false);
 
-    // No recorded capabilities is no tools — never everything.
-    expect((await tools(null)).size).toBe(0);
+    // No recorded capabilities is no tools — never everything — beyond the
+    // list of orgs, which needs none.
+    expect([...(await tools(null)).keys()]).toEqual(['salesforce_list_orgs']);
   });
 });
 
@@ -488,7 +492,8 @@ describe('cards first', () => {
     });
     const card = preview.structuredContent ?? {};
     expect(card.confirmTool).toBe('salesforce_delete_records_confirm');
-    expect(card.confirmArgs).toEqual({ object: 'Account', ids: [ACCOUNT] });
+    // The confirm acts in the org the preview resolved, on its ids.
+    expect(card.confirmArgs).toEqual({ org: 'production', object: 'Account', ids: [ACCOUNT] });
     expect(JSON.stringify(card.groupLists)).toContain('3 Site Visits');
     expect(requests.some((r) => r.method === 'DELETE')).toBe(false);
 

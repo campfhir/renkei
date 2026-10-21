@@ -10,7 +10,7 @@ import MicrosoftConnector from './microsoft-connector';
 import EntraDeveloperConnector from './entra-developer-connector';
 import ZoomConnector from './zoom-connector';
 import GitHubConnector from './github-connector';
-import SalesforceConnector from './salesforce-connector';
+import SalesforceConnector, { SalesforceOrphanedConnections } from './salesforce-connector';
 import HylandConnector from './hyland-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
@@ -32,7 +32,6 @@ import {
   ATLASSIAN_ADMIN,
   MICROSOFT,
   ENTRA_DEVELOPER,
-  SALESFORCE,
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
@@ -43,9 +42,9 @@ import { MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
 import { ENTRA_DEVELOPER_CONNECTOR } from '@/lib/entra-developer-app';
 import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
 import { GITHUB_CONNECTOR } from '@/lib/github-app';
-import { SALESFORCE_CONNECTOR } from '@/lib/salesforce-app';
+import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { usableSalesforceCeiling } from '@/lib/salesforce-scopes';
-import { parseMyDomain } from '@renkei/connector-salesforce';
+import { listSalesforceConnections } from '@/lib/salesforce-grants';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
 import { DEFAULT_ENTRA_DEVELOPER_SCOPES } from '@/lib/entra-developer-scopes';
@@ -233,17 +232,14 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   );
   const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
   const githubCeiling = ceilingFrom(settingsOf(GITHUB_CONNECTOR), DEFAULT_GITHUB_SCOPES);
-  const salesforceCeiling = usableSalesforceCeiling(storedScopes(settingsOf(SALESFORCE_CONNECTOR)));
-  // The org's My Domain, so the card names where a person will sign in.
-  const salesforceSettings = settingsOf(SALESFORCE_CONNECTOR);
-  const salesforceDomain = parseMyDomain(
-    typeof salesforceSettings === 'object' &&
-      salesforceSettings !== null &&
-      'myDomain' in salesforceSettings &&
-      typeof salesforceSettings.myDomain === 'string'
-      ? salesforceSettings.myDomain
-      : ''
-  );
+  // One card per Salesforce connector (org) the admin switched on, each
+  // connected separately; plus any connection to an org since removed.
+  const salesforceConnectors = shown.has('salesforce')
+    ? (await listSalesforceConnectors()).filter((org) => org.enabled)
+    : [];
+  const salesforceConnections = shown.has('salesforce')
+    ? await listSalesforceConnections(db, session.subject, await listSalesforceConnectors())
+    : [];
 
   // The caller's own grants, one query, mapped by provider — connection
   // state, and the scopes they previously authorized (seeding the picker on
@@ -262,7 +258,6 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   const entraDeveloperGrant = grants.get(ENTRA_DEVELOPER);
   const zoomGrant = grants.get(ZOOM);
   const githubGrant = grants.get(GITHUB);
-  const salesforceGrant = grants.get(SALESFORCE);
   const onbaseGrant = grants.get(ONBASE);
   const onbaseAdminGrant = grants.get(ONBASE_ADMIN);
   const webexGrant = grants.get(WEBEX_USER);
@@ -451,9 +446,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
             ceiling={entraDeveloperCeiling}
             priorScopes={entraDeveloperGrant?.requestedScopes ?? null}
           />
-          <RemovableProducts
-            products={removable(catalog, ['entra-developer'])}
-          />
+          <RemovableProducts products={removable(catalog, ['entra-developer'])} />
         </>
       ),
     });
@@ -505,31 +498,37 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     });
   }
 
-  if (shown.has('salesforce')) {
-    const metadata = salesforceGrant?.metadata;
-    const username =
-      typeof metadata === 'object' &&
-      metadata !== null &&
-      'username' in metadata &&
-      typeof metadata.username === 'string'
-        ? metadata.username
-        : null;
+  for (const [index, org] of salesforceConnectors.entries()) {
+    const connection = salesforceConnections.find((c) => c.connector === org.key);
     cards.push({
-      key: 'salesforce',
-      needsAttention: salesforceGrant === undefined,
+      key: `salesforce:${org.key}`,
+      needsAttention: connection === undefined,
       node: (
         <>
           <SalesforceConnector
-            connected={salesforceGrant !== undefined}
-            displayName={salesforceGrant?.displayName ?? null}
-            username={username}
-            orgHost={salesforceDomain.ok ? salesforceDomain.host : null}
-            ceiling={salesforceCeiling}
-            priorScopes={salesforceGrant?.requestedScopes ?? null}
+            connectorKey={org.key}
+            name={org.name}
+            sandbox={org.sandbox}
+            orgHost={org.host}
+            connected={connection !== undefined}
+            displayName={connection?.displayName ?? null}
+            username={connection?.username ?? null}
+            ceiling={usableSalesforceCeiling(org.scopes.join(' '))}
+            priorScopes={connection?.requestedScopes ?? null}
           />
-          <RemovableProducts products={removable(catalog, ['salesforce'])} />
+          {index === salesforceConnectors.length - 1 && (
+            <RemovableProducts products={removable(catalog, ['salesforce'])} />
+          )}
         </>
       ),
+    });
+  }
+  const orphaned = salesforceConnections.filter((c) => c.connector === null);
+  if (orphaned.length > 0) {
+    cards.push({
+      key: 'salesforce:removed',
+      needsAttention: true,
+      node: <SalesforceOrphanedConnections connections={orphaned} />,
     });
   }
 
@@ -559,9 +558,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
                 : undefined
             }
           />
-          <RemovableProducts
-            products={removable(catalog, ['onbase', 'onbase-admin'])}
-          />
+          <RemovableProducts products={removable(catalog, ['onbase', 'onbase-admin'])} />
         </>
       ),
     });
@@ -614,11 +611,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     cards.push({
       key: 'browser-secrets',
       needsAttention: false,
-      node: (
-        <SandboxSecrets
-          secrets={browserSecrets.ok ? browserSecrets.val : []}
-        />
-      ),
+      node: <SandboxSecrets secrets={browserSecrets.ok ? browserSecrets.val : []} />,
     });
   }
 

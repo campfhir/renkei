@@ -23,7 +23,13 @@
  * access through `readAccess`, which refuses — not of the HTTP method.
  */
 
+import type { Kysely } from 'kysely';
+import { getDatabase, type DB } from '@renkei/db';
 import { dataPath } from '@renkei/connector-salesforce';
+import { listSalesforceConnectors } from '@/lib/salesforce-app';
+import { listSalesforceConnections } from '@/lib/salesforce-grants';
+import { chooseConnection, orgCall } from './org-choice';
+import { salesforceScopeFor } from './scopes';
 import { SALESFORCE, readSalesforceMetadata } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
@@ -45,35 +51,62 @@ export interface SalesforceAccess {
   /** The org's My Domain origin — the one host this grant's token goes to. */
   instanceUrl: string;
   username: string;
+  /** The Salesforce connector (org) this call acts in. */
+  connector: string;
+  connectorName: string;
+  sandbox: boolean;
 }
 
 /** What the request wrapper needs of its caller — an MCPToolContext satisfies it. */
 export interface SalesforceCallContext {
   subject?: string;
+  db?: Kysely<DB>;
 }
 
+/**
+ * The caller's connection to the org this call acts in (org-choice.ts):
+ * the org asked for in `orgCall`, checked against the tool's capability.
+ */
 export async function resolveSalesforceAccess(
   context: SalesforceCallContext
 ): Promise<SalesforceAccess | string> {
   if (!context.subject) return 'No signed-in identity on this request.';
-  const grant = { provider: SALESFORCE, subject: context.subject };
+  const db =
+    context.db ??
+    (() => {
+      const result = getDatabase();
+      return result.ok ? result.val : null;
+    })();
+  if (!db) return 'Could not read your Salesforce connections.';
+  const call = orgCall.getStore();
+  const connectors = await listSalesforceConnectors();
+  const connections = await listSalesforceConnections(db, context.subject, connectors);
+  const choice = chooseConnection(
+    connectors,
+    connections,
+    call?.org,
+    call ? salesforceScopeFor(call.tool) : []
+  );
+  if (!choice.ok) return choice.error;
+  const grant = { provider: SALESFORCE, accountId: choice.connection.accountId };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) {
     return described.err.type === 'NO_GRANT'
-      ? 'Salesforce is not connected. Connect it on the Connectors page, then try again.'
-      : grantRefusalText(described.err.type, LABEL);
+      ? `Salesforce ${choice.org.name} is not connected. Connect it on the Connectors page, then try again.`
+      : grantRefusalText(described.err.type, `Salesforce ${choice.org.name}`);
   }
   const metadata = readSalesforceMetadata(described.val.metadata);
-  if (!metadata.instanceUrl) {
-    return 'This Salesforce connection does not record its org; reconnect it on the Connectors page.';
-  }
   return {
     auth: grantFetch(grant),
     accountId: described.val.accountId,
     orgId: metadata.orgId,
     userId: metadata.userId,
-    instanceUrl: metadata.instanceUrl.replace(/\/+$/, ''),
+    // The connector's My Domain, which the callback checked the grant's org is.
+    instanceUrl: choice.org.myDomain,
     username: metadata.username,
+    connector: choice.org.key,
+    connectorName: choice.org.name,
+    sandbox: choice.org.sandbox,
   };
 }
 

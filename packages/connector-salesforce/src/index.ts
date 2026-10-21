@@ -21,6 +21,16 @@ export {
 } from './api';
 export { isSalesforceId, to18, sameId, keyPrefix } from './ids';
 export {
+  MAX_ORGS,
+  orgKeyOf,
+  orgSecretName,
+  orgsFromSettings,
+  orgForInstance,
+  findOrg,
+  validateOrg,
+  type SalesforceOrg,
+} from './orgs';
+export {
   soqlString,
   soqlContains,
   isSoqlIdentifier,

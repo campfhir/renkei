@@ -1,14 +1,15 @@
 /**
- * Start a Salesforce CRM connect: "let Renkei work in Salesforce as me."
+ * Start a connect to one Salesforce connector (one org): "let Renkei work in
+ * this Salesforce org as me."
  *
- * OAuth 2.0 Web Server flow with PKCE (S256) against the org's own My
+ * OAuth 2.0 Web Server flow with PKCE (S256) against that org's own My
  * Domain (lib/salesforce-app.ts), the shape the OnBase routes use for the
- * verifier: it rides the single-use state row, and the shared callback
- * presents it at the token exchange. As with GitHub, the person's
- * narrowing of Renkei's capabilities is recorded on the pending row (it
- * becomes requested_scopes, which the tool gate narrows by) but never
- * travels to Salesforce, whose scope request is always the fixed
- * SALESFORCE_OAUTH_SCOPES.
+ * verifier: it rides the single-use state row with the connector's key,
+ * and the shared callback presents it at that org's token endpoint. As with
+ * GitHub, the person's narrowing of Renkei's capabilities is recorded on
+ * the pending row (it becomes requested_scopes, which the tool gate narrows
+ * by) but never travels to Salesforce, whose scope request is always the
+ * fixed SALESFORCE_OAUTH_SCOPES.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -16,11 +17,15 @@ import { getDatabase } from '@renkei/db';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { bindConnectFlow } from '@/lib/connect-flow-binding';
-import { getSalesforceApp, SALESFORCE_CONNECTOR } from '@/lib/salesforce-app';
+import { getSalesforceConnector, SALESFORCE_CONNECTOR } from '@/lib/salesforce-app';
 import { ALL_SALESFORCE_SCOPES, SALESFORCE_OAUTH_SCOPES } from '@/lib/salesforce-scopes';
 import { getOrigin } from '@/lib/get-origin';
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ connector: string }> }
+): Promise<NextResponse> {
+  const { connector: connectorKey } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -39,19 +44,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getSalesforceApp(originResult.val);
-  if (!app) {
+  const connector = await getSalesforceConnector(originResult.val, connectorKey);
+  if (!connector) {
     return NextResponse.json(
-      { error: 'Salesforce connector not configured for this organization' },
+      { error: 'That Salesforce connector is not set up, or is switched off' },
       { status: 503 }
     );
   }
 
-  // Narrowing only: a capability outside the org's ceiling is refused, not
-  // silently dropped.
-  const ceiling = new Set(app.scopes.split(/\s+/));
+  // Narrowing only: a capability outside this connector's ceiling is
+  // refused, not silently dropped.
+  const ceiling = new Set(connector.ceiling);
   const requestedParam = new URL(request.url).searchParams.get('scopes');
-  let effectiveScopes = app.scopes;
+  let effectiveScopes = connector.ceiling.join(' ');
   if (requestedParam) {
     const requested = requestedParam.split(/[\s,+]+/).filter(Boolean);
     const outside = requested.filter(
@@ -59,7 +64,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
     if (outside.length > 0) {
       return NextResponse.json(
-        { error: `Capabilities not allowed by this organization: ${outside.join(', ')}` },
+        { error: `Capabilities not allowed for ${connector.name}: ${outside.join(', ')}` },
         { status: 400 }
       );
     }
@@ -77,6 +82,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       nonce: randomUUID(),
       subject: session.subject,
       provider: SALESFORCE_CONNECTOR,
+      connector_key: connector.key,
       scopes: effectiveScopes,
       code_verifier: codeVerifier,
       expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
@@ -84,10 +90,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     })
     .execute();
 
-  const authUrl = new URL(`${app.myDomain}/services/oauth2/authorize`);
+  const authUrl = new URL(`${connector.myDomain}/services/oauth2/authorize`);
   authUrl.searchParams.append('response_type', 'code');
-  authUrl.searchParams.append('client_id', app.clientId);
-  authUrl.searchParams.append('redirect_uri', app.redirectUri);
+  authUrl.searchParams.append('client_id', connector.clientId);
+  authUrl.searchParams.append('redirect_uri', connector.redirectUri);
   authUrl.searchParams.append('scope', SALESFORCE_OAUTH_SCOPES);
   authUrl.searchParams.append('state', state);
   authUrl.searchParams.append('code_challenge', codeChallenge);
