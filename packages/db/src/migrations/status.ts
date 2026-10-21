@@ -183,6 +183,7 @@ export const EXPECTED_MIGRATIONS = [
   '157-chat-request-overhead',
   '158-chat-worktrees',
   '159-mcp-servers',
+  '160-pending-signin-connector',
 ];
 
 export interface MigrationStatus {

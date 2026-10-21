@@ -197,6 +197,12 @@ export const COACH_ANCHORS = [
   'entra-developer-scopes',
   /** Connect Entra Developer. */
   'entra-developer-connect',
+  /** The Salesforce card. */
+  'card-salesforce',
+  /** Its capability picker ("What Renkei may do"). */
+  'salesforce-scopes',
+  /** Connect Salesforce. */
+  'salesforce-connect',
   /** The Bitbucket panel. */
   'card-bitbucket',
   /** Its capability picker. */

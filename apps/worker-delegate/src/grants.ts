@@ -29,7 +29,9 @@ import {
   setGrant,
   ONBASE,
   ONBASE_ADMIN,
+  SALESFORCE,
   ZOOM,
+  salesforceRevokeEndpoint,
   silentLogger,
   type GrantLogger,
   type ProviderGrant,
@@ -43,6 +45,7 @@ import {
   hostAllowed,
   providerConfig,
   resolveProviderSpec,
+  salesforceOrgOfGrant,
   tokenEndpointFor,
   type ProviderSpec,
 } from './providers';
@@ -154,6 +157,8 @@ export function statusForGrantError(type: GrantError): number {
 
 interface Pending {
   provider: string;
+  /** The API host the token answer named (Salesforce's instance_url); null elsewhere. */
+  instanceUrl: string | null;
   accessToken: string;
   refreshToken: string;
   expiresAt: Date;
@@ -295,7 +300,11 @@ export class Grants {
     } catch {
       return fail('bad_request', 'x-delegate-url is not a URL');
     }
-    if (!hostAllowed(spec, url, provider))
+    // A provider on the customer's own hosts (Salesforce: one My Domain per
+    // org) can only say which host is allowed once it knows whose token
+    // this is, so its check waits for the grant below; everyone else's is
+    // here, before anything is opened.
+    if (!spec.hostsFor && !hostAllowed(spec, url, provider))
       return fail('host_not_allowed', `${url.hostname} is not ${provider}`);
 
     const body = await readBody(request, MAX_REQUEST_BYTES);
@@ -304,18 +313,37 @@ export class Grants {
     // The token: a pending exchange's, or the stored grant's (refreshed if due).
     let token: string;
     let retryWithRefresh = false;
+    let extraHosts: string[] = [];
     if (spec.anonymous) {
       token = '';
     } else if (pendingHandle) {
       const pending = this.takePending(pendingHandle, provider, false);
       if (!pending) return fail('NO_PENDING');
       token = pending.accessToken;
+      if (spec.hostsFor) {
+        extraHosts = spec.hostsFor(
+          await providerConfig(spec, this.encryptionKey),
+          null,
+          pending.instanceUrl
+        );
+      }
     } else {
       const access = await this.access(provider, { subject, accountId });
       if (!access.ok) return fail(access.error);
       token = access.grant.accessToken;
       retryWithRefresh = Boolean(access.grant.refreshToken);
+      if (spec.hostsFor) {
+        // The org the grant was minted in, read fresh (behind the config
+        // cache) so a removed org stops at once.
+        extraHosts = spec.hostsFor(
+          await providerConfig(spec, this.encryptionKey),
+          access.grant,
+          null
+        );
+      }
     }
+    if (spec.hostsFor && !hostAllowed(spec, url, provider, extraHosts))
+      return fail('host_not_allowed', `${url.hostname} is not this ${provider} grant's org`);
 
     const send = async (
       bearer: string,
@@ -365,7 +393,7 @@ export class Grants {
         }
         // Not the provider's host: the caller gets the redirect and decides;
         // the token goes nowhere near it.
-        if (!hostAllowed(spec, next, provider)) break;
+        if (!hostAllowed(spec, next, provider, extraHosts)) break;
         if (
           upstream.status === 303 ||
           ((upstream.status === 301 || upstream.status === 302) &&
@@ -441,9 +469,19 @@ export class Grants {
       tokens = answer.val;
     } else {
       const config = await providerConfig(spec, this.encryptionKey);
-      const clientId = clientIdOf(config);
-      const clientSecret = clientSecretOf(config);
-      const endpoint = tokenEndpointFor(spec, config, str(body.directoryTenantId) || undefined);
+      // Salesforce names which of its connectors (orgs) the code is for; that
+      // connector's own token endpoint and credentials follow.
+      const org = str(body.org) || undefined;
+      const credentials = spec.credentialsFor?.(config, org) ?? {
+        clientId: clientIdOf(config),
+        clientSecret: clientSecretOf(config),
+      };
+      const { clientId, clientSecret } = credentials;
+      const endpoint = tokenEndpointFor(
+        spec,
+        config,
+        str(body.directoryTenantId) || org || undefined
+      );
       if (!clientId || !endpoint || (!clientSecret && spec.clientAuth !== 'none'))
         return fail('NOT_CONFIGURED');
       const headers: Record<string, string> = {
@@ -486,6 +524,7 @@ export class Grants {
     this.sweepPending();
     this.pending.set(handle, {
       provider,
+      instanceUrl: typeof tokens.instance_url === 'string' ? tokens.instance_url : null,
       accessToken: refreshed.accessToken,
       refreshToken: refreshed.refreshToken,
       expiresAt: refreshed.expiresAt,
@@ -508,6 +547,11 @@ export class Grants {
       idToken: typeof tokens.id_token === 'string' ? tokens.id_token : null,
       grantedScopes: scopesFromAccessToken(refreshed.accessToken),
       hasRefreshToken: refreshed.refreshToken !== '',
+      // Salesforce names the org's API host and the user's identity URL in
+      // the token answer; neither is secret, and the callback needs both to
+      // check the org and say who connected.
+      instanceUrl: typeof tokens.instance_url === 'string' ? tokens.instance_url : null,
+      identityUrl: typeof tokens.id === 'string' ? tokens.id : null,
     });
   }
 
@@ -593,6 +637,21 @@ export class Grants {
                 'content-type': 'application/x-www-form-urlencoded',
               },
               body: new URLSearchParams({ token: grant.accessToken }).toString(),
+              signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+            });
+            revokedAtProvider = answer.ok;
+          }
+        } else if (provider === SALESFORCE) {
+          const org = salesforceOrgOfGrant(await providerConfig(spec, this.encryptionKey), grant);
+          const origin = org?.myDomain;
+          if (origin) {
+            // Revoking the refresh token ends every access token minted from it.
+            const answer = await this.fetchImpl(salesforceRevokeEndpoint(origin), {
+              method: 'POST',
+              headers: { 'content-type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                token: grant.refreshToken || grant.accessToken,
+              }).toString(),
               signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
             });
             revokedAtProvider = answer.ok;

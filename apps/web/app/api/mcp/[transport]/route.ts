@@ -376,6 +376,8 @@ const handler = async (request: NextRequest): Promise<Response> => {
       entraDeveloperScopes,
       bitbucketAvailable,
       bitbucketScopes,
+      salesforceAvailable,
+      salesforceScopes,
     } = availability;
     // No Jira grant → an empty scope list, which the scope gate reads as
     // "register no Jira/JSM tools" (never undefined — that means a legacy
@@ -453,6 +455,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
               jiraAdminScopes: jiraAdminAvailable ? jiraAdminScopes : undefined,
               entraDeveloperScopes: entraDeveloperAvailable ? entraDeveloperScopes : undefined,
               bitbucketScopes: bitbucketAvailable ? bitbucketScopes : undefined,
+              salesforceScopes: salesforceAvailable ? salesforceScopes : undefined,
               jsmGrant: jsmGrant ?? undefined,
               agent: agentId ? { agentId } : undefined,
               roles,

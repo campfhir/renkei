@@ -31,6 +31,7 @@ import {
   ONBASE,
   ONBASE_ADMIN,
   GITHUB,
+  SALESFORCE,
 } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { registerAllTools } from '@/lib/mcp-tools';
@@ -65,6 +66,8 @@ import { registerBitbucketTools, BITBUCKET_MCP_CONNECTOR } from '@/lib/mcp-tools
 import { oauthBitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import { registerGitHubTools, GITHUB_MCP_CONNECTOR } from '@/lib/mcp-tools/github';
 import { oauthGitHubAuth } from '@/lib/mcp-tools/github/github-auth';
+import { registerSalesforceTools, SALESFORCE_MCP_CONNECTOR } from '@/lib/mcp-tools/salesforce';
+import { oauthSalesforceAuth } from '@/lib/mcp-tools/salesforce/salesforce-auth';
 import { resolveToolExposure } from '@renkei/connector-fileshares';
 import {
   connectedServerIds,
@@ -135,6 +138,9 @@ export interface ConnectorAvailability {
   bitbucketScopes: string[];
   githubAvailable: boolean;
   githubScopes: string[];
+  salesforceAvailable: boolean;
+  /** Renkei's own capabilities on the Salesforce grant (lib/salesforce-scopes.ts). */
+  salesforceScopes: string[];
   filesharesAvailable: boolean;
   /** Whether any connected share exposes write tools / delete to the LLM. */
   fileshareWrite: boolean;
@@ -321,6 +327,28 @@ export async function resolveConnectorAvailability(
     ? narrowedScopes(githubGrantRow.requested_scopes, githubGrantRow.granted_scopes)
     : [];
 
+  // Salesforce: the token always carries `api` — the whole REST surface —
+  // so, as for GitHub, what the person asked for in Renkei's own picker is
+  // the narrowing. The token is opaque, so granted is null and requested
+  // is the answer.
+  //
+  // A person can hold one connection per Salesforce connector (production,
+  // each sandbox), so registration takes the union of their connections'
+  // capabilities; each call is then checked against the one connection it
+  // runs on (salesforce/org-choice.ts).
+  const salesforceGrantRows = await db
+    .selectFrom('provider_grants')
+    .select(['requested_scopes', 'granted_scopes'])
+    .where('provider', '=', SALESFORCE)
+    .where('subject', '=', subject)
+    .execute();
+  const salesforceAvailable = salesforceGrantRows.length > 0;
+  const salesforceScopes = [
+    ...new Set(
+      salesforceGrantRows.flatMap((row) => narrowedScopes(row.requested_scopes, row.granted_scopes))
+    ),
+  ];
+
   // File shares are the one connector with no provider_grants row: the
   // caller's own stored connections stand in for the OAuth grant, and the
   // exposure they chose per share decides which tool FAMILIES register —
@@ -392,6 +420,8 @@ export async function resolveConnectorAvailability(
     bitbucketScopes,
     githubAvailable,
     githubScopes,
+    salesforceAvailable,
+    salesforceScopes,
     filesharesAvailable,
     fileshareWrite,
     fileshareDelete,
@@ -441,6 +471,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.entraDeveloperAvailable ? [ENTRA_DEVELOPER_MCP_CONNECTOR] : []),
     ...(availability.bitbucketAvailable ? [BITBUCKET_MCP_CONNECTOR] : []),
     ...(availability.githubAvailable ? [GITHUB_MCP_CONNECTOR] : []),
+    ...(availability.salesforceAvailable ? [SALESFORCE_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
     ...(availability.mirthAvailable ? [MIRTH_MCP_CONNECTOR] : []),
     ...(availability.admanagerAvailable ? [ADMANAGER_MCP_CONNECTOR] : []),
@@ -479,6 +510,7 @@ export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
   ENTRA_DEVELOPER_MCP_CONNECTOR,
   BITBUCKET_MCP_CONNECTOR,
   GITHUB_MCP_CONNECTOR,
+  SALESFORCE_MCP_CONNECTOR,
   FILESHARES_MCP_CONNECTOR,
   MIRTH_MCP_CONNECTOR,
   ADMANAGER_MCP_CONNECTOR,
@@ -529,6 +561,7 @@ export async function registerRenkeiTools(
     entraDeveloperAvailable,
     bitbucketAvailable,
     githubAvailable,
+    salesforceAvailable,
     filesharesAvailable,
     mirthAvailable,
     admanagerAvailable,
@@ -758,6 +791,16 @@ export async function registerRenkeiTools(
       withCapabilityGate(server, projection, GITHUB_MCP_CONNECTOR),
       context,
       oauthGitHubAuth(context)
+    );
+  }
+  if (salesforceAvailable) {
+    // Production's one path: the caller's own grant on the organization's
+    // Salesforce app. Its capability gate sits inside registerSalesforceTools
+    // and fails closed on a missing capability list.
+    registerSalesforceTools(
+      withCapabilityGate(server, projection, SALESFORCE_MCP_CONNECTOR),
+      context,
+      oauthSalesforceAuth(context)
     );
   }
   if (filesharesAvailable) {

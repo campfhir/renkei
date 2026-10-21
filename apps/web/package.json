@@ -34,6 +34,7 @@
     "@renkei/connector-mirth": "workspace:*",
     "@renkei/connector-mistral-ocr": "workspace:*",
     "@renkei/connector-onbase": "workspace:*",
+    "@renkei/connector-salesforce": "workspace:*",
     "@renkei/connector-sandbox": "workspace:*",
     "@renkei/connector-webex": "workspace:*",
     "@renkei/connector-zoom": "workspace:*",

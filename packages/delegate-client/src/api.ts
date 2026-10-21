@@ -90,6 +90,10 @@ export interface ExchangeOutcome {
   idToken: string | null;
   grantedScopes: string[] | null;
   hasRefreshToken: boolean;
+  /** Salesforce: the org's API host (`instance_url`); null elsewhere. */
+  instanceUrl: string | null;
+  /** Salesforce: the identity URL naming the org and user (`id`); null elsewhere. */
+  identityUrl: string | null;
 }
 
 /** Where a workspace's git should go instead of the host, for one operation. */
@@ -250,6 +254,8 @@ export class DelegateGrants {
     provider: string;
     form: Record<string, string>;
     directoryTenantId?: string;
+    /** Which of a provider's registered connectors the code is for (Salesforce: the org). */
+    org?: string;
   }): Promise<Result<ExchangeOutcome, GrantOpError>> {
     const answer = await this.transport.call('oauth/exchange', { ...input });
     if (!answer.ok) return err(grantOpError(answer.err.type), { message: answer.err.message });
@@ -263,6 +269,8 @@ export class DelegateGrants {
       idToken: typeof value.idToken === 'string' ? value.idToken : null,
       grantedScopes: Array.isArray(value.grantedScopes) ? stringsOf(value.grantedScopes) : null,
       hasRefreshToken: value.hasRefreshToken === true,
+      instanceUrl: typeof value.instanceUrl === 'string' ? value.instanceUrl : null,
+      identityUrl: typeof value.identityUrl === 'string' ? value.identityUrl : null,
     });
   }
 

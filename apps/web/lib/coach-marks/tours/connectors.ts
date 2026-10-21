@@ -246,6 +246,41 @@ export const CONNECTOR_TOURS: CoachMarkTour[] = [
     ],
   },
   {
+    id: 'connect-salesforce',
+    area: 'Connectors',
+    version: 1,
+    title: 'Connecting Salesforce',
+    description:
+      'Records, custom objects, activity, and reports and dashboards in your Salesforce org, with your own Salesforce access.',
+    startPath: '/connectors',
+    autoStart: false,
+    requires: ['card-salesforce'],
+    audience: 'everyone',
+    steps: [
+      {
+        id: 'card',
+        title: 'Your Salesforce org',
+        target: 'card-salesforce',
+        placement: 'auto',
+        body: 'Find and update records — standard objects and your organization’s own custom ones — log calls and tasks, and run the reports and dashboards you already use. Salesforce checks your own access on every call: what you cannot see or change there, Renkei cannot either.',
+      },
+      {
+        id: 'scopes',
+        title: 'What Renkei may do',
+        target: 'salesforce-scopes',
+        placement: 'auto',
+        body: 'Reading, changing, deleting and reassigning records, and running reports, are separate choices. Deleting and reassigning start off; leave out what you will not use. Changing many records at once is always a card you confirm.',
+      },
+      {
+        id: 'connect',
+        title: 'Connect',
+        target: 'salesforce-connect',
+        placement: 'auto',
+        body: 'Sign in on your organization’s Salesforce page and come back connected. Disconnecting revokes the connection in Salesforce too.',
+      },
+    ],
+  },
+  {
     id: 'connect-bitbucket',
     area: 'Connectors',
     version: 1,

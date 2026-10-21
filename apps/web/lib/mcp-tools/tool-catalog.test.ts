@@ -78,6 +78,11 @@ jest.mock('@renkei/db', () => ({
             const row = grants[provider];
             return row ? { provider_account_id: 'acct-1', ...row } : undefined;
           },
+          // Every grant of a provider (Salesforce: one per connected org).
+          execute: async () => {
+            const row = grants[provider];
+            return row ? [{ provider_account_id: 'acct-1', ...row }] : [];
+          },
         };
         return chain;
       },
@@ -329,6 +334,44 @@ describe('listAvailableTools', () => {
     tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('entra_'))).toBe(false);
     expect(tools).toContain('jira_search_issues');
+  });
+
+  it('includes Salesforce on its own grant, narrowed to the capabilities the person chose', async () => {
+    // An opaque token: granted is null, and requested is the narrowing.
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      salesforce: { requested_scopes: ['sf-records-read', 'sf-reports'], granted_scopes: null },
+    };
+    let tools = namesOf(await listAvailableTools('subject-1'));
+    expect(tools).toContain('salesforce_get_record');
+    expect(tools).toContain('salesforce_run_report');
+    expect(tools).not.toContain('salesforce_update_record');
+    expect(tools).not.toContain('salesforce_delete_records_preview');
+
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      salesforce: {
+        requested_scopes: ['sf-records-read', 'sf-records-write', 'sf-records-delete'],
+        granted_scopes: null,
+      },
+    };
+    invalidateToolCatalogCache('subject-1');
+    tools = namesOf(await listAvailableTools('subject-1'));
+    expect(tools).toContain('salesforce_update_record');
+    expect(tools).toContain('salesforce_delete_records_preview');
+    expect(tools).not.toContain('salesforce_change_owner_preview');
+
+    // Read-only mode keeps the reads; the org switch takes all of it away.
+    readOnly = true;
+    invalidateToolCatalogCache('subject-1');
+    tools = namesOf(await listAvailableTools('subject-1'));
+    expect(tools).toContain('salesforce_query');
+    expect(tools).not.toContain('salesforce_update_record');
+    readOnly = false;
+    disabledConnectors = ['salesforce'];
+    invalidateToolCatalogCache('subject-1');
+    tools = namesOf(await listAvailableTools('subject-1'));
+    expect(tools.some((name) => name.startsWith('salesforce_'))).toBe(false);
   });
 
   it('includes Bitbucket once its grant exists, narrowed to requested ∩ granted', async () => {

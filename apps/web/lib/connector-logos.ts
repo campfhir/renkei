@@ -34,6 +34,13 @@ export const LOGO_FILE: Record<string, string> = {
   'entra-developer': 'microsoft',
   // The WebEx bot is a second registration of the same product.
   'webex-bot': 'webex',
+  // Renkei's own built-in surfaces wear Renkei's mark — one file, many keys.
+  cards: 'renkei',
+  agents: 'renkei',
+  'batch-jobs': 'renkei',
+  logs: 'renkei',
+  'user-memory': 'renkei',
+  sandbox: 'renkei',
 };
 
 /**
@@ -49,10 +56,10 @@ export const EXTRA_LOGOS = ['outlook', 'microsoft', 'jira-jsm', 'atlassian', 'di
 /**
  * Marks we deliberately do not ship, which render the built-in glyph.
  *
- * `knowledge`, `cards`, `agents`, `logs`, `user-memory`, `web-search`, `sandbox`,
- * `batch-jobs` and `mistral-ocr` are our own surfaces
- * rather than products — the built-in glyph says that better than any
- * vendor-style file would.
+ * `knowledge`, `web-search`, `voice` and `mistral-ocr` are our own surfaces
+ * rather than products, each with a built-in glyph that says what it does.
+ * The other built-in surfaces (cards, agents, batch jobs, logs, memory, the
+ * sandbox) are mapped to Renkei's own mark in LOGO_FILE instead.
  *
  * `directory` is NOT here. It has no vendor logo either — it names a Renkei
  * bundle of Graph scopes, not a Microsoft product — but a real asset beats a
@@ -62,29 +69,17 @@ export const EXTRA_LOGOS = ['outlook', 'microsoft', 'jira-jsm', 'atlassian', 'di
  */
 export const GLYPH_ONLY = new Set([
   'knowledge',
-  'cards',
-  'agents',
   'fileshares',
-  'logs',
-  'user-memory',
   // Web search is a Renkei surface over an Azure deployment, not a product
   // of its own — and drawing Bing's or Azure's mark for it would claim
   // more than it is.
   'web-search',
-  // Same reasoning for the sandbox, batch jobs and the OCR stage: Renkei
-  // surfaces, not vendor products (Mistral's mark would claim the wrong
-  // thing for a pipeline stage that happens to call it).
-  'sandbox',
-  'batch-jobs',
+  // The OCR stage: a Renkei pipeline stage, not a vendor product (Mistral's
+  // mark would claim the wrong thing for a stage that happens to call it).
   'mistral-ocr',
   // Voice is the chat speaking and listening through an org-provisioned
   // speech service; drawing that vendor's mark would name the wrong thing.
   'voice',
-  // No shipped GitHub mark yet (the README's marks are sourced from
-  // Wikimedia Commons entries recorded there as public domain; nothing
-  // suitable was vetted for this connector) — the built-in glyph renders
-  // until one is added the same way.
-  'github',
   // Same reasoning for ADManager Plus: no ManageEngine mark has been
   // vetted for this connector yet — the built-in glyph renders until one
   // is added the same way.
@@ -92,6 +87,14 @@ export const GLYPH_ONLY = new Set([
   // MCP servers are whatever the org lists, not one product; no mark fits.
   'mcp',
 ]);
+
+/**
+ * Marks drawn in black, which vanish on a dark card: they render inverted in
+ * dark mode. An SVG loaded through <img> cannot see the page's theme (it is
+ * the `data-theme` attribute, not the system setting), so the page inverts
+ * it rather than the file switching itself.
+ */
+export const INVERT_ON_DARK = new Set(['github']);
 
 /** Explicit prop, then the known-mismatch table, then the key itself. */
 export function resolveLogoFile(capabilityKey: string, logo?: string): string {

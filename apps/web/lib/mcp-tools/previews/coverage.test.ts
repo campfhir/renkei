@@ -5,7 +5,7 @@
  * tool HAS one, so this runs the real registration for every connector —
  * through the same enumeration the tools page uses, with every scope
  * granted, plus Mirth and ADManager registered directly like their own
- * suites do — and fails naming any act tool that has neither a hand-written
+ * suites do, and the Salesforce file tools, which need a sandbox worker — and fails naming any act tool that has neither a hand-written
  * preview nor a builder in this directory.
  *
  * A new act tool therefore arrives with its card, or this test says which
@@ -62,6 +62,8 @@ jest.mock('@renkei/db', () => ({
           where: () => chain,
           limit: () => chain,
           executeTakeFirst: async () => GRANT,
+          // Every grant of a provider (Salesforce: one per connected org).
+          execute: async () => [GRANT],
         };
         return chain;
       },
@@ -108,6 +110,8 @@ import { needsPreview, previewTwinOf } from '../act-preview';
 import { registerMirthTools } from '../mirth';
 import { NO_SUCH_INSTANCE as NO_MIRTH_INSTANCE } from '../mirth/mirth-auth';
 import { registerAdManagerTools } from '../admanager';
+import { registerFileTools as registerSalesforceFileTools } from '../salesforce/files';
+import { deniedSalesforceAuth } from '../salesforce/salesforce-auth';
 import { NO_SUCH_INSTANCE as NO_ADMANAGER_INSTANCE } from '../admanager/admanager-auth';
 import type { MCPToolContext } from '../common';
 import { PREVIEW_BUILDERS } from '.';
@@ -180,6 +184,13 @@ function admanagerTools(): Map<string, Config> {
   return tools;
 }
 
+/** The Salesforce file tools, as a deployment with a sandbox worker registers them. */
+function salesforceFileTools(): Map<string, Config> {
+  const { server, tools } = collecting();
+  registerSalesforceFileTools(server, context, deniedSalesforceAuth(), true);
+  return tools;
+}
+
 beforeEach(() => {
   fetchSpy.mockReset();
   global.fetch = fetchSpy as unknown as typeof fetch;
@@ -205,7 +216,8 @@ async function surface() {
       ...(tool.appOnly ? { _meta: { ui: { visibility: ['app'] } } } : {}),
     });
   }
-  for (const [name, config] of [...mirthTools(), ...admanagerTools()]) configs.set(name, config);
+  for (const [name, config] of [...mirthTools(), ...admanagerTools(), ...salesforceFileTools()])
+    configs.set(name, config);
   return configs;
 }
 
@@ -229,6 +241,7 @@ describe('act tool preview coverage', () => {
       'admanager_',
       'entra_',
       'fileshare_',
+      'salesforce_',
     ]) {
       expect(names.some((name) => name.startsWith(prefix))).toBe(true);
     }

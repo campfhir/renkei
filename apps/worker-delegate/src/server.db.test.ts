@@ -12,7 +12,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { getDatabase, closeDatabase } from '@renkei/db';
 import { instanceListMessage, parseEncryptionKey, verifyEd25519 } from '@renkei/crypto';
-import { setGrant, GITHUB } from '@renkei/provider-grants';
+import { setGrant, GITHUB, SALESFORCE } from '@renkei/provider-grants';
+import { invalidateConnectorConfigCache, setConnectorConfig } from '@renkei/connector-config';
 import { createInstance, upsertConnection } from '@renkei/connector-mirth';
 import { sealForSubject } from '@renkei/user-keys';
 import { Readable } from 'node:stream';
@@ -79,9 +80,8 @@ describeDb('worker-delegate', () => {
     });
     ownerSessionId = enrolledOwner.sessionId;
     ownerKeys = enrolledOwner.keys;
-    friendSessionId = (
-      await enrollTestPerson(db.val, { subject: friend, instances: targets })
-    ).sessionId;
+    friendSessionId = (await enrollTestPerson(db.val, { subject: friend, instances: targets }))
+      .sessionId;
     await enrollTestPerson(db.val, { subject: leaver, instances: targets });
     const fetchImpl: typeof fetch = async (input, init) => {
       const url =
@@ -299,9 +299,9 @@ describeDb('worker-delegate', () => {
       )
     ).toEqual(['automation']);
     // A value under the user key alone is out of a worker's reach, whatever op it tries.
-    expect(
-      (await op('user-sealed/open', { subject: owner, stored: [] }, WORKER_KEY)).status
-    ).toBe(403);
+    expect((await op('user-sealed/open', { subject: owner, stored: [] }, WORKER_KEY)).status).toBe(
+      403
+    );
 
     // The agents worker asks about a run's owner: without the run, or with
     // somebody else's run, it is refused; with the owner's run it is answered.
@@ -498,9 +498,7 @@ describeDb('worker-delegate', () => {
     });
     expect(forged.status).toBe(400);
     expect(errorType(forged.json)).toBe('BAD_DELEGATION');
-    expect(
-      (await op('keys/status', { subject: owner })).json.automationInstances
-    ).toEqual([]);
+    expect((await op('keys/status', { subject: owner })).json.automationInstances).toEqual([]);
     // An empty session list stores nothing and drops this session's rows only on request.
     const empty = await op('keys/delegate', {
       subject: owner,
@@ -699,6 +697,139 @@ describeDb('worker-delegate', () => {
     expect((await op('grant/describe', grant)).status).toBe(404);
   });
 
+  it("keeps a Salesforce token to its own connector's org: exchange, identity, commit, proxy, revoke", async () => {
+    const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+    if (!key.ok) throw new Error('bad key');
+    const PROD = 'acme-e2e.my.salesforce.com';
+    const UAT = 'acme-e2e--uat.sandbox.my.salesforce.com';
+    const configured = await setConnectorConfig(
+      SALESFORCE,
+      {
+        enabled: true,
+        // Two Salesforce connectors, one per org, each its own app.
+        settings: {
+          orgs: [
+            { key: 'production', name: 'Production', myDomain: PROD, clientId: 'prod-client' },
+            { key: 'uat', name: 'UAT', myDomain: UAT, sandbox: true, clientId: 'uat-client' },
+          ],
+        },
+        secrets: { 'clientSecret:production': 'prod-secret', 'clientSecret:uat': 'uat-secret' },
+      },
+      key.val
+    );
+    expect(configured.ok).toBe(true);
+    invalidateConnectorConfigCache(SALESFORCE);
+    const proxy = (grant: Record<string, unknown>, target: string) =>
+      fetch(`${base}/v1/api`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${API_KEY}`,
+          'x-delegate-grant': JSON.stringify(grant),
+          'x-delegate-url': target,
+          'x-delegate-method': 'GET',
+        },
+      });
+    try {
+      // The code is traded at the sandbox's own token endpoint, with the
+      // sandbox's own app; the answer's instance and identity URLs are
+      // relayed — never the tokens.
+      scriptedAnswers.push(
+        () =>
+          new Response(
+            JSON.stringify({
+              access_token: '00D!uat_access',
+              refresh_token: 'uat_refresh',
+              instance_url: `https://${UAT}`,
+              id: 'https://test.salesforce.com/id/00D000000000063EAA/005000000000001AAA',
+              issued_at: '1760000000000',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+      );
+      const exchanged = await op('oauth/exchange', {
+        provider: SALESFORCE,
+        org: 'uat',
+        form: {
+          code: 'the-code',
+          redirect_uri: 'https://renkei.example/api/oauth/callback',
+          code_verifier: 'v',
+        },
+      });
+      expect(exchanged.status).toBe(200);
+      const tokenCall = upstreamCalls.at(-1);
+      expect(tokenCall?.url).toBe(`https://${UAT}/services/oauth2/token`);
+      expect(tokenCall?.body).toContain('code_verifier=v');
+      expect(tokenCall?.body).toContain('client_id=uat-client');
+      expect(tokenCall?.body).toContain('client_secret=uat-secret');
+      expect(exchanged.json.instanceUrl).toBe(`https://${UAT}`);
+      expect(JSON.stringify(exchanged.json)).not.toContain('uat_access');
+      const handle = String(exchanged.json.handle);
+
+      // The identity call rides the pending handle to the sandbox — and
+      // only the sandbox, though production is registered too.
+      const identity = await proxy(
+        { provider: SALESFORCE, pending: handle },
+        `https://${UAT}/services/oauth2/userinfo`
+      );
+      expect(identity.status).toBe(200);
+      expect(upstreamCalls.at(-1)?.authorization).toBe('Bearer 00D!uat_access');
+      const crossed = await proxy(
+        { provider: SALESFORCE, pending: handle },
+        `https://${PROD}/services/oauth2/userinfo`
+      );
+      expect(crossed.status).toBe(403);
+
+      const accountId = '00D000000000063EAA/005000000000001AAA';
+      const committed = await op('grant/commit', {
+        provider: SALESFORCE,
+        handle,
+        subject: owner,
+        accountId,
+        displayName: 'Ada Admin',
+        requestedScopes: ['sf-records-read'],
+        metadata: {
+          orgId: '00D000000000063EAA',
+          userId: '005000000000001AAA',
+          instanceUrl: `https://${UAT}`,
+          connector: 'uat',
+        },
+      });
+      expect(committed.status).toBe(200);
+
+      const grant = { provider: SALESFORCE, accountId };
+      const proxied = await proxy(grant, `https://${UAT}/services/data/v68.0/sobjects`);
+      expect(proxied.status).toBe(200);
+      expect(upstreamCalls.at(-1)?.authorization).toBe('Bearer 00D!uat_access');
+
+      // Another org — production included — never gets the sandbox's token.
+      for (const elsewhere of [
+        `https://${PROD}/services/data/v68.0/sobjects`,
+        'https://other-org.my.salesforce.com/services/data/v68.0/sobjects',
+        `https://${UAT}.evil.example/x`,
+        'https://login.salesforce.com/services/oauth2/userinfo',
+      ]) {
+        const refused = await proxy(grant, elsewhere);
+        expect(refused.status).toBe(403);
+        expect(refused.headers.get('x-delegate-error')).toBe('host_not_allowed');
+      }
+
+      // Disconnect revokes the refresh token at the sandbox, then deletes the grant.
+      const revoked = await op('grant/revoke', { provider: SALESFORCE, accountId });
+      expect(revoked.status).toBe(200);
+      expect(revoked.json.revokedAtProvider).toBe(true);
+      const revokeCall = upstreamCalls.at(-1);
+      expect(revokeCall?.url).toBe(`https://${UAT}/services/oauth2/revoke`);
+      expect(revokeCall?.body).toBe('token=uat_refresh');
+      expect((await op('grant/describe', grant)).status).toBe(404);
+    } finally {
+      scriptedAnswers.length = 0;
+      const db = getDatabase();
+      if (db.ok)
+        await db.val.deleteFrom('connector_configs').where('connector', '=', SALESFORCE).execute();
+      invalidateConnectorConfigCache(SALESFORCE);
+    }
+  });
+
   it('relays a workspace git exchange on a ticket with the token attached, and never a write on a read ticket', async () => {
     const accountId = `gh-${randomUUID().slice(0, 8)}`;
     const saved = await setGrant(GITHUB, {
@@ -717,13 +848,9 @@ describeDb('worker-delegate', () => {
 
     // Nobody but GitHub and Bitbucket; nobody without a grant.
     expect(
-      errorType(
-        (await op('grant/git-ticket', { provider: 'webex', subject: owner })).json
-      )
+      errorType((await op('grant/git-ticket', { provider: 'webex', subject: owner })).json)
     ).toBe('host_not_allowed');
-    expect(
-      (await op('grant/git-ticket', { provider: GITHUB, subject: friend })).status
-    ).toBe(404);
+    expect((await op('grant/git-ticket', { provider: GITHUB, subject: friend })).status).toBe(404);
 
     const read = await op('grant/git-ticket', { provider: GITHUB, subject: owner });
     expect(read.status).toBe(200);

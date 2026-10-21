@@ -44,6 +44,7 @@ const PREFIXES: [string, string][] = [
   ['confluence_', 'atlassian-confluence'],
   ['bitbucket_', 'atlassian-bitbucket'],
   ['github_', 'github'],
+  ['salesforce_', 'salesforce'],
   ['outlook_', 'microsoft'],
   ['sharepoint_', 'sharepoint'],
   ['onedrive_', 'onedrive'],

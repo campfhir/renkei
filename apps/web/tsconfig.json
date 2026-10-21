@@ -33,6 +33,7 @@
       "@renkei/connector-fileshares": ["../../packages/connector-fileshares/src/index.ts"],
       "@renkei/connector-fileshares/pure": ["../../packages/connector-fileshares/src/pure.ts"],
       "@renkei/connector-onbase": ["../../packages/connector-onbase/src/index.ts"],
+      "@renkei/connector-salesforce": ["../../packages/connector-salesforce/src/index.ts"],
       "@renkei/connector-mcp": ["../../packages/connector-mcp/src/index.ts"],
       "@renkei/connector-mcp/pure": ["../../packages/connector-mcp/src/pure.ts"],
       "@renkei/connector-mirth": ["../../packages/connector-mirth/src/index.ts"],

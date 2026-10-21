@@ -6,6 +6,7 @@
  * every row manages its own live connect/disconnect/permission state.
  */
 
+import ConnectorIcon from '@/components/connector-icon';
 import { ConnectorShell, ConnectorHeading } from './connector-shell';
 import AdManagerList, { type ConnectableAdManagerInstanceView } from './admanager-list';
 
@@ -18,7 +19,10 @@ export default function AdManagerConnector({
 }) {
   return (
     <ConnectorShell anchor="card-admanager">
-      <ConnectorHeading>ADManager Plus</ConnectorHeading>
+      <ConnectorHeading>
+        <ConnectorIcon capabilityKey="admanager" label="ADManager Plus" size={20} />
+        ADManager Plus
+      </ConnectorHeading>
       <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
         Your organization&apos;s ManageEngine ADManager Plus servers. Connect each with your own
         technician authtoken — what you can reach there is what that token can. The permissions

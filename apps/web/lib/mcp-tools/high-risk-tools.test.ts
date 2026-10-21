@@ -69,6 +69,11 @@ jest.mock('@renkei/db', () => ({
             const row = grants[provider];
             return row ? { provider_account_id: 'acct-1', ...row } : undefined;
           },
+          // Every grant of a provider (Salesforce: one per connected org).
+          execute: async () => {
+            const row = grants[provider];
+            return row ? [{ provider_account_id: 'acct-1', ...row }] : [];
+          },
         };
         return chain;
       },
@@ -119,6 +124,7 @@ import { sharepointScopeFor } from './sharepoint/scopes';
 import { githubScopeFor } from './github/scopes';
 import { bitbucketScopeFor } from './bitbucket/scopes';
 import { entraScopeFor } from './entra-developer/scopes';
+import { salesforceScopeFor } from './salesforce/scopes';
 import type { MCPToolContext } from './common';
 
 /** Every scope the listed tools of one connector need, as one grant row. */
@@ -226,6 +232,7 @@ beforeEach(() => {
     'atlassian-bitbucket': grantFor(['bitbucket_'], bitbucketScopeFor),
     github: grantFor(['github_'], githubScopeFor),
     'entra-developer': grantFor(['entra_'], entraScopeFor),
+    salesforce: grantFor(['salesforce_'], salesforceScopeFor),
   };
   fetchSpy.mockReset();
   global.fetch = fetchSpy as unknown as typeof fetch;

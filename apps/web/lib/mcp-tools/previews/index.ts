@@ -16,6 +16,7 @@ import { JSM_PREVIEWS } from './jsm';
 import { MEETING_PREVIEWS } from './meetings';
 import { MIRTH_ADMIN_PREVIEWS } from './mirth-admin';
 import { OUTLOOK_PREVIEWS } from './outlook';
+import { SALESFORCE_PREVIEWS } from './salesforce';
 import { SOURCE_CONTROL_PREVIEWS } from './source-control';
 
 const SETS: Record<string, PreviewBuilder>[] = [
@@ -28,6 +29,7 @@ const SETS: Record<string, PreviewBuilder>[] = [
   DOCUMENT_PREVIEWS,
   INTEGRATION_PREVIEWS,
   MIRTH_ADMIN_PREVIEWS,
+  SALESFORCE_PREVIEWS,
 ];
 
 function merge(): Record<string, PreviewBuilder> {

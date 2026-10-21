@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { resolveLogoFile, GLYPH_ONLY } from '@/lib/connector-logos';
+import { resolveLogoFile, GLYPH_ONLY, INVERT_ON_DARK } from '@/lib/connector-logos';
 
 /**
  * A small mark per connector, so a page of eight cards can be scanned rather
@@ -60,12 +60,13 @@ const BRAND: Record<string, string> = {
   // A warm violet for voice: no vendor mark (GLYPH_ONLY), so the
   // sound-wave glyph below carries the colour.
   voice: '#7C3AED',
-  // The red-orange of the shipped Mirth Connect mark, so the fallback
-  // channel glyph reads as the same product.
-  mirth: '#D2492F',
-  // GitHub's near-black; we ship no vendor mark (GLYPH_ONLY), so the
-  // initial-letter glyph carries the colour.
-  github: '#181717',
+  // The orange of the shipped Mirth Connect mark, so the fallback channel
+  // glyph reads as the same product.
+  mirth: '#F15A24',
+  // The near-black of the shipped Octicons mark.
+  github: '#1B1F23',
+  // The cloud blue of the shipped Salesforce mark.
+  salesforce: '#00A1E0',
 };
 
 /** Fallback: the connector's initial on a neutral tile. */
@@ -314,7 +315,7 @@ export default function ConnectorIcon({
         // reliably forbid. object-contain letterboxes anything past the
         // width ceiling instead of distorting it.
         style={{ height: size, width: 'auto', maxWidth: maxWidth ?? size * 4 }}
-        className={`object-contain ${className ?? ''}`}
+        className={`object-contain ${INVERT_ON_DARK.has(file) ? 'dark:invert' : ''} ${className ?? ''}`}
         onError={() => setLogoMissing(true)}
         // Decorative: the label is always rendered beside it, so announcing
         // the mark too would make a screen reader say everything twice.

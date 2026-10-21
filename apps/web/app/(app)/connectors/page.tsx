@@ -10,6 +10,7 @@ import MicrosoftConnector from './microsoft-connector';
 import EntraDeveloperConnector from './entra-developer-connector';
 import ZoomConnector from './zoom-connector';
 import GitHubConnector from './github-connector';
+import SalesforceConnector, { SalesforceOrphanedConnections } from './salesforce-connector';
 import HylandConnector from './hyland-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
@@ -48,6 +49,9 @@ import { MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
 import { ENTRA_DEVELOPER_CONNECTOR } from '@/lib/entra-developer-app';
 import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
 import { GITHUB_CONNECTOR } from '@/lib/github-app';
+import { listSalesforceConnectors } from '@/lib/salesforce-app';
+import { usableSalesforceCeiling } from '@/lib/salesforce-scopes';
+import { listSalesforceConnections } from '@/lib/salesforce-grants';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
 import { DEFAULT_ENTRA_DEVELOPER_SCOPES } from '@/lib/entra-developer-scopes';
@@ -235,6 +239,14 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   );
   const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
   const githubCeiling = ceilingFrom(settingsOf(GITHUB_CONNECTOR), DEFAULT_GITHUB_SCOPES);
+  // One card per Salesforce connector (org) the admin switched on, each
+  // connected separately; plus any connection to an org since removed.
+  const salesforceConnectors = shown.has('salesforce')
+    ? (await listSalesforceConnectors()).filter((org) => org.enabled)
+    : [];
+  const salesforceConnections = shown.has('salesforce')
+    ? await listSalesforceConnections(db, session.subject, await listSalesforceConnectors())
+    : [];
 
   // The caller's own grants, one query, mapped by provider — connection
   // state, and the scopes they previously authorized (seeding the picker on
@@ -307,6 +319,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     shown.has('entra-developer') ||
     shown.has('zoom') ||
     shown.has('github') ||
+    shown.has('salesforce') ||
     hylandShown ||
     shown.has('fileshares') ||
     shown.has('mirth') ||
@@ -514,6 +527,40 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
           <RemovableProducts products={removable(catalog, ['github'])} />
         </>
       ),
+    });
+  }
+
+  for (const [index, org] of salesforceConnectors.entries()) {
+    const connection = salesforceConnections.find((c) => c.connector === org.key);
+    cards.push({
+      key: `salesforce:${org.key}`,
+      needsAttention: connection === undefined,
+      node: (
+        <>
+          <SalesforceConnector
+            connectorKey={org.key}
+            name={org.name}
+            sandbox={org.sandbox}
+            orgHost={org.host}
+            connected={connection !== undefined}
+            displayName={connection?.displayName ?? null}
+            username={connection?.username ?? null}
+            ceiling={usableSalesforceCeiling(org.scopes.join(' '))}
+            priorScopes={connection?.requestedScopes ?? null}
+          />
+          {index === salesforceConnectors.length - 1 && (
+            <RemovableProducts products={removable(catalog, ['salesforce'])} />
+          )}
+        </>
+      ),
+    });
+  }
+  const orphaned = salesforceConnections.filter((c) => c.connector === null);
+  if (orphaned.length > 0) {
+    cards.push({
+      key: 'salesforce:removed',
+      needsAttention: true,
+      node: <SalesforceOrphanedConnections connections={orphaned} />,
     });
   }
 

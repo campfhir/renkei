@@ -31,22 +31,25 @@ use; see below.
 
 Ratios below are measured from each file's `viewBox`, not estimated.
 
-| File             | Source                                                                                                                             | Ratio |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| `sharepoint.svg` | `Microsoft Office SharePoint (2025–present).svg`                                                                                   | 0.90  |
-| `microsoft.svg`  | _record source_                                                                                                                    | 1.00  |
-| `outlook.svg`    | `Microsoft Outlook Icon (2025–present).svg`                                                                                        | 1.06  |
-| `onedrive.svg`   | `Microsoft OneDrive Icon (2025 - present).svg`                                                                                     | 1.50  |
-| `confluence.svg` | _record source_                                                                                                                    | 1.00  |
-| `atlassian.svg`  | _record source_                                                                                                                    | 1.00  |
-| `jira.svg`       | _record source_                                                                                                                    | 1.00  |
-| `jira-jsm.svg`   | _record source_                                                                                                                    | 1.00  |
-| `bitbucket.svg`  | _record source_                                                                                                                    | 1.00  |
-| `webex.svg`      | `Cisco Webex logo - Brandlogos.net.svg`                                                                                            | 2.64  |
-| `zoom.svg`       | _record source_                                                                                                                    | 1.00  |
-| `directory.svg`  | **ours** — original artwork, not a vendor mark                                                                                     | 1.00  |
-| `onbase.svg`     | **ours** — vector recreation of the official OnBase app icon (Hyland), supplied in-session; not a Commons asset                    | 1.00  |
-| `mirth.svg`      | **ours** — vector recreation of the official Mirth Connect app icon (NextGen Healthcare), supplied in-session; not a Commons asset | 1.00  |
+| File             | Source                                                                                                                 | Ratio |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------- | ----- |
+| `sharepoint.svg` | `Microsoft Office SharePoint (2025–present).svg`                                                                       | 0.90  |
+| `microsoft.svg`  | _record source_                                                                                                        | 1.00  |
+| `outlook.svg`    | `Microsoft Outlook Icon (2025–present).svg`                                                                            | 1.06  |
+| `onedrive.svg`   | `Microsoft OneDrive Icon (2025 - present).svg`                                                                         | 1.50  |
+| `confluence.svg` | _record source_                                                                                                        | 1.00  |
+| `atlassian.svg`  | _record source_                                                                                                        | 1.00  |
+| `jira.svg`       | _record source_                                                                                                        | 1.00  |
+| `jira-jsm.svg`   | _record source_                                                                                                        | 1.00  |
+| `bitbucket.svg`  | _record source_                                                                                                        | 1.00  |
+| `webex.svg`      | `Cisco Webex logo - Brandlogos.net.svg`                                                                                | 2.64  |
+| `zoom.svg`       | _record source_                                                                                                        | 1.00  |
+| `directory.svg`  | **ours** — original artwork, not a vendor mark                                                                         | 1.00  |
+| `renkei.svg`     | **ours** — the Renkei mark (`app/icon.svg`), cropped square; worn by Renkei's built-in surfaces via `LOGO_FILE`        | 1.00  |
+| `onbase.svg`     | **ours** — vector recreation of the official OnBase app icon (Hyland), supplied in-session; not a Commons asset        | 1.00  |
+| `salesforce.svg` | `Salesforce.com logo.svg` (PD-textlogo)                                                                                | 1.43  |
+| `github.svg`     | `Octicons-mark-github.svg` — **MIT**, © 2018 GitHub Inc. (not PD; see below)                                           | 1.00  |
+| `mirth.svg`      | **ours** — stylized Mirth Connect network mark (ring and three linked nodes), supplied in-session; not a Commons asset | 1.00  |
 
 **The `_record source_` rows need filling in.** This table is the provenance
 record for third-party trademarks, so an unattributed asset is the one thing
@@ -61,15 +64,34 @@ asset rather than a recoloured one.
 
 `bitbucket.svg` has no connector behind it. It is staged for one.
 
-`mirth.svg` is also ours in the same sense as `onbase.svg`: a vector
-recreation of the official Mirth Connect app icon (NextGen Healthcare),
-drawn from a reference image supplied in-session because the mark has no
-public-domain source on Commons. Geometry and colours were measured from
-the reference (tile, chamfers, gradient, hub-and-spoke graph), not
-estimated. It is a trademark: use is nominative, to identify the product
-the connector talks to, and the file is not recoloured or reshaped.
+`mirth.svg` is also ours in the same sense as `onbase.svg`: a stylized
+Mirth Connect mark — an orange ring around three linked nodes, for the
+engine's channels — supplied in-session as SVG because the mark has no
+public-domain source on Commons. It replaced an earlier recreation of the
+app tile. The supplied file's `xmlns` read `http://w3.org`, which browsers
+do not treat as SVG; it is stored with the real SVG namespace and otherwise
+as supplied. It identifies the product the connector talks to and is not
+recoloured or reshaped.
 
-`directory.svg` is the one other file here we drew. It marks the "Enterprise
+`github.svg` is the one Commons file here that is not public domain: Commons
+lists it under the MIT (Expat) licence, © 2018 GitHub Inc., from GitHub's
+Octicons. MIT asks that the copyright and permission notice travel with the
+file, so it is recorded here; it is also trademarked, like the rest.
+
+It is drawn in GitHub's near-black (`#1B1F23`), which disappears
+on a dark card. It is not recoloured: `INVERT_ON_DARK` in
+`lib/connector-logos.ts` inverts it in dark mode, because an SVG loaded
+through `<img>` cannot see the page's `data-theme` and so cannot switch
+itself.
+
+`renkei.svg` is Renkei's own mark — the same path and gradient as
+`app/icon.svg` and `components/renkei-mark.tsx`, with the viewBox cropped
+square for a connector slot. The built-in surfaces (cards, agents, batch
+jobs, logs, memory, the sandbox) map to it in `LOGO_FILE`; change the mark
+in all three places together. Knowledge, web search, voice and the OCR stage
+keep their own glyphs, which say what each does.
+
+`directory.svg` is the other file here we drew. It marks the "Enterprise
 directory" panel — a Renkei bundle of Graph people/group scopes, not a
 Microsoft product — so there is no vendor mark to use. Microsoft's own would
 have been the obvious choice and is the one that cannot work: the Microsoft

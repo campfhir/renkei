@@ -36,6 +36,10 @@ import {
   ONBASE_ADMIN,
   OnBaseAdapter,
   OnBaseAdminAdapter,
+  SALESFORCE,
+  SalesforceAdapter,
+  readSalesforceMetadata,
+  salesforceTokenEndpoint,
   WEBEX_USER,
   WebexUserAdapter,
   ZOOM,
@@ -43,6 +47,13 @@ import {
   type ProviderAdapter,
   type ProviderGrant,
 } from '@renkei/provider-grants';
+import {
+  findOrg,
+  orgForInstance,
+  orgSecretName,
+  orgsFromSettings,
+  type SalesforceOrg,
+} from '@renkei/connector-salesforce';
 import { onbaseWorkerRefresh } from './onbase-worker';
 
 export interface ProviderSpec {
@@ -52,6 +63,25 @@ export interface ProviderSpec {
   tokenEndpoint: string | null;
   /** Hostnames a request may carry this provider's token to. A leading dot allows subdomains. */
   hosts: readonly string[];
+  /**
+   * More hosts, for a provider whose API lives on the customer's own host
+   * (Salesforce's My Domain, one per org): for a stored grant, the host of
+   * the org it was minted in; for a pending exchange, the host the token
+   * answer named — each only when the app registration lists that org.
+   * Exact hosts only, never a suffix (for Salesforce, every org on earth).
+   */
+  hostsFor?(
+    config: ConnectorConfig | null,
+    grant: ProviderGrant | null,
+    pendingInstanceUrl: string | null
+  ): string[];
+  /** The token endpoint, when it is the customer's own host too; `org` names which. */
+  tokenEndpointFrom?(config: ConnectorConfig | null, org?: string): string | null;
+  /** The client credentials an exchange presents, when they vary by org. */
+  credentialsFor?(
+    config: ConnectorConfig | null,
+    org?: string
+  ): { clientId: string; clientSecret: string };
   /** How the token endpoint wants the client authenticated at exchange time. */
   clientAuth: 'body' | 'basic' | 'none';
   /**
@@ -107,6 +137,67 @@ function microsoft(provider: string): ProviderSpec {
   };
 }
 
+/** The orgs a Salesforce app registration lists (production and sandboxes). */
+export function salesforceOrgs(config: ConnectorConfig | null): SalesforceOrg[] {
+  return orgsFromSettings(config?.settings);
+}
+
+/** The registered org a Salesforce grant was minted in, or null. */
+export function salesforceOrgOfGrant(
+  config: ConnectorConfig | null,
+  grant: ProviderGrant | null
+): SalesforceOrg | null {
+  if (!grant) return null;
+  return orgForInstance(salesforceOrgs(config), readSalesforceMetadata(grant.metadata).instanceUrl);
+}
+
+/** A connector's own consumer key and secret (each org is its own External Client App). */
+function salesforceCredentials(
+  config: ConnectorConfig | null,
+  org: SalesforceOrg | null
+): { clientId: string; clientSecret: string } {
+  if (!org) return { clientId: '', clientSecret: '' };
+  return { clientId: org.clientId, clientSecret: config?.secrets[orgSecretName(org.key)] ?? '' };
+}
+
+/** A connector the admin has switched on, by key. */
+function enabledOrg(config: ConnectorConfig | null, key: string | undefined): SalesforceOrg | null {
+  const org = key ? findOrg(salesforceOrgs(config), key) : null;
+  return org?.enabled ? org : null;
+}
+
+function salesforce(provider: string): ProviderSpec {
+  return {
+    connector: provider,
+    tokenEndpoint: null, // the org's own; resolved by `tokenEndpointFor`
+    hosts: [],
+    hostsFor: (config, grant, pendingInstanceUrl) => {
+      const orgs = salesforceOrgs(config);
+      const org = grant
+        ? orgForInstance(orgs, readSalesforceMetadata(grant.metadata).instanceUrl)
+        : pendingInstanceUrl
+          ? orgForInstance(orgs, pendingInstanceUrl)
+          : null;
+      // A connector switched off carries nothing, even for an existing grant.
+      return org?.enabled ? [org.host] : [];
+    },
+    tokenEndpointFrom: (config, key) => {
+      const org = enabledOrg(config, key);
+      return org ? salesforceTokenEndpoint(org.myDomain) : null;
+    },
+    credentialsFor: (config, key) => salesforceCredentials(config, enabledOrg(config, key)),
+    clientAuth: 'body',
+    adapter: (config, grant) => {
+      const org = salesforceOrgOfGrant(config, grant);
+      if (!org?.enabled) return null;
+      const { clientSecret } = salesforceCredentials(config, org);
+      return clientSecret
+        ? new SalesforceAdapter(clientSecret, salesforceTokenEndpoint(org.myDomain), provider)
+        : null;
+    },
+  };
+}
+
 export const PROVIDERS: Readonly<Record<string, ProviderSpec>> = {
   [ATLASSIAN]: atlassian(ATLASSIAN),
   [ATLASSIAN_JSM]: atlassian(ATLASSIAN_JSM),
@@ -142,6 +233,7 @@ export const PROVIDERS: Readonly<Record<string, ProviderSpec>> = {
     clientAuth: 'basic',
     adapter: (config) => (secretOf(config) ? new ZoomAdapter(secretOf(config)) : null),
   },
+  [SALESFORCE]: salesforce(SALESFORCE),
   [ONBASE]: {
     connector: ONBASE,
     tokenEndpoint: null,
@@ -250,12 +342,22 @@ function standInOrigin(provider: string): string | null {
   }
 }
 
-/** Whether `url` may carry this provider's token: exact host, or a subdomain of a dotted entry. */
-export function hostAllowed(spec: ProviderSpec, url: URL, provider?: string): boolean {
+/**
+ * Whether `url` may carry this provider's token: exact host, or a subdomain
+ * of a dotted entry. `extraHosts` are the spec's `hostsFor` for this grant
+ * or pending exchange — exact matches only.
+ */
+export function hostAllowed(
+  spec: ProviderSpec,
+  url: URL,
+  provider?: string,
+  extraHosts: readonly string[] = []
+): boolean {
   if (provider && standInOrigin(provider) === url.origin) return true;
   if (spec.origins?.includes(url.origin)) return true;
   if (url.protocol !== 'https:') return false;
   const host = url.hostname.toLowerCase();
+  if (url.port === '' && extraHosts.some((allowed) => host === allowed.toLowerCase())) return true;
   return spec.hosts.some((allowed) =>
     allowed.startsWith('.') ? host.endsWith(allowed) || host === allowed.slice(1) : host === allowed
   );
@@ -271,13 +373,19 @@ export async function providerConfig(
   return result.ok ? result.val : null;
 }
 
-/** Microsoft's token endpoint is per directory; everyone else's is fixed. */
+/**
+ * Microsoft's token endpoint is per directory, Salesforce's per org;
+ * everyone else's is fixed. `which` is the directory tenant id, or the
+ * Salesforce org's key.
+ */
 export function tokenEndpointFor(
   spec: ProviderSpec,
   config: ConnectorConfig | null,
-  directoryTenantId?: string
+  which?: string
 ): string | null {
   if (spec.tokenEndpoint) return spec.tokenEndpoint;
+  if (spec.tokenEndpointFrom) return spec.tokenEndpointFrom(config, which);
+  const directoryTenantId = which;
   if (spec.hosts.some((host) => host === 'graph.microsoft.com')) {
     const tid = directoryTenantId || settingOf(config, 'directoryTenantId');
     return tid
