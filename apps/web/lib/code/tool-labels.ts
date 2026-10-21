@@ -29,6 +29,8 @@ const LABELS: Record<string, CodeToolLabel> = {
   code_run: { label: 'Run command' },
   code_edit_file: { label: 'Edit file' },
   code_write_file: { label: 'Write file' },
+  code_delete_file: { label: 'Delete file' },
+  code_move_file: { label: 'Move file' },
   code_read_file: { label: 'Read file' },
   code_grep: { label: 'Search code' },
   code_find: { label: 'Find files' },

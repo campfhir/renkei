@@ -95,6 +95,8 @@ const OWN: Record<string, string> = {
   code_read_file: 'Reading a file',
   code_edit_file: 'Editing a file',
   code_write_file: 'Writing a file',
+  code_delete_file: 'Deleting a file',
+  code_move_file: 'Moving a file',
   code_env_names: 'Checking the environment',
   code_delegate: 'Handing a task to a sub-agent',
   chat_delegate: 'Handing a task to a sub-agent',

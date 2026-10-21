@@ -59,11 +59,20 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     // header; the app only needs to be able to build one.
     await client.query(
       `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)\n       VALUES ('atlassian-bitbucket', 'e2e-bitbucket-account', $1, 'e2e-client', 'E2E Bitbucket',\n               $2, $3, $4, $5, $6)\n       ON CONFLICT (provider, provider_account_id) DO UPDATE\n         SET subject = EXCLUDED.subject,\n             encrypted_access_token = EXCLUDED.encrypted_access_token,\n             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,\n             expires_at = EXCLUDED.expires_at`,
-      [E2E_SUBJECT, await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'), await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'), new Date(Date.now() + 365 * 86_400_000), ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'], JSON.stringify({ username: 'e2e-dev' })]
+      [
+        E2E_SUBJECT,
+        await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'),
+        await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'),
+        new Date(Date.now() + 365 * 86_400_000),
+        ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'],
+        JSON.stringify({ username: 'e2e-dev' }),
+      ]
     );
     await client.query('DELETE FROM chats WHERE id = $1', [ids.seededChatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.seededProjectId]);
-    await client.query(`DELETE FROM chat_projects WHERE name = ANY($1)`, [[ids.newName, ids.createdRepoName]]);
+    await client.query(`DELETE FROM chat_projects WHERE name = ANY($1)`, [
+      [ids.newName, ids.createdRepoName],
+    ]);
     // A code project with no checkout yet — the first chat makes one.
     await client.query(
       `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Invoices, dunning and the nightly jobs.', 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
@@ -83,7 +92,9 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   try {
     await client.query('DELETE FROM chats WHERE id = $1', [ids.seededChatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.seededProjectId]);
-    await client.query(`DELETE FROM chat_projects WHERE name = ANY($1)`, [[ids.newName, ids.createdRepoName]]);
+    await client.query(`DELETE FROM chat_projects WHERE name = ANY($1)`, [
+      [ids.newName, ids.createdRepoName],
+    ]);
   } finally {
     await client.end();
   }
@@ -100,8 +111,8 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 /**
  * A finished turn in the seeded chat, as the runner leaves one in a code
  * project: the prompt, the clone step the runner wrote (a tool_use the
- * model never made, with its result row), the model's own commit call
- * with its result, and the reply.
+ * model never made, with its result row), the model's own delete and
+ * commit calls with their results, and the reply.
  */
 async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
   const turnId = `88888888-8888-4888-8888-8888888888${ids.digit}3`;
@@ -155,6 +166,34 @@ async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
       blocks: [
         {
           type: 'tool_use',
+          id: 'toolu_e2e_delete',
+          name: 'code_delete_file',
+          input: { path: 'src/jobs/legacy-retry.ts' },
+        },
+      ],
+    },
+    {
+      seq: 5,
+      role: 'user',
+      kind: 'tool_results',
+      stop: null,
+      blocks: [
+        {
+          type: 'tool_result',
+          toolUseId: 'toolu_e2e_delete',
+          content:
+            'Deleted src/jobs/legacy-retry.ts.\n--- working tree (uncommitted changes) ---\n  +0 −41 src/jobs/legacy-retry.ts',
+        },
+      ],
+    },
+    {
+      seq: 6,
+      role: 'assistant',
+      kind: 'assistant',
+      stop: 'tool_use',
+      blocks: [
+        {
+          type: 'tool_use',
           id: 'toolu_e2e_commit',
           name: 'code_git_commit',
           input: { message: 'Cap invoice retries at MAX_ATTEMPTS', newBranch: 'fix/retry-cap' },
@@ -162,7 +201,7 @@ async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
       ],
     },
     {
-      seq: 5,
+      seq: 7,
       role: 'user',
       kind: 'tool_results',
       stop: null,
@@ -175,7 +214,7 @@ async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
       ],
     },
     {
-      seq: 6,
+      seq: 8,
       role: 'assistant',
       kind: 'assistant',
       stop: 'end_turn',
@@ -201,7 +240,15 @@ async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
     for (const row of rows) {
       await client.query(
         `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, stop_reason)\n         VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7)`,
-        [ids.seededChatId, turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), row.stop]
+        [
+          ids.seededChatId,
+          turnId,
+          row.seq,
+          row.role,
+          row.kind,
+          chatKey.seal(JSON.stringify(row.blocks)),
+          row.stop,
+        ]
       );
     }
   } finally {
@@ -566,19 +613,35 @@ test.describe('code projects', () => {
     await main.getByRole('link', { name: ids.seededChatTitle }).click();
     await expect(main.getByText('Why does the invoice job retry forever?')).toBeVisible();
     const work = main.locator('details.chat-fold:not([data-milestone])').first();
-    await expect(work).toContainText('1 tool call');
+    await expect(work).toContainText('2 tool calls');
     await work.locator('> summary').click();
     const steps = work.locator('ol > li > details.chat-fold');
     const cloneStep = steps.filter({ hasText: 'Cloned the repository' });
     await expect(cloneStep).toBeVisible();
     await cloneStep.locator('> summary').click();
     await expect(cloneStep.getByText(/4\.1 MB on the sandbox/)).toBeVisible();
+    // The model's own deletion is a named step like any file change, with
+    // the tree's changed files in its result.
+    const deleteStep = steps.filter({ hasText: 'Delete file' });
+    await expect(deleteStep).toBeVisible();
+    await deleteStep.locator('> summary').click();
+    await expect(deleteStep.getByText(/Deleted src\/jobs\/legacy-retry\.ts/)).toBeVisible();
     const commitCard = main.locator('details[data-milestone="code_git_commit"]');
     await expect(commitCard).toBeVisible();
     await expect(commitCard).toContainText('Committed');
     await expect(commitCard).toContainText('3f2a9c1');
     await expect(main.getByText('Calling', { exact: false })).toHaveCount(0);
     await shot('code-chat-transcript.png');
+    if (!mobile) {
+      // At phone width the opened step still reads whole, result lines included.
+      const wide = page.viewportSize()!;
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(deleteStep).toBeVisible();
+      await expect(deleteStep.getByText(/Deleted src\/jobs\/legacy-retry\.ts/)).toBeVisible();
+      await expectNoHorizontalOverflow(page);
+      await shot('code-chat-transcript-phone.png');
+      await page.setViewportSize(wide);
+    }
     await main.getByRole('link', { name: 'Back to project' }).click();
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
 

@@ -29,7 +29,9 @@ jest.mock('@renkei/sandbox-client', () => ({
   sbWorkspaceGitStatus: jest.fn(),
   sbWorkspaceGrep: jest.fn(),
   sbWorkspaceLs: jest.fn(),
+  sbWorkspaceMove: jest.fn(),
   sbWorkspaceRead: jest.fn(),
+  sbWorkspaceRemove: jest.fn(),
   sbWorkspaceWrite: jest.fn(),
 }));
 
@@ -113,6 +115,7 @@ describe('the set', () => {
     expect([...set.keys()].sort()).toEqual([
       'code_clone',
       'code_delegate',
+      'code_delete_file',
       'code_edit_file',
       'code_env_names',
       'code_find',
@@ -122,6 +125,7 @@ describe('the set', () => {
       'code_git_status',
       'code_grep',
       'code_ls',
+      'code_move_file',
       'code_read_file',
       'code_run',
       'code_write_file',
@@ -130,6 +134,76 @@ describe('the set', () => {
     expect(set.get('code_env_names')!.readOnly).toBe(true);
     expect(set.get('code_run')!.readOnly).toBeUndefined();
     expect(set.get('code_edit_file')!.readOnly).toBeUndefined();
+    expect(set.get('code_delete_file')!.readOnly).toBeUndefined();
+    expect(set.get('code_move_file')!.readOnly).toBeUndefined();
+  });
+});
+
+describe('deleting and moving', () => {
+  it('removes a path in the bound checkout and reports what the tree now has changed', async () => {
+    client.sbWorkspaceRemove.mockResolvedValue({
+      ok: true,
+      val: { path: 'src/old.ts', deleted: true },
+    });
+    client.sbWorkspaceGitDiff.mockResolvedValue({
+      ok: true,
+      val: {
+        branch: 'main',
+        diff: '',
+        files: [{ path: 'src/old.ts', added: 0, deleted: 12, status: 'deleted' }],
+        truncated: false,
+      },
+    });
+    const result = await tools().get('code_delete_file')!.execute({ path: 'src/old.ts' }, context);
+    expect(client.sbWorkspaceRemove).toHaveBeenCalledWith(TARGET, {
+      id: WS_ID,
+      path: 'src/old.ts',
+    });
+    expect(result.isError).toBe(false);
+    expect(result.content[0]!.text).toBe(
+      'Deleted src/old.ts.\n--- working tree (uncommitted changes) ---\n  +0 −12 src/old.ts'
+    );
+  });
+
+  it('moves a path and turns the worker’s refusal into a clean error', async () => {
+    client.sbWorkspaceMove.mockResolvedValue({
+      ok: true,
+      val: { from: 'src/a.ts', to: 'src/lib/a.ts' },
+    });
+    const moved = await tools()
+      .get('code_move_file')!
+      .execute({ from: 'src/a.ts', to: 'src/lib/a.ts' }, context);
+    expect(client.sbWorkspaceMove).toHaveBeenCalledWith(TARGET, {
+      id: WS_ID,
+      from: 'src/a.ts',
+      to: 'src/lib/a.ts',
+    });
+    expect(moved.content[0]!.text).toBe('Moved src/a.ts to src/lib/a.ts.');
+
+    client.sbWorkspaceMove.mockResolvedValue({
+      ok: false,
+      err: {
+        kind: 'op',
+        type: 'move_conflict',
+        message: 'src/lib/a.ts already exists.',
+        status: 409,
+      },
+    });
+    const refused = await tools()
+      .get('code_move_file')!
+      .execute({ from: 'src/a.ts', to: 'src/lib/a.ts' }, context);
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]!.text).toBe('src/lib/a.ts already exists.');
+  });
+
+  it('refuses both in org read-only mode without reaching the worker', async () => {
+    const readOnly = { ...context, readOnly: true };
+    const deleted = await tools().get('code_delete_file')!.execute({ path: 'x' }, readOnly);
+    const moved = await tools().get('code_move_file')!.execute({ from: 'x', to: 'y' }, readOnly);
+    expect(deleted.isError).toBe(true);
+    expect(moved.isError).toBe(true);
+    expect(client.sbWorkspaceRemove).not.toHaveBeenCalled();
+    expect(client.sbWorkspaceMove).not.toHaveBeenCalled();
   });
 });
 
