@@ -77,6 +77,13 @@ export interface SystemPromptInput {
    */
   hasDirectory?: boolean;
   hasSandbox: boolean;
+  /**
+   * chat_memory_remember (outside a project) or project_memory_remember (in
+   * one) is among the tools: the org is not read-only. The brief then
+   * says to save durable facts unprompted. Optional so callers/fixtures
+   * that predate this flag keep compiling; absent, it is not mentioned.
+   */
+  canRemember?: boolean;
   /** The org has somewhere to keep files; false means none can be made or attached. */
   filesAllowed: boolean;
   /** chat_write_chart is among the tools (a file store plus a chart renderer): the brief names it. */
@@ -223,6 +230,24 @@ const VOICE_DELEGATE_BRIEF = `The person is waiting on the line while you work, 
  */
 const DELEGATE_BRIEF = `Keep this conversation for the conversation. Anything that takes more than a call or two — reading several tickets or pages, searching across systems, comparing documents, pulling together what a summary needs — goes to a sub-agent with chat_delegate: give it a complete, self-contained task with what to report, one sub-agent per piece, and answer from its report. Its own calls and results never enter this conversation; only its report does, and it is kept for you. Read reports critically — you own the answer — and keep for yourself what is quick (one lookup, a check of what a report claims) and everything that creates, changes or sends something, which only you do, with the person's say-so.`;
 
+/**
+ * Memory is only as good as what gets written to it, and a model left
+ * waiting for "remember this" writes almost nothing: people state who they
+ * are, what they prefer and what they are working on in passing. So the
+ * model is told to notice those and save them on its own, quietly — but
+ * sparingly, because every note is carried into every later request, and
+ * a notebook of trivia and guesses crowds out the facts that matter.
+ * Named per chat kind because the two tools write different notebooks: the
+ * person's own, or the project's, which the project's other members read.
+ */
+function memoryBrief(inProject: boolean): string {
+  const tool = inProject ? 'project_memory_remember' : 'chat_memory_remember';
+  const whose = inProject
+    ? "this project's memory, which every member's chats read, so keep to facts about the project and its work and leave out personal details about any one person"
+    : "the person's memory, which every chat they have sees";
+  return `You keep notes in ${whose}. Without being asked, save a note with ${tool} when the conversation reveals something durable that would help in a later chat: ${inProject ? 'a decision, a convention, a constraint, who owns what, the goal behind the work' : 'their role, team or projects, a standing preference about how you answer, a tool or format they work in, a recurring responsibility'}. Do it in the same turn as the answer, with no announcement beyond at most a few words, and never let it replace or delay the answer. Save only what the person said or plainly showed, never a guess; skip anything passing, already in memory, or only about the current question; never save secrets, credentials, health, financial or other sensitive personal details unless they ask. One short sentence per note. If a note proves wrong or out of date, fix it with the forget tool and save the correction. When they ask you to remember or forget something, do so.`;
+}
+
 /** `2026-09-04T10:00Z`: the ISO stamp with minutes and seconds dropped. */
 export function hourStamp(now: Date): string {
   return `${now.toISOString().slice(0, 13)}:00Z`;
@@ -306,6 +331,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     sections.push(
       `Memory (notes kept about this person across their chats, newest last):\n${input.userMemoryText}`
     );
+  }
+  if (input.canRemember) {
+    sections.push(memoryBrief(input.project !== null));
   }
   if (input.chatFiles.length > 0) {
     sections.push(
