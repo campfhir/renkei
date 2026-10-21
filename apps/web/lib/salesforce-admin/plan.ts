@@ -19,17 +19,19 @@
  * (by a hash of its metadata), a permission set created under the name.
  */
 
-import { createHash } from 'node:crypto';
 import { soqlString, type PackageMember } from '@renkei/connector-salesforce';
 import {
   rec,
   recs,
-  sfGet,
   sfQuery,
   str,
   type SalesforceAccess,
   type SalesforceCallContext,
 } from '@/lib/mcp-tools/salesforce/client';
+import { entityKey, fingerprintOf, toolingQuery } from './tooling';
+import { listRecordTypes, wholeComponentFingerprint } from './whole-components';
+
+export { entityKey, fingerprintOf, toolingQuery } from './tooling';
 
 export const FIELDS_KIND = 'fields';
 export const VALIDATION_RULE_KIND = 'validation_rule';
@@ -39,6 +41,7 @@ export const LAYOUT_KIND = 'layout';
 export const OBJECT_KIND = 'object';
 export const PERMISSION_SET_KIND = 'permission_set';
 export const ASSIGNMENTS_KIND = 'assignments';
+export const RECORD_TYPE_KIND = 'record_type';
 
 /**
  * The capabilities applying a change stands on (lib/salesforce-admin-scopes.ts):
@@ -62,6 +65,8 @@ export function applyScopesFor(kind: string, payload?: MetadataPayload | null): 
       scopes.add('sfa-schema');
   }
   if (payload?.members.some((member) => member.type === 'Layout')) scopes.add('sfa-layouts');
+  // Record type visibility in a profile is access.
+  if (payload?.members.some((member) => member.type === 'Profile')) scopes.add('sfa-permissions');
   if (payload?.dataSteps.some((step) => step.kind === 'assign' || step.kind === 'unassign')) {
     scopes.add('sfa-user-access');
   }
@@ -91,7 +96,28 @@ export type Precondition =
   | { kind: 'field-unchanged'; object: string; field: string; fingerprint: string }
   | { kind: 'layout-unchanged'; object: string; layout: string; fingerprint: string }
   | { kind: 'object-absent'; object: string }
+  | { kind: 'record-type-absent'; object: string; name: string }
+  | {
+      kind: 'component-unchanged';
+      type: WholeComponent;
+      /** The object (record types, processes, a standard set's field). */
+      object: string;
+      /** The record type's developer name, the process's or global set's name, a standard set's field. */
+      name: string;
+      fingerprint: string;
+    }
   | { kind: 'permission-set-absent'; name: string };
+
+/** Components read whole and written back whole, checked by a hash on apply. */
+export type WholeComponent =
+  'RecordType' | 'BusinessProcess' | 'GlobalValueSet' | 'StandardValueSet';
+
+const WHOLE_COMPONENTS: readonly WholeComponent[] = [
+  'RecordType',
+  'BusinessProcess',
+  'GlobalValueSet',
+  'StandardValueSet',
+];
 
 export interface Access {
   read: boolean;
@@ -247,6 +273,14 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
         return [{ kind: 'layout-unchanged', object, layout: str(p.layout), fingerprint }];
       case 'object-absent':
         return [{ kind: 'object-absent', object }];
+      case 'record-type-absent':
+        return [{ kind: 'record-type-absent', object, name: str(p.name) }];
+      case 'component-unchanged': {
+        const type = WHOLE_COMPONENTS.find((t) => t === p.type);
+        return type
+          ? [{ kind: 'component-unchanged', type, object, name: str(p.name), fingerprint }]
+          : [];
+      }
       case 'permission-set-absent':
         return [{ kind: 'permission-set-absent', name: str(p.name) }];
       default:
@@ -298,22 +332,6 @@ export function stepLabel(step: DataStep): string {
   }
 }
 
-/** A hash of a component's metadata as read, to tell whether it moved since. */
-export function fingerprintOf(metadata: unknown): string {
-  return createHash('sha256').update(JSON.stringify(metadata)).digest('hex');
-}
-
-/** A Tooling API query (`/tooling/query`), one page. */
-export async function toolingQuery(
-  context: SalesforceCallContext,
-  access: SalesforceAccess,
-  soql: string
-): Promise<{ ok: true; records: Record<string, unknown>[] } | { ok: false; error: string }> {
-  const result = await sfGet(context, access, `/tooling/query?q=${encodeURIComponent(soql)}`);
-  if (!result.ok) return { ok: false, error: result.error };
-  return { ok: true, records: recs(rec(result.body).records) };
-}
-
 /** Whether a field exists on an object, whoever can see it (FieldDefinition, not the describe). */
 export async function fieldExists(
   context: SalesforceCallContext,
@@ -343,20 +361,6 @@ export async function objectExists(
   );
   if (!found.ok) return found.error;
   return found.records.length > 0;
-}
-
-/** The key the Tooling API files an object's fields and layouts under: its name, or 01I… for a custom one. */
-export async function entityKey(
-  context: SalesforceCallContext,
-  access: SalesforceAccess,
-  object: string
-): Promise<string | null> {
-  const found = await sfQuery(
-    context,
-    access,
-    `SELECT DurableId FROM EntityDefinition WHERE QualifiedApiName = ${soqlString(object)} LIMIT 1`
-  );
-  return found.ok ? str(found.records[0]?.DurableId) || null : null;
 }
 
 export interface LiveRule {
@@ -579,6 +583,32 @@ export async function brokenPreconditions(
         else if (!live)
           broken.push(`${name} is gone — someone deleted it since this was proposed.`);
         else if (live.fingerprint !== precondition.fingerprint) moved(name);
+        break;
+      }
+      case 'record-type-absent': {
+        const types = await listRecordTypes(context, access, precondition.object);
+        if (typeof types === 'string')
+          broken.push(`Could not check the record types of ${precondition.object}: ${types}`);
+        else if (
+          types.some((rt) => rt.developerName.toLowerCase() === precondition.name.toLowerCase())
+        )
+          broken.push(
+            `The record type ${precondition.object}.${precondition.name} exists now — someone created it since this was proposed.`
+          );
+        break;
+      }
+      case 'component-unchanged': {
+        const label =
+          precondition.type === 'StandardValueSet'
+            ? `The values of ${precondition.object}.${precondition.name}`
+            : precondition.type === 'GlobalValueSet'
+              ? `The global value set ${precondition.name}`
+              : `The ${precondition.type === 'RecordType' ? 'record type' : 'process'} ${precondition.object}.${precondition.name}`;
+        const now = await wholeComponentFingerprint(context, access, precondition);
+        if (now && typeof now === 'object') broken.push(`Could not check ${label}: ${now.error}`);
+        else if (now === null)
+          broken.push(`${label} is gone — someone deleted it since this was proposed.`);
+        else if (now !== precondition.fingerprint) moved(label);
         break;
       }
       case 'layout-unchanged': {

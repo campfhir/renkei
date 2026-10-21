@@ -94,7 +94,25 @@ const SITE_VISIT = {
   fields: [
     { name: 'Id', label: 'Record ID', type: 'id' },
     { name: 'Name', label: 'Visit Number', type: 'string', nameField: true },
-    { name: 'Stage__c', label: 'Stage', type: 'picklist', custom: true },
+    {
+      name: 'Stage__c',
+      label: 'Stage',
+      type: 'picklist',
+      custom: true,
+      nillable: true,
+      picklistValues: [
+        { value: 'Draft', label: 'Draft', active: true, defaultValue: true },
+        { value: 'Done', label: 'Done', active: true, defaultValue: false },
+      ],
+    },
+    {
+      name: 'Region__c',
+      label: 'Region',
+      type: 'picklist',
+      custom: true,
+      nillable: true,
+      picklistValues: [{ value: 'North', label: 'North', active: true, defaultValue: false }],
+    },
     { name: 'Visit_Date__c', label: 'Visit Date', type: 'date', custom: true },
   ],
   childRelationships: [],
@@ -110,6 +128,50 @@ let objectRows: Record<string, unknown>[];
 let assigned: string[];
 
 const ENTITY = '01I000000000001AAA';
+const HOME_VISIT = '012000000000001AAA';
+const GRANT = '012000000000002AAA';
+const GRANT_PROCESS = '019000000000001AAA';
+let homeVisitMetadata: Record<string, unknown>;
+
+const LEAD = {
+  name: 'Lead',
+  label: 'Lead',
+  labelPlural: 'Leads',
+  fields: [
+    { name: 'Id', label: 'Lead ID', type: 'id' },
+    {
+      name: 'LeadSource',
+      label: 'Lead Source',
+      type: 'picklist',
+      nillable: true,
+      picklistValues: [
+        { value: 'Web', label: 'Web', active: true, defaultValue: false },
+        { value: 'Referral', label: 'Referral', active: true, defaultValue: false },
+      ],
+    },
+  ],
+  childRelationships: [],
+  recordTypeInfos: [],
+};
+
+const OPPORTUNITY = {
+  name: 'Opportunity',
+  label: 'Opportunity',
+  labelPlural: 'Opportunities',
+  fields: [
+    { name: 'Id', label: 'Opportunity ID', type: 'id' },
+    {
+      name: 'StageName',
+      label: 'Stage',
+      type: 'picklist',
+      picklistValues: [
+        { value: 'Prospecting', label: 'Prospecting', active: true, defaultValue: true },
+      ],
+    },
+  ],
+  childRelationships: [],
+  recordTypeInfos: [],
+};
 const LAYOUT_ID = '00h000000000001AAA';
 
 function answer(status: number, body: unknown): Response {
@@ -132,7 +194,159 @@ function fakeOrg(method: string, path: string, query: string): Response {
           queryable: true,
         },
         { name: 'Contact', label: 'Contact', keyPrefix: '003', queryable: true },
+        { name: 'Lead', label: 'Lead', keyPrefix: '00Q', queryable: true },
+        { name: 'Opportunity', label: 'Opportunity', keyPrefix: '006', queryable: true },
       ],
+    });
+  }
+  if (method === 'GET' && path === `${V}/sobjects/Lead/describe`) return answer(200, LEAD);
+  if (method === 'GET' && path === `${V}/sobjects/Opportunity/describe`)
+    return answer(200, OPPORTUNITY);
+  if (method === 'GET' && path === `${V}/query` && /FROM RecordType WHERE SobjectType/.test(q)) {
+    const rows = /'Site_Visit__c'/.test(q)
+      ? [
+          {
+            Id: HOME_VISIT,
+            Name: 'Home Visit',
+            DeveloperName: 'Home_Visit',
+            IsActive: true,
+            BusinessProcessId: null,
+          },
+        ]
+      : /'Opportunity'/.test(q)
+        ? [
+            {
+              Id: GRANT,
+              Name: 'Grant',
+              DeveloperName: 'Grant',
+              IsActive: true,
+              BusinessProcessId: GRANT_PROCESS,
+            },
+          ]
+        : [];
+    return answer(200, { totalSize: rows.length, done: true, records: rows });
+  }
+  if (method === 'GET' && path === `${V}/tooling/query` && /FROM RecordType WHERE Id/.test(q)) {
+    const home = q.includes(HOME_VISIT);
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [
+        home
+          ? {
+              Id: HOME_VISIT,
+              DeveloperName: 'Home_Visit',
+              FullName: 'Site_Visit__c.Home_Visit',
+              Metadata: homeVisitMetadata,
+            }
+          : {
+              Id: GRANT,
+              DeveloperName: 'Grant',
+              FullName: 'Opportunity.Grant',
+              Metadata: {
+                label: 'Grant',
+                active: true,
+                businessProcess: 'Grants',
+                picklistValues: [],
+              },
+            },
+      ],
+    });
+  }
+  if (
+    method === 'GET' &&
+    path === `${V}/query` &&
+    /FROM BusinessProcess WHERE TableEnumOrId/.test(q)
+  ) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [{ Id: GRANT_PROCESS, Name: 'Grants', IsActive: true }],
+    });
+  }
+  if (
+    method === 'GET' &&
+    path === `${V}/tooling/query` &&
+    /FROM BusinessProcess WHERE Id/.test(q)
+  ) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [
+        {
+          Id: GRANT_PROCESS,
+          Name: 'Grants',
+          FullName: 'Opportunity.Grants',
+          Metadata: { isActive: true, values: [{ fullName: 'Prospecting', default: true }] },
+        },
+      ],
+    });
+  }
+  if (method === 'GET' && path === `${V}/tooling/query` && /FROM GlobalValueSet/.test(q)) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [
+        {
+          Id: '0Nt000000000001AAA',
+          DeveloperName: 'Regions',
+          MasterLabel: 'Regions',
+          NamespacePrefix: null,
+          Metadata: {
+            masterLabel: 'Regions',
+            sorted: false,
+            customValue: [{ fullName: 'North', default: false, label: 'North' }],
+            urls: null,
+          },
+        },
+      ],
+    });
+  }
+  if (
+    method === 'GET' &&
+    path === `${V}/tooling/query` &&
+    /FROM MetadataComponentDependency/.test(q)
+  ) {
+    return answer(200, {
+      totalSize: 2,
+      done: true,
+      records: [
+        { MetadataComponentName: 'Site_Visit__c.Region__c', MetadataComponentType: 'CustomField' },
+        { MetadataComponentName: 'Account.Region__c', MetadataComponentType: 'CustomField' },
+      ],
+    });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM OpportunityStage/.test(q)) {
+    return answer(200, {
+      totalSize: 2,
+      done: true,
+      records: [
+        {
+          ApiName: 'Prospecting',
+          MasterLabel: 'Prospecting',
+          IsActive: true,
+          IsClosed: false,
+          IsWon: false,
+          ForecastCategoryName: 'Pipeline',
+          DefaultProbability: 10,
+        },
+        {
+          ApiName: 'Old Stage',
+          MasterLabel: 'Old Stage',
+          IsActive: false,
+          IsClosed: false,
+          IsWon: false,
+          ForecastCategoryName: 'Best Case',
+          DefaultProbability: 50,
+        },
+      ],
+    });
+  }
+  if (method === 'GET' && path === `${V}/tooling/query` && /FROM Profile WHERE Name/.test(q)) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [{ Id: '00e000000000001AAA', Name: 'Standard User', FullName: 'Standard' }],
     });
   }
   if (method === 'GET' && path === `${V}/sobjects/Site_Visit__c/describe`)
@@ -342,7 +556,26 @@ beforeEach(() => {
     showHighlightsPanel: true,
     urls: null,
   };
+  homeVisitMetadata = {
+    label: 'Home Visit',
+    active: true,
+    picklistValues: [
+      {
+        picklist: 'Stage__c',
+        values: [
+          { fullName: 'Draft', default: true },
+          { fullName: 'Done', default: false },
+        ],
+      },
+    ],
+    urls: null,
+  };
   fieldMetadata = {
+    Region__c: {
+      label: 'Region',
+      type: 'Picklist',
+      valueSet: { restricted: true, valueSetName: 'Regions' },
+    },
     Visit_Date__c: { label: 'Visit Date', type: 'Date', required: false, inlineHelpText: null },
     Stage__c: {
       label: 'Stage',
@@ -681,7 +914,12 @@ describe('salesforce_admin_propose_picklist_changes', () => {
     expect(object).toContain('<fullName>Cancelled</fullName>');
     expect(object).not.toContain('<default>true</default>');
     expect(stored()).toMatchObject({ kind: 'picklist_changes' });
-    expect(text(result)).toContain('record types');
+    // Added values are offered on the record types that list the picklist.
+    expect(object).toContain('<recordTypes>');
+    expect(object).toMatch(
+      /<fullName>Home_Visit<\/fullName>[\s\S]*<fullName>Cancelled<\/fullName>/
+    );
+    expect(text(result)).toContain('On the record type Home Visit:\n• Offer: Cancelled');
   });
 });
 
@@ -818,5 +1056,190 @@ describe('salesforce_admin_propose_assignments', () => {
       },
     ]);
     expect(text(result)).toContain('Alan Turing (alan@acme.org) already has Program_Staff.');
+  });
+});
+
+describe('picklists beyond a field’s own values', () => {
+  it('changes a global value set, saying which fields change with it', async () => {
+    const result = await call('salesforce_admin_propose_picklist_changes', {
+      object: 'Site_Visit__c',
+      field: 'Region__c',
+      add: [{ value: 'East' }],
+      addToRecordTypes: false,
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(Object.keys(files).sort()).toEqual([
+      'globalValueSets/Regions.globalValueSet',
+      'package.xml',
+    ]);
+    const set = files['globalValueSets/Regions.globalValueSet'];
+    expect(set).toContain('<GlobalValueSet xmlns=');
+    expect(set).toMatch(/<fullName>North<\/fullName>[\s\S]*<fullName>East<\/fullName>/);
+    expect(set).not.toContain('<urls');
+    expect(stored().payload.preconditions).toEqual([
+      expect.objectContaining({
+        kind: 'component-unchanged',
+        type: 'GlobalValueSet',
+        name: 'Regions',
+      }),
+    ]);
+    expect(text(result)).toContain('used by Site_Visit__c.Region__c, Account.Region__c');
+  });
+
+  it('adds to a standard picklist through its value set, shared fields named', async () => {
+    const result = await call('salesforce_admin_propose_picklist_changes', {
+      object: 'Lead',
+      field: 'LeadSource',
+      add: [{ value: 'Webinar' }],
+    });
+    expect(result.isError).toBeUndefined();
+    const set = (await received()).files['standardValueSets/LeadSource.standardValueSet'];
+    expect(set).toContain('<StandardValueSet xmlns=');
+    // Every value read goes back, with the new one.
+    expect(set).toMatch(
+      /<fullName>Web<\/fullName>[\s\S]*Referral[\s\S]*<fullName>Webinar<\/fullName>/
+    );
+    expect(text(result)).toContain('Contact.LeadSource, Opportunity.LeadSource also use');
+    expect(stored().payload.preconditions[0]).toMatchObject({
+      type: 'StandardValueSet',
+      object: 'Lead',
+      name: 'LeadSource',
+    });
+  });
+
+  it('needs a new stage’s probability, then offers it through the sales process', async () => {
+    const missing = await call('salesforce_admin_propose_picklist_changes', {
+      object: 'Opportunity',
+      field: 'StageName',
+      add: [{ value: 'Pledged' }],
+    });
+    expect(text(missing)).toContain('a new stage needs its probability');
+    const result = await call('salesforce_admin_propose_picklist_changes', {
+      object: 'Opportunity',
+      field: 'StageName',
+      add: [{ value: 'Pledged', probability: 75, forecastCategory: 'Forecast' }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const stages = files['standardValueSets/OpportunityStage.standardValueSet'];
+    expect(stages).toContain('<probability>75</probability>');
+    // The inactive stage the describe cannot see stays, inactive, with its flags.
+    expect(stages).toMatch(/<fullName>Old Stage<\/fullName>[\s\S]*<isActive>false<\/isActive>/);
+    expect(stages).toContain('<forecastCategory>BestCase</forecastCategory>');
+    const object = files['objects/Opportunity.object'];
+    expect(object).toContain('<businessProcesses>');
+    expect(object).toMatch(/<fullName>Grants<\/fullName>[\s\S]*<fullName>Pledged<\/fullName>/);
+    expect(text(result)).toContain('On the sales process Grants (Grant):\n• Offer: Pledged');
+  });
+
+  it('changes what one record type offers, and nothing else', async () => {
+    const result = await call('salesforce_admin_propose_picklist_changes', {
+      object: 'Site_Visit__c',
+      field: 'Stage__c',
+      recordTypes: [{ recordType: 'Home Visit', remove: ['Done'] }],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(stored().payload.members).toEqual([
+      { type: 'RecordType', member: 'Site_Visit__c.Home_Visit' },
+    ]);
+    const object = (await received()).files['objects/Site_Visit__c.object'];
+    expect(object).not.toContain('<fields>');
+    expect(object).not.toContain('<fullName>Done</fullName>');
+    expect(text(result)).toContain('On the record type Home Visit:\n• Stop offering: Done');
+  });
+
+  it('reads a picklist’s values and what each record type offers', async () => {
+    const result = await call('salesforce_admin_get_picklist', {
+      object: 'Site_Visit__c',
+      field: 'Stage__c',
+    });
+    expect(text(result)).toContain('Site_Visit__c.Stage__c has its own values.');
+    expect(text(result)).toContain('• Draft (default)');
+    expect(text(result)).toContain('• Home Visit (Home_Visit): Draft (default), Done');
+  });
+});
+
+describe('salesforce_admin_propose_record_type', () => {
+  it('builds a new record type offering every value, and the profile overlay', async () => {
+    const result = await call('salesforce_admin_propose_record_type', {
+      object: 'Site_Visit__c',
+      label: 'Phone Check-in',
+      picklists: [{ field: 'Stage__c', values: ['Draft'], default: 'Draft' }],
+      profiles: [{ profile: 'Standard User', layout: 'Site Visit Layout' }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const object = files['objects/Site_Visit__c.object'];
+    expect(object).toContain('<fullName>Phone_Check_in</fullName>');
+    // Named: only Draft. Not named: every active value.
+    expect(object).toMatch(
+      /<picklist>Stage__c<\/picklist>\s*<values>\s*<fullName>Draft<\/fullName>/
+    );
+    expect(object).toMatch(
+      /<picklist>Region__c<\/picklist>\s*<values>\s*<fullName>North<\/fullName>/
+    );
+    const profile = files['profiles/Standard.profile'];
+    expect(profile).toContain('<recordType>Site_Visit__c.Phone_Check_in</recordType>');
+    expect(profile).toContain('<layout>Site_Visit__c-Site Visit Layout</layout>');
+    expect(stored()).toMatchObject({ kind: 'record_type' });
+    expect(stored().payload.preconditions).toEqual([
+      { kind: 'record-type-absent', object: 'Site_Visit__c', name: 'Phone_Check_in' },
+    ]);
+    expect(stored().payload.members).toContainEqual({ type: 'Profile', member: 'Standard' });
+  });
+
+  it('needs a sales process on Opportunity, and keeps Stage to the process', async () => {
+    const noProcess = await call('salesforce_admin_propose_record_type', {
+      object: 'Opportunity',
+      label: 'Donation',
+    });
+    expect(text(noProcess)).toContain('needs its sales process');
+    const stage = await call('salesforce_admin_propose_record_type', {
+      object: 'Opportunity',
+      label: 'Donation',
+      businessProcess: 'Grants',
+      picklists: [{ field: 'StageName', values: ['Prospecting'] }],
+    });
+    expect(text(stage)).toContain('offered through the sales process');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('changes an existing one whole, keeping what it was', async () => {
+    const result = await call('salesforce_admin_propose_record_type', {
+      object: 'Site_Visit__c',
+      recordType: 'Home_Visit',
+      label: 'In-home Visit',
+      active: false,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(stored().payload.components[0].rows).toEqual([
+      { label: 'Label', value: 'In-home Visit', from: 'Home Visit' },
+      { label: 'Active', value: 'no', from: 'yes' },
+    ]);
+    const object = (await received()).files['objects/Site_Visit__c.object'];
+    expect(object).toContain('<label>In-home Visit</label>');
+    // What it offers is untouched.
+    expect(object).toContain('<fullName>Done</fullName>');
+    expect(stored().payload.preconditions[0]).toMatchObject({
+      kind: 'component-unchanged',
+      type: 'RecordType',
+      name: 'Home_Visit',
+    });
+  });
+
+  it('gives record types only to a new permission set', async () => {
+    const existing = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      recordTypes: ['Site_Visit__c.Home Visit'],
+    });
+    expect(text(existing)).toContain('in a new permission set only');
+    const created = await call('salesforce_admin_propose_permission_set', {
+      newSet: { label: 'Site Visit Home Visits' },
+      recordTypes: ['Site_Visit__c.Home Visit'],
+    });
+    expect(created.isError).toBeUndefined();
+    const set = (await received()).files['permissionsets/Site_Visit_Home_Visits.permissionset'];
+    expect(set).toContain('<recordType>Site_Visit__c.Home_Visit</recordType>');
   });
 });

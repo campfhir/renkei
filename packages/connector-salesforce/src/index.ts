@@ -122,7 +122,6 @@ export {
   SHARING_MODELS,
   type ChangeRow,
   type FieldChanges,
-  type PicklistChanges,
   type ObjectSpec,
   type SharingModel,
 } from './changes';
@@ -135,3 +134,34 @@ export {
   type ObjectRights,
   type NewPermissionSetSpec,
 } from './permission-sets';
+export {
+  FORECAST_CATEGORIES,
+  STANDARD_VALUE_SETS,
+  PROCESS_FIELDS,
+  mergeValueList,
+  mergeGlobalValueSetChanges,
+  mergeStandardValueSetChanges,
+  mergeAvailable,
+  mergeRecordTypePicklist,
+  mergeBusinessProcessValues,
+  standardValueSetOf,
+  fieldsOfValueSet,
+  processOf,
+  availableValueName,
+  type ForecastCategory,
+  type NewValue,
+  type PicklistChanges,
+  type ValueRow,
+  type StandardValueRead,
+  type AvailabilityChange,
+} from './picklists';
+export {
+  PROCESS_OBJECTS,
+  objectChildXml,
+  checkRecordTypeSpec,
+  recordTypeMetadata,
+  recordTypePicklists,
+  profileOverlayFile,
+  type RecordTypeSpec,
+  type ProfileRecordTypeAccess,
+} from './record-types';

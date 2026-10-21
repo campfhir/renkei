@@ -43,6 +43,7 @@ import {
   type DataStep,
   type ViewRow,
 } from '@/lib/salesforce-admin/plan';
+import { findRecordType, listRecordTypes } from '@/lib/salesforce-admin/whole-components';
 import { proposeAndValidate, reasonField, refusesChanges, replacesField } from './shared';
 
 const NO_RIGHTS: ObjectRights = {
@@ -90,7 +91,9 @@ async function checkAccess(
     objects?: ({ object: string } & Partial<ObjectRights>)[];
     fields?: { object: string; field: string; edit?: boolean }[];
     tabs?: string[];
-  }
+  },
+  /** Something else is given (record types), so no access is fine. */
+  allowNone = false
 ): Promise<CheckedAccess | string[]> {
   const errors: string[] = [];
   const names = new Map<string, string>();
@@ -177,7 +180,8 @@ async function checkAccess(
   }
 
   if (errors.length > 0) return errors;
-  if (objects.size + fields.size + tabs.length === 0) return ['Name some access to give.'];
+  if (!allowNone && objects.size + fields.size + tabs.length === 0)
+    return ['Name some access to give.'];
   return { objects, fields, tabs, notes };
 }
 
@@ -386,6 +390,13 @@ export function registerAdminPermissionTools(
           .optional()
           .describe('A new permission set, instead of permissionSet.'),
         ...accessInput,
+        recordTypes: z
+          .array(z.string().min(1))
+          .max(50)
+          .optional()
+          .describe(
+            'New sets only: record types people with it can use, as Object.RecordType (API name or label).'
+          ),
         reason: reasonField,
         replaces: replacesField,
       }),
@@ -398,11 +409,42 @@ export function registerAdminPermissionTools(
       if (typeof access === 'string') return errText(access);
       const refused = await refusesChanges(access);
       if (refused) return errText(refused);
-      const checked = await checkAccess(context, access, args);
+      const checkedErrors: string[] = [];
+      if (!args.newSet && (args.recordTypes ?? []).length > 0) {
+        return errText(
+          'Record types can be given in a new permission set only: an existing set deploys whole, which would drop everything else it grants. Give the record type to profiles (salesforce_admin_propose_record_type), or create a set for it.'
+        );
+      }
+
+      const checked = await checkAccess(
+        context,
+        access,
+        args,
+        Boolean(args.newSet) && (args.recordTypes ?? []).length > 0
+      );
       if (Array.isArray(checked))
         return errText(`Nothing was proposed:\n${checked.map((e) => `• ${e}`).join('\n')}`);
 
       if (args.newSet) {
+        const recordTypes: string[] = [];
+        for (const ref of args.recordTypes ?? []) {
+          const dot = ref.indexOf('.');
+          if (dot < 1) {
+            checkedErrors.push(`"${ref}": name it as Object.RecordType.`);
+            continue;
+          }
+          const describe = await resolveObject(context, access, ref.slice(0, dot));
+          if (typeof describe === 'string') {
+            checkedErrors.push(describe);
+            continue;
+          }
+          const types = await listRecordTypes(context, access, describe.name);
+          const rt = typeof types === 'string' ? types : findRecordType(types, ref.slice(dot + 1));
+          if (typeof rt === 'string') checkedErrors.push(`${describe.name}: ${rt}`);
+          else recordTypes.push(`${describe.name}.${rt.developerName}`);
+        }
+        if (checkedErrors.length > 0)
+          return errText(`Nothing was proposed:\n${checkedErrors.map((e) => `• ${e}`).join('\n')}`);
         const label = args.newSet.label.trim();
         const name = args.newSet.apiName?.trim() ?? '';
         const taken = await sfQuery(
@@ -440,6 +482,7 @@ export function registerAdminPermissionTools(
           ...objects.map((o) => ({ label: `${o.object} records`, value: rightsLabel(o) })),
           ...fields.map((f) => ({ label: f.field, value: f.edit ? 'read and edit' : 'read' })),
           ...checked.tabs.map((tab) => ({ label: `${tab} tab`, value: 'shown' })),
+          ...recordTypes.map((rt) => ({ label: `${rt} record type`, value: 'may use' })),
         ];
         return proposeAndValidate(context, access, {
           kind: PERMISSION_SET_KIND,
@@ -456,6 +499,7 @@ export function registerAdminPermissionTools(
                 objects,
                 fields,
                 tabs: checked.tabs,
+                recordTypes,
               }),
             },
             members,

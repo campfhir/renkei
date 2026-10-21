@@ -99,6 +99,26 @@ global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       records: existingAccess ? [{ Id: '01k00000000000EAAA' }] : [],
     });
   }
+  if (method === 'GET' && /FROM RecordType WHERE SobjectType/.test(q)) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [{ Id: '012000000000001AAA', Name: 'Home Visit', DeveloperName: 'Home_Visit' }],
+    });
+  }
+  if (method === 'GET' && /FROM RecordType WHERE Id/.test(q)) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [
+        {
+          Id: '012000000000001AAA',
+          DeveloperName: 'Home_Visit',
+          Metadata: { label: 'Home Visit (edited)', active: true },
+        },
+      ],
+    });
+  }
   if (method === 'GET' && /FROM PermissionSetTabSetting/.test(q)) {
     return answer(200, {
       totalSize: /'Shown__c'/.test(q) ? 1 : 0,
@@ -221,6 +241,34 @@ describe('applyChangeRequest', () => {
     expect(finished()?.results.operations[0].detail).toContain(
       'Site_Visit__c.Outcome__c exists now'
     );
+    expect(requests.some((r) => r.path.includes('/metadata/'))).toBe(false);
+  });
+
+  it('stops when a record type was edited since it was read, or one was created under the name', async () => {
+    const recordTypes = {
+      ...change(),
+      kind: 'record_type',
+      payload: {
+        ...payload,
+        preconditions: [
+          {
+            kind: 'component-unchanged',
+            type: 'RecordType',
+            object: 'Site_Visit__c',
+            name: 'Home_Visit',
+            fingerprint: 'what-it-was',
+          },
+          { kind: 'record-type-absent', object: 'Site_Visit__c', name: 'home_visit' },
+        ],
+      },
+    };
+    const outcome = await applyChangeRequest(db, context, access, recordTypes, 'ada');
+    expect(outcome.status).toBe('failed');
+    const detail = finished()?.results.operations[0].detail ?? '';
+    expect(detail).toContain(
+      'The record type Site_Visit__c.Home_Visit was changed since this was proposed'
+    );
+    expect(detail).toContain('Site_Visit__c.home_visit exists now');
     expect(requests.some((r) => r.path.includes('/metadata/'))).toBe(false);
   });
 
@@ -387,6 +435,10 @@ describe('applyScopesFor', () => {
       )
     ).toEqual(['sfa-schema', 'sfa-layouts']);
     expect(applyScopesFor('layout')).toEqual(['sfa-layouts']);
+    // Record type access in a profile is access.
+    expect(
+      applyScopesFor('record_type', payload({ members: [{ type: 'Profile', member: 'Standard' }] }))
+    ).toEqual(['sfa-schema', 'sfa-permissions']);
     expect(
       applyScopesFor(
         'permission_set',

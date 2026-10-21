@@ -71,6 +71,8 @@ export interface NewPermissionSetSpec {
   fields: { field: string; edit: boolean }[];
   /** Tab names (a custom object's tab is its API name), shown in the app's navigation. */
   tabs: string[];
+  /** Record types (`Object.RecordType`) people with the set can use. */
+  recordTypes?: string[];
 }
 
 /** A new permission set's name and label, checked. */
@@ -115,6 +117,10 @@ export function permissionSetFile(spec: NewPermissionSetSpec): string {
       modifyAllRecords: entry.modifyAll,
       object: entry.object,
       viewAllRecords: entry.viewAll,
+    })),
+    recordTypeVisibilities: (spec.recordTypes ?? []).map((recordType) => ({
+      recordType,
+      visible: true,
     })),
     tabSettings: spec.tabs.map((tab) => ({ tab, visibility: 'Visible' })),
   });

@@ -65,6 +65,7 @@ function fixtureFor(projectName: string) {
     failed: uuidFrom(`salesforce-admin-e2e-failed:${projectName}`),
     production: uuidFrom(`salesforce-admin-e2e-production:${projectName}`),
     access: uuidFrom(`salesforce-admin-e2e-access:${projectName}`),
+    picklist: uuidFrom(`salesforce-admin-e2e-picklist:${projectName}`),
   };
 }
 
@@ -372,6 +373,38 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
       ],
     },
   });
+  // A standard picklist's values and what a record type offers of them, in one change.
+  await propose(fixture, {
+    id: fixture.picklist,
+    connector: 'uat',
+    host: UAT,
+    kind: 'picklist_changes',
+    title: 'Lead: change the values of Lead.LeadSource',
+    validation: passed,
+    payload: {
+      files: { 'package.xml': '<Package/>' },
+      members: [
+        { type: 'StandardValueSet', member: 'LeadSource' },
+        { type: 'RecordType', member: 'Lead.Donor' },
+      ],
+      components: [
+        {
+          type: 'StandardValueSet',
+          name: 'LeadSource',
+          action: 'update',
+          rows: [{ label: 'Add value', value: 'Webinar' }],
+        },
+        {
+          type: 'RecordType',
+          name: 'Lead.Donor',
+          action: 'update',
+          rows: [{ label: 'Offer', value: 'Webinar' }],
+        },
+      ],
+      preconditions: [],
+      dataSteps: [],
+    },
+  });
   // Access added to an existing permission set: data only, nothing to deploy.
   await propose(fixture, {
     id: fixture.access,
@@ -424,9 +457,9 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
 
   await page.reload();
   await expect(uat.getByText('Connected', { exact: true })).toBeVisible();
-  // Counted per org: three wait in UAT, one in production.
+  // Counted per org: four wait in UAT, one in production.
   await expect(
-    uat.getByRole('link', { name: '3 change requests waiting for your review' })
+    uat.getByRole('link', { name: '4 change requests waiting for your review' })
   ).toBeVisible();
   const production = cards.filter({
     has: page.getByRole('heading', { name: /Salesforce Admin · Production/ }),
@@ -501,6 +534,15 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
   await shot(page, testInfo, 'salesforce-admin-04c-access-mobile');
   await page.setViewportSize({ width: 1280, height: 900 });
 
+  // --- A standard picklist and a record type: each component named for what it is. ---
+  await page.goto(`/salesforce-admin/changes/${fixture.picklist}`);
+  const picklist = page.getByRole('main').getByTestId('change-components');
+  await expect(picklist.getByText('Changed standard picklist')).toBeVisible();
+  await expect(picklist.getByText('Changed record type')).toBeVisible();
+  await expect(picklist.getByText('Offer', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Deploy to UAT' })).toBeEnabled();
+  await shot(page, testInfo, 'salesforce-admin-04d-picklist');
+
   // --- A failed validation: Salesforce's errors, and no Deploy. ---
   await page.goto(`/salesforce-admin/changes/${fixture.failed}`);
   await expect(page.getByRole('main').getByTestId('validation-state')).toHaveText(
@@ -533,11 +575,11 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
   );
   expect(refused.status()).toBe(403);
 
-  // --- The list: three waiting, one cancelled. ---
+  // --- The list: four waiting, one cancelled. ---
   await page.goto('/salesforce-admin/changes');
   await expect(page.getByRole('heading', { name: 'Salesforce admin changes' })).toBeVisible();
   await expect(page.getByRole('main').getByTestId('changes-waiting').getByRole('link')).toHaveCount(
-    3
+    4
   );
   await expect(page.getByRole('main').getByTestId('changes-recent').getByRole('link')).toHaveCount(
     1

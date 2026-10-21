@@ -479,6 +479,12 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Proposed Salesforce picklist value changes for your review',
     short: 'Proposed picklist changes for your review',
   },
+  salesforce_admin_propose_record_type: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed a Salesforce record type for your review',
+    short: 'Proposed a record type for your review',
+  },
   salesforce_admin_propose_layout_changes: {
     category: 'created',
     entity: 'change request',

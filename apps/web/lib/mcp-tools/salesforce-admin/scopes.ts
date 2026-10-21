@@ -16,6 +16,8 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
     case 'salesforce_admin_list_validation_rules':
     case 'salesforce_admin_list_change_requests':
     case 'salesforce_admin_get_layout':
+    case 'salesforce_admin_get_picklist':
+    case 'salesforce_admin_get_record_type':
       return ['sfa-read'];
 
     case 'salesforce_admin_propose_object':
@@ -23,6 +25,7 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
     case 'salesforce_admin_propose_field_changes':
     case 'salesforce_admin_propose_picklist_changes':
     case 'salesforce_admin_propose_validation_rule':
+    case 'salesforce_admin_propose_record_type':
       return ['sfa-read', 'sfa-schema'];
 
     case 'salesforce_admin_propose_layout_changes':

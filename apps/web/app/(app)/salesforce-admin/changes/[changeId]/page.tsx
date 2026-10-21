@@ -31,6 +31,11 @@ const TYPE_LABELS: Record<string, string> = {
   CustomObject: 'object',
   CustomTab: 'tab',
   PermissionSet: 'permission set',
+  RecordType: 'record type',
+  BusinessProcess: 'business process',
+  GlobalValueSet: 'global value set',
+  StandardValueSet: 'standard picklist',
+  Profile: 'profile',
 };
 
 const OUTCOME_LABELS: Record<OperationResult['outcome'], string> = {

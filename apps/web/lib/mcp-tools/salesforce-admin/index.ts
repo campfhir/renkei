@@ -26,6 +26,8 @@ import { registerAdminLayoutTools } from './layout-tools';
 import { registerAdminChangeTools } from './propose-changes';
 import { registerAdminObjectTools } from './propose-object';
 import { registerAdminPermissionTools } from './permissions';
+import { registerAdminPicklistTools } from './picklist-tools';
+import { registerAdminRecordTypeTools } from './record-type-tools';
 
 export const SALESFORCE_ADMIN_MCP_CONNECTOR = SALESFORCE_ADMIN_KIND.key;
 
@@ -52,6 +54,8 @@ export function registerSalesforceAdminTools(
   registerAdminProposalTools(server, context, auth);
   registerAdminObjectTools(server, context, auth);
   registerAdminChangeTools(server, context, auth);
+  registerAdminPicklistTools(server, context, auth);
+  registerAdminRecordTypeTools(server, context, auth);
   registerAdminLayoutTools(server, context, auth);
   registerAdminPermissionTools(server, context, auth);
 }

@@ -910,10 +910,10 @@ differs from the text above:
   list is undefined; the Salesforce module passes an empty list instead, so a grant without
   recorded capabilities registers nothing.
 
-## As built (admin connector, first two slices)
+## As built (admin connector, first three slices)
 
-The admin connector's foundation, its reads, and the schema, layout and permission set
-proposals are built; the as-built description is the `salesforce-admin` section of
+The admin connector's foundation, its reads, and the schema, picklist, record type, layout and
+permission set proposals are built; the as-built description is the `salesforce-admin` section of
 [`connectors.md`](./connectors.md). Where it differs from the text above:
 
 - **Production writes are per connector** (`productionChanges` on each admin connector, off by
@@ -933,9 +933,27 @@ proposals are built; the as-built description is the `salesforce-admin` section 
   hash of what was read as its precondition. Element order follows the Tooling API's JSON, which
   the Metadata API accepts.
 - **Field changes refuse what loses data**: a type change, a shorter length, fewer digits; and a
-  picklist value is deactivated, never deleted. Picklist values per record type are not offered
-  yet — the proposal says new values still need adding to each record type — nor are changes to
-  global value sets, or related lists on layouts.
+  picklist value is deactivated, never deleted.
+- **Picklists are changed where their values live.** A custom field's own values deploy with the
+  field; a global value set as its `GlobalValueSet`, read whole from the Tooling API, naming the
+  fields that share it; a standard picklist as its `StandardValueSet`. No API reads a standard
+  value set whole, so it is assembled from a fresh describe plus, for the sets with flags
+  (Opportunity Stage, Lead, Case and Task Status, Task Priority), the status objects that carry
+  them — the inactive stages included. The Metadata API adds and changes a standard set's
+  values on deploy, so inactive values the read cannot see stay as they are. Several objects
+  share some sets (Lead Source, Industry, Rating, Salutation); the proposal says so.
+- **What record types offer is changed whole too.** Added values are offered on every record
+  type that lists the picklist (a record type that does not leaves it to Salesforce, and is
+  left alone); deactivated values come off every record type offering them; a named record
+  type's offering changes as asked. For Opportunity Stage and the Lead, Case and Solution
+  Status fields the change lands on each record type's business process instead, once per
+  process. Values are matched decoded and written percent-encoded, as the Metadata API names
+  them.
+- **Record type access goes to profiles and new permission sets.** A `Profile` deploy overlays
+  the profile, so a file naming only the record type's visibility and layout assignment changes
+  only that. An existing permission set deploys whole, so record types are not added to one; a
+  new set can carry them. Related lists on layouts and dependent picklists' value matrices are
+  not offered yet.
 - **Tabs for a new object** are shown to the permission sets given access to it (in their
   navigation by default); standard objects' tabs are not offered.
 - **The dependency list is on `get_field`**, not on the review page, for now.

@@ -1,14 +1,14 @@
 /**
- * Changes to existing custom fields: their settings (label, help text,
- * required, a longer length…) and a picklist's values (added, relabelled,
- * deactivated, reordered, the default). An existing field deploys as its
- * whole definition, so each proposal reads the live field (the Tooling
- * API's `CustomField.Metadata`), merges only what it changes
- * (@renkei/connector-salesforce changes.ts), and carries the precondition
- * that nobody edited the field since — applying is refused otherwise.
+ * Changes to an existing custom field's settings: label, help text,
+ * required, a longer length… (a picklist's values: picklist-tools.ts). An
+ * existing field deploys as its whole definition, so the proposal reads the
+ * live field (the Tooling API's `CustomField.Metadata`), merges only what
+ * it changes (@renkei/connector-salesforce changes.ts), and carries the
+ * precondition that nobody edited the field since — applying is refused
+ * otherwise.
  *
- * Nothing here loses data: a type change, a shorter length, fewer digits
- * and deleting a picklist value are refused, with where to do them instead.
+ * Nothing here loses data: a type change, a shorter length and fewer
+ * digits are refused, with where to do them instead.
  */
 
 import { z } from 'zod';
@@ -16,7 +16,6 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import {
   existingFieldXml,
   mergeFieldChanges,
-  mergePicklistChanges,
   objectFileXml,
   packageXml,
   type ChangeRow,
@@ -28,7 +27,6 @@ import { resolveObject } from '../salesforce/schema';
 import { objectField } from '../salesforce/fields';
 import {
   FIELD_CHANGES_KIND,
-  PICKLIST_CHANGES_KIND,
   readCustomField,
   type LiveCustomField,
   type MetadataPayload,
@@ -41,7 +39,7 @@ const fieldNameField = z
   .describe('The custom field’s API name (…__c); salesforce_admin_describe_object lists them.');
 
 /** The live field to change, or why not. */
-async function liveField(
+export async function liveField(
   context: MCPToolContext,
   access: SalesforceAccess,
   object: string,
@@ -56,7 +54,7 @@ async function liveField(
 }
 
 /** The deployment of one existing field, whole, with the change merged in. */
-function fieldPayload(
+export function fieldPayload(
   object: string,
   live: LiveCustomField,
   metadata: Record<string, unknown>,
@@ -76,7 +74,7 @@ function fieldPayload(
   };
 }
 
-const rowLine = (row: ChangeRow) =>
+export const rowLine = (row: ChangeRow) =>
   row.from !== undefined
     ? `• ${row.label}: ${row.from} → ${row.value}`
     : `• ${row.label}: ${row.value}`;
@@ -149,71 +147,6 @@ export function registerAdminChangeTools(
         replaces: args.replaces,
         payload: fieldPayload(object, live, merged.metadata, merged.rows),
         summary: [`${live.fullName}:`, ...merged.rows.map(rowLine)],
-      });
-    }
-  );
-
-  server.registerTool(
-    'salesforce_admin_propose_picklist_changes',
-    {
-      title: 'Salesforce Admin · Act — Propose picklist value changes',
-      description:
-        'Propose changes to a custom picklist’s values: values to add, new labels for values, ' +
-        'values to stop offering (records keep them) or offer again, a new order, and the ' +
-        'default. Values are never deleted. A picklist on a global value set changes there, not ' +
-        'here. Checked by a validation deploy that changes nothing; the person reviews and ' +
-        'applies it from the link this returns.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        object: objectField,
-        field: fieldNameField,
-        add: z
-          .array(z.object({ value: z.string().min(1), label: z.string().optional() }))
-          .max(200)
-          .optional(),
-        relabel: z
-          .array(z.object({ value: z.string().min(1), label: z.string().min(1) }))
-          .max(200)
-          .optional()
-          .describe('New labels; the values records hold do not change.'),
-        deactivate: z.array(z.string().min(1)).max(200).optional(),
-        activate: z.array(z.string().min(1)).max(200).optional(),
-        order: z
-          .array(z.string().min(1))
-          .max(1000)
-          .optional()
-          .describe('Values in their new order; values not named follow in their current order.'),
-        defaultValue: z.string().optional().describe('The default value; "" for none.'),
-        reason: reasonField,
-        replaces: replacesField,
-      }),
-    },
-    async (args) => {
-      const access = await auth.resolve();
-      if (typeof access === 'string') return errText(access);
-      const refused = await refusesChanges(access);
-      if (refused) return errText(refused);
-      const found = await liveField(context, access, args.object, args.field);
-      if (typeof found === 'string') return errText(found);
-      const { object, label, live } = found;
-      const merged = mergePicklistChanges(live.metadata, args);
-      if (!merged.ok)
-        return errText(`Nothing was proposed:\n${merged.errors.map((e) => `• ${e}`).join('\n')}`);
-      return proposeAndValidate(context, access, {
-        kind: PICKLIST_CHANGES_KIND,
-        title: `${label}: change the values of ${live.fullName}`,
-        reason: args.reason,
-        replaces: args.replaces,
-        payload: fieldPayload(object, live, merged.metadata, merged.rows),
-        summary: [
-          `${live.fullName}:`,
-          ...merged.rows.map(rowLine),
-          ...((args.add ?? []).length > 0
-            ? [
-                'If the object uses record types, new values still have to be made available on each record type; this change does not.',
-              ]
-            : []),
-        ],
       });
     }
   );

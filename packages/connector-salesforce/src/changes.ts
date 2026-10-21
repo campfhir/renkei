@@ -18,6 +18,9 @@ import {
   type PackageMember,
 } from './metadata';
 import { metadataBody, metadataFile } from './metadata-xml';
+import { mergeValueList, type PicklistChanges } from './picklists';
+
+export type { PicklistChanges } from './picklists';
 
 type Json = Record<string, unknown>;
 
@@ -144,23 +147,10 @@ export function mergeFieldChanges(
   return errors.length > 0 ? { ok: false, errors } : { ok: true, metadata: next, rows };
 }
 
-export interface PicklistChanges {
-  add?: { value: string; label?: string }[];
-  /** A new label for a value. The value itself (what records hold) does not change. */
-  relabel?: { value: string; label: string }[];
-  /** Values to stop offering; records that hold them keep them. */
-  deactivate?: string[];
-  /** Values to offer again. */
-  activate?: string[];
-  /** The values in their new order; values not named keep their order after these. */
-  order?: string[];
-  /** The value selected by default, or '' for none. */
-  defaultValue?: string;
-}
-
 /**
  * A picklist field's metadata with value changes merged in, and its rows —
- * or why not. A picklist on a global value set changes there, not here.
+ * or why not. A picklist on a global value set changes there, not here
+ * (picklists.ts mergeGlobalValueSetChanges).
  * Values are never deleted: deactivating keeps them on the records that
  * hold them, the way Setup does.
  */
@@ -189,76 +179,13 @@ export function mergePicklistChanges(
   valueSet.valueSetDefinition = definition;
   const values: Json[] = Array.isArray(definition.value) ? definition.value.filter(isRecord) : [];
   definition.value = values;
-  const find = (value: string) =>
-    values.find((v) => str(v.fullName).toLowerCase() === value.toLowerCase());
-
-  for (const add of changes.add ?? []) {
-    const value = add.value.trim();
-    if (!value || value.length > 255)
-      errors.push(`"${value.slice(0, 40)}" is not a picklist value (1 to 255 characters).`);
-    else if (find(value)) errors.push(`"${value}" is already a value of this picklist.`);
-    else {
-      values.push({ fullName: value, default: false, label: add.label?.trim() || value });
-      rows.push({
-        label: 'Add value',
-        value: add.label && add.label !== value ? `${value} (shown as “${add.label}”)` : value,
-      });
-    }
-  }
-  for (const relabel of changes.relabel ?? []) {
-    const entry = find(relabel.value);
-    if (!entry) errors.push(`"${relabel.value}" is not a value of this picklist.`);
-    else {
-      rows.push({
-        label: `Label of ${str(entry.fullName)}`,
-        value: relabel.label,
-        from: str(entry.label) || str(entry.fullName),
-      });
-      entry.label = relabel.label.trim();
-    }
-  }
-  for (const [list, active] of [
-    [changes.deactivate ?? [], false],
-    [changes.activate ?? [], true],
-  ] as const) {
-    for (const value of list) {
-      const entry = find(value);
-      if (!entry) errors.push(`"${value}" is not a value of this picklist.`);
-      else if ((entry.isActive !== false) === active)
-        errors.push(`"${value}" is already ${active ? 'active' : 'inactive'}.`);
-      else {
-        entry.isActive = active;
-        rows.push({ label: active ? 'Offer again' : 'Stop offering', value: str(entry.fullName) });
-      }
-    }
-  }
-  if (changes.order) {
-    const named = changes.order.map((value) => find(value));
-    const missing = changes.order.filter((_, index) => !named[index]);
-    if (missing.length > 0) errors.push(`Not values of this picklist: ${missing.join(', ')}.`);
-    else {
-      const ordered = [...new Set(named.filter((v): v is Json => v !== undefined))];
-      const before = values.map((v) => str(v.fullName)).join(', ');
-      const rest = values.filter((v) => !ordered.includes(v));
-      values.splice(0, values.length, ...ordered, ...rest);
-      const after = values.map((v) => str(v.fullName)).join(', ');
-      if (before !== after) rows.push({ label: 'Order', value: after, from: before });
-    }
-  }
-  if (changes.defaultValue !== undefined) {
-    const wanted = changes.defaultValue.trim();
-    const current = values.find((v) => v.default === true);
-    if (wanted && !find(wanted)) errors.push(`"${wanted}" is not a value of this picklist.`);
-    else if (str(current?.fullName) !== wanted) {
-      for (const v of values)
-        v.default = wanted !== '' && str(v.fullName).toLowerCase() === wanted.toLowerCase();
-      rows.push({
-        label: 'Default',
-        value: wanted || '(none)',
-        from: str(current?.fullName) || '(none)',
-      });
-    }
-  }
+  const merged = mergeValueList(values, changes, (add) => ({
+    fullName: add.value,
+    default: false,
+    label: add.label?.trim() || add.value,
+  }));
+  errors.push(...merged.errors);
+  rows.push(...merged.rows);
   if (errors.length === 0 && rows.length === 0)
     errors.push('Nothing in that changes the picklist.');
   return errors.length > 0 ? { ok: false, errors } : { ok: true, metadata: next, rows };

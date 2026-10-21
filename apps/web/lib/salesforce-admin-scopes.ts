@@ -30,10 +30,13 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Read org configuration',
     hint:
       'salesforce_admin_check_access, salesforce_admin_describe_object, salesforce_admin_get_field, ' +
-      'salesforce_admin_list_validation_rules, salesforce_admin_list_change_requests — objects, ' +
-      'fields, validation rules and where a field is used, as the person can see them in Setup.',
+      'salesforce_admin_list_validation_rules, salesforce_admin_get_picklist, ' +
+      'salesforce_admin_get_record_type, salesforce_admin_get_layout, ' +
+      'salesforce_admin_list_change_requests — objects, fields, picklists and their value sets, ' +
+      'record types, layouts, validation rules and where a field is used, as the person can see ' +
+      'them in Setup.',
     userHint:
-      'Read how the org is built — objects, fields, validation rules, where a field is used — and your own change requests.',
+      'Read how the org is built — objects, fields, picklists, record types, layouts, validation rules, where a field is used — and your own change requests.',
     group: 'read',
     defaultChecked: true,
   },
@@ -44,11 +47,13 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'salesforce_admin_propose_object, salesforce_admin_propose_fields, ' +
       'salesforce_admin_propose_field_changes, salesforce_admin_propose_picklist_changes, ' +
-      'salesforce_admin_propose_validation_rule — each a change request, checked by a ' +
+      'salesforce_admin_propose_record_type, salesforce_admin_propose_validation_rule — each a ' +
+      'change request (picklists include standard ones and global value sets, and what each ' +
+      'record type offers), checked by a ' +
       'validation deploy in the org and applied only by the person, in their browser. Nothing ' +
       'on the MCP surface changes the org.',
     userHint:
-      'Propose new objects, fields, changes to fields and picklists, and validation rules. Each is checked by Salesforce and waits for you to review and apply it in Renkei.',
+      'Propose new objects, fields, changes to fields and picklists (standard ones too), record types and validation rules. Each is checked by Salesforce and waits for you to review and apply it in Renkei.',
     group: 'build',
     defaultChecked: true,
   },
@@ -72,8 +77,8 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'salesforce_admin_list_permission_sets, salesforce_admin_propose_permission_set — a new ' +
       'permission set, or object, field and tab access added to an existing one (each access ' +
-      'row written on its own, so nothing else in the set changes). Assigning sets to people is ' +
-      'the separate user access option.',
+      'row written on its own, so nothing else in the set changes), and which profiles may use a ' +
+      'record type. Assigning sets to people is the separate user access option.',
     userHint:
       'Propose new permission sets, or more access in existing ones, for you to review and apply.',
     group: 'access',
