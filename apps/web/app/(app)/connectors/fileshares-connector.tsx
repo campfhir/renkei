@@ -6,19 +6,19 @@
  * live connect/disconnect/exposure state.
  */
 
+import ConnectorIcon from '@/components/connector-icon';
 import { ConnectorShell, ConnectorHeading } from './connector-shell';
 import FileshareList, { type ConnectableShareView } from './fileshare-list';
 
 export type { ConnectableShareView } from './fileshare-list';
 
-export default function FilesharesConnector({
-  shares,
-}: {
-  shares: ConnectableShareView[];
-}) {
+export default function FilesharesConnector({ shares }: { shares: ConnectableShareView[] }) {
   return (
     <ConnectorShell anchor="card-fileshares">
-      <ConnectorHeading>File shares</ConnectorHeading>
+      <ConnectorHeading>
+        <ConnectorIcon capabilityKey="fileshares" label="File shares" size={20} />
+        File shares
+      </ConnectorHeading>
       <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
         Org network shares (SMB/SFTP). Connect each with your own file-server account — what you can
         reach there is what that account can. The checkboxes are what your LLM&apos;s tools may do;

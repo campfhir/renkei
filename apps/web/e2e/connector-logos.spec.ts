@@ -4,7 +4,10 @@
  * built-in surfaces, load as images (not the
  * built-in fallback glyph, which is what a missing or malformed file
  * silently degrades to), and GitHub's near-black mark is inverted on a dark
- * page only (lib/connector-logos.ts, INVERT_ON_DARK).
+ * page only (lib/connector-logos.ts, INVERT_ON_DARK). And on the person's
+ * own Connectors page, every card's heading carries a mark that loads —
+ * the page where a missing icon was noticed. Which cards render depends on
+ * the org's setup; every one that does is checked.
  *
  * Read-only, but signed in as its own operator so it does not depend on the
  * shared seed's roles; nothing organization-wide is written.
@@ -14,7 +17,7 @@
 
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
 import { enrollForE2E } from './keys';
 
@@ -48,11 +51,10 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
   }
 }
 
-test('connector marks: shipped SVGs load, and GitHub inverts on dark only', async ({
-  page,
-}, testInfo) => {
-  const sessionId = uuidFrom(`connector-logos-e2e-session:${testInfo.project.name}`);
-  const subject = `e2e-logos-${testInfo.project.name}@example.com`;
+/** Its own operator, with every connector added to their Connectors page. */
+async function signIn(page: Page, projectName: string): Promise<void> {
+  const sessionId = uuidFrom(`connector-logos-e2e-session:${projectName}`);
+  const subject = `e2e-logos-${projectName}@example.com`;
   await withDb(async (client) => {
     for (const table of ['user_preferences', 'sessions', 'identities']) {
       await client.query(`DELETE FROM ${table} WHERE subject = $1`, [subject]);
@@ -69,6 +71,10 @@ test('connector marks: shipped SVGs load, and GitHub inverts on dark only', asyn
       `INSERT INTO user_preferences (subject, key, value) VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [subject]
     );
+    await client.query(
+      `INSERT INTO user_preferences (subject, key, value) VALUES ($1, 'connectors', $2::jsonb)`,
+      [subject, JSON.stringify({ added: ADDED })]
+    );
     await enrollForE2E(client, subject);
   });
   await page.context().addCookies([
@@ -82,7 +88,29 @@ test('connector marks: shipped SVGs load, and GitHub inverts on dark only', asyn
       sameSite: 'Lax',
     },
   ]);
+}
 
+const ADDED = [
+  'jira',
+  'atlassian-confluence',
+  'atlassian-bitbucket',
+  'microsoft',
+  'entra-developer',
+  'github',
+  'salesforce',
+  'webex',
+  'zoom',
+  'onbase',
+  'onbase-admin',
+  'fileshares',
+  'mirth',
+  'admanager',
+];
+
+test('connector marks: shipped SVGs load, and GitHub inverts on dark only', async ({
+  page,
+}, testInfo) => {
+  await signIn(page, testInfo.project.name);
   await page.goto('/admin/connectors');
   const dark = testInfo.project.name.includes('dark');
   for (const [name, file] of [
@@ -119,4 +147,39 @@ test('connector marks: shipped SVGs load, and GitHub inverts on dark only', asyn
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
   expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test('connectors page: every card heading carries a mark that loads', async ({
+  page,
+}, testInfo) => {
+  await signIn(page, testInfo.project.name);
+  await page.goto('/connectors');
+  const headings = page.locator('[data-coach^="card-"] :is(h2, h3)');
+  await expect(headings.first()).toBeVisible();
+  const count = await headings.count();
+  const seen: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const heading = headings.nth(i);
+    if (!(await heading.isVisible())) continue;
+    const name = (await heading.innerText()).trim();
+    seen.push(name);
+    const mark = heading.locator('img, svg').first();
+    await expect(mark, `"${name}" has a mark`).toBeVisible();
+    if ((await mark.evaluate((el) => el.tagName.toLowerCase())) === 'img') {
+      await expect
+        .poll(
+          () => mark.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0),
+          { message: `"${name}"'s mark loads` }
+        )
+        .toBe(true);
+    }
+  }
+  // Browser secrets had no mark; the org-configured cards that had none
+  // (Mirth Connect, File shares, ADManager Plus) render only where the org
+  // runs those servers, and are guarded by app/(app)/connectors/card-marks.test.ts.
+  expect(seen.some((heading) => heading.includes('Browser secrets'))).toBe(true);
+  await page.screenshot({
+    path: path.join(RESULTS, 'screens', testInfo.project.name, 'connectors-page-marks.png'),
+    fullPage: true,
+  });
 });

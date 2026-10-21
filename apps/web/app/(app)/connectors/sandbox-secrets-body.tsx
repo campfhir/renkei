@@ -17,6 +17,7 @@
  * state this component owns.
  */
 
+import ConnectorIcon from '@/components/connector-icon';
 import { useState } from 'react';
 import { getJson, sendJson, sendJsonFull } from '@/lib/fetch-json';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
@@ -70,11 +71,7 @@ function isUnlocked(secret: SecretView): boolean {
   return secret.unlockedUntil !== null && new Date(secret.unlockedUntil).getTime() > Date.now();
 }
 
-export default function SandboxSecretsBody({
-  secrets: initialSecrets,
-}: {
-  secrets: SecretView[];
-}) {
+export default function SandboxSecretsBody({ secrets: initialSecrets }: { secrets: SecretView[] }) {
   const [secrets, setSecrets] = useState(initialSecrets);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<CreateDraft>(EMPTY_DRAFT);
@@ -193,7 +190,11 @@ export default function SandboxSecretsBody({
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">Browser secrets</h2>
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          {/* A sandbox feature, so Renkei's own mark (connector-logos.ts). */}
+          <ConnectorIcon capabilityKey="sandbox" label="Browser secrets" size={20} />
+          Browser secrets
+        </h2>
         {adding ? null : (
           <button
             {...addAnchor}
