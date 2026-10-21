@@ -7,10 +7,10 @@ is, the as-built description belongs in a `salesforce` and a `salesforce-admin` 
 Two connectors, one vendor — the `jira`/`jira-admin`, `onbase`/`onbase-admin` and
 `microsoft`/`entra-developer` arrangement:
 
-| Connector          | Who it is for                                                         | What it does                                                                                                                                     |
-| ------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `salesforce`       | Everyone who works in Salesforce as a CRM — sales, service, nonprofit | Find, read, create, update and delete records of standard and custom objects; log activity; read, run, author and share reports; read dashboards |
-| `salesforce-admin` | Salesforce administrators and app builders                            | Build applications: define custom objects and fields, picklists, validation rules, record types, layouts, apps and tabs, permission sets         |
+| Connector          | Who it is for                                                         | What it does                                                                                                                                                                      |
+| ------------------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `salesforce`       | Everyone who works in Salesforce as a CRM — sales, service, nonprofit | Find, read, create, update and delete records of standard and custom objects; log activity; find and run reports (sync and async) to tell the story behind the numbers            |
+| `salesforce-admin` | Salesforce administrators and app builders                            | Build applications: define custom objects and fields, picklists, validation rules, record types, layouts, apps and tabs, permission sets; build and publish reports for CRM users |
 
 ## What they are for
 
@@ -18,16 +18,18 @@ Two connectors, one vendor — the `jira`/`jira-admin`, `onbase`/`onbase-admin` 
 did we last hear from Acme?", "which of my opportunities close this month?", "how much has this
 donor given since 2023?" — and does the routine data work that follows: log the call, move the
 stage, fix the address, create the follow-up task. Reports are the other half of everyday
-Salesforce: people want an existing report run with a different filter, a new report built from a
-sentence ("open cases by owner, this quarter, as a summary by priority"), and that report handed to
-a colleague.
+Salesforce, and the half that tells the story: the org's reports already encode what its people
+care about, so "how did this quarter go?" is best answered by running them — this period and last,
+one region and another — and explaining what moved, with a chart.
 
 **The admin connector** is for the people who change the shape of the org rather than the rows in
 it. An administrator building an application does the same dozen things in Setup: create an
 object, add its fields, add picklist values, write validation rules, put the fields on a layout,
 give it a tab and an app, and grant a permission set — usually in a sandbox first, then again in
 production. The connector does that work from a sentence, shows exactly what it will deploy, and
-deploys it only when the admin applies it.
+deploys it only when the admin applies it. Admins also build the **reports** CRM users run: a
+report drafted from a sentence, checked against real data, then published to a folder the right
+people can see.
 
 ## Decisions
 
@@ -205,8 +207,8 @@ The CRM connector's record work runs on a small, stable part of Salesforce's RES
 sObject, Query and Search resources and the two composite resources that batch sObject writes —
 rather than on a spread of API families. These exist in every org with API access, behave the same
 for standard and custom objects, and are the resources Salesforce's own sObjects OpenAPI document
-describes. Reports are the one exception: authoring and sharing them is only possible through the
-Reports and Dashboards REST API, so the report tools use it.
+describes. Reports are the one other API: listing, describing and running them (and, on the admin
+connector, building them) goes through the Reports and Dashboards REST API (`/analytics/…`).
 
 | Resource                                                              | Used for                                                                                                                                                                                                                                                                               |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -257,14 +259,12 @@ Answers that mention record ids carry the record's name alongside, so a raw resu
 The everyday-record rule, between Mirth's "only permanent operations" and ADManager Plus's "every
 write":
 
-| Action                                                       | Confirm                                                                               |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| Create one record, update one record, log an activity        | Direct; the result shows each field's old and new value and links the record          |
-| Update or create more than one record                        | Preview + confirm — the card lists every record and every field change                |
-| Delete (any number)                                          | Preview + confirm — the card names each record and its child records that go too      |
-| Change a record's owner                                      | Preview + confirm — it changes who can see it                                         |
-| Share a report (folder share), subscribe someone else to one | Preview + confirm — the card lists everything else in the folder that becomes visible |
-| Create, update or delete a report                            | Direct for the person's own private folder; preview + confirm in a shared folder      |
+| Action                                                | Confirm                                                                          |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Create one record, update one record, log an activity | Direct; the result shows each field's old and new value and links the record     |
+| Update or create more than one record                 | Preview + confirm — the card lists every record and every field change           |
+| Delete (any number)                                   | Preview + confirm — the card names each record and its child records that go too |
+| Change a record's owner                               | Preview + confirm — it changes who can see it                                    |
 
 Single-record writes are direct because that is how people use a CRM — the result is the receipt,
 and the record's own history (where field history is tracked) and the person's own eyes on the
@@ -272,8 +272,8 @@ link are the undo. Deleted records go to the Recycle Bin for 15 days; the delete
 and links it. Agents follow the same table through their staged actions: a direct write is a step,
 a preview + confirm write is a step with `needsApproval` ([`agents.md`](./agents.md)).
 
-The card is the existing issue-preview widget for record changes, and `directory_action_preview`
-for shares (its `person` slot shows the recipient, its group lists the folder's reports).
+The card is the existing issue-preview widget for record changes. Running reports is read-only
+and needs no card.
 
 ### Tools
 
@@ -408,8 +408,8 @@ practice:
   dropped for an object when a write fails with `INVALID_FIELD` or a picklist error, and when the
   admin connector applies a change request touching that object, so a field an admin just built
   is usable in CRM tools on the next call, not ten minutes later.
-- **Reports on custom objects** need no extra tools: custom report types appear in
-  `salesforce_list_report_types` like standard ones.
+- **Reports on custom objects** need no extra tools: a report on a custom report type lists and
+  runs like any other.
 - **Keeping some objects away from the model** (optional org setting). Salesforce's permissions
   decide what a person can reach, but an org may want, say, `Case_Note__c` or a payroll object out
   of chat even for people who can see it in Salesforce. An **object and field exclusion list** on
@@ -450,75 +450,64 @@ Files move through the sandbox scratch space the way OnBase and Jira attachments
 `salesforce_attach_file` inserts a `ContentVersion` (multipart) from a scratch file and links it to
 the records named with `ContentDocumentLink`.
 
-**Reports and dashboards**
+### Reports: find, run, tell the story
 
-The Reports and Dashboards REST API (`/analytics/…` under the pinned version).
+The CRM connector reads and runs reports; it does not build or share them — that is the admin
+connector's job (below), so the reports people rely on are made deliberately and kept in one
+place.
 
-| Tool                                                      | Does                                                                                                                                                                                         |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `salesforce_find_reports`                                 | By name, folder or owner — a SOQL query on `Report`, since `GET /analytics/reports` only lists the recently viewed                                                                           |
-| `salesforce_describe_report`                              | Its type, format, columns, groupings, filters and folder                                                                                                                                     |
-| `salesforce_run_report`                                   | Run it, optionally with filters changed for this run only (nothing saved); summary rows and aggregates by default, detail rows on request (Salesforce caps synchronous detail at 2,000 rows) |
-| `salesforce_run_report_async`                             | The same as an async instance, for reports too slow to run inline; results read back by instance id                                                                                          |
-| `salesforce_export_report`                                | Run and stage the result as a spreadsheet in the sandbox scratch space, for a person to download or another connector to send                                                                |
-| `salesforce_list_report_types`                            | Report types the person can build on, and a type's available columns and filters                                                                                                             |
-| `salesforce_create_report`                                | Build one from a report type: format (tabular, summary, matrix), columns, groupings, filters, boolean filter logic, chart; saved to a named folder or the person's private one               |
-| `salesforce_update_report`                                | Change columns, groupings, filters, name, description                                                                                                                                        |
-| `salesforce_clone_report`                                 | Save a copy, optionally into another folder — the usual first step before sharing a private report                                                                                           |
-| `salesforce_delete_report_preview` / `_confirm`           | Delete one (it goes to the Recycle Bin)                                                                                                                                                      |
-| `salesforce_list_report_folders`                          | Folders the person can see, with their access to each (view, edit, manage)                                                                                                                   |
-| `salesforce_share_report_preview` / `_confirm`            | Share — see below                                                                                                                                                                            |
-| `salesforce_subscribe_report`                             | Subscribe the person to a report on a schedule, with optional conditions; subscribing others is preview + confirm and needs Salesforce's own permission to add recipients                    |
-| `salesforce_list_dashboards` / `salesforce_get_dashboard` | A dashboard's components and their current values; `refresh` re-runs it                                                                                                                      |
+| Tool                            | Resource                                                                   | Does                                                                                                                                                                                        |
+| ------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `salesforce_find_reports`       | `GET /query` on `Report` and `Folder`; `GET /analytics/reports` for recent | By name, folder, report type, owner, or last run — a SOQL query, since `GET /analytics/reports` lists only the person's recently viewed (offered as "recent")                               |
+| `salesforce_describe_report`    | `GET /analytics/reports/{id}/describe`                                     | What the report measures, in words: its report type, format, groupings, aggregates, columns and filters — so the model knows what a number means before quoting it                          |
+| `salesforce_run_report`         | `GET`/`POST /analytics/reports/{id}`                                       | Run it now. Optional run-time changes — filters, a date range, a grouping's sort — apply to this run only and nothing is saved. Groupings and aggregates by default, detail rows on request |
+| `salesforce_run_report_async`   | `POST /analytics/reports/{id}/instances`                                   | Start a run in the background for a slow report or more detail rows than a synchronous run returns; answers with an instance id                                                             |
+| `salesforce_get_report_results` | `GET /analytics/reports/{id}/instances/{instanceId}`, `…/instances`        | An async run's status and, when complete, its results; or the report's recent runs                                                                                                          |
+| `salesforce_export_report`      | `GET /analytics/reports/{id}` (spreadsheet)                                | The run as a spreadsheet staged in the scratch space, to download or hand to another connector                                                                                              |
 
-**Building a report from a sentence** goes: pick the report type (`salesforce_list_report_types`
-with the object named), describe it for the column and filter names, build the metadata in the
-package's validator (which refuses an unknown column, a grouping on a non-groupable field, a
-filter operator the column's type does not take), create it in the person's private folder, run
-it once, and show the first rows — so the person sees the report work before anyone else does.
-The builder covers what operational reports on a custom object actually use: groupings down (and
-across for a matrix), relative date filters ("rolling 90 days", "this quarter"), filter logic,
-**row-level formulas** (days between two milestone dates), **summary formulas** (enrolled ÷ total
-as a percentage), bucket fields, and sort order. Row-level and summary formulas are checked by
-Salesforce when the report is saved; the tool returns its error verbatim. (The exact
-`reportMetadata` keys for row-level formulas are to be confirmed against the pinned API version.)
+**Sync or async.** A synchronous run answers in the call and is capped by Salesforce (2,000
+detail rows, and a time limit); it is the default for a summary. Async is for a heavy report or a
+full detail export, and suits agents well: start it, do other work, read it back. Salesforce keeps
+async results only for a limited time and caps report runs per org per hour (separately for sync
+and async), so the tools reuse a recent instance of the same run rather than starting another, and
+say how fresh it is.
 
-### Sharing a report
+**Telling the story.** A report run returns numbers; the person wants to know what they mean. The
+run result is shaped for that, and the tool descriptions steer the model to use it:
 
-Salesforce does not share a report; it shares the **folder** the report is in. That is the one
-design point here that is easy to get wrong:
+- **Scope first.** Every result states what was run — the report's name, its filters as applied
+  (including any run-time change), the date range, and when it ran — so a narrative never quotes a
+  number without saying what it counts.
+- **Groupings as structure.** Results come back as the report's groupings with labels, subtotals
+  and the grand total (the fact map turned into readable rows), which is the outline of a story:
+  "pipeline grew 12%; most of it is the West region; two deals account for half".
+- **Comparison by re-running, not by building.** "This quarter against last" is the same report
+  run twice with a different date filter; "West against East" is a filter change. The result marks
+  each run's variation so the comparison stays honest. Nothing is saved to Salesforce.
+- **Drill-down.** A surprising subtotal can be explained by asking for that grouping's detail rows
+  (a filter on the grouping value), or by moving to the records themselves with the record tools —
+  the ids in detail rows are record ids.
+- **Charts.** Groupings hand straight to the chat's `chat_write_chart` (a bar, line or pie in
+  Mermaid) where the organization has charts on, so a story arrives with its picture.
+- **Honest limits.** A truncated run (synchronous row cap), a stale async instance, or a report
+  whose filter depends on the running user ("my opportunities") is said plainly, beside the numbers.
 
-- A report in the person's private folder ("My Personal Custom Reports") cannot be shared at all.
-  The preview says so and proposes the fix: clone it into a folder the person can manage (named
-  or new), then share that folder.
-- Sharing a folder shares **everything in it**, now and later. The preview lists every report and
-  dashboard already in the folder, so "share the pipeline report with Pat" cannot quietly also
-  hand Pat the compensation report sitting beside it. When the folder holds anything else, the
-  preview offers "a new folder with just this report" as the default.
-- Recipients resolve by name or address to a user, public group or role (with or without
-  subordinates) — the share types Salesforce's folder shares accept — and access is _view_ unless
-  the person asks for _edit_ or _manage_. People who can already see the folder are named as
-  such and skipped.
-- The share is the Folders resource's `shares` collection; the person needs _manage_ on the
-  folder, and Salesforce checks it. Recipients must also hold access to the report type's objects
-  to see any rows — the preview says that sharing a report does not share the records behind it.
-
-"Send Pat a link" is a separate, cheaper ask: the tool returns the report's Lightning URL, and the
-chat can send it through WebEx or Outlook if those connectors are on.
+When nobody has built the report a question needs, the CRM connector can still answer it with an
+aggregate SOQL query (`GROUP BY`, `COUNT`, `SUM`) through `salesforce_query`, and says that a
+report for it is something an admin can publish.
 
 ### Scope picker
 
 The CRM card's checkboxes narrow what registers, the Mirth permissions shape — Salesforce's own
 permissions still decide every call:
 
-| Option                              | Tools                                                                                           | Default |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------- | ------- |
-| Read records                        | orientation, search, query, get, related, relationship path, history, changes, file download    |
-| Create and update records           | create, record tree, relate, update, upsert, log activity, task, note, attach file, bulk update |
-| Delete records                      | delete pair                                                                                     | off     |
-| Change record owners                | change owner pair                                                                               | off     |
-| Read and run reports and dashboards | find, describe, run, export, folders, dashboards                                                | on      |
-| Author and share reports            | create, update, clone, delete, share, subscribe                                                 | on      |
+| Option                    | Tools                                                                                           | Default |
+| ------------------------- | ----------------------------------------------------------------------------------------------- | ------- |
+| Read records              | orientation, search, query, get, related, relationship path, history, changes, file download    |
+| Create and update records | create, record tree, relate, update, upsert, log activity, task, note, attach file, bulk update |
+| Delete records            | delete pair                                                                                     | off     |
+| Change record owners      | change owner pair                                                                               | off     |
+| Find and run reports      | find, describe, run, run async, results, export                                                 | on      |
 
 ## The admin connector (`salesforce-admin`)
 
@@ -546,7 +535,9 @@ the server"): in an external MCP host the confirm tool and the model hold the sa
 changes to the org's schema a host's promise to keep app-only tools from the model is not enough.
 Every admin write is a **proposal** stored as a change request; nothing on the MCP surface applies
 one; the person applies it from `/[slug]/salesforce-admin/changes/[id]` in their own browser
-session.
+session. The one exception is a report **draft** in the admin's own private
+folder, which nobody else can see; publishing it is a change request like any other (see
+"Building reports for CRM users").
 
 Salesforce gives this pattern something Jira does not — a dry run:
 
@@ -638,6 +629,53 @@ Field deletion is deliberately absent: a deleted custom field's data goes to Sal
 deleted-fields list for 15 days and then for good, and dependent reports break silently. The tool
 answers "where is this field used" and links Setup; the deletion is the admin's, in Setup.
 
+### Building reports for CRM users
+
+Admins build the reports CRM users run. Reports are not schema — a report changes no object, and a
+draft nobody else can see harms nothing — so they take a lighter path than metadata, with the same
+change-request rule at the moment a report reaches other people:
+
+1. **Draft directly.** The admin describes the report in a sentence. The tools pick the report
+   type, read its columns and filters, build the report metadata in the package's validator (which
+   refuses an unknown column, a grouping on a field that cannot group, a filter operator the
+   column's type does not take), create it in the admin's **private folder**, run it once, and show
+   the first rows. Changing and re-running a draft is direct, as often as needed: nobody else can
+   see it.
+2. **Publish as a change request.** `salesforce_admin_propose_report_publish` names one or more
+   draft reports, a destination folder (existing, or a new one to create), and who should see it:
+   users, public groups, roles (with or without subordinates), with view access unless edit or
+   manage is asked for. The review page shows the reports (with a fresh sample run), the folder,
+   **everything already in that folder** — since Salesforce shares folders, not reports, anyone
+   given the folder sees all of it, now and later — and who gains access, with those who already
+   have it named and skipped. It also says that a folder share does not share the records behind
+   the report: a viewer sees only rows their own access allows. Apply moves (or copies) the reports
+   into the folder, creates the folder if needed, and adds the shares.
+3. **Change a published report** the same way: edits to a report in a shared folder are proposed
+   (old against new columns, groupings and filters, and a sample run of both), not made directly.
+
+Reports are built where the CRM users are, usually **production**, so report drafts and report
+change requests are allowed in production under their own org setting (**Reports in
+production**, on by default), separately from the metadata **production writes** setting. A
+report built in a sandbox can be promoted like any other change request (as `Report` and
+`ReportFolder` metadata).
+
+| Tool                                      | Resource                                                           | Does                                                                                                                                                                                                               |
+| ----------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `salesforce_admin_list_report_types`      | `GET /analytics/reportTypes`, `/analytics/reportTypes/{type}`      | Report types, standard and custom, and a type's columns, groupable fields and filters                                                                                                                              |
+| `salesforce_admin_list_report_folders`    | `GET /query` on `Folder`; the folder resources' `shares`           | Report folders, what is in each, and who each is shared with                                                                                                                                                       |
+| `salesforce_admin_draft_report`           | `POST /analytics/reports` (or `?cloneId=` from an existing report) | A new draft in the admin's private folder: format (tabular, summary, matrix), columns, groupings, filters and filter logic, relative dates, row-level and summary formulas, buckets, sort, chart; run once on save |
+| `salesforce_admin_update_draft_report`    | `PATCH /analytics/reports/{id}`                                    | Change a draft (refused for a report in a shared folder — that is a proposal)                                                                                                                                      |
+| `salesforce_admin_delete_draft_report`    | `DELETE /analytics/reports/{id}`                                   | Discard a draft                                                                                                                                                                                                    |
+| `salesforce_admin_propose_report_publish` | apply: folder create, `PATCH` the report's folder, folder `shares` | Publish drafts to a folder and share it (above)                                                                                                                                                                    |
+| `salesforce_admin_propose_report_changes` | apply: `PATCH /analytics/reports/{id}`, `DELETE`                   | Change or retire a published report                                                                                                                                                                                |
+| `salesforce_admin_propose_folder_sharing` | apply: folder `shares`                                             | Add or remove who a report folder is shared with, on its own                                                                                                                                                       |
+
+Row-level and summary formulas are checked by Salesforce when the report is saved and its error
+is returned verbatim. (The exact `reportMetadata` keys for row-level formulas, and the folder
+resource paths, are to be confirmed against the pinned API version.) A report on a new custom
+object needs a report type first: `salesforce_admin_propose_report_type` (metadata) comes before
+the draft.
+
 ### Checks Salesforce's dry run does not do
 
 A check-only deploy proves the metadata compiles and references resolve. It does not notice that
@@ -667,6 +705,7 @@ reported as "not checked", never as clean.
 | Read org configuration          | all reads                                                                          | on      |
 | Propose objects and fields      | object, fields, field changes, picklists, validation rules, record types           | on      |
 | Propose layouts, apps and tabs  | layout changes, record page, path, quick actions, compact layout, app, report type | on      |
+| Build and publish reports       | report types, folders, drafts, publish, report changes, folder sharing             | on      |
 | Propose field-update automation | stamp rules                                                                        | on      |
 | Propose permission sets         | permission set                                                                     | on      |
 | Propose user access             | assignments                                                                        | off     |
@@ -687,6 +726,8 @@ reported as "not checked", never as clean.
   will not pass new rules, the load should run under a **bypass custom permission** the rules and
   flows check (assigned to the loading admin for the load only), not with the rules switched off
   org-wide while everyone else keeps working.
+- **Dashboards** (reading them on the CRM connector, building them on the admin one) and report
+  **subscriptions** — the next report stage.
 - **Indexing** (and with it `verifyAccess` on `UserRecordAccess`).
 - **CRM Analytics, Data Cloud, Marketing Cloud, Experience Cloud** — separate products and APIs.
 - **Platform Events / Change Data Capture triggers** ("an opportunity closes" as an agent trigger).
@@ -703,10 +744,12 @@ reported as "not checked", never as clean.
    record trees, relating records, relationship paths, history, changes, files, bulk update and delete pairs, change
    owner, API budget — tested against more than one org shape (a standard sales org and one that is
    mostly custom objects, with a managed package installed), so nothing org-specific creeps in.
-3. **Reports.** Find, describe, run (sync and async), export, report types, create, update, clone,
-   delete, folders, share, subscribe, dashboards.
+3. **CRM reports.** Find, describe, run (sync and async), results, export, and the run result
+   shaped for storytelling (scope, groupings, comparison runs, charts).
 4. **Admin reads and the change-request machinery.** Org registry, admin reads, the
    change-request table, validation on propose, the review page, apply with quick deploy.
+   Report building rides the same machinery: report types, folders, drafts, publish, changes and
+   folder sharing — early, because it needs no metadata deploys and CRM users benefit at once.
 5. **Admin proposals.** Fields and picklists first (the most frequent chore), then objects,
    validation rules, record types, layouts, permission sets, apps, assignments; then Path, quick
    actions, compact layouts, report types, stamp rules and record pages.
