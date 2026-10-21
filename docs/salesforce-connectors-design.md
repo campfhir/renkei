@@ -469,14 +469,13 @@ place.
 | `salesforce_run_report`         | `GET`/`POST /analytics/reports/{id}`                                        | Run it now. Optional run-time changes — filters, a date range, a grouping's sort — apply to this run only and nothing is saved. Groupings and aggregates by default, detail rows on request                                                                  |
 | `salesforce_run_report_async`   | `POST /analytics/reports/{id}/instances`                                    | Start a run in the background for a slow report or more detail rows than a synchronous run returns; answers with an instance id                                                                                                                              |
 | `salesforce_get_report_results` | `GET /analytics/reports/{id}/instances/{instanceId}`, `…/instances`         | An async run's status and, when complete, its results; or the report's recent runs                                                                                                                                                                           |
-| `salesforce_export_report`      | `GET /analytics/reports/{id}` (spreadsheet)                                 | The run as a spreadsheet staged in the scratch space, to download or hand to another connector                                                                                                                                                               |
 | `salesforce_find_dashboards`    | `GET /query` on `Dashboard`; `GET /analytics/dashboards` for recent         | By name, folder or owner                                                                                                                                                                                                                                     |
 | `salesforce_get_dashboard`      | `GET /analytics/dashboards/{id}/describe`, `GET /analytics/dashboards/{id}` | Its components with their latest values — each component's source report, grouping and aggregate, so a number can be traced to the report behind it — the running user, dashboard filters (optionally applied for this read), and when it was last refreshed |
 | `salesforce_refresh_dashboard`  | `PUT /analytics/dashboards/{id}`, `GET …/status`                            | Refresh it and read it back when done; Salesforce limits how often a dashboard can refresh, and the tool says when it last did instead of failing                                                                                                            |
 
 **Sync or async.** A synchronous run answers in the call and is capped by Salesforce (2,000
 detail rows, and a time limit); it is the default for a summary. Async is for a heavy report or a
-full detail export, and suits agents well: start it, do other work, read it back. Salesforce keeps
+full detail run, and suits agents well: start it, do other work, read it back. Salesforce keeps
 async results only for a limited time and caps report runs per org per hour (separately for sync
 and async), so the tools reuse a recent instance of the same run rather than starting another, and
 say how fresh it is.
@@ -516,7 +515,7 @@ permissions still decide every call:
 | Create and update records           | create, record tree, relate, update, upsert, log activity, task, note, attach file, bulk update |
 | Delete records                      | delete pair                                                                                     | off     |
 | Change record owners                | change owner pair                                                                               | off     |
-| Find and run reports and dashboards | find, describe, run, run async, results, export; find, get and refresh dashboards               | on      |
+| Find and run reports and dashboards | find, describe, run, run async, results; find, get and refresh dashboards                       | on      |
 
 ## The admin connector (`salesforce-admin`)
 
@@ -662,7 +661,16 @@ can be promoted like any other change request (as `ReportFolder`, `DashboardFold
 Report folders and dashboard folders are separate in Salesforce, and both are what is shared — a
 report or dashboard is visible to whoever its folder is shared with. With enhanced folder sharing,
 folders nest (a subfolder inherits its parent's sharing), and sharing is _view_, _edit_ or
-_manage_ for users, public groups and roles (with or without subordinates).
+_manage_ for users, public groups and roles (with or without subordinates). All of it is the
+**Analytics Folders API**, a top-level REST resource (`/services/data/v68.0/folders`, listed in the
+REST API's resource list and documented in the Reports and Dashboards guide): `POST /folders`
+creates a folder (`label`, `name`, `type` of `report` or `dashboard`, and `parentId` for a
+subfolder; creating needs _Create Report Folders_ or _Create Dashboard Folders_); `GET
+/folders/{id}` and `/children` read it; `PATCH /folders/{id}` renames it (the label, or the unique
+name for admins; the type cannot change); `DELETE` removes it; `/shares` lists (`GET`), adds
+(`POST`) or replaces (`PUT`) its shares, `/shares/{shareId}` changes one's access (`PATCH`) or
+removes it (`DELETE`), and `/share-recipients?shareType=…` finds who can be shared with. Changing
+or deleting a folder and its shares needs _manage_ access on it.
 
 - **Create** a report or dashboard folder, at the top level or inside one the admin manages —
   direct while it is shared with nobody. A subfolder inherits its parent's sharing from the start,
@@ -670,19 +678,23 @@ _manage_ for users, public groups and roles (with or without subordinates).
 - **Share** a folder, or change or remove its shares — a change request. The review page lists
   everything in the folder and its subfolders, now and later, and who gains or loses access, with
   those who already have it named and skipped.
-- **Rename, move or delete.** Moving a folder changes what it inherits, so it is a change request
-  showing the access before and after; Salesforce deletes only empty folders, and the tool says
-  what is still in one.
+- **Rename or delete** — direct for a folder shared with nobody, a change request otherwise.
+  Salesforce deletes only empty folders, and the tool says what is still in one. The Folders API
+  has no move: a folder's parent is set when it is created.
 
 #### Reports
 
 1. **Draft directly.** The admin describes the report in a sentence. The tools pick the report
    type, read its columns and filters, build the report metadata in the package's validator (which
    refuses an unknown column, a grouping on a field that cannot group, a filter operator the
-   column's type does not take), create it in the admin's **private folder**, run it once, and show
-   the first rows. Changing and re-running a draft is direct, as often as needed.
+   column's type does not take), create it in the admin's **private folder** (`POST
+/analytics/reports` with the `reportMetadata`, or `?cloneId=` to start from an existing report),
+   run it once, and show the first rows. Row-level formulas are `customDetailFormula` and summary
+   formulas `customSummaryFormula` in that metadata; the report type's describe says which fields a
+   row-level formula may use (`allowedInCustomDetailFormula`). Changing and re-running a draft is
+   direct (`PATCH /analytics/reports/{id}`), as often as needed.
 2. **Publish as a change request** into a folder (existing, or a new one the same request creates
-   and shares). The review page shows the reports with a fresh sample run, everything already in
+   and shares) — on apply, a `PATCH` of the report's `folderId`. The review page shows the reports with a fresh sample run, everything already in
    the folder, and who can see it, and says that a folder share does not share the records behind
    the report: a viewer sees only rows their own access allows.
 3. **Change a published report** the same way: old against new columns, groupings and filters, and
@@ -692,15 +704,24 @@ _manage_ for users, public groups and roles (with or without subordinates).
 #### Dashboards
 
 A dashboard is components (charts, metrics, gauges, tables) laid out in a grid, each fed by a
-**summary or matrix report**, with optional dashboard filters and a **running user**.
+**summary or matrix report**, with optional dashboard filters and a **running user**. The
+Dashboards API has no create-from-nothing: a new dashboard is a **clone** (`POST
+/analytics/dashboards?cloneId=…`) that is then **saved** with `PATCH /analytics/dashboards/{id}`
+and a `dashboardMetadata` body — its name, `folderId`, `components`, `layout`, `filters` and
+`runningUser`. So the admin connector clones an existing dashboard when the admin names one to
+start from, and otherwise clones a **starter dashboard**: a near-empty dashboard in a folder only
+admins can see, deployed once per org as `Dashboard` metadata through an ordinary change request
+the first time an admin drafts a dashboard there.
 
 1. **Draft directly** in the admin's private dashboard folder: the components — each with its
    source report, the grouping and aggregate it shows, the chart type, title, sort and limit — the
-   layout, and up to Salesforce's limit of dashboard filters. The validator refuses a component on
-   a tabular report, a grouping the report does not have, or a filter on a field no component's
-   report can filter. Saved, refreshed once, and read back with each component's values, so the
-   admin sees it work.
-2. **Publish as a change request** into a dashboard folder, the way reports are published. The
+   layout, and up to three dashboard filters. The validator refuses a component on a tabular
+   report or a grouping the report does not have, and checks each filter against the source
+   reports with the Dashboard Filter Options Analysis resource (`POST
+…/dashboards/{id}/filteroptionsanalysis`). Saved, refreshed once (`PUT`, then `…/status`), and
+   read back with each component's values, so the admin sees it work.
+2. **Publish as a change request** into a dashboard folder, the way reports are published (a
+   `PATCH` of `folderId` in `dashboardMetadata`). The
    review page shows each component's latest values, the source reports — and whether they sit in
    folders the dashboard's viewers can open, since a viewer who cannot open the source report cannot
    drill into the component — and above all **who the dashboard runs as**:
@@ -718,31 +739,27 @@ A dashboard is components (charts, metrics, gauges, tables) laid out in a grid, 
 
 #### Tools
 
-| Tool                                         | Resource                                                           | Does                                                                                                                                                                                                               |
-| -------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `salesforce_admin_list_report_types`         | `GET /analytics/reportTypes`, `/analytics/reportTypes/{type}`      | Report types, standard and custom, and a type's columns, groupable fields and filters                                                                                                                              |
-| `salesforce_admin_list_folders`              | `GET /query` on `Folder`; the folder resources and their `shares`  | Report and dashboard folders as a tree, what is in each, and who each is shared with (directly and inherited)                                                                                                      |
-| `salesforce_admin_create_folder`             | `POST` the folder resource (type report or dashboard, parent)      | A new folder, direct while unshared; inside a shared parent it is a change request                                                                                                                                 |
-| `salesforce_admin_propose_folder_changes`    | apply: folder `shares`, `PATCH`/`DELETE` the folder                | Share or unshare, rename, move, or delete an empty folder                                                                                                                                                          |
-| `salesforce_admin_draft_report`              | `POST /analytics/reports` (or `?cloneId=` from an existing report) | A new draft in the admin's private folder: format (tabular, summary, matrix), columns, groupings, filters and filter logic, relative dates, row-level and summary formulas, buckets, sort, chart; run once on save |
-| `salesforce_admin_update_draft_report`       | `PATCH /analytics/reports/{id}`                                    | Change a draft (refused for a report in a shared folder — that is a proposal)                                                                                                                                      |
-| `salesforce_admin_delete_draft_report`       | `DELETE /analytics/reports/{id}`                                   | Discard a draft                                                                                                                                                                                                    |
-| `salesforce_admin_propose_report_publish`    | apply: folder create, `PATCH` the report's folder, folder `shares` | Publish drafts to a folder (and share it)                                                                                                                                                                          |
-| `salesforce_admin_propose_report_changes`    | apply: `PATCH`/`DELETE /analytics/reports/{id}`                    | Change or retire a published report                                                                                                                                                                                |
-| `salesforce_admin_draft_dashboard`           | `POST /analytics/dashboards` (or `?cloneId=`), then refresh        | A new draft dashboard in the admin's private dashboard folder: components, layout, filters, running user                                                                                                           |
-| `salesforce_admin_update_draft_dashboard`    | `PATCH /analytics/dashboards/{id}`                                 | Add, change, move or remove components and filters on a draft                                                                                                                                                      |
-| `salesforce_admin_delete_draft_dashboard`    | `DELETE /analytics/dashboards/{id}`                                | Discard a draft                                                                                                                                                                                                    |
-| `salesforce_admin_propose_dashboard_publish` | apply: `PATCH` the dashboard's folder, folder `shares`             | Publish drafts to a dashboard folder (and share it)                                                                                                                                                                |
-| `salesforce_admin_propose_dashboard_changes` | apply: `PATCH`/`DELETE /analytics/dashboards/{id}`                 | Change or retire a published dashboard                                                                                                                                                                             |
+| Tool                                         | Resource                                                                                                                                                 | Does                                                                                                                                                                                                               |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `salesforce_admin_list_report_types`         | `GET /analytics/reportTypes`, `/analytics/reportTypes/{type}`                                                                                            | Report types, standard and custom, and a type's columns, groupable fields and filters                                                                                                                              |
+| `salesforce_admin_list_folders`              | `GET /folders`, `/folders/{id}/children`, `/folders/{id}/shares`                                                                                         | Report and dashboard folders as a tree, what is in each (a `Report`/`Dashboard` query by folder), and who each is shared with                                                                                      |
+| `salesforce_admin_create_folder`             | `POST /folders` (`label`, `name`, `type`, `parentId`)                                                                                                    | A new report or dashboard folder or subfolder; direct while unshared, a change request inside a shared parent                                                                                                      |
+| `salesforce_admin_propose_folder_changes`    | apply: `/folders/{id}/shares` (`POST`/`PUT`), `/shares/{shareId}` (`PATCH`/`DELETE`), `PATCH`/`DELETE /folders/{id}`; `/share-recipients` to resolve who | Share or unshare, change access, rename, or delete an empty folder                                                                                                                                                 |
+| `salesforce_admin_draft_report`              | `POST /analytics/reports` (or `?cloneId=` from an existing report)                                                                                       | A new draft in the admin's private folder: format (tabular, summary, matrix), columns, groupings, filters and filter logic, relative dates, row-level and summary formulas, buckets, sort, chart; run once on save |
+| `salesforce_admin_update_draft_report`       | `PATCH /analytics/reports/{id}`                                                                                                                          | Change a draft (refused for a report in a shared folder — that is a proposal)                                                                                                                                      |
+| `salesforce_admin_delete_draft_report`       | `DELETE /analytics/reports/{id}`                                                                                                                         | Discard a draft                                                                                                                                                                                                    |
+| `salesforce_admin_propose_report_publish`    | apply: `POST /folders` when new, `PATCH /analytics/reports/{id}` (`folderId`), folder `shares`                                                           | Publish drafts to a folder (and share it)                                                                                                                                                                          |
+| `salesforce_admin_propose_report_changes`    | apply: `PATCH`/`DELETE /analytics/reports/{id}`                                                                                                          | Change or retire a published report                                                                                                                                                                                |
+| `salesforce_admin_draft_dashboard`           | `POST /analytics/dashboards?cloneId=` (a named dashboard or the starter), then `PATCH` with `dashboardMetadata`, `PUT` to refresh                        | A new draft dashboard in the admin's private dashboard folder: components, layout, filters, running user                                                                                                           |
+| `salesforce_admin_update_draft_dashboard`    | `GET …/describe`, `PATCH /analytics/dashboards/{id}`, `POST …/filteroptionsanalysis`                                                                     | Add, change, move or remove components and filters on a draft                                                                                                                                                      |
+| `salesforce_admin_delete_draft_dashboard`    | `DELETE /analytics/dashboards/{id}`                                                                                                                      | Discard a draft                                                                                                                                                                                                    |
+| `salesforce_admin_propose_dashboard_publish` | apply: `PATCH /analytics/dashboards/{id}` (`folderId`), folder `shares`                                                                                  | Publish drafts to a dashboard folder (and share it)                                                                                                                                                                |
+| `salesforce_admin_propose_dashboard_changes` | apply: `PATCH`/`DELETE /analytics/dashboards/{id}`                                                                                                       | Change or retire a published dashboard                                                                                                                                                                             |
 
 Formulas are checked by Salesforce when a report is saved, and its error is returned verbatim. A
 report on a new custom object needs a report type first: `salesforce_admin_propose_report_type`
-(metadata) comes before the draft. **To confirm against the pinned API version before building:**
-the exact `reportMetadata` keys for row-level formulas; the folder resource paths and whether
-folder create, move and delete are all exposed there (the fallback is `ReportFolder` /
-`DashboardFolder` metadata deploys, which the change-request machinery already does); and the
-dashboard create and save request shape (`dashboardMetadata` with components, layout and filters),
-with `Dashboard` metadata as the same fallback.
+(metadata) comes before the draft. Everything above is checked against the v68.0 guides in this
+folder (see "Reference documents").
 
 ### Checks Salesforce's dry run does not do
 
@@ -779,6 +796,23 @@ reported as "not checked", never as clean.
 | Propose user access                   | assignments                                                                          | off     |
 | Propose whole applications            | application, promote                                                                 | on      |
 
+## Reference documents
+
+Salesforce's official developer guides for the pinned version, **v68.0 (Winter '27, last updated
+October 9, 2026)**, downloaded from `resources.docs.salesforce.com` and kept beside the other
+vendor references in this folder:
+
+| File                                                                                                                         | Covers                                                                                                                                                                                           | Used by |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| [`salesforce-rest-api-developer-guide.pdf`](./salesforce-rest-api-developer-guide.pdf)                                       | sObject resources (describe, rows, upsert, updated/deleted, blob), query, search, composite collections and tree, limits, the resource list (including `/folders`), OAuth                        | both    |
+| [`salesforce-soql-sosl-reference.pdf`](./salesforce-soql-sosl-reference.pdf)                                                 | SOQL (relationship queries, aggregates, `toLabel()`, `FORMAT()`, date literals) and SOSL                                                                                                         | both    |
+| [`salesforce-reports-dashboards-rest-api-developer-guide.pdf`](./salesforce-reports-dashboards-rest-api-developer-guide.pdf) | Reports (list, describe, run sync and async, create, clone, save, delete, report types), Dashboards (list, results, describe, refresh, clone, save, delete, filter options), and the Folders API | both    |
+| [`salesforce-metadata-api-developer-guide.pdf`](./salesforce-metadata-api-developer-guide.pdf)                               | Metadata types and the REST `deployRequest` (check-only, quick deploy of a validated request)                                                                                                    | admin   |
+| [`salesforce-tooling-api-developer-guide.pdf`](./salesforce-tooling-api-developer-guide.pdf)                                 | Reading metadata in JSON (`EntityDefinition`, `FieldDefinition`, `ValidationRule`, `Layout`, `FlexiPage`…) and `MetadataComponentDependency`                                                     | admin   |
+
+They are point-in-time copies: when the pin moves, replace them with that version's guides in the
+same change.
+
 ## Not in this version
 
 - **Apex, triggers, Lightning Web Components, and free-form Flow authoring.** Generating code
@@ -811,7 +845,7 @@ reported as "not checked", never as clean.
    record trees, relating records, relationship paths, history, changes, files, bulk update and delete pairs, change
    owner, API budget — tested against more than one org shape (a standard sales org and one that is
    mostly custom objects, with a managed package installed), so nothing org-specific creeps in.
-3. **CRM reports and dashboards.** Find, describe, run (sync and async), results, export; find,
+3. **CRM reports and dashboards.** Find, describe, run (sync and async), results; find,
    read and refresh dashboards; results shaped for storytelling (scope, groupings, comparison runs,
    charts).
 4. **Admin reads and the change-request machinery.** Org registry, admin reads, the
@@ -838,6 +872,6 @@ nobody reconnects between stages.
    use it at all.
 3. **The SOAP fallback for metadata reads** — which types the Tooling API cannot read in a
    deployable form, settled against a live org in stage 5.
-4. **API version — decided: v68.0** (Winter '27). Still to verify against it: the folder
-   resource paths, report spreadsheet export, the row-level formula keys and the dashboard
-   create/save shape.
+4. **API version — decided: v68.0** (Winter '27). The folder, report formula and dashboard
+   save shapes are now confirmed against its guides; what remains is a live-org check of the
+   starter-dashboard clone-and-save flow.
