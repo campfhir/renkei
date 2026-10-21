@@ -49,12 +49,15 @@ function capture(): { response: ServerResponse; answer: () => Answer } {
   };
 }
 
+function loadKey() {
+  const parsed = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!parsed.ok) throw new Error('bad key');
+  return parsed.val;
+}
+
 describeDb('mcp/prepare', () => {
-  const key = (() => {
-    const parsed = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-    if (!parsed.ok) throw new Error('bad key');
-    return parsed.val;
-  })();
+  // Parsed in beforeAll: a skipped describe still runs its body, and CI has no key.
+  let key: ReturnType<typeof loadKey>;
   const created: string[] = [];
   const requests: { url: string; method: string; body: string }[] = [];
   let script: (url: string, init: RequestInit | undefined) => Response;
@@ -134,6 +137,10 @@ describeDb('mcp/prepare', () => {
     );
     return out.answer();
   }
+
+  beforeAll(() => {
+    key = loadKey();
+  });
 
   beforeEach(() => {
     requests.length = 0;
