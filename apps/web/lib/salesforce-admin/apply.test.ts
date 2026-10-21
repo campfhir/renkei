@@ -28,7 +28,7 @@ import { EMPTY_POLICY } from '@renkei/connector-salesforce';
 import type { SalesforceAccess } from '@/lib/mcp-tools/salesforce/client';
 import { applyChangeRequest, refreshApplying } from './apply';
 import type { ChangeRequest } from './change-requests';
-import type { MetadataPayload } from './plan';
+import { applyScopesFor, type MetadataPayload } from './plan';
 
 const store = jest.requireMock<{ finishChangeRequest: jest.Mock; recordDeployStarted: jest.Mock }>(
   './change-requests'
@@ -45,6 +45,7 @@ let quickQualifies: boolean;
 let deployDone: boolean;
 let deploySucceeds: boolean;
 let grantFails: boolean;
+let existingAccess: boolean;
 let requests: { method: string; path: string; body: unknown }[];
 
 function answer(status: number, body: unknown): Response {
@@ -91,6 +92,32 @@ global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       records: fieldExistsNow ? [{ QualifiedApiName: 'Outcome__c' }] : [],
     });
   }
+  if (method === 'GET' && /FROM FieldPermissions/.test(q)) {
+    return answer(200, {
+      totalSize: existingAccess ? 1 : 0,
+      done: true,
+      records: existingAccess ? [{ Id: '01k00000000000EAAA' }] : [],
+    });
+  }
+  if (method === 'GET' && /FROM PermissionSetTabSetting/.test(q)) {
+    return answer(200, {
+      totalSize: /'Shown__c'/.test(q) ? 1 : 0,
+      done: true,
+      records: /'Shown__c'/.test(q) ? [{ Id: '0PT000000000001AAA' }] : [],
+    });
+  }
+  if (method === 'POST' && url.pathname === `${V}/sobjects/PermissionSetTabSetting`) {
+    return answer(201, { id: '0PT000000000002AAA', success: true });
+  }
+  if (method === 'GET' && /FROM PermissionSetAssignment/.test(q)) {
+    return answer(200, { totalSize: 0, done: true, records: [] });
+  }
+  if (method === 'PATCH' && url.pathname === `${V}/sobjects/FieldPermissions/01k00000000000EAAA`) {
+    return new Response(null, { status: 204 });
+  }
+  if (method === 'POST' && url.pathname === `${V}/sobjects/PermissionSetAssignment`) {
+    return answer(201, { id: '0Pa000000000001AAA', success: true });
+  }
   if (method === 'POST' && url.pathname === `${V}/metadata/deployRequest/${VALIDATED}`) {
     return quickQualifies
       ? answer(201, result(QUICK))
@@ -129,12 +156,14 @@ const payload: MetadataPayload = {
   members: [{ type: 'CustomField', member: 'Site_Visit__c.Outcome__c' }],
   components: [],
   preconditions: [{ kind: 'field-absent', object: 'Site_Visit__c', field: 'Outcome__c' }],
-  fieldGrants: [
+  dataSteps: [
     {
+      kind: 'field-permission',
       permissionSetId: '0PS000000000001AAA',
       permissionSetName: 'Program_Staff',
       object: 'Site_Visit__c',
       field: 'Outcome__c',
+      read: true,
       edit: true,
     },
   ],
@@ -181,6 +210,7 @@ beforeEach(() => {
   deployDone = true;
   deploySucceeds = true;
   grantFails = false;
+  existingAccess = false;
 });
 
 describe('applyChangeRequest', () => {
@@ -241,6 +271,90 @@ describe('applyChangeRequest', () => {
     expect(outcome.status).toBe('partial');
   });
 
+  it('updates the access a permission set already has instead of adding a second row', async () => {
+    existingAccess = true;
+    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    expect(outcome.status).toBe('applied');
+    expect(
+      requests.some((r) => r.method === 'POST' && r.path.endsWith('/sobjects/FieldPermissions'))
+    ).toBe(false);
+    const patch = requests.find((r) => r.method === 'PATCH');
+    expect(JSON.parse(String(patch?.body))).toEqual({
+      PermissionsRead: true,
+      PermissionsEdit: true,
+    });
+  });
+
+  it('runs a data-only change without deploying anything', async () => {
+    const dataOnly = {
+      ...change(),
+      kind: 'assignments',
+      validation: {
+        deployId: '',
+        done: true,
+        success: true,
+        status: 'Checked',
+        failures: [],
+        checkedAt: '',
+      },
+      payload: {
+        files: {},
+        members: [],
+        components: [],
+        preconditions: [],
+        dataSteps: [
+          {
+            kind: 'assign',
+            permissionSetId: '0PS000000000001AAA',
+            permissionSetName: 'Program_Staff',
+            userId: '005000000000002AAA',
+            userName: 'Grace Hopper',
+          },
+        ],
+      },
+    };
+    const outcome = await applyChangeRequest(db, context, access, dataOnly, 'ada');
+    expect(outcome.status).toBe('applied');
+    expect(requests.some((r) => r.path.includes('/metadata/'))).toBe(false);
+    const assigned = requests.find((r) => r.path.endsWith('/sobjects/PermissionSetAssignment'));
+    expect(JSON.parse(String(assigned?.body))).toEqual({
+      AssigneeId: '005000000000002AAA',
+      PermissionSetId: '0PS000000000001AAA',
+    });
+  });
+
+  it('creates a tab setting once, and leaves one that exists', async () => {
+    const base = { permissionSetId: '0PS000000000001AAA', permissionSetName: 'Program_Staff' };
+    const tabs = {
+      ...change(),
+      kind: 'permission_set',
+      validation: {
+        deployId: '',
+        done: true,
+        success: true,
+        status: 'Checked',
+        failures: [],
+        checkedAt: '',
+      },
+      payload: {
+        files: {},
+        members: [],
+        components: [],
+        preconditions: [],
+        dataSteps: [
+          { kind: 'tab-visibility', ...base, tab: 'Site_Visit__c', visibility: 'DefaultOn' },
+          { kind: 'tab-visibility', ...base, tab: 'Shown__c', visibility: 'DefaultOn' },
+        ],
+      },
+    };
+    const outcome = await applyChangeRequest(db, context, access, tabs, 'ada');
+    expect(outcome.status).toBe('applied');
+    const created = requests.filter((r) => r.path.endsWith('/sobjects/PermissionSetTabSetting'));
+    expect(created.map((r) => JSON.parse(String(r.body)))).toEqual([
+      { ParentId: '0PS000000000001AAA', Name: 'Site_Visit__c', Visibility: 'DefaultOn' },
+    ]);
+  });
+
   it('leaves a deploy still running as applying, and a later look finishes it', async () => {
     deployDone = false;
     const outcome = await applyChangeRequest(db, context, access, change(), 'ada', 0);
@@ -251,5 +365,43 @@ describe('applyChangeRequest', () => {
     const later = { ...change(), results: { deployId: QUICK, quick: true, operations: [] } };
     expect(await refreshApplying(db, context, access, later)).toBe(true);
     expect(finished()).toMatchObject({ status: 'applied' });
+  });
+});
+
+describe('applyScopesFor', () => {
+  const payload = (over: Partial<MetadataPayload>): MetadataPayload => ({
+    files: {},
+    members: [],
+    components: [],
+    preconditions: [],
+    dataSteps: [],
+    ...over,
+  });
+
+  it('needs what the change carries, not only its kind', () => {
+    expect(applyScopesFor('fields', payload({}))).toEqual(['sfa-schema']);
+    expect(
+      applyScopesFor(
+        'fields',
+        payload({ members: [{ type: 'Layout', member: 'Site_Visit__c-Site Visit Layout' }] })
+      )
+    ).toEqual(['sfa-schema', 'sfa-layouts']);
+    expect(applyScopesFor('layout')).toEqual(['sfa-layouts']);
+    expect(
+      applyScopesFor(
+        'permission_set',
+        payload({
+          dataSteps: [
+            {
+              kind: 'unassign',
+              permissionSetId: '0PS',
+              permissionSetName: 'X',
+              userId: '005',
+              userName: 'Y',
+            },
+          ],
+        })
+      )
+    ).toEqual(['sfa-permissions', 'sfa-user-access']);
   });
 });

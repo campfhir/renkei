@@ -10,8 +10,9 @@
  * applies in their browser.
  *
  * Only bundles with tools behind them are listed; the design's others
- * (layouts and apps, reports and dashboards, automation, permission sets,
- * user access, whole applications) join as their tools are built.
+ * (reports and dashboards, automation, whole applications) join as their
+ * tools are built. User access — assigning permission sets to people — is
+ * off by default: it changes who can do what, not how the org is built.
  */
 
 import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
@@ -19,6 +20,7 @@ import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
 export const SALESFORCE_ADMIN_SCOPE_GROUPS: ScopeGroup[] = [
   { id: 'read', label: 'Reading the org’s setup' },
   { id: 'build', label: 'Building' },
+  { id: 'access', label: 'Access' },
 ];
 
 export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
@@ -40,13 +42,54 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['sfa-schema'],
     label: 'Propose objects and fields',
     hint:
-      'salesforce_admin_propose_fields, salesforce_admin_propose_validation_rule — each a change ' +
-      'request, checked by a validation deploy in the org and applied only by the person, in ' +
-      'their browser. Nothing on the MCP surface changes the org.',
+      'salesforce_admin_propose_object, salesforce_admin_propose_fields, ' +
+      'salesforce_admin_propose_field_changes, salesforce_admin_propose_picklist_changes, ' +
+      'salesforce_admin_propose_validation_rule — each a change request, checked by a ' +
+      'validation deploy in the org and applied only by the person, in their browser. Nothing ' +
+      'on the MCP surface changes the org.',
     userHint:
-      'Propose new fields and validation rules. Each is checked by Salesforce and waits for you to review and apply it in Renkei.',
+      'Propose new objects, fields, changes to fields and picklists, and validation rules. Each is checked by Salesforce and waits for you to review and apply it in Renkei.',
     group: 'build',
     defaultChecked: true,
+  },
+  {
+    id: 'sfa-layouts',
+    scopes: ['sfa-layouts'],
+    label: 'Propose page layout changes',
+    hint:
+      'salesforce_admin_propose_layout_changes, and placing new fields on layouts from ' +
+      'salesforce_admin_propose_fields — a layout deploys whole, so the change request carries ' +
+      'the live layout with only the proposed moves merged in.',
+    userHint:
+      'Propose changes to page layouts — fields added, removed, new sections — for you to review and apply.',
+    group: 'build',
+    defaultChecked: true,
+  },
+  {
+    id: 'sfa-permissions',
+    scopes: ['sfa-permissions'],
+    label: 'Propose permission sets',
+    hint:
+      'salesforce_admin_list_permission_sets, salesforce_admin_propose_permission_set — a new ' +
+      'permission set, or object, field and tab access added to an existing one (each access ' +
+      'row written on its own, so nothing else in the set changes). Assigning sets to people is ' +
+      'the separate user access option.',
+    userHint:
+      'Propose new permission sets, or more access in existing ones, for you to review and apply.',
+    group: 'access',
+    defaultChecked: true,
+  },
+  {
+    id: 'sfa-user-access',
+    scopes: ['sfa-user-access'],
+    label: 'Propose user access',
+    hint:
+      'salesforce_admin_propose_assignments — assigning permission sets to named users, or ' +
+      'removing them. Off by default: it changes what people can do in the org.',
+    userHint:
+      'Propose giving people permission sets, or taking them away. Off unless you choose it.',
+    group: 'access',
+    defaultChecked: false,
   },
 ];
 

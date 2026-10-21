@@ -10,7 +10,7 @@ import {
   type ChangeRequest,
   type OperationResult,
 } from '@/lib/salesforce-admin/change-requests';
-import { readMetadataPayload } from '@/lib/salesforce-admin/plan';
+import { deploys, readMetadataPayload, stepLabel } from '@/lib/salesforce-admin/plan';
 import {
   accessForChange,
   applyGate,
@@ -22,6 +22,16 @@ import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
 import LocalTime from '@/components/local-time';
 import { ChangeStatePill, ValidationPill, validationState } from '../change-status';
 import ChangeActions, { RefreshWhileRunning } from './change-actions';
+
+/** A component's Metadata API type, as the review page names it. */
+const TYPE_LABELS: Record<string, string> = {
+  CustomField: 'field',
+  ValidationRule: 'validation rule',
+  Layout: 'page layout',
+  CustomObject: 'object',
+  CustomTab: 'tab',
+  PermissionSet: 'permission set',
+};
 
 const OUTCOME_LABELS: Record<OperationResult['outcome'], string> = {
   done: 'Done',
@@ -160,13 +170,21 @@ export default async function SalesforceAdminChangePage({
           data-testid="change-validation"
           className="mb-4 rounded-md border border-gray-200 p-3 text-sm dark:border-gray-800"
         >
-          <h2 className="mb-1 font-semibold">Salesforce&apos;s validation</h2>
+          <h2 className="mb-1 font-semibold">
+            {validationState(validation) === 'checked' ? 'Checks' : 'Salesforce’s validation'}
+          </h2>
           {'error' in validation ? (
             <p className="text-red-700 dark:text-red-400">{validation.error}</p>
           ) : !validation.done ? (
             <p className="text-gray-600 dark:text-gray-400">
               Salesforce is running a check-only deploy of this change. This page updates when it is
               done.
+            </p>
+          ) : validation.success && !validation.deployId ? (
+            <p className="text-gray-700 dark:text-gray-300">
+              Nothing in this change deploys, so there is no dry run for Salesforce to do. Every
+              permission set, user and object it names was checked against {orgName} when it was
+              proposed; each step reads the live row again when it runs.
             </p>
           ) : validation.success ? (
             <p className="text-gray-700 dark:text-gray-300">
@@ -227,18 +245,20 @@ export default async function SalesforceAdminChangePage({
         </>
       ) : (
         <>
-          <h2 className="mb-2 text-sm font-semibold">What applying it deploys</h2>
+          <h2 className="mb-2 text-sm font-semibold">
+            {payload && !deploys(payload) ? 'What applying it changes' : 'What applying it deploys'}
+          </h2>
           <ol className="space-y-2" data-testid="change-components">
-            {(payload?.components ?? []).map((component) => (
+            {(payload?.components ?? []).map((component, index) => (
               <li
-                key={component.name}
+                key={`${index}:${component.type}:${component.name}`}
                 className="rounded-md border border-gray-200 p-3 text-sm dark:border-gray-800"
               >
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <span className="min-w-0 font-mono text-xs break-all">{component.name}</span>
                   <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-800">
                     {component.action === 'create' ? 'New' : 'Changed'}{' '}
-                    {component.type === 'CustomField' ? 'field' : 'validation rule'}
+                    {TYPE_LABELS[component.type] ?? component.type}
                   </span>
                 </div>
                 <dl className="grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-[9rem_1fr]">
@@ -265,22 +285,22 @@ export default async function SalesforceAdminChangePage({
               </li>
             ))}
           </ol>
-          {payload && payload.fieldGrants.length > 0 && (
-            <p
+          {payload && payload.dataSteps.length > 0 && (
+            <div
               className="mt-3 text-sm text-gray-700 dark:text-gray-300"
               data-testid="change-grants"
             >
-              <span className="font-medium">Then:</span>{' '}
-              {[
-                ...new Set(
-                  payload.fieldGrants.map(
-                    (grant) =>
-                      `${grant.permissionSetName} gets ${grant.edit ? 'read and edit' : 'read'} access`
-                  )
-                ),
-              ].join('; ')}{' '}
-              to the new fields.
-            </p>
+              <p className="font-medium">
+                {deploys(payload) ? 'Then, once it deploys:' : 'What applying it does:'}
+              </p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                {payload.dataSteps.map((step, index) => (
+                  <li key={index} className="break-words">
+                    {stepLabel(step)}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </>
       )}
@@ -288,14 +308,15 @@ export default async function SalesforceAdminChangePage({
       {state === 'pending' && (
         <>
           <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
-            Applying first checks that nothing it was built on has changed in {orgName}, then
-            deploys it on your own Salesforce Admin connection — all of it or none of it — with the
-            permissions you hold there.
+            {payload && !deploys(payload)
+              ? `Applying writes each of these on your own Salesforce Admin connection in ${orgName}, with the permissions you hold there; each is its own step, and the result lists every one.`
+              : `Applying first checks that nothing it was built on has changed in ${orgName}, then deploys it on your own Salesforce Admin connection — all of it or none of it — with the permissions you hold there.`}
           </p>
           <ChangeActions
             changeId={change.id}
             orgName={orgName}
             applyBlocked={gate && !gate.ok ? gate.reason : null}
+            dataOnly={payload !== null && !deploys(payload)}
           />
         </>
       )}

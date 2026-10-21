@@ -64,6 +64,7 @@ function fixtureFor(projectName: string) {
     validated: uuidFrom(`salesforce-admin-e2e-validated:${projectName}`),
     failed: uuidFrom(`salesforce-admin-e2e-failed:${projectName}`),
     production: uuidFrom(`salesforce-admin-e2e-production:${projectName}`),
+    access: uuidFrom(`salesforce-admin-e2e-access:${projectName}`),
   };
 }
 
@@ -148,9 +149,17 @@ async function connect(fixture: Fixture, connector: string, host: string): Promi
 /** A change request as salesforce_admin_propose_fields stores it after Salesforce's check-only deploy. */
 async function propose(
   fixture: Fixture,
-  input: { id: string; connector: string; host: string; validation: Record<string, unknown> }
+  input: {
+    id: string;
+    connector: string;
+    host: string;
+    validation: Record<string, unknown>;
+    kind?: string;
+    title?: string;
+    payload?: Record<string, unknown>;
+  }
 ): Promise<void> {
-  const payload = {
+  const payload = input.payload ?? {
     files: {
       'package.xml': '<Package/>',
       'objects/Site_Visit__c.object': '<CustomObject/>',
@@ -183,16 +192,17 @@ async function propose(
     client.query(
       `INSERT INTO salesforce_admin_change_requests
          (id, subject, connector_key, org_id, instance_url, kind, title, reason, payload, validation, expires_at)
-       VALUES ($1, $2, $3, $4, $5, 'fields', $6, 'The program tracks outcomes now', $7, $8, NOW() + INTERVAL '1 day')`,
+       VALUES ($1, $2, $3, $4, $5, $9, $6, 'The program tracks outcomes now', $7, $8, NOW() + INTERVAL '1 day')`,
       [
         input.id,
         fixture.subject,
         input.connector,
         ORG_ID,
         `https://${input.host}`,
-        `Site Visit: add the field Outcome (${input.connector})`,
+        input.title ?? `Site Visit: add the field Outcome (${input.connector})`,
         JSON.stringify(payload),
         JSON.stringify({ checkedAt: new Date().toISOString(), ...input.validation }),
+        input.kind ?? 'fields',
       ]
     )
   );
@@ -298,7 +308,10 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
     ['uat', true, false],
     ['production', false, false],
   ]);
+  // User access (assigning permission sets to people) is off unless chosen.
   expect(stored.rows[0]?.settings.orgs?.[0]?.scopes.split(' ').sort()).toEqual([
+    'sfa-layouts',
+    'sfa-permissions',
     'sfa-read',
     'sfa-schema',
   ]);
@@ -359,6 +372,49 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
       ],
     },
   });
+  // Access added to an existing permission set: data only, nothing to deploy.
+  await propose(fixture, {
+    id: fixture.access,
+    connector: 'uat',
+    host: UAT,
+    kind: 'permission_set',
+    title: 'Program_Staff: more access',
+    validation: { deployId: '', done: true, success: true, status: 'Checked', failures: [] },
+    payload: {
+      files: {},
+      members: [],
+      components: [
+        {
+          type: 'PermissionSet',
+          name: 'Program_Staff',
+          action: 'update',
+          rows: [{ label: 'Site_Visit__c records', value: 'read, edit', from: 'read' }],
+        },
+      ],
+      preconditions: [],
+      dataSteps: [
+        {
+          kind: 'object-permission',
+          permissionSetId: '0PS000000000001AAA',
+          permissionSetName: 'Program_Staff',
+          object: 'Site_Visit__c',
+          read: true,
+          create: false,
+          edit: true,
+          delete: false,
+          viewAll: false,
+          modifyAll: false,
+        },
+        {
+          kind: 'tab-visibility',
+          permissionSetId: '0PS000000000001AAA',
+          permissionSetName: 'Program_Staff',
+          tab: 'Site_Visit__c',
+          visibility: 'DefaultOn',
+        },
+      ],
+    },
+  });
   await propose(fixture, {
     id: fixture.production,
     connector: 'production',
@@ -368,9 +424,9 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
 
   await page.reload();
   await expect(uat.getByText('Connected', { exact: true })).toBeVisible();
-  // Counted per org: two wait in UAT, one in production.
+  // Counted per org: three wait in UAT, one in production.
   await expect(
-    uat.getByRole('link', { name: '2 change requests waiting for your review' })
+    uat.getByRole('link', { name: '3 change requests waiting for your review' })
   ).toBeVisible();
   const production = cards.filter({
     has: page.getByRole('heading', { name: /Salesforce Admin · Production/ }),
@@ -384,15 +440,20 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
   // --- A validated request: every component, the grants that follow, Deploy on. ---
   await page.goto(`/salesforce-admin/changes/${fixture.validated}`);
   await expect(page.getByRole('heading', { name: 'Review a Salesforce change' })).toBeVisible();
-  await expect(page.getByTestId('change-state')).toHaveText('Waiting for review');
-  await expect(page.getByTestId('validation-state')).toHaveText('Validated by Salesforce');
-  await expect(page.getByTestId('change-org')).toContainText('UAT (sandbox)');
-  const components = page.getByTestId('change-components');
+  await expect(page.getByRole('main').getByTestId('change-state')).toHaveText('Waiting for review');
+  await expect(page.getByRole('main').getByTestId('validation-state')).toHaveText(
+    'Validated by Salesforce'
+  );
+  await expect(page.getByRole('main').getByTestId('change-org')).toContainText('UAT (sandbox)');
+  const components = page.getByRole('main').getByTestId('change-components');
   await expect(components.getByText('Site_Visit__c.Outcome__c')).toBeVisible();
   await expect(components.getByText('New field')).toBeVisible();
   await expect(components.getByText('Completed, No show')).toBeVisible();
-  await expect(page.getByTestId('change-grants')).toContainText(
-    'Program_Staff gets read and edit access'
+  await expect(page.getByRole('main').getByTestId('change-grants')).toContainText(
+    'Then, once it deploys:'
+  );
+  await expect(page.getByRole('main').getByTestId('change-grants')).toContainText(
+    'Give Program_Staff read and edit access to Site_Visit__c.Outcome__c'
   );
   await expect(page.getByRole('button', { name: 'Deploy to UAT' })).toBeEnabled();
   await shot(page, testInfo, 'salesforce-admin-03-review');
@@ -407,20 +468,61 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
   await shot(page, testInfo, 'salesforce-admin-04-review-mobile');
   await page.setViewportSize({ width: 1280, height: 900 });
 
+  // --- Access added to a permission set: old against new, steps, Apply (nothing deploys). ---
+  await page.goto(`/salesforce-admin/changes/${fixture.access}`);
+  await expect(page.getByRole('main').getByTestId('validation-state')).toHaveText(
+    'Checked against the org'
+  );
+  await expect(page.getByRole('heading', { name: 'Checks' })).toBeVisible();
+  await expect(page.getByText(/Nothing in this change deploys/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What applying it changes' })).toBeVisible();
+  const access = page.getByRole('main').getByTestId('change-components');
+  await expect(access.getByText('Changed permission set')).toBeVisible();
+  await expect(access.getByText('read, edit', { exact: true })).toBeVisible();
+  await expect(access.getByText('read', { exact: true })).toBeVisible();
+  const steps = page.getByRole('main').getByTestId('change-grants');
+  await expect(steps).toContainText('What applying it does:');
+  await expect(steps).toContainText(
+    'Give Program_Staff read, edit access to Site_Visit__c records'
+  );
+  await expect(steps).toContainText(
+    'Show the Site_Visit__c tab to Program_Staff (in their navigation by default)'
+  );
+  await expect(page.getByRole('button', { name: 'Apply in UAT' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: /Deploy to/ })).toHaveCount(0);
+  await shot(page, testInfo, 'salesforce-admin-04b-access');
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await expect(page.getByRole('button', { name: 'Apply in UAT' })).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    )
+  ).toBeLessThanOrEqual(0);
+  await shot(page, testInfo, 'salesforce-admin-04c-access-mobile');
+  await page.setViewportSize({ width: 1280, height: 900 });
+
   // --- A failed validation: Salesforce's errors, and no Deploy. ---
   await page.goto(`/salesforce-admin/changes/${fixture.failed}`);
-  await expect(page.getByTestId('validation-state')).toHaveText('Validation failed');
-  await expect(page.getByTestId('change-validation')).toContainText('Picklist value too long');
+  await expect(page.getByRole('main').getByTestId('validation-state')).toHaveText(
+    'Validation failed'
+  );
+  await expect(page.getByRole('main').getByTestId('change-validation')).toContainText(
+    'Picklist value too long'
+  );
   await expect(page.getByRole('button', { name: 'Deploy to UAT' })).toBeDisabled();
   await expect(page.getByText(/Salesforce has not validated this change/)).toBeVisible();
 
   // Its cancel is the real route.
   await page.getByRole('button', { name: 'Cancel it' }).click();
-  await expect(page.getByTestId('change-state')).toHaveText('Cancelled', { timeout: 30_000 });
+  await expect(page.getByRole('main').getByTestId('change-state')).toHaveText('Cancelled', {
+    timeout: 30_000,
+  });
 
   // --- Production takes no change requests: the gate says why, before the click. ---
   await page.goto(`/salesforce-admin/changes/${fixture.production}`);
-  await expect(page.getByTestId('change-org')).toContainText('Production — production');
+  await expect(page.getByRole('main').getByTestId('change-org')).toContainText(
+    'Production — production'
+  );
   await expect(
     page.getByText(/is a production org that does not take change requests/)
   ).toBeVisible();
@@ -431,11 +533,15 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
   );
   expect(refused.status()).toBe(403);
 
-  // --- The list: two waiting, one cancelled. ---
+  // --- The list: three waiting, one cancelled. ---
   await page.goto('/salesforce-admin/changes');
   await expect(page.getByRole('heading', { name: 'Salesforce admin changes' })).toBeVisible();
-  await expect(page.getByTestId('changes-waiting').getByRole('link')).toHaveCount(2);
-  await expect(page.getByTestId('changes-recent').getByRole('link')).toHaveCount(1);
+  await expect(page.getByRole('main').getByTestId('changes-waiting').getByRole('link')).toHaveCount(
+    3
+  );
+  await expect(page.getByRole('main').getByTestId('changes-recent').getByRole('link')).toHaveCount(
+    1
+  );
   await expect(page.getByText('Site Visit: add the field Outcome (production)')).toBeVisible();
   await shot(page, testInfo, 'salesforce-admin-05-list');
 

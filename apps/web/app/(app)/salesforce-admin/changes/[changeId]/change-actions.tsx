@@ -25,8 +25,11 @@ export default function ChangeActions({
   changeId,
   orgName,
   applyBlocked,
+  dataOnly = false,
 }: {
   changeId: string;
+  /** Nothing to deploy — access or assignments written as data — so the button says Apply. */
+  dataOnly?: boolean;
   /** The connector's name, for the button. */
   orgName: string;
   /** Why applying is refused right now (validation failed, read-only mode…); null when it is not. */
@@ -85,7 +88,13 @@ export default function ChangeActions({
           disabled={busy !== null || applyBlocked !== null}
           className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {busy === 'apply' ? 'Deploying…' : `Deploy to ${orgName}`}
+          {busy === 'apply'
+            ? dataOnly
+              ? 'Applying…'
+              : 'Deploying…'
+            : dataOnly
+              ? `Apply in ${orgName}`
+              : `Deploy to ${orgName}`}
         </button>
         <button
           onClick={() => void act('cancel')}

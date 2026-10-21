@@ -104,3 +104,34 @@ export {
   type DeployFailure,
   type DeployOutcome,
 } from './metadata';
+export { metadataBody, metadataFile, metadataFileName } from './metadata-xml';
+export {
+  layoutSections,
+  layoutFieldSet,
+  mergeLayoutChanges,
+  type FieldBehavior,
+  type LayoutChanges,
+  type LayoutSectionView,
+} from './layouts';
+export {
+  mergeFieldChanges,
+  mergePicklistChanges,
+  existingFieldXml,
+  checkObjectSpec,
+  buildObjectPackage,
+  SHARING_MODELS,
+  type ChangeRow,
+  type FieldChanges,
+  type PicklistChanges,
+  type ObjectSpec,
+  type SharingModel,
+} from './changes';
+export {
+  impliedRights,
+  rightsLabel,
+  unionRights,
+  checkPermissionSetName,
+  permissionSetFile,
+  type ObjectRights,
+  type NewPermissionSetSpec,
+} from './permission-sets';

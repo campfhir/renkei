@@ -15,11 +15,25 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
     case 'salesforce_admin_get_field':
     case 'salesforce_admin_list_validation_rules':
     case 'salesforce_admin_list_change_requests':
+    case 'salesforce_admin_get_layout':
       return ['sfa-read'];
 
+    case 'salesforce_admin_propose_object':
     case 'salesforce_admin_propose_fields':
+    case 'salesforce_admin_propose_field_changes':
+    case 'salesforce_admin_propose_picklist_changes':
     case 'salesforce_admin_propose_validation_rule':
       return ['sfa-read', 'sfa-schema'];
+
+    case 'salesforce_admin_propose_layout_changes':
+      return ['sfa-read', 'sfa-layouts'];
+
+    case 'salesforce_admin_list_permission_sets':
+    case 'salesforce_admin_propose_permission_set':
+      return ['sfa-read', 'sfa-permissions'];
+
+    case 'salesforce_admin_propose_assignments':
+      return ['sfa-read', 'sfa-user-access'];
 
     default:
       // A new tool missing its mapping registers for nobody — the loud,

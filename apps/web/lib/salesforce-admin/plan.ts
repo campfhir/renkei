@@ -1,18 +1,22 @@
 /**
- * What a metadata change request holds, and what has to still be true when
- * it is applied.
+ * What a change request holds, and what has to still be true when it is
+ * applied.
  *
  * A proposal stores the exact deployment — `files` (the manifest and the
- * object files) and `members` — beside a readable `components` list for
- * the review page, the `preconditions` it was built on, and `fieldGrants`:
- * field access to give named permission sets once the deploy succeeds.
- * Field access is data (FieldPermissions rows), not metadata, because a
- * permission set deployed as metadata replaces itself whole and would drop
- * everything the package did not list.
+ * component files) and `members`; empty for a change that is data only —
+ * beside a readable `components` list for the review page, the
+ * `preconditions` it was built on, and `dataSteps`: what runs after the
+ * deploy succeeds, as data rather than metadata — field and object access
+ * in permission sets, tab visibility, and permission set assignments. Access is data
+ * (FieldPermissions, ObjectPermissions) because a permission set deployed
+ * as metadata replaces itself whole and would drop everything the package
+ * did not list; each step reads the live row when it runs and updates it
+ * or inserts one.
  *
  * Preconditions are re-read live on apply, and any that no longer holds
- * stops the apply before anything deploys: a field someone else created in
- * the meantime, a validation rule edited since it was read.
+ * stops the apply before anything deploys: a field or object someone else
+ * created in the meantime, a rule, field or layout edited since it was read
+ * (by a hash of its metadata), a permission set created under the name.
  */
 
 import { createHash } from 'node:crypto';
@@ -29,6 +33,40 @@ import {
 
 export const FIELDS_KIND = 'fields';
 export const VALIDATION_RULE_KIND = 'validation_rule';
+export const FIELD_CHANGES_KIND = 'field_changes';
+export const PICKLIST_CHANGES_KIND = 'picklist_changes';
+export const LAYOUT_KIND = 'layout';
+export const OBJECT_KIND = 'object';
+export const PERMISSION_SET_KIND = 'permission_set';
+export const ASSIGNMENTS_KIND = 'assignments';
+
+/**
+ * The capabilities applying a change stands on (lib/salesforce-admin-scopes.ts):
+ * its kind's, and those of what else it carries — a layout placed in a
+ * fields proposal needs the layouts capability too, an assignment the
+ * user-access one.
+ */
+export function applyScopesFor(kind: string, payload?: MetadataPayload | null): string[] {
+  const scopes = new Set<string>();
+  switch (kind) {
+    case LAYOUT_KIND:
+      scopes.add('sfa-layouts');
+      break;
+    case PERMISSION_SET_KIND:
+      scopes.add('sfa-permissions');
+      break;
+    case ASSIGNMENTS_KIND:
+      scopes.add('sfa-user-access');
+      break;
+    default:
+      scopes.add('sfa-schema');
+  }
+  if (payload?.members.some((member) => member.type === 'Layout')) scopes.add('sfa-layouts');
+  if (payload?.dataSteps.some((step) => step.kind === 'assign' || step.kind === 'unassign')) {
+    scopes.add('sfa-user-access');
+  }
+  return [...scopes];
+}
 
 /** One line of a component on the review page: a value, or old → new. */
 export interface ViewRow {
@@ -38,9 +76,9 @@ export interface ViewRow {
 }
 
 export interface ComponentView {
-  /** CustomField, ValidationRule… */
+  /** CustomField, ValidationRule, Layout, CustomObject, CustomTab, PermissionSet… */
   type: string;
-  /** `Object.Member`. */
+  /** `Object.Member`, a layout's full name, an object's API name. */
   name: string;
   action: 'create' | 'update';
   rows: ViewRow[];
@@ -49,23 +87,77 @@ export interface ComponentView {
 export type Precondition =
   | { kind: 'field-absent'; object: string; field: string }
   | { kind: 'rule-absent'; object: string; rule: string }
-  | { kind: 'rule-unchanged'; object: string; rule: string; fingerprint: string };
+  | { kind: 'rule-unchanged'; object: string; rule: string; fingerprint: string }
+  | { kind: 'field-unchanged'; object: string; field: string; fingerprint: string }
+  | { kind: 'layout-unchanged'; object: string; layout: string; fingerprint: string }
+  | { kind: 'object-absent'; object: string }
+  | { kind: 'permission-set-absent'; name: string };
 
-export interface FieldGrant {
-  permissionSetId: string;
-  permissionSetName: string;
-  object: string;
-  /** With `__c`. */
-  field: string;
+export interface Access {
+  read: boolean;
   edit: boolean;
 }
 
+export interface ObjectAccess {
+  read: boolean;
+  create: boolean;
+  edit: boolean;
+  delete: boolean;
+  viewAll: boolean;
+  modifyAll: boolean;
+}
+
+export type DataStep =
+  | ({
+      kind: 'field-permission';
+      permissionSetId: string;
+      permissionSetName: string;
+      object: string;
+      /** The field's API name, without the object. */
+      field: string;
+    } & Access)
+  | ({
+      kind: 'object-permission';
+      permissionSetId: string;
+      permissionSetName: string;
+      object: string;
+    } & ObjectAccess)
+  | {
+      kind: 'tab-visibility';
+      permissionSetId: string;
+      permissionSetName: string;
+      /** The tab's name: a custom object's API name for its tab. */
+      tab: string;
+      /** DefaultOn: in the app's navigation; DefaultOff: on All Tabs only. */
+      visibility: 'DefaultOn' | 'DefaultOff';
+    }
+  | {
+      kind: 'assign';
+      permissionSetId: string;
+      permissionSetName: string;
+      userId: string;
+      userName: string;
+    }
+  | {
+      kind: 'unassign';
+      permissionSetId: string;
+      permissionSetName: string;
+      userId: string;
+      userName: string;
+    };
+
 export interface MetadataPayload {
+  /** Empty for a change that is data only (assignments, access on an existing set). */
   files: Record<string, string>;
   members: PackageMember[];
   components: ComponentView[];
   preconditions: Precondition[];
-  fieldGrants: FieldGrant[];
+  dataSteps: DataStep[];
+}
+
+/** Whether a payload deploys anything, or is data steps alone. */
+export function deploys(payload: MetadataPayload): boolean {
+  return Boolean(payload.files['package.xml']) && payload.members.length > 0;
 }
 
 function stringMap(value: unknown): Record<string, string> {
@@ -76,11 +168,54 @@ function stringMap(value: unknown): Record<string, string> {
   );
 }
 
+const flag = (value: unknown): boolean => value === true;
+
+function stepOf(raw: Record<string, unknown>): DataStep | null {
+  const base = {
+    permissionSetId: str(raw.permissionSetId),
+    permissionSetName: str(raw.permissionSetName),
+  };
+  switch (raw.kind) {
+    case 'field-permission':
+      return {
+        kind: 'field-permission',
+        ...base,
+        object: str(raw.object),
+        field: str(raw.field),
+        read: raw.read !== false,
+        edit: flag(raw.edit),
+      };
+    case 'object-permission':
+      return {
+        kind: 'object-permission',
+        ...base,
+        object: str(raw.object),
+        read: flag(raw.read),
+        create: flag(raw.create),
+        edit: flag(raw.edit),
+        delete: flag(raw.delete),
+        viewAll: flag(raw.viewAll),
+        modifyAll: flag(raw.modifyAll),
+      };
+    case 'tab-visibility':
+      return {
+        kind: 'tab-visibility',
+        ...base,
+        tab: str(raw.tab),
+        visibility: raw.visibility === 'DefaultOff' ? 'DefaultOff' : 'DefaultOn',
+      };
+    case 'assign':
+    case 'unassign':
+      return { kind: raw.kind, ...base, userId: str(raw.userId), userName: str(raw.userName) };
+    default:
+      return null;
+  }
+}
+
 /** A stored payload, defensively; null when it is not one this code can apply. */
 export function readMetadataPayload(value: unknown): MetadataPayload | null {
   const entry = rec(value);
   const files = stringMap(entry.files);
-  if (!files['package.xml']) return null;
   const members = recs(entry.members).flatMap((m) =>
     typeof m.type === 'string' && typeof m.member === 'string'
       ? [{ type: m.type, member: m.member }]
@@ -98,23 +233,74 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
   }));
   const preconditions = recs(entry.preconditions).flatMap((p): Precondition[] => {
     const object = str(p.object);
-    if (p.kind === 'field-absent') return [{ kind: 'field-absent', object, field: str(p.field) }];
-    if (p.kind === 'rule-absent') return [{ kind: 'rule-absent', object, rule: str(p.rule) }];
-    if (p.kind === 'rule-unchanged') {
-      return [
-        { kind: 'rule-unchanged', object, rule: str(p.rule), fingerprint: str(p.fingerprint) },
-      ];
+    const fingerprint = str(p.fingerprint);
+    switch (p.kind) {
+      case 'field-absent':
+        return [{ kind: 'field-absent', object, field: str(p.field) }];
+      case 'rule-absent':
+        return [{ kind: 'rule-absent', object, rule: str(p.rule) }];
+      case 'rule-unchanged':
+        return [{ kind: 'rule-unchanged', object, rule: str(p.rule), fingerprint }];
+      case 'field-unchanged':
+        return [{ kind: 'field-unchanged', object, field: str(p.field), fingerprint }];
+      case 'layout-unchanged':
+        return [{ kind: 'layout-unchanged', object, layout: str(p.layout), fingerprint }];
+      case 'object-absent':
+        return [{ kind: 'object-absent', object }];
+      case 'permission-set-absent':
+        return [{ kind: 'permission-set-absent', name: str(p.name) }];
+      default:
+        return [];
     }
-    return [];
   });
-  const fieldGrants = recs(entry.fieldGrants).map((g) => ({
-    permissionSetId: str(g.permissionSetId),
-    permissionSetName: str(g.permissionSetName),
-    object: str(g.object),
-    field: str(g.field),
-    edit: g.edit === true,
-  }));
-  return { files, members, components, preconditions, fieldGrants };
+  const dataSteps = recs(entry.dataSteps).flatMap((raw) => {
+    const step = stepOf(raw);
+    return step ? [step] : [];
+  });
+  // The first version's field grants, stored before data steps existed.
+  for (const grant of recs(entry.fieldGrants)) {
+    dataSteps.push({
+      kind: 'field-permission',
+      permissionSetId: str(grant.permissionSetId),
+      permissionSetName: str(grant.permissionSetName),
+      object: str(grant.object),
+      field: str(grant.field),
+      read: true,
+      edit: grant.edit === true,
+    });
+  }
+  const payload = { files, members, components, preconditions, dataSteps };
+  return deploys(payload) || dataSteps.length > 0 ? payload : null;
+}
+
+/** What a data step does, in words. */
+export function stepLabel(step: DataStep): string {
+  switch (step.kind) {
+    case 'field-permission':
+      return `Give ${step.permissionSetName} ${step.edit ? 'read and edit' : 'read'} access to ${step.object}.${step.field}`;
+    case 'object-permission': {
+      const rights = [
+        step.read && 'read',
+        step.create && 'create',
+        step.edit && 'edit',
+        step.delete && 'delete',
+        step.viewAll && 'view all',
+        step.modifyAll && 'modify all',
+      ].filter(Boolean);
+      return `Give ${step.permissionSetName} ${rights.join(', ') || 'no'} access to ${step.object} records`;
+    }
+    case 'tab-visibility':
+      return `Show the ${step.tab} tab to ${step.permissionSetName}${step.visibility === 'DefaultOn' ? ' (in their navigation by default)' : ''}`;
+    case 'assign':
+      return `Assign ${step.permissionSetName} to ${step.userName}`;
+    case 'unassign':
+      return `Remove ${step.permissionSetName} from ${step.userName}`;
+  }
+}
+
+/** A hash of a component's metadata as read, to tell whether it moved since. */
+export function fingerprintOf(metadata: unknown): string {
+  return createHash('sha256').update(JSON.stringify(metadata)).digest('hex');
 }
 
 /** A Tooling API query (`/tooling/query`), one page. */
@@ -144,6 +330,35 @@ export async function fieldExists(
   return found.records.length > 0;
 }
 
+/** Whether an object exists in the org, whoever can see it. */
+export async function objectExists(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  object: string
+): Promise<boolean | string> {
+  const found = await sfQuery(
+    context,
+    access,
+    `SELECT QualifiedApiName FROM EntityDefinition WHERE QualifiedApiName = ${soqlString(object)} LIMIT 1`
+  );
+  if (!found.ok) return found.error;
+  return found.records.length > 0;
+}
+
+/** The key the Tooling API files an object's fields and layouts under: its name, or 01I… for a custom one. */
+export async function entityKey(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  object: string
+): Promise<string | null> {
+  const found = await sfQuery(
+    context,
+    access,
+    `SELECT DurableId FROM EntityDefinition WHERE QualifiedApiName = ${soqlString(object)} LIMIT 1`
+  );
+  return found.ok ? str(found.records[0]?.DurableId) || null : null;
+}
+
 export interface LiveRule {
   id: string;
   name: string;
@@ -152,7 +367,6 @@ export interface LiveRule {
   formula: string;
   message: string;
   errorDisplayField: string;
-  /** A hash of the rule's metadata as read, to tell whether it moved since. */
   fingerprint: string;
 }
 
@@ -180,53 +394,206 @@ export async function readValidationRule(
     formula: str(metadata.errorConditionFormula),
     message: str(row.ErrorMessage) || str(metadata.errorMessage),
     errorDisplayField: str(row.ErrorDisplayField) || str(metadata.errorDisplayField),
-    fingerprint: createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
+    fingerprint: fingerprintOf(metadata),
   };
 }
 
-/** The preconditions that no longer hold, in words; empty when the package may deploy. */
+export interface LiveCustomField {
+  id: string;
+  /** `Object.Field__c`. */
+  fullName: string;
+  metadata: Record<string, unknown>;
+  fingerprint: string;
+}
+
+/** A custom field's whole definition, from the Tooling API. */
+export async function readCustomField(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  object: string,
+  field: string
+): Promise<LiveCustomField | null | string> {
+  if (!/__c$/i.test(field)) {
+    return `${field} is a standard field; this changes custom fields (…__c) only.`;
+  }
+  const table = await entityKey(context, access, object);
+  if (!table) return `There is no object ${object}.`;
+  const found = await toolingQuery(
+    context,
+    access,
+    `SELECT Id, FullName, Metadata FROM CustomField WHERE TableEnumOrId = ${soqlString(table)} AND DeveloperName = ${soqlString(field.replace(/__c$/i, ''))} LIMIT 1`
+  );
+  if (!found.ok) return found.error;
+  const row = found.records[0];
+  if (!row) return null;
+  const metadata = rec(row.Metadata);
+  return {
+    id: str(row.Id),
+    fullName: str(row.FullName) || `${object}.${field}`,
+    metadata,
+    fingerprint: fingerprintOf(metadata),
+  };
+}
+
+export interface LayoutRef {
+  id: string;
+  name: string;
+}
+
+/** An object's page layouts, by name. */
+export async function listLayouts(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  object: string
+): Promise<LayoutRef[] | string> {
+  const table = await entityKey(context, access, object);
+  if (!table) return `There is no object ${object}.`;
+  const found = await toolingQuery(
+    context,
+    access,
+    `SELECT Id, Name FROM Layout WHERE TableEnumOrId = ${soqlString(table)} ORDER BY Name`
+  );
+  if (!found.ok) return found.error;
+  return found.records.map((row) => ({ id: str(row.Id), name: str(row.Name) }));
+}
+
+export interface LiveLayout {
+  id: string;
+  name: string;
+  /** `Object-Layout Name`, the member name a deploy uses. */
+  fullName: string;
+  metadata: Record<string, unknown>;
+  fingerprint: string;
+}
+
+/** One layout, whole, by its name (or the object's only layout when it has one). */
+export async function readLayout(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  object: string,
+  name: string | undefined
+): Promise<LiveLayout | string> {
+  const layouts = await listLayouts(context, access, object);
+  if (typeof layouts === 'string') return layouts;
+  const wanted = name?.trim().toLowerCase();
+  const match = wanted
+    ? layouts.find((layout) => layout.name.toLowerCase() === wanted)
+    : layouts.length === 1
+      ? layouts[0]
+      : undefined;
+  if (!match) {
+    return layouts.length === 0
+      ? `${object} has no page layouts.`
+      : `Name the layout: ${object}’s layouts are ${layouts.map((l) => `“${l.name}”`).join(', ')}.`;
+  }
+  const found = await toolingQuery(
+    context,
+    access,
+    `SELECT Id, Name, FullName, Metadata FROM Layout WHERE Id = ${soqlString(match.id)} LIMIT 1`
+  );
+  if (!found.ok) return found.error;
+  const row = found.records[0];
+  if (!row) return `The layout “${match.name}” is gone.`;
+  const metadata = rec(row.Metadata);
+  return {
+    id: match.id,
+    name: match.name,
+    fullName: str(row.FullName) || `${object}-${match.name}`,
+    metadata,
+    fingerprint: fingerprintOf(metadata),
+  };
+}
+
+/** The preconditions that no longer hold, in words; empty when the change may go ahead. */
 export async function brokenPreconditions(
   context: SalesforceCallContext,
   access: SalesforceAccess,
   preconditions: readonly Precondition[]
 ): Promise<string[]> {
   const broken: string[] = [];
+  const moved = (what: string) =>
+    broken.push(`${what} was changed since this was proposed; propose again from what it is now.`);
   for (const precondition of preconditions) {
-    if (precondition.kind === 'field-absent') {
-      const exists = await fieldExists(context, access, precondition.object, precondition.field);
-      if (typeof exists === 'string')
-        broken.push(`Could not check ${precondition.object}.${precondition.field}: ${exists}`);
-      else if (exists) {
-        broken.push(
-          `${precondition.object}.${precondition.field} exists now — someone created it since this was proposed.`
-        );
+    switch (precondition.kind) {
+      case 'field-absent': {
+        const name = `${precondition.object}.${precondition.field}`;
+        const exists = await fieldExists(context, access, precondition.object, precondition.field);
+        if (typeof exists === 'string') broken.push(`Could not check ${name}: ${exists}`);
+        else if (exists)
+          broken.push(`${name} exists now — someone created it since this was proposed.`);
+        break;
       }
-    } else {
-      const live = await readValidationRule(
-        context,
-        access,
-        precondition.object,
-        precondition.rule
-      );
-      const name = `${precondition.object}.${precondition.rule}`;
-      if (typeof live === 'string') broken.push(`Could not check the rule ${name}: ${live}`);
-      else if (precondition.kind === 'rule-absent' && live) {
-        broken.push(`The rule ${name} exists now — someone created it since this was proposed.`);
-      } else if (precondition.kind === 'rule-unchanged') {
-        if (!live)
-          broken.push(`The rule ${name} is gone — someone deleted it since this was proposed.`);
-        else if (live.fingerprint !== precondition.fingerprint) {
+      case 'object-absent': {
+        const exists = await objectExists(context, access, precondition.object);
+        if (typeof exists === 'string')
+          broken.push(`Could not check ${precondition.object}: ${exists}`);
+        else if (exists) {
           broken.push(
-            `The rule ${name} was changed since this was proposed; propose again from what it is now.`
+            `${precondition.object} exists now — someone created it since this was proposed.`
           );
         }
+        break;
+      }
+      case 'permission-set-absent': {
+        const found = await sfQuery(
+          context,
+          access,
+          `SELECT Id FROM PermissionSet WHERE Name = ${soqlString(precondition.name)} LIMIT 1`
+        );
+        if (!found.ok)
+          broken.push(`Could not check the permission set ${precondition.name}: ${found.error}`);
+        else if (found.records.length > 0) {
+          broken.push(
+            `A permission set ${precondition.name} exists now — someone created it since this was proposed.`
+          );
+        }
+        break;
+      }
+      case 'rule-absent':
+      case 'rule-unchanged': {
+        const name = `The rule ${precondition.object}.${precondition.rule}`;
+        const live = await readValidationRule(
+          context,
+          access,
+          precondition.object,
+          precondition.rule
+        );
+        if (typeof live === 'string') broken.push(`Could not check ${name}: ${live}`);
+        else if (precondition.kind === 'rule-absent' && live) {
+          broken.push(`${name} exists now — someone created it since this was proposed.`);
+        } else if (precondition.kind === 'rule-unchanged') {
+          if (!live) broken.push(`${name} is gone — someone deleted it since this was proposed.`);
+          else if (live.fingerprint !== precondition.fingerprint) moved(name);
+        }
+        break;
+      }
+      case 'field-unchanged': {
+        const name = `${precondition.object}.${precondition.field}`;
+        const live = await readCustomField(
+          context,
+          access,
+          precondition.object,
+          precondition.field
+        );
+        if (typeof live === 'string') broken.push(`Could not check ${name}: ${live}`);
+        else if (!live)
+          broken.push(`${name} is gone — someone deleted it since this was proposed.`);
+        else if (live.fingerprint !== precondition.fingerprint) moved(name);
+        break;
+      }
+      case 'layout-unchanged': {
+        const name = `The layout “${precondition.layout}”`;
+        const live = await readLayout(context, access, precondition.object, precondition.layout);
+        if (typeof live === 'string') broken.push(`Could not check ${name}: ${live}`);
+        else if (live.fingerprint !== precondition.fingerprint) moved(name);
+        break;
       }
     }
   }
   return broken;
 }
 
-/** A permission set by API name or label, for field grants. */
+/** A permission set by API name or label. */
 export async function resolvePermissionSet(
   context: SalesforceCallContext,
   access: SalesforceAccess,

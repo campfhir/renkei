@@ -14,275 +14,48 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
-import { actMeta } from '@renkei/tool-outcomes';
 import {
   buildObjectChildrenPackage,
   checkFieldSpec,
   checkValidationRuleSpec,
-  FIELD_TYPES,
+  packageXml,
   soqlString,
-  takesChanges,
   type FieldSpec,
 } from '@renkei/connector-salesforce';
 import type { MCPToolContext } from '../common';
 import type { SalesforceAuth } from '../salesforce/salesforce-auth';
-import { errText, sfQuery, str, type SalesforceAccess } from '../salesforce/client';
+import { errText, sfQuery, str } from '../salesforce/client';
 import { globalDescribe, resolveObject } from '../salesforce/schema';
 import { objectField } from '../salesforce/fields';
-import { listSalesforceConnectors } from '@/lib/salesforce-app';
-import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
-import {
-  cancelChangeRequest,
-  CHANGE_REQUEST_TTL_HOURS,
-  createChangeRequest,
-  setValidation,
-  validationFrom,
-  type Validation,
-} from '@/lib/salesforce-admin/change-requests';
-import { failureLines, startDeploy, waitForDeploy } from '@/lib/salesforce-admin/deploy';
 import {
   FIELDS_KIND,
   readValidationRule,
   resolvePermissionSet,
   VALIDATION_RULE_KIND,
   type ComponentView,
-  type FieldGrant,
-  type MetadataPayload,
+  type DataStep,
   type Precondition,
 } from '@/lib/salesforce-admin/plan';
-import { reviewPrefix } from './review-link';
+import {
+  fieldInput,
+  fieldRows,
+  proposeAndValidate,
+  reasonField,
+  refusesChanges,
+  replacesField,
+} from './shared';
+import { planLayoutChange } from './layout-plan';
 
-/** How long a proposal waits on Salesforce's validation before answering. */
-export const VALIDATION_WAIT_MS = 60_000;
-
-const reasonField = z
-  .string()
-  .max(2000)
-  .optional()
-  .describe('Why, in the person’s words — shown on the review page.');
-
-const replacesField = z
-  .string()
-  .optional()
-  .describe('The id of an earlier pending request this one replaces; that one is cancelled.');
-
-function dbOf(context: MCPToolContext): Kysely<DB> | null {
-  if (context.db) return context.db;
-  const result = getDatabase();
-  return result.ok ? result.val : null;
-}
-
-/** Why this org takes no proposals, or null. */
-async function refusesChanges(access: SalesforceAccess): Promise<string | null> {
-  const org = (await listSalesforceConnectors(SALESFORCE_ADMIN_KIND)).find(
-    (candidate) => candidate.key === access.connector
-  );
-  if (!org) return 'This Salesforce Admin connector is no longer set up.';
-  if (takesChanges(org)) return null;
-  return (
-    `${org.name} is a production org that does not take change requests from Renkei. ` +
-    'Propose it in a sandbox and promote it, or ask an organization admin to allow changes on this connector.'
-  );
-}
-
-function validationLines(validation: Validation): string[] {
-  if ('error' in validation) {
-    return [`Salesforce could not validate it: ${validation.error}`];
-  }
-  if (!validation.done) {
-    return [
-      'Salesforce is still validating it (a check-only deploy); the review page shows the result when it is done.',
-    ];
-  }
-  if (validation.success) {
-    return ['Salesforce validated it: a check-only deploy passed and changed nothing.'];
-  }
-  return [
-    'Salesforce’s validation failed — fix these and propose again (replaces: this id):',
-    ...failureLines({
-      id: validation.deployId,
-      done: true,
-      status: validation.status,
-      success: false,
-      checkOnly: true,
-      componentsDeployed: 0,
-      componentsTotal: 0,
-      failures: validation.failures,
-      ...(validation.errorMessage ? { errorMessage: validation.errorMessage } : {}),
-    }).map((line) => `  • ${line}`),
-  ];
-}
-
-/** Store the proposal, validate it, and answer with the outcome and the review link. */
-async function proposeAndValidate(
-  context: MCPToolContext,
-  access: SalesforceAccess,
-  input: {
-    kind: string;
-    title: string;
-    reason?: string;
-    replaces?: string;
-    payload: MetadataPayload;
-    summary: string[];
-  }
-) {
-  if (!context.subject) return errText('No signed-in identity on this request.');
-  const db = dbOf(context);
-  if (!db) return errText('Could not store the change request.');
-  if (input.replaces) await cancelChangeRequest(db, context.subject, input.replaces);
-  const change = await createChangeRequest(db, {
-    subject: context.subject,
-    agentId: context.agent?.agentId,
-    connectorKey: access.connector,
-    orgId: access.orgId,
-    instanceUrl: access.instanceUrl,
-    kind: input.kind,
-    title: input.title,
-    reason: input.reason,
-    payload: input.payload,
-  });
-
-  let validation: Validation;
-  const started = await startDeploy(context, access, input.payload.files, { checkOnly: true });
-  if (!started.ok) {
-    validation = { error: started.error, checkedAt: new Date().toISOString() };
-  } else {
-    const waited = started.outcome.done
-      ? { ok: true as const, outcome: started.outcome }
-      : await waitForDeploy(context, access, started.outcome.id, VALIDATION_WAIT_MS);
-    validation = waited.ok ? validationFrom(waited.outcome) : validationFrom(started.outcome);
-  }
-  await setValidation(db, change.id, validation);
-
-  const link = `${reviewPrefix(context)}${change.id}`;
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: [
-          `Proposed in ${access.connectorName}${access.sandbox ? ' (sandbox)' : ' (production)'} — nothing has changed in Salesforce yet.`,
-          ...input.summary,
-          '',
-          ...validationLines(validation),
-          '',
-          `Review and apply: ${link}`,
-          `Request ${change.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours. Only the person can apply it, from that page.`,
-        ].join('\n'),
-      },
-    ],
-    _meta: actMeta({ url: link }),
-  };
-}
-
-const fieldInput = z.object({
-  label: z.string().min(1).max(40).describe('What people see: "Visit Outcome".'),
-  apiName: z
-    .string()
-    .optional()
-    .describe(
-      'The API name, with or without __c; default derived from the label (Visit_Outcome__c).'
-    ),
-  type: z.enum(FIELD_TYPES).describe('The field type.'),
-  description: z.string().max(1000).optional().describe('For admins: what it is for.'),
-  helpText: z.string().max(510).optional().describe('What people see when they hover the field.'),
-  required: z.boolean().optional(),
-  unique: z.boolean().optional().describe('Text, Number, Email only.'),
-  externalId: z
-    .boolean()
-    .optional()
-    .describe('Text, Number, Email only: an id from another system.'),
-  trackHistory: z
-    .boolean()
-    .optional()
-    .describe('Track changes in field history (the object must have history tracking on).'),
-  length: z
-    .number()
-    .int()
-    .optional()
-    .describe('Text 1–255 (default 255); LongTextArea 256–131,072.'),
-  precision: z.number().int().optional().describe('Number, Currency, Percent: all digits, 1–18.'),
-  scale: z.number().int().optional().describe('Digits after the decimal point.'),
-  visibleLines: z.number().int().optional(),
-  defaultChecked: z.boolean().optional().describe('Checkbox: ticked by default.'),
-  values: z
-    .array(
-      z.union([
-        z.string(),
-        z.object({
-          value: z.string(),
-          label: z.string().optional(),
-          default: z.boolean().optional(),
-        }),
-      ])
-    )
-    .max(1000)
-    .optional()
-    .describe('Picklist and MultiselectPicklist values, in order.'),
-  restricted: z
-    .boolean()
-    .optional()
-    .describe('Picklists: only these values may be saved (default true).'),
-  referenceTo: z
-    .string()
-    .optional()
-    .describe('Lookup: the object it points at (Contact, Program__c).'),
-  relationshipName: z
-    .string()
-    .optional()
-    .describe('Lookup: the related list’s API name on the parent; default from the label.'),
-  relationshipLabel: z
-    .string()
-    .optional()
-    .describe('Lookup: the related list’s label on the parent.'),
-  deleteConstraint: z
-    .enum(['SetNull', 'Restrict'])
-    .optional()
-    .describe(
-      'Lookup: what happens when the parent is deleted (a required lookup always Restricts).'
-    ),
-});
-
-function fieldRows(spec: FieldSpec): ComponentView['rows'] {
-  const rows: ComponentView['rows'] = [
-    { label: 'Label', value: spec.label },
-    { label: 'Type', value: spec.type },
-  ];
-  const add = (label: string, value: unknown) => {
-    if (value === undefined || value === '' || value === false) return;
-    rows.push({ label, value: typeof value === 'string' ? value : JSON.stringify(value) });
-  };
-  add('Length', spec.length);
-  add('Precision', spec.precision);
-  add('Scale', spec.scale);
-  add('Required', spec.required);
-  add('Unique', spec.unique);
-  add('External id', spec.externalId);
-  add('Track history', spec.trackHistory);
-  add(
-    'Default',
-    spec.type === 'Checkbox' ? (spec.defaultChecked ? 'ticked' : 'unticked') : undefined
-  );
-  add('Values', spec.values?.map((v) => (v.default ? `${v.value} (default)` : v.value)).join(', '));
-  add('Only these values', spec.values ? spec.restricted : undefined);
-  add('Points at', spec.referenceTo);
-  add(
-    'Related list',
-    spec.relationshipName ? `${spec.relationshipLabel} (${spec.relationshipName})` : undefined
-  );
-  add(
-    'When the parent is deleted',
-    spec.deleteConstraint === 'Restrict'
-      ? 'refuse the delete'
-      : spec.deleteConstraint
-        ? 'clear this field'
-        : undefined
-  );
-  add('Help text', spec.helpText);
-  add('Description', spec.description);
-  return rows;
-}
+/** A permission set to give access to what a proposal creates. */
+export const grantToField = z
+  .array(
+    z.object({
+      permissionSet: z.string().min(1).describe('The permission set’s API name or label.'),
+      edit: z.boolean().optional().describe('Edit as well as read (default read only).'),
+    })
+  )
+  .max(10)
+  .optional();
 
 export function registerAdminProposalTools(
   server: McpServer,
@@ -296,7 +69,8 @@ export function registerAdminProposalTools(
       description:
         'Propose up to 20 new custom fields on one object — text, long text, number, currency, ' +
         'percent, date, date/time, checkbox, email, phone, URL, picklist, multi-select picklist ' +
-        'or lookup — optionally giving named permission sets access to them. This stores a change ' +
+        'or lookup — optionally giving named permission sets access to them and placing them on ' +
+        'named page layouts, in the same change. This stores a change ' +
         'request and has Salesforce validate it (a check-only deploy, which changes nothing); the ' +
         'person reviews and applies it from the link this returns. New fields are invisible to ' +
         'people until a permission set grants them, so name the permission sets.',
@@ -306,16 +80,25 @@ export function registerAdminProposalTools(
       inputSchema: z.object({
         object: objectField,
         fields: z.array(fieldInput).min(1).max(20),
-        grantTo: z
+        grantTo: grantToField.describe(
+          'Permission sets to give access to the new fields once they deploy.'
+        ),
+        addToLayouts: z
           .array(
             z.object({
-              permissionSet: z.string().min(1).describe('The permission set’s API name or label.'),
-              edit: z.boolean().optional().describe('Edit as well as read (default read only).'),
+              layout: z
+                .string()
+                .min(1)
+                .describe('The page layout’s name (salesforce_admin_get_layout lists them).'),
+              section: z
+                .string()
+                .optional()
+                .describe('The section’s label; default the first with fields.'),
             })
           )
-          .max(10)
+          .max(5)
           .optional()
-          .describe('Permission sets to give access to the new fields once they deploy.'),
+          .describe('Page layouts to place the new fields on, in the same change.'),
         reason: reasonField,
         replaces: replacesField,
       }),
@@ -325,6 +108,16 @@ export function registerAdminProposalTools(
       if (typeof access === 'string') return errText(access);
       const refused = await refusesChanges(access);
       if (refused) return errText(refused);
+      // Placing fields on layouts is the layouts capability's; applying
+      // checks it again on the one connection the change runs on.
+      if (
+        (args.addToLayouts ?? []).length > 0 &&
+        !(context.salesforceAdminScopes ?? []).includes('sfa-layouts')
+      ) {
+        return errText(
+          'Placing fields on layouts needs “Propose page layout changes”, which your connection does not allow. Propose the fields without addToLayouts.'
+        );
+      }
       const describe = await resolveObject(context, access, args.object);
       if (typeof describe === 'string') return errText(describe);
 
@@ -365,7 +158,7 @@ export function registerAdminProposalTools(
       if (errors.length > 0)
         return errText(`Nothing was proposed:\n${errors.map((e) => `• ${e}`).join('\n')}`);
 
-      const grants: FieldGrant[] = [];
+      const steps: DataStep[] = [];
       for (const grant of args.grantTo ?? []) {
         const permissionSet = await resolvePermissionSet(context, access, grant.permissionSet);
         if (typeof permissionSet === 'string') return errText(permissionSet);
@@ -373,11 +166,13 @@ export function registerAdminProposalTools(
           // A required field is visible and editable to everyone already;
           // Salesforce refuses field permissions on one.
           if (spec.required) continue;
-          grants.push({
+          steps.push({
+            kind: 'field-permission',
             permissionSetId: permissionSet.id,
             permissionSetName: permissionSet.name,
             object: describe.name,
             field: spec.apiName,
+            read: true,
             edit: grant.edit === true,
           });
         }
@@ -395,20 +190,38 @@ export function registerAdminProposalTools(
         object: describe.name,
         field: spec.apiName,
       }));
+      const layoutLines: string[] = [];
+      for (const placement of args.addToLayouts ?? []) {
+        const part = await planLayoutChange(context, access, describe.name, placement.layout, {
+          add: specs.map((spec) => ({
+            field: spec.apiName,
+            section: placement.section,
+            behavior: spec.required ? 'Required' : 'Edit',
+          })),
+        });
+        if (typeof part === 'string') return errText(`Nothing was proposed: ${part}`);
+        built.files[part.path] = part.content;
+        built.members.push(part.member);
+        components.push(part.component);
+        preconditions.push(part.precondition);
+        layoutLines.push(...part.summary);
+      }
+      built.files['package.xml'] = packageXml(built.members);
       const names = specs.map((spec) => spec.label);
       return proposeAndValidate(context, access, {
         kind: FIELDS_KIND,
         title: `${describe.label}: add ${names.length === 1 ? `the field ${names[0]}` : `${names.length} fields (${names.join(', ')})`}`,
         reason: args.reason,
         replaces: args.replaces,
-        payload: { ...built, components, preconditions, fieldGrants: grants },
+        payload: { ...built, components, preconditions, dataSteps: steps },
         summary: [
           ...specs.map(
             (spec) => `• ${describe.name}.${spec.apiName} — ${spec.type}, “${spec.label}”`
           ),
-          ...(grants.length > 0
+          ...(layoutLines.length > 0 ? ['On layouts:', ...layoutLines] : ['On no page layout.']),
+          ...(steps.length > 0
             ? [
-                `Then: ${[...new Set(grants.map((g) => `${g.permissionSetName} (${g.edit ? 'read and edit' : 'read'})`))].join(', ')} get access to them.`,
+                `Then: ${[...new Set(steps.map((g) => `${g.permissionSetName} (${'edit' in g && g.edit ? 'read and edit' : 'read'})`))].join(', ')} get access to them.`,
               ]
             : [
                 'No permission set is given access: people will not see these fields until one is.',
@@ -525,7 +338,7 @@ export function registerAdminProposalTools(
           ...built,
           components: [component],
           preconditions: [precondition],
-          fieldGrants: [],
+          dataSteps: [],
         },
         summary: [
           `• ${live ? 'Change' : 'New'} rule ${describe.name}.${rule.name}${rule.active ? '' : ' (inactive)'}: blocks a save when ${rule.formula}`,

@@ -910,25 +910,35 @@ differs from the text above:
   list is undefined; the Salesforce module passes an empty list instead, so a grant without
   recorded capabilities registers nothing.
 
-## As built (admin connector, first slice)
+## As built (admin connector, first two slices)
 
-The admin connector's foundation and its first two proposals are built; the as-built description
-is the `salesforce-admin` section of [`connectors.md`](./connectors.md). Where it differs from the
-text above:
+The admin connector's foundation, its reads, and the schema, layout and permission set
+proposals are built; the as-built description is the `salesforce-admin` section of
+[`connectors.md`](./connectors.md). Where it differs from the text above:
 
 - **Production writes are per connector** (`productionChanges` on each admin connector, off by
   default), not one org-wide setting: an organization with two production orgs can allow one.
-- **Field access is granted as data.** A new field's access in named permission sets is inserted
-  as `FieldPermissions` rows after the deploy succeeds, rather than deployed as `PermissionSet`
-  metadata, which replaces a permission set whole. A grant that fails leaves the request
-  `partial`; the deploy itself is all or nothing. Required fields get no grant (Salesforce makes
-  them visible to everyone and refuses one).
-- **Layout placement is not built yet**: new fields land on no page layout, and the review page
-  says nothing about layouts.
+- **Access to an existing permission set is data.** Object, field and tab access is written as
+  `ObjectPermissions`, `FieldPermissions` and `PermissionSetTabSetting` rows after the deploy (or
+  alone, for a change that is only access), each updating the live row or inserting one, rather
+  than deployed as `PermissionSet` metadata, which replaces a set whole. A proposal reads what the
+  set grants and only adds to it; nothing a proposal names is ever taken away. A **new** set
+  deploys as metadata with its access inside it. A step that fails leaves the request `partial`;
+  the deploy itself is all or nothing. Required fields get no field access (Salesforce makes them
+  visible to everyone and refuses it).
+- **Changes that are data only** (access, assignments) have no check-only deploy: the proposal's
+  own checks against the org are the validation, and the review page says so.
+- **Existing components deploy whole.** A changed field or a changed layout is read from the
+  Tooling API's `Metadata`, the change merged in, and the whole component written back, with a
+  hash of what was read as its precondition. Element order follows the Tooling API's JSON, which
+  the Metadata API accepts.
+- **Field changes refuse what loses data**: a type change, a shorter length, fewer digits; and a
+  picklist value is deactivated, never deleted. Picklist values per record type are not offered
+  yet — the proposal says new values still need adding to each record type — nor are changes to
+  global value sets, or related lists on layouts.
+- **Tabs for a new object** are shown to the permission sets given access to it (in their
+  navigation by default); standard objects' tabs are not offered.
 - **The dependency list is on `get_field`**, not on the review page, for now.
-- **The check that compares the package with live metadata** is per kind: a new field must still
-  be absent (`FieldDefinition`), a new rule absent, a changed rule unchanged since it was read
-  (a hash of its Tooling `Metadata`).
 
 ## Open questions
 

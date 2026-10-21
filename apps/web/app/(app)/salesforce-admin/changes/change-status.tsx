@@ -46,17 +46,21 @@ export function ChangeStatePill({ state }: { state: ChangeRequestState }) {
   );
 }
 
-export type ValidationState = 'passed' | 'failed' | 'running' | 'error' | 'none';
+export type ValidationState = 'passed' | 'checked' | 'failed' | 'running' | 'error' | 'none';
 
 export function validationState(validation: Validation | null): ValidationState {
   if (!validation) return 'none';
   if ('error' in validation) return 'error';
   if (!validation.done) return 'running';
-  return validation.success ? 'passed' : 'failed';
+  // A change that is data only has no deploy for Salesforce to dry-run:
+  // the proposal checked every name and id against the org instead.
+  if (validation.success) return validation.deployId ? 'passed' : 'checked';
+  return 'failed';
 }
 
 const VALIDATION_LABELS: Record<ValidationState, string> = {
   passed: 'Validated by Salesforce',
+  checked: 'Checked against the org',
   failed: 'Validation failed',
   running: 'Validating…',
   error: 'Could not validate',
@@ -66,7 +70,7 @@ const VALIDATION_LABELS: Record<ValidationState, string> = {
 export function ValidationPill({ validation }: { validation: Validation | null }) {
   const state = validationState(validation);
   const color =
-    state === 'passed'
+    state === 'passed' || state === 'checked'
       ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
       : state === 'running'
         ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'

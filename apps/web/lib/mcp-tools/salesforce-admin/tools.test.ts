@@ -104,6 +104,13 @@ const SITE_VISIT = {
 let requests: { method: string; path: string; query: string; body: unknown }[];
 let checkOnlyAnswer: Record<string, unknown>;
 let existingRule: Record<string, unknown> | null;
+let layoutMetadata: Record<string, unknown>;
+let fieldMetadata: Record<string, Record<string, unknown>>;
+let objectRows: Record<string, unknown>[];
+let assigned: string[];
+
+const ENTITY = '01I000000000001AAA';
+const LAYOUT_ID = '00h000000000001AAA';
 
 function answer(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -137,8 +144,101 @@ function fakeOrg(method: string, path: string, query: string): Response {
       done: true,
       records: ['Id', 'Name', 'Stage__c', 'Visit_Date__c', 'Hidden_Score__c'].map((n) => ({
         QualifiedApiName: n,
+        IsNillable: n.endsWith('__c'),
+        DataType: 'Text',
       })),
     });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM EntityDefinition/.test(q)) {
+    const known = /'(Site_Visit__c|Contact)'/.exec(q);
+    return answer(200, {
+      totalSize: known ? 1 : 0,
+      done: true,
+      records: known ? [{ QualifiedApiName: known[1], DurableId: ENTITY }] : [],
+    });
+  }
+  if (
+    method === 'GET' &&
+    path === `${V}/tooling/query` &&
+    /FROM Layout WHERE TableEnumOrId/.test(q)
+  ) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [{ Id: LAYOUT_ID, Name: 'Site Visit Layout' }],
+    });
+  }
+  if (method === 'GET' && path === `${V}/tooling/query` && /FROM Layout WHERE Id/.test(q)) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [
+        {
+          Id: LAYOUT_ID,
+          Name: 'Site Visit Layout',
+          FullName: 'Site_Visit__c-Site Visit Layout',
+          Metadata: layoutMetadata,
+        },
+      ],
+    });
+  }
+  if (method === 'GET' && path === `${V}/tooling/query` && /FROM ProfileLayout/.test(q)) {
+    return answer(200, {
+      totalSize: 1,
+      done: true,
+      records: [{ LayoutId: LAYOUT_ID, Profile: { Name: 'Standard User' }, RecordType: null }],
+    });
+  }
+  if (method === 'GET' && path === `${V}/tooling/query` && /FROM CustomField/.test(q)) {
+    const name = /DeveloperName = '([^']+)'/.exec(q)?.[1] ?? '';
+    const metadata = fieldMetadata[`${name}__c`];
+    return answer(200, {
+      totalSize: metadata ? 1 : 0,
+      done: true,
+      records: metadata
+        ? [{ Id: '00N000000000001AAA', FullName: `Site_Visit__c.${name}__c`, Metadata: metadata }]
+        : [],
+    });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM ObjectPermissions/.test(q)) {
+    return answer(200, { totalSize: objectRows.length, done: true, records: objectRows });
+  }
+  if (
+    method === 'GET' &&
+    path === `${V}/query` &&
+    /FROM (FieldPermissions|PermissionSetTabSetting)/.test(q)
+  ) {
+    return answer(200, { totalSize: 0, done: true, records: [] });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM PermissionSetAssignment/.test(q)) {
+    return answer(200, {
+      totalSize: assigned.length,
+      done: true,
+      records: assigned.map((id) => ({ AssigneeId: id })),
+    });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM User /.test(q)) {
+    const people = [
+      {
+        Id: '005000000000002AAA',
+        Name: 'Grace Hopper',
+        Username: 'grace@acme.org',
+        IsActive: true,
+      },
+      { Id: '005000000000003AAA', Name: 'Alan Turing', Username: 'alan@acme.org', IsActive: true },
+    ].filter((p) => q.includes(`'${p.Username}'`) || q.includes(`'${p.Name}'`));
+    return answer(200, { totalSize: people.length, done: true, records: people });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM PermissionSet WHERE Label/.test(q)) {
+    // A new set's name: nothing takes it.
+    return answer(200, { totalSize: 0, done: true, records: [] });
+  }
+  if (
+    method === 'GET' &&
+    path === `${V}/query` &&
+    /FROM PermissionSet WHERE Name = 'Site_Visit/.test(q)
+  ) {
+    return answer(200, { totalSize: 0, done: true, records: [] });
   }
   if (method === 'GET' && path === `${V}/query` && /FROM PermissionSet/.test(q)) {
     return answer(200, {
@@ -225,6 +325,41 @@ beforeEach(() => {
   jest.clearAllMocks();
   requests = [];
   existingRule = null;
+  objectRows = [];
+  assigned = [];
+  layoutMetadata = {
+    layoutSections: [
+      {
+        label: 'Information',
+        style: 'TwoColumnsTopToBottom',
+        layoutColumns: [
+          { layoutItems: [{ behavior: 'Required', field: 'Name' }] },
+          { layoutItems: [{ behavior: 'Edit', field: 'Stage__c' }] },
+        ],
+      },
+      { label: 'System Information', layoutColumns: [{ layoutItems: [] }] },
+    ],
+    showHighlightsPanel: true,
+    urls: null,
+  };
+  fieldMetadata = {
+    Visit_Date__c: { label: 'Visit Date', type: 'Date', required: false, inlineHelpText: null },
+    Stage__c: {
+      label: 'Stage',
+      type: 'Picklist',
+      valueSet: {
+        restricted: true,
+        valueSetName: null,
+        valueSetDefinition: {
+          sorted: false,
+          value: [
+            { fullName: 'Draft', default: true, label: 'Draft' },
+            { fullName: 'Done', default: false, label: 'Done' },
+          ],
+        },
+      },
+    },
+  };
   connector = org('uat', true);
   checkOnlyAnswer = { done: true, success: true, status: 'Succeeded', checkOnly: true };
   app.listSalesforceConnectors.mockImplementation(async () => [connector]);
@@ -290,7 +425,7 @@ describe('salesforce_admin_propose_fields', () => {
       { kind: 'field-absent', object: 'Site_Visit__c', field: 'Outcome__c' },
       { kind: 'field-absent', object: 'Site_Visit__c', field: 'Visit_Notes__c' },
     ]);
-    expect(stored.payload.fieldGrants).toEqual([
+    expect(stored.payload.dataSteps).toEqual([
       expect.objectContaining({
         permissionSetName: 'Program_Staff',
         field: 'Outcome__c',
@@ -414,5 +549,274 @@ describe('salesforce_admin_propose_validation_rule', () => {
     });
     expect(result.isError).toBe(true);
     expect(deploys()).toHaveLength(0);
+  });
+});
+
+const stored = () => store.createChangeRequest.mock.calls[0][1];
+
+describe('salesforce_admin_get_layout', () => {
+  it('lists the layouts with who uses them, and reads one by section', async () => {
+    const list = await call('salesforce_admin_get_layout', { object: 'Site_Visit__c' });
+    expect(text(list)).toContain('• Site Visit Layout\n  Used by: Standard User');
+    const one = await call('salesforce_admin_get_layout', {
+      object: 'Site_Visit__c',
+      layout: 'site visit layout',
+    });
+    expect(text(one)).toContain('1. Information — 2 columns');
+    expect(text(one)).toContain('Column 2: Stage__c');
+    expect(text(one)).toContain('2. System Information — 1 column\n   Column 1: (empty)');
+  });
+});
+
+describe('salesforce_admin_propose_layout_changes', () => {
+  it('deploys the whole live layout with only the change merged in', async () => {
+    const result = await call('salesforce_admin_propose_layout_changes', {
+      object: 'Site_Visit__c',
+      layout: 'Site Visit Layout',
+      add: [{ field: 'visit_date__c', section: 'Information' }],
+      addSections: [{ label: 'Follow-up', columns: 1 }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const layout = files['layouts/Site_Visit__c-Site Visit Layout.layout'];
+    expect(files['package.xml']).toContain('<members>Site_Visit__c-Site Visit Layout</members>');
+    // The org's own spelling, in the shorter column, beside what was there.
+    expect(layout).toMatch(/<field>Name<\/field>[\s\S]*<field>Stage__c<\/field>/);
+    expect(layout).toContain('<field>Visit_Date__c</field>');
+    expect(layout).toContain('<label>Follow-up</label>');
+    expect(layout).toContain('<showHighlightsPanel>true</showHighlightsPanel>');
+    expect(layout).not.toContain('<urls');
+    expect(stored()).toMatchObject({ kind: 'layout' });
+    expect(stored().payload.preconditions).toEqual([
+      expect.objectContaining({ kind: 'layout-unchanged', layout: 'Site Visit Layout' }),
+    ]);
+  });
+
+  it('refuses a field the object does not have, and a field already placed', async () => {
+    const unknown = await call('salesforce_admin_propose_layout_changes', {
+      object: 'Site_Visit__c',
+      layout: 'Site Visit Layout',
+      add: [{ field: 'Nope__c' }],
+    });
+    expect(text(unknown)).toContain('has no field Nope__c');
+    const twice = await call('salesforce_admin_propose_layout_changes', {
+      object: 'Site_Visit__c',
+      layout: 'Site Visit Layout',
+      add: [{ field: 'Stage__c' }],
+    });
+    expect(text(twice)).toContain('Stage__c is already on this layout.');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('is not offered, nor reachable through a fields proposal, without the layouts capability', async () => {
+    const handlers = await tools(['sfa-read', 'sfa-schema']);
+    expect(handlers.has('salesforce_admin_propose_layout_changes')).toBe(false);
+    const result = await handlers.get('salesforce_admin_propose_fields')?.({
+      object: 'Site_Visit__c',
+      fields: [{ label: 'Outcome', type: 'Text' }],
+      addToLayouts: [{ layout: 'Site Visit Layout' }],
+    });
+    expect(result && text(result)).toContain('needs “Propose page layout changes”');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('salesforce_admin_propose_field_changes', () => {
+  it('deploys the whole field with the change, and keeps what it was', async () => {
+    const result = await call('salesforce_admin_propose_field_changes', {
+      object: 'Site_Visit__c',
+      field: 'Visit_Date__c',
+      label: 'Planned Visit Date',
+      helpText: 'When the visit is booked for',
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const object = files['objects/Site_Visit__c.object'];
+    expect(object).toContain('<fullName>Visit_Date__c</fullName>');
+    expect(object).toContain('<label>Planned Visit Date</label>');
+    expect(object).toContain('<type>Date</type>');
+    expect(object).toContain('<inlineHelpText>When the visit is booked for</inlineHelpText>');
+    expect(stored().payload.components[0].rows).toContainEqual({
+      label: 'Label',
+      value: 'Planned Visit Date',
+      from: 'Visit Date',
+    });
+    expect(stored().payload.preconditions[0]).toMatchObject({
+      kind: 'field-unchanged',
+      field: 'Visit_Date__c',
+    });
+    expect(text(result)).toContain('• Label: Visit Date → Planned Visit Date');
+  });
+
+  it('refuses a type change, and standard fields', async () => {
+    const type = await call('salesforce_admin_propose_field_changes', {
+      object: 'Site_Visit__c',
+      field: 'Visit_Date__c',
+      type: 'DateTime',
+    });
+    expect(text(type)).toContain('Changing a field’s type');
+    const standard = await call('salesforce_admin_propose_field_changes', {
+      object: 'Site_Visit__c',
+      field: 'Name',
+      label: 'Visit',
+    });
+    expect(text(standard)).toContain('is a standard field');
+    expect(deploys()).toHaveLength(0);
+  });
+});
+
+describe('salesforce_admin_propose_picklist_changes', () => {
+  it('adds and deactivates values without deleting any', async () => {
+    const result = await call('salesforce_admin_propose_picklist_changes', {
+      object: 'Site_Visit__c',
+      field: 'Stage__c',
+      add: [{ value: 'Cancelled' }],
+      deactivate: ['Draft'],
+      defaultValue: '',
+    });
+    expect(result.isError).toBeUndefined();
+    const object = (await received()).files['objects/Site_Visit__c.object'];
+    expect(object).toMatch(/<fullName>Draft<\/fullName>[\s\S]*<isActive>false<\/isActive>/);
+    expect(object).toContain('<fullName>Done</fullName>');
+    expect(object).toContain('<fullName>Cancelled</fullName>');
+    expect(object).not.toContain('<default>true</default>');
+    expect(stored()).toMatchObject({ kind: 'picklist_changes' });
+    expect(text(result)).toContain('record types');
+  });
+});
+
+describe('salesforce_admin_propose_object', () => {
+  it('builds the object, its tab and fields, then gives the named sets access', async () => {
+    const result = await call('salesforce_admin_propose_object', {
+      label: 'Home Visit',
+      nameField: { type: 'AutoNumber', displayFormat: 'HV-{0000}' },
+      sharingModel: 'Private',
+      fields: [{ label: 'Outcome', type: 'Text' }],
+      grantTo: [{ permissionSet: 'Program Staff', edit: true }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(Object.keys(files).sort()).toEqual([
+      'objects/Home_Visit__c.object',
+      'package.xml',
+      'tabs/Home_Visit__c.tab',
+    ]);
+    expect(files['objects/Home_Visit__c.object']).toContain('<sharingModel>Private</sharingModel>');
+    expect(files['objects/Home_Visit__c.object']).toContain(
+      '<displayFormat>HV-{0000}</displayFormat>'
+    );
+    expect(stored().payload.preconditions).toEqual([
+      { kind: 'object-absent', object: 'Home_Visit__c' },
+    ]);
+    // Records and the tab before the fields: field access needs the object's.
+    expect(stored().payload.dataSteps.map((s: { kind: string }) => s.kind)).toEqual([
+      'object-permission',
+      'tab-visibility',
+      'field-permission',
+    ]);
+    expect(stored().payload.dataSteps[0]).toMatchObject({
+      read: true,
+      create: true,
+      edit: true,
+      delete: true,
+      viewAll: false,
+    });
+  });
+
+  it('refuses an object that exists, even one the person cannot see', async () => {
+    const result = await call('salesforce_admin_propose_object', { label: 'Site Visit' });
+    expect(text(result)).toContain('There is already an object Site_Visit__c.');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('salesforce_admin_propose_permission_set', () => {
+  it('adds access to an existing set as data, never taking any away', async () => {
+    objectRows = [
+      { SobjectType: 'Site_Visit__c', PermissionsRead: true, PermissionsDelete: false },
+    ];
+    const result = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      objects: [{ object: 'Site_Visit__c', edit: true }],
+      fields: [{ object: 'Site_Visit__c', field: 'stage__c' }],
+      tabs: ['Site_Visit__c'],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(deploys()).toHaveLength(0);
+    expect(stored()).toMatchObject({ kind: 'permission_set' });
+    expect(stored().payload.files).toEqual({});
+    expect(stored().payload.dataSteps).toEqual([
+      expect.objectContaining({ kind: 'object-permission', read: true, edit: true, delete: false }),
+      expect.objectContaining({
+        kind: 'tab-visibility',
+        tab: 'Site_Visit__c',
+        visibility: 'DefaultOn',
+      }),
+      expect.objectContaining({ kind: 'field-permission', field: 'Stage__c', edit: false }),
+    ]);
+    expect(text(result)).toContain('Site_Visit__c records: read → read, edit');
+    expect(text(result)).toContain('Nothing to deploy');
+  });
+
+  it('shows a tab alone, without reading access it does not touch', async () => {
+    const result = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      tabs: ['Site_Visit__c'],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(stored().payload.dataSteps).toEqual([
+      expect.objectContaining({ kind: 'tab-visibility', tab: 'Site_Visit__c' }),
+    ]);
+    expect(requests.some((r) => /ObjectPermissions/.test(decodeURIComponent(r.query)))).toBe(false);
+  });
+
+  it('refuses field access on a required field', async () => {
+    const result = await call('salesforce_admin_propose_permission_set', {
+      permissionSet: 'Program Staff',
+      fields: [{ object: 'Site_Visit__c', field: 'Name' }],
+    });
+    expect(text(result)).toContain('takes no field access');
+  });
+
+  it('deploys a new set with its access inside it', async () => {
+    const result = await call('salesforce_admin_propose_permission_set', {
+      newSet: { label: 'Site Visit Editors' },
+      objects: [{ object: 'Site_Visit__c', edit: true }],
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const set = files['permissionsets/Site_Visit_Editors.permissionset'];
+    expect(set).toContain('<label>Site Visit Editors</label>');
+    expect(set).toContain('<object>Site_Visit__c</object>');
+    expect(stored().payload.preconditions).toEqual([
+      { kind: 'permission-set-absent', name: 'Site_Visit_Editors' },
+    ]);
+  });
+});
+
+describe('salesforce_admin_propose_assignments', () => {
+  it('is off unless the connection allows user access', async () => {
+    const defaults = await tools(['sfa-read', 'sfa-schema', 'sfa-layouts', 'sfa-permissions']);
+    expect(defaults.has('salesforce_admin_propose_assignments')).toBe(false);
+    expect(defaults.has('salesforce_admin_propose_permission_set')).toBe(true);
+  });
+
+  it('proposes only what would change, and names the rest', async () => {
+    assigned = ['005000000000003AAA'];
+    const result = await call('salesforce_admin_propose_assignments', {
+      assign: [{ permissionSet: 'Program Staff', users: ['grace@acme.org', 'Alan Turing'] }],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(stored()).toMatchObject({ kind: 'assignments' });
+    expect(stored().payload.dataSteps).toEqual([
+      {
+        kind: 'assign',
+        permissionSetId: '0PS000000000001AAA',
+        permissionSetName: 'Program_Staff',
+        userId: '005000000000002AAA',
+        userName: 'Grace Hopper (grace@acme.org)',
+      },
+    ]);
+    expect(text(result)).toContain('Alan Turing (alan@acme.org) already has Program_Staff.');
   });
 });
