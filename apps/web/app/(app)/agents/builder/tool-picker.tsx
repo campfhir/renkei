@@ -127,7 +127,9 @@ export function ToolPicker({
           groups.map((group) => (
             <div key={group.connector}>
               <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                {group.connector}
+                {group.connector.startsWith('mcp-')
+                  ? `${group.connector.slice(4)} (MCP server)`
+                  : group.connector}
                 {group.picked > 0 ? ` · ${group.picked} selected` : ''}
               </p>
               <ul className="mt-0.5 space-y-0.5">

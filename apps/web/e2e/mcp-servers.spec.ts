@@ -285,6 +285,20 @@ test('an admin lists a server, a person connects it through the server’s own s
     );
     expect(grants.rowCount).toBe(1);
 
+    // The agent builder offers the server's tools like any connector's: an
+    // agent names the tools it may use, and the save validates them against
+    // the owner's tool projection.
+    await page.goto('/agents/new');
+    const picker = page.getByRole('region', { name: 'Tools' });
+    await picker.getByRole('textbox', { name: 'Search tools' }).fill('lookup');
+    await expect(picker.getByText(`${SLUG} (MCP server)`)).toBeVisible(COLD);
+    const lookup = picker.getByRole('checkbox', { name: 'lookup_policy' });
+    await expect(lookup).toBeVisible(COLD);
+    await expect(picker.getByRole('checkbox', { name: 'file_claim' })).toHaveCount(0);
+    await lookup.check();
+    await expect(picker.getByTestId('tool-count')).toContainText('1 of at most');
+    await shot(page, testInfo, 'mcp-04c-agent-builder');
+
     // ── 3. Chat: find_tools reaches the server by what the admin wrote ───
     await seedChat(client, fixture);
     await page.goto(`/chat/${fixture.chatId}`);
