@@ -18,6 +18,7 @@ export default {
     '^@renkei/connector-mirth$': '<rootDir>/../../packages/connector-mirth/src/index.ts',
     '^@renkei/connector-admanager$': '<rootDir>/../../packages/connector-admanager/src/index.ts',
     '^@renkei/connector-fileshares$': '<rootDir>/../../packages/connector-fileshares/src/index.ts',
+    '^@renkei/connector-salesforce$': '<rootDir>/../../packages/connector-salesforce/src/index.ts',
   },
   // kysely's published build is ESM-only; ts-jest (allowJs) transforms it to
   // CJS for the test run — the worker-agents arrangement.

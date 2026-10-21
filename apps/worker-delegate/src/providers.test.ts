@@ -4,8 +4,15 @@
  * widen that are refused outright in production.
  */
 
-import { GITHUB } from '@renkei/provider-grants';
-import { hostAllowed, providerSpec, standInViolations, STAND_IN_ENV } from './providers';
+import type { ConnectorConfig } from '@renkei/connector-config';
+import { GITHUB, SALESFORCE } from '@renkei/provider-grants';
+import {
+  hostAllowed,
+  providerSpec,
+  standInViolations,
+  tokenEndpointFor,
+  STAND_IN_ENV,
+} from './providers';
 
 function withEnv<T>(patch: Record<string, string | undefined>, run: () => T): T {
   const before: Record<string, string | undefined> = {};
@@ -46,6 +53,40 @@ describe('hostAllowed', () => {
     withEnv({ NODE_ENV: 'production', GITHUB_API_BASE_URL: 'http://127.0.0.1:8092/github' }, () => {
       expect(hostAllowed(github, standIn, GITHUB)).toBe(false);
     });
+  });
+});
+
+describe('Salesforce: hosts and token endpoint from the app registration', () => {
+  const spec = providerSpec(SALESFORCE);
+  if (!spec?.configHosts) throw new Error('salesforce spec missing');
+  const config = (myDomain: string): ConnectorConfig => ({
+    connector: SALESFORCE,
+    enabled: true,
+    settings: { clientId: 'c', myDomain },
+    secrets: { clientSecret: 's' },
+  });
+
+  it("allows exactly the org's My Domain host, never a suffix", () => {
+    const hosts = spec.configHosts?.(config('acme.my.salesforce.com')) ?? [];
+    expect(hosts).toEqual(['acme.my.salesforce.com']);
+    const allowed = (url: string): boolean => hostAllowed(spec, new URL(url), SALESFORCE, hosts);
+    expect(allowed('https://acme.my.salesforce.com/services/data/v68.0/sobjects')).toBe(true);
+    expect(allowed('https://other.my.salesforce.com/services/data')).toBe(false);
+    expect(allowed('https://x.acme.my.salesforce.com/')).toBe(false);
+    expect(allowed('http://acme.my.salesforce.com/')).toBe(false);
+    expect(allowed('https://acme.my.salesforce.com:8443/')).toBe(false);
+  });
+
+  it('allows nothing when no My Domain is set, or it is not one', () => {
+    expect(spec.configHosts?.(null)).toEqual([]);
+    expect(spec.configHosts?.(config('login.salesforce.com'))).toEqual([]);
+  });
+
+  it("trades codes at the org's own token endpoint", () => {
+    expect(tokenEndpointFor(spec, config('https://acme.my.salesforce.com/'))).toBe(
+      'https://acme.my.salesforce.com/services/oauth2/token'
+    );
+    expect(tokenEndpointFor(spec, null)).toBeNull();
   });
 });
 

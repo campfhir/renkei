@@ -43,7 +43,10 @@ import {
   ONBASE,
   ONBASE_ADMIN,
   GITHUB,
+  SALESFORCE,
 } from '@renkei/provider-grants';
+import { parseIdentityUrl, salesforceAccountId, sameOrg, to18 } from '@renkei/connector-salesforce';
+import { getSalesforceApp } from '@/lib/salesforce-app';
 import {
   delegateGrants,
   grantFetch,
@@ -380,6 +383,15 @@ async function handleCallback(
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes
+      );
+    }
+    if (pendingSignIn.provider === 'salesforce') {
+      return handleSalesforceCallback(
+        request,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes,
+        pendingSignIn.code_verifier
       );
     }
     if (pendingSignIn.provider === 'zoom') {
@@ -1493,6 +1505,120 @@ async function handleEntraDeveloperCallback(
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: ENTRA_DEVELOPER,
+  });
+  invalidateToolCatalogCache(subject);
+  return NextResponse.redirect(new URL(`/connectors`, originResult.val));
+}
+
+/* ------------------------------ Salesforce ------------------------------ */
+
+/**
+ * Complete the OAuth flow for the Salesforce CRM app: the code is traded at
+ * the org's own token endpoint with the PKCE verifier the authorize step
+ * stored. The token answer names the org it was minted for (instance_url)
+ * and who granted it (the identity URL, `…/id/<orgId>/<userId>`); a token
+ * from any org but the configured one is refused here, before anything is
+ * stored — the delegate would refuse to send it anywhere else anyway, and a
+ * grant nothing can use is not a connection. The account id is
+ * `<orgId>/<userId>`: a sandbox keeps production's user ids, so a user id
+ * alone would collide across orgs. The display name comes from userinfo.
+ */
+async function handleSalesforceCallback(
+  request: NextRequest,
+  subject: string | null,
+  code: string,
+  requestedScopes: string | null,
+  codeVerifier: string | null
+): Promise<NextResponse> {
+  if (!subject) {
+    logger.error('Salesforce pending flow has no subject; cannot assign grant owner', {
+      component: 'auth/oauth',
+    });
+    return NextResponse.json(
+      { error: 'Sign in again before connecting Salesforce' },
+      { status: 400 }
+    );
+  }
+  if (!codeVerifier) {
+    logger.error('Salesforce pending flow carries no code_verifier', { component: 'auth/oauth' });
+    return NextResponse.json({ error: 'Start the Salesforce connection again' }, { status: 400 });
+  }
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) {
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
+  const app = await getSalesforceApp(originResult.val);
+  if (!app) {
+    return NextResponse.json(
+      { error: 'Salesforce integration not configured for this organization' },
+      { status: 503 }
+    );
+  }
+
+  const exchanged = await delegateGrants().exchange({
+    provider: SALESFORCE,
+    form: {
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: app.redirectUri,
+      code_verifier: codeVerifier,
+    },
+  });
+  if (!exchanged.ok) return exchangeFailed('Salesforce', exchanged.err);
+  logExchanged('Salesforce', exchanged.val);
+  const { handle, instanceUrl, identityUrl } = exchanged.val;
+
+  if (!instanceUrl || !sameOrg(instanceUrl, app.myDomain)) {
+    logger.warn('Salesforce token is for a different org than the one configured; refusing', {
+      component: 'auth/oauth',
+      instanceUrl,
+      myDomain: app.myDomain,
+    });
+    return NextResponse.json(
+      {
+        error: 'That Salesforce login belongs to a different org',
+        error_description: `Sign in to ${new URL(app.myDomain).hostname} and connect again.`,
+      },
+      { status: 403 }
+    );
+  }
+  const identity = identityUrl ? parseIdentityUrl(identityUrl) : null;
+  if (!identity) {
+    logger.error('Salesforce token answer has no identity URL; cannot identify grantor', {
+      component: 'auth/oauth',
+    });
+    return NextResponse.json({ error: 'Could not identify Salesforce user' }, { status: 502 });
+  }
+  const orgId = to18(identity.orgId);
+  const userId = to18(identity.userId);
+
+  // Who granted this, in words: name and username for the card.
+  const pending = grantFetch({ provider: SALESFORCE, pending: handle });
+  const infoResponse = await pendingGet(pending, `${app.myDomain}/services/oauth2/userinfo`);
+  const info = infoResponse.ok ? await jsonRecord(infoResponse) : null;
+  const username =
+    typeof info?.preferred_username === 'string' ? info.preferred_username : userId;
+  const displayName = typeof info?.name === 'string' && info.name ? info.name : username;
+
+  const stored = await delegateGrants().commit({
+    provider: SALESFORCE,
+    handle,
+    subject,
+    accountId: salesforceAccountId(orgId, userId),
+    displayName,
+    clientId: app.clientId,
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    metadata: { orgId, userId, instanceUrl: app.myDomain, username },
+  });
+  if (!stored.ok) return storeFailed('Salesforce', stored.err);
+
+  logger.info('Salesforce grant stored', { component: 'auth/oauth', subject });
+  recordAuditEvent({
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: SALESFORCE,
   });
   invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));

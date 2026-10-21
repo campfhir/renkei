@@ -16,6 +16,7 @@
     "@renkei/connector-config": "workspace:*",
     "@renkei/connector-fileshares": "workspace:*",
     "@renkei/connector-mirth": "workspace:*",
+    "@renkei/connector-salesforce": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/provider-grants": "workspace:*",

@@ -30,6 +30,7 @@ export type ConnectorCategory =
   | 'documents'
   | 'files'
   | 'integration'
+  | 'crm'
   | 'search'
   | 'renkei';
 
@@ -41,6 +42,7 @@ export const CONNECTOR_CATEGORY_LABELS: Record<ConnectorCategory, string> = {
   documents: 'Document management',
   files: 'Files',
   integration: 'Integration engines',
+  crm: 'CRM',
   search: 'Search and knowledge',
   renkei: 'Renkei',
 };
@@ -268,6 +270,41 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
       'developer',
     ],
     grantProviders: ['entra-developer'],
+    userConnectable: true,
+    togglable: true,
+  },
+  {
+    // The org's own Salesforce org, on an External Client App it creates
+    // there; each person connects with their own Salesforce login, and
+    // Salesforce's own permissions decide every call.
+    capabilityKey: 'salesforce',
+    configKey: 'salesforce',
+    label: 'Salesforce',
+    summary:
+      'Find, read, create and update records — standard and custom objects, their related ' +
+      'records and history — log activity, and run reports and dashboards, with your own ' +
+      'Salesforce access.',
+    toolPrefix: 'salesforce_*',
+    category: 'crm',
+    keywords: [
+      'crm',
+      'salesforce',
+      'sfdc',
+      'records',
+      'accounts',
+      'contacts',
+      'opportunities',
+      'leads',
+      'cases',
+      'donors',
+      'nonprofit',
+      'npsp',
+      'custom objects',
+      'reports',
+      'dashboards',
+      'soql',
+    ],
+    grantProviders: ['salesforce'],
     userConnectable: true,
     togglable: true,
   },

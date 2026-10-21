@@ -61,6 +61,10 @@ export const ALWAYS_APPROVAL_TOOLS: readonly string[] = [
   'sharepoint_add_user_to_document',
   // Work items destroyed.
   'jira_delete_issue',
+  // CRM records destroyed, changed in bulk, or handed to someone else.
+  'salesforce_delete_records_preview',
+  'salesforce_update_records_preview',
+  'salesforce_change_owner_preview',
   // An integration engine's traffic and configuration.
   'mirth_send_message',
   'mirth_control_channels',

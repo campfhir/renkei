@@ -19,6 +19,7 @@ export const GRANT_PROVIDER_LABELS: Record<string, string> = {
   zoom: 'Zoom',
   onbase: 'OnBase',
   'onbase-admin': 'OnBase Administration',
+  salesforce: 'Salesforce',
 };
 
 export function grantProviderLabel(provider: string): string {

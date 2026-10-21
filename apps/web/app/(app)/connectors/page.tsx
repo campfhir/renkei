@@ -10,6 +10,7 @@ import MicrosoftConnector from './microsoft-connector';
 import EntraDeveloperConnector from './entra-developer-connector';
 import ZoomConnector from './zoom-connector';
 import GitHubConnector from './github-connector';
+import SalesforceConnector from './salesforce-connector';
 import HylandConnector from './hyland-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
@@ -31,6 +32,7 @@ import {
   ATLASSIAN_ADMIN,
   MICROSOFT,
   ENTRA_DEVELOPER,
+  SALESFORCE,
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
@@ -41,6 +43,9 @@ import { MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
 import { ENTRA_DEVELOPER_CONNECTOR } from '@/lib/entra-developer-app';
 import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
 import { GITHUB_CONNECTOR } from '@/lib/github-app';
+import { SALESFORCE_CONNECTOR } from '@/lib/salesforce-app';
+import { usableSalesforceCeiling } from '@/lib/salesforce-scopes';
+import { parseMyDomain } from '@renkei/connector-salesforce';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
 import { DEFAULT_ENTRA_DEVELOPER_SCOPES } from '@/lib/entra-developer-scopes';
@@ -228,6 +233,17 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   );
   const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
   const githubCeiling = ceilingFrom(settingsOf(GITHUB_CONNECTOR), DEFAULT_GITHUB_SCOPES);
+  const salesforceCeiling = usableSalesforceCeiling(storedScopes(settingsOf(SALESFORCE_CONNECTOR)));
+  // The org's My Domain, so the card names where a person will sign in.
+  const salesforceSettings = settingsOf(SALESFORCE_CONNECTOR);
+  const salesforceDomain = parseMyDomain(
+    typeof salesforceSettings === 'object' &&
+      salesforceSettings !== null &&
+      'myDomain' in salesforceSettings &&
+      typeof salesforceSettings.myDomain === 'string'
+      ? salesforceSettings.myDomain
+      : ''
+  );
 
   // The caller's own grants, one query, mapped by provider — connection
   // state, and the scopes they previously authorized (seeding the picker on
@@ -246,6 +262,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   const entraDeveloperGrant = grants.get(ENTRA_DEVELOPER);
   const zoomGrant = grants.get(ZOOM);
   const githubGrant = grants.get(GITHUB);
+  const salesforceGrant = grants.get(SALESFORCE);
   const onbaseGrant = grants.get(ONBASE);
   const onbaseAdminGrant = grants.get(ONBASE_ADMIN);
   const webexGrant = grants.get(WEBEX_USER);
@@ -276,6 +293,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     shown.has('entra-developer') ||
     shown.has('zoom') ||
     shown.has('github') ||
+    shown.has('salesforce') ||
     hylandShown ||
     shown.has('fileshares') ||
     shown.has('mirth') ||
@@ -482,6 +500,34 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
             priorScopes={githubGrant?.requestedScopes ?? null}
           />
           <RemovableProducts products={removable(catalog, ['github'])} />
+        </>
+      ),
+    });
+  }
+
+  if (shown.has('salesforce')) {
+    const metadata = salesforceGrant?.metadata;
+    const username =
+      typeof metadata === 'object' &&
+      metadata !== null &&
+      'username' in metadata &&
+      typeof metadata.username === 'string'
+        ? metadata.username
+        : null;
+    cards.push({
+      key: 'salesforce',
+      needsAttention: salesforceGrant === undefined,
+      node: (
+        <>
+          <SalesforceConnector
+            connected={salesforceGrant !== undefined}
+            displayName={salesforceGrant?.displayName ?? null}
+            username={username}
+            orgHost={salesforceDomain.ok ? salesforceDomain.host : null}
+            ceiling={salesforceCeiling}
+            priorScopes={salesforceGrant?.requestedScopes ?? null}
+          />
+          <RemovableProducts products={removable(catalog, ['salesforce'])} />
         </>
       ),
     });

@@ -42,6 +42,14 @@ export {
 } from './onbase';
 export { MICROSOFT, ENTRA_DEVELOPER, MicrosoftAdapter } from './microsoft';
 export {
+  SALESFORCE,
+  SALESFORCE_SESSION_SECONDS,
+  SalesforceAdapter,
+  readSalesforceMetadata,
+  salesforceTokenEndpoint,
+  salesforceRevokeEndpoint,
+} from './salesforce';
+export {
   outlookIndexingOf,
   OUTLOOK_INDEXING_CATEGORIES,
   type OutlookIndexingPrefs,

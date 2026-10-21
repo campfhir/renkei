@@ -279,6 +279,7 @@ export async function listAvailableTools(
       ? availability.entraDeveloperScopes
       : undefined,
     bitbucketScopes: availability.bitbucketAvailable ? availability.bitbucketScopes : undefined,
+    salesforceScopes: availability.salesforceAvailable ? availability.salesforceScopes : undefined,
     // Scopes real, credentials deliberately empty — same reasoning as the
     // token fields above: the JSM scope gates read these at registration,
     // and nothing here may be able to reach Atlassian.

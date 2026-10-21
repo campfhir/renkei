@@ -862,6 +862,30 @@ same change.
 Each stage adds tools and no new OAuth scopes — Salesforce's scopes are settled in stage 1 — so
 nobody reconnects between stages.
 
+## As built (first part)
+
+Stage 1 and the CRM connector's records and reports (stages 2 and 3) are built; the as-built
+description is the `salesforce` section of [`connectors.md`](./connectors.md). Where the build
+differs from the text above:
+
+- **Session length is not a setting.** The adapter records an hour per access token
+  (`SALESFORCE_SESSION_SECONDS`), shorter than Salesforce's two-hour default, and the delegate's
+  refresh-and-retry on a 401 covers an org whose timeout is shorter still. No form field.
+- **The API budget is a fixed 80%** for read tools, not an org setting yet. `check_access`
+  answers over budget, since it is how a person sees the usage.
+- **Host pinning reads the app registration, not the grant.** The CRM connector has one org, so
+  the delegate pins its token to the configured My Domain (`configHosts`), which also covers the
+  callback's identity call before any grant exists. The admin connector's sandboxes will need
+  the per-grant form described under "Host pinning is per grant".
+- **`salesforce_create_record_tree` is a preview + confirm pair**, as the confirm table says for
+  multi-record writes; the tools table above names it as one tool.
+- **Files are not built yet** (`salesforce_download_file` / `salesforce_attach_file`), nor the
+  object and field exclusion list, the data-classification switch, or the long-text rule beyond
+  `get_record`'s default view. They come before the connector is turned on for sensitive data.
+- **The scope gate fails closed.** `withScopeGate` passes every tool through when the capability
+  list is undefined; the Salesforce module passes an empty list instead, so a grant without
+  recorded capabilities registers nothing.
+
 ## Open questions
 
 1. **Single-record writes direct, or preview + confirm?** This doc says direct (receipt in the

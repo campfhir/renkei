@@ -28,6 +28,9 @@ import {
   ONBASE_ADMIN,
   OnBaseAdapter,
   OnBaseAdminAdapter,
+  SALESFORCE,
+  SalesforceAdapter,
+  salesforceTokenEndpoint,
   WEBEX_USER,
   WebexUserAdapter,
   ZOOM,
@@ -35,6 +38,7 @@ import {
   type ProviderAdapter,
   type ProviderGrant,
 } from '@renkei/provider-grants';
+import { parseMyDomain } from '@renkei/connector-salesforce';
 import { onbaseWorkerRefresh } from './onbase-worker';
 
 export interface ProviderSpec {
@@ -44,6 +48,14 @@ export interface ProviderSpec {
   tokenEndpoint: string | null;
   /** Hostnames a request may carry this provider's token to. A leading dot allows subdomains. */
   hosts: readonly string[];
+  /**
+   * More hosts, read from the app registration: a provider whose API lives
+   * on the customer's own host (Salesforce's My Domain). Exact hosts only —
+   * never a suffix, which for Salesforce would be every org on earth.
+   */
+  configHosts?(config: ConnectorConfig | null): string[];
+  /** The token endpoint, when it is the customer's own host too. */
+  tokenEndpointFrom?(config: ConnectorConfig | null): string | null;
   /** How the token endpoint wants the client authenticated at exchange time. */
   clientAuth: 'body' | 'basic';
   adapter(config: ConnectorConfig | null, grant: ProviderGrant | null): ProviderAdapter | null;
@@ -87,6 +99,35 @@ function microsoft(provider: string): ProviderSpec {
   };
 }
 
+/** The org's My Domain origin from its app registration, or null when unset or not a My Domain. */
+export function salesforceOrigin(config: ConnectorConfig | null): string | null {
+  const parsed = parseMyDomain(settingOf(config, 'myDomain'));
+  return parsed.ok ? parsed.origin : null;
+}
+
+function salesforce(provider: string): ProviderSpec {
+  return {
+    connector: provider,
+    tokenEndpoint: null, // the org's own; resolved by `tokenEndpointFor`
+    hosts: [],
+    configHosts: (config) => {
+      const origin = salesforceOrigin(config);
+      return origin ? [new URL(origin).hostname] : [];
+    },
+    tokenEndpointFrom: (config) => {
+      const origin = salesforceOrigin(config);
+      return origin ? salesforceTokenEndpoint(origin) : null;
+    },
+    clientAuth: 'body',
+    adapter: (config) => {
+      const origin = salesforceOrigin(config);
+      return secretOf(config) && origin
+        ? new SalesforceAdapter(secretOf(config), salesforceTokenEndpoint(origin), provider)
+        : null;
+    },
+  };
+}
+
 export const PROVIDERS: Readonly<Record<string, ProviderSpec>> = {
   [ATLASSIAN]: atlassian(ATLASSIAN),
   [ATLASSIAN_JSM]: atlassian(ATLASSIAN_JSM),
@@ -122,6 +163,7 @@ export const PROVIDERS: Readonly<Record<string, ProviderSpec>> = {
     clientAuth: 'basic',
     adapter: (config) => (secretOf(config) ? new ZoomAdapter(secretOf(config)) : null),
   },
+  [SALESFORCE]: salesforce(SALESFORCE),
   [ONBASE]: {
     connector: ONBASE,
     tokenEndpoint: null,
@@ -183,11 +225,21 @@ function standInOrigin(provider: string): string | null {
   }
 }
 
-/** Whether `url` may carry this provider's token: exact host, or a subdomain of a dotted entry. */
-export function hostAllowed(spec: ProviderSpec, url: URL, provider?: string): boolean {
+/**
+ * Whether `url` may carry this provider's token: exact host, or a subdomain
+ * of a dotted entry. `extraHosts` are the spec's `configHosts` for the
+ * current app registration — exact matches only.
+ */
+export function hostAllowed(
+  spec: ProviderSpec,
+  url: URL,
+  provider?: string,
+  extraHosts: readonly string[] = []
+): boolean {
   if (provider && standInOrigin(provider) === url.origin) return true;
   if (url.protocol !== 'https:') return false;
   const host = url.hostname.toLowerCase();
+  if (url.port === '' && extraHosts.some((allowed) => host === allowed.toLowerCase())) return true;
   return spec.hosts.some((allowed) =>
     allowed.startsWith('.') ? host.endsWith(allowed) || host === allowed.slice(1) : host === allowed
   );
@@ -202,13 +254,14 @@ export async function providerConfig(
   return result.ok ? result.val : null;
 }
 
-/** Microsoft's token endpoint is per directory; everyone else's is fixed. */
+/** Microsoft's token endpoint is per directory, Salesforce's per org; everyone else's is fixed. */
 export function tokenEndpointFor(
   spec: ProviderSpec,
   config: ConnectorConfig | null,
   directoryTenantId?: string
 ): string | null {
   if (spec.tokenEndpoint) return spec.tokenEndpoint;
+  if (spec.tokenEndpointFrom) return spec.tokenEndpointFrom(config);
   if (spec.hosts.some((host) => host === 'graph.microsoft.com')) {
     const tid = directoryTenantId || settingOf(config, 'directoryTenantId');
     return tid

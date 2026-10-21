@@ -90,6 +90,10 @@ export interface ExchangeOutcome {
   idToken: string | null;
   grantedScopes: string[] | null;
   hasRefreshToken: boolean;
+  /** Salesforce: the org's API host (`instance_url`); null elsewhere. */
+  instanceUrl: string | null;
+  /** Salesforce: the identity URL naming the org and user (`id`); null elsewhere. */
+  identityUrl: string | null;
 }
 
 /** Where a workspace's git should go instead of the host, for one operation. */
@@ -243,6 +247,8 @@ export class DelegateGrants {
       idToken: typeof value.idToken === 'string' ? value.idToken : null,
       grantedScopes: Array.isArray(value.grantedScopes) ? stringsOf(value.grantedScopes) : null,
       hasRefreshToken: value.hasRefreshToken === true,
+      instanceUrl: typeof value.instanceUrl === 'string' ? value.instanceUrl : null,
+      identityUrl: typeof value.identityUrl === 'string' ? value.identityUrl : null,
     });
   }
 

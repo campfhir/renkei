@@ -41,6 +41,7 @@ const nextConfig: NextConfig = {
     '@renkei/knowledge',
     '@renkei/connector-fileshares',
     '@renkei/connector-onbase',
+    '@renkei/connector-salesforce',
     '@renkei/mcp-client',
     '@renkei/blob-store',
     '@renkei/voice',

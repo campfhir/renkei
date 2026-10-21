@@ -29,6 +29,7 @@ import {
   AtlassianAdminForm,
 } from '@/app/(app)/admin/connectors/forms/atlassian-forms';
 import { GitHubForm } from '@/app/(app)/admin/connectors/forms/github-form';
+import { SalesforceForm } from '@/app/(app)/admin/connectors/forms/salesforce-form';
 import { WebexUserForm } from '@/app/(app)/admin/connectors/forms/webex-user-form';
 import { WebexBotForm } from '@/app/(app)/admin/connectors/forms/webex-bot-form';
 import { MicrosoftForm } from '@/app/(app)/admin/connectors/forms/microsoft-form';
@@ -67,6 +68,7 @@ const FORMS: Record<string, ComponentType<AdminFormProps>> = {
   'atlassian-bitbucket': AtlassianBitbucketForm,
   'atlassian-admin': AtlassianAdminForm,
   github: GitHubForm,
+  salesforce: SalesforceForm,
   'webex-user': WebexUserForm,
   'webex-bot': WebexBotForm,
   microsoft: MicrosoftForm,

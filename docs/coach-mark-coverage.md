@@ -83,6 +83,7 @@ with the next one.
 | SharePoint              | Microsoft; library watches once connected        | `connect-microsoft`       | Partial |
 | OneDrive                | Microsoft                                        | `connect-microsoft`       | Covered |
 | Entra Developer         | own Entra app, directory-wide scopes; developers | `connect-entra-developer` | Covered |
+| Salesforce              | org's own External Client App, PKCE; My Domain   | `connect-salesforce`      | Covered |
 | WebEx                   | Integration OAuth; "Watch all my spaces"         | `connect-webex`           | Covered |
 | Zoom                    | OAuth; ungranted-scope notice                    | `connect-zoom`            | Covered |
 | OnBase                  | tenant IdP, PKCE; no scope picker                | `connect-onbase`          | Covered |

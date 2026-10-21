@@ -66,6 +66,9 @@ const BRAND: Record<string, string> = {
   // GitHub's near-black; we ship no vendor mark (GLYPH_ONLY), so the
   // initial-letter glyph carries the colour.
   github: '#181717',
+  // Salesforce's cloud blue; we ship no vendor mark (GLYPH_ONLY), so the
+  // initial-letter glyph carries the colour.
+  salesforce: '#00A1E0',
 };
 
 /** Fallback: the connector's initial on a neutral tile. */

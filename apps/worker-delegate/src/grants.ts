@@ -29,7 +29,9 @@ import {
   setGrant,
   ONBASE,
   ONBASE_ADMIN,
+  SALESFORCE,
   ZOOM,
+  salesforceRevokeEndpoint,
   silentLogger,
   type GrantLogger,
   type ProviderGrant,
@@ -43,6 +45,7 @@ import {
   hostAllowed,
   providerConfig,
   providerSpec,
+  salesforceOrigin,
   tokenEndpointFor,
   type ProviderSpec,
 } from './providers';
@@ -295,7 +298,13 @@ export class Grants {
     } catch {
       return fail('bad_request', 'x-delegate-url is not a URL');
     }
-    if (!hostAllowed(spec, url, provider))
+    // A provider on the customer's own host (Salesforce) names it in its app
+    // registration; read fresh (behind the config cache) so a changed My
+    // Domain takes effect without a restart.
+    const extraHosts = spec.configHosts
+      ? spec.configHosts(await providerConfig(spec, this.encryptionKey))
+      : [];
+    if (!hostAllowed(spec, url, provider, extraHosts))
       return fail('host_not_allowed', `${url.hostname} is not ${provider}`);
 
     const body = await readBody(request, MAX_REQUEST_BYTES);
@@ -363,7 +372,7 @@ export class Grants {
         }
         // Not the provider's host: the caller gets the redirect and decides;
         // the token goes nowhere near it.
-        if (!hostAllowed(spec, next, provider)) break;
+        if (!hostAllowed(spec, next, provider, extraHosts)) break;
         if (
           upstream.status === 303 ||
           ((upstream.status === 301 || upstream.status === 302) &&
@@ -414,8 +423,7 @@ export class Grants {
       sendJson(response, statusForGrantError(type), { error: { type, message } });
     const provider = str(body.provider);
     const spec = providerSpec(provider);
-    if (!spec || !isRecord(body.form))
-      return fail(spec ? 'bad_request' : 'unknown_provider');
+    if (!spec || !isRecord(body.form)) return fail(spec ? 'bad_request' : 'unknown_provider');
     const form = new URLSearchParams();
     for (const [key, value] of Object.entries(body.form)) {
       if (typeof value === 'string') form.set(key, value);
@@ -506,6 +514,11 @@ export class Grants {
       idToken: typeof tokens.id_token === 'string' ? tokens.id_token : null,
       grantedScopes: scopesFromAccessToken(refreshed.accessToken),
       hasRefreshToken: refreshed.refreshToken !== '',
+      // Salesforce names the org's API host and the user's identity URL in
+      // the token answer; neither is secret, and the callback needs both to
+      // check the org and say who connected.
+      instanceUrl: typeof tokens.instance_url === 'string' ? tokens.instance_url : null,
+      identityUrl: typeof tokens.id === 'string' ? tokens.id : null,
     });
   }
 
@@ -568,8 +581,7 @@ export class Grants {
   async revoke(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
     const provider = str(body.provider);
     const accountId = str(body.accountId);
-    if (!provider || !accountId)
-      return sendJson(response, 400, { error: { type: 'bad_request' } });
+    if (!provider || !accountId) return sendJson(response, 400, { error: { type: 'bad_request' } });
     const spec = providerSpec(provider);
     if (!spec) return sendJson(response, 404, { error: { type: 'unknown_provider' } });
 
@@ -592,6 +604,20 @@ export class Grants {
                 'content-type': 'application/x-www-form-urlencoded',
               },
               body: new URLSearchParams({ token: grant.accessToken }).toString(),
+              signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+            });
+            revokedAtProvider = answer.ok;
+          }
+        } else if (provider === SALESFORCE) {
+          const origin = salesforceOrigin(await providerConfig(spec, this.encryptionKey));
+          if (origin) {
+            // Revoking the refresh token ends every access token minted from it.
+            const answer = await this.fetchImpl(salesforceRevokeEndpoint(origin), {
+              method: 'POST',
+              headers: { 'content-type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                token: grant.refreshToken || grant.accessToken,
+              }).toString(),
               signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
             });
             revokedAtProvider = answer.ok;
@@ -621,8 +647,7 @@ export class Grants {
   async deleteOp(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
     const provider = str(body.provider);
     const accountId = str(body.accountId);
-    if (!provider || !accountId)
-      return sendJson(response, 400, { error: { type: 'bad_request' } });
+    if (!provider || !accountId) return sendJson(response, 400, { error: { type: 'bad_request' } });
     const deleted = await deleteGrant(provider, accountId);
     if (!deleted.ok) return sendJson(response, 500, { error: { type: 'internal' } });
     sendJson(response, 200, { ok: true });
@@ -630,11 +655,7 @@ export class Grants {
 
   // ── pending exchanges ──────────────────────────────────────────────────
 
-  private takePending(
-    handle: string,
-    provider: string,
-    consume: boolean
-  ): Pending | null {
+  private takePending(handle: string, provider: string, consume: boolean): Pending | null {
     this.sweepPending();
     const pending = this.pending.get(handle);
     if (!pending || pending.provider !== provider) return null;

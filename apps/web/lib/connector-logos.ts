@@ -89,6 +89,9 @@ export const GLYPH_ONLY = new Set([
   // vetted for this connector yet — the built-in glyph renders until one
   // is added the same way.
   'admanager',
+  // Same for Salesforce: no Salesforce mark has been vetted for this
+  // connector yet — the built-in glyph renders until one is added the same way.
+  'salesforce',
 ]);
 
 /** Explicit prop, then the known-mismatch table, then the key itself. */

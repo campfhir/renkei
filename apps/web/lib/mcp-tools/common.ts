@@ -133,6 +133,13 @@ export interface MCPToolContext {
    */
   entraDeveloperScopes?: string[];
   /**
+   * Same, for the caller's Salesforce grant: Renkei's own capabilities the
+   * person chose (lib/salesforce-scopes.ts) — Salesforce's `api` scope
+   * cannot tell a read from a delete, so this is the registration-time
+   * narrowing. Absent means no Salesforce tools, never "everything".
+   */
+  salesforceScopes?: string[];
+  /**
    * Present when the caller is an agent run (an agent-runner token,
    * migration 040). `subject`/`userEmail` still name the run OWNER — every
    * gate applies as if the owner called — this only says an agent is doing
