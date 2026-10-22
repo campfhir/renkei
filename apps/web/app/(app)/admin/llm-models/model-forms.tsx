@@ -324,6 +324,13 @@ export default function ModelForms() {
       setFormError('Context window must be a token count, such as 200k or 1m.');
       return;
     }
+    const maxOutputTokens = draft.maxOutputTokens.trim()
+      ? parseTokenCount(draft.maxOutputTokens)
+      : null;
+    if (draft.maxOutputTokens.trim() && maxOutputTokens === null) {
+      setFormError('Max output tokens must be a token count, such as 4k or 8000.');
+      return;
+    }
     setSaving(true);
     setFormError(null);
     const payload = {
@@ -331,7 +338,7 @@ export default function ModelForms() {
       provider: draft.provider,
       model: draft.model,
       baseUrl: draft.baseUrl || null,
-      ...(draft.maxOutputTokens ? { maxOutputTokens: Number(draft.maxOutputTokens) } : {}),
+      ...(maxOutputTokens !== null ? { maxOutputTokens } : {}),
       ...(contextWindow !== null ? { contextWindow } : {}),
       ...(draft.temperature ? { temperature: Number(draft.temperature) } : {}),
       ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
@@ -776,37 +783,36 @@ export default function ModelForms() {
               ) : null}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={labelClass} htmlFor="model-max-tokens">
-                  Max output tokens <span className="font-normal text-gray-500">(optional)</span>
-                </label>
-                <input
-                  id="model-max-tokens"
-                  className={inputClass}
-                  type="number"
-                  min={1}
-                  value={draft.maxOutputTokens}
-                  placeholder="4096"
-                  onChange={(event) => setDraft({ ...draft, maxOutputTokens: event.target.value })}
-                />
-              </div>
-              <div>
-                <label className={labelClass} htmlFor="model-temperature">
-                  Temperature <span className="font-normal text-gray-500">(optional)</span>
-                </label>
-                <input
-                  id="model-temperature"
-                  className={inputClass}
-                  type="number"
-                  step="0.1"
-                  min={0}
-                  max={1}
-                  value={draft.temperature}
-                  placeholder="provider default"
-                  onChange={(event) => setDraft({ ...draft, temperature: event.target.value })}
-                />
-              </div>
+            {/*
+              One grid with the labels in their own row: a wrapped label then
+              grows its row for both columns, so the two inputs stay level.
+            */}
+            <div className="grid grid-cols-2 gap-x-3">
+              <label className={labelClass} htmlFor="model-max-tokens">
+                Max output tokens <span className="font-normal text-gray-500">(optional)</span>
+              </label>
+              <label className={labelClass} htmlFor="model-temperature">
+                Temperature <span className="font-normal text-gray-500">(optional)</span>
+              </label>
+              <input
+                id="model-max-tokens"
+                className={inputClass}
+                type="text"
+                value={draft.maxOutputTokens}
+                placeholder="4k"
+                onChange={(event) => setDraft({ ...draft, maxOutputTokens: event.target.value })}
+              />
+              <input
+                id="model-temperature"
+                className={inputClass}
+                type="number"
+                step="0.1"
+                min={0}
+                max={1}
+                value={draft.temperature}
+                placeholder="provider default"
+                onChange={(event) => setDraft({ ...draft, temperature: event.target.value })}
+              />
             </div>
 
             <div>
