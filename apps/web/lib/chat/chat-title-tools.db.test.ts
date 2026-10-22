@@ -38,6 +38,7 @@ maybe('chat titles', () => {
   const modelAnswering = (title: string | null) => {
     const complete = jest.fn(async () =>
       ok({
+        usage: { inputTokens: 120, outputTokens: 9 },
         content:
           title === null
             ? [{ type: 'text' as const, text: 'I cannot title this.' }]
@@ -54,15 +55,41 @@ maybe('chat titles', () => {
   });
 
   afterAll(async () => {
+    await db.deleteFrom('llm_calls').where('subject', '=', subject).execute();
     await db.deleteFrom('chats').where('owner_subject', '=', subject).execute();
+  });
+
+  it('records the title call under context_window, not as a chat turn', async () => {
+    await db.deleteFrom('llm_calls').where('subject', '=', subject).execute();
+    const chatId = await newChat(placeholder);
+    const { llm } = modelAnswering('Budget review');
+
+    await autoTitleChat(db, { subject, chatId, llm, firstPrompt: 'Budget help please.' });
+
+    const rows = await db
+      .selectFrom('llm_calls')
+      .select(['purpose', 'input_tokens', 'output_tokens'])
+      .where('subject', '=', subject)
+      .execute();
+    expect(rows).toEqual([{ purpose: 'context_window', input_tokens: 120, output_tokens: 9 }]);
   });
 
   it('titles a new chat once, from its first prompt', async () => {
     const chatId = await newChat(placeholder);
     const { llm, complete } = modelAnswering('Budget review');
 
-    await autoTitleChat(db, { chatId, llm, firstPrompt: 'Help me plan the budget review.' });
-    await autoTitleChat(db, { chatId, llm, firstPrompt: 'Help me plan the budget review.' });
+    await autoTitleChat(db, {
+      subject,
+      chatId,
+      llm,
+      firstPrompt: 'Help me plan the budget review.',
+    });
+    await autoTitleChat(db, {
+      subject,
+      chatId,
+      llm,
+      firstPrompt: 'Help me plan the budget review.',
+    });
 
     expect(await titleOf(chatId)).toEqual({ title: 'Budget review', auto_title_asked: true });
     expect(complete).toHaveBeenCalledTimes(1);
@@ -80,6 +107,7 @@ maybe('chat titles', () => {
         .where('id', '=', chatId)
         .execute();
       return ok({
+        usage: { inputTokens: 120, outputTokens: 9 },
         content: [
           {
             type: 'tool_use' as const,
@@ -92,7 +120,7 @@ maybe('chat titles', () => {
     });
     const llm = { provider: { complete } } as unknown as ResolvedLlm;
 
-    await autoTitleChat(db, { chatId, llm, firstPrompt: 'Budget help please.' });
+    await autoTitleChat(db, { subject, chatId, llm, firstPrompt: 'Budget help please.' });
 
     expect(await titleOf(chatId)).toEqual({ title: 'My own name', auto_title_asked: true });
   });
@@ -102,7 +130,7 @@ maybe('chat titles', () => {
     const { llm } = modelAnswering(null);
 
     await expect(
-      autoTitleChat(db, { chatId, llm, firstPrompt: 'Budget help please.' })
+      autoTitleChat(db, { subject, chatId, llm, firstPrompt: 'Budget help please.' })
     ).resolves.toBeUndefined();
 
     expect(await titleOf(chatId)).toEqual({ title: placeholder, auto_title_asked: true });
@@ -113,7 +141,7 @@ maybe('chat titles', () => {
     const complete = jest.fn(async () => err({ type: 'PROVIDER', message: 'overloaded' } as never));
     const llm = { provider: { complete } } as unknown as ResolvedLlm;
 
-    await autoTitleChat(db, { chatId, llm, firstPrompt: 'Budget help please.' });
+    await autoTitleChat(db, { subject, chatId, llm, firstPrompt: 'Budget help please.' });
 
     expect(await titleOf(chatId)).toEqual({ title: placeholder, auto_title_asked: true });
   });

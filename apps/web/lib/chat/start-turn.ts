@@ -568,7 +568,12 @@ async function executeTurnBody(
     // the sidebar's refresh at turn end already shows the title.
     const firstPrompt = input.chat.autoTitleAsked ? '' : latestUserPrompt(rows);
     const titling = firstPrompt
-      ? autoTitleChat(db, { chatId: input.chat.id, llm: input.llm, firstPrompt })
+      ? autoTitleChat(db, {
+          subject: input.session.subject,
+          chatId: input.chat.id,
+          llm: input.llm,
+          firstPrompt,
+        })
       : Promise.resolve();
     const [priorSummary, overheadTokens] = await Promise.all([
       latestChatSummary(db, input.chat.id, input.cipher),

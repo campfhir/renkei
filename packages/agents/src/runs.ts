@@ -452,7 +452,12 @@ export interface RecordLlmCallInput {
   agentId: string | null;
   runId?: string | null;
   stepId?: string | null;
-  purpose: 'run' | 'optimize' | 'chat';
+  /**
+   * `context_window`: a call made beside a chat's turn rather than as one —
+   * the automatic title (chat-title-tools.ts). Counted in the totals, never
+   * in a chat's own turns or the auto-compaction budget.
+   */
+  purpose: 'run' | 'optimize' | 'chat' | 'context_window';
   /** Every prompt token the model read, cache-served or not. */
   inputTokens: number;
   outputTokens: number;

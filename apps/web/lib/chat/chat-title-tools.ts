@@ -13,6 +13,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { ResolvedLlm } from '@renkei/agent-llm';
+import { recordLlmCall } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
 import { errorResult, textResult, type LocalTool } from './local-tools';
 import { claimAutoTitle, renameChatIfTitledAs, updateChat } from './store';
@@ -53,14 +54,20 @@ const AUTO_TITLE_SYSTEM_PROMPT =
  * The chat's one automatic title, asked of the model right after its first
  * prompt. Runs beside the reply and never throws: a title that fails to
  * come back leaves the placeholder the send wrote, and the reply goes on.
+ *
+ * Its tokens go to the usage ledger under purpose `context_window`, not
+ * `chat`: the call is not a turn, and writes no message row, so the
+ * auto-compaction budget (compaction.ts reads the stored replies' usage)
+ * never counts it.
  */
 export async function autoTitleChat(
   db: Kysely<DB>,
-  input: { chatId: string; llm: ResolvedLlm; firstPrompt: string }
+  input: { subject: string; chatId: string; llm: ResolvedLlm; firstPrompt: string }
 ): Promise<void> {
   try {
     const claimed = await claimAutoTitle(db, input.chatId);
     if (!claimed) return;
+    const startedAt = Date.now();
     const completion = await input.llm.provider.complete({
       system: AUTO_TITLE_SYSTEM_PROMPT,
       messages: [
@@ -75,6 +82,25 @@ export async function autoTitleChat(
       ...(input.llm.temperature !== undefined ? { temperature: input.llm.temperature } : {}),
     });
     if (!completion.ok) throw new Error(completion.err.message ?? 'the model failed');
+    await recordLlmCall(db, {
+      subject: input.subject,
+      agentId: null,
+      purpose: 'context_window',
+      inputTokens: completion.val.usage.inputTokens,
+      outputTokens: completion.val.usage.outputTokens,
+      durationMs: Date.now() - startedAt,
+      ...(completion.val.usage.cacheReadInputTokens !== undefined
+        ? { cacheReadInputTokens: completion.val.usage.cacheReadInputTokens }
+        : {}),
+      ...(completion.val.usage.cacheWriteInputTokens !== undefined
+        ? { cacheWriteInputTokens: completion.val.usage.cacheWriteInputTokens }
+        : {}),
+      model: {
+        provider: input.llm.providerName,
+        model: input.llm.model,
+        llmModelId: input.llm.modelConfigId,
+      },
+    });
     const call = completion.val.content.find(
       (block) => block.type === 'tool_use' && block.name === CHAT_RENAME_TOOL
     );

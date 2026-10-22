@@ -109,7 +109,7 @@ The chat has no chrome of its own: it fills the main column (`data-wide-page`), 
 
 ## Titles (`lib/chat/titles.ts`, `chat-title-tools.ts`)
 
-A chat starts with a placeholder title cut from its first prompt (`touchChat`, at send time). The first prompt also gets one automatic title from the model, run beside the reply (`autoTitleChat`): a forced `chat_rename` call with no transcript rows of its own, so the person never sees the request, and asked once per chat (`chats.auto_title_asked`, migration 162; existing chats are marked asked). It only replaces the placeholder — a title the person set meanwhile stays. `chat_rename` is the model's tool for a rename the person asks for, offered in every chat with no permission ask; it is an ordinary tool call in the thread.
+A chat starts with a placeholder title cut from its first prompt (`touchChat`, at send time). The first prompt also gets one automatic title from the model, run beside the reply (`autoTitleChat`): a forced `chat_rename` call with no transcript rows of its own, so the person never sees the request, and asked once per chat (`chats.auto_title_asked`, migration 162; existing chats are marked asked). It only replaces the placeholder — a title the person set meanwhile stays. Its tokens go to the usage ledger (`llm_calls`) under purpose `context_window`, never `chat`, and the auto-compaction budget reads only the stored replies' usage, so it never counts them. A rename the person asks for is a normal reply and does count. `chat_rename` is the model's tool for a rename the person asks for, offered in every chat with no permission ask; it is an ordinary tool call in the thread.
 
 ## Voice (`lib/voice/`, `@renkei/voice`)
 
