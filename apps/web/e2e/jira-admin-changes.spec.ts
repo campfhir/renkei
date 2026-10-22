@@ -78,7 +78,9 @@ const FULL_SCOPES = ['read:jira-user', 'read:jira-work', 'manage:jira-configurat
 
 async function seedTenant(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = $1', [
+      fixture.subject,
+    ]);
     await client.query('DELETE FROM audit_events WHERE actor_subject = $1', [fixture.subject]);
     await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
     await client.query('DELETE FROM connector_configs');
@@ -108,7 +110,14 @@ async function seedTenant(fixture: Fixture): Promise<void> {
     // Connected, with sealed tokens far from expiry so nothing refreshes.
     await client.query(
       `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian-admin', 'e2e-jira-admin-account', $1, 'e2e-admin-client',\n               'E2E Jira Admin', $2, $3, $4, $5, $6)`,
-      [fixture.subject, await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'), await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'), new Date(Date.now() + 365 * 24 * 3_600_000), [...FULL_SCOPES, 'offline_access'], { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' }]
+      [
+        fixture.subject,
+        await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'),
+        await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'),
+        new Date(Date.now() + 365 * 24 * 3_600_000),
+        [...FULL_SCOPES, 'offline_access'],
+        { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' },
+      ]
     );
   });
 }
@@ -139,7 +148,14 @@ async function propose(fixture: Fixture, proposal: Proposal): Promise<string> {
   const result = await withDb((client) =>
     client.query<{ id: string }>(
       `INSERT INTO jira_admin_change_requests\n         (subject, cloud_id, site_url, kind, title, reason, payload, expires_at)\n       VALUES ($1, $2, 'https://e2e.atlassian.net', 'field_options', $3, $4, $5, $6)\n       RETURNING id`,
-      [proposal.subject ?? fixture.subject, proposal.cloudId ?? fixture.cloudId, proposal.title, proposal.reason ?? null, JSON.stringify(payload), new Date(Date.now() + (proposal.expired ? -60_000 : 24 * 3_600_000))]
+      [
+        proposal.subject ?? fixture.subject,
+        proposal.cloudId ?? fixture.cloudId,
+        proposal.title,
+        proposal.reason ?? null,
+        JSON.stringify(payload),
+        new Date(Date.now() + (proposal.expired ? -60_000 : 24 * 3_600_000)),
+      ]
     )
   );
   const id = result.rows[0]?.id;
@@ -292,8 +308,10 @@ test('a proposal waits for review, and applying it changes Jira exactly as shown
   await expect
     .poll(async () =>
       withDb(async (client) => {
+        // This person's only: the dev database is shared by every spec in a run.
         const rows = await client.query<{ actor_subject: string; details: { status: string } }>(
-          `SELECT actor_subject, details FROM audit_events\n            WHERE action = 'jira_admin.change_applied'`
+          `SELECT actor_subject, details FROM audit_events\n            WHERE action = 'jira_admin.change_applied' AND actor_subject = $1`,
+          [fixture.subject]
         );
         return rows.rows.map((row) => `${row.actor_subject}:${row.details.status}`);
       })
@@ -302,9 +320,7 @@ test('a proposal waits for review, and applying it changes Jira exactly as shown
   await shot(page, testInfo, 'jira-admin-changes-03-applied');
 
   // Applying twice is refused — the route, not only the missing button.
-  const again = await page.request.post(
-    `/api/jira-admin/changes/${id}/apply`
-  );
+  const again = await page.request.post(`/api/jira-admin/changes/${id}/apply`);
   expect(again.status()).toBe(409);
 
   // The list now files it under Recent.
@@ -385,9 +401,7 @@ test('a stale or refused proposal changes nothing, and says why', async ({ page 
   await page.reload();
   await expect(main(page).getByText(/does not include manage:jira-configuration/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Apply this change to Jira' })).toBeDisabled();
-  const refused = await page.request.post(
-    `/api/jira-admin/changes/${global}/apply`
-  );
+  const refused = await page.request.post(`/api/jira-admin/changes/${global}/apply`);
   expect(refused.status()).toBe(403);
   expect(await statusOf(global)).toBe('pending');
   await shot(page, testInfo, 'jira-admin-changes-07-refused');
@@ -407,9 +421,7 @@ test('a stale or refused proposal changes nothing, and says why', async ({ page 
   await page.goto(`/jira-admin/changes/${expired}`);
   await expect(main(page).getByTestId('change-state')).toHaveText('Expired');
   await expect(page.getByRole('button', { name: /Apply/ })).toHaveCount(0);
-  const late = await page.request.post(
-    `/api/jira-admin/changes/${expired}/apply`
-  );
+  const late = await page.request.post(`/api/jira-admin/changes/${expired}/apply`);
   expect(late.status()).toBe(409);
 
   // --- Someone else's: not found, on the page and at the route. ---
@@ -423,9 +435,7 @@ test('a stale or refused proposal changes nothing, and says why', async ({ page 
   await page.goto(`/jira-admin/changes/${theirs}`);
   await expect(page.getByRole('heading', { name: 'This page could not be found.' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Review a Jira admin change' })).toHaveCount(0);
-  const notYours = await page.request.post(
-    `/api/jira-admin/changes/${theirs}/apply`
-  );
+  const notYours = await page.request.post(`/api/jira-admin/changes/${theirs}/apply`);
   expect(notYours.status()).toBe(404);
   expect(await statusOf(theirs)).toBe('pending');
 

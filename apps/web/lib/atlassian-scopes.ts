@@ -214,6 +214,26 @@ export const ATLASSIAN_JSM_SCOPE_OPTIONS: ScopeOption[] = [
     ],
   },
   {
+    id: 'jsm-request-types',
+    label: 'Set up request types',
+    hint:
+      'Create request types on a service project’s portal — proposed through Jira ' +
+      'Administration and applied from its review page, on this connection',
+    group: 'jsm',
+    // Off by default, unlike the rest of this app: Atlassian documents the
+    // create call under a granular scope only, so it rides this app rather
+    // than the classic Jira Administration one — but it is an admin power
+    // (jira_admin_propose_request_type, docs/atlassian-admin-scopes.md),
+    // and the app registration in the developer console needs the scope
+    // added before anyone can consent to it.
+    defaultChecked: false,
+    scopes: [
+      'read:servicedesk:jira-service-management',
+      'read:requesttype:jira-service-management',
+      'write:requesttype:jira-service-management',
+    ],
+  },
+  {
     id: 'ops-alerts-read',
     label: 'Read alerts',
     hint: 'Alert list and detail',

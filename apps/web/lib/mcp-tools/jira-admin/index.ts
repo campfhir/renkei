@@ -10,6 +10,11 @@
  * the exact operations and changes nothing in Jira, and the person applies
  * the request from a signed-in Renkei session — never from an MCP tool
  * call (./changes.ts, lib/jira-admin, docs/project-management-design.md).
+ *
+ * One tool stands on two grants: jira_admin_propose_request_type, whose
+ * write Atlassian documents under a granular JSM scope only, reads the
+ * space here and the service desk on the person's JSM grant, and registers
+ * only when both are connected with what they need (./jsm-access.ts).
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -25,6 +30,10 @@ import { registerChangeTools } from './changes';
 import { registerTemplateTools } from './templates';
 import { registerProposeSpaceTools } from './propose-space';
 import { registerProposeFieldTools } from './propose-field';
+import { registerProposeWorkTypeTools } from './propose-work-type';
+import { registerScreenTools } from './screens';
+import { registerProposeRequestTypeTools } from './propose-request-type';
+import { holdsRequestTypeScopes } from './jsm-access';
 
 export const JIRA_ADMIN_MCP_CONNECTOR = 'jira-admin';
 
@@ -45,4 +54,12 @@ export async function registerJiraAdminTools(
   await registerTemplateTools(server, context, auth);
   await registerProposeSpaceTools(server, context, auth);
   await registerProposeFieldTools(server, context, auth);
+  await registerProposeWorkTypeTools(server, context, auth);
+  await registerScreenTools(server, context, auth);
+  // Request types are a Jira Administration tool that writes on the Jira
+  // Service Management grant (jsm-access.ts): offered only when that grant
+  // is connected with the scopes the write takes, on top of this one's.
+  if (context.jsmGrant && holdsRequestTypeScopes(context.jsmGrant.scopes)) {
+    await registerProposeRequestTypeTools(server, context, auth);
+  }
 }

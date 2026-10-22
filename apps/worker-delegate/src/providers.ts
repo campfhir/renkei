@@ -316,6 +316,10 @@ export const STAND_IN_ENV: Readonly<Record<string, string>> = {
   [GITHUB]: 'GITHUB_API_BASE_URL',
   [ATLASSIAN_BITBUCKET]: 'BITBUCKET_API_BASE_URL',
   [ATLASSIAN_ADMIN]: 'JIRA_ADMIN_API_BASE_URL',
+  // The same stand-in: a request type change request applies on the JSM
+  // grant, through the Jira Administration client on the same gateway
+  // (apps/web/lib/jira-admin/request-type.ts).
+  [ATLASSIAN_JSM]: 'JIRA_ADMIN_API_BASE_URL',
   [ENTRA_DEVELOPER]: 'ENTRA_DEVELOPER_API_BASE_URL',
 };
 
@@ -328,7 +332,7 @@ export const STAND_IN_ENV: Readonly<Record<string, string>> = {
  */
 export function standInViolations(env: NodeJS.ProcessEnv = process.env): string[] {
   if (env.NODE_ENV !== 'production') return [];
-  return Object.values(STAND_IN_ENV).filter((name) => Boolean(env[name]?.trim()));
+  return [...new Set(Object.values(STAND_IN_ENV))].filter((name) => Boolean(env[name]?.trim()));
 }
 
 function standInOrigin(provider: string): string | null {

@@ -124,10 +124,21 @@ write:request.comment:jira-service-management
 write:request.participant:jira-service-management
 write:request.status:jira-service-management
 write:request:jira-service-management
+write:requesttype:jira-service-management
 write:servicedesk.customer:jira-service-management
 delete:request.participant:jira-service-management
 delete:servicedesk.customer:jira-service-management
 ```
+
+`write:requesttype:jira-service-management` is the one admin scope on this
+app, and the picker's **Set up request types** box (off by default). Creating
+a request type (`POST /servicedesk/{id}/requesttype`) is documented under this
+granular scope only, with no classic equivalent, so it cannot ride the classic
+Jira Administration app: `jira_admin_propose_request_type` is a Jira
+Administration tool that reads the space on that grant and reads and writes
+the service desk on this one, and is offered only to someone holding both
+(`docs/atlassian-admin-scopes.md`, "Request types"). Add the scope to the JSM
+app in the developer console before ticking the box under Connector setup.
 
 ## Jira Service Management Ops API — app 2 ("Renkei JSM")
 

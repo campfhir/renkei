@@ -28,6 +28,18 @@ import {
   readCreateSpacePayload,
 } from './space-creation';
 import { SPACE_FIELD_KIND, applySpaceField, readSpaceFieldPayload } from './space-field';
+import { WORK_TYPE_KIND, applyWorkType, readWorkTypePayload } from './work-type';
+import {
+  SCREEN_CHANGES_KIND,
+  applyScreenChanges,
+  readScreenChangesPayload,
+} from './screen-changes';
+import { REQUEST_TYPE_KIND, applyRequestType, readRequestTypePayload } from './request-type';
+import {
+  holdsRequestTypeScopes,
+  jsmGrantScopes,
+  missingRequestTypeScopes,
+} from '@/lib/mcp-tools/jira-admin/jsm-access';
 
 /**
  * The classic scopes applying a change stands on. Option writes are
@@ -37,7 +49,8 @@ import { SPACE_FIELD_KIND, applySpaceField, readSpaceFieldPayload } from './spac
  * versions (manage:jira-project). A field for a space takes all three: the
  * field search (read:jira-work), the field, its contexts and options
  * (manage:jira-configuration) and screen tabs (manage:jira-project), so it
- * falls to the default. Anything unrecognised asks for the most.
+ * falls to the default. A work type, a screen and a request type each name
+ * their own below. Anything unrecognised asks for the most.
  */
 export function changeScopes(change: Pick<ChangeRequest, 'kind' | 'payload'>): string[] {
   if (change.kind === FIELD_OPTIONS_KIND) return ['manage:jira-configuration'];
@@ -45,6 +58,14 @@ export function changeScopes(change: Pick<ChangeRequest, 'kind' | 'payload'>): s
     const payload = readCreateSpacePayload(change.payload);
     if (payload) return createSpaceScopes(payload);
   }
+  // A work type: the site's work types (read:jira-work), then creating it,
+  // its icon and its scheme mappings (manage:jira-configuration).
+  if (change.kind === WORK_TYPE_KIND) return ['read:jira-work', 'manage:jira-configuration'];
+  // A screen's tabs and fields, read and changed (manage:jira-project).
+  if (change.kind === SCREEN_CHANGES_KIND) return ['manage:jira-project'];
+  // A request type writes nothing on this grant — the JSM grant's scopes are
+  // the gate's second question — but the connector must be connected.
+  if (change.kind === REQUEST_TYPE_KIND) return ['read:jira-work'];
   return ['read:jira-work', 'manage:jira-configuration', 'manage:jira-project'];
 }
 
@@ -107,6 +128,30 @@ export async function applyGate(
     };
   }
 
+  if (change.kind === REQUEST_TYPE_KIND) {
+    // The one kind that writes on another grant: the JSM grant, with the
+    // picker's "Set up request types" box.
+    const jsmScopes = await jsmGrantScopes(db, subject);
+    if (jsmScopes === null) {
+      return {
+        ok: false,
+        reason:
+          'Jira Service Management is not connected. Request types are created on that ' +
+          'connection; connect it on the Connectors page with “Set up request types” ticked.',
+      };
+    }
+    if (!holdsRequestTypeScopes(jsmScopes)) {
+      return {
+        ok: false,
+        reason:
+          'Your Jira Service Management connection does not include ' +
+          `${missingRequestTypeScopes(jsmScopes).join(', ')}. Reconnect it with “Set up request ` +
+          'types” ticked (if it is not offered, an organization admin allows it under Connector ' +
+          'setup first).',
+      };
+    }
+  }
+
   // The questions above give a person the reason; the projection is the
   // rule itself, and has the last word should the two ever disagree.
   const projection = buildProjection({ settings, availability, roles, audience });
@@ -161,7 +206,9 @@ export async function viewGate(db: Kysely<DB>, subject: string): Promise<Gate> {
 export async function applyChangeRequest(
   scope: { subject?: string },
   access: JiraAdminAccess,
-  change: Pick<ChangeRequest, 'kind' | 'payload'>
+  change: Pick<ChangeRequest, 'kind' | 'payload'>,
+  /** The JSM grant, which a request type change runs on instead of `access`. */
+  grants: { jsm?: JiraAdminAccess } = {}
 ): Promise<{ status: 'applied' | 'partial' | 'failed'; results: OperationResult[] }> {
   if (change.kind === FIELD_OPTIONS_KIND) {
     const payload = readFieldOptionsPayload(change.payload);
@@ -174,6 +221,30 @@ export async function applyChangeRequest(
   if (change.kind === SPACE_FIELD_KIND) {
     const payload = readSpaceFieldPayload(change.payload);
     if (payload) return applySpaceField(scope, access, payload);
+  }
+  if (change.kind === WORK_TYPE_KIND) {
+    const payload = readWorkTypePayload(change.payload);
+    if (payload) return applyWorkType(scope, access, payload);
+  }
+  if (change.kind === SCREEN_CHANGES_KIND) {
+    const payload = readScreenChangesPayload(change.payload);
+    if (payload) return applyScreenChanges(scope, access, payload);
+  }
+  if (change.kind === REQUEST_TYPE_KIND) {
+    const payload = readRequestTypePayload(change.payload);
+    if (payload && !grants.jsm) {
+      return {
+        status: 'failed',
+        results: [
+          {
+            label: 'Reach Jira Service Management',
+            outcome: 'failed',
+            detail: 'The Jira Service Management connection was not resolved; nothing was changed.',
+          },
+        ],
+      };
+    }
+    if (payload && grants.jsm) return applyRequestType(scope, grants.jsm, payload);
   }
   return {
     status: 'failed',

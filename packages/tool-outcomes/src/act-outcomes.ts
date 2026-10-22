@@ -444,6 +444,24 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Proposed a Jira field for a space, for your review',
     short: 'Proposed a field for a space for your review',
   },
+  jira_admin_propose_work_type: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed a Jira work type for a space, for your review',
+    short: 'Proposed a work type for your review',
+  },
+  jira_admin_propose_screen_changes: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed changes to a Jira screen, for your review',
+    short: 'Proposed screen changes for your review',
+  },
+  jira_admin_propose_request_type: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed a Jira request type, for your review',
+    short: 'Proposed a request type for your review',
+  },
 
   // ---- Salesforce Admin ------------------------------------------------
   // Its own capability key ('salesforce-admin'). As for Jira Administration,

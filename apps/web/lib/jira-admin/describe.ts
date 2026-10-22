@@ -25,6 +25,26 @@ import {
   readSpaceFieldPayload,
   touchesOtherSpaces,
 } from './space-field';
+import {
+  WORK_TYPE_KIND,
+  describeWorkTypeOperation,
+  describeWorkTypeReach,
+  readWorkTypePayload,
+  workTypeTouchesOtherSpaces,
+} from './work-type';
+import {
+  SCREEN_CHANGES_KIND,
+  describeScreenOperation,
+  describeScreenReach,
+  readScreenChangesPayload,
+  screenTouchesOtherSpaces,
+} from './screen-changes';
+import {
+  REQUEST_TYPE_KIND,
+  describeRequestTypeOperation,
+  describeRequestTypeReach,
+  readRequestTypePayload,
+} from './request-type';
 
 export interface DescribedOperation {
   text: string;
@@ -102,6 +122,54 @@ export function describeChange(
           'has no context of its own, and which options and screens it already has — and ' +
           'stops at anything that has changed. A field it has created stays created. Nothing ' +
           'is deleted.',
+      };
+    }
+  }
+  if (change.kind === WORK_TYPE_KIND) {
+    const payload = readWorkTypePayload(change.payload);
+    if (payload) {
+      return {
+        operations: payload.operations.map((operation) =>
+          describeWorkTypeOperation(operation, payload)
+        ),
+        reach: describeWorkTypeReach(payload, change.siteUrl),
+        siteWide: workTypeTouchesOtherSpaces(payload),
+        applyNote:
+          'Renkei checks first that no work type of this name has appeared and that the space ' +
+          'still runs on the same schemes — and stops at anything that has changed. A work ' +
+          'type it has created stays created. Nothing is deleted.',
+      };
+    }
+  }
+  if (change.kind === SCREEN_CHANGES_KIND) {
+    const payload = readScreenChangesPayload(change.payload);
+    if (payload) {
+      return {
+        operations: payload.operations.map((operation) =>
+          describeScreenOperation(operation, payload)
+        ),
+        reach: describeScreenReach(payload, change.siteUrl),
+        siteWide: screenTouchesOtherSpaces(payload),
+        applyNote:
+          'Renkei reads the screen’s tabs and fields again first and stops at anything that has ' +
+          'changed since this was proposed. A field taken off a screen keeps its values on ' +
+          'every issue. Nothing is deleted.',
+      };
+    }
+  }
+  if (change.kind === REQUEST_TYPE_KIND) {
+    const payload = readRequestTypePayload(change.payload);
+    if (payload) {
+      return {
+        operations: payload.operations.map((operation) =>
+          describeRequestTypeOperation(operation, payload)
+        ),
+        reach: describeRequestTypeReach(payload, change.siteUrl),
+        siteWide: false,
+        applyNote:
+          'Renkei checks first that no request type of this name has appeared on the project. ' +
+          'This runs on your Jira Service Management connection, not your Jira Administration ' +
+          'one. Nothing is deleted.',
       };
     }
   }

@@ -16,7 +16,9 @@ import { getSessionFromRequest } from '@/lib/session';
 import { getOrigin } from '@/lib/get-origin';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
-import { resolveJiraAdminAccess } from '@/lib/mcp-tools/jira-admin/client';
+import { resolveJiraAdminAccess, type JiraAdminAccess } from '@/lib/mcp-tools/jira-admin/client';
+import { resolveJsmAccess } from '@/lib/mcp-tools/jira-admin/jsm-access';
+import { REQUEST_TYPE_KIND } from '@/lib/jira-admin/request-type';
 import {
   claimChangeRequest,
   finishChangeRequest,
@@ -88,6 +90,27 @@ export async function POST(
     );
   }
 
+  // A request type runs on the JSM grant (lib/jira-admin/request-type.ts):
+  // resolved here, with the same site check, before the claim.
+  let jsm: JiraAdminAccess | undefined;
+  if (change.kind === REQUEST_TYPE_KIND) {
+    const resolved = await resolveJsmAccess(session.subject);
+    if (typeof resolved === 'string') {
+      return NextResponse.json({ error: resolved }, { status: 409 });
+    }
+    if (resolved.cloudId !== change.cloudId) {
+      return NextResponse.json(
+        {
+          error:
+            'Your Jira Service Management connection is on a different Jira site than the one ' +
+            'this change was proposed for, so it was not applied.',
+        },
+        { status: 409 }
+      );
+    }
+    jsm = resolved;
+  }
+
   // Claim before running, so two clicks cannot both apply it.
   if (!(await claimChangeRequest(db, session.subject, change.id))) {
     return NextResponse.json(
@@ -98,7 +121,7 @@ export async function POST(
 
   let outcome: { status: 'applied' | 'partial' | 'failed'; results: OperationResult[] };
   try {
-    outcome = await applyChangeRequest({ subject: session.subject }, access, change);
+    outcome = await applyChangeRequest({ subject: session.subject }, access, change, { jsm });
   } catch (error) {
     logger.error('jira admin change apply threw', {
       component: 'jira-admin/apply',

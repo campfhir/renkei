@@ -177,7 +177,9 @@ describe('standInViolations', () => {
       []
     );
     expect(standInViolations({ NODE_ENV: 'production' })).toEqual([]);
-    expect(Object.values(STAND_IN_ENV)).toHaveLength(4);
+    // Jira Administration and JSM share one, the Jira gateway's.
+    expect(Object.values(STAND_IN_ENV)).toHaveLength(5);
+    expect(new Set(Object.values(STAND_IN_ENV)).size).toBe(4);
   });
 });
 

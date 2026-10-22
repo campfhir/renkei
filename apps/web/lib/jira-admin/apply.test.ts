@@ -23,12 +23,19 @@ jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({}));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));
+jest.mock('@/lib/mcp-tools/jira-admin/jsm-access', () => {
+  const actual = jest.requireActual<typeof import('@/lib/mcp-tools/jira-admin/jsm-access')>(
+    '@/lib/mcp-tools/jira-admin/jsm-access'
+  );
+  return { ...actual, jsmGrantScopes: jest.fn() };
+});
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { resolveAudience } from '@/lib/connectors/audience';
 import { resolveConnectorAvailability } from '@/lib/mcp-tools/registry';
+import { jsmGrantScopes } from '@/lib/mcp-tools/jira-admin/jsm-access';
 import { applyGate, changeScopes } from './apply';
 import { planSpaceCreation, type CreateSpacePayload } from './space-creation';
 
@@ -159,4 +166,49 @@ it('asks for every admin scope for a change it cannot read', () => {
     'manage:jira-configuration',
     'manage:jira-project',
   ]);
+});
+
+describe('a request type, which writes on the JSM grant', () => {
+  const change = { kind: 'request_type', payload: {} };
+
+  it('asks this grant only to be connected with a read, and the JSM grant for the write', async () => {
+    expect(changeScopes(change)).toEqual(['read:jira-work']);
+    jest
+      .mocked(jsmGrantScopes)
+      .mockResolvedValue([
+        'read:servicedesk:jira-service-management',
+        'read:requesttype:jira-service-management',
+        'write:requesttype:jira-service-management',
+      ]);
+    expect(await applyGate(db, 'subject-1', [], change)).toEqual({ ok: true });
+  });
+
+  it('refuses without a JSM grant, naming the box', async () => {
+    jest.mocked(jsmGrantScopes).mockResolvedValue(null);
+    const gate = await applyGate(db, 'subject-1', [], change);
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) expect(gate.reason).toContain('Jira Service Management is not connected');
+    if (!gate.ok) expect(gate.reason).toContain('Set up request types');
+  });
+
+  it('refuses a JSM grant without the write scope, naming it', async () => {
+    jest
+      .mocked(jsmGrantScopes)
+      .mockResolvedValue([
+        'read:servicedesk:jira-service-management',
+        'read:requesttype:jira-service-management',
+      ]);
+    const gate = await applyGate(db, 'subject-1', [], change);
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) expect(gate.reason).toContain('write:requesttype:jira-service-management');
+    if (!gate.ok) expect(gate.reason).toContain('Reconnect it with “Set up request types” ticked');
+  });
+
+  it('still refuses when Jira Administration itself is not connected', async () => {
+    availability = { jiraAdminAvailable: false, jiraAdminScopes: [] };
+    jest.mocked(jsmGrantScopes).mockResolvedValue(['write:requesttype:jira-service-management']);
+    const gate = await applyGate(db, 'subject-1', [], change);
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) expect(gate.reason).toContain('Jira Administration is not connected');
+  });
 });
