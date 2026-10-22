@@ -74,6 +74,7 @@ import { openTurnChannel, type TurnChannel } from './turn-events';
 import { createTurnStore } from './turn-store';
 import { runChatTurn, DEFAULT_TURN_LIMITS, type TurnResumeSeed } from './turn-runner';
 import { chatLocalTools } from './chat-local-tools';
+import { autoTitleChat } from './chat-title-tools';
 import { recordImageUsage, type ImageUsageReport } from '@/lib/image/usage';
 import { latestUserPrompt } from './prompt-text';
 import {
@@ -562,6 +563,13 @@ async function executeTurnBody(
     // unavailable model leaves every message as it was for the next turn's
     // check to retry — never a reason to fail the turn that triggered it.
     let rows = initialRows;
+    // A chat's first prompt is titled by the model beside the reply
+    // (chat-title-tools.ts): started here, awaited just before the loop, so
+    // the sidebar's refresh at turn end already shows the title.
+    const firstPrompt = input.chat.autoTitleAsked ? '' : latestUserPrompt(rows);
+    const titling = firstPrompt
+      ? autoTitleChat(db, { chatId: input.chat.id, llm: input.llm, firstPrompt })
+      : Promise.resolve();
     const [priorSummary, overheadTokens] = await Promise.all([
       latestChatSummary(db, input.chat.id, input.cipher),
       getRequestOverhead(db, input.chat.id),
@@ -813,6 +821,7 @@ async function executeTurnBody(
     // The loop's own heartbeat takes over from here.
     prepared();
 
+    await titling;
     const outcome = await runChatTurn(
       {
         llm: input.llm,

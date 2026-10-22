@@ -23,6 +23,7 @@ import { sandboxChartsEnabled, sandboxConfig, sandboxScriptsServed } from '@renk
 import { attachmentTools } from './attachment-tools';
 import { compactionTools } from './compaction-tools';
 import { chartTools } from './chart-tools';
+import { chatRenameTool } from './chat-title-tools';
 import { fileTools } from './file-tools';
 import { memoryTools } from './memory-tools';
 import { mockupTools } from './mockup-tools';
@@ -44,7 +45,7 @@ export async function chatLocalTools(
   // chat_compact acts on the chat's own stored messages, never an
   // organization system, so every chat gets it — no project or
   // read-only gate, unlike the tools below.
-  const tools: LocalTool[] = [...compactionTools()];
+  const tools: LocalTool[] = [...compactionTools(), chatRenameTool()];
   // A mockup is drawn from the call's own input and needs no store, no
   // worker and no project — every chat, a code project's included, can
   // show one (mockup-tools.ts).
