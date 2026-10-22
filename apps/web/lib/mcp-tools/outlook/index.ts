@@ -2985,12 +2985,16 @@ export async function registerOutlookTools(
       });
       const title = str(event.subject) || str(args.subject);
       return {
+        // The first line is the card's headline, so it names the meeting and
+        // its people; the id sits on its own line below, where the model can
+        // still reach it for a later update and the card does not show it.
         ...textResult(
-          `Created "${title}" (id ${str(event.id) || 'unknown'})` +
+          `Created "${title}"` +
             (recurrence.val ? `, repeating ${recurrence.val.description}` : '') +
             (requiredAttendees.length > 0 ? `; required: ${requiredAttendees.join(', ')}` : '') +
             (optionalAttendees.length > 0 ? `; optional: ${optionalAttendees.join(', ')}` : '') +
             '.' +
+            `\nEvent id: ${str(event.id) || 'unknown'}` +
             (str(event.webLink) ? `\n[Open in Outlook](${str(event.webLink)})` : '')
         ),
         // The meeting's own title, for the same reason a sent mail carries

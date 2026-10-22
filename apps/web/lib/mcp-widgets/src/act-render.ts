@@ -65,7 +65,7 @@ const STYLE = `
   background: var(--card-field-bg); border: 1px solid var(--card-border);
 }
 .a-ref-label { font: 600 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; flex: none; }
-.a-ref-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-ref-title { font-size: 13px; overflow-wrap: anywhere; }
 .a-ref-context { font-size: 11px; color: var(--card-muted); flex: none; }
 .a-refs { display: flex; flex-wrap: wrap; gap: 6px; }
 .a-ref.is-struck .a-ref-label, .a-ref.is-struck .a-ref-title { text-decoration: line-through; opacity: 0.7; }
