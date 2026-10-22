@@ -5,7 +5,7 @@
  */
 
 import type { ConnectorConfig } from '@renkei/connector-config';
-import { GITHUB, SALESFORCE, type ProviderGrant } from '@renkei/provider-grants';
+import { GITHUB, SALESFORCE, SALESFORCE_ADMIN, type ProviderGrant } from '@renkei/provider-grants';
 import {
   hostAllowed,
   providerSpec,
@@ -197,5 +197,36 @@ describe('a dynamic (MCP server) provider', () => {
     expect(hostAllowed(spec, new URL('https://mcp.example.evil.test/mcp'))).toBe(false);
     expect(hostAllowed(spec, new URL('https://auth.example/token'))).toBe(false);
     expect(hostAllowed(spec, new URL('http://mcp.example/mcp'))).toBe(false);
+  });
+});
+
+describe('Salesforce admin: a separate provider with the same per-org rules', () => {
+  it('reads its own config row and pins each grant to its org', () => {
+    const spec = providerSpec(SALESFORCE_ADMIN);
+    expect(spec?.connector).toBe(SALESFORCE_ADMIN);
+    const config: ConnectorConfig = {
+      connector: SALESFORCE_ADMIN,
+      enabled: true,
+      settings: {
+        orgs: [
+          {
+            key: 'uat',
+            name: 'UAT',
+            myDomain: 'acme--uat.sandbox.my.salesforce.com',
+            sandbox: true,
+            clientId: 'admin-uat-key',
+          },
+        ],
+      },
+      secrets: { 'clientSecret:uat': 'admin-uat-secret' },
+    };
+    expect(spec?.credentialsFor?.(config, 'uat')).toEqual({
+      clientId: 'admin-uat-key',
+      clientSecret: 'admin-uat-secret',
+    });
+    expect(spec?.hostsFor?.(config, null, 'https://acme--uat.sandbox.my.salesforce.com')).toEqual([
+      'acme--uat.sandbox.my.salesforce.com',
+    ]);
+    expect(spec?.hostsFor?.(config, null, 'https://acme.my.salesforce.com')).toEqual([]);
   });
 });

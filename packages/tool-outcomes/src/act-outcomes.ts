@@ -445,6 +445,65 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     short: 'Proposed a field for a space for your review',
   },
 
+  // ---- Salesforce Admin ------------------------------------------------
+  // Its own capability key ('salesforce-admin'). As for Jira Administration,
+  // a proposal changes nothing in the org: a change request waits for its
+  // owner's review, validated by Salesforce, and the receipt links it.
+  salesforce_admin_propose_fields: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed new Salesforce fields for your review',
+    short: 'Proposed new fields for your review',
+  },
+  salesforce_admin_propose_validation_rule: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed a Salesforce validation rule for your review',
+    short: 'Proposed a validation rule for your review',
+  },
+  salesforce_admin_propose_object: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed a new Salesforce object for your review',
+    short: 'Proposed a new object for your review',
+  },
+  salesforce_admin_propose_field_changes: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed changes to a Salesforce field for your review',
+    short: 'Proposed field changes for your review',
+  },
+  salesforce_admin_propose_picklist_changes: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed Salesforce picklist value changes for your review',
+    short: 'Proposed picklist changes for your review',
+  },
+  salesforce_admin_propose_record_type: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed a Salesforce record type for your review',
+    short: 'Proposed a record type for your review',
+  },
+  salesforce_admin_propose_layout_changes: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed Salesforce page layout changes for your review',
+    short: 'Proposed layout changes for your review',
+  },
+  salesforce_admin_propose_permission_set: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed Salesforce permission set access for your review',
+    short: 'Proposed permission set access for your review',
+  },
+  salesforce_admin_propose_assignments: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed Salesforce permission set assignments for your review',
+    short: 'Proposed assignments for your review',
+  },
+
   // ---- Jira Service Management -----------------------------------------
   // Same capability key as Jira ('jira'), so these appear in the same
   // preferences group. Their wording says "service request" precisely so

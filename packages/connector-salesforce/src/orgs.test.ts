@@ -2,6 +2,7 @@ import {
   findOrg,
   orgForInstance,
   orgKeyOf,
+  takesChanges,
   orgsFromSettings,
   validateOrg,
   type SalesforceOrg,
@@ -116,5 +117,39 @@ describe('Salesforce connectors (one per org)', () => {
     const started = Date.now();
     orgKeyOf(`${'-'.repeat(50_000)}x`);
     expect(Date.now() - started).toBeLessThan(200);
+  });
+});
+
+describe('takesChanges', () => {
+  it('lets any sandbox take change requests, and production only when allowed', () => {
+    const settings = {
+      orgs: [
+        {
+          key: 'production',
+          name: 'Production',
+          myDomain: 'acme.my.salesforce.com',
+          clientId: 'p',
+        },
+        {
+          key: 'uat',
+          name: 'UAT',
+          myDomain: 'acme--uat.sandbox.my.salesforce.com',
+          sandbox: true,
+          clientId: 'u',
+        },
+        {
+          key: 'prod-2',
+          name: 'Prod 2',
+          myDomain: 'acme2.my.salesforce.com',
+          clientId: 'p2',
+          productionChanges: true,
+        },
+      ],
+    };
+    expect(orgsFromSettings(settings).map((org) => [org.key, takesChanges(org)])).toEqual([
+      ['production', false],
+      ['uat', true],
+      ['prod-2', true],
+    ]);
   });
 });

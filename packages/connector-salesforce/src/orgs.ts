@@ -33,6 +33,17 @@ export interface SalesforceOrg {
   scopes: string[];
   /** What this connector keeps away from the model (policy.ts). */
   policy: DataPolicy;
+  /**
+   * Admin connectors: whether change requests may be applied in this org
+   * when it is production. Off by default, so a production org is read-only
+   * until an admin says otherwise; a sandbox always takes them.
+   */
+  productionChanges: boolean;
+}
+
+/** Whether an admin connector's org takes change requests: any sandbox, production only when allowed. */
+export function takesChanges(org: SalesforceOrg): boolean {
+  return org.sandbox || org.productionChanges;
 }
 
 export const MAX_ORGS = 20;
@@ -94,6 +105,7 @@ export function orgsFromSettings(settings: unknown): SalesforceOrg[] {
       clientId,
       scopes: stringList(org.scopes),
       policy: policyFromSettings(org),
+      productionChanges: org.productionChanges === true,
     });
   }
   return orgs;
@@ -167,6 +179,7 @@ export function validateOrg(
       clientId,
       scopes: stringList(entry.scopes),
       policy: policy.policy,
+      productionChanges: entry.productionChanges === true,
     },
   };
 }

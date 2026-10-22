@@ -43,11 +43,11 @@ import {
   ONBASE,
   ONBASE_ADMIN,
   GITHUB,
-  SALESFORCE,
 } from '@renkei/provider-grants';
 import { parseIdentityUrl, salesforceAccountId, sameOrg, to18 } from '@renkei/connector-salesforce';
 import { getSalesforceConnector } from '@/lib/salesforce-app';
 import { listSalesforceConnections } from '@/lib/salesforce-grants';
+import { salesforceKindOfProvider, type SalesforceKind } from '@/lib/salesforce-kinds';
 import {
   delegateGrants,
   grantFetch,
@@ -365,8 +365,10 @@ async function handleCallback(
         pendingSignIn.scopes
       );
     }
-    if (pendingSignIn.provider === 'salesforce') {
+    const salesforceKind = salesforceKindOfProvider(pendingSignIn.provider ?? '');
+    if (salesforceKind) {
       return handleSalesforceCallback(
+        salesforceKind,
         request,
         pendingSignIn.subject,
         code,
@@ -1505,6 +1507,7 @@ async function handleEntraDeveloperCallback(
  * replaces their earlier connection to it rather than holding two.
  */
 async function handleSalesforceCallback(
+  kind: SalesforceKind,
   request: NextRequest,
   subject: string | null,
   code: string,
@@ -1532,16 +1535,16 @@ async function handleSalesforceCallback(
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const connector = await getSalesforceConnector(originResult.val, connectorKey);
+  const connector = await getSalesforceConnector(originResult.val, connectorKey, kind);
   if (!connector) {
     return NextResponse.json(
-      { error: 'That Salesforce connector is not set up, or is switched off' },
+      { error: `That ${kind.label} connector is not set up, or is switched off` },
       { status: 503 }
     );
   }
 
   const exchanged = await delegateGrants().exchange({
-    provider: SALESFORCE,
+    provider: kind.provider,
     org: connector.key,
     form: {
       grant_type: 'authorization_code',
@@ -1581,14 +1584,14 @@ async function handleSalesforceCallback(
   const accountId = salesforceAccountId(orgId, userId);
 
   // Who granted this, in words: name and username for the card.
-  const pending = grantFetch({ provider: SALESFORCE, pending: handle });
+  const pending = grantFetch({ provider: kind.provider, pending: handle });
   const infoResponse = await pendingGet(pending, `${connector.myDomain}/services/oauth2/userinfo`);
   const info = infoResponse.ok ? await jsonRecord(infoResponse) : null;
   const username = typeof info?.preferred_username === 'string' ? info.preferred_username : userId;
   const displayName = typeof info?.name === 'string' && info.name ? info.name : username;
 
   const stored = await delegateGrants().commit({
-    provider: SALESFORCE,
+    provider: kind.provider,
     handle,
     subject,
     accountId,
@@ -1609,11 +1612,13 @@ async function handleSalesforceCallback(
   // someone else goes (revoked at Salesforce too).
   const dbResult = getDatabase();
   if (dbResult.ok) {
-    const earlier = (await listSalesforceConnections(dbResult.val, subject, [connector])).filter(
+    const earlier = (
+      await listSalesforceConnections(dbResult.val, subject, [connector], kind.provider)
+    ).filter(
       (connection) => connection.connector === connector.key && connection.accountId !== accountId
     );
     for (const connection of earlier) {
-      await delegateGrants().revoke({ provider: SALESFORCE, accountId: connection.accountId });
+      await delegateGrants().revoke({ provider: kind.provider, accountId: connection.accountId });
     }
   }
 
@@ -1626,7 +1631,7 @@ async function handleSalesforceCallback(
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
-    targetLabel: `${SALESFORCE}:${connector.key}`,
+    targetLabel: `${kind.provider}:${connector.key}`,
   });
   invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));

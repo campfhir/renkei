@@ -184,6 +184,7 @@ export const EXPECTED_MIGRATIONS = [
   '158-chat-worktrees',
   '159-mcp-servers',
   '160-pending-signin-connector',
+  '161-salesforce-admin-change-requests',
 ];
 
 export interface MigrationStatus {

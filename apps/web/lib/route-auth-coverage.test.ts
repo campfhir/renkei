@@ -118,6 +118,20 @@ const GUARDED_BY_ACTION: Record<string, string> = {
   '(app)/usage/page.tsx': 'getUsageReport resolves the session and scope',
   '(app)/utilization/page.tsx':
     "getUtilizationReport resolves the session; subject is the session's own",
+  // The Salesforce connector types share their handlers (lib/salesforce-kinds.ts):
+  // each route file names its type and calls one that guards itself.
+  'api/admin/connectors/salesforce/route.ts':
+    'salesforceConnectorsRoute (lib/salesforce-connectors-admin.ts) calls checkAccess([ROLE_OPERATOR])',
+  'api/admin/connectors/salesforce-admin/route.ts':
+    'salesforceConnectorsRoute (lib/salesforce-connectors-admin.ts) calls checkAccess([ROLE_OPERATOR])',
+  'api/salesforce/[connector]/authorize/route.ts':
+    'authorizeSalesforce (lib/salesforce-connect-authorize.ts) calls getSessionFromRequest',
+  'api/salesforce-admin/[connector]/authorize/route.ts':
+    'authorizeSalesforce (lib/salesforce-connect-authorize.ts) calls getSessionFromRequest',
+  'api/salesforce/[connector]/grant/route.ts':
+    'disconnectSalesforce (lib/salesforce-connect-grant.ts) calls getSessionFromRequest',
+  'api/salesforce-admin/[connector]/grant/route.ts':
+    'disconnectSalesforce (lib/salesforce-connect-grant.ts) calls getSessionFromRequest',
 };
 
 function walk(dir: string, out: string[] = []): string[] {

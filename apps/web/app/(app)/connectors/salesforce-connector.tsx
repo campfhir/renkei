@@ -5,7 +5,8 @@ import CoachTarget from '@/components/coach-marks/anchor';
 import AuthorizedPermissions from '@/components/authorized-permissions';
 import DisconnectControl from './disconnect-control';
 import { ConnectScopePanel, ReconnectScopePanel } from './scope-connect-panel';
-import { SALESFORCE_SCOPE_GROUPS, SALESFORCE_SCOPE_OPTIONS } from '@/lib/salesforce-scopes';
+import Link from 'next/link';
+import { SALESFORCE_CRM_KIND, type SalesforceKind } from '@/lib/salesforce-kinds';
 
 /**
  * A person's connection to ONE Salesforce connector — one org, production
@@ -14,8 +15,12 @@ import { SALESFORCE_SCOPE_GROUPS, SALESFORCE_SCOPE_OPTIONS } from '@/lib/salesfo
  * connected separately; the GitHub/Entra Developer card shape otherwise:
  * connection state server-rendered, a connect link that narrows Renkei's
  * capabilities within this connector's ceiling, confirm-gated disconnect.
+ *
+ * The same card serves the admin connector (`kind`), which also links the
+ * person's change requests waiting in this org.
  */
 export default function SalesforceConnector({
+  kind = SALESFORCE_CRM_KIND,
   connectorKey,
   name,
   sandbox,
@@ -25,7 +30,10 @@ export default function SalesforceConnector({
   username,
   ceiling,
   priorScopes,
+  pendingChanges = 0,
+  takesChanges = true,
 }: {
+  kind?: SalesforceKind;
   connectorKey: string;
   /** The connector's name (Production, UAT…). */
   name: string;
@@ -40,12 +48,17 @@ export default function SalesforceConnector({
   ceiling: string[];
   /** Capabilities on the person's previous grant, seeding the picker on reconnect. */
   priorScopes: string[] | null;
+  /** Admin connectors: the person's change requests waiting in this org. */
+  pendingChanges?: number;
+  /** Admin connectors: whether this org takes change requests (a production org may not). */
+  takesChanges?: boolean;
 }) {
-  const base = `/api/salesforce/${encodeURIComponent(connectorKey)}`;
-  const label = `Salesforce · ${name}`;
+  const admin = kind.key !== SALESFORCE_CRM_KIND.key;
+  const base = `${kind.apiBase}/${encodeURIComponent(connectorKey)}`;
+  const label = `${kind.label} · ${name}`;
 
   return (
-    <ConnectorShell anchor="card-salesforce">
+    <ConnectorShell anchor={admin ? 'card-salesforce-admin' : 'card-salesforce'}>
       <div className="flex items-center justify-between gap-4">
         <ConnectorHeading>
           <ConnectorIcon capabilityKey="salesforce" label="Salesforce" size={20} />
@@ -64,9 +77,19 @@ export default function SalesforceConnector({
           <>
             Connected as <strong>{displayName}</strong>
             {username && username !== displayName ? <> ({username})</> : null} to{' '}
-            <span className="break-words font-mono text-xs">{orgHost}</span>. Records, related
-            records and reports in this org are read and changed on this connection, with the access
-            you have there.
+            <span className="break-words font-mono text-xs">{orgHost}</span>.{' '}
+            {admin
+              ? takesChanges
+                ? 'Changes to this org’s setup are proposed on this connection, validated by Salesforce, and applied only when you approve them here.'
+                : 'This production org is read only here: build in a sandbox.'
+              : 'Records, related records and reports in this org are read and changed on this connection, with the access you have there.'}
+          </>
+        ) : admin ? (
+          <>
+            Read how this {sandbox ? 'sandbox' : 'org'} is built — objects, fields, validation rules
+            — and propose new fields and rules. Salesforce validates each proposal, and nothing
+            changes until you apply it in Renkei, with the Setup permissions you hold. You will sign
+            in at <span className="break-words font-mono text-xs">{orgHost}</span>.
           </>
         ) : (
           <>
@@ -79,29 +102,39 @@ export default function SalesforceConnector({
         )}
       </p>
 
+      {admin && connected && (
+        <p className="mt-2 text-sm">
+          <Link href="/salesforce-admin/changes" className="underline">
+            {pendingChanges > 0
+              ? `${pendingChanges} change request${pendingChanges === 1 ? '' : 's'} waiting for your review`
+              : 'Your change requests'}
+          </Link>
+        </p>
+      )}
+
       {!connected && (
         <ConnectScopePanel
-          groups={SALESFORCE_SCOPE_GROUPS}
-          options={SALESFORCE_SCOPE_OPTIONS}
+          groups={kind.scopeGroups}
+          options={kind.scopeOptions}
           ceiling={ceiling}
           priorScopes={priorScopes}
           authorizePath={`${base}/authorize`}
           connectLabel={`Connect ${label}`}
-          scopesAnchor="salesforce-scopes"
-          connectAnchor="salesforce-connect"
+          scopesAnchor={admin ? 'salesforce-admin-scopes' : 'salesforce-scopes'}
+          connectAnchor={admin ? 'salesforce-admin-connect' : 'salesforce-connect'}
         />
       )}
 
       {connected && (
-        <CoachTarget name="salesforce-scopes">
+        <CoachTarget name={admin ? 'salesforce-admin-scopes' : 'salesforce-scopes'}>
           <AuthorizedPermissions
-            options={SALESFORCE_SCOPE_OPTIONS}
+            options={kind.scopeOptions}
             authorized={priorScopes}
             connectorLabel={label}
           >
             <ReconnectScopePanel
-              groups={SALESFORCE_SCOPE_GROUPS}
-              options={SALESFORCE_SCOPE_OPTIONS}
+              groups={kind.scopeGroups}
+              options={kind.scopeOptions}
               ceiling={ceiling}
               priorScopes={priorScopes}
               authorizePath={`${base}/authorize`}
@@ -113,7 +146,7 @@ export default function SalesforceConnector({
       {connected && (
         <DisconnectControl
           endpoint={`${base}/grant`}
-          confirmText={`Disconnect ${label}? Its tools stop working in this org until you reconnect, and the connection is revoked in Salesforce too. Your other Salesforce connections are not affected.`}
+          confirmText={`Disconnect ${label}? Its tools stop working in this org until you reconnect, and the connection is revoked in Salesforce too. Your other Salesforce connections are not affected.${admin ? ' Change requests waiting for this org cannot be applied until you reconnect.' : ''}`}
           buttonLabel={`Disconnect ${label}`}
         />
       )}
@@ -123,26 +156,28 @@ export default function SalesforceConnector({
 
 /** Connections to orgs an admin has since removed: shown so a person can revoke them. */
 export function SalesforceOrphanedConnections({
+  kind = SALESFORCE_CRM_KIND,
   connections,
 }: {
+  kind?: SalesforceKind;
   connections: { accountId: string; displayName: string; instanceUrl: string }[];
 }) {
   return (
     <ConnectorShell>
       <ConnectorHeading>
         <ConnectorIcon capabilityKey="salesforce" label="Salesforce" size={20} />
-        Salesforce connections to removed orgs
+        {kind.label} connections to removed orgs
       </ConnectorHeading>
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-        Your organization no longer has a Salesforce connector for{' '}
+        Your organization no longer has a {kind.label} connector for{' '}
         {connections
           .map((c) => new URL(c.instanceUrl || 'https://unknown.invalid').hostname)
           .join(', ')}
         , so these connections do nothing. Revoke them to remove them from Salesforce too.
       </p>
       <DisconnectControl
-        endpoint="/api/salesforce/-/grant"
-        confirmText="Revoke these Salesforce connections? They are removed from Salesforce too."
+        endpoint={`${kind.apiBase}/-/grant`}
+        confirmText={`Revoke these ${kind.label} connections? They are removed from Salesforce too.`}
         buttonLabel="Revoke removed-org connections"
       />
     </ConnectorShell>

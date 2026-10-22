@@ -309,6 +309,34 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     togglable: true,
   },
   {
+    // Building in the org: its own External Client Apps and grants, one
+    // connector per org like the CRM's. Every change is a change request,
+    // validated by Salesforce and applied by the person in Renkei.
+    capabilityKey: 'salesforce-admin',
+    configKey: 'salesforce-admin',
+    label: 'Salesforce Admin',
+    summary:
+      'Build in Salesforce — read how objects, fields and validation rules are set up, and ' +
+      'propose new fields and rules as change requests that Salesforce validates and you apply.',
+    toolPrefix: 'salesforce_admin_*',
+    category: 'crm',
+    keywords: [
+      'salesforce',
+      'admin',
+      'setup',
+      'metadata',
+      'custom fields',
+      'custom objects',
+      'validation rules',
+      'sandbox',
+      'deploy',
+      'change request',
+    ],
+    grantProviders: ['salesforce-admin'],
+    userConnectable: true,
+    togglable: true,
+  },
+  {
     capabilityKey: 'webex',
     configKey: 'webex-user',
     label: 'WebEx',

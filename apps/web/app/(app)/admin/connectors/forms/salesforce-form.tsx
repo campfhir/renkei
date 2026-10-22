@@ -1,7 +1,11 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
-import { SALESFORCE_SCOPE_GROUPS, SALESFORCE_SCOPE_OPTIONS } from '@/lib/salesforce-scopes';
+import {
+  SALESFORCE_ADMIN_KIND,
+  SALESFORCE_CRM_KIND,
+  type SalesforceKind,
+} from '@/lib/salesforce-kinds';
 import ScopePicker from '@/components/scope-picker';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 import {
@@ -30,6 +34,7 @@ interface SalesforceConnectorRow {
   excludedObjects: string[];
   excludedFields: string[];
   hideRestricted: boolean;
+  productionChanges: boolean;
   hasClientSecret: boolean;
 }
 
@@ -39,13 +44,11 @@ interface SalesforceConfig {
   connectors: SalesforceConnectorRow[];
 }
 
-const URL_BASE = `/api/admin/connectors/salesforce`;
-
-function defaultChecked(): Set<string> {
-  return new Set(
-    SALESFORCE_SCOPE_OPTIONS.filter((option) => option.defaultChecked).map((o) => o.id)
-  );
+function defaultChecked(kind: SalesforceKind): Set<string> {
+  return new Set(kind.scopeOptions.filter((option) => option.defaultChecked).map((o) => o.id));
 }
+
+const isAdmin = (kind: SalesforceKind) => kind.key === SALESFORCE_ADMIN_KIND.key;
 
 /**
  * The Salesforce connectors — one per Salesforce org the organization works
@@ -55,14 +58,33 @@ function defaultChecked(): Set<string> {
  * (salesforce-scopes.ts): Salesforce's OAuth scopes cannot tell a read from
  * a delete, so the narrowing is ours, and each person's Salesforce
  * permissions still decide every call.
+ *
+ * One form for both types (lib/salesforce-kinds.ts). The CRM's connectors
+ * also say what they keep away from the model; the admin's say whether a
+ * production org takes change requests.
  */
 export function SalesforceForm({ origin }: { origin: string | null }) {
-  const [state, reload] = useConnectorConfig<SalesforceConfig>(URL_BASE);
+  return <SalesforceConnectorsForm origin={origin} kind={SALESFORCE_CRM_KIND} />;
+}
+
+/** The Salesforce admin connectors: the same list, on their own config row and apps. */
+export function SalesforceAdminForm({ origin }: { origin: string | null }) {
+  return <SalesforceConnectorsForm origin={origin} kind={SALESFORCE_ADMIN_KIND} />;
+}
+
+function SalesforceConnectorsForm({
+  origin,
+  kind,
+}: {
+  origin: string | null;
+  kind: SalesforceKind;
+}) {
+  const [state, reload] = useConnectorConfig<SalesforceConfig>(kind.adminApi);
   const [editing, setEditing] = useState<string | null>(null);
 
   if (state.loading)
     return (
-      <Card title="Salesforce" status={null}>
+      <Card title={kind.label} status={null}>
         <LoadingRegion label="Loading settings…">
           <SkeletonForm fields={3} />
         </LoadingRegion>
@@ -70,7 +92,7 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
     );
   if (state.error) {
     return (
-      <Card title="Salesforce" status={null}>
+      <Card title={kind.label} status={null}>
         <p className="text-sm text-red-700 dark:text-red-300">{state.error}</p>
       </Card>
     );
@@ -79,21 +101,32 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
 
   return (
     <div className="space-y-4">
-      <Card title="Salesforce" status={null}>
+      <Card title={kind.label} status={null}>
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Add a Salesforce connector for <strong>each Salesforce org</strong> people work in — your
-          production org, and each sandbox. Each is its own connector: in that org, create an{' '}
-          <strong>External Client App</strong> (Setup → External Client App Manager) with the
-          callback URL <CallbackUrl origin={origin} />, the scopes{' '}
-          <code className="font-mono text-xs">api</code>,{' '}
+          Add a {kind.label} connector for <strong>each Salesforce org</strong> people{' '}
+          {isAdmin(kind) ? 'build in' : 'work in'} — your production org, and each sandbox. Each is
+          its own connector: in that org, create an <strong>External Client App</strong> (Setup →
+          External Client App Manager) with the callback URL <CallbackUrl origin={origin} />, the
+          scopes <code className="font-mono text-xs">api</code>,{' '}
           <code className="font-mono text-xs">refresh_token</code> and{' '}
           <code className="font-mono text-xs">id</code>, and <strong>Require PKCE</strong>, then add
           its consumer key and secret here. People connect each org separately, and Salesforce
           applies each person&apos;s own access in that org on every call.
+          {isAdmin(kind) && (
+            <>
+              {' '}
+              Use an External Client App of its own, not the CRM connector&apos;s: building is
+              connected and revoked separately from working records. Every change is a change
+              request, checked by Salesforce and applied by the person in Renkei.
+            </>
+          )}
         </p>
         {connectors.length === 0 && (
           <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
-            No Salesforce connectors yet. Start with your production org.
+            No {kind.label} connectors yet.{' '}
+            {isAdmin(kind)
+              ? 'Start with a sandbox to build in.'
+              : 'Start with your production org.'}
           </p>
         )}
       </Card>
@@ -102,6 +135,7 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
         editing === connector.key ? (
           <ConnectorEditor
             key={connector.key}
+            kind={kind}
             existing={connector}
             onDone={() => {
               setEditing(null);
@@ -112,6 +146,7 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
         ) : (
           <ConnectorSummary
             key={connector.key}
+            kind={kind}
             connector={connector}
             onEdit={() => setEditing(connector.key)}
           />
@@ -120,6 +155,7 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
 
       {editing === '__new__' ? (
         <ConnectorEditor
+          kind={kind}
           existing={null}
           isFirst={connectors.length === 0}
           onDone={() => {
@@ -134,7 +170,11 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
           onClick={() => setEditing('__new__')}
           className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
         >
-          {connectors.length === 0 ? 'Add your production org' : 'Add a Salesforce org'}
+          {connectors.length === 0
+            ? isAdmin(kind)
+              ? 'Add your first org'
+              : 'Add your production org'
+            : 'Add a Salesforce org'}
         </button>
       )}
     </div>
@@ -142,18 +182,20 @@ export function SalesforceForm({ origin }: { origin: string | null }) {
 }
 
 function ConnectorSummary({
+  kind,
   connector,
   onEdit,
 }: {
+  kind: SalesforceKind;
   connector: SalesforceConnectorRow;
   onEdit: () => void;
 }) {
-  const capabilities = SALESFORCE_SCOPE_OPTIONS.filter((option) =>
-    optionWithin(option, new Set(connector.scopes.split(/\s+/)))
-  ).map((option) => option.label);
+  const capabilities = kind.scopeOptions
+    .filter((option) => optionWithin(option, new Set(connector.scopes.split(/\s+/))))
+    .map((option) => option.label);
   return (
     <Card
-      title={`Salesforce · ${connector.name}`}
+      title={`${kind.label} · ${connector.name}`}
       status={<StatusPill configured={connector.hasClientSecret} enabled={connector.enabled} />}
     >
       <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-[10rem_1fr]">
@@ -165,8 +207,23 @@ function ConnectorSummary({
         <dd className="break-all font-mono text-xs">{connector.clientId}</dd>
         <dt className="text-gray-500 dark:text-gray-400">People may let Renkei</dt>
         <dd>{capabilities.join(', ') || 'nothing'}</dd>
-        <dt className="text-gray-500 dark:text-gray-400">Kept from the assistant</dt>
-        <dd className="break-words">{keptAway(connector)}</dd>
+        {isAdmin(kind) ? (
+          <>
+            <dt className="text-gray-500 dark:text-gray-400">Change requests</dt>
+            <dd>
+              {connector.sandbox
+                ? 'Applied here when the person approves them'
+                : connector.productionChanges
+                  ? 'Allowed in this production org'
+                  : 'Not in this production org — read only'}
+            </dd>
+          </>
+        ) : (
+          <>
+            <dt className="text-gray-500 dark:text-gray-400">Kept from the assistant</dt>
+            <dd className="break-words">{keptAway(connector)}</dd>
+          </>
+        )}
       </dl>
       <button
         type="button"
@@ -191,19 +248,23 @@ function keptAway(connector: SalesforceConnectorRow): string {
 }
 
 function ConnectorEditor({
+  kind,
   existing,
   isFirst = false,
   onDone,
   onCancel,
 }: {
+  kind: SalesforceKind;
   existing: SalesforceConnectorRow | null;
   isFirst?: boolean;
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState(existing?.name ?? (isFirst ? 'Production' : ''));
+  // A CRM usually starts with production; building usually starts in a sandbox.
+  const firstIsProduction = isFirst && !isAdmin(kind);
+  const [name, setName] = useState(existing?.name ?? (firstIsProduction ? 'Production' : ''));
   const [myDomain, setMyDomain] = useState(existing?.myDomain ?? '');
-  const [sandbox, setSandbox] = useState(existing?.sandbox ?? !isFirst);
+  const [sandbox, setSandbox] = useState(existing?.sandbox ?? !firstIsProduction);
   const [clientId, setClientId] = useState(existing?.clientId ?? '');
   const [clientSecret, setClientSecret] = useState('');
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
@@ -212,7 +273,8 @@ function ConnectorEditor({
   );
   const [excludedFields, setExcludedFields] = useState((existing?.excludedFields ?? []).join('\n'));
   const [hideRestricted, setHideRestricted] = useState(existing?.hideRestricted ?? false);
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(defaultChecked);
+  const [productionChanges, setProductionChanges] = useState(existing?.productionChanges ?? false);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => defaultChecked(kind));
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -221,9 +283,9 @@ function ConnectorEditor({
   useEffect(() => {
     if (!existing?.scopes) return;
     const stored = new Set(existing.scopes.split(/\s+/));
-    const matching = SALESFORCE_SCOPE_OPTIONS.filter((option) => optionWithin(option, stored));
+    const matching = kind.scopeOptions.filter((option) => optionWithin(option, stored));
     if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
-  }, [existing?.scopes]);
+  }, [existing?.scopes, kind]);
 
   function toggleOption(optionId: string, on: boolean) {
     setCheckedIds((current) => {
@@ -239,7 +301,7 @@ function ConnectorEditor({
     setBusy(true);
     setNotice(null);
     setError(null);
-    const failure = await putJson(URL_BASE, {
+    const failure = await putJson(kind.adminApi, {
       ...(existing ? { key: existing.key } : {}),
       name: name.trim(),
       myDomain: myDomain.trim(),
@@ -248,10 +310,10 @@ function ConnectorEditor({
       // Blank means keep the stored secret — omit it from the payload.
       ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
       enabled,
-      scopes: scopesOfOptions(SALESFORCE_SCOPE_OPTIONS, checkedIds).join(' '),
-      excludedObjects,
-      excludedFields,
-      hideRestricted,
+      scopes: scopesOfOptions(kind.scopeOptions, checkedIds).join(' '),
+      ...(isAdmin(kind)
+        ? { productionChanges: !sandbox && productionChanges }
+        : { excludedObjects, excludedFields, hideRestricted }),
     });
     setBusy(false);
     if (failure) {
@@ -266,7 +328,7 @@ function ConnectorEditor({
   async function remove() {
     if (!existing) return;
     setBusy(true);
-    const response = await fetch(`${URL_BASE}?key=${encodeURIComponent(existing.key)}`, {
+    const response = await fetch(`${kind.adminApi}?key=${encodeURIComponent(existing.key)}`, {
       method: 'DELETE',
     }).catch(() => null);
     setBusy(false);
@@ -277,10 +339,10 @@ function ConnectorEditor({
     onDone();
   }
 
-  const idBase = `salesforce-${existing?.key ?? 'new'}`;
+  const idBase = `${kind.key}-${existing?.key ?? 'new'}`;
   return (
     <Card
-      title={existing ? `Salesforce · ${existing.name}` : 'New Salesforce connector'}
+      title={existing ? `${kind.label} · ${existing.name}` : `New ${kind.label} connector`}
       status={
         existing ? (
           <StatusPill configured={existing.hasClientSecret} enabled={existing.enabled} />
@@ -355,8 +417,8 @@ function ConnectorEditor({
         <fieldset>
           <legend className={labelClass}>What people may let Renkei do in this org</legend>
           <ScopePicker
-            groups={SALESFORCE_SCOPE_GROUPS}
-            options={SALESFORCE_SCOPE_OPTIONS}
+            groups={kind.scopeGroups}
+            options={kind.scopeOptions}
             checked={checkedIds}
             onToggle={toggleOption}
           />
@@ -364,60 +426,80 @@ function ConnectorEditor({
             This is the ceiling: people can narrow it when they connect, never widen it. Salesforce
             grants the whole API to a connection, so these boxes are Renkei&apos;s own limit on
             which tools it offers — each person&apos;s Salesforce permissions still decide what any
-            tool may do. Record contents are sent to your organization&apos;s configured model
-            provider; decide that before turning this on for sensitive records.
+            tool may do.{' '}
+            {isAdmin(kind)
+              ? 'The org’s setup — objects, fields, formulas, validation rules — is sent to your organization’s configured model provider; no records are read.'
+              : 'Record contents are sent to your organization’s configured model provider; decide that before turning this on for sensitive records.'}
           </p>
         </fieldset>
-        <fieldset className="space-y-3">
-          <legend className={labelClass}>Kept away from the assistant</legend>
-          <p className={hintClass}>
-            Objects and fields no Salesforce tool reads, queries, searches, reports on or writes in
-            this org — even for people who can see them in Salesforce. Use it for what should not
-            reach your model provider: case notes, health or payroll objects. It only takes things
-            away.
-          </p>
-          <div>
-            <label htmlFor={`${idBase}-excluded-objects`} className={labelClass}>
-              Hidden objects
+        {isAdmin(kind) ? (
+          !sandbox && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={productionChanges}
+                onChange={(e) => setProductionChanges(e.target.checked)}
+              />
+              <span>
+                Allow change requests in this production org. Off, it is read only here: people
+                build in a sandbox and promote. On, each change is still validated by Salesforce and
+                applied only when the person approves it in Renkei.
+              </span>
             </label>
-            <textarea
-              id={`${idBase}-excluded-objects`}
-              rows={2}
-              value={excludedObjects}
-              onChange={(e) => setExcludedObjects(e.target.value)}
-              placeholder="Case_Note__c"
-              className={`${inputClass} font-mono`}
-            />
-            <p className={hintClass}>API names, one per line.</p>
-          </div>
-          <div>
-            <label htmlFor={`${idBase}-excluded-fields`} className={labelClass}>
-              Hidden fields
+          )
+        ) : (
+          <fieldset className="space-y-3">
+            <legend className={labelClass}>Kept away from the assistant</legend>
+            <p className={hintClass}>
+              Objects and fields no Salesforce tool reads, queries, searches, reports on or writes
+              in this org — even for people who can see them in Salesforce. Use it for what should
+              not reach your model provider: case notes, health or payroll objects. It only takes
+              things away.
+            </p>
+            <div>
+              <label htmlFor={`${idBase}-excluded-objects`} className={labelClass}>
+                Hidden objects
+              </label>
+              <textarea
+                id={`${idBase}-excluded-objects`}
+                rows={2}
+                value={excludedObjects}
+                onChange={(e) => setExcludedObjects(e.target.value)}
+                placeholder="Case_Note__c"
+                className={`${inputClass} font-mono`}
+              />
+              <p className={hintClass}>API names, one per line.</p>
+            </div>
+            <div>
+              <label htmlFor={`${idBase}-excluded-fields`} className={labelClass}>
+                Hidden fields
+              </label>
+              <textarea
+                id={`${idBase}-excluded-fields`}
+                rows={2}
+                value={excludedFields}
+                onChange={(e) => setExcludedFields(e.target.value)}
+                placeholder="Contact.Diagnosis__c"
+                className={`${inputClass} font-mono`}
+              />
+              <p className={hintClass}>Object.Field API names, one per line.</p>
+            </div>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={hideRestricted}
+                onChange={(e) => setHideRestricted(e.target.checked)}
+              />
+              <span>
+                Hide every field this org&apos;s data classification marks Restricted or Mission
+                Critical (Setup → Data Classification). If Salesforce cannot say how a field is
+                classified, the object is not shown at all.
+              </span>
             </label>
-            <textarea
-              id={`${idBase}-excluded-fields`}
-              rows={2}
-              value={excludedFields}
-              onChange={(e) => setExcludedFields(e.target.value)}
-              placeholder="Contact.Diagnosis__c"
-              className={`${inputClass} font-mono`}
-            />
-            <p className={hintClass}>Object.Field API names, one per line.</p>
-          </div>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={hideRestricted}
-              onChange={(e) => setHideRestricted(e.target.checked)}
-            />
-            <span>
-              Hide every field this org&apos;s data classification marks Restricted or Mission
-              Critical (Setup → Data Classification). If Salesforce cannot say how a field is
-              classified, the object is not shown at all.
-            </span>
-          </label>
-        </fieldset>
+          </fieldset>
+        )}
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           Enabled

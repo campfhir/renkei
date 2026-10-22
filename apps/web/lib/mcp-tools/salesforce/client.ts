@@ -30,7 +30,8 @@ import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { listSalesforceConnections } from '@/lib/salesforce-grants';
 import { chooseConnection, orgCall } from './org-choice';
 import { salesforceScopeFor } from './scopes';
-import { SALESFORCE, readSalesforceMetadata } from '@renkei/provider-grants';
+import { readSalesforceMetadata } from '@renkei/provider-grants';
+import { SALESFORCE_CRM_KIND, type SalesforceKind } from '@/lib/salesforce-kinds';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
@@ -68,9 +69,13 @@ export interface SalesforceCallContext {
 /**
  * The caller's connection to the org this call acts in (org-choice.ts):
  * the org asked for in `orgCall`, checked against the tool's capability.
+ * The admin connector resolves the same way, on its own connectors, grants
+ * and capability map.
  */
 export async function resolveSalesforceAccess(
-  context: SalesforceCallContext
+  context: SalesforceCallContext,
+  kind: SalesforceKind = SALESFORCE_CRM_KIND,
+  scopeFor: (tool: string) => string[] = salesforceScopeFor
 ): Promise<SalesforceAccess | string> {
   if (!context.subject) return 'No signed-in identity on this request.';
   const db =
@@ -81,21 +86,28 @@ export async function resolveSalesforceAccess(
     })();
   if (!db) return 'Could not read your Salesforce connections.';
   const call = orgCall.getStore();
-  const connectors = await listSalesforceConnectors();
-  const connections = await listSalesforceConnections(db, context.subject, connectors);
+  const connectors = await listSalesforceConnectors(kind);
+  const connections = await listSalesforceConnections(
+    db,
+    context.subject,
+    connectors,
+    kind.provider
+  );
   const choice = chooseConnection(
     connectors,
     connections,
     call?.org,
-    call ? salesforceScopeFor(call.tool) : []
+    call ? scopeFor(call.tool) : [],
+    kind.label,
+    kind.key === SALESFORCE_CRM_KIND.key
   );
   if (!choice.ok) return choice.error;
-  const grant = { provider: SALESFORCE, accountId: choice.connection.accountId };
+  const grant = { provider: kind.provider, accountId: choice.connection.accountId };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) {
     return described.err.type === 'NO_GRANT'
-      ? `Salesforce ${choice.org.name} is not connected. Connect it on the Connectors page, then try again.`
-      : grantRefusalText(described.err.type, `Salesforce ${choice.org.name}`);
+      ? `${kind.label} ${choice.org.name} is not connected. Connect it on the Connectors page, then try again.`
+      : grantRefusalText(described.err.type, `${kind.label} ${choice.org.name}`);
   }
   const metadata = readSalesforceMetadata(described.val.metadata);
   return {

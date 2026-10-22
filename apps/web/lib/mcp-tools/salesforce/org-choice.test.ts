@@ -19,6 +19,7 @@ const org = (key: string, sandbox: boolean, enabled = true): SalesforceOrg => ({
   clientId: `${key}-client`,
   scopes: ['sf-records-read', 'sf-records-write'],
   policy: EMPTY_POLICY,
+  productionChanges: false,
 });
 const connection = (connector: string, scopes: string[]): SalesforceConnection => ({
   accountId: `00D/${connector}`,

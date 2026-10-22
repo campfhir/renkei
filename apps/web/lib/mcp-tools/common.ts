@@ -139,6 +139,8 @@ export interface MCPToolContext {
    * narrowing. Absent means no Salesforce tools, never "everything".
    */
   salesforceScopes?: string[];
+  /** Renkei's capabilities across the caller's Salesforce admin connections. */
+  salesforceAdminScopes?: string[];
   /**
    * Present when the caller is an agent run (an agent-runner token,
    * migration 040). `subject`/`userEmail` still name the run OWNER — every

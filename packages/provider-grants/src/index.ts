@@ -44,6 +44,7 @@ export { GenericOAuthAdapter } from './generic-oauth';
 export { MICROSOFT, ENTRA_DEVELOPER, MicrosoftAdapter } from './microsoft';
 export {
   SALESFORCE,
+  SALESFORCE_ADMIN,
   SALESFORCE_SESSION_SECONDS,
   SalesforceAdapter,
   readSalesforceMetadata,
