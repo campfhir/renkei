@@ -21,8 +21,11 @@
  * does not get an entry — a changelog that lists refactors is one nobody
  * reads, and then the entries that matter are missed too.
  *
- * `date` is the day the work landed on `main`, ISO, or null for work that has
- * not shipped yet.
+ * `date` is the day the work landed on `main`, ISO. Entries are not written by
+ * hand into a finished release: `pnpm changelog add` stamps today's date as
+ * the work lands, and `pnpm changelog check` runs in CI and fails a pull
+ * request that changes the product without an entry (a commit saying
+ * `Changelog: none` opts out). `node scripts/changelog.mjs` documents both.
  */
 
 export interface ChangelogEntry {
@@ -34,8 +37,8 @@ export interface ChangelogEntry {
 }
 
 export interface ChangelogRelease {
-  /** ISO date, or null for unreleased work sitting on main. */
-  date: string | null;
+  /** ISO date (YYYY-MM-DD) the work landed on main. */
+  date: string;
   /** Optional theme, when a group of entries share one. */
   heading?: string;
   entries: ChangelogEntry[];
@@ -43,7 +46,7 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
-    date: null,
+    date: '2026-10-20',
     entries: [
       {
         kind: 'changed',
