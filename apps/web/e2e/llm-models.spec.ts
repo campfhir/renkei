@@ -216,8 +216,13 @@ test('admin: the model roster, listing, testing, and saving', async ({ page }, t
   await page.setViewportSize(MOBILE_VIEWPORT);
   await shot(page, testInfo, 'llm-models-07-mobile-list');
   await page.getByRole('button', { name: 'Edit' }).click();
-  await expect(page.getByText('Edit model', { exact: true })).toBeVisible();
+  // The edit form is a modal dialog over the roster, not a block at its foot.
+  const editDialog = page.getByRole('dialog', { name: 'Edit model' });
+  await expect(editDialog).toBeVisible();
   await shot(page, testInfo, 'llm-models-08-mobile-edit');
+  await editDialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(editDialog).toHaveCount(0);
+  await expect(page.getByText('Prod Claude')).toBeVisible();
 });
 
 test('admin: reasoning effort is free text — no fixed value list — and round-trips through save', async ({
