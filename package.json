@@ -12,7 +12,8 @@
     "build": "pnpm -r build",
     "lint": "eslint .",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r --if-present test"
+    "test": "pnpm -r --if-present test",
+    "changelog": "node scripts/changelog.mjs"
   },
   "devDependencies": {
     "@campfhir/safe-functions": "^0.1.3",

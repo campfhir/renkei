@@ -39,6 +39,10 @@ export default [
       'apps/web/public/voice-capture-worklet.js',
       // Standalone vendoring script: runs via tsx, no tsconfig project covers it.
       'scripts/trim-graph-openapi.ts',
+      // Changelog guard: plain Node ESM run directly (`pnpm changelog`) and
+      // its test, outside every tsconfig project — same category as above.
+      'scripts/changelog.mjs',
+      'scripts/changelog.test.mjs',
       // The local ESLint rules themselves — plain ESM consumed by this config,
       // outside every tsconfig project, same category as the scripts above.
       'scripts/eslint-rules/**',

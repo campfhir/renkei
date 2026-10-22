@@ -104,15 +104,10 @@ export default async function AboutPage(): Promise<React.ReactNode> {
 
           <div className="space-y-8">
             {CHANGELOG.map((release, index) => (
-              <section key={`${release.date ?? 'unreleased'}-${release.heading ?? index}`}>
+              <section key={`${release.date}-${release.heading ?? index}`}>
                 <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-gray-200 pb-2 dark:border-gray-800">
-                  <h3 className="font-semibold">
-                    {/* An unreleased group is dated by its heading alone — putting
-                        today's date on work that has not shipped would be a lie
-                        the reader has no way to check. */}
-                    {release.date ? releaseDate(release.date) : (release.heading ?? 'Unreleased')}
-                  </h3>
-                  {release.date && release.heading ? (
+                  <h3 className="font-semibold">{releaseDate(release.date)}</h3>
+                  {release.heading ? (
                     <span className="text-sm text-gray-500 dark:text-gray-400">
                       {release.heading}
                     </span>
