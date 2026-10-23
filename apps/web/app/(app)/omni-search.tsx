@@ -394,13 +394,13 @@ function buildSections({
   ];
 
   const sections: Section[] = [
-    { title: 'Settings', results: placeResults('Settings') },
-    { title: 'Connectors', results: placeResults('Connectors') },
-    { title: 'Organization', results: placeResults('Organization') },
-    { title: 'Pages', results: pageResults },
-    { title: 'Projects', results: projectResults },
-    { title: 'Artifacts', results: artifactResults },
     { title: 'Chats', results: [...byTitle, ...bySaid].slice(0, LIMITS.chats) },
+    { title: 'Artifacts', results: artifactResults },
+    { title: 'Projects', results: projectResults },
+    { title: 'Pages', results: pageResults },
+    { title: 'Organization', results: placeResults('Organization') },
+    { title: 'Connectors', results: placeResults('Connectors') },
+    { title: 'Settings', results: placeResults('Settings') },
   ];
   return sections.filter((section) => section.results.length > 0);
 }

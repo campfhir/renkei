@@ -27,26 +27,27 @@ test('top bar search: Ctrl+K focuses it, a setting is found and opened', async (
   await expect(search).toBeFocused();
 
   await search.fill('prefer');
-  await expect(results.getByRole('option', { name: 'Preferences' })).toBeVisible();
-  // The first result is active; Enter opens it.
-  await page.keyboard.press('Enter');
+  await expect(results.getByRole('option', { name: 'Preferences', exact: true })).toBeVisible();
+  await results.getByRole('option', { name: 'Preferences', exact: true }).click();
   await expect(page).toHaveURL(/\/preferences$/);
   await expect(results).toBeHidden();
   await expect(search).toHaveValue('');
 
   // Escape clears the text first, then closes the results.
   await search.fill('connectors');
-  await expect(results.getByRole('option', { name: 'Connectors' })).toBeVisible();
+  await expect(results.getByRole('option', { name: 'Connectors', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(search).toHaveValue('');
   await expect(results).toBeHidden();
 
-  // A search that matches nothing says so, and the arrows do not break it.
+  // A search that matches no setting still offers the library search, and
+  // the arrows move through what is there without breaking it.
   await search.fill('zzz no such place');
-  await expect(results).toContainText('Nothing matches');
+  await expect(results.getByRole('option', { name: /Search artifacts for/ })).toBeVisible();
+  await expect(results.getByRole('option')).toHaveCount(1);
   await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/\/preferences$/);
+  await page.keyboard.press('ArrowUp');
+  await expect(results.getByRole('option')).toHaveCount(1);
 
   await page.screenshot({
     path: path.join(
@@ -87,8 +88,7 @@ test('on a phone the top bar folds search into a magnifier that opens a full fie
   expect(fontSize).toBeGreaterThanOrEqual(16);
 
   await search.fill('prefer');
-  await expect(results.getByRole('option', { name: 'Preferences' })).toBeVisible();
-  await page.keyboard.press('Enter');
+  await results.getByRole('option', { name: 'Preferences', exact: true }).click();
   await expect(page).toHaveURL(/\/preferences$/);
   // Back on the new page the field folds away again.
   await expect(search).toBeHidden();
