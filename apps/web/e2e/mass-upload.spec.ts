@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -71,6 +72,12 @@ async function seed(fixture: ReturnType<typeof fixtureFor>): Promise<void> {
       `INSERT INTO chats (id, owner_subject, title, last_message_at)\n       VALUES ($1, $2, 'Applicant review', NOW())`,
       [fixture.chatId, fixture.subject]
     );
+    // Enrolled, with a delegation for this spec's session, the way
+    // e2e/seed.ts enrolls the shared person: otherwise the KeyGuard's
+    // "this device does not have your encryption key" dialog sits over the
+    // composer and swallows every click after the first run has left the
+    // person enrolled in a browser that is gone.
+    await enrollForE2E(client, fixture.subject);
   } finally {
     await client.end();
   }

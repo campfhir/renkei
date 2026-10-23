@@ -29,7 +29,7 @@ import path from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { keyFor } from './keys';
+import { enrollForE2E, keyFor } from './keys';
 import { encodeGif } from '@renkei/document-render';
 import { deleteRowsOf } from './seed';
 
@@ -173,6 +173,12 @@ async function seedTenant(f: Fixture): Promise<void> {
       `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [f.subject]
     );
+    // Enrolled with a delegation for this spec's session, as e2e/seed.ts
+    // enrolls the shared person. The chat cases get this through keyFor;
+    // the Preferences and usage cases seed no chat, and without it the
+    // KeyGuard's "this device does not have your encryption key" dialog
+    // sits over the page and swallows every click.
+    await enrollForE2E(client, f.subject);
   } finally {
     await client.end();
   }
@@ -845,7 +851,7 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
 
   await select.selectOption({ label: 'Painter · gpt-image-1' });
   await section.getByRole('button', { name: 'Save' }).click();
-  await expect(section.getByText('Saved.')).toBeVisible();
+  await expect(section.getByText('Saved.')).toBeVisible(COLD);
   await shot(page, testInfo, 'preferences-image-model.png');
 
   // Saved: it survives a reload, and the stored preference is the model's id.
@@ -866,7 +872,7 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
   // Back to the organization default clears it.
   await page.getByLabel('Preferred image model').selectOption('');
   await section.getByRole('button', { name: 'Save' }).click();
-  await expect(section.getByText('Saved.')).toBeVisible();
+  await expect(section.getByText('Saved.')).toBeVisible(COLD);
 
   // Phone width.
   await page.setViewportSize(MOBILE_VIEWPORT);
@@ -912,7 +918,9 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
   const surfaceImages = surfaces.getByRole('listitem').filter({ hasText: 'Images' });
   await expect(surfaceImages).toContainText('5.3k');
   await expect(surfaceImages).toContainText('(101 in · 5.2k out)');
-  await expect(page.getByRole('main').getByText('5.3k', { exact: true }).first()).toBeVisible();
+  // The row's figure is the images' own total, 101 + 5,200, not a share of
+  // anything else on the page (the shared seed's agent tokens sit beside it).
+  await expect(surfaceImages).toHaveText(/^Images\s*5\.3k/);
   const board = page.locator('section', {
     has: page.getByRole('heading', { name: 'Top image creators' }),
   });
