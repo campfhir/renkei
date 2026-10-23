@@ -63,11 +63,12 @@ export default {
     '^@renkei/blob-store$': '<rootDir>/../../packages/blob-store/src/index.ts',
     '^@renkei/voice$': '<rootDir>/../../packages/voice/src/index.ts',
   },
-  // kysely's published build is ESM-only, and quickjs-emscripten's CJS
-  // build keeps a dynamic import() for its wasm variant (pptxgenjs's, for
-  // node:fs); suites importing package barrels that reach any of them need
-  // them transformed to CJS rather than ignored — the worker-agents pattern.
-  transformIgnorePatterns: ['/node_modules/(?!.*(kysely|quickjs|pptxgenjs))'],
+  // kysely's and marked's published builds are ESM-only, and
+  // quickjs-emscripten's CJS build keeps a dynamic import() for its wasm
+  // variant (pptxgenjs's, for node:fs); suites importing package barrels
+  // that reach any of them need them transformed to CJS rather than
+  // ignored — the worker-agents pattern.
+  transformIgnorePatterns: ['/node_modules/(?!.*(kysely|quickjs|pptxgenjs|marked))'],
   transform: {
     '^.+\\.(t|j)sx?$': [
       'ts-jest',

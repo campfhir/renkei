@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-23',
     entries: [
       {
+        kind: 'changed',
+        title: 'Dependencies brought up to date',
+        detail:
+          'Every package the app and workers build on moved to its current release: Next.js, React, Playwright, Zod, Kysely, the Markdown and Word renderers, the logging library and the lint and test tooling. Nothing changes in how the app behaves; this keeps security fixes flowing.',
+      },
+      {
         kind: 'added',
         title: 'Jira automation rules on your own Atlassian API token',
         detail:

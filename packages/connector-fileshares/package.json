@@ -20,17 +20,17 @@
     "@renkei/rate-limit": "workspace:*",
     "@renkei/user-keys": "workspace:*",
     "@tryjsky/v9u-smb2": "^1.1.0",
-    "kysely": "^0.29.6",
+    "kysely": "^0.29.7",
     "ssh2-sftp-client": "^12.1.1"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "@types/node": "^24.19.1",
+    "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
     "@types/ssh2-sftp-client": "^9.0.6",
     "jest": "^30.5.2",
     "pg": "^8.23.1",
-    "ts-jest": "^29.4.14",
+    "ts-jest": "^29.4.15",
     "typescript": "^5.9.3"
   }
 }
