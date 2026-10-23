@@ -105,7 +105,7 @@ export function ModeToggle({
       type="button"
       role="radio"
       aria-checked={value === mode}
-      title={title}
+      data-tip={title}
       disabled={disabled}
       onClick={() => value !== mode && onChange(mode)}
       className={`flex h-6 items-center rounded-md px-2 text-[11px] font-medium disabled:cursor-default ${

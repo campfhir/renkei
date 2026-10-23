@@ -110,7 +110,7 @@ export default function AttachArtifactsModal({
             onChange={(event) => setFilter(event.target.value)}
             placeholder="Filter by name…"
             aria-label="Filter by name"
-            className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
+            className="min-w-[12rem] flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
           />
         </div>
         <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-800">

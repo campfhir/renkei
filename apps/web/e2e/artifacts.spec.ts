@@ -26,6 +26,8 @@ import { deleteRowsOf } from './seed';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
+/** A first visit compiles the page on the dev server; a real upload extracts text. */
+const COLD = { timeout: 30_000 };
 
 test.use({
   launchOptions: {
@@ -301,6 +303,56 @@ test('the library: filters, details, rename, share, delete with its impact', asy
   await expect(list.getByText('vendor-sdk-manual.txt')).toBeHidden();
 });
 
+test('the library: a real upload lands, reads back, and is attached from the card', async ({
+  page,
+}, testInfo) => {
+  const f = fixtureFor(testInfo.project.name);
+  await seed(f);
+  await signIn(page, f);
+
+  // No mock: the bytes go to the blob store's local backend (the Playwright
+  // config points the dev server at it), the text is extracted, the row
+  // appears, and the download serves the same bytes back.
+  await page.goto('/chat/artifacts');
+  await page.getByLabel('Upload artifacts').setInputFiles({
+    name: 'api-style-guide.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('# API style guide\n\nMoney fields are snake_case and numeric.\n'),
+  });
+  const list = page.getByRole('region', { name: 'Artifacts' });
+  await expect(list.getByText('api-style-guide.md')).toBeVisible(COLD);
+  const details = page.getByRole('complementary', { name: 'Selected artifact' });
+  await expect(details.getByText('Ready to read')).toBeVisible();
+  const href = await details.getByRole('link', { name: 'api-style-guide.md' }).getAttribute('href');
+  expect(href).toMatch(/\/api\/chat\/attachments\//);
+  const served = await page.request.get(href!);
+  expect(served.ok()).toBe(true);
+  expect(await served.text()).toContain('Money fields are snake_case');
+
+  // Hover: the controls explain themselves, in an element a screenshot keeps.
+  await details.getByRole('button', { name: 'Rename' }).hover();
+  await shot(page, testInfo, 'artifacts-10-hover-details');
+
+  // Attach it from the project's card, as Always: its text is short.
+  await page.goto(`/chat/projects/${f.projectId}`);
+  const card = page.getByRole('region', { name: 'Artifacts' });
+  await card.getByRole('button', { name: 'Attach from library…' }).click();
+  const picker = page.getByRole('dialog');
+  await picker.getByLabel('Attach api-style-guide.md').check();
+  await picker
+    .getByRole('radiogroup', { name: /How .* uses api-style-guide\.md/ })
+    .getByRole('radio', { name: 'Always' })
+    .click();
+  await picker.getByRole('button', { name: /^Attach 1$/ }).click();
+  await expect(card.getByText('api-style-guide.md')).toBeVisible();
+  await expect(card.getByText(/1 file · \d+ tokens of 24k tokens per turn/)).toBeVisible();
+  await card
+    .getByRole('radiogroup', { name: "How this project's chats use api-style-guide.md" })
+    .getByRole('radio', { name: 'On demand' })
+    .hover();
+  await shot(page, testInfo, 'artifacts-11-hover-mode');
+});
+
 test('a project page: the Artifacts card, Always against the budget, attach from the library', async ({
   page,
 }, testInfo) => {
@@ -450,8 +502,10 @@ test('a project chat: Send answers the chooser, and the remembered choice can be
   await expect(page.getByRole('link', { name: 'retry-policy.md' })).toBeVisible();
 
   // The remembered choice shows beside the paperclip; clicking it asks again next time.
-  const remembered = page.getByRole('button', { name: 'Files → artifacts' });
+  const remembered = page.getByRole('button', { name: /Dropped files go to .* artifacts/ });
   await expect(remembered).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Attach a file' })).toBeVisible();
+  await remembered.hover();
   await shot(page, testInfo, 'artifacts-09-remembered-control');
   await remembered.click();
   await expect(remembered).toBeHidden();
@@ -483,9 +537,52 @@ test('phone: the library and the project card fit the viewport', async ({ page }
   expect(overflow).toBeLessThanOrEqual(0);
   await shot(page, testInfo, 'artifacts-07-phone-library');
 
+  // The owner's dialogs at phone width: share, then delete with its impact.
+  const details = page.getByRole('complementary', { name: 'Selected artifact' });
+  await details.getByRole('button', { name: 'Share…' }).click();
+  await expect(page.getByRole('dialog').getByText(/Sharing lets a person use it/)).toBeVisible();
+  await shot(page, testInfo, 'artifacts-12-phone-share');
+  await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+  await details.getByRole('button', { name: 'Delete' }).click();
+  await expect(
+    page.getByRole('dialog').getByText('Deleting removes the file for everyone')
+  ).toBeVisible();
+  await shot(page, testInfo, 'artifacts-13-phone-delete');
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+
   await page.goto(`/chat/projects/${f.projectId}`);
   const card = page.getByRole('region', { name: 'Artifacts' });
   await expect(card.getByText('schema-guide.md')).toBeVisible();
   await expect(card.getByRole('radio', { name: 'On demand' })).toBeVisible();
   await shot(page, testInfo, 'artifacts-08-phone-project');
+  await card.getByRole('button', { name: 'Attach from library…' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Generated in chats' }).click();
+  await expect(page.getByRole('dialog').getByText('rounding-analysis.md')).toBeVisible();
+  await shot(page, testInfo, 'artifacts-14-phone-picker');
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+
+  // The chooser in a project chat, and the remembered control (the glyph alone here).
+  await page.goto(`/chat/${f.chatId}`);
+  await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
+  await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({
+      name: 'retry-policy.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# Retries\n\nExponential, with jitter.'),
+    });
+  const chooser = page.getByRole('group', { name: 'Where should the files go?' });
+  await expect(chooser).toBeVisible();
+  await shot(page, testInfo, 'artifacts-15-phone-chooser');
+  await chooser.getByRole('button', { name: 'Add' }).click();
+  await expect(page.getByRole('link', { name: 'retry-policy.md' })).toBeVisible(COLD);
+  const remembered = page.getByRole('button', { name: /Dropped files go to .* artifacts/ });
+  await expect(remembered).toBeVisible();
+  const row = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+  );
+  expect(row).toBeLessThanOrEqual(0);
+  await shot(page, testInfo, 'artifacts-16-phone-remembered');
 });

@@ -760,11 +760,15 @@ export default function Composer({
             <button
               type="button"
               onClick={forgetDrop}
-              title={`Dropped files go to ${remembered === 'project' ? `${project.name}’s artifacts` : 'this message only'}. Click to be asked again next time.`}
-              className="hidden items-center gap-1 rounded-md px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 sm:inline-flex dark:hover:bg-gray-800"
+              aria-label={`Dropped files go to ${remembered === 'project' ? `${project.name}’s artifacts` : 'this message only'}. Ask me again next time.`}
+              data-tip={`Dropped files go to ${remembered === 'project' ? `${project.name}’s artifacts` : 'this message only'}. Click to be asked again next time.`}
+              data-tip-start=""
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
             >
               <Icon path={ICONS.layers} className="h-3.5 w-3.5" />
-              {remembered === 'project' ? 'Files → artifacts' : 'Files → message'}
+              <span className="hidden sm:inline">
+                {remembered === 'project' ? 'Files → artifacts' : 'Files → message'}
+              </span>
             </button>
           ) : null}
           {uploads ? (

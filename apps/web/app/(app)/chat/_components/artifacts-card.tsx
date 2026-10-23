@@ -202,7 +202,7 @@ export default function ArtifactsCard({
                     disabled={busyId === file.id}
                     onClick={() => void detach(file)}
                     aria-label={`Remove ${file.filename} from ${projectName}`}
-                    title="Detach from this project; the file stays in its owner’s artifacts"
+                    data-tip="Detach from this project. The file stays in its owner’s artifacts."
                     className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-900"
                   >
                     <Icon path={ICONS.close} className="h-4 w-4" />
@@ -216,7 +216,7 @@ export default function ArtifactsCard({
 
       {files.length > 0 ? (
         <div className="mt-3 border-t border-gray-100 pt-2.5 dark:border-gray-900">
-          <div className="mb-1.5 flex items-center gap-2 text-xs">
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
             <span className="font-medium text-gray-700 dark:text-gray-300">Always in context</span>
             <span className="text-gray-500">
               {files.length - onDemandCount} file{files.length - onDemandCount === 1 ? '' : 's'} ·{' '}

@@ -1575,3 +1575,61 @@ input[type='number']::-webkit-inner-spin-button {
     transform: scaleY(0.7);
   }
 }
+
+/*
+ * Hover tips. A native `title` is the browser's own tooltip: it arrives
+ * late, looks different everywhere and never shows in a screenshot, so a
+ * control that needs a word of explanation carries it in `data-tip` and
+ * this draws it — above the control, on hover and on keyboard focus, in
+ * the theme's colours. `data-tip-start` pins it to the control's left
+ * edge for a control that sits against the window's. Touch screens have
+ * no hover and get nothing, so the words have to stand on their own
+ * there (an aria-label, or a label beside the glyph).
+ */
+[data-tip] {
+  position: relative;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 16rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #111827;
+  color: #f9fafb;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
+  z-index: 40;
+}
+[data-tip][data-tip-start]:hover::after,
+[data-tip][data-tip-start]:focus-visible::after {
+  left: 0;
+  transform: none;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) [data-tip]:hover::after,
+  :root:not([data-theme='light']) [data-tip]:focus-visible::after {
+    background: #e5e7eb;
+    color: #111827;
+  }
+}
+:root[data-theme='dark'] [data-tip]:hover::after,
+:root[data-theme='dark'] [data-tip]:focus-visible::after {
+  background: #e5e7eb;
+  color: #111827;
+}
+@media (hover: none) {
+  [data-tip]:hover::after {
+    display: none;
+  }
+}

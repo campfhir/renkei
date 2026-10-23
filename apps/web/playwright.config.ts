@@ -139,6 +139,23 @@ export default defineConfig({
         JIRA_ADMIN_API_BASE_URL: 'http://127.0.0.1:8092/jira',
         // The Automation API too, on the person's API token (Basic auth).
         JIRA_AUTOMATION_API_BASE_URL: 'http://127.0.0.1:8092/automation',
+        // File storage: the blob store's local backend, files under
+        // test-results, unless the environment names a store of its own —
+        // so uploads, downloads and text extraction run for real in a spec
+        // and the composer's paperclip is on screen.
+        BLOB_STORE_PROVIDER: process.env.BLOB_STORE_PROVIDER ?? 'local',
+        BLOB_STORE_LOCAL_DIR:
+          process.env.BLOB_STORE_LOCAL_DIR ?? path.join(HERE, 'test-results', 'blobs'),
+        ...(process.env.AZURE_BLOB_ACCOUNT
+          ? { AZURE_BLOB_ACCOUNT: process.env.AZURE_BLOB_ACCOUNT }
+          : {}),
+        ...(process.env.AZURE_BLOB_KEY ? { AZURE_BLOB_KEY: process.env.AZURE_BLOB_KEY } : {}),
+        ...(process.env.AZURE_BLOB_CONTAINER
+          ? { AZURE_BLOB_CONTAINER: process.env.AZURE_BLOB_CONTAINER }
+          : {}),
+        ...(process.env.AZURE_BLOB_ENDPOINT
+          ? { AZURE_BLOB_ENDPOINT: process.env.AZURE_BLOB_ENDPOINT }
+          : {}),
       },
     },
   ],

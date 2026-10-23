@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'A local file store for development',
+        detail:
+          "Set BLOB_STORE_PROVIDER=local and BLOB_STORE_LOCAL_DIR to keep uploaded files on the machine's own disk instead of Azure, for a laptop or the browser test suite. Controls on the Artifacts surfaces now explain themselves on hover in the app's own style rather than the browser's tooltip.",
+      },
+      {
+        kind: 'added',
         title: 'Artifacts: one library of files for chats and projects',
         detail:
           'The files you upload and the files chats generate now live in one place, Artifacts, owned by you and held by projects and chats by reference: attach the same manual, guide or design doc to any number of code projects without a second copy, keep a short guide in context on every turn or let the model search a long one on demand, share a file for others to use in their own projects, hand it over, copy one that was shared with you, and drop a file into a project chat to keep it for the project. Project files from before are carried across as they were.',

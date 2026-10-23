@@ -37,7 +37,7 @@ describe('blobStoreConfig', () => {
       AZURE_BLOB_ENDPOINT: 'http://azurite:10000/devstoreaccount1/',
       AZURE_BLOB_CONTAINER: 'files',
     });
-    if (!config.ok) throw new Error('expected ok');
+    if (!config.ok || config.val.provider !== 'azure') throw new Error('expected azure');
     expect(config.val.endpoint).toBe('http://azurite:10000/devstoreaccount1');
     expect(config.val.container).toBe('files');
   });

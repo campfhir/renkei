@@ -32,7 +32,12 @@ viewport pass.
   (which sandbox features the seeded organization gets — code workspaces,
   services, the browser, charts — is written by `e2e/seed.ts` as org
   settings, not by environment variables); then
-  `pnpm --filter @renkei/db migrate`. After that,
+  `pnpm --filter @renkei/db migrate`. File storage needs nothing: the
+  Playwright config points the dev server at the blob store's `local`
+  backend (`packages/blob-store/src/local.ts`, files under
+  `apps/web/test-results/blobs`) unless `BLOB_STORE_PROVIDER` is already
+  set, so uploads, downloads and text extraction run for real in a spec
+  and the composer's paperclip is on screen. After that,
   `npx playwright test <spec>.spec.ts --project=desktop-light` from
   `apps/web` drives everything else (dev server, sandbox stub, the
   delegate worker) itself.
