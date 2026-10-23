@@ -12,7 +12,7 @@ export function formatTokens(n: number): string {
  * scaled, so the caller can say what it expects rather than guess.
  */
 export function parseTokenCount(input: string): number | null {
-  const match = /^(\d+(?:\.\d+)?)([km])?$/.exec(input.replace(/[,_\s]/g, '').toLowerCase());
+  const match = /^(\d+(?:\.\d+)?|\.\d+)([km])?$/.exec(input.replace(/[,_\s]/g, '').toLowerCase());
   if (!match || (!match[2] && match[1].includes('.'))) return null;
   const scale = match[2] === 'm' ? 1_000_000 : match[2] === 'k' ? 1_000 : 1;
   const tokens = Math.round(Number(match[1]) * scale);

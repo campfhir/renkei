@@ -8,6 +8,7 @@
  */
 
 import RemoveButton from '@/components/remove-button';
+import Modal from '@/components/modal';
 import { useCallback, useEffect, useState } from 'react';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { LoadingRegion, SkeletonCards } from '@/components/skeleton';
@@ -239,6 +240,12 @@ export default function ModelForms() {
     clearAvailable();
   };
 
+  const closeForm = () => {
+    setEditingId(null);
+    setDraft(emptyDraft);
+    setFormError(null);
+  };
+
   /*
     Which stored config the listing (and a keyless save) can borrow a key
     from: the reuse choice when one is made, else the row being edited —
@@ -317,6 +324,13 @@ export default function ModelForms() {
       setFormError('Context window must be a token count, such as 200k or 1m.');
       return;
     }
+    const maxOutputTokens = draft.maxOutputTokens.trim()
+      ? parseTokenCount(draft.maxOutputTokens)
+      : null;
+    if (draft.maxOutputTokens.trim() && maxOutputTokens === null) {
+      setFormError('Max output tokens must be a token count, such as 4k or 8000.');
+      return;
+    }
     setSaving(true);
     setFormError(null);
     const payload = {
@@ -324,7 +338,7 @@ export default function ModelForms() {
       provider: draft.provider,
       model: draft.model,
       baseUrl: draft.baseUrl || null,
-      ...(draft.maxOutputTokens ? { maxOutputTokens: Number(draft.maxOutputTokens) } : {}),
+      ...(maxOutputTokens !== null ? { maxOutputTokens } : {}),
       ...(contextWindow !== null ? { contextWindow } : {}),
       ...(draft.temperature ? { temperature: Number(draft.temperature) } : {}),
       ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
@@ -446,344 +460,348 @@ export default function ModelForms() {
       ))}
 
       {editingId !== null ? (
-        <form
-          className="space-y-3 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submit();
-          }}
+        <Modal
+          title={editingId === 'new' ? 'Add a model' : 'Edit model'}
+          size="lg"
+          onClose={closeForm}
         >
-          <p className="text-sm font-semibold">
-            {editingId === 'new' ? 'Add a model' : 'Edit model'}
-          </p>
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
+            <div>
+              <label className={labelClass} htmlFor="model-label">
+                Display name
+              </label>
+              <input
+                id="model-label"
+                className={inputClass}
+                value={draft.label}
+                required
+                maxLength={128}
+                placeholder="e.g. Claude Sonnet"
+                onChange={(event) => setDraft({ ...draft, label: event.target.value })}
+              />
+              <p className={hintClass}>What agent owners see in the model picker.</p>
+            </div>
 
-          <div>
-            <label className={labelClass} htmlFor="model-label">
-              Display name
-            </label>
-            <input
-              id="model-label"
-              className={inputClass}
-              value={draft.label}
-              required
-              maxLength={128}
-              placeholder="e.g. Claude Sonnet"
-              onChange={(event) => setDraft({ ...draft, label: event.target.value })}
-            />
-            <p className={hintClass}>What agent owners see in the model picker.</p>
-          </div>
+            <div>
+              <label className={labelClass} htmlFor="model-provider">
+                Provider
+              </label>
+              <select
+                id="model-provider"
+                className={inputClass}
+                value={draft.provider}
+                onChange={(event) => {
+                  setDraft({
+                    ...draft,
+                    provider: event.target.value,
+                    // The API surface is an OpenAI-dialect setting; switching away drops it.
+                    apiSurface: event.target.value === 'openai' ? draft.apiSurface : '',
+                  });
+                  clearAvailable();
+                }}
+              >
+                <option value="anthropic">Anthropic (Claude)</option>
+                <option value="openai">OpenAI-compatible (OpenAI, Azure AI Foundry)</option>
+              </select>
+            </div>
 
-          <div>
-            <label className={labelClass} htmlFor="model-provider">
-              Provider
-            </label>
-            <select
-              id="model-provider"
-              className={inputClass}
-              value={draft.provider}
-              onChange={(event) => {
-                setDraft({
-                  ...draft,
-                  provider: event.target.value,
-                  // The API surface is an OpenAI-dialect setting; switching away drops it.
-                  apiSurface: event.target.value === 'openai' ? draft.apiSurface : '',
-                });
-                clearAvailable();
-              }}
-            >
-              <option value="anthropic">Anthropic (Claude)</option>
-              <option value="openai">OpenAI-compatible (OpenAI, Azure AI Foundry)</option>
-            </select>
-          </div>
-
-          {/*
+            {/*
             Connection info first, what to run on it second: Base URL, API
             key, and API version are exactly what "List available models"
             and "Test connection" below need to reach the right endpoint —
             asking a person to click either before entering a base URL (an
             Azure deployment, a gateway) or a key never worked.
           */}
-          <div>
-            <label className={labelClass} htmlFor="model-base-url">
-              Base URL <span className="font-normal text-gray-500">(optional)</span>
-            </label>
-            <input
-              id="model-base-url"
-              className={inputClass}
-              value={draft.baseUrl}
-              placeholder={
-                draft.provider === 'openai'
-                  ? 'https://{resource}.openai.azure.com/openai/v1'
-                  : 'https://api.anthropic.com'
-              }
-              onChange={(event) => {
-                setDraft({ ...draft, baseUrl: event.target.value });
-                clearAvailable();
-              }}
-            />
-            <p className={hintClass}>
-              {PROVIDER_HINTS[draft.provider]?.baseUrl ??
-                'Only for a gateway or proxy in front of the provider.'}
-            </p>
-          </div>
-
-          {draft.provider === 'openai' ? (
             <div>
-              <label className={labelClass} htmlFor="model-api-surface">
-                API surface
+              <label className={labelClass} htmlFor="model-base-url">
+                Base URL <span className="font-normal text-gray-500">(optional)</span>
               </label>
-              <select
-                id="model-api-surface"
+              <input
+                id="model-base-url"
                 className={inputClass}
-                value={draft.apiSurface}
+                value={draft.baseUrl}
+                placeholder={
+                  draft.provider === 'openai'
+                    ? 'https://{resource}.openai.azure.com/openai/v1'
+                    : 'https://api.anthropic.com'
+                }
                 onChange={(event) => {
-                  setDraft({
-                    ...draft,
-                    apiSurface: event.target.value,
-                    // An image model cannot answer chat, so it can never be the default.
-                    isDefault:
-                      event.target.value === 'images' || event.target.value === 'flux'
-                        ? false
-                        : draft.isDefault,
-                  });
+                  setDraft({ ...draft, baseUrl: event.target.value });
                   clearAvailable();
                 }}
-              >
-                <option value="">Chat completions (default)</option>
-                <option value="responses">Responses API</option>
-                <option value="images">Images API — gpt-image (image generation)</option>
-                <option value="flux">FLUX — Black Forest Labs (image generation)</option>
-              </select>
-              {isImage ? (
-                <p className={hintClass} data-testid="image-surface-hint">
-                  For a model that draws pictures rather than chats. It is never offered as a chat
-                  model or the default; instead, chats get a &quot;generate image&quot; tool that
-                  sends the prompt to it.{' '}
-                  {draft.apiSurface === 'flux' ? (
-                    <>
-                      FLUX through its native provider route (FLUX.2 pro / flex): set the base URL
-                      to the model&apos;s own endpoint, e.g.{' '}
-                      <span className="font-mono break-all">
-                        https://&#123;resource&#125;.api.cognitive.microsoft.com/providers/blackforestlabs/v1/flux-2-flex
-                      </span>{' '}
-                      (a <span className="font-mono">.services.ai.azure.com</span> host works the
-                      same; the path is <span className="font-mono">flux-2-pro</span> or{' '}
-                      <span className="font-mono">flux-2-flex</span>), the model id to its name
-                      (FLUX.2-flex), and the API version to{' '}
-                      <span className="font-mono">preview</span>. FLUX.1 Kontext Pro and 1.1 Pro
-                      take a different request on this route — pick the Images API for those.
-                    </>
-                  ) : (
-                    <>
-                      gpt-image: leave the base URL blank for OpenAI, or on Azure set it to the
-                      resource&apos;s <span className="font-mono">/openai/v1</span> surface and the
-                      model id to your deployment name. FLUX.1 Kontext and 1.1 Pro deployed on Azure
-                      answer on this same route.
-                    </>
-                  )}
-                </p>
-              ) : null}
-              {isImage ? null : (
-                <p className={hintClass}>
-                  Some reasoning-model deployments (an Azure gpt-6-astra-1 case is where this
-                  setting came from) cannot make tool calls on chat completions at ANY reasoning
-                  effort value — their own error names{' '}
-                  <span className="font-mono">/v1/responses</span> as the only path. Switch this
-                  only if &quot;Test connection&quot; with tools fails citing
-                  <span className="font-mono"> reasoning_effort</span> no matter what you set it to.
-                </p>
-              )}
+              />
+              <p className={hintClass}>
+                {PROVIDER_HINTS[draft.provider]?.baseUrl ??
+                  'Only for a gateway or proxy in front of the provider.'}
+              </p>
             </div>
-          ) : null}
 
-          <div>
-            <label className={labelClass} htmlFor="model-key">
-              API key
-            </label>
-            {/*
+            {draft.provider === 'openai' ? (
+              <div>
+                <label className={labelClass} htmlFor="model-api-surface">
+                  API surface
+                </label>
+                <select
+                  id="model-api-surface"
+                  className={inputClass}
+                  value={draft.apiSurface}
+                  onChange={(event) => {
+                    setDraft({
+                      ...draft,
+                      apiSurface: event.target.value,
+                      // An image model cannot answer chat, so it can never be the default.
+                      isDefault:
+                        event.target.value === 'images' || event.target.value === 'flux'
+                          ? false
+                          : draft.isDefault,
+                    });
+                    clearAvailable();
+                  }}
+                >
+                  <option value="">Chat completions (default)</option>
+                  <option value="responses">Responses API</option>
+                  <option value="images">Images API — gpt-image (image generation)</option>
+                  <option value="flux">FLUX — Black Forest Labs (image generation)</option>
+                </select>
+                {isImage ? (
+                  <p className={hintClass} data-testid="image-surface-hint">
+                    For a model that draws pictures rather than chats. It is never offered as a chat
+                    model or the default; instead, chats get a &quot;generate image&quot; tool that
+                    sends the prompt to it.{' '}
+                    {draft.apiSurface === 'flux' ? (
+                      <>
+                        FLUX through its native provider route (FLUX.2 pro / flex): set the base URL
+                        to the model&apos;s own endpoint, e.g.{' '}
+                        <span className="font-mono break-all">
+                          https://&#123;resource&#125;.api.cognitive.microsoft.com/providers/blackforestlabs/v1/flux-2-flex
+                        </span>{' '}
+                        (a <span className="font-mono">.services.ai.azure.com</span> host works the
+                        same; the path is <span className="font-mono">flux-2-pro</span> or{' '}
+                        <span className="font-mono">flux-2-flex</span>), the model id to its name
+                        (FLUX.2-flex), and the API version to{' '}
+                        <span className="font-mono">preview</span>. FLUX.1 Kontext Pro and 1.1 Pro
+                        take a different request on this route — pick the Images API for those.
+                      </>
+                    ) : (
+                      <>
+                        gpt-image: leave the base URL blank for OpenAI, or on Azure set it to the
+                        resource&apos;s <span className="font-mono">/openai/v1</span> surface and
+                        the model id to your deployment name. FLUX.1 Kontext and 1.1 Pro deployed on
+                        Azure answer on this same route.
+                      </>
+                    )}
+                  </p>
+                ) : null}
+                {isImage ? null : (
+                  <p className={hintClass}>
+                    Some reasoning-model deployments (an Azure gpt-6-astra-1 case is where this
+                    setting came from) cannot make tool calls on chat completions at ANY reasoning
+                    effort value — their own error names{' '}
+                    <span className="font-mono">/v1/responses</span> as the only path. Switch this
+                    only if &quot;Test connection&quot; with tools fails citing
+                    <span className="font-mono"> reasoning_effort</span> no matter what you set it
+                    to.
+                  </p>
+                )}
+              </div>
+            ) : null}
+
+            <div>
+              <label className={labelClass} htmlFor="model-key">
+                API key
+              </label>
+              {/*
               One connection can serve every model row: when sibling configs
               already hold a key, the field grows a source picker and
               "reuse" copies the stored key server-side — it never rides
               through the browser, and nobody retypes it per model.
             */}
-            {keyedSiblings.length > 0 ? (
-              <select
-                aria-label="API key source"
-                className={`${inputClass} mb-2`}
-                value={draft.apiKeyFromId}
-                onChange={(event) => {
-                  setDraft({ ...draft, apiKeyFromId: event.target.value, apiKey: '' });
-                  clearAvailable();
-                }}
-              >
-                <option value="">
-                  {editingId === 'new' ? 'Enter a key' : 'Keep the stored key (or enter a new one)'}
-                </option>
-                {keyedSiblings.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    Reuse the key stored on “{row.label}”
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            {draft.apiKeyFromId === '' ? (
-              <>
-                <input
-                  id="model-key"
-                  className={inputClass}
-                  type="password"
-                  value={draft.apiKey}
-                  required={editingId === 'new'}
-                  placeholder={
-                    editingId === 'new'
-                      ? draft.provider === 'openai'
-                        ? 'sk-… or an Azure API key'
-                        : 'sk-ant-…'
-                      : 'Leave blank to keep the stored key'
-                  }
-                  autoComplete="off"
+              {keyedSiblings.length > 0 ? (
+                <select
+                  aria-label="API key source"
+                  className={`${inputClass} mb-2`}
+                  value={draft.apiKeyFromId}
                   onChange={(event) => {
-                    setDraft({ ...draft, apiKey: event.target.value });
+                    setDraft({ ...draft, apiKeyFromId: event.target.value, apiKey: '' });
                     clearAvailable();
                   }}
-                />
-                <p className={hintClass}>Stored encrypted; never shown again after saving.</p>
-              </>
-            ) : (
-              <p className={hintClass}>
-                Saving copies that key onto this model — still encrypted, never shown.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className={labelClass} htmlFor="model-api-version">
-              API version <span className="font-normal text-gray-500">(optional, Azure)</span>
-            </label>
-            <input
-              id="model-api-version"
-              className={inputClass}
-              value={draft.apiVersion}
-              placeholder="e.g. 2024-05-01-preview"
-              onChange={(event) => {
-                setDraft({ ...draft, apiVersion: event.target.value });
-                clearAvailable();
-              }}
-            />
-            <p className={hintClass}>
-              Appended as ?api-version=… — only when the Azure surface demands it (a &quot;Missing
-              required query parameter: api-version&quot; error). Leave blank for Anthropic, OpenAI,
-              and Azure&apos;s /openai/v1 surface.
-            </p>
-          </div>
-
-          <div>
-            <label className={labelClass} htmlFor="model-id">
-              Model id
-            </label>
-            <input
-              id="model-id"
-              className={inputClass}
-              value={draft.model}
-              required
-              list="model-suggestions"
-              placeholder={
-                draft.provider === 'openai'
-                  ? 'e.g. gpt-5 or your deployment name'
-                  : 'e.g. claude-sonnet-5'
-              }
-              onChange={(event) => {
-                setDraft({ ...draft, model: event.target.value });
-                clearTest();
-              }}
-            />
-            <datalist id="model-suggestions">
-              {/* Live answers replace the hardcoded guesses once fetched. */}
-              {(available ?? MODEL_SUGGESTIONS[draft.provider]?.map((id) => ({ id })) ?? []).map(
-                (suggestion) => (
-                  <option key={suggestion.id} value={suggestion.id} />
-                )
+                >
+                  <option value="">
+                    {editingId === 'new'
+                      ? 'Enter a key'
+                      : 'Keep the stored key (or enter a new one)'}
+                  </option>
+                  {keyedSiblings.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      Reuse the key stored on “{row.label}”
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              {draft.apiKeyFromId === '' ? (
+                <>
+                  <input
+                    id="model-key"
+                    className={inputClass}
+                    type="password"
+                    value={draft.apiKey}
+                    required={editingId === 'new'}
+                    placeholder={
+                      editingId === 'new'
+                        ? draft.provider === 'openai'
+                          ? 'sk-… or an Azure API key'
+                          : 'sk-ant-…'
+                        : 'Leave blank to keep the stored key'
+                    }
+                    autoComplete="off"
+                    onChange={(event) => {
+                      setDraft({ ...draft, apiKey: event.target.value });
+                      clearAvailable();
+                    }}
+                  />
+                  <p className={hintClass}>Stored encrypted; never shown again after saving.</p>
+                </>
+              ) : (
+                <p className={hintClass}>
+                  Saving copies that key onto this model — still encrypted, never shown.
+                </p>
               )}
-            </datalist>
-            <p className={hintClass}>
-              {PROVIDER_HINTS[draft.provider]?.model ?? 'The provider’s model identifier.'}
-            </p>
+            </div>
 
-            {/*
+            <div>
+              <label className={labelClass} htmlFor="model-api-version">
+                API version <span className="font-normal text-gray-500">(optional, Azure)</span>
+              </label>
+              <input
+                id="model-api-version"
+                className={inputClass}
+                value={draft.apiVersion}
+                placeholder="e.g. 2024-05-01-preview"
+                onChange={(event) => {
+                  setDraft({ ...draft, apiVersion: event.target.value });
+                  clearAvailable();
+                }}
+              />
+              <p className={hintClass}>
+                Appended as ?api-version=… — only when the Azure surface demands it (a &quot;Missing
+                required query parameter: api-version&quot; error). Leave blank for Anthropic,
+                OpenAI, and Azure&apos;s /openai/v1 surface.
+              </p>
+            </div>
+
+            <div>
+              <label className={labelClass} htmlFor="model-id">
+                Model id
+              </label>
+              <input
+                id="model-id"
+                className={inputClass}
+                value={draft.model}
+                required
+                list="model-suggestions"
+                placeholder={
+                  draft.provider === 'openai'
+                    ? 'e.g. gpt-5 or your deployment name'
+                    : 'e.g. claude-sonnet-5'
+                }
+                onChange={(event) => {
+                  setDraft({ ...draft, model: event.target.value });
+                  clearTest();
+                }}
+              />
+              <datalist id="model-suggestions">
+                {/* Live answers replace the hardcoded guesses once fetched. */}
+                {(available ?? MODEL_SUGGESTIONS[draft.provider]?.map((id) => ({ id })) ?? []).map(
+                  (suggestion) => (
+                    <option key={suggestion.id} value={suggestion.id} />
+                  )
+                )}
+              </datalist>
+              <p className={hintClass}>
+                {PROVIDER_HINTS[draft.provider]?.model ?? 'The provider’s model identifier.'}
+              </p>
+
+              {/*
               Ask the connection itself instead of the provider's docs. The
               button needs a key to ask with, so it stays disabled until
               the form has one — typed, borrowed, or stored on this row —
               and the hint says which is missing rather than looking broken.
             */}
-            <div className="mt-2">
-              <button
-                type="button"
-                disabled={!canList || listing}
-                onClick={() => void listModels()}
-                className="text-xs font-medium text-blue-600 hover:underline disabled:cursor-not-allowed disabled:text-gray-400 disabled:no-underline dark:text-blue-400 dark:disabled:text-gray-600"
-              >
-                {listing ? 'Asking the provider…' : 'List available models'}
-              </button>
-              {!canList ? (
-                <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
-                  Enter an API key (or pick one to reuse) first.
-                </span>
+              <div className="mt-2">
+                <button
+                  type="button"
+                  disabled={!canList || listing}
+                  onClick={() => void listModels()}
+                  className="text-xs font-medium text-blue-600 hover:underline disabled:cursor-not-allowed disabled:text-gray-400 disabled:no-underline dark:text-blue-400 dark:disabled:text-gray-600"
+                >
+                  {listing ? 'Asking the provider…' : 'List available models'}
+                </button>
+                {!canList ? (
+                  <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                    Enter an API key (or pick one to reuse) first.
+                  </span>
+                ) : null}
+              </div>
+              {listError ? (
+                <p className="mt-1 text-xs text-red-600 dark:text-red-400">{listError}</p>
+              ) : null}
+              {available !== null && available.length === 0 ? (
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  The provider answered with an empty list.
+                </p>
+              ) : null}
+              {available !== null && available.length > 0 ? (
+                <ul className="mt-2 max-h-48 divide-y divide-gray-100 overflow-y-auto rounded-md border border-gray-200 dark:divide-gray-800 dark:border-gray-700">
+                  {available.map((entry) => (
+                    <li key={entry.id}>
+                      <button
+                        type="button"
+                        onClick={() => setDraft({ ...draft, model: entry.id })}
+                        aria-pressed={draft.model === entry.id}
+                        className={`flex w-full items-baseline gap-2 px-3 py-1.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${
+                          draft.model === entry.id
+                            ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                            : ''
+                        }`}
+                      >
+                        <span className="min-w-0 truncate font-mono text-xs">{entry.id}</span>
+                        {entry.displayName ? (
+                          <span className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
+                            {entry.displayName}
+                          </span>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               ) : null}
             </div>
-            {listError ? (
-              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{listError}</p>
-            ) : null}
-            {available !== null && available.length === 0 ? (
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                The provider answered with an empty list.
-              </p>
-            ) : null}
-            {available !== null && available.length > 0 ? (
-              <ul className="mt-2 max-h-48 divide-y divide-gray-100 overflow-y-auto rounded-md border border-gray-200 dark:divide-gray-800 dark:border-gray-700">
-                {available.map((entry) => (
-                  <li key={entry.id}>
-                    <button
-                      type="button"
-                      onClick={() => setDraft({ ...draft, model: entry.id })}
-                      aria-pressed={draft.model === entry.id}
-                      className={`flex w-full items-baseline gap-2 px-3 py-1.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${
-                        draft.model === entry.id
-                          ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
-                          : ''
-                      }`}
-                    >
-                      <span className="min-w-0 truncate font-mono text-xs">{entry.id}</span>
-                      {entry.displayName ? (
-                        <span className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
-                          {entry.displayName}
-                        </span>
-                      ) : null}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
+            {/*
+              One grid with the labels in their own row: a wrapped label then
+              grows its row for both columns, so the two inputs stay level.
+            */}
+            <div className="grid grid-cols-2 gap-x-3">
               <label className={labelClass} htmlFor="model-max-tokens">
                 Max output tokens <span className="font-normal text-gray-500">(optional)</span>
+              </label>
+              <label className={labelClass} htmlFor="model-temperature">
+                Temperature <span className="font-normal text-gray-500">(optional)</span>
               </label>
               <input
                 id="model-max-tokens"
                 className={inputClass}
-                type="number"
-                min={1}
+                type="text"
                 value={draft.maxOutputTokens}
-                placeholder="4096"
+                placeholder="4k"
                 onChange={(event) => setDraft({ ...draft, maxOutputTokens: event.target.value })}
               />
-            </div>
-            <div>
-              <label className={labelClass} htmlFor="model-temperature">
-                Temperature <span className="font-normal text-gray-500">(optional)</span>
-              </label>
               <input
                 id="model-temperature"
                 className={inputClass}
@@ -796,230 +814,229 @@ export default function ModelForms() {
                 onChange={(event) => setDraft({ ...draft, temperature: event.target.value })}
               />
             </div>
-          </div>
 
-          <div>
-            <label className={labelClass} htmlFor="model-context-window">
-              Context window (tokens) <span className="font-normal text-gray-500">(optional)</span>
-            </label>
-            <input
-              id="model-context-window"
-              className={inputClass}
-              type="text"
-              value={draft.contextWindow}
-              placeholder="200k"
-              onChange={(event) => setDraft({ ...draft, contextWindow: event.target.value })}
-            />
-            <p className="mt-1 text-xs text-gray-500">
-              The most the model can read in one call — type 200k, 1m or 200000. Chats show how much
-              of it the conversation uses; leave blank to show usage without a limit.
-            </p>
-          </div>
+            <div>
+              <label className={labelClass} htmlFor="model-context-window">
+                Context window (tokens){' '}
+                <span className="font-normal text-gray-500">(optional)</span>
+              </label>
+              <input
+                id="model-context-window"
+                className={inputClass}
+                type="text"
+                value={draft.contextWindow}
+                placeholder="200k"
+                onChange={(event) => setDraft({ ...draft, contextWindow: event.target.value })}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                The most the model can read in one call — type 200k, 1m or 200000. Chats show how
+                much of it the conversation uses; leave blank to show usage without a limit.
+              </p>
+            </div>
 
-          <div>
-            <label className={labelClass} htmlFor="model-reasoning-effort">
-              Reasoning effort <span className="font-normal text-gray-500">(optional)</span>
-            </label>
-            <input
-              id="model-reasoning-effort"
-              className={inputClass}
-              value={draft.reasoningEffort}
-              list="reasoning-effort-suggestions"
-              placeholder="Model default"
-              onChange={(event) => {
-                setDraft({ ...draft, reasoningEffort: event.target.value });
-                clearTest();
-              }}
-            />
-            <datalist id="reasoning-effort-suggestions">
-              {draft.provider === 'anthropic' ? null : (
-                <>
-                  <option value="none" />
-                  <option value="minimal" />
-                </>
+            <div>
+              <label className={labelClass} htmlFor="model-reasoning-effort">
+                Reasoning effort <span className="font-normal text-gray-500">(optional)</span>
+              </label>
+              <input
+                id="model-reasoning-effort"
+                className={inputClass}
+                value={draft.reasoningEffort}
+                list="reasoning-effort-suggestions"
+                placeholder="Model default"
+                onChange={(event) => {
+                  setDraft({ ...draft, reasoningEffort: event.target.value });
+                  clearTest();
+                }}
+              />
+              <datalist id="reasoning-effort-suggestions">
+                {draft.provider === 'anthropic' ? null : (
+                  <>
+                    <option value="none" />
+                    <option value="minimal" />
+                  </>
+                )}
+                <option value="low" />
+                <option value="medium" />
+                <option value="high" />
+                <option value="xhigh" />
+                <option value="max" />
+              </datalist>
+              {draft.provider === 'anthropic' ? (
+                <p className={hintClass}>
+                  Claude 4.6 and later think adaptively, and this is the one dial on how long they
+                  deliberate and how many tool rounds they take (sent as output_config.effort: low,
+                  medium, high, xhigh or max; blank is the provider&apos;s default, high). A
+                  chat&apos;s own Thinking switch only shows or hides the thinking summary on these
+                  models — it does not turn thinking off. Set medium or low here when replies think
+                  longer than the work needs, or for a model row meant for sub-agents and quick
+                  lookups. Ignored on older Claude models, which take a thinking budget instead.
+                </p>
+              ) : (
+                <p className={hintClass}>
+                  Reasoning models only (GPT-5 family and newer). Leave temperature blank for these
+                  — they reject it. Free text, not a fixed list: which values a model accepts (and
+                  whether it accepts &quot;none&quot; at all) is entirely the provider&apos;s call
+                  and differs by model — one Azure deployment demanded &quot;none&quot; to allow
+                  tool calls at all, another rejected &quot;none&quot; outright and only took
+                  low/medium/ high/xhigh. Blank keeps the model&apos;s own default, which is not the
+                  same as &quot;none&quot; and may reject tool calls on its own. Check the exact
+                  error message — it names the accepted values — and paste one here.
+                </p>
               )}
-              <option value="low" />
-              <option value="medium" />
-              <option value="high" />
-              <option value="xhigh" />
-              <option value="max" />
-            </datalist>
-            {draft.provider === 'anthropic' ? (
-              <p className={hintClass}>
-                Claude 4.6 and later think adaptively, and this is the one dial on how long they
-                deliberate and how many tool rounds they take (sent as output_config.effort: low,
-                medium, high, xhigh or max; blank is the provider&apos;s default, high). A
-                chat&apos;s own Thinking switch only shows or hides the thinking summary on these
-                models — it does not turn thinking off. Set medium or low here when replies think
-                longer than the work needs, or for a model row meant for sub-agents and quick
-                lookups. Ignored on older Claude models, which take a thinking budget instead.
-              </p>
-            ) : (
-              <p className={hintClass}>
-                Reasoning models only (GPT-5 family and newer). Leave temperature blank for these —
-                they reject it. Free text, not a fixed list: which values a model accepts (and
-                whether it accepts &quot;none&quot; at all) is entirely the provider&apos;s call and
-                differs by model — one Azure deployment demanded &quot;none&quot; to allow tool
-                calls at all, another rejected &quot;none&quot; outright and only took low/medium/
-                high/xhigh. Blank keeps the model&apos;s own default, which is not the same as
-                &quot;none&quot; and may reject tool calls on its own. Check the exact error message
-                — it names the accepted values — and paste one here.
-              </p>
-            )}
-          </div>
+            </div>
 
-          <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
-            {/*
+            <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
+              {/*
               Proves the configuration actually answers, before Save commits
               it: a real chat completion sent with the draft's own settings.
               Listing models (above) only proves the key is valid — a wrong
               Azure deployment name or an unreachable model still lists fine
               and only fails here.
             */}
-            <button
-              type="button"
-              disabled={!canTest || testing}
-              onClick={() => void testConnection()}
-              className="text-xs font-medium text-blue-600 hover:underline disabled:cursor-not-allowed disabled:text-gray-400 disabled:no-underline dark:text-blue-400 dark:disabled:text-gray-600"
-            >
-              {testing ? 'Sending a test message…' : 'Test connection'}
-            </button>
-            {!canTest && !isImage ? (
-              <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
-                Enter a model id and an API key (or pick one to reuse) first.
-              </span>
-            ) : null}
-            <p className={hintClass}>
-              {isImage
-                ? 'An image generation model cannot be tested here: the check sends a chat completion, which it rejects. Ask a chat to draw something to try it.'
-                : 'Sends one real chat completion with these settings — the same check an agent run would make.'}
-            </p>
-            {testError ? (
-              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{testError}</p>
-            ) : null}
-            {testReply !== null ? (
-              <p className="mt-1 text-xs text-green-700 dark:text-green-400">
-                ✓ The model responded: “{testReply}”
+              <button
+                type="button"
+                disabled={!canTest || testing}
+                onClick={() => void testConnection()}
+                className="text-xs font-medium text-blue-600 hover:underline disabled:cursor-not-allowed disabled:text-gray-400 disabled:no-underline dark:text-blue-400 dark:disabled:text-gray-600"
+              >
+                {testing ? 'Sending a test message…' : 'Test connection'}
+              </button>
+              {!canTest && !isImage ? (
+                <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                  Enter a model id and an API key (or pick one to reuse) first.
+                </span>
+              ) : null}
+              <p className={hintClass}>
+                {isImage
+                  ? 'An image generation model cannot be tested here: the check sends a chat completion, which it rejects. Ask a chat to draw something to try it.'
+                  : 'Sends one real chat completion with these settings — the same check an agent run would make.'}
               </p>
-            ) : null}
-          </div>
+              {testError ? (
+                <p className="mt-1 text-xs text-red-600 dark:text-red-400">{testError}</p>
+              ) : null}
+              {testReply !== null ? (
+                <p className="mt-1 text-xs text-green-700 dark:text-green-400">
+                  ✓ The model responded: “{testReply}”
+                </p>
+              ) : null}
+            </div>
 
-          <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
-            <legend className="px-1 text-sm font-medium">Data handling</legend>
-            <p className={hintClass}>
-              Where this model processes requests and what the provider keeps. Recorded by you, not
-              checked by Renkei: it is what the roster&apos;s warning badge and the &quot;Require a
-              BAA-covered model for PHI connectors&quot; setting go by.
-            </p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className={labelClass} htmlFor="model-data-residency">
-                  Data residency <span className="font-normal text-gray-500">(optional)</span>
-                </label>
+            <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
+              <legend className="px-1 text-sm font-medium">Data handling</legend>
+              <p className={hintClass}>
+                Where this model processes requests and what the provider keeps. Recorded by you,
+                not checked by Renkei: it is what the roster&apos;s warning badge and the
+                &quot;Require a BAA-covered model for PHI connectors&quot; setting go by.
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={labelClass} htmlFor="model-data-residency">
+                    Data residency <span className="font-normal text-gray-500">(optional)</span>
+                  </label>
+                  <input
+                    id="model-data-residency"
+                    className={inputClass}
+                    value={draft.dataResidency}
+                    placeholder="e.g. Azure East US, DataZone"
+                    onChange={(event) => setDraft({ ...draft, dataResidency: event.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass} htmlFor="model-provider-retention">
+                    Data retention
+                  </label>
+                  <select
+                    id="model-provider-retention"
+                    className={inputClass}
+                    value={draft.providerRetention}
+                    onChange={(event) =>
+                      setDraft({ ...draft, providerRetention: event.target.value })
+                    }
+                  >
+                    {PROVIDER_RETENTION_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <label className="mt-3 flex items-center gap-2 text-sm">
                 <input
-                  id="model-data-residency"
+                  type="checkbox"
+                  checked={draft.baaCovered}
+                  onChange={(event) => setDraft({ ...draft, baaCovered: event.target.checked })}
+                />
+                Covered by a Business Associate Agreement (BAA)
+              </label>
+              <div className="mt-3">
+                <label className={labelClass} htmlFor="model-data-notes">
+                  Notes <span className="font-normal text-gray-500">(optional)</span>
+                </label>
+                <textarea
+                  id="model-data-notes"
                   className={inputClass}
-                  value={draft.dataResidency}
-                  placeholder="e.g. Azure East US, DataZone"
-                  onChange={(event) => setDraft({ ...draft, dataResidency: event.target.value })}
+                  rows={2}
+                  value={draft.notes}
+                  placeholder="Contract reference, date confirmed, who to ask"
+                  onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
                 />
               </div>
-              <div>
-                <label className={labelClass} htmlFor="model-provider-retention">
-                  Data retention
-                </label>
-                <select
-                  id="model-provider-retention"
-                  className={inputClass}
-                  value={draft.providerRetention}
-                  onChange={(event) =>
-                    setDraft({ ...draft, providerRetention: event.target.value })
-                  }
-                >
-                  {PROVIDER_RETENTION_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <label className="mt-3 flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={draft.baaCovered}
-                onChange={(event) => setDraft({ ...draft, baaCovered: event.target.checked })}
-              />
-              Covered by a Business Associate Agreement (BAA)
-            </label>
-            <div className="mt-3">
-              <label className={labelClass} htmlFor="model-data-notes">
-                Notes <span className="font-normal text-gray-500">(optional)</span>
+            </fieldset>
+
+            <div className="flex flex-wrap gap-4 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={draft.enabled}
+                  onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })}
+                />
+                Enabled
               </label>
-              <textarea
-                id="model-data-notes"
-                className={inputClass}
-                rows={2}
-                value={draft.notes}
-                placeholder="Contract reference, date confirmed, who to ask"
-                onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
-              />
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={draft.isDefault && !isImage}
+                  disabled={isImage}
+                  onChange={(event) => setDraft({ ...draft, isDefault: event.target.checked })}
+                />
+                Organization default
+              </label>
             </div>
-          </fieldset>
 
-          <div className="flex flex-wrap gap-4 text-sm">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={draft.enabled}
-                onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })}
-              />
-              Enabled
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={draft.isDefault && !isImage}
-                disabled={isImage}
-                onChange={(event) => setDraft({ ...draft, isDefault: event.target.checked })}
-              />
-              Organization default
-            </label>
-          </div>
+            {formError ? (
+              <p className="text-sm text-red-600 dark:text-red-400">{formError}</p>
+            ) : null}
 
-          {formError ? <p className="text-sm text-red-600 dark:text-red-400">{formError}</p> : null}
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              <button
+                type="button"
+                onClick={closeForm}
+                className="rounded-md border border-gray-300 px-4 py-1.5 text-sm dark:border-gray-700"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
 
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEditingId(null);
-                setDraft(emptyDraft);
-                setFormError(null);
-              }}
-              className="rounded-md border border-gray-300 px-4 py-1.5 text-sm dark:border-gray-700"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      ) : (
-        <button
-          {...addAnchor}
-          type="button"
-          onClick={startCreate}
-          className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
-        >
-          + Add a model
-        </button>
-      )}
+      <button
+        {...addAnchor}
+        type="button"
+        onClick={startCreate}
+        className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+      >
+        + Add a model
+      </button>
     </div>
   );
 }

@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-23',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'Agent model settings open in a dialog',
+        detail:
+          'Editing an organization agent model opens its form in a dialog over the list. Context window and max output tokens take counts such as 200k, 1.5m or 8000.',
+      },
+    ],
+  },
+  {
     date: '2026-10-20',
     entries: [
       {

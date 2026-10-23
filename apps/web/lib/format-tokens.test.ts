@@ -8,6 +8,16 @@ describe('parseTokenCount', () => {
     expect(parseTokenCount(' 128K ')).toBe(128_000);
   });
 
+  it('reads decimals with a scale, rounded to whole tokens', () => {
+    expect(parseTokenCount('1.5k')).toBe(1_500);
+    expect(parseTokenCount('2.34k')).toBe(2_340);
+    expect(parseTokenCount('5.56m')).toBe(5_560_000);
+    expect(parseTokenCount('.5k')).toBe(500);
+    expect(parseTokenCount('0.5m')).toBe(500_000);
+    expect(parseTokenCount('1.0005k')).toBe(1_001);
+    expect(parseTokenCount('1.23456789m')).toBe(1_234_568);
+  });
+
   it('reads plain and comma-grouped numbers', () => {
     expect(parseTokenCount('200000')).toBe(200_000);
     expect(parseTokenCount('200,000')).toBe(200_000);
