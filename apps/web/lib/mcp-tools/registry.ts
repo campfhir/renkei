@@ -25,6 +25,7 @@ import {
   ATLASSIAN_CONFLUENCE,
   ATLASSIAN_BITBUCKET,
   ATLASSIAN_ADMIN,
+  ATLASSIAN_ADMIN_TOKEN,
   MICROSOFT,
   ENTRA_DEVELOPER,
   ZOOM,
@@ -140,6 +141,8 @@ export interface ConnectorAvailability {
   /** A SEPARATE connector/grant from Jira — the fifth Atlassian app, classic scopes. */
   jiraAdminAvailable: boolean;
   jiraAdminScopes: string[];
+  /** The person's own Atlassian API token, beside the admin grant — the Automation API's only key. */
+  jiraAdminTokenAvailable: boolean;
   bitbucketAvailable: boolean;
   bitbucketScopes: string[];
   githubAvailable: boolean;
@@ -313,6 +316,10 @@ export async function resolveConnectorAvailability(
   const jiraAdminScopes = jiraAdminGrantRow
     ? (jiraAdminGrantRow.granted_scopes ?? jiraAdminGrantRow.requested_scopes)
     : [];
+  // The API token rides the admin connector: no grant without it means no
+  // automation tools, however the token row stands.
+  const jiraAdminTokenAvailable =
+    jiraAdminAvailable && (await grantRow(db, ATLASSIAN_ADMIN_TOKEN, subject)) !== undefined;
 
   // Bitbucket inverts the Atlassian rule the same way Zoom does: the token
   // ALWAYS carries the OAuth consumer's full scope set (Bitbucket cannot
@@ -442,6 +449,7 @@ export async function resolveConnectorAvailability(
     confluenceScopes,
     jiraAdminAvailable,
     jiraAdminScopes,
+    jiraAdminTokenAvailable,
     bitbucketAvailable,
     bitbucketScopes,
     githubAvailable,

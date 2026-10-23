@@ -53,6 +53,16 @@ export interface JiraAdminAccess {
    * same gateway.
    */
   label?: string;
+  /**
+   * Where the calls go, in place of the Jira gateway for this site — the
+   * Automation API (automation-client.ts), whose base is its own.
+   */
+  baseUrl?: string;
+  /**
+   * The credential is the person's own Atlassian API token, not an app's
+   * grant: a 401 means the token, not a scope.
+   */
+  apiToken?: boolean;
 }
 
 /**
@@ -111,8 +121,19 @@ function jiraReasons(body: unknown): string[] {
   return [...messages, ...fieldErrors, ...single].slice(0, 2);
 }
 
-function describeStatus(status: number, reasons: string[], label: string): string {
+function describeStatus(
+  status: number,
+  reasons: string[],
+  label: string,
+  apiToken: boolean
+): string {
   const why = reasons.length > 0 ? ` ${reasons.join(' ')}` : '';
+  if (status === 401 && apiToken) {
+    return (
+      `Atlassian refused the ${label} (401): it may have been revoked or belong to another ` +
+      `email. Save a new one on the Connectors page.${why}`
+    );
+  }
   if (status === 401) {
     return (
       `Jira refused the ${label} token (401). The app registration may be missing ` +
@@ -223,16 +244,19 @@ async function jiraAdminRequest(
   let response: Response;
   try {
     // No Authorization here: the fetcher's owner (the delegate) attaches it.
-    response = await access.auth(`${JIRA_ADMIN_API_BASE}/${access.cloudId}${pathAndQuery}`, {
-      method,
-      headers: {
-        Accept: 'application/json',
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        ...(options?.headers ?? {}),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
-    });
+    response = await access.auth(
+      `${access.baseUrl ?? `${JIRA_ADMIN_API_BASE}/${access.cloudId}`}${pathAndQuery}`,
+      {
+        method,
+        headers: {
+          Accept: 'application/json',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(options?.headers ?? {}),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+      }
+    );
   } catch (error) {
     const timedOut = isTimeoutError(error);
     logger.warn('Jira admin API unreachable', {
@@ -286,7 +310,7 @@ async function jiraAdminRequest(
     });
     return {
       ok: false,
-      error: describeStatus(response.status, jiraReasons(parsed), label),
+      error: describeStatus(response.status, jiraReasons(parsed), label, access.apiToken === true),
       status: response.status,
     };
   }

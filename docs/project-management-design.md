@@ -183,7 +183,9 @@ for new spaces, and a custom field placed on a space's screens. The third
 part ("1c as built (third part)") added work types with their icons and
 scheme mappings, changes to a screen's tabs and fields, and request types
 for service projects — the last on the Jira Service Management grant, since
-Atlassian documents that create under a granular scope only. Still to
+Atlassian documents that create under a granular scope only. The fourth
+("1c as built (fourth part)") added automation rules, on the person's own
+Atlassian API token, since the Automation API refuses OAuth apps. Still to
 come: copying a scheme so one space can differ from its family — its own
 screens above all, since a field on a shared screen shows in every space
 that shares it — field configurations (required and hidden fields for
@@ -371,6 +373,35 @@ publish a form to issue create or to a request type.
   or icons for request types, which the public API has no way to write.
   `docs/atlassian-admin-scopes.md`, "Request types".
 
+### 1c as built (fourth part): automation rules, on an API token
+
+Atlassian's Automation REST API refuses every OAuth app and takes an API
+token (HTTP Basic) or a browser session only — so this is the one place
+Renkei takes a credential typed in. The Jira Administration card gains an
+**Atlassian API token** field beside the grant; the delegate stores it as a
+grant of its own (`grant/store`), sends it as Basic to `api.atlassian.com`
+and nowhere else, and the web app keeps a new token only after one call
+through the delegate succeeds (`docs/atlassian-admin-scopes.md`,
+"Automation rules"). On it:
+
+- `jira_admin_list_automation_rules` and `jira_admin_get_automation_rule`
+  read the site's rules — name, uuid, state, the spaces a rule is scoped to
+  (ARIs resolved to keys on the admin grant), labels — and one rule's
+  definition JSON (trigger and components), the shape a proposal takes.
+- `jira_admin_propose_automation_rule_state` (`automation_state`) switches
+  rules on or off; applying reads each rule again and leaves one already in
+  that state alone.
+- `jira_admin_propose_automation_rule` (`automation_rule`) creates a rule
+  from a definition or a copy of an existing rule (Jira's ids stripped),
+  scoped to named spaces or site-wide, or changes one — name, description,
+  labels, scope, state or its whole definition, the rest kept. The stored
+  payload is the whole rule as the API takes it; applying refuses an update
+  once the rule's `updated` stamp has moved. Jira validates a definition
+  when it is created.
+- `jira_admin_propose_automation_run` (`automation_run`) runs a manual rule
+  on named issues (keys resolved to ids on the admin grant), with the inputs
+  it asks for; Jira answers per issue. Deleting a rule is not offered.
+
 ### Guardrails
 
 - **No deletes in phase 1.** Deleting a custom field, an option or a scheme
@@ -387,10 +418,7 @@ publish a form to issue create or to a request type.
 - **Experimental endpoints are named as such** (the Plans API, screen
   creation), so an Atlassian change there fails a proposal loudly.
 - **Not possible, so not attempted:** board column and estimation settings
-  (read-only in the API); Jira Automation rules (every rule-management and
-  manual-trigger operation of Atlassian's Automation REST API says "Forge and
-  OAuth2 apps cannot access this REST resource", and it takes only an API
-  token or a browser session); a request type's portal form — its field
+  (read-only in the API); a request type's portal form — its field
   layout, required-by-customer flags, portal defaults, hidden preset values,
   icon and portal group — which the Cloud API only reads (the Forms API,
   stage 1e, is the one documented way to shape what a customer fills in);
@@ -450,8 +478,9 @@ Then the agents on top:
 
 ## Not building
 
-A Renkei task database, a Gantt editor, time tracking, boards, and Jira
-Automation rule management (OAuth apps are refused).
+A Renkei task database, a Gantt editor, time tracking, boards, and deleting
+automation rules (rule management runs on the person's own Atlassian API
+token, since OAuth apps are refused — "1c as built (fourth part)").
 
 ## Decided
 

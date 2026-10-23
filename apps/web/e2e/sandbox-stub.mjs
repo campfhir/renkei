@@ -2054,6 +2054,151 @@ function handleJiraWorkTypes(request, url, response, cloudId, path) {
   return jiraError(response, 404, 'The stub does not answer that path.');
 }
 
+/**
+ * The Automation REST API, stood in for: reached through
+ * JIRA_AUTOMATION_API_BASE_URL on the person's Atlassian API token, which
+ * the delegate sends as HTTP Basic (email:token). A token that does not
+ * look like one (ATATT…) is refused with a 401, the way Atlassian refuses
+ * a revoked one — so the token route's "check it through the delegate"
+ * step has something to check against. Two rules per site, in memory.
+ */
+const AUTOMATION = new Map();
+let nextRuleId = 100;
+
+function automationSite(cloudId) {
+  if (!AUTOMATION.has(cloudId)) {
+    AUTOMATION.set(cloudId, {
+      lastAuthorization: null,
+      rules: new Map([
+        [
+          'rule-1',
+          {
+            uuid: 'rule-1',
+            name: 'Escalate outages',
+            state: 'ENABLED',
+            description: 'Pages on-call',
+            labels: ['ops'],
+            ruleScopeARIs: [`ari:cloud:jira:${cloudId}:project/10000`],
+            created: 1700000000000,
+            updated: 1700000000000,
+            authorAccountId: 'acct-1',
+            actor: { type: 'ACCOUNT_ID', actor: 'acct-1' },
+            trigger: { id: 't-1', type: 'jira.issue.event.trigger:created', value: {} },
+            components: [
+              { id: 'c-1', type: 'jira.issue.comment', value: { comment: 'Paging' }, children: [] },
+            ],
+          },
+        ],
+        [
+          'rule-2',
+          {
+            uuid: 'rule-2',
+            name: 'Nightly tidy',
+            state: 'DISABLED',
+            description: '',
+            labels: [],
+            ruleScopeARIs: [],
+            created: 1700000000000,
+            updated: 1700000000000,
+            authorAccountId: 'acct-1',
+            actor: { type: 'ACCOUNT_ID', actor: 'acct-1' },
+            trigger: { id: 't-2', type: 'jira.schedule.trigger', value: {} },
+            components: [],
+          },
+        ],
+      ]),
+    });
+  }
+  return AUTOMATION.get(cloudId);
+}
+
+function summaryOfRule(rule) {
+  const { trigger, components, ...summary } = rule;
+  void trigger;
+  void components;
+  return summary;
+}
+
+function handleAutomation(request, url, response) {
+  // The real path shape, product then site: …/automation/public/jira/{cloudId}/rest/v1/….
+  const match = /^\/automation\/jira\/([^/]+)(\/.*)$/.exec(url.pathname);
+  if (!match) return json(response, 404, { message: 'The stub does not answer that path.' });
+  const [, cloudId, path] = match;
+  const site = automationSite(cloudId);
+  // The test reads what the delegate sent, without a token of its own.
+  if (path === '/__last-authorization' && request.method === 'GET') {
+    return json(response, 200, { authorization: site.lastAuthorization });
+  }
+  const authorization = request.headers.authorization ?? '';
+  site.lastAuthorization = authorization;
+  const basic = /^Basic (.+)$/.exec(authorization);
+  const decoded = basic ? Buffer.from(basic[1], 'base64').toString('utf8') : '';
+  const token = decoded.includes(':') ? decoded.slice(decoded.indexOf(':') + 1) : '';
+  if (!decoded.includes('@') || !token.startsWith('ATATT')) {
+    return json(response, 401, { message: 'Unauthorized; scope does not match' });
+  }
+  if (path === '/rest/v1/rule/summary' && (request.method === 'GET' || request.method === 'POST')) {
+    const answer = (filter) => {
+      const rules = [...site.rules.values()]
+        .filter((rule) => !filter.state || rule.state === filter.state)
+        .filter((rule) => !filter.scope || rule.ruleScopeARIs.includes(filter.scope))
+        .map(summaryOfRule);
+      json(response, 200, { data: rules, links: {} });
+    };
+    if (request.method === 'GET') return answer({});
+    void readBody(request).then((body) => answer(body ?? {}));
+    return;
+  }
+  if (path === '/rest/v1/rule' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      const rule = body?.rule;
+      if (!rule || !rule.name || !rule.trigger || !Array.isArray(rule.components)) {
+        return json(response, 400, { message: 'A rule needs a name, a trigger and components.' });
+      }
+      const uuid = `rule-${nextRuleId++}`;
+      site.rules.set(uuid, { ...rule, uuid, created: Date.now(), updated: Date.now() });
+      json(response, 201, { ruleUuid: uuid });
+    });
+    return;
+  }
+  const one = /^\/rest\/v1\/rule\/([^/?]+)(\/state)?(?:\?.*)?$/.exec(path);
+  if (one) {
+    const rule = site.rules.get(one[1]);
+    if (!rule) return json(response, 404, { message: 'Rule not found.' });
+    if (request.method === 'GET' && !one[2]) {
+      return json(response, 200, { rule, connections: [] });
+    }
+    if (request.method === 'PUT' && one[2]) {
+      void readBody(request).then((body) => {
+        rule.state = body?.value === 'DISABLED' ? 'DISABLED' : 'ENABLED';
+        rule.updated = Date.now();
+        json(response, 200, {});
+      });
+      return;
+    }
+    if (request.method === 'PUT' && !one[2]) {
+      void readBody(request).then((body) => {
+        if (!body?.rule) return json(response, 400, { message: 'A rule is required.' });
+        site.rules.set(rule.uuid, { ...body.rule, uuid: rule.uuid, updated: Date.now() });
+        json(response, 200, { ruleUuid: rule.uuid });
+      });
+      return;
+    }
+  }
+  const run = /^\/rest\/v1\/rule\/manual\/([^/]+)\/invocation$/.exec(path);
+  if (run && request.method === 'POST') {
+    const rule = site.rules.get(run[1]);
+    if (!rule) return json(response, 404, { message: 'Rule not found.' });
+    void readBody(request).then((body) => {
+      const answers = {};
+      for (const object of body?.objects ?? []) answers[object] = 'SUCCESS';
+      json(response, 200, answers);
+    });
+    return;
+  }
+  return json(response, 404, { message: 'The stub does not answer that path.' });
+}
+
 function handleJiraAdmin(request, url, response) {
   const workTypes =
     /^\/jira\/([^/]+)(\/rest\/api\/3\/(?:issuetype|avatar|issuetypescheme|issuetypescreenscheme|screenscheme|workflowscheme|workflows|project\/search)(?:\/.*)?|\/rest\/servicedeskapi\/.*)$/.exec(
@@ -2256,6 +2401,7 @@ const server = createServer((request, response) => {
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
   // Jira administration's option endpoints, for applying change requests.
   if (url.pathname.startsWith('/jira/')) return handleJiraAdmin(request, url, response);
+  if (url.pathname.startsWith('/automation/')) return handleAutomation(request, url, response);
   if (request.headers.authorization !== `Bearer ${API_KEY}`) {
     return error(response, 401, 'unauthorized');
   }

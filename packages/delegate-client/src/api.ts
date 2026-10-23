@@ -292,6 +292,26 @@ export class DelegateGrants {
       : err(grantOpError(answer.err.type), { message: answer.err.message });
   }
 
+  /**
+   * Store a credential the person typed in — an Atlassian API token — as a
+   * grant, for a provider the delegate marks as taking one. The secret
+   * travels to the delegate once, here, and never comes back: the web app
+   * checks it by making a call through `fetcher` afterwards.
+   */
+  async store(input: {
+    provider: string;
+    subject: string;
+    accountId: string;
+    displayName: string;
+    secret: string;
+    metadata: Record<string, unknown>;
+  }): Promise<Result<void, GrantOpError>> {
+    const answer = await this.transport.call('grant/store', { ...input });
+    return answer.ok
+      ? ok(undefined)
+      : err(grantOpError(answer.err.type), { message: answer.err.message });
+  }
+
   async describe(grant: GrantRef): Promise<Result<GrantDescription, GrantOpError>> {
     const answer = await this.transport.call('grant/describe', { ...grant });
     if (!answer.ok) return err(grantOpError(answer.err.type));

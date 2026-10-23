@@ -40,6 +40,23 @@ import {
   jsmGrantScopes,
   missingRequestTypeScopes,
 } from '@/lib/mcp-tools/jira-admin/jsm-access';
+import {
+  AUTOMATION_RULE_KIND,
+  AUTOMATION_RUN_KIND,
+  AUTOMATION_STATE_KIND,
+  applyAutomationRule,
+  applyAutomationRun,
+  applyAutomationState,
+  isAutomationKind,
+  readAutomationRulePayload,
+  readAutomationRunPayload,
+  readAutomationStatePayload,
+} from './automation';
+import {
+  NO_TOKEN,
+  hasAutomationToken,
+  issueAri,
+} from '@/lib/mcp-tools/jira-admin/automation-client';
 
 /**
  * The classic scopes applying a change stands on. Option writes are
@@ -66,6 +83,8 @@ export function changeScopes(change: Pick<ChangeRequest, 'kind' | 'payload'>): s
   // A request type writes nothing on this grant — the JSM grant's scopes are
   // the gate's second question — but the connector must be connected.
   if (change.kind === REQUEST_TYPE_KIND) return ['read:jira-work'];
+  // Automation runs on the API token; this grant only has to be connected.
+  if (isAutomationKind(change.kind)) return ['read:jira-work'];
   return ['read:jira-work', 'manage:jira-configuration', 'manage:jira-project'];
 }
 
@@ -152,6 +171,11 @@ export async function applyGate(
     }
   }
 
+  if (isAutomationKind(change.kind)) {
+    // The kinds that run on the person's own Atlassian API token.
+    if (!(await hasAutomationToken(db, subject))) return { ok: false, reason: NO_TOKEN };
+  }
+
   // The questions above give a person the reason; the projection is the
   // rule itself, and has the last word should the two ever disagree.
   const projection = buildProjection({ settings, availability, roles, audience });
@@ -207,8 +231,8 @@ export async function applyChangeRequest(
   scope: { subject?: string },
   access: JiraAdminAccess,
   change: Pick<ChangeRequest, 'kind' | 'payload'>,
-  /** The JSM grant, which a request type change runs on instead of `access`. */
-  grants: { jsm?: JiraAdminAccess } = {}
+  /** The JSM grant (a request type) or the API token (automation), which run instead of `access`. */
+  grants: { jsm?: JiraAdminAccess; automation?: JiraAdminAccess } = {}
 ): Promise<{ status: 'applied' | 'partial' | 'failed'; results: OperationResult[] }> {
   if (change.kind === FIELD_OPTIONS_KIND) {
     const payload = readFieldOptionsPayload(change.payload);
@@ -245,6 +269,37 @@ export async function applyChangeRequest(
       };
     }
     if (payload && grants.jsm) return applyRequestType(scope, grants.jsm, payload);
+  }
+  if (isAutomationKind(change.kind)) {
+    const automation = grants.automation;
+    if (!automation) {
+      return {
+        status: 'failed',
+        results: [
+          {
+            label: 'Reach the Automation API',
+            outcome: 'failed',
+            detail: 'The Atlassian API token was not resolved; nothing was changed.',
+          },
+        ],
+      };
+    }
+    if (change.kind === AUTOMATION_STATE_KIND) {
+      const payload = readAutomationStatePayload(change.payload);
+      if (payload) return applyAutomationState(scope, automation, payload);
+    }
+    if (change.kind === AUTOMATION_RULE_KIND) {
+      const payload = readAutomationRulePayload(change.payload);
+      if (payload) return applyAutomationRule(scope, automation, payload);
+    }
+    if (change.kind === AUTOMATION_RUN_KIND) {
+      const payload = readAutomationRunPayload(change.payload);
+      if (payload) {
+        return applyAutomationRun(scope, automation, payload, (id) =>
+          issueAri(automation.cloudId, id)
+        );
+      }
+    }
   }
   return {
     status: 'failed',

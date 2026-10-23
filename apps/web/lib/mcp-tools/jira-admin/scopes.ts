@@ -98,6 +98,16 @@ export function jiraAdminScopeFor(toolName: string): string[] {
     case 'jira_admin_propose_request_type':
       return ['read:jira-work'];
 
+    // Automation runs on the person's Atlassian API token (index.ts offers
+    // the tools only once one is saved); this grant names spaces and issues
+    // by key (read:jira-work) and nothing more.
+    case 'jira_admin_list_automation_rules':
+    case 'jira_admin_get_automation_rule':
+    case 'jira_admin_propose_automation_rule_state':
+    case 'jira_admin_propose_automation_rule':
+    case 'jira_admin_propose_automation_run':
+      return ['read:jira-work'];
+
     // A tool nobody mapped stands on the whole admin set: registering it
     // for less could only produce 401s.
     default:

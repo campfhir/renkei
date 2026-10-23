@@ -273,6 +273,35 @@ describe('listAvailableTools', () => {
     expect(tools).not.toContain('jira_admin_propose_request_type');
   });
 
+  it('offers automation rules only once the Atlassian API token grant sits beside the admin one', async () => {
+    const admin = {
+      requested_scopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
+      granted_scopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
+    };
+    grants = { atlassian: ATLASSIAN_GRANT, 'atlassian-admin': admin };
+    let tools = namesOf(await listAvailableTools('subject-1'));
+    expect(tools).not.toContain('jira_admin_list_automation_rules');
+
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'atlassian-admin': admin,
+      'atlassian-admin-token': { requested_scopes: [], granted_scopes: null },
+    };
+    invalidateToolCatalogCache('subject-1');
+    tools = namesOf(await listAvailableTools('subject-1'));
+    expect(tools).toContain('jira_admin_list_automation_rules');
+    expect(tools).toContain('jira_admin_propose_automation_rule');
+
+    // A token without the admin grant is nothing: it rides that connector.
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'atlassian-admin-token': { requested_scopes: [], granted_scopes: null },
+    };
+    invalidateToolCatalogCache('subject-1');
+    tools = namesOf(await listAvailableTools('subject-1'));
+    expect(tools).not.toContain('jira_admin_list_automation_rules');
+  });
+
   it('hides Jira admin proposals in read-only mode, since applying one would be refused', async () => {
     // A proposal changes nothing in Jira, but it is the first half of a
     // write — an Act tool — and the apply route refuses read-only orgs.

@@ -138,6 +138,37 @@ describe('registration', () => {
     expect(configs.some((config) => /apply|confirm|approve/.test(config.name))).toBe(false);
   });
 
+  it('offers automation only once an Atlassian API token is saved beside the grant', async () => {
+    const names = async (jiraAdminTokenAvailable?: boolean) => {
+      const registered: string[] = [];
+      const server = {
+        registerTool: (name: string) => {
+          registered.push(name);
+        },
+      } as unknown as McpServer;
+      await registerJiraAdminTools(
+        server,
+        {
+          subject: 'subject-1',
+          jiraAdminScopes: ['read:jira-work'],
+          jiraAdminTokenAvailable,
+        } as MCPToolContext,
+        stubAuth
+      );
+      return registered;
+    };
+    const automation = [
+      'jira_admin_list_automation_rules',
+      'jira_admin_get_automation_rule',
+      'jira_admin_propose_automation_rule_state',
+      'jira_admin_propose_automation_rule',
+      'jira_admin_propose_automation_run',
+    ];
+    expect((await names()).filter((name) => automation.includes(name))).toEqual([]);
+    expect((await names(false)).filter((name) => automation.includes(name))).toEqual([]);
+    expect((await names(true)).filter((name) => automation.includes(name))).toEqual(automation);
+  });
+
   it('offers request types only to someone holding the JSM grant with its scopes too', async () => {
     // The one tool on two grants: Atlassian documents creating a request
     // type under a granular JSM scope only, which the classic admin app

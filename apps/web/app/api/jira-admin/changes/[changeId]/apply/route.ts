@@ -19,6 +19,8 @@ import { logger } from '@/lib/logger';
 import { resolveJiraAdminAccess, type JiraAdminAccess } from '@/lib/mcp-tools/jira-admin/client';
 import { resolveJsmAccess } from '@/lib/mcp-tools/jira-admin/jsm-access';
 import { REQUEST_TYPE_KIND } from '@/lib/jira-admin/request-type';
+import { isAutomationKind } from '@/lib/jira-admin/automation';
+import { resolveAutomationAccess } from '@/lib/mcp-tools/jira-admin/automation-client';
 import {
   claimChangeRequest,
   finishChangeRequest,
@@ -111,6 +113,26 @@ export async function POST(
     jsm = resolved;
   }
 
+  // Automation runs on the person's Atlassian API token, saved for a site.
+  let automation: JiraAdminAccess | undefined;
+  if (isAutomationKind(change.kind)) {
+    const resolved = await resolveAutomationAccess({ subject: session.subject });
+    if (typeof resolved === 'string') {
+      return NextResponse.json({ error: resolved }, { status: 409 });
+    }
+    if (resolved.cloudId !== change.cloudId) {
+      return NextResponse.json(
+        {
+          error:
+            'Your Atlassian API token was saved for a different Jira site than the one this ' +
+            'change was proposed for, so it was not applied. Save it again on the Connectors page.',
+        },
+        { status: 409 }
+      );
+    }
+    automation = resolved;
+  }
+
   // Claim before running, so two clicks cannot both apply it.
   if (!(await claimChangeRequest(db, session.subject, change.id))) {
     return NextResponse.json(
@@ -121,7 +143,10 @@ export async function POST(
 
   let outcome: { status: 'applied' | 'partial' | 'failed'; results: OperationResult[] };
   try {
-    outcome = await applyChangeRequest({ subject: session.subject }, access, change, { jsm });
+    outcome = await applyChangeRequest({ subject: session.subject }, access, change, {
+      jsm,
+      automation,
+    });
   } catch (error) {
     logger.error('jira admin change apply threw', {
       component: 'jira-admin/apply',

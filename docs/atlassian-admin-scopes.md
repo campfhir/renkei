@@ -79,6 +79,25 @@ reads) to the JSM app in the developer console; Organization → Connector setup
 → Jira Service Management: tick **Set up request types**; each Jira admin
 reconnects JSM with the box ticked.
 
+## Automation rules — an API token, not a scope
+
+Atlassian's Automation REST API (`api.atlassian.com/automation/public/jira/{cloudId}/rest/v1/…`)
+refuses every OAuth app: each rule-management and manual-rule operation says
+"Forge and OAuth2 apps cannot access this REST resource", and the API takes an
+API token (HTTP Basic, `email:token`) or a browser session only. So the Jira
+Administration card takes the person's own **Atlassian API token** beside the
+OAuth grant (`POST`/`DELETE /api/atlassian-admin/token`). The delegate keeps
+it as a grant of its own (`ATLASSIAN_ADMIN_TOKEN`, stored by `grant/store`,
+never exchanged or refreshed), sends it as Basic with the grant's email, and
+lets it reach `api.atlassian.com` only; the web app checks a new token by
+making one call through the delegate and drops it on a 401, so a mistyped
+token is never kept. The `jira_admin_*_automation_*` tools register only once
+a token is saved, and the three automation change kinds (`automation_state`,
+`automation_rule`, `automation_run`) apply on it — the confirm rule unchanged
+(`lib/mcp-tools/jira-admin/automation-client.ts`, `lib/jira-admin/automation.ts`).
+On this app the tools stand on `read:jira-work` alone, to name spaces and
+issues by key.
+
 ## Request-time only (not on the Permissions page)
 
 ```

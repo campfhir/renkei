@@ -462,6 +462,24 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Proposed a Jira request type, for your review',
     short: 'Proposed a request type for your review',
   },
+  jira_admin_propose_automation_rule_state: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed enabling or disabling Jira automation rules, for your review',
+    short: 'Proposed an automation rule switch for your review',
+  },
+  jira_admin_propose_automation_rule: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed a Jira automation rule, for your review',
+    short: 'Proposed an automation rule for your review',
+  },
+  jira_admin_propose_automation_run: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed running a Jira automation rule, for your review',
+    short: 'Proposed an automation run for your review',
+  },
 
   // ---- Salesforce Admin ------------------------------------------------
   // Its own capability key ('salesforce-admin'). As for Jira Administration,

@@ -37,6 +37,7 @@ import {
   ATLASSIAN_CONFLUENCE,
   ATLASSIAN_BITBUCKET,
   ATLASSIAN_ADMIN,
+  ATLASSIAN_ADMIN_TOKEN,
   MICROSOFT,
   ENTRA_DEVELOPER,
   ZOOM,
@@ -268,6 +269,8 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   const confluenceGrant = grants.get(ATLASSIAN_CONFLUENCE);
   const bitbucketGrant = grants.get(ATLASSIAN_BITBUCKET);
   const jiraAdminGrant = grants.get(ATLASSIAN_ADMIN);
+  // The API token beside it: its display name is the email it belongs to.
+  const jiraAdminToken = grants.get(ATLASSIAN_ADMIN_TOKEN);
   // Proposals wait for their owner on the review page; the card says how
   // many, so an agent's proposal is not only a notification away.
   const pendingJiraAdminChanges = jiraAdminGrant
@@ -396,6 +399,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
                     changesHref: `/jira-admin/changes`,
                     templatesHref: `/jira-admin/templates`,
                     pendingChanges: pendingJiraAdminChanges,
+                    apiTokenFor: jiraAdminToken?.displayName ?? null,
                   }
                 : undefined
             }

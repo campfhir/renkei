@@ -27,7 +27,7 @@
  *                     — the sweep's orphan prune.
  *
  * Token ops (grants.ts): api (raw, streaming), oauth/exchange,
- * grant/commit, grant/describe, grant/revoke, grant/delete.
+ * grant/commit, grant/store, grant/describe, grant/revoke, grant/delete.
  * Connector workers (forward.ts): forward/<connector>/<op>.
  * Git for code workspaces (git.ts): grant/git-ticket, and /git/<ticket>/….
  */
@@ -493,6 +493,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     // ── provider grants (tokens never leave this process; see grants.ts) ───
     'oauth/exchange': (body, response) => grants.exchange(body, response),
     'grant/commit': (body, response) => grants.commit(body, response),
+    'grant/store': (body, response) => grants.store(body, response),
     'grant/describe': (body, response) => grants.describeOp(body, response),
     'grant/revoke': (body, response) => grants.revoke(body, response),
     'grant/delete': (body, response) => grants.deleteOp(body, response),

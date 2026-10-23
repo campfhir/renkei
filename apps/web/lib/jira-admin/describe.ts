@@ -45,6 +45,18 @@ import {
   describeRequestTypeReach,
   readRequestTypePayload,
 } from './request-type';
+import {
+  AUTOMATION_RULE_KIND,
+  AUTOMATION_RUN_KIND,
+  AUTOMATION_STATE_KIND,
+  describeAutomationReach,
+  describeRuleOperation,
+  describeRun,
+  describeStateChange,
+  readAutomationRulePayload,
+  readAutomationRunPayload,
+  readAutomationStatePayload,
+} from './automation';
 
 export interface DescribedOperation {
   text: string;
@@ -170,6 +182,48 @@ export function describeChange(
           'Renkei checks first that no request type of this name has appeared on the project. ' +
           'This runs on your Jira Service Management connection, not your Jira Administration ' +
           'one. Nothing is deleted.',
+      };
+    }
+  }
+  if (change.kind === AUTOMATION_STATE_KIND) {
+    const payload = readAutomationStatePayload(change.payload);
+    if (payload) {
+      return {
+        operations: payload.rules.map(describeStateChange),
+        reach: describeAutomationReach(change.kind, change.siteUrl),
+        siteWide: false,
+        applyNote:
+          'Renkei reads each rule again first; one already in that state is left alone, and one ' +
+          'that is gone is reported. This runs on your Atlassian API token. Nothing is deleted.',
+      };
+    }
+  }
+  if (change.kind === AUTOMATION_RULE_KIND) {
+    const payload = readAutomationRulePayload(change.payload);
+    if (payload) {
+      return {
+        operations: [describeRuleOperation(payload)],
+        reach: describeAutomationReach(change.kind, change.siteUrl),
+        siteWide: payload.projects.length === 0,
+        applyNote:
+          payload.mode === 'create'
+            ? 'Jira checks the rule’s definition when it is created; a refused one is reported ' +
+              'with Jira’s reason. This runs on your Atlassian API token. Nothing is deleted.'
+            : 'Renkei reads the rule again first and stops if it has been changed since this was ' +
+              'proposed. This runs on your Atlassian API token. Nothing is deleted.',
+      };
+    }
+  }
+  if (change.kind === AUTOMATION_RUN_KIND) {
+    const payload = readAutomationRunPayload(change.payload);
+    if (payload) {
+      return {
+        operations: [describeRun(payload)],
+        reach: describeAutomationReach(change.kind, change.siteUrl),
+        siteWide: false,
+        applyNote:
+          'Renkei checks the rule is still enabled, then runs it once on each issue; Jira ' +
+          'answers per issue. This runs on your Atlassian API token.',
       };
     }
   }

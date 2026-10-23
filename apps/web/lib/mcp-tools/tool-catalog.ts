@@ -288,6 +288,7 @@ export async function listAvailableTools(
     zoomScopes: availability.zoomAvailable ? availability.zoomScopes : undefined,
     confluenceScopes: availability.confluenceAvailable ? availability.confluenceScopes : undefined,
     jiraAdminScopes: availability.jiraAdminAvailable ? availability.jiraAdminScopes : undefined,
+    jiraAdminTokenAvailable: availability.jiraAdminTokenAvailable,
     entraDeveloperScopes: availability.entraDeveloperAvailable
       ? availability.entraDeveloperScopes
       : undefined,

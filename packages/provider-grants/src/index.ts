@@ -26,8 +26,10 @@ export {
   ATLASSIAN_JSM,
   ATLASSIAN_CONFLUENCE,
   ATLASSIAN_ADMIN,
+  ATLASSIAN_ADMIN_TOKEN,
   AtlassianAdapter,
   readAtlassianMetadata,
+  readAtlassianTokenMetadata,
 } from './atlassian';
 export { ATLASSIAN_BITBUCKET, BitbucketAdapter, readBitbucketMetadata } from './bitbucket';
 export { GITHUB, GitHubAdapter, readGitHubMetadata } from './github';

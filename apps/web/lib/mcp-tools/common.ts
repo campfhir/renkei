@@ -125,6 +125,12 @@ export interface MCPToolContext {
    */
   jiraAdminScopes?: string[];
   /**
+   * Whether the caller has saved an Atlassian API token beside that grant —
+   * the Automation API's only key (jira-admin/automation-client.ts). The
+   * automation tools register only when so.
+   */
+  jiraAdminTokenAvailable?: boolean;
+  /**
    * Same, for the caller's grant on the Entra Developer app registration —
    * the SECOND Entra app, its own grant (ENTRA_DEVELOPER): its delegated
    * Graph scopes, for the registration-time gate. The entra_ tools resolve

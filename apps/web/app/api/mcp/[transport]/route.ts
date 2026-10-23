@@ -455,6 +455,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
               zoomScopes: zoomAvailable ? zoomScopes : undefined,
               confluenceScopes: confluenceAvailable ? confluenceScopes : undefined,
               jiraAdminScopes: jiraAdminAvailable ? jiraAdminScopes : undefined,
+              jiraAdminTokenAvailable: availability.jiraAdminTokenAvailable,
               entraDeveloperScopes: entraDeveloperAvailable ? entraDeveloperScopes : undefined,
               bitbucketScopes: bitbucketAvailable ? bitbucketScopes : undefined,
               salesforceScopes: salesforceAvailable ? salesforceScopes : undefined,

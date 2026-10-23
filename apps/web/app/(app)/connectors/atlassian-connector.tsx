@@ -62,6 +62,8 @@ export default function AtlassianConnector({
     /** The organization's space templates. */
     templatesHref: string;
     pendingChanges: number;
+    /** Whose Atlassian API token is saved beside the grant, for Automation rules; null for none. */
+    apiTokenFor: string | null;
   };
   confluence?: {
     connected: boolean;
@@ -131,6 +133,7 @@ export default function AtlassianConnector({
             changesHref={jiraAdmin.changesHref}
             templatesHref={jiraAdmin.templatesHref}
             pendingChanges={jiraAdmin.pendingChanges}
+            apiTokenFor={jiraAdmin.apiTokenFor}
           />
         )}
 

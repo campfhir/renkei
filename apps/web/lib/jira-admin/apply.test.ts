@@ -23,6 +23,12 @@ jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({}));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));
+jest.mock('@/lib/mcp-tools/jira-admin/automation-client', () => {
+  const actual = jest.requireActual<typeof import('@/lib/mcp-tools/jira-admin/automation-client')>(
+    '@/lib/mcp-tools/jira-admin/automation-client'
+  );
+  return { ...actual, hasAutomationToken: jest.fn() };
+});
 jest.mock('@/lib/mcp-tools/jira-admin/jsm-access', () => {
   const actual = jest.requireActual<typeof import('@/lib/mcp-tools/jira-admin/jsm-access')>(
     '@/lib/mcp-tools/jira-admin/jsm-access'
@@ -36,6 +42,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { resolveAudience } from '@/lib/connectors/audience';
 import { resolveConnectorAvailability } from '@/lib/mcp-tools/registry';
 import { jsmGrantScopes } from '@/lib/mcp-tools/jira-admin/jsm-access';
+import { hasAutomationToken } from '@/lib/mcp-tools/jira-admin/automation-client';
 import { applyGate, changeScopes } from './apply';
 import { planSpaceCreation, type CreateSpacePayload } from './space-creation';
 
@@ -210,5 +217,23 @@ describe('a request type, which writes on the JSM grant', () => {
     const gate = await applyGate(db, 'subject-1', [], change);
     expect(gate.ok).toBe(false);
     if (!gate.ok) expect(gate.reason).toContain('Jira Administration is not connected');
+  });
+});
+
+describe('automation, which runs on the Atlassian API token', () => {
+  it('asks this grant only to be connected, and the token to be saved', async () => {
+    for (const kind of ['automation_state', 'automation_rule', 'automation_run']) {
+      expect(changeScopes({ kind, payload: {} })).toEqual(['read:jira-work']);
+    }
+    jest.mocked(hasAutomationToken).mockResolvedValue(true);
+    expect(await applyGate(db, 'subject-1', [], { kind: 'automation_state', payload: {} })).toEqual(
+      {
+        ok: true,
+      }
+    );
+    jest.mocked(hasAutomationToken).mockResolvedValue(false);
+    const gate = await applyGate(db, 'subject-1', [], { kind: 'automation_rule', payload: {} });
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) expect(gate.reason).toContain('No Atlassian API token is saved');
   });
 });

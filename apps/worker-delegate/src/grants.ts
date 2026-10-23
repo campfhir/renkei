@@ -183,6 +183,9 @@ export function describe(grant: ProviderGrant): Record<string, unknown> {
   };
 }
 
+/** A typed-in credential never expires on its own; a century keeps the refresh margin quiet. */
+const CREDENTIAL_LIFETIME_MS = 100 * 365 * 24 * 3_600_000;
+
 export class Grants {
   private readonly pending = new Map<string, Pending>();
 
@@ -315,6 +318,8 @@ export class Grants {
     let token: string;
     let retryWithRefresh = false;
     let extraHosts: string[] = [];
+    // For a typed-in credential (spec.credential): the Basic user name.
+    let credentialUser = '';
     if (spec.anonymous) {
       token = '';
     } else if (pendingHandle) {
@@ -333,6 +338,7 @@ export class Grants {
       if (!access.ok) return fail(access.error);
       token = access.grant.accessToken;
       retryWithRefresh = Boolean(access.grant.refreshToken);
+      credentialUser = str(access.grant.metadata.email);
       if (spec.hostsFor) {
         // The org the grant was minted in, read fresh (behind the config
         // cache) so a removed org stops at once.
@@ -357,7 +363,14 @@ export class Grants {
         if (typeof value === 'string' && !FORBIDDEN_REQUEST_HEADERS.has(name.toLowerCase()))
           headers.set(name, value);
       }
-      if (bearer) headers.set('authorization', `Bearer ${bearer}`);
+      if (bearer && spec.credential === 'basic') {
+        headers.set(
+          'authorization',
+          `Basic ${Buffer.from(`${credentialUser}:${bearer}`).toString('base64')}`
+        );
+      } else if (bearer) {
+        headers.set('authorization', `Bearer ${bearer}`);
+      }
       return this.fetchImpl(target, {
         method: hopMethod,
         headers,
@@ -592,6 +605,46 @@ export class Grants {
       subject,
     });
     if (!saved.ok) return fail('GRANT_UNREADABLE', 'the grant could not be stored');
+    sendJson(response, 200, { ok: true, accountId });
+  }
+
+  /**
+   * grant/store: a credential the person typed in (an Atlassian API token),
+   * for a provider whose spec says `credential`. It is sealed the way an
+   * exchanged token is and leaves this process only as an Authorization
+   * header on a forwarded request; there is nothing to refresh, so it
+   * expires a century on. A provider without `credential` is refused: its
+   * tokens come from `oauth/exchange` and `grant/commit` only.
+   */
+  async store(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
+    const fail = (type: GrantError, message?: string): void =>
+      sendJson(response, statusForGrantError(type), { error: { type, message } });
+    const provider = str(body.provider);
+    const subject = str(body.subject);
+    const accountId = str(body.accountId);
+    const displayName = str(body.displayName);
+    const secret = str(body.secret);
+    if (!provider || !subject || !accountId || !secret) return fail('bad_request');
+    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
+    if (!spec) return fail('unknown_provider');
+    if (!spec.credential) return fail('bad_request', `${provider} takes no typed-in credential`);
+    const metadata = isRecord(body.metadata) ? body.metadata : {};
+    if (spec.credential === 'basic' && !str(metadata.email)) {
+      return fail('bad_request', 'a Basic credential needs metadata.email');
+    }
+    const saved = await setGrant(provider, {
+      accountId,
+      clientId: '',
+      displayName,
+      accessToken: secret,
+      refreshToken: '',
+      expiresAt: new Date(Date.now() + CREDENTIAL_LIFETIME_MS).toISOString(),
+      requestedScopes: [],
+      grantedScopes: null,
+      metadata,
+      subject,
+    });
+    if (!saved.ok) return fail('GRANT_UNREADABLE', 'the credential could not be stored');
     sendJson(response, 200, { ok: true, accountId });
   }
 
