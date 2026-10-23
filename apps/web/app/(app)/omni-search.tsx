@@ -111,7 +111,8 @@ export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSid
   const sections = buildSections({
     needle,
     pages,
-    projects: chats?.projects ?? [],
+    // Chat projects and code projects come in separate lists from the sidebar.
+    projects: [...(chats?.projects ?? []), ...(chats?.code.projects ?? [])],
     chats: allChats ?? chats?.chats ?? [],
     hits,
   });
