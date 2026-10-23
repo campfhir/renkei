@@ -37,7 +37,15 @@
  * turns resume and notes land while the person is away.
  */
 
-import { createHash, hkdfSync, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  hkdfSync,
+  randomBytes,
+  scryptSync,
+  timingSafeEqual,
+} from 'node:crypto';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { encrypt, decrypt, parseEncryptionKey } from './secretbox';
@@ -228,4 +236,100 @@ export function verifierMatches(kek: Buffer, verifier: string): boolean {
   const left = Buffer.from(kekVerifier(kek), 'hex');
   const right = Buffer.from(verifier, 'hex');
   return left.byteLength === right.byteLength && timingSafeEqual(left, right);
+}
+
+/**
+ * Bytes sealed under a resource's data key — the binary counterpart of the
+ * `renc2` text envelope, for a file's content (an artifact's bytes in the
+ * object store). One buffer:
+ *
+ *   magic `renc2b\0` · key id length (1 byte) · key id · iv (12) · tag (16) · ciphertext
+ *
+ * AES-256-GCM with the key id as associated data, so the id a reader
+ * checks before trying is the id the seal was made under. A buffer that
+ * does not start with the magic is not sealed: a file stored before bytes
+ * were sealed reads as it is.
+ */
+export const RESOURCE_BYTES_MAGIC = Buffer.from('renc2b\0', 'latin1');
+const BYTES_IV_LENGTH = 12;
+const BYTES_TAG_LENGTH = 16;
+
+export function isResourceSealedBytes(bytes: Uint8Array): boolean {
+  return (
+    bytes.byteLength > RESOURCE_BYTES_MAGIC.byteLength &&
+    Buffer.from(bytes.buffer, bytes.byteOffset, RESOURCE_BYTES_MAGIC.byteLength).equals(
+      RESOURCE_BYTES_MAGIC
+    )
+  );
+}
+
+export function sealBytesWithResourceKey(bytes: Uint8Array, keyId: string, key: Buffer): Buffer {
+  const id = Buffer.from(keyId, 'utf8');
+  if (id.byteLength === 0 || id.byteLength > 255) {
+    throw new RangeError('resource key id must be 1 to 255 bytes');
+  }
+  const iv = randomBytes(BYTES_IV_LENGTH);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(id);
+  const ciphertext = Buffer.concat([cipher.update(bytes), cipher.final()]);
+  return Buffer.concat([
+    RESOURCE_BYTES_MAGIC,
+    Buffer.from([id.byteLength]),
+    id,
+    iv,
+    cipher.getAuthTag(),
+    ciphertext,
+  ]);
+}
+
+/** The key id a sealed buffer names and where its body starts; null when it is not a sealed buffer. */
+export function parseResourceBytesEnvelope(
+  bytes: Uint8Array
+): { keyId: string; iv: Buffer; tag: Buffer; ciphertext: Buffer } | null {
+  if (!isResourceSealedBytes(bytes)) return null;
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let at = RESOURCE_BYTES_MAGIC.byteLength;
+  const idLength = buffer[at++];
+  if (idLength === undefined || idLength === 0) return null;
+  const end = at + idLength + BYTES_IV_LENGTH + BYTES_TAG_LENGTH;
+  if (buffer.byteLength < end) return null;
+  const keyId = buffer.subarray(at, at + idLength).toString('utf8');
+  at += idLength;
+  const iv = buffer.subarray(at, at + BYTES_IV_LENGTH);
+  at += BYTES_IV_LENGTH;
+  const tag = buffer.subarray(at, at + BYTES_TAG_LENGTH);
+  at += BYTES_TAG_LENGTH;
+  return { keyId, iv, tag, ciphertext: buffer.subarray(at) };
+}
+
+/**
+ * Open a sealed buffer with the key it names. As with the text envelope,
+ * the id check turns "wrong key" into a message that says which key the
+ * bytes want.
+ */
+export function openBytesWithResourceKey(
+  sealed: Uint8Array,
+  keyId: string,
+  key: Buffer
+): Result<Buffer, 'DECRYPTION_ERROR' | 'WRONG_KEY'> {
+  const parsed = parseResourceBytesEnvelope(sealed);
+  if (!parsed) {
+    return err('DECRYPTION_ERROR' as const, { message: 'bytes are not a renc2b envelope' });
+  }
+  if (parsed.keyId !== keyId) {
+    return err('WRONG_KEY' as const, {
+      message: `bytes are sealed under key ${parsed.keyId}, not ${keyId}`,
+    });
+  }
+  try {
+    const decipher = createDecipheriv('aes-256-gcm', key, parsed.iv);
+    decipher.setAAD(Buffer.from(parsed.keyId, 'utf8'));
+    decipher.setAuthTag(parsed.tag);
+    return ok(Buffer.concat([decipher.update(parsed.ciphertext), decipher.final()]));
+  } catch (cause) {
+    return err('DECRYPTION_ERROR' as const, {
+      message: 'bytes could not be opened (wrong key or tampered content)',
+      cause,
+    });
+  }
 }

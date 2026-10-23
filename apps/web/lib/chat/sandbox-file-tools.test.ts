@@ -13,12 +13,19 @@ jest.mock('@renkei/sandbox-client', () => ({
   sbWriteFile: jest.fn(),
 }));
 jest.mock('@renkei/blob-store', () => ({ resolveTenantBlobStore: jest.fn() }));
-jest.mock('./attachments', () => ({ listAttachments: jest.fn(), listProjectArtifacts: jest.fn() }));
+// The rows are faked; the read of their bytes is the real one, over the faked store.
+jest.mock('./attachments', () => ({
+  ...jest.requireActual<typeof import('./attachments')>('./attachments'),
+  listAttachments: jest.fn(),
+  listProjectArtifacts: jest.fn(),
+}));
 jest.mock('./attachment-tools', () => ({ findAttachment: jest.fn() }));
+jest.mock('./artifact-access', () => ({ fileCipherFor: jest.fn() }));
 
 import { sbReadFile, sbWriteFile } from '@renkei/sandbox-client';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { findAttachment } from './attachment-tools';
+import { fileCipherFor } from './artifact-access';
 import { listAttachments, listProjectArtifacts, type AttachmentRow } from './attachments';
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
 import {
@@ -36,6 +43,7 @@ const storeMock = jest.mocked(resolveTenantBlobStore);
 const listMock = jest.mocked(listAttachments);
 const listProjectMock = jest.mocked(listProjectArtifacts);
 const findMock = jest.mocked(findAttachment);
+const cipherMock = jest.mocked(fileCipherFor);
 
 const testCipher = resourceCipher({
   id: '00000000-0000-4000-8000-00000000c1fe',
@@ -99,15 +107,23 @@ const documentsOf = (meta: Record<string, unknown>): Doc[] =>
 
 const tools = createLocalToolSet(sandboxFileTools());
 
+const putMock = jest.fn(async () => ({ ok: true, val: undefined }));
+
 beforeEach(() => {
   jest.clearAllMocks();
+  cipherMock.mockResolvedValue(testCipher);
+  // What the store holds is the file sealed under the chat's key.
   storeMock.mockResolvedValue({
     ok: true,
     val: {
-      getObject: jest.fn(async (key: string) => ({
-        ok: true,
-        val: { bytes: Buffer.from(`bytes of ${key}`), contentType: 'image/png' },
-      })),
+      getObject: jest.fn(async (key: string) => {
+        const sealed = testCipher.sealBytes(Buffer.from(`bytes of ${key}`));
+        return {
+          ok: true,
+          val: { bytes: sealed.ok ? sealed.val : Buffer.alloc(0), contentType: 'image/png' },
+        };
+      }),
+      putObject: putMock,
     },
   } as never);
   writeMock.mockResolvedValue({ ok: true, val: { ...STAGED, filename: 'cover.png' } } as never);
@@ -181,6 +197,7 @@ describe(ATTACH_TO_SANDBOX_TOOL, () => {
       blobKey: 'blob/cover.png',
       extractedText: null,
       extractStatus: 'unsupported',
+      cipher: testCipher,
     });
     const result = await tools.run(ATTACH_TO_SANDBOX_TOOL, { attachmentId: 'a1' }, context());
     expect(result.isError).toBe(false);
@@ -222,6 +239,52 @@ describe(ATTACH_TO_SANDBOX_TOOL, () => {
       Buffer.from('bytes of blob/template.docx')
     );
     expect(findMock).not.toHaveBeenCalled();
+    expect(cipherMock).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-1', projectId: 'p1' }),
+      expect.objectContaining({ filename: 'template.docx' })
+    );
+    expect(putMock).not.toHaveBeenCalled();
+  });
+
+  it('stages a file stored before bytes were sealed, sealing it in place on the way', async () => {
+    storeMock.mockResolvedValue({
+      ok: true,
+      val: {
+        getObject: jest.fn(async () => ({
+          ok: true,
+          val: { bytes: Buffer.from('plain bytes'), contentType: 'image/png' },
+        })),
+        putObject: putMock,
+      },
+    } as never);
+    listMock.mockResolvedValue([row('cover.png', { origin: 'model' })]);
+    const result = await tools.run(ATTACH_TO_SANDBOX_TOOL, { filename: 'last' }, context());
+    expect(result.isError).toBe(false);
+    expect(writeMock).toHaveBeenCalledWith(
+      { subject: 'auth0|alice' },
+      expect.objectContaining({ filename: 'cover.png' }),
+      Buffer.from('plain bytes')
+    );
+    expect(putMock).toHaveBeenCalledTimes(1);
+    const [key, written] = putMock.mock.calls[0] as unknown as [string, Uint8Array];
+    expect(key).toBe('blob/cover.png');
+    const reopened = testCipher.openBytes(written);
+    expect(reopened.ok && reopened.val.toString()).toBe('plain bytes');
+  });
+
+  it('refuses a file no key opens for this person, and one sealed under another key', async () => {
+    listMock.mockResolvedValue([row('cover.png', { origin: 'model' })]);
+    cipherMock.mockResolvedValue(null);
+    const noKey = await tools.run(ATTACH_TO_SANDBOX_TOOL, { filename: 'last' }, context());
+    expect(noKey.isError).toBe(true);
+    expect(noKey.content[0]?.text).toBe('No key opens this file for you.');
+    cipherMock.mockResolvedValue(
+      resourceCipher({ id: '00000000-0000-4000-8000-00000000beef', key: Buffer.alloc(32, 9) })
+    );
+    const wrongKey = await tools.run(ATTACH_TO_SANDBOX_TOOL, { filename: 'last' }, context());
+    expect(wrongKey.isError).toBe(true);
+    expect(wrongKey.content[0]?.text).toContain('could not be read (CONTENT_KEY)');
+    expect(writeMock).not.toHaveBeenCalled();
   });
 
   it('prefers the id when both are given', async () => {

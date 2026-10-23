@@ -10,10 +10,14 @@
 import { randomUUID } from 'node:crypto';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { resolveTenantBlobStore } from '@renkei/blob-store';
-import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
-import { getAttachment } from '@/lib/chat/attachments';
-import { mayReadAttachment } from '@/lib/chat/artifact-access';
+import {
+  chatRequestContext,
+  jsonError,
+  readBytesError,
+  readJsonBody,
+} from '@/lib/chat/route-support';
+import { readAttachmentBytes } from '@/lib/chat/attachments';
+import { resolveArtifactAccess } from '@/lib/chat/artifact-access';
 import { executeUpload } from '@/lib/upload-executors';
 
 export const runtime = 'nodejs';
@@ -26,10 +30,9 @@ export async function POST(
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const row = await getAttachment(db, attachmentId);
-  if (!row || !(await mayReadAttachment(db, session.subject, row))) {
-    return jsonError(404, 'not-found', 'No such file');
-  }
+  const access = await resolveArtifactAccess(db, session.subject, attachmentId);
+  if (!access) return jsonError(404, 'not-found', 'No such file');
+  const { row } = access;
 
   const body = await readJsonBody(request);
   if (body.kind !== 'fileshare-file') {
@@ -39,10 +42,8 @@ export async function POST(
   const path = typeof body.path === 'string' && body.path.trim() ? body.path.trim() : '/';
   if (!shareId) return jsonError(400, 'invalid', 'Choose a share.');
 
-  const store = await resolveTenantBlobStore();
-  if (!store.ok) return jsonError(503, 'uploads-off', 'The file store is not configured.');
-  const object = await store.val.getObject(row.blobKey);
-  if (!object.ok) return jsonError(502, 'store', 'The file could not be read.');
+  const object = await readAttachmentBytes(row, access.cipher);
+  if (!object.ok) return readBytesError(object.err.type);
 
   const outcome = await executeUpload(
     db,
@@ -55,7 +56,7 @@ export async function POST(
       filename: row.filename,
       content_type: row.contentType,
     },
-    Buffer.from(object.val.bytes)
+    Buffer.from(object.val)
   );
   return NextResponse.json(outcome, { status: outcome.ok ? 200 : 502 });
 }

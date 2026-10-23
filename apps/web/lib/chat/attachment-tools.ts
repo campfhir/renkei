@@ -8,10 +8,10 @@
  * which looks files up the same way.
  */
 
-import { openText } from './content-crypto';
+import { openText, type ContentCipher } from './content-crypto';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 import { getAttachment } from './attachments';
-import { resolveArtifactAccess } from './artifact-access';
+import { fileCipherFor } from './artifact-access';
 
 const READ_DEFAULT_CHARS = 20_000;
 const READ_MAX_CHARS = 80_000;
@@ -23,6 +23,8 @@ export interface FoundAttachment {
   blobKey: string;
   extractedText: string | null;
   extractStatus: string;
+  /** What opens its text and its bytes; null when no key reaches it. */
+  cipher: ContentCipher | null;
 }
 
 /** One of this chat's or its project's files by id, its text opened under the right key; null for any other id. */
@@ -49,13 +51,7 @@ export async function findAttachment(
     .select('extracted_text')
     .where('id', '=', row.id)
     .executeTakeFirst();
-  // The chat's own file opens under the chat's cipher the turn already
-  // holds; anything else under the key artifact-access.ts resolves for it.
-  const cipher =
-    row.keyKind === 'chat' && row.keyRef === context.chatId
-      ? context.cipher
-      : ((await resolveArtifactAccess(context.db, context.subject, row, context.projectId))
-          ?.cipher ?? null);
+  const cipher = await fileCipherFor(context, row);
   return {
     id: row.id,
     filename: row.filename,
@@ -68,6 +64,7 @@ export async function findAttachment(
           ? '[content unavailable: no key for this file]'
           : null,
     extractStatus: row.extractStatus,
+    cipher,
   };
 }
 

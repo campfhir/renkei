@@ -13,6 +13,11 @@ import {
   wrapKey,
   unwrapKey,
   encryptWithResourceKey,
+  isResourceSealedBytes,
+  openBytesWithResourceKey,
+  parseResourceBytesEnvelope,
+  sealBytesWithResourceKey,
+  RESOURCE_BYTES_MAGIC,
   decryptWithResourceKey,
   parseResourceEnvelope,
   isResourceEncrypted,
@@ -171,5 +176,62 @@ describe('own-key derivation', () => {
     expect(verifierMatches(a, verifier)).toBe(true);
     expect(verifierMatches(randomBytes(32), verifier)).toBe(false);
     expect(verifierMatches(a, 'abc')).toBe(false);
+  });
+});
+
+describe('renc2b sealed bytes', () => {
+  const keyId = randomUUID();
+  const key = generateDataKey();
+  const bytes = Buffer.from('%PDF-1.7 the whole file, bytes and all \u0000\u00ff');
+
+  it('seals a buffer, names its key, and opens it to the same bytes', () => {
+    const sealed = sealBytesWithResourceKey(bytes, keyId, key);
+    expect(isResourceSealedBytes(sealed)).toBe(true);
+    expect(sealed.subarray(0, RESOURCE_BYTES_MAGIC.byteLength).equals(RESOURCE_BYTES_MAGIC)).toBe(
+      true
+    );
+    expect(parseResourceBytesEnvelope(sealed)?.keyId).toBe(keyId);
+    // The content itself is not in the clear anywhere in the envelope.
+    expect(sealed.includes(Buffer.from('the whole file'))).toBe(false);
+    const opened = openBytesWithResourceKey(sealed, keyId, key);
+    expect(opened.ok && opened.val.equals(bytes)).toBe(true);
+  });
+
+  it('seals an empty buffer and a buffer from the middle of a larger one', () => {
+    const empty = sealBytesWithResourceKey(new Uint8Array(0), keyId, key);
+    const openedEmpty = openBytesWithResourceKey(empty, keyId, key);
+    expect(openedEmpty.ok && openedEmpty.val.byteLength).toBe(0);
+    const window = Buffer.from('xxHELLOxx').subarray(2, 7);
+    const opened = openBytesWithResourceKey(
+      sealBytesWithResourceKey(window, keyId, key),
+      keyId,
+      key
+    );
+    expect(opened.ok && opened.val.toString()).toBe('HELLO');
+  });
+
+  it('says which key the bytes want, and refuses a wrong key or a tampered body', () => {
+    const sealed = sealBytesWithResourceKey(bytes, keyId, key);
+    const wrong = openBytesWithResourceKey(sealed, randomUUID(), key);
+    expect(!wrong.ok && wrong.err.type).toBe('WRONG_KEY');
+    const badKey = openBytesWithResourceKey(sealed, keyId, generateDataKey());
+    expect(!badKey.ok && badKey.err.type).toBe('DECRYPTION_ERROR');
+    const tampered = Buffer.from(sealed);
+    tampered[tampered.byteLength - 1] ^= 0x01;
+    expect(openBytesWithResourceKey(tampered, keyId, key).ok).toBe(false);
+  });
+
+  it('is never mistaken for a plain file, and a plain file never for it', () => {
+    expect(isResourceSealedBytes(bytes)).toBe(false);
+    expect(isResourceSealedBytes(new Uint8Array(0))).toBe(false);
+    expect(isResourceSealedBytes(RESOURCE_BYTES_MAGIC)).toBe(false);
+    expect(
+      parseResourceBytesEnvelope(Buffer.concat([RESOURCE_BYTES_MAGIC, Buffer.from([0])]))
+    ).toBeNull();
+    expect(
+      parseResourceBytesEnvelope(Buffer.concat([RESOURCE_BYTES_MAGIC, Buffer.from([5, 1])]))
+    ).toBeNull();
+    const plain = openBytesWithResourceKey(bytes, keyId, key);
+    expect(!plain.ok && plain.err.type).toBe('DECRYPTION_ERROR');
   });
 });

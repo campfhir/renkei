@@ -139,15 +139,6 @@ export async function resolveArtifactAccess(
   return null;
 }
 
-/** Whether the viewer may read the artifact at all (download, preview, copy to a share). */
-export async function mayReadAttachment(
-  db: Kysely<DB>,
-  subject: string,
-  row: AttachmentRow
-): Promise<boolean> {
-  return (await resolveArtifactAccess(db, subject, row)) !== null;
-}
-
 /** The cipher this reader opens the file's text with, or null when they may not read it. */
 export async function attachmentCipherFor(
   db: Kysely<DB>,
@@ -155,6 +146,26 @@ export async function attachmentCipherFor(
   row: AttachmentRow
 ): Promise<ContentCipher | null> {
   const access = await resolveArtifactAccess(db, subject, row);
+  return access?.cipher ?? null;
+}
+
+/**
+ * The cipher a turn's tool opens one of the chat's or its project's files
+ * with: the chat's own cipher, which the turn already holds, for a file
+ * still under the chat's key; else whatever access the person has to it.
+ */
+export async function fileCipherFor(
+  scope: {
+    db: Kysely<DB>;
+    subject: string;
+    chatId: string;
+    cipher: ContentCipher;
+    projectId?: string | null;
+  },
+  row: AttachmentRow
+): Promise<ContentCipher | null> {
+  if (row.keyKind === 'chat' && row.keyRef === scope.chatId) return scope.cipher;
+  const access = await resolveArtifactAccess(scope.db, scope.subject, row, scope.projectId ?? null);
   return access?.cipher ?? null;
 }
 

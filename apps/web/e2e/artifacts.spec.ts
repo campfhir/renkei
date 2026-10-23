@@ -18,6 +18,7 @@
  */
 
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
@@ -25,6 +26,17 @@ import { enrollForE2E, keyFor } from './keys';
 import { deleteRowsOf } from './seed';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
+/**
+ * Where the dev server's local blob store keeps its objects (the
+ * Playwright config's default); the spec reads them back from disk to
+ * see what is at rest. Null when the environment points at another
+ * backend, and those checks are skipped.
+ */
+const BLOBS =
+  (process.env.BLOB_STORE_PROVIDER ?? 'local') === 'local'
+    ? (process.env.BLOB_STORE_LOCAL_DIR ?? path.join(RESULTS, 'blobs'))
+    : null;
+const SEALED_MAGIC = Buffer.from('renc2b\0', 'latin1');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 /** A first visit compiles the page on the dev server; a real upload extracts text. */
 const COLD = { timeout: 30_000 };
@@ -89,6 +101,25 @@ const GUIDE_TEXT =
   '# Postgres schema guide\n\nMonetary columns are numeric(12,4). Round half to even at the boundary, never in storage.\n';
 const REPORT_TEXT = '# Rounding analysis\n\nThree call sites round per line; one rounds once.\n';
 const MANUAL_TEXT = 'Vendor SDK manual. Retries are exponential with jitter.\n';
+const CSV_TEXT = 'id,amount\n1,10.00\n';
+
+/** The bytes the local store holds for one artifact, and whether they are sealed. */
+async function storedBytes(blobKey: string): Promise<Buffer> {
+  if (!BLOBS) throw new Error('no local blob store to read');
+  return readFile(path.join(BLOBS, blobKey));
+}
+
+/**
+ * A file as the store held it before bytes were sealed: the content in
+ * the clear, beside the local backend's content-type sidecar.
+ */
+async function storePlainBlob(blobKey: string, text: string, contentType: string): Promise<void> {
+  if (!BLOBS) return;
+  const file = path.join(BLOBS, blobKey);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, text);
+  await writeFile(`${file}.meta.json`, JSON.stringify({ contentType }));
+}
 
 async function seed(f: Fixture): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
@@ -198,15 +229,18 @@ async function seed(f: Fixture): Promise<void> {
     });
     await client.query(
       `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, extracted_text, origin, key_kind, key_ref)
-       VALUES ($1, $2, $3, $4, 'march-invoices.csv', 'text/csv', 48, 'done', $5, 'upload', 'chat', $3)`,
+       VALUES ($1, $2, $3, $4, 'march-invoices.csv', 'text/csv', $5, 'done', $6, 'upload', 'chat', $3)`,
       [
         f.csvId,
         f.subject,
         f.plainChatId,
         `chat/e2e/${f.csvId}`,
-        plainKey.seal('id,amount\n1,10.00\n'),
+        CSV_TEXT.length,
+        plainKey.seal(CSV_TEXT),
       ]
     );
+    // Its bytes as a store from before this build holds them: in the clear.
+    await storePlainBlob(`chat/e2e/${f.csvId}`, CSV_TEXT, 'text/csv');
     // A colleague's file, shared with the person.
     const manualKey = await keyFor(client, {
       kind: 'artifact',
@@ -358,6 +392,39 @@ test('the library: a real upload lands, reads back, and is attached from the car
   const served = await page.request.get(href!);
   expect(served.ok()).toBe(true);
   expect(await served.text()).toContain('Money fields are snake_case');
+
+  if (BLOBS) {
+    // At rest the store holds the file sealed under the artifact's key:
+    // the envelope's magic in front, none of the text anywhere in it.
+    const client = new Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    let blobKey: string;
+    try {
+      const { rows } = await client.query<{ blob_key: string }>(
+        `SELECT blob_key FROM artifacts WHERE owner_subject = $1 AND filename = 'api-style-guide.md'`,
+        [f.subject]
+      );
+      blobKey = rows[0]!.blob_key;
+    } finally {
+      await client.end();
+    }
+    const atRest = await storedBytes(blobKey);
+    expect(atRest.subarray(0, SEALED_MAGIC.byteLength).equals(SEALED_MAGIC)).toBe(true);
+    expect(atRest.includes(Buffer.from('snake_case'))).toBe(false);
+
+    // A file stored in the clear before this build reads as it did, and the
+    // first read seals it in place; the second read opens what was sealed.
+    const before = await storedBytes(`chat/e2e/${f.csvId}`);
+    expect(before.toString()).toBe(CSV_TEXT);
+    const legacy = await page.request.get(`/api/chat/attachments/${f.csvId}`);
+    expect(legacy.ok()).toBe(true);
+    expect(await legacy.text()).toBe(CSV_TEXT);
+    const after = await storedBytes(`chat/e2e/${f.csvId}`);
+    expect(after.subarray(0, SEALED_MAGIC.byteLength).equals(SEALED_MAGIC)).toBe(true);
+    expect(after.includes(Buffer.from('10.00'))).toBe(false);
+    const again = await page.request.get(`/api/chat/attachments/${f.csvId}`);
+    expect(await again.text()).toBe(CSV_TEXT);
+  }
 
   // Hover: the controls explain themselves, in an element a screenshot keeps.
   await details.getByRole('button', { name: 'Rename' }).hover();

@@ -435,7 +435,16 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
       const wantedSource = typeof input.sourceImage === 'string' ? input.sourceImage.trim() : null;
       let source: Extract<SourceLoad, { ok: true }>['image'] | null = null;
       if (wantedSource !== null && wantedSource !== '') {
-        const loaded = await loadSource({ db: context.db, chatId: context.chatId }, wantedSource);
+        const loaded = await loadSource(
+          {
+            db: context.db,
+            subject: context.subject,
+            chatId: context.chatId,
+            cipher: context.cipher,
+            projectId: context.projectId,
+          },
+          wantedSource
+        );
         if (!loaded.ok) return errorResult(loaded.reason);
         source = loaded.image;
       }

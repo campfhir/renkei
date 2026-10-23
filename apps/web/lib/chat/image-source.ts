@@ -13,9 +13,10 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { sanitizeBytes } from '@renkei/document-render';
-import { listAttachments, type AttachmentRow } from './attachments';
+import { fileCipherFor } from './artifact-access';
+import { listAttachments, readAttachmentBytes, type AttachmentRow } from './attachments';
+import type { ContentCipher } from './content-crypto';
 
 /** What the picker needs of a stored file. */
 export interface ImageFile {
@@ -78,7 +79,11 @@ export type SourceLoad = { ok: true; image: SourceImage } | { ok: false; reason:
 
 export interface SourceScope {
   db: Kysely<DB>;
+  subject: string;
   chatId: string;
+  /** The chat's cipher: what opens a picture still under the chat's key. */
+  cipher: ContentCipher;
+  projectId?: string | null;
 }
 
 /** Reads the named picture back from the store and rebuilds it; or says why it cannot. */
@@ -91,15 +96,21 @@ export async function loadSourceImage(scope: SourceScope, wanted: string): Promi
   }
   const picked = pickSourceImage(rows, wanted);
   if (!picked.ok) return picked;
-  const store = await resolveTenantBlobStore();
-  if (!store.ok) return { ok: false, reason: 'The file store is not available.' };
-  const object = await store.val.getObject(picked.file.blobKey);
+  const cipher = await fileCipherFor(scope, picked.file);
+  if (!cipher) return { ok: false, reason: `No key opens ${picked.file.filename} for you.` };
+  const object = await readAttachmentBytes(picked.file, cipher);
   if (!object.ok) {
-    return { ok: false, reason: `${picked.file.filename} could not be read back from storage.` };
+    return {
+      ok: false,
+      reason:
+        object.err.type === 'UNCONFIGURED'
+          ? 'The file store is not available.'
+          : `${picked.file.filename} could not be read back from storage.`,
+    };
   }
   const extension = picked.file.contentType === 'image/jpeg' ? 'jpg' : 'png';
   // Rebuilt, not trusted: an upload may carry metadata or worse.
-  const checked = sanitizeBytes(extension, Buffer.from(object.val.bytes));
+  const checked = sanitizeBytes(extension, Buffer.from(object.val));
   if (!checked.ok) {
     return {
       ok: false,

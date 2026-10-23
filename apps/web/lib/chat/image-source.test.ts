@@ -7,16 +7,28 @@
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
+import { fileCipherFor } from './artifact-access';
 import { listAttachments, type AttachmentRow } from './attachments';
+import { resourceCipher } from './content-crypto';
 import { loadSourceImage, pickSourceImage, type ImageFile } from './image-source';
 
-jest.mock('./attachments', () => ({ listAttachments: jest.fn() }));
+// The rows are faked; the read of their bytes is the real one, over a faked store.
+jest.mock('./attachments', () => ({
+  ...jest.requireActual<typeof import('./attachments')>('./attachments'),
+  listAttachments: jest.fn(),
+}));
+jest.mock('./artifact-access', () => ({ fileCipherFor: jest.fn() }));
 jest.mock('@renkei/blob-store', () => ({ resolveTenantBlobStore: jest.fn() }));
 
 const { resolveTenantBlobStore } = jest.requireMock<{ resolveTenantBlobStore: jest.Mock }>(
   '@renkei/blob-store'
 );
 const listAttachmentsMock = jest.mocked(listAttachments);
+const cipherMock = jest.mocked(fileCipherFor);
+const chatCipher = resourceCipher({
+  id: '00000000-0000-4000-8000-00000000c0de',
+  key: Buffer.alloc(32, 3),
+});
 
 const file = (filename: string, origin = 'model', contentType = 'image/png'): ImageFile => ({
   filename,
@@ -103,7 +115,7 @@ describe('loadSourceImage', () => {
     'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACAQMAAABIeJ9nAAAAA1BMVEX/AAAZ4gk3AAAADElEQVQI12NgYGAAAAAEAAEnNCcKAAAAAElFTkSuQmCC',
     'base64'
   ); // a real 2x2 PNG
-  const SCOPE = { db: null as never, chatId: 'c' };
+  const SCOPE = { db: null as never, subject: 'u', chatId: 'c', cipher: chatCipher };
   const row = (over: Partial<AttachmentRow>): AttachmentRow => ({
     id: 'a1',
     ownerSubject: 'u',
@@ -121,6 +133,7 @@ describe('loadSourceImage', () => {
     updatedAt: new Date(0),
     ...over,
   });
+  const putObject = jest.fn(async () => ok(undefined));
   const store = (bytes: Uint8Array | null) =>
     resolveTenantBlobStore.mockResolvedValue(
       ok({
@@ -129,15 +142,22 @@ describe('loadSourceImage', () => {
             ? ok({ bytes, contentType: 'image/png' })
             : err('NOT_FOUND' as never, { message: 'gone' })
         ),
+        putObject,
       })
     );
 
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    cipherMock.mockResolvedValue(chatCipher);
+  });
 
-  it('reads the picture back from this chat’s store, rebuilt from its pixels', async () => {
+  it('reads the picture back from this chat’s store, opened under the chat’s key and rebuilt from its pixels', async () => {
     listAttachmentsMock.mockResolvedValue([row({})]);
-    // An upload with something riding behind the pixels.
-    store(Buffer.concat([PNG, Buffer.from('<script>alert(1)</script>')]));
+    // An upload with something riding behind the pixels, sealed as the store holds it.
+    const sealed = chatCipher.sealBytes(
+      Buffer.concat([PNG, Buffer.from('<script>alert(1)</script>')])
+    );
+    store(sealed.ok ? sealed.val : Buffer.alloc(0));
     const loaded = await loadSourceImage(SCOPE, 'last');
     expect(loaded.ok).toBe(true);
     if (loaded.ok) {
@@ -146,6 +166,28 @@ describe('loadSourceImage', () => {
       expect(loaded.image.bytes.includes(Buffer.from('script'))).toBe(false);
     }
     expect(listAttachmentsMock).toHaveBeenCalledWith(null, { chatId: 'c' });
+    expect(cipherMock).toHaveBeenCalledWith(SCOPE, expect.objectContaining({ id: 'a1' }));
+    expect(putObject).not.toHaveBeenCalled();
+  });
+
+  it('reads a picture stored before bytes were sealed, and seals it in place on the way', async () => {
+    listAttachmentsMock.mockResolvedValue([row({})]);
+    store(PNG);
+    const loaded = await loadSourceImage(SCOPE, 'last');
+    expect(loaded.ok && loaded.image.bytes.subarray(1, 4).toString()).toBe('PNG');
+    expect(putObject).toHaveBeenCalledTimes(1);
+    const [key, written] = putObject.mock.calls[0] as unknown as [string, Uint8Array];
+    expect(key).toBe('chat/t/a1');
+    const reopened = chatCipher.openBytes(written);
+    expect(reopened.ok && reopened.val.equals(PNG)).toBe(true);
+  });
+
+  it('refuses a picture no key opens for this person', async () => {
+    listAttachmentsMock.mockResolvedValue([row({ keyKind: 'artifact', keyRef: null })]);
+    cipherMock.mockResolvedValue(null);
+    store(PNG);
+    const loaded = await loadSourceImage(SCOPE, 'last');
+    expect(!loaded.ok && loaded.reason).toMatch(/No key opens bear\.png/);
   });
 
   it('says what is there when the name is not', async () => {

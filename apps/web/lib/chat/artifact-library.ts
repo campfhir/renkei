@@ -39,6 +39,7 @@ import {
   getAttachment,
   getAttachmentText,
   listReferencesOf,
+  readAttachmentBytes,
   removeProjectReference,
   setReferenceMode,
   type AttachmentError,
@@ -54,7 +55,13 @@ import {
   shareKey,
   wrapKeyUnder,
 } from './chat-keys';
-import { openText, resourceCipher, sealText, type ContentCipher } from './content-crypto';
+import {
+  openText,
+  resourceCipher,
+  sealBytes,
+  sealText,
+  type ContentCipher,
+} from './content-crypto';
 import type { OutboundRedactor } from './outbound-redaction';
 import { notifyArtifactEvent } from './artifact-notifications';
 
@@ -130,7 +137,9 @@ export async function createOwnedArtifact(
  * Re-seals a row still under its chat's or project's key under a key of
  * its own, wrapped under the chat it lives in and every project that
  * holds it. Needs the owner's key (minting is the owner's) and a cipher
- * that opens the text as it is — the caller's access.
+ * that opens the text and the bytes as they are — the caller's access.
+ * The bytes go first: a row that says `artifact` must find its file under
+ * the artifact's key.
  */
 export async function promoteKey(
   db: Kysely<DB>,
@@ -156,6 +165,19 @@ export async function promoteKey(
     const result = sealText(text, own);
     if (!result.ok) return err('CONTENT_KEY' as const);
     sealed = result.val;
+  }
+  const bytes = await readAttachmentBytes(row, access.cipher);
+  if (bytes.ok) {
+    const store = await resolveTenantBlobStore();
+    const resealed = sealBytes(bytes.val, own);
+    if (!store.ok || !resealed.ok) return err('CONTENT_KEY' as const);
+    const put = await store.val.putObject(row.blobKey, resealed.val, 'application/octet-stream');
+    if (!put.ok) return err('CONTENT_KEY' as const);
+  } else if (bytes.err.type === 'CONTENT_KEY' || bytes.err.type === 'STORE') {
+    // No bytes at all (no store, or none kept for this row) is nothing to
+    // move; bytes that will not open or cannot be read must not be left
+    // behind under a key the row no longer names.
+    return err('CONTENT_KEY' as const);
   }
   await db
     .updateTable('artifacts')
@@ -535,15 +557,21 @@ export async function copyArtifact(
   const access = await resolveArtifactAccess(db, input.actorSubject, input.artifactId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role === 'owner') return err('SELF' as const);
-  const store = await resolveTenantBlobStore();
-  if (!store.ok) return err('UNCONFIGURED' as const);
-  const object = await store.val.getObject(access.row.blobKey);
-  if (!object.ok) return err('STORE' as const);
+  const object = await readAttachmentBytes(access.row, access.cipher);
+  if (!object.ok) {
+    return err(
+      object.err.type === 'UNCONFIGURED'
+        ? ('UNCONFIGURED' as const)
+        : object.err.type === 'CONTENT_KEY'
+          ? ('CONTENT_KEY' as const)
+          : ('STORE' as const)
+    );
+  }
   const created = await createOwnedArtifact(db, {
     ownerSubject: input.actorSubject,
     filename: input.filename ? cleanFilename(input.filename) : copyName(access.row.filename),
     contentType: access.row.contentType,
-    bytes: object.val.bytes,
+    bytes: object.val,
     maxBytes: input.maxBytes,
     redactor: input.redactor,
     origin: 'upload',
