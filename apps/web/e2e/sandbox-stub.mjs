@@ -2332,7 +2332,24 @@ function handleAnthropic(request, url, response) {
     const scripted = /^\[\[call\s+([A-Za-z0-9_.-]+)\s*(\{[\s\S]*\})?\s*\]\]$/.exec(
       firstLine.trim()
     );
-    const frames = scripted
+    // The artifact digest (apps/web/lib/chat/artifact-digest.ts) forces its
+    // one tool; it is answered from the text itself — a summary naming the
+    // first line, the longer words as keywords — so a spec can see a
+    // file's digest land and search by it.
+    const digested = text.replace(/^<file[^>]*>\n?/, '').replace(/\n?<\/file>$/, '');
+    const digestLine = digested.split('\n').find((line) => line.trim()) ?? '';
+    const forced =
+      body.tool_choice?.type === 'tool' && body.tool_choice.name === 'artifact_digest'
+        ? [
+            'artifact_digest',
+            JSON.stringify({
+              summary: `Stub summary: ${digestLine.trim()}`,
+              keywords: [...new Set(digested.toLowerCase().match(/[a-z]{4,}/g) ?? [])].slice(0, 8),
+            }),
+          ]
+        : null;
+    const call = scripted ? [scripted[1], scripted[2] ?? '{}'] : forced;
+    const frames = call
       ? [
           { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
           {
@@ -2341,14 +2358,14 @@ function handleAnthropic(request, url, response) {
             content_block: {
               type: 'tool_use',
               id: `toolu_stub_${Date.now()}`,
-              name: scripted[1],
+              name: call[0],
               input: {},
             },
           },
           {
             type: 'content_block_delta',
             index: 0,
-            delta: { type: 'input_json_delta', partial_json: scripted[2] ?? '{}' },
+            delta: { type: 'input_json_delta', partial_json: call[1] },
           },
           { type: 'content_block_stop', index: 0 },
           {
@@ -2370,6 +2387,27 @@ function handleAnthropic(request, url, response) {
           },
           { type: 'message_stop' },
         ];
+    // A one-shot call (`complete`, no `stream`) reads one JSON message, as
+    // the real API answers it — the chat's title and an artifact's digest
+    // are asked for this way.
+    if (body.stream !== true) {
+      return json(response, 200, {
+        type: 'message',
+        role: 'assistant',
+        content: call
+          ? [
+              {
+                type: 'tool_use',
+                id: `toolu_stub_${Date.now()}`,
+                name: call[0],
+                input: JSON.parse(call[1]),
+              },
+            ]
+          : [{ type: 'text', text: reply }],
+        stop_reason: call ? 'tool_use' : 'end_turn',
+        usage: { input_tokens: 12, output_tokens: 8 },
+      });
+    }
     response.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',

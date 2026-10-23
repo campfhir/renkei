@@ -15,7 +15,7 @@
  */
 
 import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { getOrgSettings } from '@renkei/settings';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { isUuid } from '@/lib/uuid';
@@ -29,6 +29,7 @@ import {
   type ReferenceMode,
 } from '@/lib/chat/attachments';
 import { attachToProject, createOwnedArtifact } from '@/lib/chat/artifact-library';
+import { deferDigest } from '@/lib/chat/artifact-digest';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 
 export const runtime = 'nodejs';
@@ -121,6 +122,7 @@ export async function PUT(request: NextRequest): Promise<Response> {
       key: { kind: 'chat', ref: chat.chat.id },
     });
     if (!created.ok) return uploadError(created.err.type);
+    deferDigest(db, session.subject, [created.val], after);
     return NextResponse.json({ attachment: toAttachmentView(created.val) }, { status: 201 });
   }
 
@@ -134,6 +136,8 @@ export async function PUT(request: NextRequest): Promise<Response> {
     redactor,
   });
   if (!created.ok) return uploadError(created.err.type);
+  // The summary and keywords for the search index, asked for after the reply.
+  deferDigest(db, session.subject, [created.val], after);
   let attached: { mode: ReferenceMode } | null = null;
   if (projectId) {
     const result = await attachToProject(db, {

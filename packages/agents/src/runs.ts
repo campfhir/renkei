@@ -457,7 +457,7 @@ export interface RecordLlmCallInput {
    * the automatic title (chat-title-tools.ts). Counted in the totals, never
    * in a chat's own turns or the auto-compaction budget.
    */
-  purpose: 'run' | 'optimize' | 'chat' | 'context_window';
+  purpose: 'run' | 'optimize' | 'chat' | 'context_window' | 'artifact_digest';
   /** Every prompt token the model read, cache-served or not. */
   inputTokens: number;
   outputTokens: number;

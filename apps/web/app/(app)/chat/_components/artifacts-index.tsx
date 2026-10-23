@@ -3,18 +3,23 @@
 /**
  * The Artifacts page: everything this person owns — uploads and the
  * files their chats generated — and everything shared with them, each
- * with where it is used; the whole page a drop target. The list is paged
- * and scrolls inside its own box, so the filters and the pager stay put
- * however many files there are. On a wide screen one file is selected at
- * a time, with its details and acts beside the list; on a phone the list
- * is a column of cards and a tap opens the file's details over it, with a
- * back button to the list — the way the code pane opens a file as a tab.
- * What the viewer may do follows artifact-access.ts: an owner renames,
- * replaces, shares, hands over or deletes; a person it was shared with
- * uses it, copies it or takes it off their own list.
+ * with where it is used; the whole page a drop target. The list is one
+ * page of the library, chosen on the server by what the URL says
+ * (artifact-library-params.ts): the search looks at names and at the
+ * digest the organization's model wrote for each file, the filters
+ * narrow, the pager turns, and each change is a navigation, so the
+ * browser is sent no more than it shows and a page is a link. The list
+ * scrolls inside its own box, so the filters and the pager stay put.
+ * On a wide screen one file is selected at a time, with its details
+ * and acts beside the list; on a phone the list is a column of cards
+ * and a tap opens the file's details over it, with a back button to the
+ * list — the way the code pane opens a file as a tab. What the viewer
+ * may do follows artifact-access.ts: an owner renames, replaces, shares,
+ * hands over or deletes; a person it was shared with uses it, copies it
+ * or takes it off their own list.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -22,70 +27,99 @@ import DownloadLink from '@/components/download-link';
 import LocalTime from '@/components/local-time';
 import { chatClient } from '@/lib/chat/client';
 import type { LibraryItem } from '@/lib/chat/artifact-library';
+import {
+  libraryQueryString,
+  type LibraryFilters,
+  type LibraryQuery,
+  type LibraryShow,
+} from '@/lib/chat/artifact-library-params';
+import type { LibraryPage } from '@/lib/chat/artifact-library-query';
 import { useMediaQuery } from '@/lib/use-media-query';
 import ShareModal from './share-modal';
 import AttachArtifactsPicker from './attach-to-project-modal';
 import { CopyArtifactModal, DeleteArtifactModal, RenameArtifactModal } from './artifact-dialogs';
 import { ModeToggle, sizeOf, statusLabel, TypeBadge } from './artifact-bits';
 
-type Show = 'all' | 'uploaded' | 'generated' | 'shared';
-
-/** Rows per page: enough to scan, few enough that the pager means something. */
-export const PAGE_SIZE = 25;
-
 /**
  * Below Tailwind's `md` the details open over the list instead of beside
  * it — the same width the list's rows turn into cards at.
  */
 const NARROW = '(max-width: 767.98px)';
+/** Typing pauses this long before the search is asked for. */
+const SEARCH_DEBOUNCE_MS = 300;
 
-interface Filters {
-  show: Show;
-  projectId: string;
-  query: string;
-}
-
-function matches(item: LibraryItem, { show, projectId, query }: Filters): boolean {
-  if (show === 'shared' && item.via === 'owner') return false;
-  if (show === 'uploaded' && (item.via !== 'owner' || item.origin !== 'upload')) return false;
-  if (show === 'generated' && (item.via !== 'owner' || item.origin !== 'model')) return false;
-  if (projectId && !item.projects.some((project) => project.id === projectId)) return false;
-  const needle = query.trim().toLowerCase();
-  return !needle || item.filename.toLowerCase().includes(needle);
-}
-
-/** The page a file sits on under these filters; the first when it is not listed. */
-function pageOf(items: LibraryItem[], filters: Filters, id: string | null): number {
-  if (!id) return 0;
-  const index = items.filter((item) => matches(item, filters)).findIndex((item) => item.id === id);
-  return index < 0 ? 0 : Math.floor(index / PAGE_SIZE);
-}
+const PATH = '/chat/artifacts';
 
 const pagerButton =
   'flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900';
 const smallButton =
   'rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900';
 
+const filtersOf = (query: LibraryQuery): LibraryFilters => ({
+  show: query.show,
+  projectId: query.projectId,
+  query: query.query,
+});
+const keyOf = (filters: LibraryFilters) =>
+  `${filters.show}|${filters.projectId ?? ''}|${filters.query}`;
+
+/** What the digest's state says in the details, or null when it says nothing worth a line. */
+function digestLabel(status: string): string | null {
+  switch (status) {
+    case 'pending':
+    case 'running':
+      return 'Summary on its way…';
+    case 'failed':
+      return 'No summary could be written for this file.';
+    case 'none':
+      return 'No text to summarize.';
+    default:
+      return null;
+  }
+}
+
 export default function ArtifactsIndex({
-  initial,
+  page,
+  query,
   uploads,
   projects,
   selectedId,
 }: {
-  initial: LibraryItem[];
+  /** The page the server chose for `query`. */
+  page: LibraryPage;
+  /** What the URL asked for, as the server read it. */
+  query: LibraryQuery;
   uploads: boolean;
   projects: { id: string; name: string; kind: string }[];
   selectedId: string | null;
 }) {
   const router = useRouter();
   const narrow = useMediaQuery(NARROW);
-  const [items, setItems] = useState(initial);
-  useEffect(() => setItems(initial), [initial]);
-  const [filters, setFilters] = useState<Filters>({ show: 'all', projectId: '', query: '' });
+  const [isPending, startTransition] = useTransition();
+  const items = page.artifacts;
+  // The filters as typed: the URL follows them, debounced for the
+  // search box, and they follow the URL when it changes under them (the
+  // back button) — told apart by the key of the last navigation asked for.
+  const [filters, setFilters] = useState<LibraryFilters>(() => filtersOf(query));
+  const asked = useRef(keyOf(filtersOf(query)));
+  const latest = useRef(filters);
+  latest.current = filters;
+  const serverKey = keyOf(filtersOf(query));
+  const served = useRef(query);
+  served.current = query;
+  // Keyed on the string, not the object: a re-render with the same
+  // answer must not reset what is being typed.
+  useEffect(() => {
+    if (serverKey !== asked.current) {
+      asked.current = serverKey;
+      setFilters(filtersOf(served.current));
+    }
+  }, [serverKey]);
   const [selected, setSelected] = useState<string | null>(selectedId);
-  // The page a link opened to ("?artifact=") is shown with its file on it.
-  const [page, setPage] = useState(() =>
-    pageOf(initial, { show: 'all', projectId: '', query: '' }, selectedId)
+  // The selected file as last seen, so its details stay while a page it
+  // is not on is shown — a filter that hides it, an upload's reveal in flight.
+  const [remembered, setRemembered] = useState<LibraryItem | null>(
+    () => page.artifacts.find((item) => item.id === selectedId) ?? null
   );
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(0);
@@ -97,41 +131,59 @@ export default function ArtifactsIndex({
   const replaceInput = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const dragDepth = useRef(0);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const reload = useCallback(async (): Promise<LibraryItem[] | null> => {
-    const result = await chatClient.artifacts();
-    if (result.data) setItems(result.data.artifacts);
-    router.refresh();
-    return result.data?.artifacts ?? null;
+  /** Asks the server for a page: the URL changes, the page re-renders with it. */
+  const navigate = useCallback(
+    (next: LibraryFilters, toPage: number, focus: string | null = null) => {
+      asked.current = keyOf(next);
+      startTransition(() => {
+        router.replace(`${PATH}${libraryQueryString(next, toPage, focus)}`, { scroll: false });
+      });
+      listRef.current?.scrollTo({ top: 0 });
+    },
+    [router]
+  );
+  /** The same page again, after an act changed what is on it. */
+  const reload = useCallback(() => {
+    startTransition(() => router.refresh());
   }, [router]);
 
-  const shown = useMemo(() => items.filter((item) => matches(item, filters)), [items, filters]);
-  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
-  // Deleting the last file on the last page leaves the pager on a page
-  // that no longer exists; the page shown is always a real one.
-  const pageIndex = Math.min(page, pageCount - 1);
-  const pageItems = shown.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE);
-
-  const goTo = (next: number) => {
-    setPage(Math.max(0, Math.min(pageCount - 1, next)));
-    listRef.current?.scrollTo({ top: 0 });
+  // A filter change starts over at the first page of what it shows; the
+  // search box waits for typing to pause.
+  const filter = (patch: Partial<LibraryFilters>) => {
+    const next = { ...latest.current, ...patch };
+    setFilters(next);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if ('query' in patch) {
+      searchTimer.current = setTimeout(() => navigate(next, 1), SEARCH_DEBOUNCE_MS);
+    } else {
+      navigate(next, 1);
+    }
   };
-  // A filter change starts over at the first page of what it shows.
-  const filter = (patch: Partial<Filters>) => {
-    setFilters((current) => ({ ...current, ...patch }));
-    setPage(0);
-    listRef.current?.scrollTo({ top: 0 });
-  };
-  /** Selects a file and turns to the page it is on, in `list` as it stands now. */
-  const reveal = (id: string, list: LibraryItem[]) => {
+  useEffect(
+    () => () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    },
+    []
+  );
+  const goTo = (toPage: number) =>
+    navigate(latest.current, Math.max(1, Math.min(page.pageCount, toPage)));
+  /** Selects a file and turns to the page it is on. */
+  const reveal = (id: string) => {
     setSelected(id);
-    setPage(pageOf(list, filters, id));
+    navigate(latest.current, 1, id);
+  };
+  const select = (item: LibraryItem | null) => {
+    setSelected(item?.id ?? null);
+    if (item) setRemembered(item);
   };
 
-  const current = items.find((item) => item.id === selected) ?? null;
-  const totalBytes = items
-    .filter((item) => item.via === 'owner')
-    .reduce((sum, item) => sum + item.sizeBytes, 0);
+  const onPage = items.find((item) => item.id === selected) ?? null;
+  const current = onPage ?? (remembered?.id === selected ? remembered : null);
+  useEffect(() => {
+    if (onPage) setRemembered(onPage);
+  }, [onPage]);
 
   const upload = async (list: FileList | File[] | null) => {
     const files = list ? [...list] : [];
@@ -145,8 +197,8 @@ export default function ArtifactsIndex({
       else last = result.data?.id ?? null;
       setUploading((count) => count - 1);
     }
-    const fresh = await reload();
-    if (last) reveal(last, fresh ?? items);
+    if (last) reveal(last);
+    else reload();
   };
 
   const replace = async (file: File | null) => {
@@ -154,29 +206,29 @@ export default function ArtifactsIndex({
     setError(null);
     const result = await chatClient.replaceArtifact(current.id, file);
     if (result.error) setError(result.error);
-    await reload();
+    reload();
   };
 
   const setMode = async (item: LibraryItem, projectId: string, mode: 'always' | 'on_demand') => {
     setError(null);
     const result = await chatClient.setArtifactMode(projectId, item.id, mode);
     if (result.error) setError(result.error);
-    await reload();
+    reload();
   };
 
   const detach = async (item: LibraryItem, projectId: string) => {
     setError(null);
     const result = await chatClient.detachArtifact(projectId, item.id);
     if (result.error) setError(result.error);
-    await reload();
+    reload();
   };
 
   const leave = async (item: LibraryItem) => {
     setError(null);
     const result = await chatClient.deleteArtifact(item.id);
     if (result.error) setError(result.error);
-    setSelected(null);
-    await reload();
+    select(null);
+    reload();
   };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -186,7 +238,7 @@ export default function ArtifactsIndex({
     if (uploads && event.dataTransfer.files?.length) void upload(event.dataTransfer.files);
   };
 
-  const tab = (value: Show, label: string) => (
+  const tab = (value: LibraryShow, label: string) => (
     <button
       type="button"
       onClick={() => filter({ show: value })}
@@ -234,7 +286,7 @@ export default function ArtifactsIndex({
         {!narrow ? (
           <button
             type="button"
-            onClick={() => setSelected(null)}
+            onClick={() => select(null)}
             aria-label="Close details"
             className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
           >
@@ -242,6 +294,37 @@ export default function ArtifactsIndex({
           </button>
         ) : null}
       </div>
+
+      <section
+        aria-label="About this file"
+        className="border-t border-gray-100 px-4 py-3 dark:border-gray-900"
+      >
+        <h3 className="mb-2 text-xs font-semibold text-gray-500">About</h3>
+        {current.summary ? (
+          <p className="text-sm text-gray-700 dark:text-gray-300">{current.summary}</p>
+        ) : (
+          <p className="text-xs text-gray-500">{digestLabel(current.digestStatus)}</p>
+        )}
+        {current.keywords.length > 0 ? (
+          <ul aria-label="Keywords" className="mt-2 flex flex-wrap gap-1">
+            {current.keywords.map((keyword) => (
+              <li key={keyword}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (narrow) select(null);
+                    filter({ query: keyword });
+                  }}
+                  title={`Search for “${keyword}”`}
+                  className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  {keyword}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
 
       <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
         <h3 className="mb-2 text-xs font-semibold text-gray-500">Used in</h3>
@@ -403,7 +486,7 @@ export default function ArtifactsIndex({
           title={`Share ${current.filename}`}
           onClose={() => {
             setDialog(null);
-            void reload();
+            reload();
           }}
         />
       ) : null}
@@ -411,8 +494,8 @@ export default function ArtifactsIndex({
         <DeleteArtifactModal
           item={current}
           onDone={() => {
-            setSelected(null);
-            void reload();
+            select(null);
+            reload();
           }}
           onClose={() => setDialog(null)}
         />
@@ -421,24 +504,18 @@ export default function ArtifactsIndex({
         <CopyArtifactModal
           item={current}
           projects={projects}
-          onDone={(artifactId) => {
-            void reload().then((fresh) => reveal(artifactId, fresh ?? items));
-          }}
+          onDone={(artifactId) => reveal(artifactId)}
           onClose={() => setDialog(null)}
         />
       ) : null}
       {dialog === 'rename' && current ? (
-        <RenameArtifactModal
-          item={current}
-          onDone={() => void reload()}
-          onClose={() => setDialog(null)}
-        />
+        <RenameArtifactModal item={current} onDone={reload} onClose={() => setDialog(null)} />
       ) : null}
       {dialog === 'attach' && current ? (
         <AttachArtifactsPicker
           item={current}
           projects={projects}
-          onDone={() => void reload()}
+          onDone={reload}
           onClose={() => setDialog(null)}
         />
       ) : null}
@@ -453,7 +530,7 @@ export default function ArtifactsIndex({
         <div className="flex h-12 shrink-0 items-center gap-1 border-b border-gray-200 pr-3 dark:border-gray-800">
           <button
             type="button"
-            onClick={() => setSelected(null)}
+            onClick={() => select(null)}
             aria-label="Back to artifacts"
             className="flex h-12 w-12 shrink-0 items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-900 dark:hover:text-gray-200"
           >
@@ -477,8 +554,9 @@ export default function ArtifactsIndex({
     );
   }
 
-  const first = pageIndex * PAGE_SIZE + 1;
-  const last = Math.min(shown.length, (pageIndex + 1) * PAGE_SIZE);
+  const first = page.total === 0 ? 0 : (page.page - 1) * page.pageSize + 1;
+  const last = Math.min(page.total, page.page * page.pageSize);
+  const searching = filters.query.trim().length > 0;
 
   return (
     <div
@@ -527,7 +605,8 @@ export default function ArtifactsIndex({
         <p className="hidden shrink-0 text-sm text-gray-600 md:block dark:text-gray-400">
           Files you upload and files chats generate: manuals, design docs, style guides, reports.
           Stored once, under you, outside every repository; a project holds one by reference, so the
-          same file serves any number of projects.
+          same file serves any number of projects. Search finds a file by its name or by what it is
+          about.
           {!uploads
             ? ' File storage is not set up for this organization, so nothing can be uploaded yet.'
             : ''}
@@ -540,10 +619,11 @@ export default function ArtifactsIndex({
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <input
+            type="search"
             value={filters.query}
             onChange={(event) => filter({ query: event.target.value })}
-            placeholder="Search names…"
-            aria-label="Search artifacts by name"
+            placeholder="Search names and contents…"
+            aria-label="Search artifacts"
             className="w-64 max-w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
           />
           <div
@@ -558,8 +638,8 @@ export default function ArtifactsIndex({
           </div>
           {projects.length > 0 ? (
             <select
-              value={filters.projectId}
-              onChange={(event) => filter({ projectId: event.target.value })}
+              value={filters.projectId ?? ''}
+              onChange={(event) => filter({ projectId: event.target.value || null })}
               aria-label="Used in project"
               className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
             >
@@ -572,20 +652,23 @@ export default function ArtifactsIndex({
             </select>
           ) : null}
           <span className="ml-auto text-xs text-gray-500">
-            {items.filter((item) => item.via === 'owner').length} of yours · {sizeOf(totalBytes)}
+            {page.owned.count} of yours · {sizeOf(page.owned.bytes)}
           </span>
         </div>
 
         <div className="flex min-h-0 flex-1 items-stretch gap-4">
           <section
             aria-label="Artifacts"
-            className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-gray-200 dark:border-gray-800"
+            aria-busy={isPending}
+            className={`flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-gray-200 transition-opacity dark:border-gray-800 ${isPending ? 'opacity-60' : ''}`}
           >
-            {shown.length === 0 ? (
+            {items.length === 0 ? (
               <p className="p-4 text-sm text-gray-500">
-                {items.length === 0
+                {page.libraryCount === 0
                   ? 'No artifacts yet. Upload a manual, a guide or a design doc, or drop one anywhere on this page; files your chats write land here on their own.'
-                  : 'Nothing matches.'}
+                  : searching
+                    ? 'Nothing matches. Search looks at file names and at the summary and keywords written for each file.'
+                    : 'Nothing matches.'}
               </p>
             ) : (
               // Rows on a wide screen; cards, each a door to the file's
@@ -594,7 +677,7 @@ export default function ArtifactsIndex({
                 ref={listRef}
                 className="min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto max-md:space-y-1.5 max-md:divide-y-0 max-md:p-2 dark:divide-gray-900"
               >
-                {pageItems.map((item) => {
+                {items.map((item) => {
                   const status = statusLabel(item.extractStatus);
                   const isSelected = item.id === selected;
                   return (
@@ -605,7 +688,7 @@ export default function ArtifactsIndex({
                     >
                       <button
                         type="button"
-                        onClick={() => setSelected(isSelected && !narrow ? null : item.id)}
+                        onClick={() => select(isSelected && !narrow ? null : item)}
                         aria-current={isSelected ? 'true' : undefined}
                         className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : ''}`}
                       >
@@ -630,6 +713,11 @@ export default function ArtifactsIndex({
                             {' · '}
                             <LocalTime at={item.createdAt} format="date" />
                           </span>
+                          {item.summary ? (
+                            <span className="mt-0.5 line-clamp-1 text-xs text-gray-500">
+                              {item.summary}
+                            </span>
+                          ) : null}
                         </span>
                         <span className="hidden min-w-0 max-w-[14rem] shrink-0 flex-wrap justify-end gap-1 md:flex">
                           {item.projects.length === 0 ? (
@@ -677,29 +765,29 @@ export default function ArtifactsIndex({
                   Drop files anywhere on this page to add them · any type
                 </span>
               ) : null}
-              {shown.length > 0 ? (
+              {page.total > 0 ? (
                 <nav aria-label="Pages" className="ml-auto flex items-center gap-2">
                   <span>
-                    {first}–{last} of {shown.length}
+                    {first}–{last} of {page.total}
                   </span>
-                  {pageCount > 1 ? (
+                  {page.pageCount > 1 ? (
                     <>
                       <button
                         type="button"
-                        onClick={() => goTo(pageIndex - 1)}
-                        disabled={pageIndex === 0}
+                        onClick={() => goTo(page.page - 1)}
+                        disabled={page.page <= 1 || isPending}
                         aria-label="Previous page"
                         className={pagerButton}
                       >
                         <Icon path={ICONS.chevronLeft} className="h-4 w-4" />
                       </button>
                       <span>
-                        Page {pageIndex + 1} of {pageCount}
+                        Page {page.page} of {page.pageCount}
                       </span>
                       <button
                         type="button"
-                        onClick={() => goTo(pageIndex + 1)}
-                        disabled={pageIndex >= pageCount - 1}
+                        onClick={() => goTo(page.page + 1)}
+                        disabled={page.page >= page.pageCount || isPending}
                         aria-label="Next page"
                         className={pagerButton}
                       >

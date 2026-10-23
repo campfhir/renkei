@@ -604,6 +604,23 @@ export async function copyArtifact(
       }
     }
   }
+  // The same bytes are about the same things: the digest comes across
+  // too, in the clear as it was, rather than being asked for again.
+  if (access.row.digestStatus === 'done' && access.row.summary !== null) {
+    await db
+      .updateTable('artifacts')
+      .set((eb) => ({
+        summary: access.row.summary,
+        keywords: access.row.keywords,
+        search_vector: eb
+          .selectFrom('artifacts')
+          .select('search_vector')
+          .where('id', '=', access.row.id),
+        digest_status: 'done',
+      }))
+      .where('id', '=', created.val.id)
+      .execute();
+  }
   if (input.attachProjectId) {
     await attachToProject(db, {
       actorSubject: input.actorSubject,
@@ -666,6 +683,10 @@ export interface LibraryItem {
   projects: { id: string; name: string; kind: string; mode: ReferenceMode }[];
   /** People it is shared with — the owner's view only. */
   sharedWith: number;
+  /** The digest for the search index (artifact-digest.ts), when the model has written it. */
+  summary: string | null;
+  keywords: string[];
+  digestStatus: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -713,7 +734,8 @@ export async function libraryItemFor(
   return items[0] ?? null;
 }
 
-async function libraryItems(
+/** The rows as library items: where each is used, who shares it, and who owns it, looked up once for the lot. */
+export async function libraryItems(
   db: Kysely<DB>,
   viewerSubject: string,
   rows: {
@@ -725,6 +747,9 @@ async function libraryItems(
     size_bytes: string | number | bigint;
     extract_status: string;
     origin: string;
+    summary: string | null;
+    keywords: string[];
+    digest_status: string;
     created_at: Date;
     updated_at: Date;
   }[],
@@ -800,6 +825,9 @@ async function libraryItems(
       chat: chat ? { id: chat.id, title: chat.title, projectId: chat.project_id } : null,
       projects: byArtifact.get(row.id) ?? [],
       sharedWith: row.owner_subject === viewerSubject ? (shareCounts.get(row.id) ?? 0) : 0,
+      summary: row.summary,
+      keywords: row.keywords,
+      digestStatus: row.digest_status,
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     };
@@ -863,6 +891,11 @@ export async function replaceArtifactBytes(
       size_bytes: temp.val.sizeBytes,
       extracted_text: text?.extracted_text ?? null,
       extract_status: temp.val.extractStatus,
+      // The old digest described the old bytes: start over.
+      summary: null,
+      keywords: [],
+      search_vector: null,
+      digest_status: temp.val.digestStatus,
       updated_at: new Date(),
     })
     .where('id', '=', row.id)

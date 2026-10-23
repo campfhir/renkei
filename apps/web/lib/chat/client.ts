@@ -253,7 +253,9 @@ export const chatClient = {
   // ---- Artifacts (lib/chat/artifact-routes.ts) ----
 
   /** The viewer's library: what they own and what was shared with them. */
-  artifacts: () => getJson<{ artifacts: LibraryItem[]; uploads: boolean }>(`${base()}/artifacts`),
+  /** The whole library at once — the attach picker's; the Artifacts page reads pages through its own URL. */
+  artifacts: () =>
+    getJson<{ artifacts: LibraryItem[]; uploads: boolean }>(`${base()}/artifacts?all=1`),
 
   artifact: (artifactId: string) =>
     getJson<{

@@ -1,15 +1,17 @@
 /**
  * Artifacts, end to end in a browser (docs/artifacts-design.md): the
  * library page with its filters and details panel; rename, share and
- * delete-with-impact on one file; the list paged and scrolling in its
- * own box, with a link opening to the page its file is on; a project
- * page's Artifacts card with the Always / On demand switch and attaching
- * from the library; the composer's "where should it go?" chooser in a
- * project chat; and, at phone width, the cards that open a file's
- * details over the list, a back button to return. Every act
- * goes through the real routes against the real dev database; only the
- * composer's upload is mocked at the browser edge, since e2e has no blob
- * store.
+ * delete-with-impact on one file; the list paged in the database and
+ * scrolling in its own box, the search finding a file by its name or by
+ * the digest (summary and keywords) the model wrote for it, a link
+ * opening to the page its file is on; a project page's Artifacts card
+ * with the Always / On demand switch and attaching from the library;
+ * the composer's "where should it go?" chooser in a project chat; and,
+ * at phone width, the cards that open a file's details over the list, a
+ * back button to return. Every act goes through the real routes against
+ * the real dev database; the model is the sandbox stub, which answers a
+ * digest from the file's own text; only the composer's upload is mocked
+ * at the browser edge, since e2e has no blob store.
  *
  * Each Playwright project gets its own person, project, chat and files,
  * derived from the project name (the llm-models.spec.ts pattern): the
@@ -163,7 +165,7 @@ async function seed(f: Fixture): Promise<void> {
     await enrollForE2E(client, f.friend);
     await client.query(
       `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)
-       VALUES ($1, $2, 'anthropic', 'e2e-model', 'http://127.0.0.1:8092/anthropic', $3, true, false)`,
+       VALUES ($1, $2, 'anthropic', 'e2e-model', 'http://127.0.0.1:8092/anthropic', $3, true, true)`,
       [
         f.modelId,
         `Chatty (artifacts ${testProject(f)})`,
@@ -200,6 +202,12 @@ async function seed(f: Fixture): Promise<void> {
       `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, extracted_text, origin, key_kind)
        VALUES ($1, $2, NULL, $3, 'schema-guide.md', 'text/markdown', $4, 'done', $5, 'upload', 'artifact')`,
       [f.guideId, f.subject, `chat/e2e/${f.guideId}`, GUIDE_TEXT.length, guideKey.seal(GUIDE_TEXT)]
+    );
+    await digestOf(
+      client,
+      f.guideId,
+      'A Postgres schema guide: how monetary columns are typed and where rounding happens.',
+      ['postgres', 'schema', 'monetary columns', 'rounding', 'numeric']
     );
     await client.query(
       `INSERT INTO artifact_references (artifact_id, project_id, mode, added_by) VALUES ($1, $2, 'on_demand', $3)`,
@@ -261,11 +269,51 @@ async function seed(f: Fixture): Promise<void> {
         manualKey.seal(MANUAL_TEXT),
       ]
     );
+    await digestOf(
+      client,
+      f.manualId,
+      'The vendor SDK manual: retries are exponential with jitter.',
+      ['vendor sdk', 'retries', 'jitter']
+    );
     await client.query(
       `INSERT INTO resource_access_grants (resource_kind, resource_id, owner_subject, grantee_subject, role)
        VALUES ('artifact', $1, $2, $3, 'viewer')`,
       [f.manualId, f.friend, f.subject]
     );
+  } finally {
+    await client.end();
+  }
+}
+
+/** A digest as the model would have left it (artifact-digest.ts's storeDigest), in the clear, indexed. */
+async function digestOf(
+  client: Client,
+  artifactId: string,
+  summary: string,
+  keywords: string[]
+): Promise<void> {
+  await client.query(
+    `UPDATE artifacts
+        SET summary = $2, keywords = $3, digest_status = 'done',
+            search_vector = setweight(to_tsvector('english', $4), 'A') || setweight(to_tsvector('english', $2), 'B')
+      WHERE id = $1`,
+    [artifactId, summary, keywords, keywords.join(' ')]
+  );
+}
+
+/** The digest's state for one file, as the database holds it. */
+async function digestStatusOf(
+  subject: string,
+  filename: string
+): Promise<{ id: string; status: string } | null> {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ id: string; digest_status: string }>(
+      `SELECT id, digest_status FROM artifacts WHERE owner_subject = $1 AND filename = $2`,
+      [subject, filename]
+    );
+    return rows[0] ? { id: rows[0].id, status: rows[0].digest_status } : null;
   } finally {
     await client.end();
   }
@@ -329,7 +377,22 @@ test('the library: filters, details, rename, share, delete with its impact', asy
   await expect(details).toBeVisible();
   await expect(details.getByRole('link', { name: f.projectName })).toBeVisible();
   await expect(details.getByText('owned by you')).toBeVisible();
+  // What the model wrote about it, and a keyword as a search of its own:
+  // the guide is found by its digest, the analysis by its name.
+  const about = details.getByRole('region', { name: 'About this file' });
+  await expect(about.getByText(/A Postgres schema guide/)).toBeVisible();
   await shot(page, testInfo, 'artifacts-02-details');
+  await about
+    .getByRole('list', { name: 'Keywords' })
+    .getByRole('button', { name: 'rounding' })
+    .click();
+  await expect(page.getByLabel('Search artifacts')).toHaveValue('rounding');
+  await expect(list.getByText('rounding-analysis.md')).toBeVisible();
+  await expect(list.getByText('schema-guide.md')).toBeVisible();
+  await expect(list.getByText('march-invoices.csv')).toBeHidden();
+  await expect(page).toHaveURL(/q=rounding/);
+  await page.getByLabel('Search artifacts').fill('');
+  await expect(list.getByText('march-invoices.csv')).toBeVisible();
 
   await details.getByRole('button', { name: 'Rename' }).click();
   await page.getByLabel('File name').fill('postgres-schema-guide.md');
@@ -438,9 +501,11 @@ test('the library: pages of 25, the list scrolling in its own box, a link openin
   expect(pageScroll).toBeLessThanOrEqual(0);
   await shot(page, testInfo, 'artifacts-17-paged');
 
-  // The second page: the oldest eight and the shared one, and no further.
+  // The second page: the oldest eight and the shared one, and no further;
+  // the URL says which page, so it is a link.
   await pager.getByRole('button', { name: 'Next page' }).click();
   await expect(pager.getByText('26–34 of 34')).toBeVisible();
+  await expect(page).toHaveURL(/page=2/);
   await expect(list.getByText('backlog-23.txt')).toBeVisible();
   await expect(list.getByText('backlog-30.txt')).toBeVisible();
   await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
@@ -448,11 +513,22 @@ test('the library: pages of 25, the list scrolling in its own box, a link openin
   await expect(pager.getByRole('button', { name: 'Next page' })).toBeDisabled();
   await shot(page, testInfo, 'artifacts-18-paged-second');
 
-  // A filter starts over on the first page of what it shows.
-  await page.getByLabel('Search artifacts by name').fill('backlog-2');
+  // A search starts over on the first page of what it finds: a word in a
+  // name (a substring), or in the summary and keywords the model wrote.
+  const search = page.getByLabel('Search artifacts');
+  await search.fill('backlog-2');
   await expect(pager.getByText('1–10 of 10')).toBeVisible();
   await expect(pager.getByRole('button', { name: 'Next page' })).toHaveCount(0);
-  await page.getByLabel('Search artifacts by name').fill('');
+  await search.fill('monetary rounding');
+  await expect(list.getByText('schema-guide.md')).toBeVisible();
+  await expect(pager.getByText('1–1 of 1')).toBeVisible();
+  await search.fill('jitter');
+  await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
+  await expect(pager.getByText('1–1 of 1')).toBeVisible();
+  await search.fill('zzzz-nothing');
+  await expect(list.getByText(/Nothing matches\. Search looks at file names/)).toBeVisible();
+  await shot(page, testInfo, 'artifacts-20-search-empty');
+  await search.fill('');
   await expect(pager.getByText('Page 1 of 2')).toBeVisible();
 
   // The link a notification carries opens to the page its file is on.
@@ -524,6 +600,24 @@ test('the library: a real upload lands, reads back, and is attached from the car
     const again = await page.request.get(`/api/chat/attachments/${f.csvId}`);
     expect(await again.text()).toBe(CSV_TEXT);
   }
+
+  // The digest: asked of the org's default model (the stub) after the
+  // upload's response, stored in the clear, shown, and searched.
+  await expect
+    .poll(async () => (await digestStatusOf(f.subject, 'api-style-guide.md'))?.status, COLD)
+    .toBe('done');
+  const uploaded = await digestStatusOf(f.subject, 'api-style-guide.md');
+  await page.goto(`/chat/artifacts?artifact=${uploaded!.id}`);
+  const about = details.getByRole('region', { name: 'About this file' });
+  await expect(about.getByText('Stub summary: # API style guide')).toBeVisible();
+  await expect(
+    about.getByRole('list', { name: 'Keywords' }).getByRole('button', { name: 'money' })
+  ).toBeVisible();
+  await page.getByLabel('Search artifacts').fill('money fields');
+  await expect(list.getByText('api-style-guide.md')).toBeVisible();
+  await expect(list.getByText('schema-guide.md')).toBeHidden();
+  await page.getByLabel('Search artifacts').fill('');
+  await expect(list.getByText('schema-guide.md')).toBeVisible();
 
   // Hover: the controls explain themselves, in an element a screenshot keeps.
   await details.getByRole('button', { name: 'Rename' }).hover();

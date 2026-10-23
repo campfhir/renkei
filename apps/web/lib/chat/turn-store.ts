@@ -9,7 +9,9 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { recordLlmCall, type LlmCallModel } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
+import { after } from 'next/server';
 import { createAttachment, toAttachmentView } from './attachments';
+import { deferDigest } from './artifact-digest';
 import { insertMessage, updateMessageContent } from './messages';
 import {
   clearToolPermission,
@@ -141,6 +143,10 @@ export function createTurnStore(
         });
         if (created.ok) {
           kept.push(toAttachmentView(created.val));
+          // Its summary and keywords for the library's search, once the
+          // turn's response is out of the way (or, on a turn served by no
+          // request, beside it).
+          deferDigest(db, scope.subject, [created.val], after);
         } else if (created.err.type !== 'UNCONFIGURED') {
           logger.warn('chat artifact not stored: {reason} {message}', {
             reason: created.err.type,
