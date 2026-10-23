@@ -90,6 +90,14 @@ function rememberedDropChoice(projectId: string): DropDestination | null {
   }
 }
 
+function forgetDropChoice(projectId: string): void {
+  try {
+    window.localStorage.removeItem(DROP_CHOICE_KEY(projectId));
+  } catch {
+    // Nothing stored, nothing to forget.
+  }
+}
+
 function rememberDropChoice(projectId: string, choice: DropDestination): void {
   try {
     window.localStorage.setItem(DROP_CHOICE_KEY(projectId), choice);
@@ -170,6 +178,13 @@ export default function Composer({
   const [pendingDrop, setPendingDrop] = useState<File[] | null>(null);
   const [dropChoice, setDropChoice] = useState<DropDestination>('project');
   const [rememberDrop, setRememberDrop] = useState(true);
+  /** The destination this browser remembers for the project, shown so it can be changed. */
+  const [remembered, setRemembered] = useState<DropDestination | null>(null);
+  useEffect(() => {
+    setRemembered(project ? rememberedDropChoice(project.id) : null);
+  }, [project]);
+  /** Send was pressed while files were still being placed: send once they have uploaded. */
+  const sendAfterUpload = useRef(false);
   const [uploadTotal, setUploadTotal] = useState(0);
   const [ocrPending, setOcrPending] = useState(0);
   const [listOpen, setListOpen] = useState(false);
@@ -363,9 +378,18 @@ export default function Composer({
     const list = pendingDrop;
     setPendingDrop(null);
     if (!list) return;
-    if (project && rememberDrop) rememberDropChoice(project.id, dropChoice);
+    if (project && rememberDrop) {
+      rememberDropChoice(project.id, dropChoice);
+      setRemembered(dropChoice);
+    }
     void proceed(list, dropChoice === 'project');
   }, [pendingDrop, project, rememberDrop, dropChoice, proceed]);
+
+  const forgetDrop = useCallback(() => {
+    if (!project) return;
+    forgetDropChoice(project.id);
+    setRemembered(null);
+  }, [project]);
 
   const confirmBatch = useCallback(() => {
     const list = pendingBatch;
@@ -385,20 +409,40 @@ export default function Composer({
   }, []);
 
   /** Something to send — typed text or an attachment. */
-  const hasDraft = text.trim().length > 0 || attachments.length > 0;
+  const placing = (pendingDrop?.length ?? 0) > 0;
+  const hasDraft = text.trim().length > 0 || attachments.length > 0 || placing;
 
   const send = useCallback(async () => {
     const trimmed = text.trim();
+    if (disabled) return;
+    // Files still waiting for the person to say where they go: Send is
+    // the answer — the choice as it stands is taken, the files upload,
+    // and the message goes out once they are up.
+    if (placing) {
+      sendAfterUpload.current = true;
+      confirmDrop();
+      return;
+    }
     // Sending while running is not blocked here — the caller (onSubmit)
     // queues it and returns true; only an actually-empty box or an
     // in-flight upload stops the person from queuing.
-    if ((!trimmed && attachments.length === 0) || disabled || uploading > 0) return;
+    if ((!trimmed && attachments.length === 0) || uploading > 0) return;
     const ok = await onSubmit({ text: trimmed, attachments });
     if (ok) {
       setText('');
       setAttachments([]);
     }
-  }, [text, attachments, disabled, uploading, onSubmit]);
+  }, [text, attachments, disabled, uploading, onSubmit, placing, confirmDrop]);
+
+  useEffect(() => {
+    // The send waits for the files: the chooser's answer taken, a mass
+    // upload's own warning answered, every upload finished. Cancelling the
+    // warning drops the pending send and leaves the message in the box.
+    if (!sendAfterUpload.current) return;
+    if (placing || pendingBatch || uploading > 0 || uploadTotal > 0) return;
+    sendAfterUpload.current = false;
+    void send();
+  }, [uploading, uploadTotal, pendingBatch, placing, send]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === '/' && text === '') {
@@ -577,7 +621,24 @@ export default function Composer({
                 </span>
               </span>
             </label>
-            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <button
+                type="button"
+                onClick={confirmDrop}
+                className="rounded bg-blue-600 px-2.5 py-1 font-medium text-white hover:bg-blue-700"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sendAfterUpload.current = false;
+                  setPendingDrop(null);
+                }}
+                className="rounded px-2 py-1 font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40"
+              >
+                Cancel
+              </button>
               <label className="flex items-center gap-1.5">
                 <input
                   type="checkbox"
@@ -586,21 +647,9 @@ export default function Composer({
                 />
                 Remember for {project.name}
               </label>
-              <span className="flex-1" />
-              <button
-                type="button"
-                onClick={() => setPendingDrop(null)}
-                className="rounded px-2 py-0.5 font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmDrop}
-                className="rounded bg-blue-600 px-2 py-0.5 font-medium text-white hover:bg-blue-700"
-              >
-                Add
-              </button>
+              <span className="text-blue-800/80 dark:text-blue-300/80">
+                Sending the message adds them too.
+              </span>
             </div>
           </div>
         ) : null}
@@ -629,7 +678,10 @@ export default function Composer({
               </button>
               <button
                 type="button"
-                onClick={() => setPendingBatch(null)}
+                onClick={() => {
+                  sendAfterUpload.current = false;
+                  setPendingBatch(null);
+                }}
                 className="rounded-md px-2.5 py-1 hover:bg-amber-100 dark:hover:bg-amber-900/40"
               >
                 Cancel
@@ -704,6 +756,17 @@ export default function Composer({
           className="block w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none disabled:opacity-60"
         />
         <div className="flex items-center gap-1 px-2 pb-2">
+          {project && remembered ? (
+            <button
+              type="button"
+              onClick={forgetDrop}
+              title={`Dropped files go to ${remembered === 'project' ? `${project.name}’s artifacts` : 'this message only'}. Click to be asked again next time.`}
+              className="hidden items-center gap-1 rounded-md px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 sm:inline-flex dark:hover:bg-gray-800"
+            >
+              <Icon path={ICONS.layers} className="h-3.5 w-3.5" />
+              {remembered === 'project' ? 'Files → artifacts' : 'Files → message'}
+            </button>
+          ) : null}
           {uploads ? (
             <button
               type="button"

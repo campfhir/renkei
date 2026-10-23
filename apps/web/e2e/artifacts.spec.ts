@@ -402,6 +402,69 @@ test('a project chat: a dropped file asks where it goes', async ({ page }, testI
   await expect.poll(() => uploads.length).toBe(2);
 });
 
+test('a project chat: Send answers the chooser, and the remembered choice can be changed', async ({
+  page,
+}, testInfo) => {
+  const f = fixtureFor(testInfo.project.name);
+  await seed(f);
+  await signIn(page, f);
+  const uploads: string[] = [];
+  await page.route('**/api/chat/attachments?*', async (route) => {
+    uploads.push(new URL(route.request().url()).search);
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        attachment: {
+          id: uuidFrom(`send-upload:${uploads.length}`),
+          filename: 'retry-policy.md',
+          contentType: 'text/markdown',
+          sizeBytes: 900,
+          extractStatus: 'done',
+        },
+        attached: { mode: 'on_demand' },
+      }),
+    });
+  });
+
+  await page.goto(`/chat/${f.chatId}`);
+  await expect(page.getByLabel('Message')).toBeVisible();
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({
+      name: 'retry-policy.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# Retries\n\nExponential, with jitter.'),
+    });
+  const chooser = page.getByRole('group', { name: 'Where should the files go?' });
+  await expect(chooser).toBeVisible();
+  // No Add: the message is sent with the choice as it stands (the project).
+  await page.getByRole('textbox', { name: 'Message' }).fill('Follow the retry policy.');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(chooser).toBeHidden();
+  await expect.poll(() => uploads.length).toBe(1);
+  expect(uploads[0]).toContain('keep=1');
+  expect(uploads[0]).toContain(`projectId=${f.projectId}`);
+  // The file is attached to the message that went out with it.
+  await expect(page.getByRole('link', { name: 'retry-policy.md' })).toBeVisible();
+
+  // The remembered choice shows beside the paperclip; clicking it asks again next time.
+  const remembered = page.getByRole('button', { name: 'Files → artifacts' });
+  await expect(remembered).toBeVisible();
+  await remembered.click();
+  await expect(remembered).toBeHidden();
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({
+      name: 'again.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('again'),
+    });
+  await expect(chooser).toBeVisible();
+});
+
 test('phone: the library and the project card fit the viewport', async ({ page }, testInfo) => {
   const f = fixtureFor(testInfo.project.name);
   await seed(f);
