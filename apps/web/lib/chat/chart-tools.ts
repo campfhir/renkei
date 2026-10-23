@@ -24,6 +24,7 @@ import { clientFailure, sbChartRender } from '@renkei/sandbox-client';
 import { CHART_SYNTAX_HINT } from '@/lib/mcp-tools/sandbox/charts';
 import { checkFilename } from './file-tools';
 import { errorResult, textResult, type LocalTool } from './local-tools';
+import { DIGEST_INPUT_PROPERTIES, digestFieldsOf } from './artifact-digest-input';
 
 const KEPT_LINE =
   'It is under this chat’s Artifacts, where the person can download it or copy it to a network share; tell them so, and describe what the chart shows in a sentence rather than repeating its data.';
@@ -72,6 +73,7 @@ export function chartTools(): LocalTool[] {
               maximum: 4,
               description: 'png only: device pixels per CSS pixel, 1–4 (default 2).',
             },
+            ...DIGEST_INPUT_PROPERTIES,
           },
           required: ['source'],
         },
@@ -102,6 +104,7 @@ export function chartTools(): LocalTool[] {
                 mediaType,
                 dataBase64: Buffer.from(bytes).toString('base64'),
                 title: name.filename,
+                ...digestFieldsOf(input),
               },
             ],
             // The model wrote this; it does not need to read it back.

@@ -6,12 +6,13 @@
  */
 
 import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { getOrgSettings } from '@renkei/settings';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { resolveChatAccess } from '@/lib/chat/access';
-import { ocrChatAttachments } from '@/lib/chat/attachments';
+import { getAttachments, ocrChatAttachments } from '@/lib/chat/attachments';
+import { deferDigest } from '@/lib/chat/artifact-digest';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 
 export const runtime = 'nodejs';
@@ -19,9 +20,7 @@ export const runtime = 'nodejs';
 /** One request OCRs at most this many files; the client sends the rest in the next. */
 const MAX_IDS_PER_REQUEST = 12;
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -35,9 +34,7 @@ export async function POST(
           .filter((id): id is string => typeof id === 'string')
           .slice(0, MAX_IDS_PER_REQUEST)
       : [];
-  const access = isUuid(chatId)
-    ? await resolveChatAccess(db, session.subject, chatId)
-    : null;
+  const access = isUuid(chatId) ? await resolveChatAccess(db, session.subject, chatId) : null;
   if (!access || access.role !== 'owner') return jsonError(404, 'not-found', 'No such chat');
 
   const settings = await getOrgSettings();
@@ -48,5 +45,10 @@ export async function POST(
     redactor: settings.ok ? createOutboundRedactor(settings.val) : null,
     cipher: access.cipher,
   });
+  // Text that just arrived by OCR wants its digest for the search index.
+  const done = results.filter((result) => result.extractStatus === 'done').map((r) => r.id);
+  if (done.length > 0) {
+    deferDigest(db, session.subject, await getAttachments(db, done), after);
+  }
   return NextResponse.json({ results });
 }

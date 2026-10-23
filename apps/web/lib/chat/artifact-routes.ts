@@ -9,7 +9,7 @@
  */
 
 import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { getOrgSettings } from '@renkei/settings';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { isUuid } from '@/lib/uuid';
@@ -36,6 +36,9 @@ import {
   transferArtifact,
   type ArtifactActError,
 } from './artifact-library';
+import { deferDigest } from './artifact-digest';
+import { parseLibraryQuery } from './artifact-library-params';
+import { queryLibrary } from './artifact-library-query';
 import { createOutboundRedactor } from './outbound-redaction';
 import { parseExpiry } from './grant-input';
 import { resolveProjectAccess } from './access';
@@ -72,14 +75,22 @@ function actError(error: ArtifactActError): Response {
 
 const modeOf = (value: unknown): ReferenceMode => (isReferenceMode(value) ? value : 'on_demand');
 
+/**
+ * GET: a page of the library, chosen by the same parameters the page's
+ * URL carries (artifact-library-params.ts) — or, with `all=1`, the whole
+ * of it, for a picker that lists everything at once.
+ */
 export async function listLibraryRoute(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  return NextResponse.json({
-    artifacts: await listLibrary(db, session.subject),
-    uploads: await tenantBlobStoreConfigured(),
-  });
+  const params = request.nextUrl.searchParams;
+  const uploads = await tenantBlobStoreConfigured();
+  if (params.get('all') === '1') {
+    return NextResponse.json({ artifacts: await listLibrary(db, session.subject), uploads });
+  }
+  const page = await queryLibrary(db, session.subject, parseLibraryQuery(params));
+  return NextResponse.json({ ...page, uploads });
 }
 
 export async function artifactDetailRoute(
@@ -155,6 +166,7 @@ export async function replaceArtifactRoute(
     redactor: settings ? createOutboundRedactor(settings) : null,
   });
   if (!replaced.ok) return actError(replaced.err.type);
+  deferDigest(db, session.subject, [replaced.val], after);
   return NextResponse.json({ ok: true, extractStatus: replaced.val.extractStatus });
 }
 
@@ -230,6 +242,8 @@ export async function copyRoute(request: NextRequest, artifactId: string): Promi
       ? jsonError(400, 'self', 'It is yours already; a copy is for a file someone shared with you.')
       : actError(result.err.type);
   }
+  // A copy of an undigested file is digested as the copier's own.
+  deferDigest(db, session.subject, [result.val], after);
   return NextResponse.json({ ok: true, artifactId: result.val.id }, { status: 201 });
 }
 

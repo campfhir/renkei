@@ -1,12 +1,17 @@
 /**
  * Artifacts, end to end in a browser (docs/artifacts-design.md): the
  * library page with its filters and details panel; rename, share and
- * delete-with-impact on one file; a project page's Artifacts card with
- * the Always / On demand switch and attaching from the library; and the
- * composer's "where should it go?" chooser in a project chat. Every act
- * goes through the real routes against the real dev database; only the
- * composer's upload is mocked at the browser edge, since e2e has no blob
- * store.
+ * delete-with-impact on one file; the list paged in the database and
+ * scrolling in its own box, the search finding a file by its name or by
+ * the digest (summary and keywords) the model wrote for it, a link
+ * opening to the page its file is on; a project page's Artifacts card
+ * with the Always / On demand switch and attaching from the library;
+ * the composer's "where should it go?" chooser in a project chat; and,
+ * at phone width, the cards that open a file's details over the list, a
+ * back button to return. Every act goes through the real routes against
+ * the real dev database; the model is the sandbox stub, which answers a
+ * digest from the file's own text; only the composer's upload is mocked
+ * at the browser edge, since e2e has no blob store.
  *
  * Each Playwright project gets its own person, project, chat and files,
  * derived from the project name (the llm-models.spec.ts pattern): the
@@ -144,7 +149,13 @@ async function seed(f: Fixture): Promise<void> {
     await client.query('DELETE FROM llm_model_configs WHERE id = $1', [f.modelId]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
-      [f.sessionId, f.subject, ['renkei-user'], new Date(Date.now() + 24 * 3_600_000)]
+      // An operator too: the upload test turns the organization's digest switch on.
+      [
+        f.sessionId,
+        f.subject,
+        ['renkei-user', 'renkei-operator'],
+        new Date(Date.now() + 24 * 3_600_000),
+      ]
     );
     await client.query(
       `INSERT INTO identities (subject, email, display_name) VALUES ($1, $1, 'Artifacts Tester'), ($2, $2, 'Priya Friend')`,
@@ -160,7 +171,7 @@ async function seed(f: Fixture): Promise<void> {
     await enrollForE2E(client, f.friend);
     await client.query(
       `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)
-       VALUES ($1, $2, 'anthropic', 'e2e-model', 'http://127.0.0.1:8092/anthropic', $3, true, false)`,
+       VALUES ($1, $2, 'anthropic', 'e2e-model', 'http://127.0.0.1:8092/anthropic', $3, true, true)`,
       [
         f.modelId,
         `Chatty (artifacts ${testProject(f)})`,
@@ -197,6 +208,12 @@ async function seed(f: Fixture): Promise<void> {
       `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, extracted_text, origin, key_kind)
        VALUES ($1, $2, NULL, $3, 'schema-guide.md', 'text/markdown', $4, 'done', $5, 'upload', 'artifact')`,
       [f.guideId, f.subject, `chat/e2e/${f.guideId}`, GUIDE_TEXT.length, guideKey.seal(GUIDE_TEXT)]
+    );
+    await digestOf(
+      client,
+      f.guideId,
+      'A Postgres schema guide: how monetary columns are typed and where rounding happens.',
+      ['postgres', 'schema', 'monetary columns', 'rounding', 'numeric']
     );
     await client.query(
       `INSERT INTO artifact_references (artifact_id, project_id, mode, added_by) VALUES ($1, $2, 'on_demand', $3)`,
@@ -258,11 +275,51 @@ async function seed(f: Fixture): Promise<void> {
         manualKey.seal(MANUAL_TEXT),
       ]
     );
+    await digestOf(
+      client,
+      f.manualId,
+      'The vendor SDK manual: retries are exponential with jitter.',
+      ['vendor sdk', 'retries', 'jitter']
+    );
     await client.query(
       `INSERT INTO resource_access_grants (resource_kind, resource_id, owner_subject, grantee_subject, role)
        VALUES ('artifact', $1, $2, $3, 'viewer')`,
       [f.manualId, f.friend, f.subject]
     );
+  } finally {
+    await client.end();
+  }
+}
+
+/** A digest as the model would have left it (artifact-digest.ts's storeDigest), in the clear, indexed. */
+async function digestOf(
+  client: Client,
+  artifactId: string,
+  summary: string,
+  keywords: string[]
+): Promise<void> {
+  await client.query(
+    `UPDATE artifacts
+        SET summary = $2, keywords = $3, digest_status = 'done',
+            search_vector = setweight(to_tsvector('english', $4), 'A') || setweight(to_tsvector('english', $2), 'B')
+      WHERE id = $1`,
+    [artifactId, summary, keywords, keywords.join(' ')]
+  );
+}
+
+/** The digest's state for one file, as the database holds it. */
+async function digestStatusOf(
+  subject: string,
+  filename: string
+): Promise<{ id: string; status: string } | null> {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ id: string; digest_status: string }>(
+      `SELECT id, digest_status FROM artifacts WHERE owner_subject = $1 AND filename = $2`,
+      [subject, filename]
+    );
+    return rows[0] ? { id: rows[0].id, status: rows[0].digest_status } : null;
   } finally {
     await client.end();
   }
@@ -326,7 +383,22 @@ test('the library: filters, details, rename, share, delete with its impact', asy
   await expect(details).toBeVisible();
   await expect(details.getByRole('link', { name: f.projectName })).toBeVisible();
   await expect(details.getByText('owned by you')).toBeVisible();
+  // What the model wrote about it, and a keyword as a search of its own:
+  // the guide is found by its digest, the analysis by its name.
+  const about = details.getByRole('region', { name: 'About this file' });
+  await expect(about.getByText(/A Postgres schema guide/)).toBeVisible();
   await shot(page, testInfo, 'artifacts-02-details');
+  await about
+    .getByRole('list', { name: 'Keywords' })
+    .getByRole('button', { name: 'rounding' })
+    .click();
+  await expect(page.getByLabel('Search artifacts')).toHaveValue('rounding');
+  await expect(list.getByText('rounding-analysis.md')).toBeVisible();
+  await expect(list.getByText('schema-guide.md')).toBeVisible();
+  await expect(list.getByText('march-invoices.csv')).toBeHidden();
+  await expect(page).toHaveURL(/q=rounding/);
+  await page.getByLabel('Search artifacts').fill('');
+  await expect(list.getByText('march-invoices.csv')).toBeVisible();
 
   await details.getByRole('button', { name: 'Rename' }).click();
   await page.getByLabel('File name').fill('postgres-schema-guide.md');
@@ -367,12 +439,138 @@ test('the library: filters, details, rename, share, delete with its impact', asy
   await expect(list.getByText('vendor-sdk-manual.txt')).toBeHidden();
 });
 
+/**
+ * Thirty more files of the person's own, all older than the fixture's, so
+ * the fixture's three of theirs lead and the pager has a second page: 25
+ * on the first, the oldest eight and the colleague's shared file (the
+ * library lists what is shared after what is owned) on the second.
+ */
+async function seedBacklog(f: Fixture): Promise<string[]> {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    const ids: string[] = [];
+    for (let n = 1; n <= 30; n += 1) {
+      const id = uuidFrom(`artifacts-e2e:backlog-${n}:${testProject(f)}`);
+      const name = `backlog-${String(n).padStart(2, '0')}.txt`;
+      const key = await keyFor(client, {
+        kind: 'artifact',
+        resourceId: id,
+        ownerSubject: f.subject,
+      });
+      await client.query(
+        `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, extracted_text, origin, key_kind, created_at)
+         VALUES ($1, $2, NULL, $3, $4, 'text/plain', 12, 'done', $5, 'upload', 'artifact', NOW() - INTERVAL '1 day' - $6 * INTERVAL '1 minute')`,
+        [id, f.subject, `chat/e2e/${id}`, name, key.seal('backlog note'), n]
+      );
+      ids.push(id);
+    }
+    return ids;
+  } finally {
+    await client.end();
+  }
+}
+
+test('the library: pages of 25, the list scrolling in its own box, a link opening to its page', async ({
+  page,
+}, testInfo) => {
+  const f = fixtureFor(testInfo.project.name);
+  await seed(f);
+  const backlog = await seedBacklog(f);
+  await signIn(page, f);
+  // Short enough that a page of rows is taller than the box it scrolls in.
+  await page.setViewportSize({ width: 1280, height: 640 });
+
+  await page.goto('/chat/artifacts');
+  const list = page.getByRole('region', { name: 'Artifacts' });
+  const pager = list.getByRole('navigation', { name: 'Pages' });
+  await expect(pager.getByText('1–25 of 34')).toBeVisible();
+  await expect(pager.getByText('Page 1 of 2')).toBeVisible();
+  await expect(pager.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+  await expect(list.getByText('backlog-22.txt')).toBeAttached();
+  await expect(list.getByText('backlog-23.txt')).toHaveCount(0);
+  await expect(list.getByText('vendor-sdk-manual.txt')).toHaveCount(0);
+
+  // The rows scroll inside the list; the filters and the pager stay where they are.
+  const rows = list.getByRole('list');
+  const box = await rows.evaluate((element) => ({
+    scrolls: element.scrollHeight > element.clientHeight,
+    overflow: getComputedStyle(element).overflowY,
+  }));
+  expect(box.scrolls).toBe(true);
+  expect(box.overflow).toBe('auto');
+  await expect(pager).toBeInViewport();
+  await expect(page.getByRole('group', { name: 'Show' })).toBeInViewport();
+  const pageScroll = await page.evaluate(
+    () => document.documentElement.scrollHeight - document.documentElement.clientHeight
+  );
+  expect(pageScroll).toBeLessThanOrEqual(0);
+  await shot(page, testInfo, 'artifacts-17-paged');
+
+  // The second page: the oldest eight and the shared one, and no further;
+  // the URL says which page, so it is a link.
+  await pager.getByRole('button', { name: 'Next page' }).click();
+  await expect(pager.getByText('26–34 of 34')).toBeVisible();
+  await expect(page).toHaveURL(/page=2/);
+  await expect(list.getByText('backlog-23.txt')).toBeVisible();
+  await expect(list.getByText('backlog-30.txt')).toBeVisible();
+  await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
+  await expect(list.getByText('backlog-22.txt')).toHaveCount(0);
+  await expect(pager.getByRole('button', { name: 'Next page' })).toBeDisabled();
+  await shot(page, testInfo, 'artifacts-18-paged-second');
+
+  // A search starts over on the first page of what it finds: a word in a
+  // name (a substring), or in the summary and keywords the model wrote.
+  const search = page.getByLabel('Search artifacts');
+  await search.fill('backlog-2');
+  await expect(pager.getByText('1–10 of 10')).toBeVisible();
+  await expect(pager.getByRole('button', { name: 'Next page' })).toHaveCount(0);
+  await search.fill('monetary rounding');
+  await expect(list.getByText('schema-guide.md')).toBeVisible();
+  await expect(pager.getByText('1–1 of 1')).toBeVisible();
+  await search.fill('jitter');
+  await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
+  await expect(pager.getByText('1–1 of 1')).toBeVisible();
+  // (The sentence about summaries follows the organization's digest
+  // switch, which another test flips; the first words are the assertion.)
+  await search.fill('zzzz-nothing');
+  await expect(list.getByText(/^Nothing matches\./)).toBeVisible();
+  await shot(page, testInfo, 'artifacts-20-search-empty');
+  await search.fill('');
+  await expect(pager.getByText('Page 1 of 2')).toBeVisible();
+
+  // The link a notification carries opens to the page its file is on.
+  await page.goto(`/chat/artifacts?artifact=${backlog[29]}`);
+  await expect(pager.getByText('Page 2 of 2')).toBeVisible();
+  const details = page.getByRole('complementary', { name: 'Selected artifact' });
+  await expect(details.getByRole('link', { name: 'backlog-30.txt' })).toBeVisible();
+  await expect(list.getByRole('button', { name: /backlog-30\.txt/ })).toHaveAttribute(
+    'aria-current',
+    'true'
+  );
+});
+
 test('the library: a real upload lands, reads back, and is attached from the card', async ({
   page,
 }, testInfo) => {
   const f = fixtureFor(testInfo.project.name);
   await seed(f);
   await signIn(page, f);
+
+  // Digests are off by default — a file's text goes to a model only when
+  // the organization says so. On, through the switch (shared by every
+  // project in a run, so only flipped when it is off).
+  await page.goto('/admin/settings');
+  const digestSwitch = page.getByRole('switch', {
+    name: 'Summarize artifacts with the default model',
+  });
+  await expect(digestSwitch).toBeVisible();
+  if ((await digestSwitch.getAttribute('aria-checked')) !== 'true') {
+    await digestSwitch.click();
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.getByText('Saved.')).toBeVisible();
+  }
+  await shot(page, testInfo, 'artifacts-21-digest-switch');
 
   // No mock: the bytes go to the blob store's local backend (the Playwright
   // config points the dev server at it), the text is extracted, the row
@@ -425,6 +623,24 @@ test('the library: a real upload lands, reads back, and is attached from the car
     const again = await page.request.get(`/api/chat/attachments/${f.csvId}`);
     expect(await again.text()).toBe(CSV_TEXT);
   }
+
+  // The digest: asked of the org's default model (the stub) after the
+  // upload's response, stored in the clear, shown, and searched.
+  await expect
+    .poll(async () => (await digestStatusOf(f.subject, 'api-style-guide.md'))?.status, COLD)
+    .toBe('done');
+  const uploaded = await digestStatusOf(f.subject, 'api-style-guide.md');
+  await page.goto(`/chat/artifacts?artifact=${uploaded!.id}`);
+  const about = details.getByRole('region', { name: 'About this file' });
+  await expect(about.getByText('Stub summary: # API style guide')).toBeVisible();
+  await expect(
+    about.getByRole('list', { name: 'Keywords' }).getByRole('button', { name: 'money' })
+  ).toBeVisible();
+  await page.getByLabel('Search artifacts').fill('money fields');
+  await expect(list.getByText('api-style-guide.md')).toBeVisible();
+  await expect(list.getByText('schema-guide.md')).toBeHidden();
+  await page.getByLabel('Search artifacts').fill('');
+  await expect(list.getByText('schema-guide.md')).toBeVisible();
 
   // Hover: the controls explain themselves, in an element a screenshot keeps.
   await details.getByRole('button', { name: 'Rename' }).hover();
@@ -626,16 +842,29 @@ test('phone: the library and the project card fit the viewport', async ({ page }
   await page.goto('/chat/artifacts');
   const list = page.getByRole('region', { name: 'Artifacts' });
   await expect(list.getByText('schema-guide.md')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Artifacts' })).toBeVisible();
+  await shot(page, testInfo, 'artifacts-07-phone-library');
+
+  // A card opens the file's details over the list — the list goes, a
+  // back button brings it back — the way the code pane opens a file.
   await list.getByRole('button', { name: /schema-guide\.md/ }).click();
-  await expect(page.getByRole('complementary', { name: 'Selected artifact' })).toBeVisible();
+  const details = page.getByRole('complementary', { name: 'Selected artifact' });
+  await expect(details).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'schema-guide.md' })).toBeVisible();
+  await expect(list).toHaveCount(0);
+  await expect(details.getByRole('button', { name: 'Close details' })).toHaveCount(0);
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
   expect(overflow).toBeLessThanOrEqual(0);
-  await shot(page, testInfo, 'artifacts-07-phone-library');
+  await shot(page, testInfo, 'artifacts-19-phone-details');
+  await page.getByRole('button', { name: 'Back to artifacts' }).click();
+  await expect(list.getByText('schema-guide.md')).toBeVisible();
+  await expect(details).toHaveCount(0);
+  await list.getByRole('button', { name: /schema-guide\.md/ }).click();
+  await expect(details).toBeVisible();
 
   // The owner's dialogs at phone width: share, then delete with its impact.
-  const details = page.getByRole('complementary', { name: 'Selected artifact' });
   await details.getByRole('button', { name: 'Share…' }).click();
   await expect(page.getByRole('dialog').getByText(/Sharing lets a person use it/)).toBeVisible();
   await shot(page, testInfo, 'artifacts-12-phone-share');

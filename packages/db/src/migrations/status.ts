@@ -187,6 +187,7 @@ export const EXPECTED_MIGRATIONS = [
   '161-salesforce-admin-change-requests',
   '162-chat-auto-title',
   '163-artifacts',
+  '164-artifact-digest',
 ];
 
 export interface MigrationStatus {

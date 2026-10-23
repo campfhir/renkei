@@ -434,16 +434,20 @@ export interface Artifacts {
   chat_id: string | null;
   content_type: string;
   created_at: Generated<Timestamp>;
+  digest_status: Generated<string>;
   extract_status: Generated<string>;
   extracted_text: string | null;
   filename: string;
   id: Generated<string>;
   key_kind: Generated<string>;
   key_ref: string | null;
+  keywords: Generated<string[]>;
   message_id: string | null;
   origin: Generated<string>;
   owner_subject: string;
+  search_vector: string | null;
   size_bytes: Int8;
+  summary: string | null;
   updated_at: Generated<Timestamp>;
 }
 

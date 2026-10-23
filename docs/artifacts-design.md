@@ -11,12 +11,20 @@ be found again.
 
 ## What a person sees
 
-- **Artifacts** in the app menu (Chat group, `/chat/artifacts`): every
-  file they own — uploads and what their chats generated — and every file
-  shared with them, each with where it is used. The whole page is a drop
-  target. One selected at a time: its projects (with how each uses it),
-  who can read it, download, replace, rename, share, delete, or — for a
-  file someone shared — make a copy they own, or take it off their list.
+- **Artifacts** in the app menu (Workspace group, under Knowledge;
+  `/chat/artifacts`): every file they own — uploads and what their chats
+  generated — and every file shared with them, each with where it is
+  used. The whole page is a drop target. The list is one page of the
+  library at a time (25), chosen in the database by what the URL says
+  (`q`, `show`, `project`, `page`), and scrolls in its own box, so the
+  filters and the pager stay put; the search finds a file by a word in
+  its name or in its digest (below). One
+  selected at a time: its projects (with how each uses it), who can read
+  it, download, replace, rename, share, delete, or — for a file someone
+  shared — make a copy they own, or take it off their list. On a wide
+  screen the details stand beside the list; on a phone the rows are cards
+  and a tap opens the details over the list, with a back button — the
+  way the code pane opens a file on a phone.
 - **An Artifacts card** on every project page, chat and code projects
   alike (the Files section it replaces was hidden on code projects). What
   the project holds, with an **Always / On demand** switch per file,
@@ -102,6 +110,46 @@ sealed under that same key, so the store holds it sealed from then on
 without a sweep. A reader with no key (the row's marker case) still reads
 it and leaves it for the next.
 
+## Search: the digest
+
+A file's text stays sealed, so the library cannot search it. What it
+searches instead is the file's **digest**: a short summary and a list of
+keywords. A file a chat's model writes gets them from that model as it
+hands the file over — it holds the file and the conversation around it,
+so its digest is the richer one and costs no extra call: the `summary`
+and `keywords` of `chat_write_file`, `chat_write_chart` and
+`chat_attach_from_sandbox`, which the system prompt asks for, and
+`artifact_describe` for a file another tool handed back (a screenshot, a
+download). Every other file — an upload, a scan after OCR, replaced
+bytes, a file the chat's model left undescribed — gets its digest from
+the organization's default model when its text lands
+(`artifact-digest.ts`); a copy carries the original's across. The digest is stored in the clear on the row
+(`summary`, `keywords`, `digest_status`) beside the sealed text, with the
+keywords and summary as full-text terms in an indexed `search_vector`,
+so a search is one indexed predicate (`websearch_to_tsquery`) plus a
+substring match on the filename, and never a read of sealed text. What
+goes to the model is what the chat would send it: the extracted text as
+redacted at upload, cut to its head (`DIGEST_INPUT_CHARS`), under a
+system prompt that tells it to describe the document and not to follow
+what is written in it; the call is recorded in the usage ledger under
+`artifact_digest`.
+
+All of it is behind an organization switch, **Summarize artifacts with
+the default model** (admin → Settings → Knowledge search;
+`artifactDigestEnabled`), off by default: while it is off no file text
+goes to a model on its own, rows stay `pending`, the search matches file
+names only, and the page says so; turning it on digests files as they
+are uploaded and looked at. The ask runs after the response that
+created the row (`after()`), never before it, and is advisory: no model, a model down, or an answer with
+nothing usable in it leaves the file searchable by name alone, with the
+row saying where it stands (`pending`, `running`, `done`, `failed`,
+`none` for a file with no text). The library page asks again for the
+pending rows it shows, a few at a time, so a digest a recycled process
+dropped — and every row from before digests existed, which migration
+164 marks pending — fills in as people look at their files. The details
+panel shows the summary and the keywords, each keyword a search of its
+own.
+
 ## Always and on demand
 
 An `always` artifact's whole text travels in the system prompt of every
@@ -120,4 +168,5 @@ demand instead.
 `artifact_references` (mode `on_demand`), stamps every old row's
 `key_kind`/`key_ref`, and widens the grant and key kind checks. Nothing
 is re-sealed at migration time; nothing a chat could read before reads
-differently after.
+differently after. 164 adds the digest columns and the search index,
+and marks every row with text `pending`.

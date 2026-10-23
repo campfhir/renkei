@@ -82,6 +82,14 @@ export interface AttachmentRow {
   origin: string;
   keyKind: ArtifactKeyKind;
   keyRef: string | null;
+  /**
+   * The digest the organization's model wrote for the search index
+   * (artifact-digest.ts): in the clear, unlike the text. `digestStatus`
+   * says whether it is there yet.
+   */
+  summary: string | null;
+  keywords: string[];
+  digestStatus: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -113,6 +121,9 @@ const COLUMNS = [
   'origin',
   'key_kind',
   'key_ref',
+  'summary',
+  'keywords',
+  'digest_status',
   'created_at',
   'updated_at',
 ] as const;
@@ -130,6 +141,9 @@ function rowOf(raw: {
   origin: string;
   key_kind: string;
   key_ref: string | null;
+  summary: string | null;
+  keywords: string[];
+  digest_status: string;
   created_at: Date;
   updated_at: Date;
 }): AttachmentRow {
@@ -146,6 +160,9 @@ function rowOf(raw: {
     origin: raw.origin,
     keyKind: raw.key_kind === 'chat' || raw.key_kind === 'chat_project' ? raw.key_kind : 'artifact',
     keyRef: raw.key_ref,
+    summary: raw.summary,
+    keywords: raw.keywords,
+    digestStatus: raw.digest_status,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   };
@@ -252,7 +269,12 @@ async function ocrOne(
   if (!sealed.ok) return NEEDS_OCR;
   await db
     .updateTable('artifacts')
-    .set({ extracted_text: sealed.val, extract_status: 'done', updated_at: new Date() })
+    .set({
+      extracted_text: sealed.val,
+      extract_status: 'done',
+      digest_status: 'pending',
+      updated_at: new Date(),
+    })
     .where('id', '=', row.id)
     .execute();
   return 'done';
@@ -362,6 +384,8 @@ export async function createAttachment(
         size_bytes: input.bytes.byteLength,
         extracted_text: sealedText,
         extract_status: extracted.status,
+        // Text to digest for the search index, once the row is there.
+        digest_status: sealedText !== null ? 'pending' : 'none',
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
@@ -472,6 +496,31 @@ export async function getAttachmentText(
   return raw?.extracted_text ? openText(raw.extracted_text, cipher) : null;
 }
 
+/**
+ * One of a chat's own files, by id or — the way a model knows a file it
+ * wrote — by name, the newest of that name. Only the caller's own files
+ * in the chat; null for anything else.
+ */
+export async function findChatAttachment(
+  db: Kysely<DB>,
+  input: { chatId: string; ownerSubject: string; id: string | null; filename: string | null }
+): Promise<AttachmentRow | null> {
+  if (!isUuid(input.chatId)) return null;
+  if (!input.id && !input.filename) return null;
+  let query = db
+    .selectFrom('artifacts')
+    .select(COLUMNS)
+    .where('chat_id', '=', input.chatId)
+    .where('owner_subject', '=', input.ownerSubject);
+  query = input.id
+    ? isUuid(input.id)
+      ? query.where('id', '=', input.id)
+      : query.where('id', 'is', null)
+    : query.where('filename', '=', cleanFilename(input.filename ?? ''));
+  const row = await query.orderBy('created_at', 'desc').limit(1).executeTakeFirst();
+  return row ? rowOf(row) : null;
+}
+
 /** The files uploaded to or produced in one chat, oldest first. */
 export async function listAttachments(
   db: Kysely<DB>,
@@ -503,6 +552,9 @@ const REFERENCE_COLUMNS = [
   'a.origin',
   'a.key_kind',
   'a.key_ref',
+  'a.summary',
+  'a.keywords',
+  'a.digest_status',
   'a.created_at',
   'a.updated_at',
 ] as const;
@@ -523,6 +575,9 @@ function projectRowOf(raw: {
   origin: string;
   key_kind: string;
   key_ref: string | null;
+  summary: string | null;
+  keywords: string[];
+  digest_status: string;
   created_at: Date;
   updated_at: Date;
 }): ProjectArtifactRow {

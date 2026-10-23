@@ -216,6 +216,17 @@ export interface OrgSettings {
    */
   phiConnectorsRequireCoveredModel: boolean;
   /**
+   * Whether a file that lands in Artifacts is sent to the organization's
+   * default model for a digest — a summary and keywords, stored in the
+   * clear beside the sealed text so the Artifacts search can find a file
+   * by what it is about (apps/web/lib/chat/artifact-digest.ts). Off by
+   * default: the search then matches file names only, and no file text
+   * leaves for a model on its own. One model call per file. A file a
+   * chat's model writes gets its digest from that model as it writes it,
+   * switch or not.
+   */
+  artifactDigestEnabled: boolean;
+  /**
    * How deep an agent-triggers-agent chain may go. The queue's attempt
    * budget bounds retries, not fan-out; this is the fan-out bound.
    */
@@ -394,6 +405,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   chatRetentionDays: 365,
   agentOptimizerWindowDays: 30,
   phiConnectorsRequireCoveredModel: false,
+  artifactDigestEnabled: false,
   agentMaxChainDepth: 3,
   agentRunTimeoutMinutes: 30,
   agentRunToolCallBudget: 150,
@@ -481,11 +493,7 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
   if (!dbResult.ok) return err('DB_ERROR' as const);
 
   const rowsResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('settings')
-        .select(['key', 'value'])
-        .execute(),
+    () => dbResult.val.selectFrom('settings').select(['key', 'value']).execute(),
     'DB_ERROR' as const
   );
   if (!rowsResult.ok) return rowsResult;
@@ -560,6 +568,9 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
     ),
     phiConnectorsRequireCoveredModel: Boolean(
       coerce(stored.get('phi_connectors_require_covered_model'), d.phiConnectorsRequireCoveredModel)
+    ),
+    artifactDigestEnabled: Boolean(
+      coerce(stored.get('artifact_digest_enabled'), d.artifactDigestEnabled)
     ),
     agentMaxChainDepth: Number(coerce(stored.get('agent_max_chain_depth'), d.agentMaxChainDepth)),
     agentRunTimeoutMinutes: Number(
@@ -682,6 +693,7 @@ export async function setOrgSettings(
     ['chat_retention_days', updates.chatRetentionDays],
     ['agent_optimizer_window_days', updates.agentOptimizerWindowDays],
     ['phi_connectors_require_covered_model', updates.phiConnectorsRequireCoveredModel],
+    ['artifact_digest_enabled', updates.artifactDigestEnabled],
     ['agent_max_chain_depth', updates.agentMaxChainDepth],
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
     ['agent_run_tool_call_budget', updates.agentRunToolCallBudget],
@@ -740,9 +752,7 @@ export async function setOrgSettings(
  * Falls back to the org limit if the request table cannot be read, so a
  * database blip never turns into a refusal to write.
  */
-export async function getWorkspaceLimitBytes(
-  subject: string
-): Promise<Result<number, 'DB_ERROR'>> {
+export async function getWorkspaceLimitBytes(subject: string): Promise<Result<number, 'DB_ERROR'>> {
   const org = await getOrgSettings();
   if (!org.ok) return org;
   const dbResult = getDatabase();

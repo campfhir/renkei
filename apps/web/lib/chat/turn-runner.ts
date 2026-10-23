@@ -70,6 +70,7 @@ import { randomUUID } from 'node:crypto';
 import { secure } from '@/lib/logger';
 import type { McpClient, McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext, LocalToolSet } from './local-tools';
+import { parseDigest, type ArtifactDigest } from './artifact-digest-input';
 import type { ChatStreamEvent } from './stream-events';
 import type { TurnChannel } from './turn-events';
 import type { AttachmentView, PendingToolPermission, ToolPermissionDecision } from './views';
@@ -135,6 +136,8 @@ export interface ArtifactFile {
   filename: string;
   mediaType: string;
   dataBase64: string;
+  /** The summary and keywords the model gave with it (artifact-digest-input.ts), when it did. */
+  digest?: ArtifactDigest | null;
 }
 
 export interface TurnOutcome {
@@ -465,6 +468,7 @@ export function artifactsOfMeta(
       filename: title ?? `${toolName}-${ordinal}-${out.length + 1}${extension}`,
       mediaType: record.mediaType,
       dataBase64: record.dataBase64,
+      digest: parseDigest(entry),
     });
   }
   return out;

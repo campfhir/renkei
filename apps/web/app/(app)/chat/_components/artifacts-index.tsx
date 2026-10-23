@@ -3,14 +3,23 @@
 /**
  * The Artifacts page: everything this person owns — uploads and the
  * files their chats generated — and everything shared with them, each
- * with where it is used; the whole page a drop target; one selected at a
- * time, with its details and acts beside the list. What the viewer may
- * do follows artifact-access.ts: an owner renames, replaces, shares,
+ * with where it is used; the whole page a drop target. The list is one
+ * page of the library, chosen on the server by what the URL says
+ * (artifact-library-params.ts): the search looks at names and at the
+ * digest the organization's model wrote for each file, the filters
+ * narrow, the pager turns, and each change is a navigation, so the
+ * browser is sent no more than it shows and a page is a link. The list
+ * scrolls inside its own box, so the filters and the pager stay put.
+ * On a wide screen one file is selected at a time, with its details
+ * and acts beside the list; on a phone the list is a column of cards
+ * and a tap opens the file's details over it, with a back button to the
+ * list — the way the code pane opens a file as a tab. What the viewer
+ * may do follows artifact-access.ts: an owner renames, replaces, shares,
  * hands over or deletes; a person it was shared with uses it, copies it
  * or takes it off their own list.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -18,31 +27,103 @@ import DownloadLink from '@/components/download-link';
 import LocalTime from '@/components/local-time';
 import { chatClient } from '@/lib/chat/client';
 import type { LibraryItem } from '@/lib/chat/artifact-library';
+import {
+  libraryQueryString,
+  type LibraryFilters,
+  type LibraryQuery,
+  type LibraryShow,
+} from '@/lib/chat/artifact-library-params';
+import type { LibraryPage } from '@/lib/chat/artifact-library-query';
+import { useMediaQuery } from '@/lib/use-media-query';
 import ShareModal from './share-modal';
 import AttachArtifactsPicker from './attach-to-project-modal';
 import { CopyArtifactModal, DeleteArtifactModal, RenameArtifactModal } from './artifact-dialogs';
 import { ModeToggle, sizeOf, statusLabel, TypeBadge } from './artifact-bits';
 
-type Show = 'all' | 'uploaded' | 'generated' | 'shared';
+/**
+ * Below Tailwind's `md` the details open over the list instead of beside
+ * it — the same width the list's rows turn into cards at.
+ */
+const NARROW = '(max-width: 767.98px)';
+/** Typing pauses this long before the search is asked for. */
+const SEARCH_DEBOUNCE_MS = 300;
+
+const PATH = '/chat/artifacts';
+
+const pagerButton =
+  'flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900';
+const smallButton =
+  'rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900';
+
+const filtersOf = (query: LibraryQuery): LibraryFilters => ({
+  show: query.show,
+  projectId: query.projectId,
+  query: query.query,
+});
+const keyOf = (filters: LibraryFilters) =>
+  `${filters.show}|${filters.projectId ?? ''}|${filters.query}`;
+
+/** What the digest's state says in the details, or null when it says nothing worth a line. */
+function digestLabel(status: string): string | null {
+  switch (status) {
+    case 'pending':
+    case 'running':
+      return 'Summary on its way…';
+    case 'failed':
+      return 'No summary could be written for this file.';
+    case 'none':
+      return 'No text to summarize.';
+    default:
+      return null;
+  }
+}
 
 export default function ArtifactsIndex({
-  initial,
+  page,
+  query,
   uploads,
+  digests,
   projects,
   selectedId,
 }: {
-  initial: LibraryItem[];
+  /** The page the server chose for `query`. */
+  page: LibraryPage;
+  /** What the URL asked for, as the server read it. */
+  query: LibraryQuery;
   uploads: boolean;
+  /** Whether the organization has the model write a digest for each file (admin → Settings). */
+  digests: boolean;
   projects: { id: string; name: string; kind: string }[];
   selectedId: string | null;
 }) {
   const router = useRouter();
-  const [items, setItems] = useState(initial);
-  useEffect(() => setItems(initial), [initial]);
-  const [show, setShow] = useState<Show>('all');
-  const [projectFilter, setProjectFilter] = useState('');
-  const [query, setQuery] = useState('');
+  const narrow = useMediaQuery(NARROW);
+  const [isPending, startTransition] = useTransition();
+  const items = page.artifacts;
+  // The filters as typed: the URL follows them, debounced for the
+  // search box, and they follow the URL when it changes under them (the
+  // back button) — told apart by the key of the last navigation asked for.
+  const [filters, setFilters] = useState<LibraryFilters>(() => filtersOf(query));
+  const asked = useRef(keyOf(filtersOf(query)));
+  const latest = useRef(filters);
+  latest.current = filters;
+  const serverKey = keyOf(filtersOf(query));
+  const served = useRef(query);
+  served.current = query;
+  // Keyed on the string, not the object: a re-render with the same
+  // answer must not reset what is being typed.
+  useEffect(() => {
+    if (serverKey !== asked.current) {
+      asked.current = serverKey;
+      setFilters(filtersOf(served.current));
+    }
+  }, [serverKey]);
   const [selected, setSelected] = useState<string | null>(selectedId);
+  // The selected file as last seen, so its details stay while a page it
+  // is not on is shown — a filter that hides it, an upload's reveal in flight.
+  const [remembered, setRemembered] = useState<LibraryItem | null>(
+    () => page.artifacts.find((item) => item.id === selectedId) ?? null
+  );
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -51,30 +132,61 @@ export default function ArtifactsIndex({
   >(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const dragDepth = useRef(0);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const reload = useCallback(async () => {
-    const result = await chatClient.artifacts();
-    if (result.data) setItems(result.data.artifacts);
-    router.refresh();
+  /** Asks the server for a page: the URL changes, the page re-renders with it. */
+  const navigate = useCallback(
+    (next: LibraryFilters, toPage: number, focus: string | null = null) => {
+      asked.current = keyOf(next);
+      startTransition(() => {
+        router.replace(`${PATH}${libraryQueryString(next, toPage, focus)}`, { scroll: false });
+      });
+      listRef.current?.scrollTo({ top: 0 });
+    },
+    [router]
+  );
+  /** The same page again, after an act changed what is on it. */
+  const reload = useCallback(() => {
+    startTransition(() => router.refresh());
   }, [router]);
 
-  const shown = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return items.filter((item) => {
-      if (show === 'shared' && item.via === 'owner') return false;
-      if (show === 'uploaded' && (item.via !== 'owner' || item.origin !== 'upload')) return false;
-      if (show === 'generated' && (item.via !== 'owner' || item.origin !== 'model')) return false;
-      if (projectFilter && !item.projects.some((project) => project.id === projectFilter))
-        return false;
-      return !needle || item.filename.toLowerCase().includes(needle);
-    });
-  }, [items, show, projectFilter, query]);
+  // A filter change starts over at the first page of what it shows; the
+  // search box waits for typing to pause.
+  const filter = (patch: Partial<LibraryFilters>) => {
+    const next = { ...latest.current, ...patch };
+    setFilters(next);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if ('query' in patch) {
+      searchTimer.current = setTimeout(() => navigate(next, 1), SEARCH_DEBOUNCE_MS);
+    } else {
+      navigate(next, 1);
+    }
+  };
+  useEffect(
+    () => () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    },
+    []
+  );
+  const goTo = (toPage: number) =>
+    navigate(latest.current, Math.max(1, Math.min(page.pageCount, toPage)));
+  /** Selects a file and turns to the page it is on. */
+  const reveal = (id: string) => {
+    setSelected(id);
+    navigate(latest.current, 1, id);
+  };
+  const select = (item: LibraryItem | null) => {
+    setSelected(item?.id ?? null);
+    if (item) setRemembered(item);
+  };
 
-  const current = items.find((item) => item.id === selected) ?? null;
-  const totalBytes = items
-    .filter((item) => item.via === 'owner')
-    .reduce((sum, item) => sum + item.sizeBytes, 0);
+  const onPage = items.find((item) => item.id === selected) ?? null;
+  const current = onPage ?? (remembered?.id === selected ? remembered : null);
+  useEffect(() => {
+    if (onPage) setRemembered(onPage);
+  }, [onPage]);
 
   const upload = async (list: FileList | File[] | null) => {
     const files = list ? [...list] : [];
@@ -88,8 +200,8 @@ export default function ArtifactsIndex({
       else last = result.data?.id ?? null;
       setUploading((count) => count - 1);
     }
-    await reload();
-    if (last) setSelected(last);
+    if (last) reveal(last);
+    else reload();
   };
 
   const replace = async (file: File | null) => {
@@ -97,29 +209,29 @@ export default function ArtifactsIndex({
     setError(null);
     const result = await chatClient.replaceArtifact(current.id, file);
     if (result.error) setError(result.error);
-    await reload();
+    reload();
   };
 
   const setMode = async (item: LibraryItem, projectId: string, mode: 'always' | 'on_demand') => {
     setError(null);
     const result = await chatClient.setArtifactMode(projectId, item.id, mode);
     if (result.error) setError(result.error);
-    await reload();
+    reload();
   };
 
   const detach = async (item: LibraryItem, projectId: string) => {
     setError(null);
     const result = await chatClient.detachArtifact(projectId, item.id);
     if (result.error) setError(result.error);
-    await reload();
+    reload();
   };
 
   const leave = async (item: LibraryItem) => {
     setError(null);
     const result = await chatClient.deleteArtifact(item.id);
     if (result.error) setError(result.error);
-    setSelected(null);
-    await reload();
+    select(null);
+    reload();
   };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -129,12 +241,12 @@ export default function ArtifactsIndex({
     if (uploads && event.dataTransfer.files?.length) void upload(event.dataTransfer.files);
   };
 
-  const tab = (value: Show, label: string) => (
+  const tab = (value: LibraryShow, label: string) => (
     <button
       type="button"
-      onClick={() => setShow(value)}
+      onClick={() => filter({ show: value })}
       className={`flex h-7 items-center rounded-md px-2.5 text-xs font-medium ${
-        show === value
+        filters.show === value
           ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-950 dark:text-gray-100'
           : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
       }`}
@@ -143,9 +255,317 @@ export default function ArtifactsIndex({
     </button>
   );
 
+  // The selected file's details and acts: beside the list on a wide
+  // screen, over it on a phone — the one body in both places.
+  const details = current ? (
+    <>
+      <div className="flex items-start gap-3 p-4">
+        <TypeBadge filename={current.filename} contentType={current.contentType} large />
+        <div className="min-w-0 flex-1">
+          <DownloadLink
+            href={chatClient.attachmentUrl(current.id)}
+            filename={current.filename}
+            className="block font-semibold break-words hover:underline"
+          >
+            {current.filename}
+          </DownloadLink>
+          <p className="text-xs text-gray-500">
+            {sizeOf(current.sizeBytes)} · {current.origin === 'model' ? 'generated' : 'uploaded'}{' '}
+            <LocalTime at={current.createdAt} format="date" /> ·{' '}
+            {current.via === 'owner' ? 'owned by you' : `${current.ownerName ?? 'someone'}’s`}
+          </p>
+          <p className="mt-1 text-xs">
+            {statusLabel(current.extractStatus) ? (
+              <span className="text-amber-700 dark:text-amber-400">
+                {statusLabel(current.extractStatus)}
+              </span>
+            ) : (
+              <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-800 dark:bg-green-900/40 dark:text-green-300">
+                Ready to read
+              </span>
+            )}
+          </p>
+        </div>
+        {!narrow ? (
+          <button
+            type="button"
+            onClick={() => select(null)}
+            aria-label="Close details"
+            className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+          >
+            <Icon path={ICONS.close} className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+
+      {digests || current.summary || current.keywords.length > 0 ? (
+        <section
+          aria-label="About this file"
+          className="border-t border-gray-100 px-4 py-3 dark:border-gray-900"
+        >
+          <h3 className="mb-2 text-xs font-semibold text-gray-500">About</h3>
+          {current.summary ? (
+            <p className="text-sm text-gray-700 dark:text-gray-300">{current.summary}</p>
+          ) : (
+            <p className="text-xs text-gray-500">{digestLabel(current.digestStatus)}</p>
+          )}
+          {current.keywords.length > 0 ? (
+            <ul aria-label="Keywords" className="mt-2 flex flex-wrap gap-1">
+              {current.keywords.map((keyword) => (
+                <li key={keyword}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (narrow) select(null);
+                      filter({ query: keyword });
+                    }}
+                    title={`Search for “${keyword}”`}
+                    className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    {keyword}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
+
+      <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
+        <h3 className="mb-2 text-xs font-semibold text-gray-500">Used in</h3>
+        {current.projects.length === 0 ? (
+          <p className="text-xs text-gray-500">
+            {current.chat
+              ? 'In its chat only; it goes when the chat does unless a project takes it.'
+              : 'Not attached to a project.'}
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {current.projects.map((project) => (
+              <li key={project.id} className="flex items-center gap-2 text-sm">
+                <Icon
+                  path={project.kind === 'code' ? ICONS.code : ICONS.pages}
+                  className="h-3.5 w-3.5 shrink-0 text-gray-400"
+                />
+                <Link
+                  href={
+                    project.kind === 'code' ? `/code/${project.id}` : `/chat/projects/${project.id}`
+                  }
+                  className="min-w-0 flex-1 truncate hover:underline"
+                >
+                  {project.name}
+                </Link>
+                <ModeToggle
+                  label={`How ${project.name} uses ${current.filename}`}
+                  value={project.mode}
+                  onChange={(mode) => void setMode(current, project.id, mode)}
+                />
+                <button
+                  type="button"
+                  onClick={() => void detach(current, project.id)}
+                  aria-label={`Detach from ${project.name}`}
+                  className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-900"
+                >
+                  <Icon path={ICONS.close} className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {current.chat ? (
+          <p className="mt-2 text-xs text-gray-500">
+            From the chat{' '}
+            <Link href={`/chat/${current.chat.id}`} className="hover:underline">
+              {current.chat.title ?? 'Untitled'}
+            </Link>
+          </p>
+        ) : null}
+        {projects.length > 0 && (current.via === 'owner' || current.via === 'grant') ? (
+          <button
+            type="button"
+            onClick={() => setDialog('attach')}
+            className="mt-2 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            + Attach to a project…
+          </button>
+        ) : null}
+      </div>
+
+      <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
+        <h3 className="mb-2 text-xs font-semibold text-gray-500">Access</h3>
+        <p className="text-xs text-gray-500">
+          {current.via === 'owner'
+            ? `You own it${current.sharedWith > 0 ? `; shared with ${current.sharedWith} ${current.sharedWith === 1 ? 'person' : 'people'}` : ''}. ${current.projects.length > 0 ? 'Everyone in the projects above reads it; their owners and editors may detach it.' : ''}`
+            : current.via === 'grant'
+              ? 'Shared with you: use it in your own projects, read it, copy it. Only its owner changes it.'
+              : 'You read it through a project or chat it is used in.'}
+        </p>
+        {current.via === 'owner' ? (
+          <button
+            type="button"
+            onClick={() => setDialog('share')}
+            className={`mt-2 inline-flex items-center gap-1 ${smallButton}`}
+          >
+            <Icon path={ICONS.share} className="h-3.5 w-3.5" />
+            Share…
+          </button>
+        ) : null}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 px-4 py-3 dark:border-gray-900">
+        <DownloadLink
+          href={chatClient.attachmentUrl(current.id)}
+          filename={current.filename}
+          className={`inline-flex items-center gap-1 ${smallButton}`}
+        >
+          <Icon path={ICONS.download} className="h-3.5 w-3.5" />
+          Download
+        </DownloadLink>
+        {current.via === 'owner' ? (
+          <>
+            <button
+              type="button"
+              onClick={() => replaceInput.current?.click()}
+              className={smallButton}
+            >
+              Replace file…
+            </button>
+            <input
+              ref={replaceInput}
+              type="file"
+              className="hidden"
+              aria-label="Replace the file"
+              onChange={(event) => {
+                void replace(event.target.files?.[0] ?? null);
+                event.target.value = '';
+              }}
+            />
+            <button type="button" onClick={() => setDialog('rename')} className={smallButton}>
+              Rename
+            </button>
+            <button
+              type="button"
+              onClick={() => setDialog('delete')}
+              className="ml-auto text-xs text-red-600 hover:underline dark:text-red-400"
+            >
+              Delete
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => setDialog('copy')}
+              className={`inline-flex items-center gap-1 ${smallButton}`}
+            >
+              <Icon path={ICONS.copy} className="h-3.5 w-3.5" />
+              Make a copy I own
+            </button>
+            {current.via === 'grant' ? (
+              <button
+                type="button"
+                onClick={() => void leave(current)}
+                className="ml-auto text-xs text-red-600 hover:underline dark:text-red-400"
+                title={`Keeps ${current.ownerName ?? 'the owner'}’s file`}
+              >
+                Remove from my artifacts
+              </button>
+            ) : null}
+          </>
+        )}
+      </div>
+      <p className="px-4 pb-3 text-xs text-gray-500">
+        {current.via === 'owner'
+          ? 'Replacing keeps every attachment and re-reads the text. Deleting shows who loses it and offers to hand it over instead.'
+          : 'A copy is a separate file you own; the owner is told. Removing it keeps their file and their shares.'}
+      </p>
+    </>
+  ) : null;
+
+  const dialogs = (
+    <>
+      {dialog === 'share' && current ? (
+        <ShareModal
+          kind="artifact"
+          resourceId={current.id}
+          title={`Share ${current.filename}`}
+          onClose={() => {
+            setDialog(null);
+            reload();
+          }}
+        />
+      ) : null}
+      {dialog === 'delete' && current ? (
+        <DeleteArtifactModal
+          item={current}
+          onDone={() => {
+            select(null);
+            reload();
+          }}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === 'copy' && current ? (
+        <CopyArtifactModal
+          item={current}
+          projects={projects}
+          onDone={(artifactId) => reveal(artifactId)}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === 'rename' && current ? (
+        <RenameArtifactModal item={current} onDone={reload} onClose={() => setDialog(null)} />
+      ) : null}
+      {dialog === 'attach' && current ? (
+        <AttachArtifactsPicker
+          item={current}
+          projects={projects}
+          onDone={reload}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+    </>
+  );
+
+  // A phone with a file open: its details fill the page, the list behind
+  // them one tap back.
+  if (narrow && current) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex h-12 shrink-0 items-center gap-1 border-b border-gray-200 pr-3 dark:border-gray-800">
+          <button
+            type="button"
+            onClick={() => select(null)}
+            aria-label="Back to artifacts"
+            className="flex h-12 w-12 shrink-0 items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
+          </button>
+          <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">{current.filename}</h1>
+        </div>
+        <aside aria-label="Selected artifact" className="min-h-0 flex-1 overflow-y-auto">
+          {details}
+        </aside>
+        {error ? (
+          <p
+            role="alert"
+            className="border-t border-gray-200 px-4 py-2 text-sm text-red-600 dark:border-gray-800"
+          >
+            {error}
+          </p>
+        ) : null}
+        {dialogs}
+      </div>
+    );
+  }
+
+  const first = page.total === 0 ? 0 : (page.page - 1) * page.pageSize + 1;
+  const last = Math.min(page.total, page.page * page.pageSize);
+  const searching = filters.query.trim().length > 0;
+
   return (
     <div
-      className="relative min-h-0 flex-1 overflow-y-auto"
+      className="relative flex min-h-0 flex-1 flex-col"
       onDragEnter={(event) => {
         event.preventDefault();
         dragDepth.current += 1;
@@ -186,22 +606,29 @@ export default function ArtifactsIndex({
         ) : null}
       </header>
 
-      <div className="mx-auto max-w-5xl space-y-3 p-4">
-        <p className="text-sm text-gray-600 dark:text-gray-400">
+      <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col gap-3 p-4">
+        <p className="hidden shrink-0 text-sm text-gray-600 md:block dark:text-gray-400">
           Files you upload and files chats generate: manuals, design docs, style guides, reports.
           Stored once, under you, outside every repository; a project holds one by reference, so the
           same file serves any number of projects.
+          {digests ? ' Search finds a file by its name or by what it is about.' : ''}
           {!uploads
             ? ' File storage is not set up for this organization, so nothing can be uploaded yet.'
             : ''}
         </p>
+        {!uploads ? (
+          <p className="shrink-0 text-sm text-gray-600 md:hidden dark:text-gray-400">
+            File storage is not set up for this organization, so nothing can be uploaded yet.
+          </p>
+        ) : null}
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search names…"
-            aria-label="Search artifacts by name"
+            type="search"
+            value={filters.query}
+            onChange={(event) => filter({ query: event.target.value })}
+            placeholder={digests ? 'Search names and contents…' : 'Search names…'}
+            aria-label="Search artifacts"
             className="w-64 max-w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
           />
           <div
@@ -216,8 +643,8 @@ export default function ArtifactsIndex({
           </div>
           {projects.length > 0 ? (
             <select
-              value={projectFilter}
-              onChange={(event) => setProjectFilter(event.target.value)}
+              value={filters.projectId ?? ''}
+              onChange={(event) => filter({ projectId: event.target.value || null })}
               aria-label="Used in project"
               className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
             >
@@ -230,31 +657,43 @@ export default function ArtifactsIndex({
             </select>
           ) : null}
           <span className="ml-auto text-xs text-gray-500">
-            {items.filter((item) => item.via === 'owner').length} of yours · {sizeOf(totalBytes)}
+            {page.owned.count} of yours · {sizeOf(page.owned.bytes)}
           </span>
         </div>
 
-        <div className="flex flex-wrap items-start gap-4">
+        <div className="flex min-h-0 flex-1 items-stretch gap-4">
           <section
             aria-label="Artifacts"
-            className="min-w-0 flex-[999_1_480px] rounded-lg border border-gray-200 dark:border-gray-800"
+            aria-busy={isPending}
+            className={`flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-gray-200 transition-opacity dark:border-gray-800 ${isPending ? 'opacity-60' : ''}`}
           >
-            {shown.length === 0 ? (
+            {items.length === 0 ? (
               <p className="p-4 text-sm text-gray-500">
-                {items.length === 0
+                {page.libraryCount === 0
                   ? 'No artifacts yet. Upload a manual, a guide or a design doc, or drop one anywhere on this page; files your chats write land here on their own.'
-                  : 'Nothing matches.'}
+                  : searching && digests
+                    ? 'Nothing matches. Search looks at file names and at the summary and keywords written for each file.'
+                    : 'Nothing matches.'}
               </p>
             ) : (
-              <ul className="divide-y divide-gray-100 dark:divide-gray-900">
-                {shown.map((item) => {
+              // Rows on a wide screen; cards, each a door to the file's
+              // details, on a phone.
+              <ul
+                ref={listRef}
+                className="min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto max-md:space-y-1.5 max-md:divide-y-0 max-md:p-2 dark:divide-gray-900"
+              >
+                {items.map((item) => {
                   const status = statusLabel(item.extractStatus);
                   const isSelected = item.id === selected;
                   return (
-                    <li key={item.id} data-artifact={item.id}>
+                    <li
+                      key={item.id}
+                      data-artifact={item.id}
+                      className="max-md:overflow-hidden max-md:rounded-md max-md:border max-md:border-gray-200 max-md:dark:border-gray-800"
+                    >
                       <button
                         type="button"
-                        onClick={() => setSelected(isSelected ? null : item.id)}
+                        onClick={() => select(isSelected && !narrow ? null : item)}
                         aria-current={isSelected ? 'true' : undefined}
                         className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : ''}`}
                       >
@@ -279,8 +718,13 @@ export default function ArtifactsIndex({
                             {' · '}
                             <LocalTime at={item.createdAt} format="date" />
                           </span>
+                          {item.summary ? (
+                            <span className="mt-0.5 line-clamp-1 text-xs text-gray-500">
+                              {item.summary}
+                            </span>
+                          ) : null}
                         </span>
-                        <span className="hidden min-w-0 max-w-[14rem] shrink-0 flex-wrap justify-end gap-1 sm:flex">
+                        <span className="hidden min-w-0 max-w-[14rem] shrink-0 flex-wrap justify-end gap-1 md:flex">
                           {item.projects.length === 0 ? (
                             item.chat ? (
                               <span
@@ -309,224 +753,69 @@ export default function ArtifactsIndex({
                             </span>
                           ) : null}
                         </span>
+                        <Icon
+                          path={ICONS.chevron}
+                          className="h-4 w-4 shrink-0 text-gray-400 md:hidden"
+                        />
                       </button>
                     </li>
                   );
                 })}
               </ul>
             )}
-            {uploads ? (
-              <div className="flex items-center justify-center gap-2 border-t border-dashed border-gray-300 px-3 py-2.5 text-xs text-gray-500 dark:border-gray-700">
-                <Icon path={ICONS.upload} className="h-3.5 w-3.5" />
-                Drop files anywhere on this page to add them · any type
-              </div>
-            ) : null}
+            <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-800">
+              {uploads ? (
+                <span className="hidden items-center gap-2 md:flex">
+                  <Icon path={ICONS.upload} className="h-3.5 w-3.5" />
+                  Drop files anywhere on this page to add them · any type
+                </span>
+              ) : null}
+              {page.total > 0 ? (
+                <nav aria-label="Pages" className="ml-auto flex items-center gap-2">
+                  <span>
+                    {first}–{last} of {page.total}
+                  </span>
+                  {page.pageCount > 1 ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => goTo(page.page - 1)}
+                        disabled={page.page <= 1 || isPending}
+                        aria-label="Previous page"
+                        className={pagerButton}
+                      >
+                        <Icon path={ICONS.chevronLeft} className="h-4 w-4" />
+                      </button>
+                      <span>
+                        Page {page.page} of {page.pageCount}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => goTo(page.page + 1)}
+                        disabled={page.page >= page.pageCount || isPending}
+                        aria-label="Next page"
+                        className={pagerButton}
+                      >
+                        <Icon path={ICONS.chevron} className="h-4 w-4" />
+                      </button>
+                    </>
+                  ) : null}
+                </nav>
+              ) : null}
+            </div>
           </section>
 
           {current ? (
             <aside
               aria-label="Selected artifact"
-              className="w-full min-w-[280px] flex-[1_1_300px] rounded-lg border border-gray-200 sm:max-w-[340px] dark:border-gray-800"
+              className="hidden w-[320px] shrink-0 overflow-y-auto rounded-lg border border-gray-200 md:block dark:border-gray-800"
             >
-              <div className="flex items-start gap-3 p-4">
-                <TypeBadge filename={current.filename} contentType={current.contentType} large />
-                <div className="min-w-0 flex-1">
-                  <DownloadLink
-                    href={chatClient.attachmentUrl(current.id)}
-                    filename={current.filename}
-                    className="block font-semibold break-words hover:underline"
-                  >
-                    {current.filename}
-                  </DownloadLink>
-                  <p className="text-xs text-gray-500">
-                    {sizeOf(current.sizeBytes)} ·{' '}
-                    {current.origin === 'model' ? 'generated' : 'uploaded'}{' '}
-                    <LocalTime at={current.createdAt} format="date" /> ·{' '}
-                    {current.via === 'owner'
-                      ? 'owned by you'
-                      : `${current.ownerName ?? 'someone'}’s`}
-                  </p>
-                  <p className="mt-1 text-xs">
-                    {statusLabel(current.extractStatus) ? (
-                      <span className="text-amber-700 dark:text-amber-400">
-                        {statusLabel(current.extractStatus)}
-                      </span>
-                    ) : (
-                      <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-800 dark:bg-green-900/40 dark:text-green-300">
-                        Ready to read
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelected(null)}
-                  aria-label="Close details"
-                  className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
-                >
-                  <Icon path={ICONS.close} className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
-                <h3 className="mb-2 text-xs font-semibold text-gray-500">Used in</h3>
-                {current.projects.length === 0 ? (
-                  <p className="text-xs text-gray-500">
-                    {current.chat
-                      ? 'In its chat only; it goes when the chat does unless a project takes it.'
-                      : 'Not attached to a project.'}
-                  </p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {current.projects.map((project) => (
-                      <li key={project.id} className="flex items-center gap-2 text-sm">
-                        <Icon
-                          path={project.kind === 'code' ? ICONS.code : ICONS.pages}
-                          className="h-3.5 w-3.5 shrink-0 text-gray-400"
-                        />
-                        <Link
-                          href={
-                            project.kind === 'code'
-                              ? `/code/${project.id}`
-                              : `/chat/projects/${project.id}`
-                          }
-                          className="min-w-0 flex-1 truncate hover:underline"
-                        >
-                          {project.name}
-                        </Link>
-                        <ModeToggle
-                          label={`How ${project.name} uses ${current.filename}`}
-                          value={project.mode}
-                          onChange={(mode) => void setMode(current, project.id, mode)}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => void detach(current, project.id)}
-                          aria-label={`Detach from ${project.name}`}
-                          className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-900"
-                        >
-                          <Icon path={ICONS.close} className="h-3.5 w-3.5" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {current.chat ? (
-                  <p className="mt-2 text-xs text-gray-500">
-                    From the chat{' '}
-                    <Link href={`/chat/${current.chat.id}`} className="hover:underline">
-                      {current.chat.title ?? 'Untitled'}
-                    </Link>
-                  </p>
-                ) : null}
-                {projects.length > 0 && (current.via === 'owner' || current.via === 'grant') ? (
-                  <button
-                    type="button"
-                    onClick={() => setDialog('attach')}
-                    className="mt-2 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                  >
-                    + Attach to a project…
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
-                <h3 className="mb-2 text-xs font-semibold text-gray-500">Access</h3>
-                <p className="text-xs text-gray-500">
-                  {current.via === 'owner'
-                    ? `You own it${current.sharedWith > 0 ? `; shared with ${current.sharedWith} ${current.sharedWith === 1 ? 'person' : 'people'}` : ''}. ${current.projects.length > 0 ? 'Everyone in the projects above reads it; their owners and editors may detach it.' : ''}`
-                    : current.via === 'grant'
-                      ? 'Shared with you: use it in your own projects, read it, copy it. Only its owner changes it.'
-                      : 'You read it through a project or chat it is used in.'}
-                </p>
-                {current.via === 'owner' ? (
-                  <button
-                    type="button"
-                    onClick={() => setDialog('share')}
-                    className="mt-2 inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-                  >
-                    <Icon path={ICONS.share} className="h-3.5 w-3.5" />
-                    Share…
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 px-4 py-3 dark:border-gray-900">
-                <DownloadLink
-                  href={chatClient.attachmentUrl(current.id)}
-                  filename={current.filename}
-                  className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-                >
-                  <Icon path={ICONS.download} className="h-3.5 w-3.5" />
-                  Download
-                </DownloadLink>
-                {current.via === 'owner' ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => replaceInput.current?.click()}
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-                    >
-                      Replace file…
-                    </button>
-                    <input
-                      ref={replaceInput}
-                      type="file"
-                      className="hidden"
-                      aria-label="Replace the file"
-                      onChange={(event) => {
-                        void replace(event.target.files?.[0] ?? null);
-                        event.target.value = '';
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setDialog('rename')}
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDialog('delete')}
-                      className="ml-auto text-xs text-red-600 hover:underline dark:text-red-400"
-                    >
-                      Delete
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setDialog('copy')}
-                      className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-                    >
-                      <Icon path={ICONS.copy} className="h-3.5 w-3.5" />
-                      Make a copy I own
-                    </button>
-                    {current.via === 'grant' ? (
-                      <button
-                        type="button"
-                        onClick={() => void leave(current)}
-                        className="ml-auto text-xs text-red-600 hover:underline dark:text-red-400"
-                        title={`Keeps ${current.ownerName ?? 'the owner'}’s file`}
-                      >
-                        Remove from my artifacts
-                      </button>
-                    ) : null}
-                  </>
-                )}
-              </div>
-              <p className="px-4 pb-3 text-xs text-gray-500">
-                {current.via === 'owner'
-                  ? 'Replacing keeps every attachment and re-reads the text. Deleting shows who loses it and offers to hand it over instead.'
-                  : 'A copy is a separate file you own; the owner is told. Removing it keeps their file and their shares.'}
-              </p>
+              {details}
             </aside>
           ) : null}
         </div>
         {error ? (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="shrink-0 text-sm text-red-600">
             {error}
           </p>
         ) : null}
@@ -540,53 +829,7 @@ export default function ArtifactsIndex({
         </div>
       ) : null}
 
-      {dialog === 'share' && current ? (
-        <ShareModal
-          kind="artifact"
-          resourceId={current.id}
-          title={`Share ${current.filename}`}
-          onClose={() => {
-            setDialog(null);
-            void reload();
-          }}
-        />
-      ) : null}
-      {dialog === 'delete' && current ? (
-        <DeleteArtifactModal
-          item={current}
-          onDone={() => {
-            setSelected(null);
-            void reload();
-          }}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
-      {dialog === 'copy' && current ? (
-        <CopyArtifactModal
-          item={current}
-          projects={projects}
-          onDone={(artifactId) => {
-            setSelected(artifactId);
-            void reload();
-          }}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
-      {dialog === 'rename' && current ? (
-        <RenameArtifactModal
-          item={current}
-          onDone={() => void reload()}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
-      {dialog === 'attach' && current ? (
-        <AttachArtifactsPicker
-          item={current}
-          projects={projects}
-          onDone={() => void reload()}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
+      {dialogs}
     </div>
   );
 }

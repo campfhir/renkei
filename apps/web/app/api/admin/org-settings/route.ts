@@ -121,6 +121,7 @@ const BOOLEAN_KEYS = [
   'knowledgeKeywordEnrichment',
   'coachMarksEnabled',
   'phiConnectorsRequireCoveredModel',
+  'artifactDigestEnabled',
   'sandboxBrowserEnabled',
   'sandboxChartsEnabled',
   'sandboxWorkspacesEnabled',
@@ -173,6 +174,7 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
     coachMarksEnabled: settings.coachMarksEnabled,
     phiConnectorsRequireCoveredModel: settings.phiConnectorsRequireCoveredModel,
+    artifactDigestEnabled: settings.artifactDigestEnabled,
     chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
     sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
     sandboxBrowserEnabled: settings.sandboxBrowserEnabled,
@@ -189,9 +191,7 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
   };
 }
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -203,9 +203,7 @@ export async function GET(
   return NextResponse.json({ settings: editable(settings.val) });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
