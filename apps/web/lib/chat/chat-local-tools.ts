@@ -29,7 +29,7 @@ import { memoryTools } from './memory-tools';
 import { mockupTools } from './mockup-tools';
 import { userMemoryTools } from './user-memory-tools';
 import { recallTools } from './recall-tools';
-import { artifactTools } from './artifact-tools';
+import { artifactDescribeTool, artifactTools } from './artifact-tools';
 import { sandboxFileTools } from './sandbox-file-tools';
 import { getImagePrefs } from '@renkei/user-prefs';
 import { imageGenerationTool } from './image-tools';
@@ -78,6 +78,10 @@ export async function chatLocalTools(
     // (artifact-tools.ts) — the same acts the Artifacts pages offer.
     tools.push(...artifactTools({ inProject: context.projectId !== null }));
   }
+  // A summary and keywords for a file of this chat that got none as it
+  // was written: offered wherever a file can be here, now or by the end
+  // of the turn.
+  if (hasFiles || filesAllowed) tools.push(artifactDescribeTool());
   if (filesAllowed) {
     // The two doors between the chat's files and the sandbox
     // (sandbox-file-tools.ts): offered whenever the chat has the sandbox

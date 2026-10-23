@@ -85,6 +85,30 @@ describe('chat_write_file', () => {
     });
   });
 
+  it('carries the summary and keywords the model gave beside the file, and nothing when it gave none', async () => {
+    const described = await tools.run(
+      'chat_write_file',
+      {
+        filename: 'notes.md',
+        content: '# Notes',
+        summary: 'Meeting notes from the  rollout review.',
+        keywords: ['rollout', 'review', 'rollout'],
+      },
+      context
+    );
+    expect(documentsOf(described.meta)[0]).toMatchObject({
+      title: 'notes.md',
+      summary: 'Meeting notes from the rollout review.',
+      keywords: ['rollout', 'review'],
+    });
+    const bare = await tools.run(
+      'chat_write_file',
+      { filename: 'notes.md', content: '#' },
+      context
+    );
+    expect(documentsOf(bare.meta)[0]).not.toHaveProperty('summary');
+  });
+
   it('keeps non-ASCII content byte for byte', async () => {
     const content = '# Résumé\n\n連携 — linkage\n';
     const result = await tools.run('chat_write_file', { filename: 'notes.md', content }, context);

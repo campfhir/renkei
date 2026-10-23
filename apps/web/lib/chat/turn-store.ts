@@ -11,7 +11,7 @@ import { recordLlmCall, type LlmCallModel } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
 import { after } from 'next/server';
 import { createAttachment, toAttachmentView } from './attachments';
-import { deferDigest } from './artifact-digest';
+import { deferDigest, storeDigest } from './artifact-digest';
 import { insertMessage, updateMessageContent } from './messages';
 import {
   clearToolPermission,
@@ -143,10 +143,12 @@ export function createTurnStore(
         });
         if (created.ok) {
           kept.push(toAttachmentView(created.val));
-          // Its summary and keywords for the library's search, once the
-          // turn's response is out of the way (or, on a turn served by no
-          // request, beside it).
-          deferDigest(db, scope.subject, [created.val], after);
+          // Its summary and keywords for the library's search: the ones
+          // the model gave as it wrote the file, stored as they are; else
+          // asked of the organization's model once the turn's response is
+          // out of the way (or, on a turn served by no request, beside it).
+          if (file.digest) await storeDigest(db, created.val.id, file.digest);
+          else deferDigest(db, scope.subject, [created.val], after);
         } else if (created.err.type !== 'UNCONFIGURED') {
           logger.warn('chat artifact not stored: {reason} {message}', {
             reason: created.err.type,

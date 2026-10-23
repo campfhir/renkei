@@ -114,10 +114,16 @@ it and leaves it for the next.
 
 A file's text stays sealed, so the library cannot search it. What it
 searches instead is the file's **digest**: a short summary and a list of
-keywords the organization's default model writes for a file when its
-text lands (`artifact-digest.ts`) — at upload, when a tool hands a file
-back, when OCR finishes, when the bytes are replaced; a copy carries the
-original's across. The digest is stored in the clear on the row
+keywords. A file a chat's model writes gets them from that model as it
+hands the file over — it holds the file and the conversation around it,
+so its digest is the richer one and costs no extra call: the `summary`
+and `keywords` of `chat_write_file`, `chat_write_chart` and
+`chat_attach_from_sandbox`, which the system prompt asks for, and
+`artifact_describe` for a file another tool handed back (a screenshot, a
+download). Every other file — an upload, a scan after OCR, replaced
+bytes, a file the chat's model left undescribed — gets its digest from
+the organization's default model when its text lands
+(`artifact-digest.ts`); a copy carries the original's across. The digest is stored in the clear on the row
 (`summary`, `keywords`, `digest_status`) beside the sealed text, with the
 keywords and summary as full-text terms in an indexed `search_vector`,
 so a search is one indexed predicate (`websearch_to_tsquery`) plus a

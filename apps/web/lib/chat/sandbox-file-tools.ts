@@ -38,6 +38,7 @@ import {
 import type { ContentCipher } from './content-crypto';
 import { checkFilename, KEPT_LINE } from './file-tools';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
+import { DIGEST_INPUT_PROPERTIES, digestFieldsOf } from './artifact-digest-input';
 import { ARTIFACT_MAX_BYTES } from './turn-store';
 
 export const ATTACH_TO_SANDBOX_TOOL = 'chat_attach_to_sandbox';
@@ -196,6 +197,7 @@ export function sandboxFileTools(): LocalTool[] {
               description:
                 'Keep it under this name instead of the staged one (a name, not a path).',
             },
+            ...DIGEST_INPUT_PROPERTIES,
           },
           required: ['fileId'],
         },
@@ -243,6 +245,7 @@ export function sandboxFileTools(): LocalTool[] {
                 mediaType,
                 dataBase64: Buffer.from(bytes).toString('base64'),
                 title: name.filename,
+                ...digestFieldsOf(input),
               },
             ],
             // The model made it (or asked for it); it does not need to read it back.

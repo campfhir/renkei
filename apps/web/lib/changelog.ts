@@ -52,7 +52,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'Artifacts: search by what a file is about',
         detail:
-          "With the new Summarize artifacts with the default model switch on (admin → Settings → Knowledge search, off by default), each file that lands in Artifacts gets a short summary and keywords from the organization's default model, shown on the file and searched by the Artifacts search alongside file names. The file's text itself stays sealed; only the summary and keywords are stored in the clear.",
+          "With the new Summarize artifacts with the default model switch on (admin → Settings → Knowledge search, off by default), each file that lands in Artifacts gets a short summary and keywords from the organization's default model, shown on the file and searched by the Artifacts search alongside file names. A file a chat writes is described by that chat's own model as it writes it, switch or not. The file's text itself stays sealed; only the summary and keywords are stored in the clear.",
       },
       {
         kind: 'changed',

@@ -11,14 +11,22 @@ jest.mock('./attachments', () => ({
   listAttachments: jest.fn(),
   listProjectArtifacts: jest.fn(),
   getAttachmentText: jest.fn(),
+  findChatAttachment: jest.fn(),
 }));
 jest.mock('./artifact-access', () => ({ resolveArtifactAccess: jest.fn() }));
 jest.mock('./artifact-library', () => ({ attachToProject: jest.fn(), shareArtifact: jest.fn() }));
+jest.mock('./artifact-digest', () => ({ storeDigest: jest.fn() }));
 
-import { getAttachmentText, listAttachments, listProjectArtifacts } from './attachments';
+import {
+  findChatAttachment,
+  getAttachmentText,
+  listAttachments,
+  listProjectArtifacts,
+} from './attachments';
 import { resolveArtifactAccess } from './artifact-access';
 import { attachToProject } from './artifact-library';
-import { artifactTools, scoreText, termsOf } from './artifact-tools';
+import { storeDigest } from './artifact-digest';
+import { artifactDescribeTool, artifactTools, scoreText, termsOf } from './artifact-tools';
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
 import { resourceCipher } from './content-crypto';
 
@@ -27,6 +35,8 @@ const listProjectMock = jest.mocked(listProjectArtifacts);
 const textMock = jest.mocked(getAttachmentText);
 const accessMock = jest.mocked(resolveArtifactAccess);
 const attachMock = jest.mocked(attachToProject);
+const findMock = jest.mocked(findChatAttachment);
+const storeDigestMock = jest.mocked(storeDigest);
 
 const cipher = resourceCipher({
   id: '00000000-0000-4000-8000-00000000c1fe',
@@ -176,5 +186,62 @@ describe('artifact_attach', () => {
     );
     expect(over.isError).toBe(true);
     expect(over.content.map((c) => ('text' in c ? c.text : '')).join('')).toContain('budget');
+  });
+});
+
+describe('artifact_describe', () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  it('stores the digest, as given, for a file of this chat named by its file name', async () => {
+    findMock.mockResolvedValue(row('a7', 'plan.pptx') as never);
+    const tools = createLocalToolSet([artifactDescribeTool()]);
+    const result = await tools.run(
+      'artifact_describe',
+      {
+        filename: 'plan.pptx',
+        summary: '  The Q3 rollout plan,  by region. ',
+        keywords: ['rollout', 'Q3', 'rollout', ''],
+      },
+      context()
+    );
+    expect(result.isError).toBeFalsy();
+    expect(findMock).toHaveBeenCalledWith(null, {
+      chatId: 'chat-1',
+      ownerSubject: 'auth0|alice',
+      id: null,
+      filename: 'plan.pptx',
+    });
+    expect(storeDigestMock).toHaveBeenCalledWith(null, 'a7', {
+      summary: 'The Q3 rollout plan, by region.',
+      keywords: ['rollout', 'Q3'],
+    });
+    expect(result.meta).toEqual({ attachmentId: 'a7' });
+  });
+
+  it('needs a summary, a file it can find, and a chat that is not read-only', async () => {
+    const tools = createLocalToolSet([artifactDescribeTool()]);
+    const empty = await tools.run(
+      'artifact_describe',
+      { filename: 'plan.pptx', summary: '', keywords: [] },
+      context()
+    );
+    expect(empty.isError).toBe(true);
+    expect(findMock).not.toHaveBeenCalled();
+    findMock.mockResolvedValue(null);
+    const missing = await tools.run(
+      'artifact_describe',
+      { attachmentId: 'nope', summary: 'A plan.', keywords: [] },
+      context()
+    );
+    expect(missing.isError).toBe(true);
+    expect(storeDigestMock).not.toHaveBeenCalled();
+    const frozen = await tools.run(
+      'artifact_describe',
+      { filename: 'plan.pptx', summary: 'A plan.', keywords: [] },
+      context({ readOnly: true })
+    );
+    expect(frozen.isError).toBe(true);
   });
 });

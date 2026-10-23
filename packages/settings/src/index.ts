@@ -221,7 +221,9 @@ export interface OrgSettings {
    * clear beside the sealed text so the Artifacts search can find a file
    * by what it is about (apps/web/lib/chat/artifact-digest.ts). Off by
    * default: the search then matches file names only, and no file text
-   * leaves for a model on its own. One model call per file.
+   * leaves for a model on its own. One model call per file. A file a
+   * chat's model writes gets its digest from that model as it writes it,
+   * switch or not.
    */
   artifactDigestEnabled: boolean;
   /**

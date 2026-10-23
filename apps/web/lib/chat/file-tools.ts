@@ -39,6 +39,7 @@ import {
   XLSX_FORMULA_GUIDE,
 } from '@renkei/document-render';
 import { errorResult, textResult, type LocalTool } from './local-tools';
+import { DIGEST_INPUT_PROPERTIES, digestFieldsOf } from './artifact-digest-input';
 
 /** More than any model writes in one call; the artifact store's own cap is far above it. */
 export const WRITE_FILE_MAX_CHARS = RENDER_INPUT_MAX_CHARS;
@@ -126,6 +127,7 @@ export function fileTools(options: { python?: boolean } = {}): LocalTool[] {
               description:
                 'For text formats only: the media type, when the extension does not say (default: implied by the extension, else text/plain).',
             },
+            ...DIGEST_INPUT_PROPERTIES,
           },
           required: ['filename', 'content'],
         },
@@ -153,6 +155,7 @@ export function fileTools(options: { python?: boolean } = {}): LocalTool[] {
                   mediaType: rendered.mediaType,
                   dataBase64: rendered.bytes.toString('base64'),
                   title: name.filename,
+                  ...digestFieldsOf(input),
                 },
               ],
               // The model wrote this; it does not need to read it back.
@@ -171,6 +174,7 @@ export function fileTools(options: { python?: boolean } = {}): LocalTool[] {
                 mediaType: type.mediaType,
                 dataBase64: bytes.toString('base64'),
                 title: name.filename,
+                ...digestFieldsOf(input),
               },
             ],
             renkeiDocumentsShown: false,

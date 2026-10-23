@@ -496,6 +496,31 @@ export async function getAttachmentText(
   return raw?.extracted_text ? openText(raw.extracted_text, cipher) : null;
 }
 
+/**
+ * One of a chat's own files, by id or — the way a model knows a file it
+ * wrote — by name, the newest of that name. Only the caller's own files
+ * in the chat; null for anything else.
+ */
+export async function findChatAttachment(
+  db: Kysely<DB>,
+  input: { chatId: string; ownerSubject: string; id: string | null; filename: string | null }
+): Promise<AttachmentRow | null> {
+  if (!isUuid(input.chatId)) return null;
+  if (!input.id && !input.filename) return null;
+  let query = db
+    .selectFrom('artifacts')
+    .select(COLUMNS)
+    .where('chat_id', '=', input.chatId)
+    .where('owner_subject', '=', input.ownerSubject);
+  query = input.id
+    ? isUuid(input.id)
+      ? query.where('id', '=', input.id)
+      : query.where('id', 'is', null)
+    : query.where('filename', '=', cleanFilename(input.filename ?? ''));
+  const row = await query.orderBy('created_at', 'desc').limit(1).executeTakeFirst();
+  return row ? rowOf(row) : null;
+}
+
 /** The files uploaded to or produced in one chat, oldest first. */
 export async function listAttachments(
   db: Kysely<DB>,

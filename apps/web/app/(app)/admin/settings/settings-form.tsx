@@ -430,7 +430,7 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
         </Row>
         <Row
           label="Summarize artifacts with the default model"
-          hint="One call to the organization's default LLM model per file that lands in Artifacts (an upload, a file a chat wrote, a scan after OCR), asking for a summary and keywords. They are stored in the clear beside the file's sealed text, shown on the file, and searched by the Artifacts page, so a file is found by what it is about. Off by default: the Artifacts search then matches file names only, and no file text goes to a model on its own. Needs a default model under LLM models."
+          hint="One call to the organization's default LLM model per file that lands in Artifacts (an upload, a file a chat wrote, a scan after OCR), asking for a summary and keywords. They are stored in the clear beside the file's sealed text, shown on the file, and searched by the Artifacts page, so a file is found by what it is about. Off by default: the Artifacts search then matches file names only, and no file text goes to a model on its own. A file a chat writes is described by that chat's own model as it writes it, switch or not. Needs a default model under LLM models."
         >
           <Toggle
             on={values.artifactDigestEnabled}

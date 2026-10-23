@@ -25,8 +25,11 @@ import {
   listAttachments,
   listProjectArtifacts,
   type AttachmentRow,
+  findChatAttachment,
 } from './attachments';
 import { resolveArtifactAccess } from './artifact-access';
+import { storeDigest } from './artifact-digest';
+import { DIGEST_INPUT_PROPERTIES, parseDigest } from './artifact-digest-input';
 import { attachToProject, shareArtifact } from './artifact-library';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 
@@ -325,6 +328,50 @@ export function artifactShareTool(): LocalTool {
       return textResult(
         `Shared with ${person.display_name ?? email}; they can use it in their own projects.`
       );
+    },
+  };
+}
+
+/**
+ * artifact_describe — the model's summary and keywords for a file of this
+ * chat it did not hand over itself (a screenshot, a download, a file
+ * another tool brought back), or one it wrote before descriptions were
+ * taken beside the file. Stored as given for the Artifacts search
+ * (artifact-digest.ts), with no model call: this model holds the file
+ * and the conversation around it, which is the better digest.
+ */
+export function artifactDescribeTool(): LocalTool {
+  return {
+    def: {
+      name: 'artifact_describe',
+      description:
+        'Give a file of this chat its summary and keywords for the Artifacts search, once, when it did not get them as it was written — a file another tool handed back (a screenshot, a download, a mail attachment), or one you wrote without them. Name it by its file name, or by id from the files list.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filename: { type: 'string', description: 'The file, by the name it was kept under.' },
+          attachmentId: { type: 'string', description: 'Or the file, by id.' },
+          ...DIGEST_INPUT_PROPERTIES,
+        },
+        required: ['summary', 'keywords'],
+      },
+    },
+    readOnly: false,
+    async execute(input, context) {
+      if (context.readOnly) return errorResult('Read-only mode: nothing can be changed.');
+      const digest = parseDigest(input);
+      if (!digest) return errorResult('Say what the file is about: `summary` is empty.');
+      const row = await findChatAttachment(context.db, {
+        chatId: context.chatId,
+        ownerSubject: context.subject,
+        id: typeof input.attachmentId === 'string' ? input.attachmentId.trim() : null,
+        filename: typeof input.filename === 'string' ? input.filename.trim() : null,
+      });
+      if (!row) return errorResult('No such file in this chat; name one by its file name or id.');
+      await storeDigest(context.db, row.id, digest);
+      return textResult(`Described ${row.filename} for the Artifacts search.`, {
+        attachmentId: row.id,
+      });
     },
   };
 }
