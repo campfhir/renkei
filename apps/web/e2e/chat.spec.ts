@@ -610,7 +610,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
           .first()
           .evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
       expect(await fontSize('textarea[aria-label="Message"]')).toBeGreaterThanOrEqual(16);
-      await page.getByRole('button', { name: 'Open menu' }).click();
+      await page.getByRole('button', { name: 'Search', exact: true }).click();
       expect(await fontSize('input[aria-label="Search Renkei"]')).toBeGreaterThanOrEqual(16);
       await page.keyboard.press('Escape');
     }

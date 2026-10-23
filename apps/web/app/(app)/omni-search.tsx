@@ -47,9 +47,14 @@ export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSid
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  // On a phone the field is folded into a magnifier button until asked for.
+  const [expanded, setExpanded] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   useDismiss(open, ref, () => setOpen(false));
+  useEffect(() => {
+    if (expanded) inputRef.current?.focus();
+  }, [expanded]);
 
   // The whole history, once a person first reaches for the search; until
   // it arrives the menu's recent window stands in.
@@ -92,6 +97,7 @@ export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSid
   useEffect(() => {
     setQuery('');
     setOpen(false);
+    setExpanded(false);
   }, [pathname]);
 
   // Ctrl/⌘K from anywhere in the app.
@@ -120,116 +126,146 @@ export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSid
   const showing = open && needle.length > 0;
   const current = Math.min(active, Math.max(flat.length - 1, 0));
 
-  const choose = (href: string) => {
+  const closeSearch = () => {
     setQuery('');
     setOpen(false);
+    setExpanded(false);
     inputRef.current?.blur();
+  };
+
+  const choose = (href: string) => {
+    closeSearch();
     router.push(href);
   };
 
   let index = -1;
   return (
-    <div ref={ref} className="relative mx-auto min-w-0 max-w-xl flex-1">
-      <div className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-2.5 focus-within:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:focus-within:border-blue-700">
-        <Icon path={ICONS.search} className="h-4 w-4 shrink-0 text-gray-400" />
-        <input
-          ref={inputRef}
-          type="search"
-          role="searchbox"
-          aria-label="Search Renkei"
-          aria-expanded={showing}
-          aria-controls="omni-search-results"
-          value={query}
-          onFocus={() => {
-            setOpen(true);
-            loadAll();
-          }}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setOpen(true);
-            setActive(0);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowDown') {
-              event.preventDefault();
-              setActive((value) => (flat.length ? (value + 1) % flat.length : 0));
-            } else if (event.key === 'ArrowUp') {
-              event.preventDefault();
-              setActive((value) => (flat.length ? (value - 1 + flat.length) % flat.length : 0));
-            } else if (event.key === 'Enter' && flat[current]) {
-              event.preventDefault();
-              choose(flat[current].href);
-            } else if (event.key === 'Escape') {
-              if (query) setQuery('');
-              else inputRef.current?.blur();
-              setOpen(false);
-            }
-          }}
-          placeholder="Search chats, projects, settings…"
-          autoComplete="off"
-          className="min-w-0 flex-1 bg-transparent py-1.5 text-base outline-none sm:text-sm"
-        />
-        <kbd
-          aria-hidden="true"
-          className="hidden shrink-0 rounded border border-gray-300 px-1 text-[11px] text-gray-500 sm:block dark:border-gray-700"
-        >
-          Ctrl K
-        </kbd>
-      </div>
-
-      {showing ? (
-        <div
-          id="omni-search-results"
-          role="listbox"
-          aria-label="Results"
-          className="absolute inset-x-0 top-full z-50 mt-1 max-h-[70vh] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-800 dark:bg-gray-950"
-        >
-          {flat.length === 0 ? (
-            <p className="px-2 py-3 text-sm text-gray-500">
-              {saidPending ? 'Searching…' : `Nothing matches “${query.trim()}”.`}
-            </p>
-          ) : null}
-          {sections.map((section) => (
-            <div key={section.title} className="py-1">
-              <p className="px-2 pt-1 pb-1 text-[11px] font-semibold tracking-wide text-gray-500 uppercase">
-                {section.title}
-              </p>
-              {section.results.map((result) => {
-                index += 1;
-                const position = index;
-                const selected = position === current;
-                return (
-                  <Link
-                    key={`${section.title}-${result.href}`}
-                    href={result.href}
-                    role="option"
-                    aria-selected={selected}
-                    onMouseEnter={() => setActive(position)}
-                    onClick={() => {
-                      setQuery('');
-                      setOpen(false);
-                    }}
-                    className={`flex min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-sm ${
-                      selected ? 'bg-gray-100 dark:bg-gray-900' : ''
-                    }`}
-                  >
-                    <Icon path={result.icon} className="h-4 w-4 shrink-0 text-gray-500" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate">{result.label}</span>
-                      {result.detail ? (
-                        <span className="block truncate text-xs text-gray-500">
-                          {result.detail}
-                        </span>
-                      ) : null}
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
+    <>
+      <button
+        type="button"
+        aria-label="Search"
+        onClick={() => {
+          setExpanded(true);
+          setOpen(true);
+          loadAll();
+        }}
+        className={`ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 sm:hidden dark:text-gray-300 dark:hover:bg-gray-900 ${expanded ? 'hidden' : ''}`}
+      >
+        <Icon path={ICONS.search} className="h-5 w-5" />
+      </button>
+      <div
+        ref={ref}
+        className={`relative mx-auto min-w-0 max-w-xl flex-1 ${expanded ? '' : 'hidden sm:block'}`}
+      >
+        <div className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-2.5 focus-within:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:focus-within:border-blue-700">
+          <Icon path={ICONS.search} className="h-4 w-4 shrink-0 text-gray-400" />
+          <input
+            ref={inputRef}
+            type="search"
+            role="searchbox"
+            aria-label="Search Renkei"
+            aria-expanded={showing}
+            aria-controls="omni-search-results"
+            value={query}
+            onFocus={() => {
+              setOpen(true);
+              loadAll();
+            }}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setOpen(true);
+              setActive(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                setActive((value) => (flat.length ? (value + 1) % flat.length : 0));
+              } else if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                setActive((value) => (flat.length ? (value - 1 + flat.length) % flat.length : 0));
+              } else if (event.key === 'Enter' && flat[current]) {
+                event.preventDefault();
+                choose(flat[current].href);
+              } else if (event.key === 'Escape') {
+                if (query) setQuery('');
+                else closeSearch();
+                setOpen(false);
+              }
+            }}
+            placeholder="Search chats, projects, settings…"
+            autoComplete="off"
+            className="min-w-0 flex-1 bg-transparent py-1.5 text-base outline-none sm:text-sm [&::-webkit-search-cancel-button]:appearance-none"
+          />
+          <kbd
+            aria-hidden="true"
+            className="hidden shrink-0 rounded border border-gray-300 px-1 text-[11px] text-gray-500 sm:block dark:border-gray-700"
+          >
+            Ctrl K
+          </kbd>
+          <button
+            type="button"
+            aria-label="Close search"
+            onClick={closeSearch}
+            className="shrink-0 rounded-md p-1 text-gray-500 hover:bg-gray-100 sm:hidden dark:hover:bg-gray-800"
+          >
+            <Icon path={ICONS.close} className="h-4 w-4" strokeWidth={2.4} />
+          </button>
         </div>
-      ) : null}
-    </div>
+
+        {showing ? (
+          <div
+            id="omni-search-results"
+            role="listbox"
+            aria-label="Results"
+            className="absolute inset-x-0 top-full z-50 mt-1 max-h-[70vh] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-800 dark:bg-gray-950"
+          >
+            {flat.length === 0 ? (
+              <p className="px-2 py-3 text-sm text-gray-500">
+                {saidPending ? 'Searching…' : `Nothing matches “${query.trim()}”.`}
+              </p>
+            ) : null}
+            {sections.map((section) => (
+              <div key={section.title} className="py-1">
+                <p className="px-2 pt-1 pb-1 text-[11px] font-semibold tracking-wide text-gray-500 uppercase">
+                  {section.title}
+                </p>
+                {section.results.map((result) => {
+                  index += 1;
+                  const position = index;
+                  const selected = position === current;
+                  return (
+                    <Link
+                      key={`${section.title}-${result.href}`}
+                      href={result.href}
+                      role="option"
+                      aria-selected={selected}
+                      onMouseEnter={() => setActive(position)}
+                      onClick={() => {
+                        setQuery('');
+                        setOpen(false);
+                      }}
+                      className={`flex min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-sm ${
+                        selected ? 'bg-gray-100 dark:bg-gray-900' : ''
+                      }`}
+                    >
+                      <Icon path={result.icon} className="h-4 w-4 shrink-0 text-gray-500" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{result.label}</span>
+                        {result.detail ? (
+                          <span className="block truncate text-xs text-gray-500">
+                            {result.detail}
+                          </span>
+                        ) : null}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </>
   );
 }
 

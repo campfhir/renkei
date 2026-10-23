@@ -376,7 +376,8 @@ export default function AppNav({
           <span className="h-0.5 w-5 rounded bg-gray-700 dark:bg-gray-300" />
         </button>
 
-        <Link href={`/`} className="flex items-center gap-2 font-semibold tracking-tight">
+        {/* The mark and name make room for the search on a phone. */}
+        <Link href={`/`} className="hidden items-center gap-2 font-semibold tracking-tight sm:flex">
           <RenkeiMark className="h-6 w-6 shrink-0" />
           Renkei
         </Link>

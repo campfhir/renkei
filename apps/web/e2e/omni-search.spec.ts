@@ -60,15 +60,24 @@ test('top bar search: Ctrl+K focuses it, a setting is found and opened', async (
   });
 });
 
-test('top bar search fits a phone-width header', async ({ page }, testInfo) => {
+test('on a phone the top bar folds search into a magnifier that opens a full field', async ({
+  page,
+}, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'One viewport resize is enough here.');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/agents`);
   const search = page.getByRole('searchbox', { name: 'Search Renkei' });
-  await expect(search).toBeVisible();
-  // The box keeps the header's width; nothing spills sideways.
+  const results = page.getByRole('listbox', { name: 'Results' });
+
+  // The logo and name are gone; the field is folded into the magnifier.
+  await expect(page.getByRole('link', { name: 'Renkei' })).toBeHidden();
+  await expect(search).toBeHidden();
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(search).toBeFocused();
+
+  // Open, the field takes the space the logo and magnifier left.
   const box = await search.boundingBox();
-  expect(box && box.width).toBeGreaterThan(120);
+  expect(box?.width ?? 0, `field width ${box?.width}`).toBeGreaterThan(180);
   const fits = await page.evaluate(
     () => document.documentElement.scrollWidth <= window.innerWidth + 1
   );
@@ -76,4 +85,11 @@ test('top bar search fits a phone-width header', async ({ page }, testInfo) => {
   // Phone: the font is 16px so focusing it does not zoom the page.
   const fontSize = await search.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
   expect(fontSize).toBeGreaterThanOrEqual(16);
+
+  await search.fill('prefer');
+  await expect(results.getByRole('option', { name: 'Preferences' })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/preferences$/);
+  // Back on the new page the field folds away again.
+  await expect(search).toBeHidden();
 });
