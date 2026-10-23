@@ -13,6 +13,7 @@ import { useCoachMarks } from '@/components/coach-marks/context';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import { ChatList } from './chat/_components/chat-nav';
 import { OmniSearch, type OmniPage } from './omni-search';
+import { scrollToHash } from '@/lib/hash-scroll';
 
 interface NavProps {
   /** Display name from the identity spine, falling back to email/subject. */
@@ -113,6 +114,8 @@ export default function AppNav({
 
   // The avatar menu closes on navigation, Escape, and any click outside it.
   useEffect(() => setMenuOpen(false), [pathname]);
+  // A deep link into a page (a setting, a connector) lands on its element.
+  useEffect(() => scrollToHash(), [pathname]);
   useEffect(() => {
     if (!menuOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -382,7 +385,7 @@ export default function AppNav({
           Renkei
         </Link>
 
-        <OmniSearch pages={pages} chats={chats} />
+        <OmniSearch pages={pages} chats={chats} isOperator={isOperator} />
 
         <div className="flex items-center gap-2">
           <div ref={menuRef} className="relative">

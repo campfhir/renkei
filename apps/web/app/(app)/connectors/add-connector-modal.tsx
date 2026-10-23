@@ -33,12 +33,15 @@ export interface CatalogItem {
 export default function AddConnectorModal({
   items,
   onClose,
+  initialQuery = '',
 }: {
   items: CatalogItem[];
   onClose: () => void;
+  /** Searched for on open: a top-bar result for a connector not on the page. */
+  initialQuery?: string;
 }) {
   const router = useRouter();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [added, setAdded] = useState<Set<string>>(
     () => new Set(items.filter((item) => item.added).map((item) => item.entry.capabilityKey))
   );

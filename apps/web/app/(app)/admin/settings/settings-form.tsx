@@ -1,5 +1,6 @@
 'use client';
 
+import { anchorId } from '@/lib/hash-scroll';
 import { useState } from 'react';
 import { sendJsonFull } from '@/lib/fetch-json';
 import CoachTarget, { useCoachAnchor } from '@/components/coach-marks/anchor';
@@ -86,7 +87,12 @@ function Section({
     'rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950';
   const body = (
     <>
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">{title}</h2>
+      <h2
+        id={anchorId('settings', title)}
+        className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500"
+      >
+        {title}
+      </h2>
       <div className="space-y-4">{children}</div>
     </>
   );

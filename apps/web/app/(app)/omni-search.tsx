@@ -10,14 +10,16 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 import { chatClient } from '@/lib/chat/client';
+import type { LibraryItem } from '@/lib/chat/artifact-library';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import { CHAT_SEARCH_MIN_CHARS, normalizeQuery } from '@/lib/chat/search-text';
 import type { ChatListItem } from '@/lib/chat/views';
+import { matchPlaces, type AppPlace } from '@/lib/app-index';
+import { scrollToHash } from '@/lib/hash-scroll';
 
 /** A place in the app's menu, from the menu's own list so the two agree. */
 export interface OmniPage {
@@ -39,9 +41,17 @@ interface Section {
   results: Result[];
 }
 
-const LIMITS = { pages: 6, projects: 5, chats: 8 };
+const LIMITS = { pages: 6, places: 6, projects: 5, artifacts: 5, chats: 8 };
 
-export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSidebarData | null }) {
+export function OmniSearch({
+  pages,
+  chats,
+  isOperator,
+}: {
+  pages: OmniPage[];
+  chats: ChatSidebarData | null;
+  isOperator: boolean;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [query, setQuery] = useState('');
@@ -91,6 +101,20 @@ export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSid
     return () => clearTimeout(handle);
   }, [text, searchable]);
   const hits = said.query === text ? said.hits : new Map<string, string>();
+  // Artifacts by what they hold, through the library's own search.
+  const [found, setFound] = useState<{ query: string; items: LibraryItem[] }>({
+    query: '',
+    items: [],
+  });
+  useEffect(() => {
+    if (!searchable) return;
+    const handle = setTimeout(async () => {
+      const result = await chatClient.findArtifacts(text);
+      setFound({ query: text, items: result.data?.artifacts ?? [] });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [text, searchable]);
+  const artifacts = found.query === text ? found.items : [];
   const saidPending = searchable && said.query !== text;
 
   // Clicking through a result leaves the page the box was used on.
@@ -116,6 +140,10 @@ export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSid
 
   const sections = buildSections({
     needle,
+    query: text,
+    searchable,
+    isOperator,
+    artifacts,
     pages,
     // Chat projects and code projects come in separate lists from the sidebar.
     projects: [...(chats?.projects ?? []), ...(chats?.code.projects ?? [])],
@@ -136,6 +164,8 @@ export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSid
   const choose = (href: string) => {
     closeSearch();
     router.push(href);
+    // A link to the same page only changes its address, so the scroll is ours.
+    window.setTimeout(scrollToHash, 60);
   };
 
   let index = -1;
@@ -234,17 +264,14 @@ export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSid
                   const position = index;
                   const selected = position === current;
                   return (
-                    <Link
+                    <button
                       key={`${section.title}-${result.href}`}
-                      href={result.href}
+                      type="button"
                       role="option"
                       aria-selected={selected}
                       onMouseEnter={() => setActive(position)}
-                      onClick={() => {
-                        setQuery('');
-                        setOpen(false);
-                      }}
-                      className={`flex min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-sm ${
+                      onClick={() => choose(result.href)}
+                      className={`flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm ${
                         selected ? 'bg-gray-100 dark:bg-gray-900' : ''
                       }`}
                     >
@@ -257,7 +284,7 @@ export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSid
                           </span>
                         ) : null}
                       </span>
-                    </Link>
+                    </button>
                   );
                 })}
               </div>
@@ -269,14 +296,29 @@ export function OmniSearch({ pages, chats }: { pages: OmniPage[]; chats: ChatSid
   );
 }
 
+/** The same address with the search's words added, so the page can use them. */
+function withFind(href: string, query: string): string {
+  const [path, hash] = href.split('#');
+  const search = new URLSearchParams({ find: query }).toString();
+  return `${path}?${search}${hash ? `#${hash}` : ''}`;
+}
+
 function buildSections({
   needle,
+  query,
+  searchable,
+  isOperator,
+  artifacts,
   pages,
   projects,
   chats,
   hits,
 }: {
   needle: string;
+  query: string;
+  searchable: boolean;
+  isOperator: boolean;
+  artifacts: LibraryItem[];
   pages: OmniPage[];
   projects: ChatSidebarData['projects'];
   chats: ChatListItem[];
@@ -316,9 +358,48 @@ function buildSections({
     .filter((chat) => hits.has(chat.id) && !byTitle.some((r) => r.href === `/chat/${chat.id}`))
     .map((chat) => chatResult(chat, hits.get(chat.id)));
 
+  // Settings, connectors and organization settings, each down to the
+  // element that holds them; the organization's only for operators.
+  const placeResults = (section: AppPlace['section']) =>
+    matchPlaces(needle, isOperator)
+      .filter((place) => place.section === section)
+      .slice(0, LIMITS.places)
+      .map((place): Result => ({
+        // A connector not on the page is searched for in the catalog.
+        href: section === 'Connectors' ? withFind(place.href, query) : place.href,
+        label: place.title,
+        detail: place.where,
+        icon: place.icon,
+      }));
+
+  // The library's own search first, so a person can see all of it; then the
+  // artifacts it found, each opened where it is.
+  const artifactResults: Result[] = [
+    ...(searchable
+      ? [
+          {
+            href: `/chat/artifacts?q=${encodeURIComponent(query)}`,
+            label: `Search artifacts for “${query}”`,
+            detail: 'Names and contents',
+            icon: ICONS.search,
+          },
+        ]
+      : []),
+    ...artifacts.slice(0, LIMITS.artifacts).map((item): Result => ({
+      href: `/chat/artifacts?artifact=${item.id}`,
+      label: item.filename,
+      detail: item.chat?.title ?? 'Artifact',
+      icon: ICONS.layers,
+    })),
+  ];
+
   const sections: Section[] = [
-    { title: 'Pages and settings', results: pageResults },
+    { title: 'Settings', results: placeResults('Settings') },
+    { title: 'Connectors', results: placeResults('Connectors') },
+    { title: 'Organization', results: placeResults('Organization') },
+    { title: 'Pages', results: pageResults },
     { title: 'Projects', results: projectResults },
+    { title: 'Artifacts', results: artifactResults },
     { title: 'Chats', results: [...byTitle, ...bySaid].slice(0, LIMITS.chats) },
   ];
   return sections.filter((section) => section.results.length > 0);

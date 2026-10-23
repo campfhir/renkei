@@ -362,7 +362,8 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
       results.getByRole('option', { name: /Rotate the Zoom webhook secret/ })
     ).toBeVisible();
     await search.fill('a phrase no chat has ever held');
-    await expect(results).toContainText('Nothing matches');
+    // No chat matches; the only row left is the library search for the words.
+    await expect(results.getByRole('option', { name: /Search artifacts for/ })).toBeVisible();
     await search.fill('');
     await expect(results).toBeHidden();
     await expect(row).toBeVisible();
