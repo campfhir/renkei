@@ -131,9 +131,9 @@ export async function listRepositories(
 
 /**
  * A brand-new, empty repository under an account — for the new-project
- * form's "Create new repository" tab. The repository starts private
- * with nothing in it, so the caller still gets no branch back — the
- * first chat's clone is what puts anything on it.
+ * form's "Create new repository" tab. The repository starts private with
+ * one initial commit (a README) on its default branch, so there is a
+ * branch for a pull request to target from the start.
  */
 export async function createRepository(
   auth: GitHubAuth,
@@ -154,7 +154,7 @@ export async function createRepository(
     auth,
     ['repository:admin'],
     isOrg ? `/orgs/${encodeURIComponent(account)}/repos` : '/user/repos',
-    { method: 'POST', json: { name, private: true } }
+    { method: 'POST', json: { name, private: true, auto_init: true } }
   );
   if (!created.ok) return created;
   const repo = rec(created.body);

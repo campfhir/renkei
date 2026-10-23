@@ -135,9 +135,10 @@ export async function listRepositories(
 /**
  * A brand-new, empty repository under a workspace's project — for the
  * new-project form's "Create new repository" tab. The slug is derived
- * from the name (Bitbucket's URL takes the slug, not the display name);
- * the repository starts private with nothing in it, so the caller still
- * gets no branch back — the first chat's clone is what puts anything on it.
+ * from the name (Bitbucket's URL takes the slug, not the display name).
+ * The repository starts private with no branches, and a pull request
+ * needs a destination, so one initial commit on `main` is made here —
+ * the README is the only file in it.
  */
 export async function createRepository(
   auth: BitbucketAuth,
@@ -161,13 +162,30 @@ export async function createRepository(
   );
   if (!created.ok) return created;
   const repo = created.body;
+  const fullName = str(repo.full_name) || `${workspace}/${slug}`;
+  // The src endpoint is a form post: the file keyed by path, plus message
+  // and branch. On an empty repository that POST creates the branch itself.
+  const initial = new URLSearchParams();
+  initial.set('README.md', `# ${name}\n`);
+  initial.set('message', 'Initial commit');
+  initial.set('branch', 'main');
+  const seeded = await bbJson(auth, ['repository:write'], `/repositories/${fullName}/src`, {
+    method: 'POST',
+    form: initial,
+  });
+  if (!seeded.ok) {
+    return {
+      ok: false,
+      error: `Created ${fullName}, but its initial commit failed: ${seeded.error}`,
+    };
+  }
   return {
     ok: true,
     repo: {
-      fullName: str(repo.full_name) || `${workspace}/${slug}`,
+      fullName,
       name: str(repo.name) || name,
       projectKey: str(rec(repo.project).key) || project,
-      mainBranch: str(rec(repo.mainbranch).name) || null,
+      mainBranch: 'main',
       updatedOn: str(repo.updated_on) || null,
     },
   };

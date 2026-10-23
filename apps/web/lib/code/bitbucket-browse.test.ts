@@ -24,13 +24,15 @@ interface Route {
 
 let routes: Route[] = [];
 let requests: string[] = [];
-let posts: { path: string; json: unknown }[] = [];
+let posts: { path: string; json: unknown; form?: string }[] = [];
 
 const stubAuth: BitbucketAuth = {
   kind: 'pat',
   async fetch(_scopes, path, init) {
     requests.push(path);
-    if (init?.method === 'POST') posts.push({ path, json: init.json });
+    if (init?.method === 'POST') {
+      posts.push({ path, json: init.json, form: init.form?.toString() });
+    }
     const route = routes.find((candidate) => path.includes(candidate.match));
     if (!route) return new Response(JSON.stringify({}), { status: 404 });
     return new Response(JSON.stringify(route.body ?? {}), { status: route.status ?? 200 });
@@ -174,6 +176,25 @@ describe('listRepositories', () => {
 });
 
 describe('createRepository', () => {
+  it('reports the repository as created when its initial commit is refused', async () => {
+    routes = [
+      { match: '/repositories/nems/billing-service/src', body: { error: 'nope' }, status: 403 },
+      { match: '/repositories/nems/billing-service', body: { full_name: 'nems/billing-service' } },
+    ];
+    const created = await createRepository(stubAuth, {
+      workspace: 'nems',
+      project: 'BILL',
+      name: 'Billing Service',
+    });
+
+    expect(created.ok).toBe(false);
+    if (!created.ok) {
+      expect(created.error).toMatch(
+        /^Created nems\/billing-service, but its initial commit failed/
+      );
+    }
+  });
+
   it('posts to the slugged path under the workspace and project, empty and private', async () => {
     routes = [
       {
@@ -197,7 +218,7 @@ describe('createRepository', () => {
         fullName: 'nems/billing-service',
         name: 'Billing Service',
         projectKey: 'BILL',
-        mainBranch: null,
+        mainBranch: 'main',
         updatedOn: null,
       },
     });
@@ -205,6 +226,11 @@ describe('createRepository', () => {
       {
         path: '/repositories/nems/billing-service',
         json: { scm: 'git', name: 'Billing Service', project: { key: 'BILL' }, is_private: true },
+      },
+      {
+        path: '/repositories/nems/billing-service/src',
+        json: undefined,
+        form: 'README.md=%23+Billing+Service%0A&message=Initial+commit&branch=main',
       },
     ]);
   });
