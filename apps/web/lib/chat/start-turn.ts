@@ -991,7 +991,11 @@ export async function chatPromptContext(
           }
         : null,
     userMemoryText: project ? null : renderUserMemory(await readUserMemory(db, chat.ownerSubject)),
-    chatFiles: chatFiles.map(shape),
+    // A chat upload kept for the project is both the chat's and the
+    // project's; it is listed once, where every chat in the project sees it.
+    chatFiles: chatFiles
+      .filter((row) => !projectFiles.some((held) => held.id === row.id))
+      .map(shape),
   };
 }
 
