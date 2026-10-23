@@ -61,8 +61,8 @@ test('app menu column: open by default, toggles and is remembered', async ({ pag
   ]) {
     await expect(column.getByRole('link', { name, exact: true }).locator('svg')).toHaveCount(1);
   }
-  // The chat list and its search live in the menu on every page, not just the chat's.
-  await expect(column.getByRole('searchbox', { name: 'Find a chat' })).toBeVisible();
+  // The chat list lives in the menu on every page; search is in the top bar.
+  await expect(page.getByRole('searchbox', { name: 'Search Renkei' })).toBeVisible();
   await expect(column.getByRole('link', { name: 'Connectors' })).toHaveCount(0);
   await expect(column.getByRole('link', { name: 'New chat' })).toBeVisible();
   await shot('nav-column.png');

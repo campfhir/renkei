@@ -764,7 +764,11 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
             </h2>
             <div className="-mb-6 lg:columns-2 lg:gap-6">
               {needsSetup.map((card) => (
-                <div key={card.key} className="mb-6 break-inside-avoid">
+                <div
+                  key={card.key}
+                  id={`connector-${card.key}`}
+                  className="mb-6 break-inside-avoid"
+                >
                   {card.node}
                 </div>
               ))}
@@ -781,7 +785,11 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
             )}
             <div className="-mb-6 lg:columns-2 lg:gap-6">
               {settled.map((card) => (
-                <div key={card.key} className="mb-6 break-inside-avoid">
+                <div
+                  key={card.key}
+                  id={`connector-${card.key}`}
+                  className="mb-6 break-inside-avoid"
+                >
                   {card.node}
                 </div>
               ))}

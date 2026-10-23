@@ -154,7 +154,10 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
         name="admin-settings-identity"
         className="mt-4 rounded-lg border border-gray-200 bg-white p-4 text-sm dark:border-gray-800 dark:bg-gray-950"
       >
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+        <h2
+          id="settings-identity"
+          className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500"
+        >
           Identity
         </h2>
         <p className="text-gray-600 dark:text-gray-400">

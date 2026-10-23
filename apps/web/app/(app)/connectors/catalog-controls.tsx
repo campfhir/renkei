@@ -11,7 +11,7 @@
  * page must never show less than the MCP endpoint can do.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import AddConnectorModal, { type CatalogItem } from './add-connector-modal';
@@ -26,7 +26,17 @@ export function AddConnectorButton({
   emphasis?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [initialQuery, setInitialQuery] = useState('');
   const addAnchor = useCoachAnchor('connectors-add');
+  // A top-bar result for a connector that is not on the page: its card
+  // is not there to scroll to, so the catalog opens, searched for it.
+  useEffect(() => {
+    const find = new URLSearchParams(window.location.search).get('find');
+    const card = window.location.hash.slice(1);
+    if (!find || !card || document.getElementById(card)) return;
+    setInitialQuery(find);
+    setOpen(true);
+  }, []);
   return (
     <>
       <button
@@ -43,7 +53,11 @@ export function AddConnectorButton({
         Add connector
       </button>
       {open && (
-        <AddConnectorModal items={items} onClose={() => setOpen(false)} />
+        <AddConnectorModal
+          items={items}
+          initialQuery={initialQuery}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );

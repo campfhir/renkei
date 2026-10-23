@@ -161,6 +161,7 @@ export default function EncryptionKeySection({
 
   return (
     <section
+      id="encryption-key"
       className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
       data-testid="encryption-key"
     >

@@ -257,6 +257,12 @@ export const chatClient = {
   artifacts: () =>
     getJson<{ artifacts: LibraryItem[]; uploads: boolean }>(`${base()}/artifacts?all=1`),
 
+  /** The artifacts whose name or contents say `query`: the library's own search, for the top bar. */
+  findArtifacts: (query: string) =>
+    getJson<{ artifacts: LibraryItem[] }>(
+      `${base()}/artifacts?${new URLSearchParams({ q: query }).toString()}`
+    ),
+
   artifact: (artifactId: string) =>
     getJson<{
       artifact: LibraryItem;

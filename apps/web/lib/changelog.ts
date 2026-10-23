@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-23',
     entries: [
       {
+        kind: 'changed',
+        title: 'Tidier menu on desktop',
+        detail:
+          'The version stays pinned at the foot of the menu and only the chat list scrolls. On a phone the search is a magnifier that opens a full-width field.',
+      },
+      {
+        kind: 'added',
+        title: 'One search for the whole app',
+        detail:
+          'The search in the top bar finds chats, projects, pages, settings, connectors, artifacts and organization settings. A setting, connector or organization setting opens scrolled to the place that holds it.',
+      },
+      {
         kind: 'added',
         title: 'Artifacts: search by what a file is about',
         detail:

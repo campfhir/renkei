@@ -11,9 +11,8 @@
  * list's idiom — and every mutation goes through a route and then
  * router.refresh(), so the layout's server data is the truth.
  *
- * The search box narrows by title and project name as you type, and —
- * debounced, through the search route — by what was said in the chat:
- * a row found that way shows the matching line under its title.
+ * Search lives in the top bar (omni-search.tsx); the funnel here only
+ * chooses which states the list shows.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -24,7 +23,6 @@ import Modal from '@/components/modal';
 import { useDismiss } from '@/lib/use-dismiss';
 import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData, ProjectListItem } from '@/lib/chat/sidebar';
-import { CHAT_SEARCH_MIN_CHARS, normalizeQuery } from '@/lib/chat/search-text';
 import type { ChatListItem } from '@/lib/chat/views';
 import ShareModal from './share-modal';
 
@@ -46,8 +44,6 @@ export function ChatList({ data }: {
   data: ChatSidebarData;
 }) {
   const currentPath = usePathname();
-  const [filter, setFilter] = useState('');
-  const { hits, searching } = useContentSearch(filter);
   // Which states the list shows; active only, until the funnel says otherwise.
   const [states, setStates] = useState<{ active: boolean; archived: boolean }>({
     active: true,
@@ -91,30 +87,7 @@ export function ChatList({ data }: {
       setMoreBefore(result.data.nextBefore);
     }
   }, [moreBefore, loadingMore]);
-  /*
-   * The search route's own comment puts it best: "the same set of chats
-   * [the sidebar] shows is the set searched." Typing into the box asks for
-   * the whole history, not just the recent window `data` carries — so a
-   * non-empty box swaps in a full, unwindowed fetch (once, cached until the
-   * box empties again) for as long as it stays non-empty.
-   */
-  const [fullChats, setFullChats] = useState<ChatListItem[] | null>(null);
-  const isFiltering = filter.trim().length > 0;
-  useEffect(() => {
-    if (!isFiltering) {
-      setFullChats(null);
-      return;
-    }
-    if (fullChats !== null) return;
-    let cancelled = false;
-    void chatClient.sidebar().then((result) => {
-      if (!cancelled && result.data) setFullChats(result.data.chats);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [isFiltering, fullChats]);
-  const allChats = isFiltering && fullChats ? fullChats : windowChats;
+  const allChats = windowChats;
   const counts = useMemo(
     () => ({
       active: allChats.filter((chat) => !chat.archived).length,
@@ -123,10 +96,8 @@ export function ChatList({ data }: {
     [allChats]
   );
   const shown = useCallback(
-    (chat: ChatListItem) =>
-      (chat.archived ? states.archived : states.active) &&
-      (matches(chat, filter) || hits.has(chat.id)),
-    [states, filter, hits]
+    (chat: ChatListItem) => (chat.archived ? states.archived : states.active),
+    [states]
   );
   const mine = useMemo(
     () => allChats.filter((chat) => chat.via === 'owner' && shown(chat)),
@@ -147,38 +118,20 @@ export function ChatList({ data }: {
   }, [mine]);
 
   return (
-    <div className="border-t border-gray-200 pt-2 dark:border-gray-800">
-      <div className="mb-2 flex items-center rounded-md border border-gray-300 bg-white pr-1 focus-within:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:focus-within:border-blue-700">
-        <input
-          type="search"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          placeholder="Find a chat"
-          aria-label="Find a chat"
-          className="min-w-0 flex-1 bg-transparent px-2 py-1 text-sm outline-none"
-        />
-        <StateFilter
-          states={states}
-          onChange={setStates}
-          counts={counts}
-          filter={filter}
-          onClearSearch={() => setFilter('')}
-        />
+    <div className="flex flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
+      <div className="mb-1 flex shrink-0 justify-end">
+        <StateFilter states={states} onChange={setStates} counts={counts} />
       </div>
-      <nav aria-label="Chats">
+      <nav aria-label="Chats" className="min-h-24 flex-1 overflow-y-auto">
         {groups.length === 0 && shared.length === 0 ? (
           <p className="px-2 text-xs text-gray-500">
-            {filter
-              ? searching
-                ? 'Searching…'
-                : 'No chats match.'
-              : allChats.length === 0 && moreBefore === null
-                ? 'Your chats will appear here.'
-                : !states.active && !states.archived
-                  ? 'Nothing to show — pick Active or Archived.'
-                  : states.active
-                    ? 'No active chats.'
-                    : 'No archived chats.'}
+            {allChats.length === 0 && moreBefore === null
+              ? 'Your chats will appear here.'
+              : !states.active && !states.archived
+                ? 'Nothing to show — pick Active or Archived.'
+                : states.active
+                  ? 'No active chats.'
+                  : 'No archived chats.'}
           </p>
         ) : null}
         {groups.map(([label, dayChats]) => (
@@ -189,7 +142,6 @@ export function ChatList({ data }: {
                 key={chat.id}
                 chat={chat}
                 projects={data.projects}
-                snippet={hits.get(chat.id) ?? null}
                 active={currentPath === `/chat/${chat.id}`}
                 onDeleted={removeExtraChat}
               />
@@ -204,14 +156,13 @@ export function ChatList({ data }: {
                 key={chat.id}
                 chat={chat}
                 projects={data.projects}
-                snippet={hits.get(chat.id) ?? null}
                 active={currentPath === `/chat/${chat.id}`}
                 onDeleted={removeExtraChat}
               />
             ))}
           </div>
         ) : null}
-        {moreBefore && !isFiltering ? (
+        {moreBefore ? (
           <button
             type="button"
             onClick={() => void loadMore()}
@@ -227,22 +178,18 @@ export function ChatList({ data }: {
 }
 
 /**
- * The funnel in the search box: which states the list shows, each on its
- * own switch, in the same menu idiom as the model picker. A dot on the
- * funnel says the list is not showing the default (active only).
+ * The funnel above the list: which states the list shows, each on its own
+ * switch, in the same menu idiom as the model picker. A dot on the funnel
+ * says the list is not showing the default (active only).
  */
 function StateFilter({
   states,
   onChange,
   counts,
-  filter,
-  onClearSearch,
 }: {
   states: { active: boolean; archived: boolean };
   onChange: (states: { active: boolean; archived: boolean }) => void;
   counts: { active: number; archived: number };
-  filter: string;
-  onClearSearch: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -293,74 +240,11 @@ function StateFilter({
           </p>
           {option('active', 'Active')}
           {option('archived', 'Archived')}
-          {filter ? (
-            <>
-              <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
-              <button
-                type="button"
-                onClick={() => {
-                  onClearSearch();
-                  setOpen(false);
-                }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
-              >
-                <Icon path={ICONS.close} className="h-4 w-4" strokeWidth={2.4} />
-                Clear search
-              </button>
-            </>
-          ) : null}
         </div>
       ) : null}
     </div>
   );
 }
-
-function matches(chat: ChatListItem, filter: string): boolean {
-  const needle = filter.trim().toLowerCase();
-  if (!needle) return true;
-  return (
-    (chat.title ?? 'new chat').toLowerCase().includes(needle) ||
-    (chat.projectName ?? '').toLowerCase().includes(needle)
-  );
-}
-
-/**
- * The content half of the search: once the box holds enough to be worth
- * a scan, ask the search route (debounced) which listed chats say it, and
- * keep the snippet per chat. A reply for a query no longer in the box is
- * dropped, so fast typing cannot leave stale rows behind. `searching` is
- * true from the first keystroke until the answer for the current text is
- * in, so the empty state can hold off saying "no match" too soon.
- */
-function useContentSearch(
-  filter: string
-): { hits: Map<string, string>; searching: boolean } {
-  const query = normalizeQuery(filter);
-  const active = query.length >= CHAT_SEARCH_MIN_CHARS;
-  const [state, setState] = useState<{ query: string; hits: Map<string, string> }>({
-    query: '',
-    hits: new Map(),
-  });
-  const latest = useRef(query);
-  latest.current = query;
-  useEffect(() => {
-    if (!active) return;
-    const handle = setTimeout(async () => {
-      const result = await chatClient.searchChats(query);
-      if (latest.current !== query) return;
-      setState({
-        query,
-        hits: new Map((result.data?.hits ?? []).map((hit) => [hit.chatId, hit.snippet])),
-      });
-    }, 300);
-    return () => clearTimeout(handle);
-  }, [query, active]);
-  if (!active) return { hits: EMPTY_HITS, searching: false };
-  const current = state.query === query;
-  return { hits: current ? state.hits : EMPTY_HITS, searching: !current };
-}
-
-const EMPTY_HITS: Map<string, string> = new Map();
 
 /** The mark at the head of a row: which kind of chat this is. */
 function kindOf(chat: ChatListItem): { kind: 'chat' | 'project' | 'code'; path: string } {
@@ -377,11 +261,9 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ChatRow({ chat, projects, snippet, active, onDeleted }: {
+function ChatRow({ chat, projects, active, onDeleted }: {
   chat: ChatListItem;
   projects: ProjectListItem[];
-  /** The line of the chat that matched the search, when one did. */
-  snippet: string | null;
   active: boolean;
   /** A delete that succeeds calls this too — see ChatList's `extraChats` comment. */
   onDeleted: (chatId: string) => void;
@@ -389,8 +271,8 @@ function ChatRow({ chat, projects, snippet, active, onDeleted }: {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   // The menu opens below its row, or above it when there is no room below:
-  // the sidebar is pinned to the bottom of the window, so a menu past that
-  // edge would only grow the sidebar's scroll area.
+  // the chat list is its own scroll box, so a menu past its bottom edge
+  // would be clipped rather than reach the page.
   const [menuUp, setMenuUp] = useState(false);
   const [dialog, setDialog] = useState<'rename' | 'move' | 'share' | 'delete' | null>(null);
   const [title, setTitle] = useState(chat.title ?? '');
@@ -403,7 +285,10 @@ function ChatRow({ chat, projects, snippet, active, onDeleted }: {
   useLayoutEffect(() => {
     const panel = menuPanelRef.current;
     if (!menuOpen || !panel) return;
-    setMenuUp(panel.getBoundingClientRect().bottom > window.innerHeight);
+    // The nearest nav is the chat list, the scroll box the menu sits in; the
+    // window's edge counts too, when the list runs past it.
+    const list = panel.closest('nav')?.getBoundingClientRect().bottom ?? window.innerHeight;
+    setMenuUp(panel.getBoundingClientRect().bottom > Math.min(list, window.innerHeight));
   }, [menuOpen]);
   const isOwner = chat.via === 'owner';
   const mark = kindOf(chat);
@@ -458,15 +343,6 @@ function ChatRow({ chat, projects, snippet, active, onDeleted }: {
                   {chat.projectBranch}
                 </span>
               ) : null}
-            </span>
-          ) : null}
-          {snippet ? (
-            <span
-              data-testid="chat-search-snippet"
-              title={snippet}
-              className="block truncate text-[11px] font-normal leading-tight text-gray-500 italic"
-            >
-              {snippet}
             </span>
           ) : null}
         </span>
