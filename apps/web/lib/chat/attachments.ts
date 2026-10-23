@@ -2,8 +2,11 @@
  * Artifacts — a chat's attachments and a project's files, one kind of
  * row (migration 163): bytes in the org's object store, a metadata row
  * here, and the text extracted at upload so the model can read a file on
- * any provider. A row belongs to the person who uploaded it (or whose
- * chat produced it); a chat holds it by `chat_id`, a project through an
+ * any provider. Bytes and text alike are sealed under the row's key
+ * (content-crypto.ts): the store holds a `renc2b` buffer it cannot read,
+ * and `readAttachmentBytes` is the one way back to the file. A row
+ * belongs to the person who uploaded it (or whose chat produced it); a
+ * chat holds it by `chat_id`, a project through an
  * `artifact_references` row that also says how the project's chats use
  * it. Every operation is scoped by the owner (uploads) or by the access
  * the caller already resolved (reads — artifact-access.ts).
@@ -14,13 +17,15 @@ import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmContentBlock } from '@renkei/agent-llm';
-import { chatAttachmentKey, resolveTenantBlobStore } from '@renkei/blob-store';
+import { chatAttachmentKey, resolveTenantBlobStore, type BlobStore } from '@renkei/blob-store';
+import { isResourceSealedBytes } from '@renkei/crypto';
 import { extractText, isExtractableCandidate } from '@renkei/document-text';
 import { callMistralOcr, resolveMistralOcrConfig } from '@renkei/connector-mistral-ocr';
 import { getOrgSettings, getKeyDomain } from '@renkei/settings';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
-import { openText, sealText, type ContentCipher } from './content-crypto';
+import { logger } from '@/lib/logger';
+import { openBytes, openText, sealBytes, sealText, type ContentCipher } from './content-crypto';
 import type { OutboundRedactor } from './outbound-redaction';
 import type { AttachmentView } from './views';
 
@@ -48,6 +53,12 @@ const TEXT_TYPES = new Set([
 ]);
 
 export type AttachmentError = 'UNCONFIGURED' | 'TOO_LARGE' | 'STORE' | 'CONTENT_KEY' | 'DB_ERROR';
+
+/** Why a file's bytes could not be read back. */
+export type ReadBytesError = 'UNCONFIGURED' | 'NOT_FOUND' | 'STORE' | 'CONTENT_KEY';
+
+/** What the store is told a sealed object is: nothing it could serve or sniff. */
+const SEALED_CONTENT_TYPE = 'application/octet-stream';
 
 /**
  * Which key seals a row's extracted text: its own (`artifact`), or —
@@ -214,12 +225,16 @@ async function ocrOne(
 ): Promise<string> {
   const config = await resolveMistralOcrConfig();
   if (!config.ok) return NEEDS_OCR;
-  const store = await resolveTenantBlobStore();
-  if (!store.ok) return NEEDS_OCR;
-  const object = await store.val.getObject(row.blobKey);
-  if (!object.ok) return 'ocr_failed';
+  const bytes = await readAttachmentBytes(row, cipher);
+  if (!bytes.ok) {
+    // No store, or no key right now, is worth another try; a missing or
+    // unreadable object is the file.
+    return bytes.err.type === 'UNCONFIGURED' || bytes.err.type === 'CONTENT_KEY'
+      ? NEEDS_OCR
+      : 'ocr_failed';
+  }
   const ocr = await callMistralOcr(config.val, {
-    bytes: object.val.bytes,
+    bytes: bytes.val,
     filename: row.filename,
     contentType: row.contentType,
   });
@@ -299,7 +314,7 @@ export async function createAttachment(
     bytes: Uint8Array;
     maxBytes: number;
     redactor: OutboundRedactor | null;
-    /** The cipher the text is sealed under — the key `key` names. */
+    /** The cipher the bytes and the text are sealed under — the key `key` names. */
     cipher: ContentCipher;
     /** Which key `cipher` is: the chat's (a plain chat upload) or the artifact's own. */
     key: { kind: 'chat'; ref: string } | { kind: 'artifact' };
@@ -326,7 +341,9 @@ export async function createAttachment(
     sealedText = sealed.val;
   }
 
-  const put = await store.val.putObject(key.val, input.bytes, contentType);
+  const sealedBytes = sealBytes(input.bytes, input.cipher);
+  if (!sealedBytes.ok) return err('CONTENT_KEY' as const, { message: sealedBytes.err.message });
+  const put = await store.val.putObject(key.val, sealedBytes.val, SEALED_CONTENT_TYPE);
   if (!put.ok) return err('STORE' as const, { message: put.err.message });
   try {
     const inserted = await db
@@ -354,6 +371,55 @@ export async function createAttachment(
     await store.val.deleteObject(key.val);
     return err('DB_ERROR' as const, {
       message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * The file's bytes, opened under the key the caller resolved for the row
+ * (artifact-access.ts). A file stored before bytes were sealed comes back
+ * as it is and is sealed in place on the way, under that same key, so the
+ * store holds it sealed from then on; a reader whose cipher cannot seal
+ * (no key, as the marker says) still reads it, and leaves it for the next.
+ */
+export async function readAttachmentBytes(
+  file: { blobKey: string },
+  cipher: ContentCipher
+): Promise<Result<Uint8Array, ReadBytesError>> {
+  const store = await resolveTenantBlobStore();
+  if (!store.ok) return err('UNCONFIGURED' as const);
+  const object = await store.val.getObject(file.blobKey);
+  if (!object.ok) {
+    return object.err.type === 'NOT_FOUND'
+      ? err('NOT_FOUND' as const)
+      : err('STORE' as const, { message: object.err.message });
+  }
+  if (isResourceSealedBytes(object.val.bytes)) {
+    const opened = openBytes(object.val.bytes, cipher);
+    return opened.ok
+      ? ok(opened.val)
+      : err('CONTENT_KEY' as const, { message: opened.err.message });
+  }
+  await sealInPlace(store.val, file.blobKey, object.val.bytes, cipher);
+  return ok(object.val.bytes);
+}
+
+/** Seals a file the store still holds in the clear; best effort, the read already has the bytes. */
+async function sealInPlace(
+  store: BlobStore,
+  blobKey: string,
+  bytes: Uint8Array,
+  cipher: ContentCipher
+): Promise<void> {
+  if (cipher.unavailable || cipher.keyId === null) return;
+  const sealed = sealBytes(bytes, cipher);
+  if (!sealed.ok) return;
+  const put = await store.putObject(blobKey, sealed.val, SEALED_CONTENT_TYPE);
+  if (!put.ok) {
+    logger.warn('file not sealed in place: {key} {message}', {
+      component: 'chat/attachments',
+      key: blobKey,
+      message: put.err.message ?? put.err.type,
     });
   }
 }
@@ -603,7 +669,6 @@ export async function attachmentPromptBlocks(
   const threshold = settings.ok ? settings.val.massUploadThreshold : 10;
   if (rows.length > threshold) return [massUploadManifest(rows.map(rowOf))];
   const blocks: LlmContentBlock[] = [];
-  const store = await resolveTenantBlobStore();
   for (const raw of rows) {
     const row = rowOf(raw);
     const text = raw.extracted_text ? openText(raw.extracted_text, cipher) : null;
@@ -621,10 +686,10 @@ export async function attachmentPromptBlocks(
     const renderable =
       row.contentType === 'application/pdf' ||
       ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(row.contentType);
-    if (renderable && store.ok && row.sizeBytes <= 8_000_000) {
-      const object = await store.val.getObject(row.blobKey);
+    if (renderable && row.sizeBytes <= 8_000_000) {
+      const object = await readAttachmentBytes(row, cipher);
       if (object.ok) {
-        const dataBase64 = Buffer.from(object.val.bytes).toString('base64');
+        const dataBase64 = Buffer.from(object.val).toString('base64');
         blocks.push(
           row.contentType === 'application/pdf'
             ? { type: 'document', mediaType: row.contentType, dataBase64, title: row.filename }

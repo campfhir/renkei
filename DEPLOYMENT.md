@@ -1391,9 +1391,14 @@ The microphone tap is an audio worklet served as a static file (`apps/web/public
 
 Files people upload into the chat (`/chat`) are the one thing the
 web app stores as bytes at rest, and they live in an object store behind
-`packages/blob-store`, never on the app's disk. The store is chosen by
-`BLOB_STORE_PROVIDER`; today the only backend is Azure Blob Storage
-(`azure`), spoken directly over its REST API with Shared Key auth:
+`packages/blob-store`, never on the app's disk. Every object is sealed
+before it is written — AES-256-GCM under the file's own resource key, the
+key the delegate holds for the chat or artifact it belongs to
+(`docs/artifacts-design.md`, "Keys") — so the store holds ciphertext and
+the account key below reads none of it. The store is chosen by
+`BLOB_STORE_PROVIDER`: Azure Blob Storage (`azure`), spoken directly over
+its REST API with Shared Key auth, or a directory on disk (`local`, with
+`BLOB_STORE_LOCAL_DIR`) for development only:
 
 - `AZURE_BLOB_ACCOUNT` — the storage account name
 - `AZURE_BLOB_KEY` — one of the account's access keys (base64, as the

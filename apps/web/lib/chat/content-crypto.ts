@@ -23,7 +23,11 @@ import {
   decryptWithResourceKey,
   encryptWithResourceKey,
   isResourceEncrypted,
+  isResourceSealedBytes,
+  openBytesWithResourceKey,
+  parseResourceBytesEnvelope,
   parseResourceEnvelope,
+  sealBytesWithResourceKey,
 } from '@renkei/crypto';
 import type { ResourceKey } from '@renkei/user-keys';
 import { ok, err } from '@campfhir/safe-functions/helpers';
@@ -49,6 +53,13 @@ export interface ContentCipher {
   readonly unavailable: CipherUnavailable | null;
   seal(text: string): Result<string, 'CONTENT_KEY'>;
   open(stored: string): string;
+  /** A file's content under the same key: the `renc2b` buffer the store holds. */
+  sealBytes(bytes: Uint8Array): Result<Buffer, 'CONTENT_KEY'>;
+  /**
+   * The bytes back. Unlike `open`, there is no marker to render: a buffer
+   * that will not open is an error with the reason, and the caller says so.
+   */
+  openBytes(sealed: Uint8Array): Result<Buffer, 'CONTENT_KEY'>;
 }
 
 const MARKERS = {
@@ -80,6 +91,21 @@ export function resourceCipher(resource: ResourceKey): ContentCipher {
       }
       return MARKERS.failed;
     },
+    sealBytes: (bytes) => ok(sealBytesWithResourceKey(bytes, resource.id, resource.key)),
+    openBytes: (sealed) => {
+      if (!isResourceSealedBytes(sealed)) {
+        return err('CONTENT_KEY' as const, { message: 'The file is not sealed.' });
+      }
+      const opened = openBytesWithResourceKey(sealed, resource.id, resource.key);
+      if (opened.ok) return ok(opened.val);
+      const names = parseResourceBytesEnvelope(sealed)?.keyId;
+      return err('CONTENT_KEY' as const, {
+        message:
+          opened.err.type === 'WRONG_KEY'
+            ? `The file is sealed under another key${names ? ` (${names.slice(0, 8)}…)` : ''}.`
+            : 'The file could not be opened.',
+      });
+    },
   };
 }
 
@@ -106,6 +132,8 @@ export function unavailableCipher(reason: CipherUnavailable): ContentCipher {
     unavailable: reason,
     seal: () => err('CONTENT_KEY' as const, { message }),
     open: () => MARKERS[reason],
+    sealBytes: () => err('CONTENT_KEY' as const, { message }),
+    openBytes: () => err('CONTENT_KEY' as const, { message }),
   };
 }
 
@@ -115,6 +143,17 @@ export function sealText(text: string, cipher: ContentCipher): Result<string, 'C
 
 export function openText(stored: string, cipher: ContentCipher): string {
   return cipher.open(stored);
+}
+
+export function sealBytes(bytes: Uint8Array, cipher: ContentCipher): Result<Buffer, 'CONTENT_KEY'> {
+  return cipher.sealBytes(bytes);
+}
+
+export function openBytes(
+  sealed: Uint8Array,
+  cipher: ContentCipher
+): Result<Buffer, 'CONTENT_KEY'> {
+  return cipher.openBytes(sealed);
 }
 
 export function sealBlocks(

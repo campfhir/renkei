@@ -26,10 +26,16 @@
  */
 
 import { sbReadFile, sbWriteFile } from '@renkei/sandbox-client';
-import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { outputMediaType } from '@renkei/connector-sandbox';
 import { findAttachment } from './attachment-tools';
-import { listAttachments, listProjectArtifacts, type AttachmentRow } from './attachments';
+import { fileCipherFor } from './artifact-access';
+import {
+  listAttachments,
+  listProjectArtifacts,
+  readAttachmentBytes,
+  type AttachmentRow,
+} from './attachments';
+import type { ContentCipher } from './content-crypto';
 import { checkFilename, KEPT_LINE } from './file-tools';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 import { ARTIFACT_MAX_BYTES } from './turn-store';
@@ -126,7 +132,12 @@ export function sandboxFileTools(): LocalTool[] {
         if (!id && !wanted) {
           return errorResult('Name the file: attachmentId, or filename (or "last").');
         }
-        let file: { filename: string; contentType: string; blobKey: string };
+        let file: {
+          filename: string;
+          contentType: string;
+          blobKey: string;
+          cipher: ContentCipher | null;
+        };
         if (id) {
           const found = await findAttachment(context, id);
           if (!found) return errorResult('No such attachment in this chat.');
@@ -140,16 +151,21 @@ export function sandboxFileTools(): LocalTool[] {
           }
           const picked = pickByName(rows, wanted);
           if (!picked.ok) return errorResult(picked.reason);
-          file = picked.file;
+          file = { ...picked.file, cipher: await fileCipherFor(context, picked.file) };
         }
-        const store = await resolveTenantBlobStore();
-        if (!store.ok) return errorResult('No file store is configured.');
-        const object = await store.val.getObject(file.blobKey);
-        if (!object.ok) return errorResult(`The file could not be read (${object.err.type}).`);
+        if (!file.cipher) return errorResult('No key opens this file for you.');
+        const object = await readAttachmentBytes(file, file.cipher);
+        if (!object.ok) {
+          return errorResult(
+            object.err.type === 'UNCONFIGURED'
+              ? 'No file store is configured.'
+              : `The file could not be read (${object.err.type}).`
+          );
+        }
         const staged = await sbWriteFile(
           { subject: context.subject },
           { filename: file.filename, contentType: file.contentType, source: 'chat' },
-          object.val.bytes
+          object.val
         );
         if (!staged.ok) return errorResult(`The sandbox refused the file (${staged.err.kind}).`);
         return textResult(

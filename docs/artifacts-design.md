@@ -66,8 +66,16 @@ their own; the original's owner is told.
 ## Keys
 
 Content stays sealed under resource keys that only the delegate unwraps
-([delegate-key-design.md](./delegate-key-design.md)). An artifact has a
-key of its own, kind `artifact`:
+([delegate-key-design.md](./delegate-key-design.md)) — the extracted text
+in `artifacts.extracted_text` (`renc2:`), and the **bytes** in the object
+store (`renc2b`, the same key, AES-256-GCM over the whole file with the
+key id in front: `sealBytesWithResourceKey` in `@renkei/crypto`). The
+store holds nothing it could read; a download, a preview, a copy, a
+sandbox staging, an OCR pass and an image edit all go through
+`readAttachmentBytes`, which opens the file under the key the reader's
+access resolved. What stays in the clear is the row's metadata: filename,
+content type, size, owner. An artifact has a key of its own, kind
+`artifact`:
 
 - the owner holds it as they hold a chat's;
 - a **share** wraps it to the grantee (`shareKey`), exactly as a project
@@ -80,12 +88,19 @@ key of its own, kind `artifact`:
 A row from before the migration keeps the key of where it lived
 (`key_kind` `chat` or `chat_project`, `key_ref` naming it) and reads as it
 did. The first time it is shared or attached anywhere else it is
-**promoted**: opened by whoever may (their access), re-sealed under a new
-key of its own (minted as the owner's, so the owner's key must be
-delegated — signed in, or their automation delegation standing), and
-wrapped under its chat and every project that holds it. A plain chat
-upload stays under the chat's key from the start, and so costs nothing
-more than before until it is kept.
+**promoted**: opened by whoever may (their access), re-sealed — bytes
+first, then text — under a new key of its own (minted as the owner's, so
+the owner's key must be delegated — signed in, or their automation
+delegation standing), and wrapped under its chat and every project that
+holds it. A plain chat upload stays under the chat's key from the start,
+and so costs nothing more than before until it is kept.
+
+A file whose bytes were stored before they were sealed (any upload from
+before this build) is recognised by the absence of the envelope's magic
+and read as it is; the first read whose cipher can seal writes it back
+sealed under that same key, so the store holds it sealed from then on
+without a sweep. A reader with no key (the row's marker case) still reads
+it and leaves it for the next.
 
 ## Always and on demand
 

@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-23',
     entries: [
       {
+        kind: 'changed',
+        title: 'Files are encrypted at rest',
+        detail:
+          'A file uploaded to a chat, a project or the Artifacts library, and every file the assistant writes, is now stored encrypted under the same key as its text, so the file store holds nothing it can read. Files stored earlier are encrypted the first time they are opened.',
+      },
+      {
         kind: 'added',
         title: 'A local file store for development',
         detail:

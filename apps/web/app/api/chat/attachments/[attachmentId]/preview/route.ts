@@ -8,9 +8,8 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { resolveTenantBlobStore } from '@renkei/blob-store';
-import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
-import { getAttachment, getAttachmentText } from '@/lib/chat/attachments';
+import { chatRequestContext, jsonError, readBytesError } from '@/lib/chat/route-support';
+import { getAttachment, getAttachmentText, readAttachmentBytes } from '@/lib/chat/attachments';
 import { attachmentCipherFor } from '@/lib/chat/artifact-access';
 import { extensionOf, previewKind } from '@/lib/chat/preview-kind';
 import { sheetFromCsv, sheetFromXlsx } from '@/lib/chat/sheet-preview';
@@ -37,15 +36,13 @@ export async function GET(
   const kind = previewKind(row);
 
   if (kind === 'sheet') {
-    const store = await resolveTenantBlobStore();
-    if (!store.ok) return jsonError(503, 'uploads-off', 'The file store is not configured.');
-    const object = await store.val.getObject(row.blobKey);
-    if (!object.ok) return jsonError(502, 'store', 'The file is unavailable.');
+    const object = await readAttachmentBytes(row, cipher);
+    if (!object.ok) return readBytesError(object.err.type);
     const csv = row.contentType === 'text/csv' || extensionOf(row.filename) === 'csv';
     try {
       const sheet = csv
-        ? sheetFromCsv(new TextDecoder().decode(object.val.bytes), row.filename)
-        : await sheetFromXlsx(object.val.bytes);
+        ? sheetFromCsv(new TextDecoder().decode(object.val), row.filename)
+        : await sheetFromXlsx(object.val);
       if (!sheet) return jsonError(422, 'empty', 'The workbook has no sheets.');
       return NextResponse.json({ kind: 'sheet', sheet }, { headers });
     } catch {
