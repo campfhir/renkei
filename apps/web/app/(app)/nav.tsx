@@ -287,7 +287,11 @@ export default function AppNav({
   const menu = (
     <>
       {groups.map((group) => (
-        <div key={group.label} className="mb-5" {...(group.coach ? anchors[group.coach] : {})}>
+        <div
+          key={group.label}
+          className={group.extra ? 'mb-5 flex flex-1 flex-col' : 'mb-5'}
+          {...(group.coach ? anchors[group.coach] : {})}
+        >
           <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
             {group.label}
           </p>
@@ -330,11 +334,15 @@ export default function AppNav({
               );
             })}
           </ul>
-          {group.extra ? <div className="mt-2">{group.extra}</div> : null}
+          {group.extra ? <div className="mt-2 flex flex-1 flex-col">{group.extra}</div> : null}
         </div>
       ))}
 
-      <p className="mt-auto truncate px-2 text-xs text-gray-500" title={version}>
+      {/* Pinned to the foot of the menu: the chat list above scrolls, this does not. */}
+      <p
+        className="mt-auto shrink-0 truncate border-t border-gray-200 px-2 pt-2 text-xs text-gray-500 dark:border-gray-800"
+        title={version}
+      >
         {version}
       </p>
     </>

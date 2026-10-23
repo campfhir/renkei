@@ -147,8 +147,8 @@ export function ChatList({ data }: {
   }, [mine]);
 
   return (
-    <div className="border-t border-gray-200 pt-2 dark:border-gray-800">
-      <div className="mb-2 flex items-center rounded-md border border-gray-300 bg-white pr-1 focus-within:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:focus-within:border-blue-700">
+    <div className="flex flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
+      <div className="mb-2 flex shrink-0 items-center rounded-md border border-gray-300 bg-white pr-1 focus-within:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:focus-within:border-blue-700">
         <input
           type="search"
           value={filter}
@@ -165,7 +165,7 @@ export function ChatList({ data }: {
           onClearSearch={() => setFilter('')}
         />
       </div>
-      <nav aria-label="Chats">
+      <nav aria-label="Chats" className="min-h-24 flex-1 overflow-y-auto">
         {groups.length === 0 && shared.length === 0 ? (
           <p className="px-2 text-xs text-gray-500">
             {filter
@@ -389,8 +389,8 @@ function ChatRow({ chat, projects, snippet, active, onDeleted }: {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   // The menu opens below its row, or above it when there is no room below:
-  // the sidebar is pinned to the bottom of the window, so a menu past that
-  // edge would only grow the sidebar's scroll area.
+  // the chat list is its own scroll box, so a menu past its bottom edge
+  // would be clipped rather than reach the page.
   const [menuUp, setMenuUp] = useState(false);
   const [dialog, setDialog] = useState<'rename' | 'move' | 'share' | 'delete' | null>(null);
   const [title, setTitle] = useState(chat.title ?? '');
@@ -403,7 +403,10 @@ function ChatRow({ chat, projects, snippet, active, onDeleted }: {
   useLayoutEffect(() => {
     const panel = menuPanelRef.current;
     if (!menuOpen || !panel) return;
-    setMenuUp(panel.getBoundingClientRect().bottom > window.innerHeight);
+    // The nearest nav is the chat list, the scroll box the menu sits in; the
+    // window's edge counts too, when the list runs past it.
+    const list = panel.closest('nav')?.getBoundingClientRect().bottom ?? window.innerHeight;
+    setMenuUp(panel.getBoundingClientRect().bottom > Math.min(list, window.innerHeight));
   }, [menuOpen]);
   const isOwner = chat.via === 'owner';
   const mark = kindOf(chat);
