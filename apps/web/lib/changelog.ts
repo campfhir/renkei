@@ -57,6 +57,12 @@ export const CHANGELOG: ChangelogRelease[] = [
         detail:
           'Ask the chat to run an agent that has an API trigger, and it asks you to allow the run the same way it does for a scheduled agent — showing the inputs it will pass. You do not need to set a schedule. An agent with no schedule and no API trigger still cannot be started from chat.',
       },
+      {
+        kind: 'fixed',
+        title: 'Long text in chat action cards wraps instead of running off the card',
+        detail:
+          'A card that says what the chat did, such as a calendar event it created, now wraps a long title or name onto more lines rather than cutting it off. An Outlook event’s ID no longer appears on the card.',
+      },
     ],
   },
   {
