@@ -20,7 +20,7 @@
     "@renkei/rate-limit": "workspace:*",
     "@renkei/user-keys": "workspace:*",
     "@tryjsky/v9u-smb2": "^1.1.0",
-    "kysely": "^0.29.6",
+    "kysely": "^0.29.7",
     "ssh2-sftp-client": "^12.1.1"
   },
   "devDependencies": {

@@ -18,7 +18,7 @@
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/user-keys": "workspace:*",
-    "kysely": "^0.29.6"
+    "kysely": "^0.29.7"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

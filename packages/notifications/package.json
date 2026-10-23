@@ -14,7 +14,7 @@
     "@renkei/db": "workspace:*",
     "@renkei/settings": "workspace:*",
     "@renkei/user-prefs": "workspace:*",
-    "kysely": "^0.29.6",
+    "kysely": "^0.29.7",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
