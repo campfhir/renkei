@@ -203,6 +203,12 @@ export const COACH_ANCHORS = [
   'salesforce-scopes',
   /** Connect Salesforce. */
   'salesforce-connect',
+  /** A Salesforce Admin card (one per org). */
+  'card-salesforce-admin',
+  /** Its capability picker. */
+  'salesforce-admin-scopes',
+  /** Connect Salesforce Admin. */
+  'salesforce-admin-connect',
   /** The Bitbucket panel. */
   'card-bitbucket',
   /** Its capability picker. */

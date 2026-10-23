@@ -53,6 +53,39 @@ jobs:
       - name: Test
         run: pnpm test
 
+  # Every change to the product (apps/, packages/, docker/) needs an entry in
+  # apps/web/lib/changelog.ts in the same pull request, or a commit that says
+  # `Changelog: none`. `pnpm changelog add` writes the entry with today's date.
+  # The check also fails a malformed changelog, such as a null date.
+  changelog:
+    name: changelog
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The check diffs the pull request's base against its head, so it
+          # needs their history, not the shallow clone the other jobs use.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Changelog helper tests
+        run: node --test scripts/changelog.test.mjs
+
+      - name: Changelog check
+        run: >-
+          node scripts/changelog.mjs check
+          ${{ github.event.pull_request.base.sha }}
+          ${{ github.event.pull_request.head.sha }}
+
   # The dependency audit: a high or critical advisory against a PRODUCTION
   # dependency fails the build. The advisories that were already open when
   # this gate went in are listed, each with a review date, under

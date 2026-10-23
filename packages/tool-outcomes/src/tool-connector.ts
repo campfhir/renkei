@@ -44,6 +44,8 @@ const PREFIXES: [string, string][] = [
   ['confluence_', 'atlassian-confluence'],
   ['bitbucket_', 'atlassian-bitbucket'],
   ['github_', 'github'],
+  // Before `salesforce_`: the admin tools are a separate connector and grant.
+  ['salesforce_admin_', 'salesforce-admin'],
   ['salesforce_', 'salesforce'],
   ['outlook_', 'microsoft'],
   ['sharepoint_', 'sharepoint'],

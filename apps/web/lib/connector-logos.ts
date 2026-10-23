@@ -34,6 +34,9 @@ export const LOGO_FILE: Record<string, string> = {
   'entra-developer': 'microsoft',
   // The WebEx bot is a second registration of the same product.
   'webex-bot': 'webex',
+  // Salesforce Admin is a separate connector/capability key from
+  // 'salesforce', but the same product and the same mark.
+  'salesforce-admin': 'salesforce',
   // Renkei's own built-in surfaces wear Renkei's mark — one file, many keys.
   cards: 'renkei',
   agents: 'renkei',

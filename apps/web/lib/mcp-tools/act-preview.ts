@@ -76,6 +76,9 @@ export const PREVIEW_EXEMPT_CONNECTORS: readonly string[] = [
   'jira-admin',
   'knowledge',
   'logs',
+  // Same as jira-admin: its proposals write change requests in Renkei,
+  // validated by Salesforce and applied only from Renkei's review page.
+  'salesforce-admin',
   'sandbox',
   'user-memory',
 ];

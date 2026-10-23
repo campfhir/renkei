@@ -32,6 +32,7 @@ import {
   ONBASE_ADMIN,
   GITHUB,
   SALESFORCE,
+  SALESFORCE_ADMIN,
 } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { registerAllTools } from '@/lib/mcp-tools';
@@ -67,6 +68,11 @@ import { oauthBitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import { registerGitHubTools, GITHUB_MCP_CONNECTOR } from '@/lib/mcp-tools/github';
 import { oauthGitHubAuth } from '@/lib/mcp-tools/github/github-auth';
 import { registerSalesforceTools, SALESFORCE_MCP_CONNECTOR } from '@/lib/mcp-tools/salesforce';
+import {
+  registerSalesforceAdminTools,
+  SALESFORCE_ADMIN_MCP_CONNECTOR,
+} from '@/lib/mcp-tools/salesforce-admin';
+import { oauthSalesforceAdminAuth } from '@/lib/mcp-tools/salesforce-admin/auth';
 import { oauthSalesforceAuth } from '@/lib/mcp-tools/salesforce/salesforce-auth';
 import { resolveToolExposure } from '@renkei/connector-fileshares';
 import {
@@ -141,6 +147,10 @@ export interface ConnectorAvailability {
   salesforceAvailable: boolean;
   /** Renkei's own capabilities on the Salesforce grant (lib/salesforce-scopes.ts). */
   salesforceScopes: string[];
+  /** Any connection to a Salesforce admin connector (org). */
+  salesforceAdminAvailable: boolean;
+  /** The union of those connections' capabilities (lib/salesforce-admin-scopes.ts). */
+  salesforceAdminScopes: string[];
   filesharesAvailable: boolean;
   /** Whether any connected share exposes write tools / delete to the LLM. */
   fileshareWrite: boolean;
@@ -349,6 +359,22 @@ export async function resolveConnectorAvailability(
     ),
   ];
 
+  // The Salesforce admin connector: the same shape, on its own grants.
+  const salesforceAdminGrantRows = await db
+    .selectFrom('provider_grants')
+    .select(['requested_scopes', 'granted_scopes'])
+    .where('provider', '=', SALESFORCE_ADMIN)
+    .where('subject', '=', subject)
+    .execute();
+  const salesforceAdminAvailable = salesforceAdminGrantRows.length > 0;
+  const salesforceAdminScopes = [
+    ...new Set(
+      salesforceAdminGrantRows.flatMap((row) =>
+        narrowedScopes(row.requested_scopes, row.granted_scopes)
+      )
+    ),
+  ];
+
   // File shares are the one connector with no provider_grants row: the
   // caller's own stored connections stand in for the OAuth grant, and the
   // exposure they chose per share decides which tool FAMILIES register —
@@ -422,6 +448,8 @@ export async function resolveConnectorAvailability(
     githubScopes,
     salesforceAvailable,
     salesforceScopes,
+    salesforceAdminAvailable,
+    salesforceAdminScopes,
     filesharesAvailable,
     fileshareWrite,
     fileshareDelete,
@@ -472,6 +500,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.bitbucketAvailable ? [BITBUCKET_MCP_CONNECTOR] : []),
     ...(availability.githubAvailable ? [GITHUB_MCP_CONNECTOR] : []),
     ...(availability.salesforceAvailable ? [SALESFORCE_MCP_CONNECTOR] : []),
+    ...(availability.salesforceAdminAvailable ? [SALESFORCE_ADMIN_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
     ...(availability.mirthAvailable ? [MIRTH_MCP_CONNECTOR] : []),
     ...(availability.admanagerAvailable ? [ADMANAGER_MCP_CONNECTOR] : []),
@@ -511,6 +540,7 @@ export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
   BITBUCKET_MCP_CONNECTOR,
   GITHUB_MCP_CONNECTOR,
   SALESFORCE_MCP_CONNECTOR,
+  SALESFORCE_ADMIN_MCP_CONNECTOR,
   FILESHARES_MCP_CONNECTOR,
   MIRTH_MCP_CONNECTOR,
   ADMANAGER_MCP_CONNECTOR,
@@ -562,6 +592,7 @@ export async function registerRenkeiTools(
     bitbucketAvailable,
     githubAvailable,
     salesforceAvailable,
+    salesforceAdminAvailable,
     filesharesAvailable,
     mirthAvailable,
     admanagerAvailable,
@@ -801,6 +832,16 @@ export async function registerRenkeiTools(
       withCapabilityGate(server, projection, SALESFORCE_MCP_CONNECTOR),
       context,
       oauthSalesforceAuth(context)
+    );
+  }
+  if (salesforceAdminAvailable) {
+    // The caller's own grants on the organization's admin connectors.
+    // Proposals only write change requests in Renkei; applying one is the
+    // browser's (app/api/salesforce-admin/changes/[changeId]/apply).
+    registerSalesforceAdminTools(
+      withCapabilityGate(server, projection, SALESFORCE_ADMIN_MCP_CONNECTOR),
+      context,
+      oauthSalesforceAdminAuth(context)
     );
   }
   if (filesharesAvailable) {
