@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-23',
     entries: [
       {
+        kind: 'added',
+        title: 'Chats get their own titles',
+        detail:
+          'A new chat is titled from its first message by the model, and you can ask the chat to rename itself at any time.',
+      },
+      {
         kind: 'changed',
         title: 'Agent model settings open in a dialog',
         detail:
