@@ -141,7 +141,6 @@ export function OmniSearch({
   const sections = buildSections({
     needle,
     query: text,
-    searchable,
     isOperator,
     artifacts,
     pages,
@@ -306,7 +305,6 @@ function withFind(href: string, query: string): string {
 function buildSections({
   needle,
   query,
-  searchable,
   isOperator,
   artifacts,
   pages,
@@ -316,7 +314,6 @@ function buildSections({
 }: {
   needle: string;
   query: string;
-  searchable: boolean;
   isOperator: boolean;
   artifacts: LibraryItem[];
   pages: OmniPage[];
@@ -372,19 +369,8 @@ function buildSections({
         icon: place.icon,
       }));
 
-  // The library's own search first, so a person can see all of it; then the
-  // artifacts it found, each opened where it is.
+  // The artifacts the library found for the words, each opened where it is.
   const artifactResults: Result[] = [
-    ...(searchable
-      ? [
-          {
-            href: `/chat/artifacts?q=${encodeURIComponent(query)}`,
-            label: `Search artifacts for “${query}”`,
-            detail: 'Names and contents',
-            icon: ICONS.search,
-          },
-        ]
-      : []),
     ...artifacts.slice(0, LIMITS.artifacts).map((item): Result => ({
       href: `/chat/artifacts?artifact=${item.id}`,
       label: item.filename,

@@ -73,16 +73,6 @@ test('an operator is sent straight to an organization setting', async ({ page },
   await expect(page.locator('#settings-safety')).toBeInViewport();
 });
 
-test('a search for words reaches into artifacts through the library search', async ({
-  page,
-}, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-light', 'A desktop check.');
-  await page.goto('/agents');
-  const results = await search(page, 'quarterly budget');
-  await results.getByRole('option', { name: /Search artifacts for “quarterly budget”/ }).click();
-  await expect(page).toHaveURL(/\/chat\/artifacts\?q=quarterly(\+|%20)budget$/);
-});
-
 test('an artifact is found by a keyword in its summary, and the row shows the summary', async ({
   page,
 }, testInfo) => {

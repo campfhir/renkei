@@ -40,14 +40,12 @@ test('top bar search: Ctrl+K focuses it, a setting is found and opened', async (
   await expect(search).toHaveValue('');
   await expect(results).toBeHidden();
 
-  // A search that matches no setting still offers the library search, and
-  // the arrows move through what is there without breaking it.
+  // A search that matches nothing says so, and the arrows do not break it.
   await search.fill('zzz no such place');
-  await expect(results.getByRole('option', { name: /Search artifacts for/ })).toBeVisible();
-  await expect(results.getByRole('option')).toHaveCount(1);
+  await expect(results).toContainText('Nothing matches');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowUp');
-  await expect(results.getByRole('option')).toHaveCount(1);
+  await expect(results).toContainText('Nothing matches');
 
   await page.screenshot({
     path: path.join(
