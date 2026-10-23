@@ -70,7 +70,9 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 
 async function seedTenant(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = $1', [
+      fixture.subject,
+    ]);
     await client.query('DELETE FROM audit_events WHERE actor_subject = $1', [fixture.subject]);
     await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
     await client.query('DELETE FROM connector_configs');
@@ -94,13 +96,20 @@ async function seedTenant(fixture: Fixture): Promise<void> {
     );
     await client.query(
       `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian-admin', 'e2e-jira-admin-account', $1, 'e2e-admin-client',\n               'E2E Jira Admin', $2, $3, $4, $5, $6)`,
-      [fixture.subject, await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'), await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'), new Date(Date.now() + 365 * 24 * 3_600_000), [
-                  'read:jira-user',
-                  'read:jira-work',
-                  'manage:jira-configuration',
-                  'manage:jira-project',
-                  'offline_access',
-                ], { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' }]
+      [
+        fixture.subject,
+        await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'),
+        await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'),
+        new Date(Date.now() + 365 * 24 * 3_600_000),
+        [
+          'read:jira-user',
+          'read:jira-work',
+          'manage:jira-configuration',
+          'manage:jira-project',
+          'offline_access',
+        ],
+        { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' },
+      ]
     );
   });
 }
@@ -140,7 +149,12 @@ async function proposeVendor(fixture: Fixture): Promise<string> {
   const result = await withDb((client) =>
     client.query<{ id: string }>(
       `INSERT INTO jira_admin_change_requests\n         (subject, cloud_id, site_url, kind, title, reason, payload, expires_at)\n       VALUES ($1, $2, 'https://e2e.atlassian.net', 'space_field',\n               'New field “Vendor” for OPS', 'Procurement asked', $3, $4)\n       RETURNING id`,
-      [fixture.subject, fixture.cloudId, JSON.stringify(payload), new Date(Date.now() + 24 * 3_600_000)]
+      [
+        fixture.subject,
+        fixture.cloudId,
+        JSON.stringify(payload),
+        new Date(Date.now() + 24 * 3_600_000),
+      ]
     )
   );
   const id = result.rows[0]?.id;
@@ -266,8 +280,10 @@ test('a new field is reviewed with the screen another space shows, then created,
   await expect
     .poll(async () =>
       withDb(async (client) => {
+        // This person's only: the dev database is shared by every spec in a run.
         const rows = await client.query(
-          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied'`
+          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied' AND actor_subject = $1`,
+          [fixture.subject]
         );
         return rows.rowCount;
       })

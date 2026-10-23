@@ -1496,6 +1496,7 @@ function handleJiraSpaces(request, url, response, cloudId, path) {
 const JIRA_FIELDS = new Map();
 let nextFieldId = 10500;
 let nextContextId = 20000;
+let nextTabId = 430;
 
 function jiraFieldSite(cloudId) {
   if (!JIRA_FIELDS.has(cloudId)) {
@@ -1670,10 +1671,544 @@ function handleJiraFields(request, url, response, cloudId, path) {
       return;
     }
   }
+  // Changes to a screen (lib/jira-admin/screen-changes.ts): a field off a
+  // tab or moved on it, a tab added or renamed, the screen renamed.
+  const tabField =
+    /^\/rest\/api\/3\/screens\/([^/]+)\/tabs\/([^/]+)\/fields\/([^/]+)(\/move)?$/.exec(path);
+  if (tabField) {
+    const screen = site.screens.get(tabField[1]);
+    const tab = screen?.tabs.find((candidate) => candidate.id === tabField[2]);
+    if (!screen || !tab) return jiraError(response, 404, 'The screen tab was not found.');
+    const index = tab.fields.indexOf(tabField[3]);
+    if (index < 0) return jiraError(response, 404, 'The field is not on the screen tab.');
+    if (request.method === 'DELETE' && !tabField[4]) {
+      tab.fields.splice(index, 1);
+      response.statusCode = 204;
+      return response.end();
+    }
+    if (request.method === 'POST' && tabField[4]) {
+      void readBody(request).then((body) => {
+        const [field] = tab.fields.splice(index, 1);
+        const at =
+          body.position === 'First'
+            ? 0
+            : body.position === 'Last'
+              ? tab.fields.length
+              : body.position === 'Earlier'
+                ? Math.max(0, index - 1)
+                : Math.min(tab.fields.length, index + 1);
+        tab.fields.splice(at, 0, field);
+        response.statusCode = 204;
+        response.end();
+      });
+      return;
+    }
+  }
+  const tabOne = /^\/rest\/api\/3\/screens\/([^/]+)\/tabs\/([^/]+)$/.exec(path);
+  if (tabOne && request.method === 'PUT') {
+    const screen = site.screens.get(tabOne[1]);
+    const tab = screen?.tabs.find((candidate) => candidate.id === tabOne[2]);
+    if (!tab) return jiraError(response, 404, 'The screen tab was not found.');
+    void readBody(request).then((body) => {
+      tab.name = body.name;
+      json(response, 200, { id: Number(tab.id), name: tab.name });
+    });
+    return;
+  }
+  const tabList = /^\/rest\/api\/3\/screens\/([^/]+)\/tabs$/.exec(path);
+  if (tabList && request.method === 'POST') {
+    const screen = site.screens.get(tabList[1]);
+    if (!screen) return jiraError(response, 404, 'The screen was not found.');
+    void readBody(request).then((body) => {
+      if (screen.tabs.some((tab) => tab.name.toLowerCase() === String(body.name).toLowerCase())) {
+        return jiraError(response, 400, 'A tab with that name already exists.');
+      }
+      const tab = { id: String(nextTabId++), name: body.name, fields: [] };
+      screen.tabs.push(tab);
+      json(response, 200, { id: Number(tab.id), name: tab.name });
+    });
+    return;
+  }
+  const screenOne = /^\/rest\/api\/3\/screens\/([^/]+)$/.exec(path);
+  if (screenOne && request.method === 'PUT') {
+    const screen = site.screens.get(screenOne[1]);
+    if (!screen) return jiraError(response, 404, 'The screen was not found.');
+    void readBody(request).then((body) => {
+      screen.name = body.name;
+      json(response, 200, { id: Number(screenOne[1]), name: screen.name });
+    });
+    return;
+  }
   return jiraError(response, 404, 'The stub does not answer that path.');
 }
 
+/**
+ * Work types and the schemes a space runs on, per site, for adding a work
+ * type to OPS (lib/jira-admin/work-type.ts): the site's work types and
+ * icons, OPS's work type, screens and workflow schemes with their
+ * mappings, and the bulk workflow scheme read and update, which carries a
+ * version Jira bumps on every change. And a service desk's request types,
+ * for HELP (lib/jira-admin/request-type.ts): the create takes the JSM
+ * grant, through the same stand-in.
+ */
+const JIRA_WORK_TYPES = new Map();
+let nextWorkTypeId = 10050;
+let nextRequestTypeId = 11000;
+
+function jiraWorkTypeSite(cloudId) {
+  if (!JIRA_WORK_TYPES.has(cloudId)) {
+    JIRA_WORK_TYPES.set(cloudId, {
+      types: [
+        { id: '10001', name: 'Task', subtask: false, hierarchyLevel: 0, avatarId: 10318 },
+        { id: '10002', name: 'Bug', subtask: false, hierarchyLevel: 0, avatarId: 10303 },
+      ],
+      // Scheme 11, OPS's — and HR's, so a proposal names HR.
+      issueTypeScheme: { id: '11', name: 'OPS work types', issueTypeIds: ['10001', '10002'] },
+      screensScheme: {
+        id: '12',
+        name: 'OPS screens',
+        mappings: [
+          { issueTypeId: '10002', screenSchemeId: '31' },
+          { issueTypeId: 'default', screenSchemeId: '30' },
+        ],
+      },
+      workflowScheme: {
+        id: '13',
+        name: 'OPS workflows',
+        version: { id: 'v-1', versionNumber: 1 },
+        defaultWorkflow: { id: 'wf-simple', name: 'Simple workflow' },
+        workflowsForIssueTypes: [
+          { workflow: { id: 'wf-bug', name: 'Bug workflow' }, issueTypeIds: ['10002'] },
+        ],
+      },
+      requestTypes: [],
+    });
+  }
+  return JIRA_WORK_TYPES.get(cloudId);
+}
+
+function handleJiraWorkTypes(request, url, response, cloudId, path) {
+  const site = jiraWorkTypeSite(cloudId);
+  if (path === '/rest/api/3/issuetype' && request.method === 'GET') {
+    return json(response, 200, site.types);
+  }
+  if (path === '/rest/api/3/issuetype' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      if (site.types.some((type) => type.name.toLowerCase() === String(body.name).toLowerCase())) {
+        return jiraError(response, 409, 'An issue type with this name already exists.');
+      }
+      const type = {
+        id: String(nextWorkTypeId++),
+        name: body.name,
+        description: body.description,
+        subtask: body.hierarchyLevel === -1,
+        hierarchyLevel: body.hierarchyLevel ?? 0,
+        avatarId: 10300,
+      };
+      site.types.push(type);
+      json(response, 201, type);
+    });
+    return;
+  }
+  const typeOne = /^\/rest\/api\/3\/issuetype\/([^/]+)$/.exec(path);
+  if (typeOne && request.method === 'PUT') {
+    const type = site.types.find((candidate) => candidate.id === typeOne[1]);
+    if (!type) return jiraError(response, 404, 'The issue type was not found.');
+    void readBody(request).then((body) => {
+      if (body.avatarId !== undefined) type.avatarId = body.avatarId;
+      if (body.name) type.name = body.name;
+      if (body.description !== undefined) type.description = body.description;
+      json(response, 200, type);
+    });
+    return;
+  }
+  if (path === '/rest/api/3/avatar/issuetype/system' && request.method === 'GET') {
+    return json(response, 200, {
+      system: [
+        { id: '10303', fileName: '10303_bug.png', urls: { '48x48': 'https://stub/bug.png' } },
+        { id: '10315', fileName: '10315_story.png', urls: { '48x48': 'https://stub/story.png' } },
+        { id: '10318', fileName: '10318_task.png', urls: { '48x48': 'https://stub/task.png' } },
+      ],
+    });
+  }
+  if (path === '/rest/api/3/project/search' && request.method === 'GET') {
+    return json(
+      response,
+      200,
+      paged(url, [
+        { id: '10000', key: 'OPS' },
+        { id: '10300', key: 'HR' },
+      ])
+    );
+  }
+  if (path === '/rest/api/3/issuetypescheme/project' && request.method === 'GET') {
+    const scheme = site.issueTypeScheme;
+    const wanted = url.searchParams.getAll('projectId');
+    const projectIds = ['10000', '10300'].filter((id) => wanted.includes(id));
+    return json(
+      response,
+      200,
+      paged(
+        url,
+        projectIds.length > 0
+          ? [{ issueTypeScheme: { id: scheme.id, name: scheme.name }, projectIds }]
+          : []
+      )
+    );
+  }
+  if (path === '/rest/api/3/issuetypescheme/mapping' && request.method === 'GET') {
+    const scheme = site.issueTypeScheme;
+    return json(
+      response,
+      200,
+      paged(
+        url,
+        scheme.issueTypeIds.map((issueTypeId) => ({ issueTypeSchemeId: scheme.id, issueTypeId }))
+      )
+    );
+  }
+  const addToScheme = /^\/rest\/api\/3\/issuetypescheme\/([^/]+)\/issuetype$/.exec(path);
+  if (addToScheme && request.method === 'PUT') {
+    if (addToScheme[1] !== site.issueTypeScheme.id) {
+      return jiraError(response, 404, 'The issue type scheme was not found.');
+    }
+    void readBody(request).then((body) => {
+      for (const id of body.issueTypeIds ?? []) {
+        if (site.issueTypeScheme.issueTypeIds.includes(id)) {
+          return jiraError(response, 400, 'The issue type is already in the scheme.');
+        }
+        site.issueTypeScheme.issueTypeIds.push(id);
+      }
+      response.statusCode = 204;
+      response.end();
+    });
+    return;
+  }
+  if (path === '/rest/api/3/issuetypescreenscheme/project' && request.method === 'GET') {
+    const scheme = site.screensScheme;
+    return json(response, 200, {
+      values: [
+        { issueTypeScreenScheme: { id: scheme.id, name: scheme.name }, projectIds: ['10000'] },
+      ],
+    });
+  }
+  if (path === '/rest/api/3/issuetypescreenscheme/mapping' && request.method === 'GET') {
+    const scheme = site.screensScheme;
+    return json(
+      response,
+      200,
+      paged(
+        url,
+        scheme.mappings.map((mapping) => ({ issueTypeScreenSchemeId: scheme.id, ...mapping }))
+      )
+    );
+  }
+  const screensMapping = /^\/rest\/api\/3\/issuetypescreenscheme\/([^/]+)\/mapping$/.exec(path);
+  if (screensMapping && request.method === 'PUT') {
+    if (screensMapping[1] !== site.screensScheme.id) {
+      return jiraError(response, 404, 'The issue type screen scheme was not found.');
+    }
+    void readBody(request).then((body) => {
+      for (const mapping of body.issueTypeMappings ?? []) {
+        if (site.screensScheme.mappings.some((held) => held.issueTypeId === mapping.issueTypeId)) {
+          return jiraError(response, 400, 'The issue type is mapped already.');
+        }
+        site.screensScheme.mappings.push({
+          issueTypeId: mapping.issueTypeId,
+          screenSchemeId: mapping.screenSchemeId,
+        });
+      }
+      response.statusCode = 204;
+      response.end();
+    });
+    return;
+  }
+  if (path === '/rest/api/3/screenscheme' && request.method === 'GET') {
+    const names = { 30: 'OPS screen scheme', 31: 'Bug screen scheme' };
+    const ids = url.searchParams.getAll('id');
+    return json(response, 200, {
+      isLast: true,
+      values: ids.filter((id) => names[id]).map((id) => ({ id: Number(id), name: names[id] })),
+    });
+  }
+  if (path === '/rest/api/3/workflowscheme/project' && request.method === 'GET') {
+    const scheme = site.workflowScheme;
+    return json(response, 200, {
+      values: [{ workflowScheme: { id: scheme.id, name: scheme.name }, projectIds: ['10000'] }],
+    });
+  }
+  if (path === '/rest/api/3/workflowscheme/read' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      const scheme = site.workflowScheme;
+      json(
+        response,
+        200,
+        (body.workflowSchemeIds ?? []).includes(scheme.id)
+          ? [
+              {
+                id: scheme.id,
+                name: scheme.name,
+                version: scheme.version,
+                defaultWorkflow: scheme.defaultWorkflow,
+                workflowsForIssueTypes: scheme.workflowsForIssueTypes,
+              },
+            ]
+          : []
+      );
+    });
+    return;
+  }
+  if (path === '/rest/api/3/workflowscheme/update' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      const scheme = site.workflowScheme;
+      if (body.id !== scheme.id)
+        return jiraError(response, 404, 'The workflow scheme was not found.');
+      if (body.version?.versionNumber !== scheme.version.versionNumber) {
+        return jiraError(response, 409, 'The workflow scheme has changed since it was read.');
+      }
+      const known = new Map([
+        ['wf-bug', 'Bug workflow'],
+        ['wf-simple', 'Simple workflow'],
+        ['wf-incident', 'Incident workflow'],
+      ]);
+      scheme.workflowsForIssueTypes = (body.workflowsForIssueTypes ?? []).map((item) => ({
+        workflow: { id: item.workflowId, name: known.get(item.workflowId) ?? item.workflowId },
+        issueTypeIds: item.issueTypeIds,
+      }));
+      scheme.version = {
+        id: `v-${scheme.version.versionNumber + 1}`,
+        versionNumber: scheme.version.versionNumber + 1,
+      };
+      json(response, 200, {});
+    });
+    return;
+  }
+  if (path === '/rest/api/3/workflows/search' && request.method === 'GET') {
+    const query = (url.searchParams.get('queryString') ?? '').toLowerCase();
+    const all = [
+      { id: 'wf-bug', name: 'Bug workflow' },
+      { id: 'wf-simple', name: 'Simple workflow' },
+      { id: 'wf-incident', name: 'Incident workflow' },
+    ];
+    return json(
+      response,
+      200,
+      paged(
+        url,
+        all.filter((wf) => wf.name.toLowerCase().includes(query))
+      )
+    );
+  }
+  // The service desk for HELP, on the servicedeskapi.
+  const desk = /^\/rest\/servicedeskapi\/servicedesk\/([^/]+)$/.exec(path);
+  if (desk && request.method === 'GET') {
+    if (desk[1] !== 'HELP' && desk[1] !== '3') return jiraError(response, 404, 'No service desk.');
+    return json(response, 200, {
+      id: '3',
+      projectId: '10100',
+      projectKey: 'HELP',
+      projectName: 'Help desk',
+    });
+  }
+  const requestTypes = /^\/rest\/servicedeskapi\/servicedesk\/([^/]+)\/requesttype$/.exec(path);
+  if (requestTypes) {
+    if (requestTypes[1] !== '3') return jiraError(response, 404, 'No service desk.');
+    if (request.method === 'GET') {
+      const query = (url.searchParams.get('searchQuery') ?? '').toLowerCase();
+      return json(response, 200, {
+        isLastPage: true,
+        values: site.requestTypes.filter((type) => type.name.toLowerCase().includes(query)),
+      });
+    }
+    if (request.method === 'POST') {
+      if (request.headers['x-experimentalapi'] !== 'opt-in') {
+        return json(response, 412, {
+          errorMessage: 'This API is experimental; opt in with X-ExperimentalApi.',
+        });
+      }
+      void readBody(request).then((body) => {
+        if (
+          site.requestTypes.some(
+            (type) => type.name.toLowerCase() === String(body.name).toLowerCase()
+          )
+        ) {
+          return json(response, 400, {
+            errorMessage: 'A request type with this name already exists.',
+          });
+        }
+        const type = {
+          id: String(nextRequestTypeId++),
+          name: body.name,
+          description: body.description ?? '',
+          helpText: body.helpText ?? '',
+          issueTypeId: body.issueTypeId,
+          groupIds: [],
+          icon: { id: '10527' },
+        };
+        site.requestTypes.push(type);
+        json(response, 200, type);
+      });
+      return;
+    }
+  }
+  return jiraError(response, 404, 'The stub does not answer that path.');
+}
+
+/**
+ * The Automation REST API, stood in for: reached through
+ * JIRA_AUTOMATION_API_BASE_URL on the person's Atlassian API token, which
+ * the delegate sends as HTTP Basic (email:token). A token that does not
+ * look like one (ATATT…) is refused with a 401, the way Atlassian refuses
+ * a revoked one — so the token route's "check it through the delegate"
+ * step has something to check against. Two rules per site, in memory.
+ */
+const AUTOMATION = new Map();
+let nextRuleId = 100;
+
+function automationSite(cloudId) {
+  if (!AUTOMATION.has(cloudId)) {
+    AUTOMATION.set(cloudId, {
+      lastAuthorization: null,
+      rules: new Map([
+        [
+          'rule-1',
+          {
+            uuid: 'rule-1',
+            name: 'Escalate outages',
+            state: 'ENABLED',
+            description: 'Pages on-call',
+            labels: ['ops'],
+            ruleScopeARIs: [`ari:cloud:jira:${cloudId}:project/10000`],
+            created: 1700000000000,
+            updated: 1700000000000,
+            authorAccountId: 'acct-1',
+            actor: { type: 'ACCOUNT_ID', actor: 'acct-1' },
+            trigger: { id: 't-1', type: 'jira.issue.event.trigger:created', value: {} },
+            components: [
+              { id: 'c-1', type: 'jira.issue.comment', value: { comment: 'Paging' }, children: [] },
+            ],
+          },
+        ],
+        [
+          'rule-2',
+          {
+            uuid: 'rule-2',
+            name: 'Nightly tidy',
+            state: 'DISABLED',
+            description: '',
+            labels: [],
+            ruleScopeARIs: [],
+            created: 1700000000000,
+            updated: 1700000000000,
+            authorAccountId: 'acct-1',
+            actor: { type: 'ACCOUNT_ID', actor: 'acct-1' },
+            trigger: { id: 't-2', type: 'jira.schedule.trigger', value: {} },
+            components: [],
+          },
+        ],
+      ]),
+    });
+  }
+  return AUTOMATION.get(cloudId);
+}
+
+function summaryOfRule(rule) {
+  const { trigger, components, ...summary } = rule;
+  void trigger;
+  void components;
+  return summary;
+}
+
+function handleAutomation(request, url, response) {
+  // The real path shape, product then site: …/automation/public/jira/{cloudId}/rest/v1/….
+  const match = /^\/automation\/jira\/([^/]+)(\/.*)$/.exec(url.pathname);
+  if (!match) return json(response, 404, { message: 'The stub does not answer that path.' });
+  const [, cloudId, path] = match;
+  const site = automationSite(cloudId);
+  // The test reads what the delegate sent, without a token of its own.
+  if (path === '/__last-authorization' && request.method === 'GET') {
+    return json(response, 200, { authorization: site.lastAuthorization });
+  }
+  const authorization = request.headers.authorization ?? '';
+  site.lastAuthorization = authorization;
+  const basic = /^Basic (.+)$/.exec(authorization);
+  const decoded = basic ? Buffer.from(basic[1], 'base64').toString('utf8') : '';
+  const token = decoded.includes(':') ? decoded.slice(decoded.indexOf(':') + 1) : '';
+  if (!decoded.includes('@') || !token.startsWith('ATATT')) {
+    return json(response, 401, { message: 'Unauthorized; scope does not match' });
+  }
+  if (path === '/rest/v1/rule/summary' && (request.method === 'GET' || request.method === 'POST')) {
+    const answer = (filter) => {
+      const rules = [...site.rules.values()]
+        .filter((rule) => !filter.state || rule.state === filter.state)
+        .filter((rule) => !filter.scope || rule.ruleScopeARIs.includes(filter.scope))
+        .map(summaryOfRule);
+      json(response, 200, { data: rules, links: {} });
+    };
+    if (request.method === 'GET') return answer({});
+    void readBody(request).then((body) => answer(body ?? {}));
+    return;
+  }
+  if (path === '/rest/v1/rule' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      const rule = body?.rule;
+      if (!rule || !rule.name || !rule.trigger || !Array.isArray(rule.components)) {
+        return json(response, 400, { message: 'A rule needs a name, a trigger and components.' });
+      }
+      const uuid = `rule-${nextRuleId++}`;
+      site.rules.set(uuid, { ...rule, uuid, created: Date.now(), updated: Date.now() });
+      json(response, 201, { ruleUuid: uuid });
+    });
+    return;
+  }
+  const one = /^\/rest\/v1\/rule\/([^/?]+)(\/state)?(?:\?.*)?$/.exec(path);
+  if (one) {
+    const rule = site.rules.get(one[1]);
+    if (!rule) return json(response, 404, { message: 'Rule not found.' });
+    if (request.method === 'GET' && !one[2]) {
+      return json(response, 200, { rule, connections: [] });
+    }
+    if (request.method === 'PUT' && one[2]) {
+      void readBody(request).then((body) => {
+        rule.state = body?.value === 'DISABLED' ? 'DISABLED' : 'ENABLED';
+        rule.updated = Date.now();
+        json(response, 200, {});
+      });
+      return;
+    }
+    if (request.method === 'PUT' && !one[2]) {
+      void readBody(request).then((body) => {
+        if (!body?.rule) return json(response, 400, { message: 'A rule is required.' });
+        site.rules.set(rule.uuid, { ...body.rule, uuid: rule.uuid, updated: Date.now() });
+        json(response, 200, { ruleUuid: rule.uuid });
+      });
+      return;
+    }
+  }
+  const run = /^\/rest\/v1\/rule\/manual\/([^/]+)\/invocation$/.exec(path);
+  if (run && request.method === 'POST') {
+    const rule = site.rules.get(run[1]);
+    if (!rule) return json(response, 404, { message: 'Rule not found.' });
+    void readBody(request).then((body) => {
+      // One answer per object, keyed by its ARI — built as entries, so a
+      // caller-chosen key is never written onto an object as a property.
+      const objects = Array.isArray(body?.objects) ? body.objects : [];
+      const answers = Object.fromEntries(
+        objects.filter((object) => typeof object === 'string').map((object) => [object, 'SUCCESS'])
+      );
+      json(response, 200, answers);
+    });
+    return;
+  }
+  return json(response, 404, { message: 'The stub does not answer that path.' });
+}
+
 function handleJiraAdmin(request, url, response) {
+  const workTypes =
+    /^\/jira\/([^/]+)(\/rest\/api\/3\/(?:issuetype|avatar|issuetypescheme|issuetypescreenscheme|screenscheme|workflowscheme|workflows|project\/search)(?:\/.*)?|\/rest\/servicedeskapi\/.*)$/.exec(
+      url.pathname
+    );
+  if (workTypes) return handleJiraWorkTypes(request, url, response, workTypes[1], workTypes[2]);
   const site =
     /^\/jira\/([^/]+)(\/rest\/api\/3\/(?:project|projectvalidate|component|version)(?:\/.*)?)$/.exec(
       url.pathname
@@ -1870,6 +2405,7 @@ const server = createServer((request, response) => {
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
   // Jira administration's option endpoints, for applying change requests.
   if (url.pathname.startsWith('/jira/')) return handleJiraAdmin(request, url, response);
+  if (url.pathname.startsWith('/automation/')) return handleAutomation(request, url, response);
   if (request.headers.authorization !== `Bearer ${API_KEY}`) {
     return error(response, 401, 'unauthorized');
   }

@@ -114,12 +114,8 @@ describe('registration', () => {
         configs.push({ name, readOnly: config.annotations?.readOnlyHint });
       },
     } as unknown as McpServer;
-    await registerJiraAdminTools(
-      server,
-      { subject: 'subject-1' } as MCPToolContext,
-      stubAuth
-    );
-    expect(configs.length).toBe(14);
+    await registerJiraAdminTools(server, { subject: 'subject-1' } as MCPToolContext, stubAuth);
+    expect(configs.length).toBe(18);
     // The writes are proposals, which only store a Renkei change request,
     // and templates, which are Renkei's own records — Act tools all the
     // same, so read-only mode hides them. Applying a proposal is a
@@ -133,11 +129,103 @@ describe('registration', () => {
     ).toEqual([
       'jira_admin_delete_space_template',
       'jira_admin_propose_option_changes',
+      'jira_admin_propose_screen_changes',
       'jira_admin_propose_space',
       'jira_admin_propose_space_field',
+      'jira_admin_propose_work_type',
       'jira_admin_save_space_template',
     ]);
     expect(configs.some((config) => /apply|confirm|approve/.test(config.name))).toBe(false);
+  });
+
+  it('offers automation only once an Atlassian API token is saved beside the grant', async () => {
+    const names = async (jiraAdminTokenAvailable?: boolean) => {
+      const registered: string[] = [];
+      const server = {
+        registerTool: (name: string) => {
+          registered.push(name);
+        },
+      } as unknown as McpServer;
+      await registerJiraAdminTools(
+        server,
+        {
+          subject: 'subject-1',
+          jiraAdminScopes: ['read:jira-work'],
+          jiraAdminTokenAvailable,
+        } as MCPToolContext,
+        stubAuth
+      );
+      return registered;
+    };
+    const automation = [
+      'jira_admin_list_automation_rules',
+      'jira_admin_get_automation_rule',
+      'jira_admin_propose_automation_rule_state',
+      'jira_admin_propose_automation_rule',
+      'jira_admin_propose_automation_run',
+    ];
+    expect((await names()).filter((name) => automation.includes(name))).toEqual([]);
+    expect((await names(false)).filter((name) => automation.includes(name))).toEqual([]);
+    expect((await names(true)).filter((name) => automation.includes(name))).toEqual(automation);
+  });
+
+  it('offers request types only to someone holding the JSM grant with its scopes too', async () => {
+    // The one tool on two grants: Atlassian documents creating a request
+    // type under a granular JSM scope only, which the classic admin app
+    // cannot carry — so it shows in Jira Administration, and only when the
+    // JSM grant holds the "Set up request types" box.
+    const names = async (jsmGrant?: MCPToolContext['jsmGrant']) => {
+      const registered: string[] = [];
+      const server = {
+        registerTool: (name: string) => {
+          registered.push(name);
+        },
+      } as unknown as McpServer;
+      await registerJiraAdminTools(
+        server,
+        { subject: 'subject-1', jiraAdminScopes: ['read:jira-work'], jsmGrant } as MCPToolContext,
+        stubAuth
+      );
+      return registered;
+    };
+    expect(await names()).not.toContain('jira_admin_propose_request_type');
+    const grant = { auth: null, cloudId: 'cloud-1', accountId: 'acct-jsm' };
+    expect(
+      await names({ ...grant, scopes: ['read:servicedesk:jira-service-management'] })
+    ).not.toContain('jira_admin_propose_request_type');
+    expect(
+      await names({
+        ...grant,
+        scopes: [
+          'read:servicedesk:jira-service-management',
+          'read:requesttype:jira-service-management',
+          'write:requesttype:jira-service-management',
+        ],
+      })
+    ).toContain('jira_admin_propose_request_type');
+    // The admin grant still has to carry what the space read takes.
+    const registered: string[] = [];
+    await registerJiraAdminTools(
+      {
+        registerTool: (name: string) => {
+          registered.push(name);
+        },
+      } as unknown as McpServer,
+      {
+        subject: 'subject-1',
+        jiraAdminScopes: ['read:jira-user'],
+        jsmGrant: {
+          ...grant,
+          scopes: [
+            'read:servicedesk:jira-service-management',
+            'read:requesttype:jira-service-management',
+            'write:requesttype:jira-service-management',
+          ],
+        },
+      } as MCPToolContext,
+      stubAuth
+    );
+    expect(registered).not.toContain('jira_admin_propose_request_type');
   });
 });
 

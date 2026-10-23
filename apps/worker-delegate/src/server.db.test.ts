@@ -12,7 +12,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { getDatabase, closeDatabase } from '@renkei/db';
 import { instanceListMessage, parseEncryptionKey, verifyEd25519 } from '@renkei/crypto';
-import { setGrant, GITHUB, SALESFORCE } from '@renkei/provider-grants';
+import { setGrant, ATLASSIAN_ADMIN_TOKEN, GITHUB, SALESFORCE } from '@renkei/provider-grants';
 import { invalidateConnectorConfigCache, setConnectorConfig } from '@renkei/connector-config';
 import { createInstance, upsertConnection } from '@renkei/connector-mirth';
 import { sealForSubject } from '@renkei/user-keys';
@@ -695,6 +695,83 @@ describeDb('worker-delegate', () => {
 
     expect((await op('grant/delete', { provider: GITHUB, accountId })).status).toBe(200);
     expect((await op('grant/describe', grant)).status).toBe(404);
+  });
+
+  it('stores a typed-in Atlassian API token and sends it as Basic, to api.atlassian.com only', async () => {
+    // grant/store: the one way a credential nobody exchanged gets in. A
+    // provider without `credential` refuses it, so an OAuth token can never
+    // be planted around the exchange.
+    const accountId = `token-${randomUUID().slice(0, 8)}`;
+    const refused = await fetch(`${base}/v1/grant/store`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: GITHUB,
+        subject: owner,
+        accountId,
+        displayName: 'Octo',
+        secret: 'ghp_planted',
+        metadata: {},
+      }),
+    });
+    expect(refused.status).toBe(400);
+
+    const stored = await fetch(`${base}/v1/grant/store`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: ATLASSIAN_ADMIN_TOKEN,
+        subject: owner,
+        accountId,
+        displayName: 'Dana Admin',
+        secret: 'ATATT3x-secret',
+        metadata: { email: 'dana@example.com', cloudId: 'cloud-1' },
+      }),
+    });
+    expect(stored.status).toBe(200);
+
+    const grant = { provider: ATLASSIAN_ADMIN_TOKEN, subject: owner };
+    const described = await fetch(`${base}/v1/grant/describe`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify(grant),
+    });
+    expect(described.status).toBe(200);
+    const description: unknown = await described.json();
+    expect(isRecord(description) ? description.metadata : null).toEqual({
+      email: 'dana@example.com',
+      cloudId: 'cloud-1',
+    });
+    // Never the secret, and nothing to refresh.
+    expect(JSON.stringify(description)).not.toContain('ATATT3x-secret');
+
+    const proxied = await fetch(`${base}/v1/api`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${API_KEY}`,
+        'x-delegate-grant': JSON.stringify(grant),
+        'x-delegate-url':
+          'https://api.atlassian.com/automation/public/jira/cloud-1/rest/v1/rule/summary?limit=1',
+        'x-delegate-method': 'GET',
+      },
+    });
+    expect(proxied.status).toBe(200);
+    const call = upstreamCalls.at(-1);
+    expect(call?.authorization).toBe(
+      `Basic ${Buffer.from('dana@example.com:ATATT3x-secret').toString('base64')}`
+    );
+
+    const elsewhere = await fetch(`${base}/v1/api`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${API_KEY}`,
+        'x-delegate-grant': JSON.stringify(grant),
+        'x-delegate-url': 'https://acme.atlassian.net/rest/api/3/myself',
+        'x-delegate-method': 'GET',
+      },
+    });
+    expect(elsewhere.status).toBe(403);
+    expect(elsewhere.headers.get('x-delegate-error')).toBe('host_not_allowed');
   });
 
   it("keeps a Salesforce token to its own connector's org: exchange, identity, commit, proxy, revoke", async () => {

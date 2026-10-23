@@ -105,6 +105,7 @@ export default defineConfig({
         // delegate lets a provider's token travel to them too.
         BITBUCKET_API_BASE_URL: 'http://127.0.0.1:8092/bitbucket/2.0',
         JIRA_ADMIN_API_BASE_URL: 'http://127.0.0.1:8092/jira',
+        JIRA_AUTOMATION_API_BASE_URL: 'http://127.0.0.1:8092/automation',
       },
     },
     {
@@ -136,6 +137,8 @@ export default defineConfig({
         // And Jira administration's option endpoints: applying a change
         // request from its review page writes to the stub, never Atlassian.
         JIRA_ADMIN_API_BASE_URL: 'http://127.0.0.1:8092/jira',
+        // The Automation API too, on the person's API token (Basic auth).
+        JIRA_AUTOMATION_API_BASE_URL: 'http://127.0.0.1:8092/automation',
       },
     },
   ],

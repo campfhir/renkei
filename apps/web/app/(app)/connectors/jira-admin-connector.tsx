@@ -5,6 +5,7 @@ import { ConnectorShell, ConnectorHeading } from './connector-shell';
 import CoachTarget from '@/components/coach-marks/anchor';
 import AuthorizedPermissions from '@/components/authorized-permissions';
 import DisconnectControl from './disconnect-control';
+import ApiTokenControl from './api-token-control';
 import { ConnectScopePanel, ReconnectScopePanel } from './scope-connect-panel';
 import {
   ATLASSIAN_ADMIN_SCOPE_GROUPS,
@@ -26,6 +27,7 @@ export default function JiraAdminConnector({
   changesHref,
   templatesHref,
   pendingChanges,
+  apiTokenFor,
   nested = false,
 }: {
   connected: boolean;
@@ -40,6 +42,11 @@ export default function JiraAdminConnector({
   templatesHref: string;
   /** How many of them are waiting for review. */
   pendingChanges: number;
+  /**
+   * Whose Atlassian API token is saved beside the grant — the Automation
+   * API's only key, since it refuses OAuth apps — or null for none.
+   */
+  apiTokenFor: string | null;
   /**
    * Rendered inside the Atlassian suite card rather than as a card of its
    * own. Presentation only: the connect and disconnect controls stay here,
@@ -125,6 +132,8 @@ export default function JiraAdminConnector({
           </AuthorizedPermissions>
         </CoachTarget>
       )}
+
+      {connected && <ApiTokenControl savedFor={apiTokenFor} />}
 
       {connected && (
         <DisconnectControl

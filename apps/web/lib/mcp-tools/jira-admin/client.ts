@@ -46,6 +46,23 @@ export interface JiraAdminAccess {
   accountId: string;
   /** The fetcher every call goes out through — the delegate's, for the caller's grant. */
   auth: AuthedFetch;
+  /**
+   * Which connection the fetcher is, for a refusal's wording — "Jira
+   * Administration" unless set. The request type change runs its one
+   * write on the Jira Service Management grant (jsm-access.ts), on this
+   * same gateway.
+   */
+  label?: string;
+  /**
+   * Where the calls go, in place of the Jira gateway for this site — the
+   * Automation API (automation-client.ts), whose base is its own.
+   */
+  baseUrl?: string;
+  /**
+   * The credential is the person's own Atlassian API token, not an app's
+   * grant: a 401 means the token, not a scope.
+   */
+  apiToken?: boolean;
 }
 
 /**
@@ -98,15 +115,29 @@ function jiraReasons(body: unknown): string[] {
   const fieldErrors = Object.values(rec(record.errors)).filter(
     (m): m is string => typeof m === 'string' && m.length > 0
   );
-  return [...messages, ...fieldErrors].slice(0, 2);
+  // The servicedeskapi says it in the singular.
+  const single =
+    typeof record.errorMessage === 'string' && record.errorMessage ? [record.errorMessage] : [];
+  return [...messages, ...fieldErrors, ...single].slice(0, 2);
 }
 
-function describeStatus(status: number, reasons: string[]): string {
+function describeStatus(
+  status: number,
+  reasons: string[],
+  label: string,
+  apiToken: boolean
+): string {
   const why = reasons.length > 0 ? ` ${reasons.join(' ')}` : '';
+  if (status === 401 && apiToken) {
+    return (
+      `Atlassian refused the ${label} (401): it may have been revoked or belong to another ` +
+      `email. Save a new one on the Connectors page.${why}`
+    );
+  }
   if (status === 401) {
     return (
-      'Jira refused the Jira Administration token (401). The app registration may be missing ' +
-      `a classic scope this call needs; reconnect after an admin fixes it.${why}`
+      `Jira refused the ${label} token (401). The app registration may be missing ` +
+      `a scope this call needs; reconnect after an admin fixes it.${why}`
     );
   }
   if (status === 403) {
@@ -134,13 +165,19 @@ export type JiraAdminResult =
   /** `status` is Jira's answer when there was one; absent when Jira was unreachable. */
   | { ok: false; error: string; status?: number };
 
+/** Headers a call adds — the servicedeskapi's experimental opt-in, say. */
+export interface JiraAdminRequestOptions {
+  headers?: Record<string, string>;
+}
+
 /** GET a path under the site's Jira gateway; any JSON shape comes back as `unknown`. */
 export async function jiraAdminGet(
   scope: JiraAdminLogScope,
   access: JiraAdminAccess,
-  pathAndQuery: string
+  pathAndQuery: string,
+  options?: JiraAdminRequestOptions
 ): Promise<JiraAdminResult> {
-  return jiraAdminRequest(scope, access, 'GET', pathAndQuery);
+  return jiraAdminRequest(scope, access, 'GET', pathAndQuery, undefined, options);
 }
 
 /**
@@ -178,39 +215,48 @@ export async function jiraAdminPages(
 const PAGE_SIZE = 100;
 
 /**
- * POST or PUT a JSON body. Only the change-request executor
- * (lib/jira-admin) calls this — no MCP tool writes to Jira directly; a tool
- * proposes, and a person applies from a signed-in session.
+ * POST or PUT a JSON body — or DELETE, with none. Only the change-request
+ * executor (lib/jira-admin) calls this — no MCP tool writes to Jira
+ * directly; a tool proposes, and a person applies from a signed-in session.
+ * (A read that Jira only answers to POST, such as the bulk workflow scheme
+ * read, comes through here too.)
  */
 export async function jiraAdminSend(
   scope: JiraAdminLogScope,
   access: JiraAdminAccess,
-  method: 'POST' | 'PUT',
+  method: 'POST' | 'PUT' | 'DELETE',
   pathAndQuery: string,
-  body: unknown
+  body: unknown,
+  options?: JiraAdminRequestOptions
 ): Promise<JiraAdminResult> {
-  return jiraAdminRequest(scope, access, method, pathAndQuery, body);
+  return jiraAdminRequest(scope, access, method, pathAndQuery, body, options);
 }
 
 async function jiraAdminRequest(
   scope: JiraAdminLogScope,
   access: JiraAdminAccess,
-  method: 'GET' | 'POST' | 'PUT',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   pathAndQuery: string,
-  body?: unknown
+  body?: unknown,
+  options?: JiraAdminRequestOptions
 ): Promise<JiraAdminResult> {
+  const label = access.label ?? 'Jira Administration';
   let response: Response;
   try {
     // No Authorization here: the fetcher's owner (the delegate) attaches it.
-    response = await access.auth(`${JIRA_ADMIN_API_BASE}/${access.cloudId}${pathAndQuery}`, {
-      method,
-      headers: {
-        Accept: 'application/json',
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
-    });
+    response = await access.auth(
+      `${access.baseUrl ?? `${JIRA_ADMIN_API_BASE}/${access.cloudId}`}${pathAndQuery}`,
+      {
+        method,
+        headers: {
+          Accept: 'application/json',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(options?.headers ?? {}),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+      }
+    );
   } catch (error) {
     const timedOut = isTimeoutError(error);
     logger.warn('Jira admin API unreachable', {
@@ -244,7 +290,7 @@ async function jiraAdminRequest(
       path: pathAndQuery,
       refusal,
     });
-    return { ok: false, error: grantRefusalText(refusal, 'Jira Administration') };
+    return { ok: false, error: grantRefusalText(refusal, label) };
   }
   const text = await response.text().catch(() => '');
   let parsed: unknown = null;
@@ -264,7 +310,7 @@ async function jiraAdminRequest(
     });
     return {
       ok: false,
-      error: describeStatus(response.status, jiraReasons(parsed)),
+      error: describeStatus(response.status, jiraReasons(parsed), label, access.apiToken === true),
       status: response.status,
     };
   }

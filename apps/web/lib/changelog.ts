@@ -50,6 +50,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Jira automation rules on your own Atlassian API token',
+        detail:
+          'Jira’s Automation API refuses OAuth apps, so the Jira Administration card now takes your Atlassian API token. With it saved, you can list rules, enable or disable them, create or change a rule, or run a manual rule on issues — each proposed first and applied by you.',
+      },
+      {
+        kind: 'added',
+        title: 'Jira work types, screens and request types as proposed changes',
+        detail:
+          'A Jira admin can ask for a work type (with an icon, in a space’s scheme, set up like another type), changes to a screen’s tabs and fields, or a request type on a service project’s portal; each is proposed first and applied from the review page. Request types run on your Jira Service Management connection, which needs its new “Set up request types” box.',
+      },
+      {
+        kind: 'added',
         title: 'Chats get their own titles',
         detail:
           'A new chat is titled from its first message by the model, and you can ask the chat to rename itself at any time.',

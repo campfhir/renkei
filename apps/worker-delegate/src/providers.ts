@@ -21,6 +21,7 @@ import { decrypt } from '@renkei/crypto';
 import {
   ATLASSIAN,
   ATLASSIAN_ADMIN,
+  ATLASSIAN_ADMIN_TOKEN,
   ATLASSIAN_BITBUCKET,
   ATLASSIAN_CONFLUENCE,
   ATLASSIAN_JSM,
@@ -95,6 +96,15 @@ export interface ProviderSpec {
   staticConfig?: ConnectorConfig;
   /** An open server (no authorization): requests go out with no credential at all. */
   anonymous?: boolean;
+  /**
+   * A credential the person typed in rather than one an OAuth exchange
+   * minted: stored by `grant/store` (never `oauth/exchange` + `grant/commit`),
+   * never refreshed, and sent as HTTP Basic with the grant's `metadata.email`
+   * as the user name — an Atlassian API token, for the Automation API that
+   * refuses OAuth apps. The web app validates it by making a call through
+   * the delegate, not by holding it.
+   */
+  credential?: 'basic';
   /** Where a disconnect may revoke the token, when the provider offers one. */
   revocationEndpoint?: string;
   adapter(config: ConnectorConfig | null, grant: ProviderGrant | null): ProviderAdapter | null;
@@ -204,6 +214,17 @@ export const PROVIDERS: Readonly<Record<string, ProviderSpec>> = {
   [ATLASSIAN_JSM]: atlassian(ATLASSIAN_JSM),
   [ATLASSIAN_CONFLUENCE]: atlassian(ATLASSIAN_CONFLUENCE),
   [ATLASSIAN_ADMIN]: atlassian(ATLASSIAN_ADMIN),
+  // The person's own Atlassian API token, beside their Jira Administration
+  // grant and switched off with it (the same connector row): Basic auth to
+  // api.atlassian.com, for the Automation API, which refuses OAuth apps.
+  [ATLASSIAN_ADMIN_TOKEN]: {
+    connector: ATLASSIAN_ADMIN,
+    tokenEndpoint: null,
+    hosts: ['api.atlassian.com'],
+    clientAuth: 'none',
+    credential: 'basic',
+    adapter: () => null,
+  },
   [ATLASSIAN_BITBUCKET]: {
     connector: ATLASSIAN_BITBUCKET,
     tokenEndpoint: 'https://bitbucket.org/site/oauth2/access_token',
@@ -308,7 +329,8 @@ export function providerSpec(provider: string): ProviderSpec | null {
  * A stand-in for a provider's API, for the e2e and dev environments that
  * point the web app's clients at a local stub (`GITHUB_API_BASE_URL`,
  * `BITBUCKET_API_BASE_URL`, `JIRA_ADMIN_API_BASE_URL`,
- * `ENTRA_DEVELOPER_API_BASE_URL`): the delegate honors the same variables,
+ * `JIRA_AUTOMATION_API_BASE_URL`, `ENTRA_DEVELOPER_API_BASE_URL`): the
+ * delegate honors the same variables,
  * so a request to that origin may carry the provider's token too. Unset
  * in production, where only the provider's own hosts are allowed.
  */
@@ -316,6 +338,12 @@ export const STAND_IN_ENV: Readonly<Record<string, string>> = {
   [GITHUB]: 'GITHUB_API_BASE_URL',
   [ATLASSIAN_BITBUCKET]: 'BITBUCKET_API_BASE_URL',
   [ATLASSIAN_ADMIN]: 'JIRA_ADMIN_API_BASE_URL',
+  // The same stand-in: a request type change request applies on the JSM
+  // grant, through the Jira Administration client on the same gateway
+  // (apps/web/lib/jira-admin/request-type.ts).
+  [ATLASSIAN_JSM]: 'JIRA_ADMIN_API_BASE_URL',
+  // The Automation API's stand-in (apps/web/lib/mcp-tools/jira-admin/automation-client.ts).
+  [ATLASSIAN_ADMIN_TOKEN]: 'JIRA_AUTOMATION_API_BASE_URL',
   [ENTRA_DEVELOPER]: 'ENTRA_DEVELOPER_API_BASE_URL',
 };
 
@@ -328,7 +356,7 @@ export const STAND_IN_ENV: Readonly<Record<string, string>> = {
  */
 export function standInViolations(env: NodeJS.ProcessEnv = process.env): string[] {
   if (env.NODE_ENV !== 'production') return [];
-  return Object.values(STAND_IN_ENV).filter((name) => Boolean(env[name]?.trim()));
+  return [...new Set(Object.values(STAND_IN_ENV))].filter((name) => Boolean(env[name]?.trim()));
 }
 
 function standInOrigin(provider: string): string | null {

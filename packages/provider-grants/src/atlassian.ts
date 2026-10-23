@@ -32,6 +32,15 @@ export const ATLASSIAN_CONFLUENCE = 'atlassian-confluence';
  * admins ever grant it.
  */
 export const ATLASSIAN_ADMIN = 'atlassian-admin';
+/**
+ * Not an app at all: the person's own Atlassian API token, stored as a
+ * grant beside their Jira Administration one, for the one Atlassian API
+ * that refuses every OAuth app — Automation rules. The delegate attaches it
+ * as HTTP Basic (email:token) rather than a bearer, never refreshes it, and
+ * lets it reach api.atlassian.com only. Saved and removed from the Jira
+ * Administration card (apps/web/app/api/atlassian-admin/token).
+ */
+export const ATLASSIAN_ADMIN_TOKEN = 'atlassian-admin-token';
 
 const TOKEN_ENDPOINT = 'https://auth.atlassian.com/oauth/token';
 
@@ -47,6 +56,18 @@ export function readAtlassianMetadata(metadata: Record<string, unknown>): {
   return {
     cloudId: typeof metadata.cloudId === 'string' ? metadata.cloudId : '',
     siteUrl: typeof metadata.siteUrl === 'string' ? metadata.siteUrl : '',
+  };
+}
+
+/** The API token grant's metadata: whose token (the Basic username), and the site it was saved for. */
+export function readAtlassianTokenMetadata(metadata: Record<string, unknown>): {
+  email: string;
+  cloudId: string;
+  siteUrl: string;
+} {
+  return {
+    email: typeof metadata.email === 'string' ? metadata.email : '',
+    ...readAtlassianMetadata(metadata),
   };
 }
 

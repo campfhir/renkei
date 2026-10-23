@@ -179,11 +179,19 @@ roles, and a space compared against a template. It needed no new scope:
 creating a space and adding role members are `manage:jira-configuration`,
 which 1a already asks for. The second part brought `manage:jira-project`,
 and so one reconnect ("1c as built (second part)"): components and versions
-for new spaces, and a custom field placed on a space's screens. Still to
+for new spaces, and a custom field placed on a space's screens. The third
+part ("1c as built (third part)") added work types with their icons and
+scheme mappings, changes to a screen's tabs and fields, and request types
+for service projects — the last on the Jira Service Management grant, since
+Atlassian documents that create under a granular scope only. The fourth
+("1c as built (fourth part)") added automation rules, on the person's own
+Atlassian API token, since the Automation API refuses OAuth apps. Still to
 come: copying a scheme so one space can differ from its family — its own
 screens above all, since a field on a shared screen shows in every space
-that shares it — and a board from a filter, which waits on the Jira Software
-scopes for boards, not yet confirmed to work on a classic-scope app.
+that shares it — field configurations (required and hidden fields for
+agents), workflows and statuses, and a board from a filter, which waits on
+the Jira Software scopes for boards, not yet confirmed to work on a
+classic-scope app.
 
 **1d — Plans.** Create and update plans from spaces, boards and filters;
 scheduling settings; plan-only teams with capacity and members;
@@ -321,6 +329,79 @@ publish a form to issue create or to a request type.
   first thing that has changed or that Jira refuses. A field it created
   stays created.
 
+### 1c as built (third part): work types, screens and request types
+
+- **A work type for a space** (`work_type`, `lib/jira-admin/work-type.ts`;
+  tool `jira_admin_propose_work_type`). A new one by name, or a site-wide one
+  of that name reused rather than made twice; an icon from Jira's system set
+  (`jira_admin_list_work_type_icons` names them from their files — "bug",
+  "story"); `subtask: true` for a subtask type. It is added to the space's
+  work type scheme — a scheme other spaces share is named and refused until
+  the request says `sharedScheme: true`, the review page naming those spaces
+  in the warning colour, since the type appears in all of them. `like` a work
+  type the space has gives the new one that type's screens (a mapping in the
+  work type screen scheme) and workflow (the bulk workflow scheme update,
+  carrying the scheme's version and every existing mapping); `workflow` names
+  one; neither leaves the scheme's defaults, and the result says so. Changing
+  an existing type's icon is called out as site-wide. Applying re-checks that
+  no type of the name has appeared and that the space still runs on the
+  schemes the proposal read. No new scope: everything is
+  `manage:jira-configuration`.
+- **Changes to a screen** (`screen_changes`, `lib/jira-admin/screen-changes.ts`;
+  tools `jira_admin_get_space_screens`, which lists a space's screens with
+  their tabs, fields and the other spaces showing each, and
+  `jira_admin_propose_screen_changes`). Fields put on a tab, taken off it (the
+  field and its values stay — not a delete), or moved (first, last, earlier,
+  later); tabs added or renamed; the screen renamed. A screen shown by more
+  than one space is named with them and refused until `sharedScreens: true`.
+  Applying reads the tabs and fields again first and keeps them in step
+  operation by operation. All `manage:jira-project`, which 1c already asked
+  for. Still to come: copying a screen scheme so one space can differ.
+- **A request type** (`request_type`, `lib/jira-admin/request-type.ts`; tool
+  `jira_admin_propose_request_type`) — the one kind that runs on another
+  grant. Atlassian documents the create under a granular JSM scope only, which
+  the classic admin app cannot carry, so the tool reads the space here, reads
+  the service desk and writes the request type on the person's Jira Service
+  Management grant, and registers only for someone holding both with what
+  each needs (the JSM picker's new, off-by-default **Set up request types**
+  box). The confirm rule is unchanged: the apply route resolves the JSM grant
+  by subject, checks it is on the proposal's site, and sends the create;
+  the review page refuses, naming the box, until the grant carries it.
+  What Jira's API cannot set is said up front: the headset icon, no portal
+  group (hidden until an admin groups it in Project settings), the work
+  type's fields — and no portal layout, required-by-customer flags, defaults
+  or icons for request types, which the public API has no way to write.
+  `docs/atlassian-admin-scopes.md`, "Request types".
+
+### 1c as built (fourth part): automation rules, on an API token
+
+Atlassian's Automation REST API refuses every OAuth app and takes an API
+token (HTTP Basic) or a browser session only — so this is the one place
+Renkei takes a credential typed in. The Jira Administration card gains an
+**Atlassian API token** field beside the grant; the delegate stores it as a
+grant of its own (`grant/store`), sends it as Basic to `api.atlassian.com`
+and nowhere else, and the web app keeps a new token only after one call
+through the delegate succeeds (`docs/atlassian-admin-scopes.md`,
+"Automation rules"). On it:
+
+- `jira_admin_list_automation_rules` and `jira_admin_get_automation_rule`
+  read the site's rules — name, uuid, state, the spaces a rule is scoped to
+  (ARIs resolved to keys on the admin grant), labels — and one rule's
+  definition JSON (trigger and components), the shape a proposal takes.
+- `jira_admin_propose_automation_rule_state` (`automation_state`) switches
+  rules on or off; applying reads each rule again and leaves one already in
+  that state alone.
+- `jira_admin_propose_automation_rule` (`automation_rule`) creates a rule
+  from a definition or a copy of an existing rule (Jira's ids stripped),
+  scoped to named spaces or site-wide, or changes one — name, description,
+  labels, scope, state or its whole definition, the rest kept. The stored
+  payload is the whole rule as the API takes it; applying refuses an update
+  once the rule's `updated` stamp has moved. Jira validates a definition
+  when it is created.
+- `jira_admin_propose_automation_run` (`automation_run`) runs a manual rule
+  on named issues (keys resolved to ids on the admin grant), with the inputs
+  it asks for; Jira answers per issue. Deleting a rule is not offered.
+
 ### Guardrails
 
 - **No deletes in phase 1.** Deleting a custom field, an option or a scheme
@@ -337,10 +418,12 @@ publish a form to issue create or to a request type.
 - **Experimental endpoints are named as such** (the Plans API, screen
   creation), so an Atlassian change there fails a proposal loudly.
 - **Not possible, so not attempted:** board column and estimation settings
-  (read-only in the API); Jira Automation rules (Atlassian's Automation API
-  refuses OAuth apps); the one-call "create a fully configured space"
-  endpoint (Enterprise only — on Premium, a blueprint applies as individual
-  calls).
+  (read-only in the API); a request type's portal form — its field
+  layout, required-by-customer flags, portal defaults, hidden preset values,
+  icon and portal group — which the Cloud API only reads (the Forms API,
+  stage 1e, is the one documented way to shape what a customer fills in);
+  the one-call "create a fully configured space" endpoint (Enterprise only —
+  on Premium, a blueprint applies as individual calls).
 
 ### Keeping spaces in step with changing requirements
 
@@ -395,8 +478,9 @@ Then the agents on top:
 
 ## Not building
 
-A Renkei task database, a Gantt editor, time tracking, boards, and Jira
-Automation rule management (OAuth apps are refused).
+A Renkei task database, a Gantt editor, time tracking, boards, and deleting
+automation rules (rule management runs on the person's own Atlassian API
+token, since OAuth apps are refused — "1c as built (fourth part)").
 
 ## Decided
 

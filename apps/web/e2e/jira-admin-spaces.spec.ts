@@ -110,8 +110,12 @@ const ALL_SCOPES = [
 
 async function seedTenant(fixture: Fixture, scopes = ALL_SCOPES): Promise<string> {
   return withDb(async (client) => {
-    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM jira_admin_space_templates WHERE created_by = $1', [fixture.subject]);
+    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = $1', [
+      fixture.subject,
+    ]);
+    await client.query('DELETE FROM jira_admin_space_templates WHERE created_by = $1', [
+      fixture.subject,
+    ]);
     await client.query('DELETE FROM audit_events WHERE actor_subject = $1', [fixture.subject]);
     await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
     await client.query('DELETE FROM connector_configs');
@@ -139,20 +143,31 @@ async function seedTenant(fixture: Fixture, scopes = ALL_SCOPES): Promise<string
     );
     await client.query(
       `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian-admin', 'e2e-jira-admin-account', $1, 'e2e-admin-client',\n               'E2E Jira Admin', $2, $3, $4, $5, $6)`,
-      [fixture.subject, await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'), await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'), new Date(Date.now() + 365 * 24 * 3_600_000), scopes, { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' }]
+      [
+        fixture.subject,
+        await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'),
+        await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'),
+        new Date(Date.now() + 365 * 24 * 3_600_000),
+        scopes,
+        { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' },
+      ]
     );
     // The row jira_admin_save_space_template writes.
     const template = await client.query<{ id: string }>(
       `INSERT INTO jira_admin_space_templates\n         (cloud_id, site_url, name, name_key, description, source_space_key,\n          document, created_by, updated_by)\n       VALUES ($1, 'https://e2e.atlassian.net', 'Ops standard', 'ops standard',\n               'How operations spaces are set up', 'OPS', $2, $3, $3)\n       RETURNING id`,
-      [fixture.cloudId, JSON.stringify({
-                  version: 1,
-                  projectTypeKey: 'software',
-                  assigneeType: 'UNASSIGNED',
-                  category: null,
-                  schemes: SCHEMES,
-                  roles: ROLES,
-                  components: COMPONENTS,
-                }), fixture.subject]
+      [
+        fixture.cloudId,
+        JSON.stringify({
+          version: 1,
+          projectTypeKey: 'software',
+          assigneeType: 'UNASSIGNED',
+          category: null,
+          schemes: SCHEMES,
+          roles: ROLES,
+          components: COMPONENTS,
+        }),
+        fixture.subject,
+      ]
     );
     const id = template.rows[0]?.id;
     if (!id) throw new Error('no template inserted');
@@ -194,7 +209,13 @@ async function proposeSpace(
   const result = await withDb((client) =>
     client.query<{ id: string }>(
       `INSERT INTO jira_admin_change_requests\n         (subject, cloud_id, site_url, kind, title, payload, expires_at)\n       VALUES ($1, $2, 'https://e2e.atlassian.net', 'create_space', $3, $4, $5)\n       RETURNING id`,
-      [fixture.subject, fixture.cloudId, `New space ${key} “${name}”, from template “Ops standard”`, JSON.stringify(payload), new Date(Date.now() + 24 * 3_600_000)]
+      [
+        fixture.subject,
+        fixture.cloudId,
+        `New space ${key} “${name}”, from template “Ops standard”`,
+        JSON.stringify(payload),
+        new Date(Date.now() + 24 * 3_600_000),
+      ]
     )
   );
   const id = result.rows[0]?.id;
@@ -370,8 +391,10 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
   await expect
     .poll(async () =>
       withDb(async (client) => {
+        // This person's only: the dev database is shared by every spec in a run.
         const rows = await client.query(
-          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied'`
+          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied' AND actor_subject = $1`,
+          [fixture.subject]
         );
         return rows.rowCount;
       })
