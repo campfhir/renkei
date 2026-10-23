@@ -55,6 +55,12 @@ export const CHANGELOG: ChangelogRelease[] = [
           'A file uploaded to a chat, a project or the Artifacts library, and every file the assistant writes, is now stored encrypted under the same key as its text, so the file store holds nothing it can read. Files stored earlier are encrypted the first time they are opened.',
       },
       {
+        kind: 'changed',
+        title: 'New repositories start with a main branch',
+        detail:
+          'A repository created from the new-project form now has one commit on its default branch (a README), so a pull request has a branch to target from the start. Before, the repository was empty until the first chat cloned into it.',
+      },
+      {
         kind: 'added',
         title: 'A local file store for development',
         detail:
