@@ -64,7 +64,7 @@ export async function loadChatView(
             .where('subject', '=', chat.ownerSubject)
             .executeTakeFirst(),
       db
-        .selectFrom('chat_attachments')
+        .selectFrom('artifacts')
         .select([
           'id',
           'filename',

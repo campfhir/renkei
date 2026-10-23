@@ -1,43 +1,26 @@
 /**
  * Download and delete. A download streams through the app under the
- * caller's session — chat files to whoever may read the chat, project
- * files to whoever may open the project — as an attachment with the
- * content type forced to something a browser will not execute, unless it
- * is an image, a PDF or plain text it can safely show. Delete is the
- * uploader's, or a project editor's for project files.
+ * caller's session — to whoever may read the artifact (artifact-access.ts:
+ * its owner, a person it is shared with, a member of a project holding
+ * it, a reader of its chat) — as an attachment with the content type
+ * forced to something a browser will not execute, unless it is an image,
+ * a PDF or plain text it can safely show. Delete is the owner's and
+ * removes the file for everyone; a project editor deleting someone
+ * else's file detaches it from the project instead (`?projectId=`).
  */
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
+import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
-import { resolveResourceAccess } from '@/lib/chat/access';
-import { deleteAttachment, getAttachment, type AttachmentRow } from '@/lib/chat/attachments';
-import { mayReadAttachment } from '@/lib/chat/attachment-access';
+import { getAttachment } from '@/lib/chat/attachments';
+import { mayReadAttachment, resolveArtifactAccess } from '@/lib/chat/artifact-access';
+import { deleteArtifact, detachFromProject } from '@/lib/chat/artifact-library';
 
 export const runtime = 'nodejs';
 
 const SAFE_INLINE = /^(image\/(png|jpeg|gif|webp)|application\/pdf|text\/plain)$/;
-
-async function mayDelete(
-  db: Kysely<DB>,
-  subject: string,
-  row: AttachmentRow
-): Promise<boolean> {
-  if (row.ownerSubject === subject) return true;
-  if (row.projectId) {
-    const access = await resolveResourceAccess(
-      db,
-      subject,
-      'chat_project',
-      row.projectId
-    );
-    return access !== null && access.role !== 'viewer';
-  }
-  return false;
-}
 
 export async function GET(
   request: NextRequest,
@@ -84,10 +67,29 @@ export async function DELETE(
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const row = await getAttachment(db, attachmentId);
-  if (!row || !(await mayDelete(db, session.subject, row))) {
-    return jsonError(404, 'not-found', 'No such file');
+  const projectId = new URL(request.url).searchParams.get('projectId');
+  const access = await resolveArtifactAccess(
+    db,
+    session.subject,
+    attachmentId,
+    projectId && isUuid(projectId) ? projectId : null
+  );
+  if (!access) return jsonError(404, 'not-found', 'No such file');
+  if (access.role === 'owner' && !projectId) {
+    await deleteArtifact(db, access.row);
+    return NextResponse.json({ ok: true, detached: false });
   }
-  await deleteAttachment(db, row);
-  return NextResponse.json({ ok: true });
+  const target = projectId && isUuid(projectId) ? projectId : access.projectId;
+  if (!target) return jsonError(404, 'not-found', 'No such file');
+  const detached = await detachFromProject(db, {
+    actorSubject: session.subject,
+    artifactId: access.row.id,
+    projectId: target,
+  });
+  if (!detached.ok) {
+    return detached.err.type === 'FORBIDDEN'
+      ? jsonError(403, 'read-only', 'Only the project’s owner and editors can remove its files.')
+      : jsonError(404, 'not-found', 'No such file');
+  }
+  return NextResponse.json({ ok: true, detached: true });
 }

@@ -18,7 +18,8 @@ import type {
 import type { SubagentRunView } from './subagent-runs';
 import type { ConnectorOption } from './tool-surface';
 import type { GrantView, GrantRole, ResourceKind } from './access';
-import type { QueuedSend } from './views';
+import type { ArtifactImpact, LibraryItem } from './artifact-library';
+import type { ProjectArtifactListItem, QueuedSend } from './views';
 import type { StartedTurn } from './start-turn';
 import type { ChatSearchHit } from './search-text';
 import type { WidgetModelContextOutcome } from './widget-tools';
@@ -242,6 +243,134 @@ export const chatClient = {
   deleteAttachment: (attachmentId: string) =>
     sendJsonFull(`${base()}/attachments/${attachmentId}`, 'DELETE'),
 
+  /** A project editor lets go of a file someone else owns: detached, not deleted. */
+  detachAttachment: (attachmentId: string, projectId: string) =>
+    sendJsonFull(
+      `${base()}/attachments/${attachmentId}?${new URLSearchParams({ projectId }).toString()}`,
+      'DELETE'
+    ),
+
+  // ---- Artifacts (lib/chat/artifact-routes.ts) ----
+
+  /** The viewer's library: what they own and what was shared with them. */
+  artifacts: () => getJson<{ artifacts: LibraryItem[]; uploads: boolean }>(`${base()}/artifacts`),
+
+  artifact: (artifactId: string) =>
+    getJson<{
+      artifact: LibraryItem;
+      access: { role: 'owner' | 'use' | 'read'; via: string; projectId: string | null };
+      impact: ArtifactImpact | null;
+      grants: GrantView[];
+    }>(`${base()}/artifacts/${artifactId}`),
+
+  /** Upload into the library (no home), a project, or a chat; `keep` makes a chat upload an artifact too. */
+  uploadArtifact: async (
+    home: { projectId?: string; chatId?: string; keep?: boolean; mode?: 'always' | 'on_demand' },
+    file: File
+  ): Promise<{
+    data: (AttachmentView & { attached?: { mode: 'always' | 'on_demand' } | null }) | null;
+    error: string | null;
+  }> => {
+    const query = new URLSearchParams({
+      filename: file.name,
+      contentType: file.type || 'application/octet-stream',
+      ...(home.projectId ? { projectId: home.projectId } : {}),
+      ...(home.chatId ? { chatId: home.chatId } : {}),
+      ...(home.keep ? { keep: '1' } : {}),
+      ...(home.mode ? { mode: home.mode } : {}),
+    });
+    try {
+      const response = await fetch(`${base()}/attachments?${query.toString()}`, {
+        method: 'PUT',
+        body: file,
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        return {
+          data: null,
+          error:
+            typeof body?.error === 'string' ? body.error : `Upload failed (${response.status})`,
+        };
+      }
+      return {
+        data: body?.attachment ? { ...body.attachment, attached: body.attached ?? null } : null,
+        error: null,
+      };
+    } catch {
+      return { data: null, error: 'Could not reach the server' };
+    }
+  },
+
+  renameArtifact: (artifactId: string, filename: string) =>
+    sendJsonFull(`${base()}/artifacts/${artifactId}`, 'PATCH', { filename }),
+
+  /** The owner replaces the bytes; attachments and shares stay. */
+  replaceArtifact: async (artifactId: string, file: File): Promise<{ error: string | null }> => {
+    const query = new URLSearchParams({
+      filename: file.name,
+      contentType: file.type || 'application/octet-stream',
+    });
+    try {
+      const response = await fetch(`${base()}/artifacts/${artifactId}?${query.toString()}`, {
+        method: 'PUT',
+        body: file,
+      });
+      const body = await response.json().catch(() => null);
+      return {
+        error: response.ok
+          ? null
+          : typeof body?.error === 'string'
+            ? body.error
+            : `Upload failed (${response.status})`,
+      };
+    } catch {
+      return { error: 'Could not reach the server' };
+    }
+  },
+
+  /** Owner: deletes for everyone. Shared with: takes it off their list. */
+  deleteArtifact: (artifactId: string) =>
+    sendJsonFull<{ outcome: 'deleted' | 'left' }>(`${base()}/artifacts/${artifactId}`, 'DELETE'),
+
+  artifactImpact: (artifactId: string) =>
+    getJson<{ impact: ArtifactImpact }>(`${base()}/artifacts/${artifactId}/impact`),
+
+  transferArtifact: (artifactId: string, newOwnerSubject: string) =>
+    sendJsonFull(`${base()}/artifacts/${artifactId}/transfer`, 'POST', { newOwnerSubject }),
+
+  copyArtifact: (
+    artifactId: string,
+    input: { filename?: string; attachProjectId?: string | null; mode?: 'always' | 'on_demand' }
+  ) =>
+    sendJsonFull<{ artifactId: string }>(`${base()}/artifacts/${artifactId}/copy`, 'POST', input),
+
+  projectArtifacts: (projectId: string) =>
+    getJson<{
+      artifacts: ProjectArtifactListItem[];
+      alwaysTokens: { used: number; budget: number };
+      role: 'owner' | 'editor' | 'viewer';
+    }>(`${base()}/projects/${projectId}/artifacts`),
+
+  attachArtifact: (projectId: string, artifactId: string, mode: 'always' | 'on_demand') =>
+    sendJsonFull<{ mode: 'always' | 'on_demand' }>(
+      `${base()}/projects/${projectId}/artifacts`,
+      'POST',
+      {
+        artifactId,
+        mode,
+      }
+    ),
+
+  setArtifactMode: (projectId: string, artifactId: string, mode: 'always' | 'on_demand') =>
+    sendJsonFull<{ alwaysTokens: number }>(
+      `${base()}/projects/${projectId}/artifacts/${artifactId}`,
+      'PATCH',
+      { mode }
+    ),
+
+  detachArtifact: (projectId: string, artifactId: string) =>
+    sendJsonFull(`${base()}/projects/${projectId}/artifacts/${artifactId}`, 'DELETE'),
+
   attachmentUrl: (attachmentId: string) => `${base()}/attachments/${attachmentId}`,
 
   grants: (kind: ResourceKind, resourceId: string) =>
@@ -328,5 +457,7 @@ function grantPath(kind: ResourceKind, resourceId: string): string {
       return `projects/${resourceId}/grants`;
     case 'prompt_library':
       return `prompt-libraries/${resourceId}/grants`;
+    case 'artifact':
+      return `artifacts/${resourceId}/grants`;
   }
 }

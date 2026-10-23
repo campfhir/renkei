@@ -11,7 +11,7 @@ import { NextResponse } from 'next/server';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { getAttachment, getAttachmentText } from '@/lib/chat/attachments';
-import { attachmentCipherFor } from '@/lib/chat/attachment-access';
+import { attachmentCipherFor } from '@/lib/chat/artifact-access';
 import { extensionOf, previewKind } from '@/lib/chat/preview-kind';
 import { sheetFromCsv, sheetFromXlsx } from '@/lib/chat/sheet-preview';
 

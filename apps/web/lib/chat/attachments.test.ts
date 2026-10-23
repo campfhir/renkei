@@ -5,7 +5,8 @@ function row(over: Partial<AttachmentRow>): AttachmentRow {
     id: '11111111-1111-4111-8111-111111111111',
     ownerSubject: 'u',
     chatId: 'c',
-    projectId: null,
+    keyKind: 'chat',
+    keyRef: 'c',
     messageId: null,
     blobKey: 'k',
     filename: 'cv.pdf',
@@ -14,6 +15,7 @@ function row(over: Partial<AttachmentRow>): AttachmentRow {
     extractStatus: 'done',
     origin: 'upload',
     createdAt: new Date(0),
+    updatedAt: new Date(0),
     ...over,
   };
 }

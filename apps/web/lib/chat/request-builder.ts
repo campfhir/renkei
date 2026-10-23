@@ -22,7 +22,16 @@ export interface SystemPromptInput {
     name: string;
     instructions: string | null;
     memoryText: string | null;
-    files: { id: string; filename: string; contentType: string; sizeBytes: number }[];
+    /** The artifacts the project holds, and how its chats use each: `always` in full, `on_demand` by search and reads. */
+    files: {
+      id: string;
+      filename: string;
+      contentType: string;
+      sizeBytes: number;
+      mode?: 'always' | 'on_demand';
+    }[];
+    /** The full text of the `always` artifacts, in the same order. */
+    alwaysFiles?: { id: string; filename: string; text: string }[];
     /** A code project: the repository the code_* tools work in, and its environment's names. */
     code?: {
       repoFullName: string;
@@ -310,9 +319,23 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         `Project memory (notes kept across this project's chats, newest last):\n${input.project.memoryText}`
       );
     }
-    if (input.project.files.length > 0) {
+    const always = input.project.alwaysFiles ?? [];
+    const alwaysIds = new Set(always.map((file) => file.id));
+    const onDemand = input.project.files.filter((file) => !alwaysIds.has(file.id));
+    if (always.length > 0) {
       project.push(
-        `Project files (read one with chat_read_attachment, or stage it into the sandbox with chat_attach_to_sandbox):\n${input.project.files.map(fileLine).join('\n')}`
+        `Project artifacts kept in context — their full text follows; cite one by name when you lean on it (stage its bytes into the sandbox with chat_attach_to_sandbox):\n` +
+          always
+            .map(
+              (file) =>
+                `<artifact id="${file.id}" name="${file.filename}">\n${file.text}\n</artifact>`
+            )
+            .join('\n')
+      );
+    }
+    if (onDemand.length > 0) {
+      project.push(
+        `Project artifacts to consult on demand (artifact_search finds the passages across them that match a question; chat_read_attachment reads one by id, in pages; chat_attach_to_sandbox stages its bytes into the sandbox):\n${onDemand.map(fileLine).join('\n')}`
       );
     }
     if (input.project.code) {

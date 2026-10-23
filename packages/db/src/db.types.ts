@@ -420,7 +420,16 @@ export interface BatchProcessedFiles {
   size: number;
 }
 
-export interface ChatAttachments {
+export interface ArtifactReferences {
+  added_by: string;
+  artifact_id: string;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  mode: Generated<string>;
+  project_id: string;
+}
+
+export interface Artifacts {
   blob_key: string;
   chat_id: string | null;
   content_type: string;
@@ -429,11 +438,13 @@ export interface ChatAttachments {
   extracted_text: string | null;
   filename: string;
   id: Generated<string>;
+  key_kind: Generated<string>;
+  key_ref: string | null;
   message_id: string | null;
   origin: Generated<string>;
   owner_subject: string;
-  project_id: string | null;
   size_bytes: Int8;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface ChatMessages {
@@ -1635,6 +1646,8 @@ export interface DB {
   agent_run_log: AgentRunLog;
   agent_run_steps: AgentRunSteps;
   agent_runs: AgentRuns;
+  artifact_references: ArtifactReferences;
+  artifacts: Artifacts;
   agent_trigger_firings: AgentTriggerFirings;
   agent_triggers: AgentTriggers;
   agents: Agents;
@@ -1645,7 +1658,6 @@ export interface DB {
   batch_job_schedules: BatchJobSchedules;
   batch_jobs: BatchJobs;
   batch_processed_files: BatchProcessedFiles;
-  chat_attachments: ChatAttachments;
   chat_messages: ChatMessages;
   chat_presence: ChatPresence;
   chat_queued_sends: ChatQueuedSends;

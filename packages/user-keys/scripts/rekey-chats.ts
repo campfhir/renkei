@@ -75,8 +75,7 @@ interface Resealer {
 async function resealerFor(
   db: Kysely<DB>,
   kind: 'chat' | 'chat_project',
-  resource: { id: string;
- owner_subject: string },
+  resource: { id: string; owner_subject: string },
   contentKey: Buffer
 ): Promise<Resealer | null> {
   const ref = { kind, resourceId: resource.id };
@@ -130,19 +129,20 @@ async function resealAttachments(
   resealer: Resealer
 ): Promise<void> {
   let query = db
-    .selectFrom('chat_attachments')
+    .selectFrom('artifacts')
     .select(['id', 'extracted_text'])
     .where('extracted_text', 'is not', null)
     .where('extracted_text', 'not like', `${RESOURCE_ENVELOPE_PREFIX}%`);
+  // A row still under its chat's or project's key names it (migration 163).
   query =
     'chat_id' in home
-      ? query.where('chat_id', '=', home.chat_id)
-      : query.where('project_id', '=', home.project_id);
+      ? query.where('key_kind', '=', 'chat').where('key_ref', '=', home.chat_id)
+      : query.where('key_kind', '=', 'chat_project').where('key_ref', '=', home.project_id);
   for (const row of await query.execute()) {
     const next = resealer.reseal(row.extracted_text, false);
     if (next !== undefined) {
       await db
-        .updateTable('chat_attachments')
+        .updateTable('artifacts')
         .set({ extracted_text: next })
         .where('id', '=', row.id)
         .execute();
@@ -152,8 +152,7 @@ async function resealAttachments(
 
 async function rekeyChat(
   db: Kysely<DB>,
-  chat: { id: string;
- owner_subject: string },
+  chat: { id: string; owner_subject: string },
   contentKey: Buffer
 ): Promise<{ rows: number; skipped: number }> {
   const resealer = await resealerFor(db, 'chat', chat, contentKey);
@@ -224,8 +223,7 @@ async function rekeyChat(
 /** A project: its instructions, its memory, and its files under the project's key. */
 async function rekeyProject(
   db: Kysely<DB>,
-  project: { id: string;
- owner_subject: string; instructions: string | null },
+  project: { id: string; owner_subject: string; instructions: string | null },
   contentKey: Buffer
 ): Promise<{ rows: number; skipped: number }> {
   const resealer = await resealerFor(db, 'chat_project', project, contentKey);
@@ -375,7 +373,8 @@ async function rekeyCredentials(
 async function rekeyProviderGrants(db: Kysely<DB>, legacyKey: Buffer): Promise<void> {
   const rows = await db
     .selectFrom('provider_grants')
-    .select(['provider',
+    .select([
+      'provider',
       'provider_account_id',
       'subject',
       'encrypted_access_token',

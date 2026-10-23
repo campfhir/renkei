@@ -163,7 +163,14 @@ function chatWrittenPaths(messages: ChatMessageView[]): Set<string> {
   return paths;
 }
 
-export default function ChatThread({ initialChat, initialMessages, models, uploadsEnabled, massUploadThreshold, voice }: ThreadProps) {
+export default function ChatThread({
+  initialChat,
+  initialMessages,
+  models,
+  uploadsEnabled,
+  massUploadThreshold,
+  voice,
+}: ThreadProps) {
   const router = useRouter();
   const [chat, setChat] = useState<ChatView>(initialChat);
   const [state, dispatch] = useReducer(
@@ -218,13 +225,10 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
   useEffect(() => {
     setEchoCancellationState(getEchoCancellation());
   }, []);
-  const changeEchoCancellation = useCallback(
-    (on: boolean) => {
-      setEchoCancellationState(on);
-      setEchoCancellation(on);
-    },
-    []
-  );
+  const changeEchoCancellation = useCallback((on: boolean) => {
+    setEchoCancellationState(on);
+    setEchoCancellation(on);
+  }, []);
   // Likewise this device's microphone and speaker, where the browser
   // lets a page choose; null is the system default.
   const [microphone, setMicrophoneState] = useState<string | null>(null);
@@ -233,20 +237,14 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
     setMicrophoneState(getMicrophone());
     setAudioOutputState(getAudioOutput());
   }, []);
-  const changeMicrophone = useCallback(
-    (deviceId: string | null) => {
-      setMicrophoneState(deviceId);
-      setMicrophone(deviceId);
-    },
-    []
-  );
-  const changeAudioOutput = useCallback(
-    (deviceId: string | null) => {
-      setAudioOutputState(deviceId);
-      setAudioOutput(deviceId);
-    },
-    []
-  );
+  const changeMicrophone = useCallback((deviceId: string | null) => {
+    setMicrophoneState(deviceId);
+    setMicrophone(deviceId);
+  }, []);
+  const changeAudioOutput = useCallback((deviceId: string | null) => {
+    setAudioOutputState(deviceId);
+    setAudioOutput(deviceId);
+  }, []);
   const [speechQueue, setSpeechQueue] = useState<SpeechQueue | null>(null);
   const [speech, setSpeech] = useState<{ state: SpeechQueueState; owner: string | null }>({
     state: 'idle',
@@ -296,13 +294,10 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
     messages: state.messages,
     activeTurnId,
   });
-  const changeVoicePrefs = useCallback(
-    (next: VoicePrefs) => {
-      setVoicePrefs(next);
-      void voiceClient.savePrefs(next);
-    },
-    []
-  );
+  const changeVoicePrefs = useCallback((next: VoicePrefs) => {
+    setVoicePrefs(next);
+    void voiceClient.savePrefs(next);
+  }, []);
   /** Read one earlier reply aloud, in pieces so the first is heard at once. */
   const listen = useCallback(
     (key: string, markdown: string) => {
@@ -880,10 +875,7 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
     canEdit: isOwner,
     running,
     messages: state.messages,
-    onAsk:
-      isOwner && !running && !sending
-        ? (text) => submit({ text, attachments: [] })
-        : null,
+    onAsk: isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null,
   });
   // A new chat in the project: through the API, which gives a code project's
   // chat its own worktree; outside one, the page that creates it.
@@ -1330,6 +1322,11 @@ export default function ChatThread({ initialChat, initialMessages, models, uploa
                 onCompact={queueOrCompact}
                 editing={editing ? { text: promptTextOf(editing) } : null}
                 onCancelEdit={() => setEditing(null)}
+                project={
+                  chat.projectId
+                    ? { id: chat.projectId, name: chat.projectName ?? 'this project' }
+                    : null
+                }
                 onStop={stop}
                 modelControl={
                   <>

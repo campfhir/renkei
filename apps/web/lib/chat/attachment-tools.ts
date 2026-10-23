@@ -10,6 +10,8 @@
 
 import { openText } from './content-crypto';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
+import { getAttachment } from './attachments';
+import { resolveArtifactAccess } from './artifact-access';
 
 const READ_DEFAULT_CHARS = 20_000;
 const READ_MAX_CHARS = 80_000;
@@ -29,40 +31,43 @@ export async function findAttachment(
   attachmentId: string
 ): Promise<FoundAttachment | null> {
   if (!/^[0-9a-f-]{36}$/i.test(attachmentId)) return null;
-  const row = await context.db
-    .selectFrom('chat_attachments')
-    .select([
-      'id',
-      'filename',
-      'content_type',
-      'blob_key',
-      'extracted_text',
-      'extract_status',
-      'chat_id',
-    ])
-    .where('id', '=', attachmentId)
-    .where((eb) =>
-      eb.or([
-        eb('chat_id', '=', context.chatId),
-        ...(context.projectId ? [eb('project_id', '=', context.projectId)] : []),
-      ])
-    )
-    .executeTakeFirst();
+  const row = await getAttachment(context.db, attachmentId);
   if (!row) return null;
-  // A chat's file opens under the chat's key, a project's under the project's.
-  const cipher = row.chat_id === context.chatId ? context.cipher : context.projectCipher;
+  // The chat's own file, or one its project holds; anything else is "not found".
+  if (row.chatId !== context.chatId) {
+    if (!context.projectId) return null;
+    const held = await context.db
+      .selectFrom('artifact_references')
+      .select('id')
+      .where('artifact_id', '=', row.id)
+      .where('project_id', '=', context.projectId)
+      .executeTakeFirst();
+    if (!held) return null;
+  }
+  const stored = await context.db
+    .selectFrom('artifacts')
+    .select('extracted_text')
+    .where('id', '=', row.id)
+    .executeTakeFirst();
+  // The chat's own file opens under the chat's cipher the turn already
+  // holds; anything else under the key artifact-access.ts resolves for it.
+  const cipher =
+    row.keyKind === 'chat' && row.keyRef === context.chatId
+      ? context.cipher
+      : ((await resolveArtifactAccess(context.db, context.subject, row, context.projectId))
+          ?.cipher ?? null);
   return {
     id: row.id,
     filename: row.filename,
-    contentType: row.content_type,
-    blobKey: row.blob_key,
+    contentType: row.contentType,
+    blobKey: row.blobKey,
     extractedText:
-      row.extracted_text && cipher
-        ? openText(row.extracted_text, cipher)
-        : row.extracted_text
+      stored?.extracted_text && cipher
+        ? openText(stored.extracted_text, cipher)
+        : stored?.extracted_text
           ? '[content unavailable: no key for this file]'
           : null,
-    extractStatus: row.extract_status,
+    extractStatus: row.extractStatus,
   };
 }
 

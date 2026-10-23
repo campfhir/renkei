@@ -120,7 +120,7 @@ export async function resendFromMessage(
       ? input.text
       : await originalPromptText(db, access.chat.id, prompt, access.cipher);
   const ownUploads = await db
-    .selectFrom('chat_attachments')
+    .selectFrom('artifacts')
     .select('id')
     .where('chat_id', '=', access.chat.id)
     .where('message_id', '=', prompt.id)
@@ -144,7 +144,7 @@ export async function resendFromMessage(
     const turnIds = [...new Set(doomed.flatMap((row) => (row.turn_id ? [row.turn_id] : [])))];
     if (messageIds.length > 0) {
       const artifacts = await trx
-        .selectFrom('chat_attachments')
+        .selectFrom('artifacts')
         .select(['id', 'blob_key'])
         .where('chat_id', '=', access.chat.id)
         .where('origin', '=', 'model')
@@ -152,7 +152,7 @@ export async function resendFromMessage(
         .execute();
       if (artifacts.length > 0) {
         await trx
-          .deleteFrom('chat_attachments')
+          .deleteFrom('artifacts')
           .where(
             'id',
             'in',

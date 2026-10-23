@@ -28,7 +28,7 @@ import { getChatRow, type ChatRow } from './store';
 import { cipherFor } from './chat-keys';
 import type { ContentCipher } from './content-crypto';
 
-export type ResourceKind = 'chat' | 'chat_project' | 'prompt_library';
+export type ResourceKind = 'chat' | 'chat_project' | 'prompt_library' | 'artifact';
 export type GrantRole = 'viewer' | 'editor';
 export type ResourceRole = 'owner' | GrantRole;
 
@@ -74,7 +74,12 @@ export interface GrantedResource {
 }
 
 export function isResourceKind(value: unknown): value is ResourceKind {
-  return value === 'chat' || value === 'chat_project' || value === 'prompt_library';
+  return (
+    value === 'chat' ||
+    value === 'chat_project' ||
+    value === 'prompt_library' ||
+    value === 'artifact'
+  );
 }
 
 export function isGrantRole(value: unknown): value is GrantRole {
@@ -90,7 +95,13 @@ async function ownerOf(
 ): Promise<{ ownerSubject: string } | null> {
   if (!isUuid(resourceId)) return null;
   const table =
-    kind === 'chat' ? 'chats' : kind === 'chat_project' ? 'chat_projects' : 'prompt_libraries';
+    kind === 'chat'
+      ? 'chats'
+      : kind === 'chat_project'
+        ? 'chat_projects'
+        : kind === 'artifact'
+          ? 'artifacts'
+          : 'prompt_libraries';
   const row = await db
     .selectFrom(table)
     .select('owner_subject')
@@ -99,7 +110,7 @@ async function ownerOf(
   return row ? { ownerSubject: row.owner_subject } : null;
 }
 
-async function activeGrant(
+export async function activeGrant(
   db: Kysely<DB>,
   kind: ResourceKind,
   resourceId: string,
@@ -140,12 +151,7 @@ export async function resolveProjectAccess(
   viewerSubject: string,
   projectId: string
 ): Promise<ProjectAccess | null> {
-  const access = await resolveResourceAccess(
-    db,
-    viewerSubject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveResourceAccess(db, viewerSubject, 'chat_project', projectId);
   if (!access) return null;
   return {
     ...access,
@@ -181,12 +187,7 @@ export async function resolveChatAccess(
   const granted = await activeGrant(db, 'chat', chatId, viewerSubject);
   if (granted) return grant('viewer', 'grant');
   if (chat.projectId) {
-    const project = await resolveResourceAccess(
-      db,
-      viewerSubject,
-      'chat_project',
-      chat.projectId
-    );
+    const project = await resolveResourceAccess(db, viewerSubject, 'chat_project', chat.projectId);
     if (project) return grant('viewer', 'project');
   }
   return null;
@@ -220,7 +221,8 @@ export async function grantResourceAccess(
   input: { granteeSubject: string; role: GrantRole; expiresAt: Date | null }
 ): Promise<'OK' | 'NOT_FOUND' | 'SELF' | 'INVALID_ROLE'> {
   if (input.granteeSubject === ownerSubject) return 'SELF';
-  if (kind === 'chat' && input.role !== 'viewer') return 'INVALID_ROLE';
+  // A chat is shared to read; an artifact to use. Neither is ever shared to edit.
+  if ((kind === 'chat' || kind === 'artifact') && input.role !== 'viewer') return 'INVALID_ROLE';
   const found = await ownerOf(db, kind, resourceId);
   if (!found || found.ownerSubject !== ownerSubject) return 'NOT_FOUND';
   await db
@@ -252,9 +254,7 @@ export async function listResourceGrants(
   if (!isUuid(resourceId)) return [];
   const rows = await db
     .selectFrom('resource_access_grants as g')
-    .leftJoin('identities as i', (join) =>
-      join.onRef('i.subject', '=', 'g.grantee_subject')
-    )
+    .leftJoin('identities as i', (join) => join.onRef('i.subject', '=', 'g.grantee_subject'))
     .select([
       'g.id',
       'g.grantee_subject',

@@ -13,13 +13,13 @@ jest.mock('@renkei/sandbox-client', () => ({
   sbWriteFile: jest.fn(),
 }));
 jest.mock('@renkei/blob-store', () => ({ resolveTenantBlobStore: jest.fn() }));
-jest.mock('./attachments', () => ({ listAttachments: jest.fn() }));
+jest.mock('./attachments', () => ({ listAttachments: jest.fn(), listProjectArtifacts: jest.fn() }));
 jest.mock('./attachment-tools', () => ({ findAttachment: jest.fn() }));
 
 import { sbReadFile, sbWriteFile } from '@renkei/sandbox-client';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { findAttachment } from './attachment-tools';
-import { listAttachments, type AttachmentRow } from './attachments';
+import { listAttachments, listProjectArtifacts, type AttachmentRow } from './attachments';
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
 import {
   ATTACH_FROM_SANDBOX_TOOL,
@@ -34,6 +34,7 @@ const readMock = jest.mocked(sbReadFile);
 const writeMock = jest.mocked(sbWriteFile);
 const storeMock = jest.mocked(resolveTenantBlobStore);
 const listMock = jest.mocked(listAttachments);
+const listProjectMock = jest.mocked(listProjectArtifacts);
 const findMock = jest.mocked(findAttachment);
 
 const testCipher = resourceCipher({
@@ -62,7 +63,8 @@ function row(
     id: `id-${filename}`,
     ownerSubject: 'auth0|alice',
     chatId: 'chat-1',
-    projectId: null,
+    keyKind: 'chat',
+    keyRef: 'chat-1',
     messageId: null,
     blobKey: `blob/${filename}`,
     filename,
@@ -71,6 +73,7 @@ function row(
     extractStatus: 'unsupported',
     origin: 'upload',
     createdAt: new Date(at),
+    updatedAt: new Date(at),
     ...rest,
   };
 }
@@ -194,11 +197,17 @@ describe(ATTACH_TO_SANDBOX_TOOL, () => {
   });
 
   it('stages a file found by name among the chat’s and its project’s files', async () => {
-    listMock.mockImplementation(async (_db, home) =>
-      'chatId' in home
-        ? [row('cover.png', { at: 2, origin: 'model', contentType: 'image/png' })]
-        : [row('template.docx', { at: 1, chatId: null, projectId: 'p1' })]
-    );
+    listMock.mockResolvedValue([
+      row('cover.png', { at: 2, origin: 'model', contentType: 'image/png' }),
+    ]);
+    listProjectMock.mockResolvedValue([
+      {
+        ...row('template.docx', { at: 1, chatId: null, keyKind: 'artifact', keyRef: null }),
+        referenceId: 'ref-1',
+        mode: 'on_demand',
+        addedBy: 'auth0|alice',
+      },
+    ]);
     const result = await tools.run(
       ATTACH_TO_SANDBOX_TOOL,
       { filename: 'template' },
@@ -206,7 +215,7 @@ describe(ATTACH_TO_SANDBOX_TOOL, () => {
     );
     expect(result.isError).toBe(false);
     expect(listMock).toHaveBeenCalledWith(null, { chatId: 'chat-1' });
-    expect(listMock).toHaveBeenCalledWith(null, { projectId: 'p1' });
+    expect(listProjectMock).toHaveBeenCalledWith(null, 'p1');
     expect(writeMock).toHaveBeenCalledWith(
       { subject: 'auth0|alice' },
       expect.objectContaining({ filename: 'template.docx' }),

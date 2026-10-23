@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-23',
     entries: [
       {
+        kind: 'added',
+        title: 'Artifacts: one library of files for chats and projects',
+        detail:
+          'The files you upload and the files chats generate now live in one place, Artifacts, owned by you and held by projects and chats by reference: attach the same manual, guide or design doc to any number of code projects without a second copy, keep a short guide in context on every turn or let the model search a long one on demand, share a file for others to use in their own projects, hand it over, copy one that was shared with you, and drop a file into a project chat to keep it for the project. Project files from before are carried across as they were.',
+      },
+      {
         kind: 'changed',
         title: 'Dependencies brought up to date',
         detail:

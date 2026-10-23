@@ -72,7 +72,14 @@ interface NavGroup {
  * to the Organization page; the pages behind it still guard themselves,
  * the nav just does not advertise doors the user cannot open.
  */
-export default function AppNav({ userName, userEmail, isOperator, chats, version, children }: NavProps) {
+export default function AppNav({
+  userName,
+  userEmail,
+  isOperator,
+  chats,
+  version,
+  children,
+}: NavProps) {
   const isNarrow = useMediaQuery(NARROW);
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(true);
@@ -178,7 +185,7 @@ export default function AppNav({ userName, userEmail, isOperator, chats, version
           href: `/chat`,
           label: 'Chat',
           icon: ICONS.chat,
-          except: [`/chat/projects`, `/chat/prompts`, `/chat/memory`],
+          except: [`/chat/projects`, `/chat/prompts`, `/chat/memory`, `/chat/artifacts`],
           plus: { href: `/chat/new`, label: 'New chat' },
         },
         { href: `/chat/projects`, label: 'Projects', icon: ICONS.pages },
@@ -187,6 +194,9 @@ export default function AppNav({ userName, userEmail, isOperator, chats, version
         // chats inside each sit among the person's chats below, marked with
         // the same glyph and naming their project.
         { href: `/code`, label: 'Code', icon: ICONS.code },
+        // Artifacts — the files a person uploads and the files chats generate,
+        // held by projects and chats by reference (docs/artifacts-design.md).
+        { href: `/chat/artifacts`, label: 'Artifacts', icon: ICONS.layers },
         { href: `/chat/prompts`, label: 'Prompt libraries', icon: ICONS.promptLibrary },
         { href: `/chat/memory`, label: 'Memory', icon: ICONS.brain },
       ],
@@ -252,9 +262,7 @@ export default function AppNav({ userName, userEmail, isOperator, chats, version
       // pending its removal; nothing should lead a person there.
       { href: `/logs`, label: 'Activity', icon: ICONS.activity },
     ],
-    ...(isOperator
-      ? [[{ href: `/admin`, label: 'Organization', icon: ICONS.building }]]
-      : []),
+    ...(isOperator ? [[{ href: `/admin`, label: 'Organization', icon: ICONS.building }]] : []),
     [{ href: `/about`, label: 'About', icon: ICONS.info }],
   ];
 
@@ -264,7 +272,7 @@ export default function AppNav({ userName, userEmail, isOperator, chats, version
       await fetch('/api/auth/sign-out', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ }),
+        body: JSON.stringify({}),
       });
     } finally {
       router.push('/');

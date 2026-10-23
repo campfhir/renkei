@@ -4,14 +4,15 @@
  * normally, the others read-only), and the viewer's role.
  */
 
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { ProjectAccess } from './access';
-import { listAttachments, toAttachmentView } from './attachments';
+import { listProjectArtifacts, toAttachmentView } from './attachments';
+import { ALWAYS_BUDGET_TOKENS, tokensOf } from './artifact-library';
 import { readProjectMemory } from './memory';
 import { getProjectRow, openProjectInstructions } from './projects';
 import { listProjectChats } from './store';
-import type { AttachmentView, ChatListItem, ChatToolConfigView } from './views';
+import type { ChatListItem, ChatToolConfigView, ProjectArtifactView } from './views';
 
 export interface ProjectView {
   project: {
@@ -26,7 +27,11 @@ export interface ProjectView {
     updatedAt: string;
   };
   role: 'owner' | 'editor' | 'viewer';
-  files: AttachmentView[];
+  /** Who is looking, so the page can tell their own artifacts from others'. */
+  viewerSubject: string;
+  files: ProjectArtifactView[];
+  /** Tokens the `always` artifacts take per turn, against the budget. */
+  alwaysTokens: { used: number; budget: number };
   memory: {
     summary: string | null;
     entries: {
@@ -49,12 +54,43 @@ export async function loadProjectView(
   const project = await getProjectRow(db, projectId);
   if (!project) return null;
   const [files, memory, chats] = await Promise.all([
-    listAttachments(db, { projectId }),
+    listProjectArtifacts(db, projectId),
     readProjectMemory(db, projectId, access.cipher, { maxEntries: 300 }),
     listProjectChats(db, [projectId], null),
   ]);
+  const fileIds = files.map((file) => file.id);
+  const [textSizes, usage, fileChats] = await Promise.all([
+    fileIds.length > 0
+      ? db
+          .selectFrom('artifacts')
+          .select((eb) => [
+            'id',
+            eb.fn.coalesce(eb.fn('length', ['extracted_text']), sql<number>`0`).as('chars'),
+          ])
+          .where('id', 'in', fileIds)
+          .execute()
+      : [],
+    fileIds.length > 0
+      ? db
+          .selectFrom('artifact_references')
+          .select((eb) => ['artifact_id', eb.fn.count<number>('id').as('count')])
+          .where('artifact_id', 'in', fileIds)
+          .groupBy('artifact_id')
+          .execute()
+      : [],
+    (() => {
+      const chatIds = [...new Set(files.flatMap((file) => (file.chatId ? [file.chatId] : [])))];
+      return chatIds.length > 0
+        ? db.selectFrom('chats').select(['id', 'title']).where('id', 'in', chatIds).execute()
+        : Promise.resolve([]);
+    })(),
+  ]);
+  const charsOf = new Map(textSizes.map((row) => [row.id, Number(row.chars)]));
+  const usingOf = new Map(usage.map((row) => [row.artifact_id, Number(row.count)]));
+  const chatOf = new Map(fileChats.map((chat) => [chat.id, chat]));
   const subjects = [
     project.ownerSubject,
+    ...files.map((file) => file.ownerSubject),
     ...chats.map((chat) => chat.ownerSubject),
     ...memory.entries.flatMap((entry) => (entry.authorSubject ? [entry.authorSubject] : [])),
   ];
@@ -82,7 +118,28 @@ export async function loadProjectView(
       updatedAt: project.updatedAt.toISOString(),
     },
     role,
-    files: files.map(toAttachmentView),
+    viewerSubject,
+    files: files.map((file) => ({
+      ...toAttachmentView(file),
+      mode: file.mode,
+      origin: file.origin,
+      ownerSubject: file.ownerSubject,
+      ownerName:
+        file.ownerSubject === viewerSubject ? null : (names.get(file.ownerSubject) ?? null),
+      chat:
+        file.origin === 'model' && file.chatId && chatOf.has(file.chatId)
+          ? { id: file.chatId, title: chatOf.get(file.chatId)?.title ?? null }
+          : null,
+      projectsUsing: usingOf.get(file.id) ?? 1,
+      tokens: tokensOf(charsOf.get(file.id) ?? 0),
+      createdAt: file.createdAt.toISOString(),
+    })),
+    alwaysTokens: {
+      used: files
+        .filter((file) => file.mode === 'always')
+        .reduce((sum, file) => sum + tokensOf(charsOf.get(file.id) ?? 0), 0),
+      budget: ALWAYS_BUDGET_TOKENS,
+    },
     memory: {
       summary: memory.summary,
       entries: memory.entries.map((entry) => ({

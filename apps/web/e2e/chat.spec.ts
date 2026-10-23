@@ -232,14 +232,26 @@ async function seedChat(
   // 'model' (the bytes would sit in the blob store, which the list never
   // reads).
   await client.query(
-    `INSERT INTO chat_attachments (owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin)\n     VALUES ($1, $2, $3, 'sprint-report.pdf', 'application/pdf', 48213, 'done', 'model')`,
+    `INSERT INTO artifacts (owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, key_kind, key_ref)\n     VALUES ($1, $2, $3, 'sprint-report.pdf', 'application/pdf', 48213, 'done', 'model', 'chat', $2)`,
     [E2E_SUBJECT, CHAT_ID, `chat/${E2E_TENANT_ID}/${TURN_ID}`]
   );
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     await client.query(
       `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason, timing)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9, $10, $11)`,
-      [CHAT_ID, TURN_ID, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? MODEL_ID : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null, assistant ? (row.seq === 2 ? 'tool_use' : 'end_turn') : null, assistant && row.seq === 2 ? JSON.stringify({ durationMs: 2100, firstTokenMs: 900 }) : null]
+      [
+        CHAT_ID,
+        TURN_ID,
+        row.seq,
+        row.role,
+        row.kind,
+        chatKey.seal(JSON.stringify(row.blocks)),
+        assistant ? MODEL_ID : null,
+        assistant ? 'anthropic' : null,
+        assistant ? 'e2e-model' : null,
+        assistant ? (row.seq === 2 ? 'tool_use' : 'end_turn') : null,
+        assistant && row.seq === 2 ? JSON.stringify({ durationMs: 2100, firstTokenMs: 900 }) : null,
+      ]
     );
   }
 }
@@ -630,10 +642,9 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
   } finally {
     await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
     // The empty chat "+ New" made above.
-    await client.query(
-      'DELETE FROM chats WHERE owner_subject = $1 AND last_message_at IS NULL',
-      [E2E_SUBJECT]
-    );
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND last_message_at IS NULL', [
+      E2E_SUBJECT,
+    ]);
     await client.query('DELETE FROM chats WHERE id = $1', [ids.archivedId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
