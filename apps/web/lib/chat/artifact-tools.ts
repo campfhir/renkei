@@ -34,8 +34,13 @@ const WINDOW_CHARS = 1_200;
 const WINDOW_STEP = 600;
 const DEFAULT_HITS = 6;
 const MAX_HITS = 12;
-/** How many files one search opens; a project rarely holds more that are worth searching. */
-const MAX_FILES = 40;
+/**
+ * How many files one search opens before the rest are left for a
+ * narrower call. A batch dropped into a project can run to hundreds; the
+ * model is told how many were not reached, never shown a subset as if
+ * it were the whole.
+ */
+const MAX_FILES = 120;
 
 export interface Passage {
   artifactId: string;
@@ -120,13 +125,14 @@ export async function searchArtifacts(
   query: string,
   limit: number,
   onlyIds: string[] | null
-): Promise<{ passages: Passage[]; searched: number; unreadable: string[] }> {
+): Promise<{ passages: Passage[]; searched: number; skipped: number; unreadable: string[] }> {
   const terms = termsOf(query);
   const phrase = query.trim().toLowerCase();
-  const files = (await searchableFiles(context))
+  const candidates = (await searchableFiles(context))
     .filter((row) => row.extractStatus === 'done')
-    .filter((row) => !onlyIds || onlyIds.includes(row.id))
-    .slice(0, MAX_FILES);
+    .filter((row) => !onlyIds || onlyIds.includes(row.id));
+  const files = candidates.slice(0, MAX_FILES);
+  const skipped = candidates.length - files.length;
   const passages: Passage[] = [];
   const unreadable: string[] = [];
   for (const row of files) {
@@ -151,7 +157,7 @@ export async function searchArtifacts(
     }
   }
   passages.sort((a, b) => b.score - a.score);
-  return { passages: passages.slice(0, limit), searched: files.length, unreadable };
+  return { passages: passages.slice(0, limit), searched: files.length, skipped, unreadable };
 }
 
 export function artifactSearchTool(): LocalTool {
@@ -203,7 +209,12 @@ export function artifactSearchTool(): LocalTool {
           `[${index + 1}] ${passage.filename} (artifact id ${passage.artifactId}, offset ${passage.offset})\n${passage.text.trim()}`
       );
       const note =
-        result.unreadable.length > 0 ? `\n\nCould not open: ${result.unreadable.join(', ')}.` : '';
+        (result.unreadable.length > 0
+          ? `\n\nCould not open: ${result.unreadable.join(', ')}.`
+          : '') +
+        (result.skipped > 0
+          ? `\n\n${result.skipped} more file(s) were not searched this time; pass artifactIds to search among them.`
+          : '');
       return textResult(
         result.passages.length === 0
           ? `Nothing in ${result.searched} file(s) matched "${query}". Try other terms.${note}`
