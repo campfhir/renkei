@@ -52,7 +52,7 @@ overrides:
   # dompurify under monaco-editor (pinned exactly by monaco, one patch
   # behind the advisories' fixed version) and mermaid: patch releases of
   # the same minor, API-compatible.
-  'dompurify@<3.4.16': '3.4.16'
+  'dompurify@<3.4.17': '3.4.17'
   # uuid 8 under exceljs and 10 under pptx-preview: both call v4() only,
   # which 11 exports the same way for require and import. mermaid's own
   # range (`^11.1.0 || … || ^14`) admits 11.1.1 as well, which is what it
