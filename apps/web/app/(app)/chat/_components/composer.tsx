@@ -76,6 +76,36 @@ const UPLOAD_CONCURRENCY = 4;
 /** Files OCR'd per request; the server takes at most this many. */
 const OCR_BATCH = 12;
 
+type DropDestination = 'project' | 'message';
+
+const DROP_CHOICE_KEY = (projectId: string) => `renkei.artifact-drop.${projectId}`;
+
+/** The destination this browser remembers for the project, or null when it was never chosen. */
+function rememberedDropChoice(projectId: string): DropDestination | null {
+  try {
+    const stored = window.localStorage.getItem(DROP_CHOICE_KEY(projectId));
+    return stored === 'project' || stored === 'message' ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+function forgetDropChoice(projectId: string): void {
+  try {
+    window.localStorage.removeItem(DROP_CHOICE_KEY(projectId));
+  } catch {
+    // Nothing stored, nothing to forget.
+  }
+}
+
+function rememberDropChoice(projectId: string, choice: DropDestination): void {
+  try {
+    window.localStorage.setItem(DROP_CHOICE_KEY(projectId), choice);
+  } catch {
+    // Private windows and blocked storage: the question is simply asked again.
+  }
+}
+
 export default function Composer({
   chatId,
   disabled,
@@ -96,6 +126,7 @@ export default function Composer({
   dictation,
   editing,
   onCancelEdit,
+  project = null,
 }: {
   chatId: string;
   disabled: boolean;
@@ -130,6 +161,12 @@ export default function Composer({
   /** An earlier prompt being rewritten: its text fills the box, Send resends it. */
   editing: { text: string } | null;
   onCancelEdit: () => void;
+  /**
+   * The project the chat is in, when it is in one: a dropped file may then
+   * be kept as a project artifact (every chat in the project reads it) or
+   * attached to this message only. The choice is remembered per project.
+   */
+  project?: { id: string; name: string } | null;
 }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
@@ -137,6 +174,17 @@ export default function Composer({
   const [uploadError, setUploadError] = useState<string | null>(null);
   /** A mass upload waiting on the person's OK. */
   const [pendingBatch, setPendingBatch] = useState<File[] | null>(null);
+  /** In a project: files waiting for the person to say where they go. */
+  const [pendingDrop, setPendingDrop] = useState<File[] | null>(null);
+  const [dropChoice, setDropChoice] = useState<DropDestination>('project');
+  const [rememberDrop, setRememberDrop] = useState(true);
+  /** The destination this browser remembers for the project, shown so it can be changed. */
+  const [remembered, setRemembered] = useState<DropDestination | null>(null);
+  useEffect(() => {
+    setRemembered(project ? rememberedDropChoice(project.id) : null);
+  }, [project]);
+  /** Send was pressed while files were still being placed: send once they have uploaded. */
+  const sendAfterUpload = useRef(false);
   const [uploadTotal, setUploadTotal] = useState(0);
   const [ocrPending, setOcrPending] = useState(0);
   const [listOpen, setListOpen] = useState(false);
@@ -173,13 +221,7 @@ export default function Composer({
   const startDictation = useCallback(async () => {
     if (!dictation || recorder.current) return;
     setDictationError(null);
-    const {
-      locale,
-      detectLanguage,
-      onHeard,
-      echoCancellation,
-      microphone,
-    } = dictation;
+    const { locale, detectLanguage, onHeard, echoCancellation, microphone } = dictation;
     const instance = new UtteranceRecorder({
       echoCancellation,
       deviceId: microphone,
@@ -262,7 +304,7 @@ export default function Composer({
   );
 
   const startUpload = useCallback(
-    async (list: File[]) => {
+    async (list: File[], keep = false) => {
       setUploadError(null);
       setUploading((count) => count + list.length);
       setUploadTotal((count) => count + list.length);
@@ -271,7 +313,12 @@ export default function Composer({
       const lane = async () => {
         while (next < list.length) {
           const file = list[next++];
-          const result = await chatClient.uploadAttachment({ chatId }, file);
+          // Kept: an artifact of the person's, attached to the project as well
+          // as sent with this message (artifact-routes.ts).
+          const result =
+            keep && project
+              ? await chatClient.uploadArtifact({ chatId, keep: true, projectId: project.id }, file)
+              : await chatClient.uploadAttachment({ chatId }, file);
           setUploading((count) => count - 1);
           const attachment = result.data;
           if (result.error || !attachment) {
@@ -287,29 +334,68 @@ export default function Composer({
       const needsOcr = stored.filter((entry) => entry.extractStatus === 'needs_ocr');
       if (needsOcr.length > 0) void runOcr(needsOcr.map((entry) => entry.id));
     },
-    [chatId, runOcr]
+    [chatId, project, runOcr]
   );
 
-  const upload = useCallback(
-    async (files: FileList | File[]) => {
-      const list = [...files];
-      if (list.length === 0) return;
+  const [keepChoice, setKeepChoice] = useState(false);
+
+  const proceed = useCallback(
+    async (list: File[], keep: boolean) => {
+      setKeepChoice(keep);
       // Past the threshold the person is asked first: a mass upload is slow,
       // and its files reach the model as a list, not as inline text.
       if (attachments.length + uploading + list.length > massUploadThreshold) {
         setPendingBatch((current) => [...(current ?? []), ...list]);
         return;
       }
-      await startUpload(list);
+      await startUpload(list, keep);
     },
     [attachments.length, uploading, massUploadThreshold, startUpload]
   );
 
+  const upload = useCallback(
+    async (files: FileList | File[]) => {
+      const list = [...files];
+      if (list.length === 0) return;
+      // In a project, where a file goes is the person's call, made once
+      // per project and remembered in this browser until they change it.
+      if (project) {
+        const remembered = rememberedDropChoice(project.id);
+        if (remembered === null) {
+          setDropChoice('project');
+          setPendingDrop((current) => [...(current ?? []), ...list]);
+          return;
+        }
+        await proceed(list, remembered === 'project');
+        return;
+      }
+      await proceed(list, false);
+    },
+    [project, proceed]
+  );
+
+  const confirmDrop = useCallback(() => {
+    const list = pendingDrop;
+    setPendingDrop(null);
+    if (!list) return;
+    if (project && rememberDrop) {
+      rememberDropChoice(project.id, dropChoice);
+      setRemembered(dropChoice);
+    }
+    void proceed(list, dropChoice === 'project');
+  }, [pendingDrop, project, rememberDrop, dropChoice, proceed]);
+
+  const forgetDrop = useCallback(() => {
+    if (!project) return;
+    forgetDropChoice(project.id);
+    setRemembered(null);
+  }, [project]);
+
   const confirmBatch = useCallback(() => {
     const list = pendingBatch;
     setPendingBatch(null);
-    if (list) void startUpload(list);
-  }, [pendingBatch, startUpload]);
+    if (list) void startUpload(list, keepChoice);
+  }, [pendingBatch, startUpload, keepChoice]);
 
   // A row of chips would crowd out the text box.
   const folded = attachments.length >= FOLD_AT;
@@ -317,29 +403,46 @@ export default function Composer({
     if (attachments.length === 0) setListOpen(false);
   }, [attachments.length]);
 
-  const remove = useCallback(
-    async (attachment: AttachmentView) => {
-      setAttachments((current) => current.filter((entry) => entry.id !== attachment.id));
-      await chatClient.deleteAttachment(attachment.id);
-    },
-    []
-  );
+  const remove = useCallback(async (attachment: AttachmentView) => {
+    setAttachments((current) => current.filter((entry) => entry.id !== attachment.id));
+    await chatClient.deleteAttachment(attachment.id);
+  }, []);
 
   /** Something to send — typed text or an attachment. */
-  const hasDraft = text.trim().length > 0 || attachments.length > 0;
+  const placing = (pendingDrop?.length ?? 0) > 0;
+  const hasDraft = text.trim().length > 0 || attachments.length > 0 || placing;
 
   const send = useCallback(async () => {
     const trimmed = text.trim();
+    if (disabled) return;
+    // Files still waiting for the person to say where they go: Send is
+    // the answer — the choice as it stands is taken, the files upload,
+    // and the message goes out once they are up.
+    if (placing) {
+      sendAfterUpload.current = true;
+      confirmDrop();
+      return;
+    }
     // Sending while running is not blocked here — the caller (onSubmit)
     // queues it and returns true; only an actually-empty box or an
     // in-flight upload stops the person from queuing.
-    if ((!trimmed && attachments.length === 0) || disabled || uploading > 0) return;
+    if ((!trimmed && attachments.length === 0) || uploading > 0) return;
     const ok = await onSubmit({ text: trimmed, attachments });
     if (ok) {
       setText('');
       setAttachments([]);
     }
-  }, [text, attachments, disabled, uploading, onSubmit]);
+  }, [text, attachments, disabled, uploading, onSubmit, placing, confirmDrop]);
+
+  useEffect(() => {
+    // The send waits for the files: the chooser's answer taken, a mass
+    // upload's own warning answered, every upload finished. Cancelling the
+    // warning drops the pending send and leaves the message in the box.
+    if (!sendAfterUpload.current) return;
+    if (placing || pendingBatch || uploading > 0 || uploadTotal > 0) return;
+    sendAfterUpload.current = false;
+    void send();
+  }, [uploading, uploadTotal, pendingBatch, placing, send]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === '/' && text === '') {
@@ -476,6 +579,80 @@ export default function Composer({
             : 'border-gray-300 dark:border-gray-700'
         }`}
       >
+        {pendingDrop && project ? (
+          <div
+            role="group"
+            aria-label="Where should the files go?"
+            className="m-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200"
+          >
+            <p className="mb-1.5 font-medium">
+              Where should{' '}
+              {pendingDrop.length === 1 ? pendingDrop[0].name : `these ${pendingDrop.length} files`}{' '}
+              go?
+            </p>
+            <label className="flex cursor-pointer items-start gap-2 py-0.5">
+              <input
+                type="radio"
+                name="drop-destination"
+                checked={dropChoice === 'project'}
+                onChange={() => setDropChoice('project')}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium">Artifacts, attached to {project.name}</span>
+                <span className="block text-blue-800/80 dark:text-blue-300/80">
+                  Kept for every chat in this project and reusable elsewhere. Sent with this message
+                  too.
+                </span>
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 py-0.5">
+              <input
+                type="radio"
+                name="drop-destination"
+                checked={dropChoice === 'message'}
+                onChange={() => setDropChoice('message')}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium">This message only</span>
+                <span className="block text-blue-800/80 dark:text-blue-300/80">
+                  Readable in this chat; not part of the project.
+                </span>
+              </span>
+            </label>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <button
+                type="button"
+                onClick={confirmDrop}
+                className="rounded bg-blue-600 px-2.5 py-1 font-medium text-white hover:bg-blue-700"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sendAfterUpload.current = false;
+                  setPendingDrop(null);
+                }}
+                className="rounded px-2 py-1 font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40"
+              >
+                Cancel
+              </button>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={rememberDrop}
+                  onChange={(event) => setRememberDrop(event.target.checked)}
+                />
+                Remember for {project.name}
+              </label>
+              <span className="text-blue-800/80 dark:text-blue-300/80">
+                Sending the message adds them too.
+              </span>
+            </div>
+          </div>
+        ) : null}
         {pendingBatch ? (
           <div
             role="alertdialog"
@@ -501,7 +678,10 @@ export default function Composer({
               </button>
               <button
                 type="button"
-                onClick={() => setPendingBatch(null)}
+                onClick={() => {
+                  sendAfterUpload.current = false;
+                  setPendingBatch(null);
+                }}
                 className="rounded-md px-2.5 py-1 hover:bg-amber-100 dark:hover:bg-amber-900/40"
               >
                 Cancel
@@ -576,6 +756,21 @@ export default function Composer({
           className="block w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none disabled:opacity-60"
         />
         <div className="flex items-center gap-1 px-2 pb-2">
+          {project && remembered ? (
+            <button
+              type="button"
+              onClick={forgetDrop}
+              aria-label={`Dropped files go to ${remembered === 'project' ? `${project.name}’s artifacts` : 'this message only'}. Ask me again next time.`}
+              data-tip={`Dropped files go to ${remembered === 'project' ? `${project.name}’s artifacts` : 'this message only'}. Click to be asked again next time.`}
+              data-tip-start=""
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              <Icon path={ICONS.layers} className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">
+                {remembered === 'project' ? 'Files → artifacts' : 'Files → message'}
+              </span>
+            </button>
+          ) : null}
           {uploads ? (
             <button
               type="button"
@@ -631,7 +826,11 @@ export default function Composer({
               onVoiceOpen={onVoiceOpen}
             />
           ) : null}
-          {foldTools ? <div className="contents @max-[30rem]:hidden">{voiceControl}</div> : voiceControl}
+          {foldTools ? (
+            <div className="contents @max-[30rem]:hidden">{voiceControl}</div>
+          ) : (
+            voiceControl
+          )}
           {dictation ? (
             <button
               type="button"

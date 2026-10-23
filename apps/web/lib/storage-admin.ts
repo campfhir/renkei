@@ -123,9 +123,7 @@ export async function mergeStorage(
   };
 }
 
-export async function saveStorage(
-  input: StorageInput
-): Promise<StorageView | string> {
+export async function saveStorage(input: StorageInput): Promise<StorageView | string> {
   const key = encryptionKey();
   if (!key) return 'Server misconfigured';
   const merged = await mergeStorage(input);
@@ -147,24 +145,27 @@ export async function saveStorage(
  * created if missing, a probe object is written, read and deleted. Any
  * step failing comes back as a plain sentence.
  */
-export async function testStorage(
-  input: StorageInput
-): Promise<{ ok: boolean; detail: string }> {
+export async function testStorage(input: StorageInput): Promise<{ ok: boolean; detail: string }> {
   const merged = await mergeStorage(input);
   if (merged === 'ERROR') return { ok: false, detail: 'Could not read the stored configuration.' };
   if (!merged.secrets.key) return { ok: false, detail: 'Enter the account key to test.' };
   const config = blobStoreConfigOfRow(merged.settings, merged.secrets);
   if (!config.ok)
     return { ok: false, detail: config.err.message ?? 'The configuration is incomplete.' };
-  const store = blobStoreFor(config.val);
+  // The Storage page configures Azure; the local backend is the environment's alone.
+  if (config.val.provider !== 'azure') {
+    return { ok: false, detail: 'The Storage page configures Azure Blob Storage.' };
+  }
+  const azure = config.val;
+  const store = blobStoreFor(azure);
   const host = (() => {
     try {
-      return new URL(config.val.endpoint).host;
+      return new URL(azure.endpoint).host;
     } catch {
-      return config.val.endpoint;
+      return azure.endpoint;
     }
   })();
-  const at = `Tested ${host} as account "${config.val.account}", container "${config.val.container}".`;
+  const at = `Tested ${host} as account "${azure.account}", container "${azure.container}".`;
   const why = (error: { type: string; message?: string }) => error.message ?? error.type;
 
   const container = await store.ensureContainer();
@@ -192,6 +193,6 @@ export async function testStorage(
   }
   return {
     ok: true,
-    detail: `Wrote, read and removed a probe in "${config.val.container}" on ${config.val.account} via ${host}.`,
+    detail: `Wrote, read and removed a probe in "${azure.container}" on ${azure.account} via ${host}.`,
   };
 }

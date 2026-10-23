@@ -41,7 +41,13 @@ import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
 import type { ContentCipher } from './content-crypto';
 import { projectCipherById } from './chat-keys';
-import { attachmentPromptBlocks } from './attachments';
+import {
+  attachmentPromptBlocks,
+  getAttachmentText,
+  listAttachments,
+  listProjectArtifacts,
+} from './attachments';
+import { resolveArtifactAccess } from './artifact-access';
 import { openProjectInstructions } from './projects';
 import {
   compactChat,
@@ -295,7 +301,7 @@ export async function startChatTurn(
       if (!assistant) return err('CONTENT_KEY' as const);
       if (input.attachmentIds && input.attachmentIds.length > 0) {
         await trx
-          .updateTable('chat_attachments')
+          .updateTable('artifacts')
           .set({ message_id: user.id })
           .where('chat_id', '=', chat.id)
           .where('owner_subject', '=', input.session.subject)
@@ -945,20 +951,33 @@ export async function chatPromptContext(
   userMemoryText: Parameters<typeof buildSystemPrompt>[0]['userMemoryText'];
   chatFiles: Parameters<typeof buildSystemPrompt>[0]['chatFiles'];
 }> {
-  const files = await db
-    .selectFrom('chat_attachments')
-    .select(['id', 'filename', 'content_type', 'size_bytes', 'chat_id', 'project_id'])
-    .where((eb) =>
-      eb.or([eb('chat_id', '=', chat.id), ...(project ? [eb('project_id', '=', project.id)] : [])])
-    )
-    .orderBy('created_at', 'asc')
-    .execute();
-  const shape = (row: (typeof files)[number]) => ({
+  const [chatFiles, projectFiles] = await Promise.all([
+    listAttachments(db, { chatId: chat.id }),
+    project ? listProjectArtifacts(db, project.id) : Promise.resolve([]),
+  ]);
+  const shape = (row: {
+    id: string;
+    filename: string;
+    contentType: string;
+    sizeBytes: number;
+  }) => ({
     id: row.id,
     filename: row.filename,
-    contentType: row.content_type,
-    sizeBytes: Number(row.size_bytes),
+    contentType: row.contentType,
+    sizeBytes: row.sizeBytes,
   });
+  // An artifact the project keeps "always" travels in full with every
+  // turn; its text opens under its own key, as the chat's owner reads it
+  // through the project (artifact-access.ts).
+  const alwaysFiles: { id: string; filename: string; text: string }[] = [];
+  for (const row of projectFiles) {
+    if (row.mode !== 'always' || row.extractStatus !== 'done' || !project) continue;
+    const access = await resolveArtifactAccess(db, chat.ownerSubject, row, project.id);
+    const text = access ? await getAttachmentText(db, row.id, access.cipher) : null;
+    if (text && !text.startsWith('[content unavailable')) {
+      alwaysFiles.push({ id: row.id, filename: row.filename, text });
+    }
+  }
   return {
     project:
       project && projectCipher
@@ -966,12 +985,17 @@ export async function chatPromptContext(
             name: project.name,
             instructions: openProjectInstructions(project, projectCipher),
             memoryText: await projectMemoryText(db, project.id, projectCipher),
-            files: files.filter((row) => row.project_id === project.id).map(shape),
+            files: projectFiles.map((row) => ({ ...shape(row), mode: row.mode })),
+            alwaysFiles,
             code: null,
           }
         : null,
     userMemoryText: project ? null : renderUserMemory(await readUserMemory(db, chat.ownerSubject)),
-    chatFiles: files.filter((row) => row.chat_id === chat.id).map(shape),
+    // A chat upload kept for the project is both the chat's and the
+    // project's; it is listed once, where every chat in the project sees it.
+    chatFiles: chatFiles
+      .filter((row) => !projectFiles.some((held) => held.id === row.id))
+      .map(shape),
   };
 }
 

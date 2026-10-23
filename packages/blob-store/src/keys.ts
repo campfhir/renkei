@@ -9,7 +9,8 @@ import type { Result } from '@campfhir/safe-functions/types';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** The key domain (@renkei/settings getKeyDomain): a former organization id, or the fixed word. */
-const DOMAIN = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z][a-z0-9-]{0,31})$/i;
+const DOMAIN =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z][a-z0-9-]{0,31})$/i;
 
 /**
  * `chat/<domain>/<attachment id>`. The domain segment is where a deployment

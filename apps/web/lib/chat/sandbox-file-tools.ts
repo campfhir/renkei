@@ -29,7 +29,7 @@ import { sbReadFile, sbWriteFile } from '@renkei/sandbox-client';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { outputMediaType } from '@renkei/connector-sandbox';
 import { findAttachment } from './attachment-tools';
-import { listAttachments, type AttachmentRow } from './attachments';
+import { listAttachments, listProjectArtifacts, type AttachmentRow } from './attachments';
 import { checkFilename, KEPT_LINE } from './file-tools';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 import { ARTIFACT_MAX_BYTES } from './turn-store';
@@ -86,7 +86,7 @@ export function pickByName<T extends NamedFile>(files: readonly T[], wanted: str
 async function filesOf(context: LocalToolContext): Promise<AttachmentRow[]> {
   const own = await listAttachments(context.db, { chatId: context.chatId });
   if (!context.projectId) return own;
-  const shared = await listAttachments(context.db, { projectId: context.projectId });
+  const shared = await listProjectArtifacts(context.db, context.projectId);
   return [...shared, ...own];
 }
 

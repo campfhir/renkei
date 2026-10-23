@@ -38,7 +38,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { getKeyRing, readKeyRow, type KeyError, type KeyRing } from './keyring';
 
-export type ResourceKeyKind = 'chat' | 'chat_project' | 'prompt_library';
+export type ResourceKeyKind = 'chat' | 'chat_project' | 'prompt_library' | 'artifact';
 export type HolderKind = 'user' | 'automation' | 'public' | 'resource';
 
 /** A resource's data key, opened: what a cipher seals and opens with. */
@@ -215,8 +215,7 @@ async function openKeyById(
   const rows = await grantRows(db, [keyId]);
   const direct = openDirect(rows, ring);
   if (direct.key) {
-    if (direct.via === 'public')
-      await convertPublicWrapping(db, keyId, ring, direct.key);
+    if (direct.via === 'public') await convertPublicWrapping(db, keyId, ring, direct.key);
     return ok(direct.key);
   }
   const viaParent = await openThroughParents(db, rows, ring, depth);
@@ -401,8 +400,7 @@ export async function openResourceKeys(
     if (!ring) continue;
     const direct = openDirect(rowsByKey.get(keyId) ?? [], ring);
     if (direct.key) {
-      if (direct.via === 'public')
-        await convertPublicWrapping(db, keyId, ring, direct.key);
+      if (direct.via === 'public') await convertPublicWrapping(db, keyId, ring, direct.key);
       out.set(entry.resourceId, { id: keyId, key: direct.key });
       continue;
     }
@@ -547,6 +545,7 @@ export async function pruneOrphanResourceKeys(db: Kysely<DB>): Promise<number> {
      WHERE (k.resource_kind = 'chat' AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = k.resource_id))
         OR (k.resource_kind = 'chat_project' AND NOT EXISTS (SELECT 1 FROM chat_projects p WHERE p.id = k.resource_id))
         OR (k.resource_kind = 'prompt_library' AND NOT EXISTS (SELECT 1 FROM prompt_libraries l WHERE l.id = k.resource_id))
+        OR (k.resource_kind = 'artifact' AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.id = k.resource_id))
     RETURNING k.id
   `.execute(db);
   return result.rows.length;

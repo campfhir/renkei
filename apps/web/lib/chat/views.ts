@@ -107,6 +107,30 @@ export interface AttachmentView {
   messageId?: string | null;
 }
 
+/** An artifact as a project page lists it: the file, how the project's chats use it, where else it lives. */
+export interface ProjectArtifactView extends AttachmentView {
+  mode: 'always' | 'on_demand';
+  /** `upload` or `model`. */
+  origin: string;
+  ownerSubject: string;
+  ownerName: string | null;
+  /** The chat it was produced in, when a model wrote it and that chat still exists. */
+  chat: { id: string; title: string | null } | null;
+  /** How many projects hold it, this one included. */
+  projectsUsing: number;
+  /** Tokens its text takes when kept in context (chars / 4); 0 when there is no text. */
+  tokens: number;
+  createdAt: string;
+}
+
+/** One row of a project's artifacts list (the API's shape; the page view adds names and usage). */
+export interface ProjectArtifactListItem extends AttachmentView {
+  origin: string;
+  ownerSubject: string;
+  mode: 'always' | 'on_demand';
+  createdAt: string;
+}
+
 /** What a person answers a permission ask with. */
 export type ToolPermissionDecision = 'once' | 'always' | 'deny';
 

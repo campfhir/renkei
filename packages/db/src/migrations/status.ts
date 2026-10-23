@@ -186,6 +186,7 @@ export const EXPECTED_MIGRATIONS = [
   '160-pending-signin-connector',
   '161-salesforce-admin-change-requests',
   '162-chat-auto-title',
+  '163-artifacts',
 ];
 
 export interface MigrationStatus {

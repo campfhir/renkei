@@ -24,7 +24,7 @@ import { sendJsonFull } from '@/lib/fetch-json';
 import { chatClient } from '@/lib/chat/client';
 import type { ProjectView as ProjectViewData } from '@/lib/chat/project-view';
 import { DialogFooter } from './chat-nav';
-import AttachmentChip from './attachment-chip';
+import ArtifactsCard from './artifacts-card';
 import ShareModal from './share-modal';
 import ToolsPopover from './tools-popover';
 import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
@@ -53,7 +53,15 @@ const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
 
-export default function ProjectView({ initial, variant = 'chat', strip = null, rail = null, defaultInstructions = null, readme = null, usage = null }: {
+export default function ProjectView({
+  initial,
+  variant = 'chat',
+  strip = null,
+  rail = null,
+  defaultInstructions = null,
+  readme = null,
+  usage = null,
+}: {
   initial: ProjectViewData;
   /**
    * A code project is a chat project with a repository on it: the same
@@ -82,12 +90,11 @@ export default function ProjectView({ initial, variant = 'chat', strip = null, r
   usage?: ProjectTokenUsage | null;
 }) {
   const router = useRouter();
-  const { project, role, files, memory, chats } = initial;
+  const { project, role, files, alwaysTokens, viewerSubject, memory, chats } = initial;
   const canEdit = role !== 'viewer';
   const base = `/api/chat/projects/${project.id}`;
   const indexHref = variant === 'code' ? `/code` : `/chat/projects`;
-  const deleteRoute =
-    variant === 'code' ? `/api/code/projects/${project.id}` : base;
+  const deleteRoute = variant === 'code' ? `/api/code/projects/${project.id}` : base;
 
   const [name, setName] = useState(project.name);
   const [renamingHeader, setRenamingHeader] = useState(false);
@@ -103,9 +110,6 @@ export default function ProjectView({ initial, variant = 'chat', strip = null, r
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
-  const [uploading, setUploading] = useState(false);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
   const [startingChat, setStartingChat] = useState(false);
   const [allChats, setAllChats] = useState(false);
   const [readmeOpen, setReadmeOpen] = useState(false);
@@ -181,23 +185,6 @@ export default function ProjectView({ initial, variant = 'chat', strip = null, r
     router.refresh();
   };
 
-  const upload = async (list: FileList | null) => {
-    if (!list || list.length === 0) return;
-    setUploading(true);
-    setFileError(null);
-    for (const file of [...list]) {
-      const result = await chatClient.uploadAttachment({ projectId: project.id }, file);
-      if (result.error) setFileError(`${file.name}: ${result.error}`);
-    }
-    setUploading(false);
-    router.refresh();
-  };
-
-  const removeFile = async (id: string) => {
-    await chatClient.deleteAttachment(id);
-    router.refresh();
-  };
-
   const addNote = async () => {
     if (!note.trim()) return;
     setBusy(true);
@@ -232,17 +219,13 @@ export default function ProjectView({ initial, variant = 'chat', strip = null, r
   const totalTokens = usage ? usage.total.inputTokens + usage.total.outputTokens : 0;
   const chatsAnchor = useCoachAnchor('project-chats');
   const aboutAnchor = useCoachAnchor('project-about');
-  const filesAnchor = useCoachAnchor('project-files');
   const memoryAnchor = useCoachAnchor('project-memory');
   const chatRow = (chat: (typeof chats)[number], showPrBadge = false) => {
     const chatSpend = usage?.byChat[chat.id];
     const tokens = chatSpend ? chatSpend.inputTokens + chatSpend.outputTokens : 0;
     return (
       <li key={chat.id}>
-        <Link
-          href={`/chat/${chat.id}`}
-          className="flex items-center gap-2 py-1.5 hover:underline"
-        >
+        <Link href={`/chat/${chat.id}`} className="flex items-center gap-2 py-1.5 hover:underline">
           <Icon
             path={variant === 'code' ? ICONS.code : ICONS.pages}
             className="h-4 w-4 shrink-0 text-gray-400"
@@ -581,51 +564,15 @@ export default function ProjectView({ initial, variant = 'chat', strip = null, r
               )}
             </section>
 
-            {variant === 'code' ? null : (
-              <section className={sectionClass} {...filesAnchor}>
-                <div className="mb-2 flex items-center gap-2">
-                  <h2 className="text-sm font-semibold">Files</h2>
-                  {canEdit ? (
-                    <>
-                      <button
-                        type="button"
-                        disabled={uploading}
-                        onClick={() => fileInput.current?.click()}
-                        className="ml-auto rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
-                      >
-                        {uploading ? 'Uploading…' : 'Add files'}
-                      </button>
-                      <input
-                        ref={fileInput}
-                        type="file"
-                        multiple
-                        className="hidden"
-                        onChange={(event) => {
-                          void upload(event.target.files);
-                          event.target.value = '';
-                        }}
-                      />
-                    </>
-                  ) : null}
-                </div>
-                {files.length === 0 ? (
-                  <p className="text-sm text-gray-500">
-                    No files yet. Files here are readable in every chat of the project.
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {files.map((file) => (
-                      <AttachmentChip
-                        key={file.id}
-                        attachment={file}
-                        onRemove={canEdit ? () => void removeFile(file.id) : undefined}
-                      />
-                    ))}
-                  </div>
-                )}
-                {fileError ? <p className="mt-1 text-xs text-red-600">{fileError}</p> : null}
-              </section>
-            )}
+            <ArtifactsCard
+              className={sectionClass}
+              projectId={project.id}
+              projectName={project.name}
+              files={files}
+              alwaysTokens={alwaysTokens}
+              canEdit={canEdit}
+              viewerSubject={viewerSubject}
+            />
 
             <section className={sectionClass} {...memoryAnchor}>
               <div className="mb-2">

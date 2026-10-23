@@ -46,7 +46,7 @@ async function snapshotOf(
   const produced =
     messages.length > 0
       ? await db
-          .selectFrom('chat_attachments')
+          .selectFrom('artifacts')
           .select(['id', 'filename', 'content_type', 'size_bytes', 'extract_status'])
           .where('origin', '=', 'model')
           .where(

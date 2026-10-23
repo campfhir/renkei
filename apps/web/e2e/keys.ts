@@ -238,12 +238,8 @@ export async function enrollForE2E(
     // Anything the person held under an earlier key (a rotation in
     // keys.spec.ts, a pre-derivation run) is unopenable under these; a
     // spec that seeds reseeds.
-    await client.query(`DELETE FROM resource_key_grants WHERE holder = $1`, [
-      subject,
-    ]);
-    await client.query(`DELETE FROM key_delegations WHERE subject = $1`, [
-      subject,
-    ]);
+    await client.query(`DELETE FROM resource_key_grants WHERE holder = $1`, [subject]);
+    await client.query(`DELETE FROM key_delegations WHERE subject = $1`, [subject]);
     enrolled.set(cacheKey, keys);
   }
   const instances = await liveInstances(client);
@@ -294,7 +290,7 @@ export interface SeededKey {
 export async function keyFor(
   client: Client,
   input: {
-    kind: 'chat' | 'chat_project';
+    kind: 'chat' | 'chat_project' | 'artifact';
     resourceId: string;
     ownerSubject: string;
   }
@@ -326,7 +322,12 @@ export async function keyFor(
     );
     await client.query(
       `INSERT INTO resource_key_grants\n         (resource_key_id, holder_kind, holder, wrapped_key, kek_version)\n       VALUES ($1, 'user', $2, $3, 1), ($1, 'automation', $2, $4, 1)`,
-      [id, input.ownerSubject, secretbox(key.toString('base64'), keys.userKey), secretbox(key.toString('base64'), keys.automationKey)]
+      [
+        id,
+        input.ownerSubject,
+        secretbox(key.toString('base64'), keys.userKey),
+        secretbox(key.toString('base64'), keys.automationKey),
+      ]
     );
   }
   return { id, key, seal: (plaintext) => `renc2:${id}:${secretbox(plaintext, key)}` };

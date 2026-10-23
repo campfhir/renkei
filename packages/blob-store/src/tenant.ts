@@ -20,6 +20,7 @@ import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { blobStoreConfig, type BlobStoreConfig } from './config';
 import { createAzureBlobStore } from './azure';
+import { createLocalBlobStore } from './local';
 import type { BlobStore } from './contract';
 
 /** The connector_configs key the Storage page writes. */
@@ -62,8 +63,9 @@ export function blobStoreConfigOfRow(
 }
 
 /** The configuration in force for an org: its own row, else the environment. */
-export async function resolveTenantBlobConfig(
-): Promise<Result<BlobStoreConfig, 'BLOB_UNCONFIGURED'>> {
+export async function resolveTenantBlobConfig(): Promise<
+  Result<BlobStoreConfig, 'BLOB_UNCONFIGURED'>
+> {
   const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (key.ok) {
     const row = await readConnectorConfigCached(BLOB_STORAGE_CONNECTOR, key.val);
@@ -76,11 +78,10 @@ export async function resolveTenantBlobConfig(
 
 /** A store for one configuration, however it was arrived at (the admin page's test uses this). */
 export function blobStoreFor(config: BlobStoreConfig): BlobStore {
-  return createAzureBlobStore(config);
+  return config.provider === 'local' ? createLocalBlobStore(config) : createAzureBlobStore(config);
 }
 
-export async function resolveTenantBlobStore(
-): Promise<Result<BlobStore, 'BLOB_UNCONFIGURED'>> {
+export async function resolveTenantBlobStore(): Promise<Result<BlobStore, 'BLOB_UNCONFIGURED'>> {
   const config = await resolveTenantBlobConfig();
   if (!config.ok) return config;
   const fingerprint = JSON.stringify(config.val);

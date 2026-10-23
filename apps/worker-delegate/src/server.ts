@@ -111,7 +111,7 @@ export interface DelegateServerDeps {
 /** A batch of values to seal or open; a chat's whole memory list fits many times over. */
 const MAX_JSON_BYTES = 8 * 1_048_576;
 
-const KINDS: readonly ResourceKeyKind[] = ['chat', 'chat_project', 'prompt_library'];
+const KINDS: readonly ResourceKeyKind[] = ['chat', 'chat_project', 'prompt_library', 'artifact'];
 
 function kindOf(value: unknown): ResourceKeyKind | null {
   return KINDS.find((kind) => kind === value) ?? null;

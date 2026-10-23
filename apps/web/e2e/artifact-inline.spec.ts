@@ -178,7 +178,7 @@ async function seed(f: Fixture, files: Seeded[]): Promise<void> {
   await client.connect();
   try {
     await deleteRowsOf(client, f.subject, [
-      'chat_attachments',
+      'artifacts',
       'chats',
       'llm_model_configs',
       'user_preferences',
@@ -260,14 +260,36 @@ async function seed(f: Fixture, files: Seeded[]): Promise<void> {
       const assistant = row.role === 'assistant';
       const inserted = await client.query(
         `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)\n         VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9, $10) RETURNING id`,
-        [f.chatId, f.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? f.chatModelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null, assistant ? (row.seq === 4 ? 'end_turn' : 'tool_use') : null]
+        [
+          f.chatId,
+          f.turnId,
+          row.seq,
+          row.role,
+          row.kind,
+          chatKey.seal(JSON.stringify(row.blocks)),
+          assistant ? f.chatModelId : null,
+          assistant ? 'anthropic' : null,
+          assistant ? 'e2e-model' : null,
+          assistant ? (row.seq === 4 ? 'end_turn' : 'tool_use') : null,
+        ]
       );
       if (row.kind === 'tool_results') resultsRow = inserted.rows[0].id;
     }
     for (const file of files) {
       await client.query(
-        `INSERT INTO chat_attachments (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, extracted_text, origin, message_id)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'model', $10)`,
-        [file.id, f.subject, f.chatId, `chat/e2e/${file.id}`, file.filename, file.contentType, file.bytes.byteLength, file.extractStatus, file.extractedText ? chatKey.seal(file.extractedText) : null, resultsRow]
+        `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, extracted_text, origin, message_id, key_kind, key_ref)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'model', $10, 'chat', $3)`,
+        [
+          file.id,
+          f.subject,
+          f.chatId,
+          `chat/e2e/${file.id}`,
+          file.filename,
+          file.contentType,
+          file.bytes.byteLength,
+          file.extractStatus,
+          file.extractedText ? chatKey.seal(file.extractedText) : null,
+          resultsRow,
+        ]
       );
     }
   } finally {

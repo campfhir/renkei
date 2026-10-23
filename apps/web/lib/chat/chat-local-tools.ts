@@ -29,6 +29,7 @@ import { memoryTools } from './memory-tools';
 import { mockupTools } from './mockup-tools';
 import { userMemoryTools } from './user-memory-tools';
 import { recallTools } from './recall-tools';
+import { artifactTools } from './artifact-tools';
 import { sandboxFileTools } from './sandbox-file-tools';
 import { getImagePrefs } from '@renkei/user-prefs';
 import { imageGenerationTool } from './image-tools';
@@ -51,17 +52,32 @@ export async function chatLocalTools(
   // show one (mockup-tools.ts).
   tools.push(...mockupTools());
   const hasFiles = await db
-    .selectFrom('chat_attachments')
+    .selectFrom('artifacts')
     .select('id')
     .where((eb) =>
       eb.or([
         eb('chat_id', '=', context.chatId),
-        ...(context.projectId ? [eb('project_id', '=', context.projectId)] : []),
+        ...(context.projectId
+          ? [
+              eb.exists(
+                eb
+                  .selectFrom('artifact_references')
+                  .select('artifact_references.id')
+                  .whereRef('artifact_references.artifact_id', '=', 'artifacts.id')
+                  .where('artifact_references.project_id', '=', context.projectId)
+              ),
+            ]
+          : []),
       ])
     )
     .limit(1)
     .executeTakeFirst();
-  if (hasFiles) tools.push(...attachmentTools());
+  if (hasFiles) {
+    tools.push(...attachmentTools());
+    // Searching across them, keeping one for the project, sharing one
+    // (artifact-tools.ts) — the same acts the Artifacts pages offer.
+    tools.push(...artifactTools({ inProject: context.projectId !== null }));
+  }
   if (filesAllowed) {
     // The two doors between the chat's files and the sandbox
     // (sandbox-file-tools.ts): offered whenever the chat has the sandbox

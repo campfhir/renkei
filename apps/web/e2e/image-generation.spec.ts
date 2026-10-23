@@ -29,7 +29,7 @@ import path from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { keyFor } from './keys';
+import { enrollForE2E, keyFor } from './keys';
 import { encodeGif } from '@renkei/document-render';
 import { deleteRowsOf } from './seed';
 
@@ -137,18 +137,27 @@ async function seedTenant(f: Fixture): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await deleteRowsOf(client, [f.subject, f.otherSubject], [
-      'image_usage',
-      'chat_attachments',
-      'chats',
-      'llm_model_configs',
-      'user_preferences',
-      'sessions',
-      'identities',
-    ]);
+    await deleteRowsOf(
+      client,
+      [f.subject, f.otherSubject],
+      [
+        'image_usage',
+        'artifacts',
+        'chats',
+        'llm_model_configs',
+        'user_preferences',
+        'sessions',
+        'identities',
+      ]
+    );
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
-      [f.sessionId, f.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
+      [
+        f.sessionId,
+        f.subject,
+        ['renkei-user', 'renkei-operator'],
+        new Date(Date.now() + 24 * 3_600_000),
+      ]
     );
     for (const [subject, name] of [
       [f.subject, 'E2E Tester'],
@@ -164,6 +173,12 @@ async function seedTenant(f: Fixture): Promise<void> {
       `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [f.subject]
     );
+    // Enrolled with a delegation for this spec's session, as e2e/seed.ts
+    // enrolls the shared person. The chat cases get this through keyFor;
+    // the Preferences and usage cases seed no chat, and without it the
+    // KeyGuard's "this device does not have your encryption key" dialog
+    // sits over the page and swallows every click.
+    await enrollForE2E(client, f.subject);
   } finally {
     await client.end();
   }
@@ -250,7 +265,18 @@ async function seedRows(
     const assistant = row.role === 'assistant';
     const inserted = await client.query(
       `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9, $10) RETURNING id`,
-      [chatId, turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? f.chatModelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null, assistant ? 'tool_use' : null]
+      [
+        chatId,
+        turnId,
+        row.seq,
+        row.role,
+        row.kind,
+        chatKey.seal(JSON.stringify(row.blocks)),
+        assistant ? f.chatModelId : null,
+        assistant ? 'anthropic' : null,
+        assistant ? 'e2e-model' : null,
+        assistant ? 'tool_use' : null,
+      ]
     );
     ids.set(row.seq, inserted.rows[0].id);
   }
@@ -317,7 +343,7 @@ async function seedDoneChat(f: Fixture): Promise<void> {
     ]);
     // The file the call kept, as the runner stores it: tied to the results row.
     await client.query(
-      `INSERT INTO chat_attachments (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id)\n       VALUES ($1, $2, $3, $4, 'cute_polar_bear.png', 'image/png', 2345, 'none', 'model', $5)`,
+      `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id, key_kind, key_ref)\n       VALUES ($1, $2, $3, $4, 'cute_polar_bear.png', 'image/png', 2345, 'none', 'model', $5, 'chat', $3)`,
       [f.attachmentId, f.subject, f.doneChatId, `chat/e2e/${f.doneTurnId}`, ids.get(3)]
     );
   } finally {
@@ -391,7 +417,7 @@ async function seedGifChat(f: Fixture, sizeBytes: number): Promise<void> {
       },
     ]);
     await client.query(
-      `INSERT INTO chat_attachments (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id)\n       VALUES ($1, $2, $3, $4, 'ball.gif', 'image/gif', $5, 'none', 'model', $6)`,
+      `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id, key_kind, key_ref)\n       VALUES ($1, $2, $3, $4, 'ball.gif', 'image/gif', $5, 'none', 'model', $6, 'chat', $3)`,
       [f.gifAttachmentId, f.subject, f.gifChatId, `chat/e2e/${f.gifTurnId}`, sizeBytes, ids.get(3)]
     );
   } finally {
@@ -488,9 +514,8 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   await seedDoneChat(fixture);
   // 3:2, like the size asked for; the bytes stand in for the blob store.
   const png = solidPng(3000, 2000, [120, 170, 230]);
-  await page.route(
-    `**/api/chat/attachments/${fixture.attachmentId}`,
-    (route) => route.fulfill({ status: 200, contentType: 'image/png', body: png })
+  await page.route(`**/api/chat/attachments/${fixture.attachmentId}`, (route) =>
+    route.fulfill({ status: 200, contentType: 'image/png', body: png })
   );
   await signIn(page, fixture);
 
@@ -589,9 +614,8 @@ test('installed to the iOS home screen, Download opens the file over the app ins
   await addModels(fixture, ['chat', 'painter']);
   await seedDoneChat(fixture);
   const png = solidPng(300, 200, [120, 170, 230]);
-  await page.route(
-    `**/api/chat/attachments/${fixture.attachmentId}`,
-    (route) => route.fulfill({ status: 200, contentType: 'image/png', body: png })
+  await page.route(`**/api/chat/attachments/${fixture.attachmentId}`, (route) =>
+    route.fulfill({ status: 200, contentType: 'image/png', body: png })
   );
   // iOS WebKit's marker for a home-screen (standalone) launch; nothing else sets it.
   await page.addInitScript(() => {
@@ -632,13 +656,10 @@ test('installed to the iOS home screen with file sharing, Download opens the sha
   const png = solidPng(300, 200, [120, 170, 230]);
   let prefetched!: () => void;
   const fetchedAhead = new Promise<void>((resolve) => (prefetched = resolve));
-  await page.route(
-    `**/api/chat/attachments/${fixture.attachmentId}`,
-    async (route) => {
-      await route.fulfill({ status: 200, contentType: 'image/png', body: png });
-      if (route.request().resourceType() === 'fetch') prefetched();
-    }
-  );
+  await page.route(`**/api/chat/attachments/${fixture.attachmentId}`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'image/png', body: png });
+    if (route.request().resourceType() === 'fetch') prefetched();
+  });
   // iOS standalone plus a stand-in share sheet that records what it was handed.
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'standalone', { value: true, configurable: true });
@@ -756,9 +777,8 @@ test('an animated GIF is worded as an animation while it is made, and plays inli
   // Made: the GIF itself, served as the stored file.
   const gif = ballGif();
   await seedGifChat(fixture, gif.byteLength);
-  await page.route(
-    `**/api/chat/attachments/${fixture.gifAttachmentId}`,
-    (route) => route.fulfill({ status: 200, contentType: 'image/gif', body: gif })
+  await page.route(`**/api/chat/attachments/${fixture.gifAttachmentId}`, (route) =>
+    route.fulfill({ status: 200, contentType: 'image/gif', body: gif })
   );
   await page.goto(`/chat/${fixture.gifChatId}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Bouncing ball' })).toBeVisible(COLD);
@@ -831,7 +851,7 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
 
   await select.selectOption({ label: 'Painter · gpt-image-1' });
   await section.getByRole('button', { name: 'Save' }).click();
-  await expect(section.getByText('Saved.')).toBeVisible();
+  await expect(section.getByText('Saved.')).toBeVisible(COLD);
   await shot(page, testInfo, 'preferences-image-model.png');
 
   // Saved: it survives a reload, and the stored preference is the model's id.
@@ -852,7 +872,7 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
   // Back to the organization default clears it.
   await page.getByLabel('Preferred image model').selectOption('');
   await section.getByRole('button', { name: 'Save' }).click();
-  await expect(section.getByText('Saved.')).toBeVisible();
+  await expect(section.getByText('Saved.')).toBeVisible(COLD);
 
   // Phone width.
   await page.setViewportSize(MOBILE_VIEWPORT);
@@ -898,7 +918,9 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
   const surfaceImages = surfaces.getByRole('listitem').filter({ hasText: 'Images' });
   await expect(surfaceImages).toContainText('5.3k');
   await expect(surfaceImages).toContainText('(101 in · 5.2k out)');
-  await expect(page.getByRole('main').getByText('5.3k', { exact: true }).first()).toBeVisible();
+  // The row's figure is the images' own total, 101 + 5,200, not a share of
+  // anything else on the page (the shared seed's agent tokens sit beside it).
+  await expect(surfaceImages).toHaveText(/^Images\s*5\.3k/);
   const board = page.locator('section', {
     has: page.getByRole('heading', { name: 'Top image creators' }),
   });

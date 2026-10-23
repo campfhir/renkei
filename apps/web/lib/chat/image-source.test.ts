@@ -108,7 +108,8 @@ describe('loadSourceImage', () => {
     id: 'a1',
     ownerSubject: 'u',
     chatId: 'c',
-    projectId: null,
+    keyKind: 'chat',
+    keyRef: 'c',
     messageId: 'm1',
     blobKey: 'chat/t/a1',
     filename: 'bear.png',
@@ -117,6 +118,7 @@ describe('loadSourceImage', () => {
     extractStatus: 'none',
     origin: 'model',
     createdAt: new Date(0),
+    updatedAt: new Date(0),
     ...over,
   });
   const store = (bytes: Uint8Array | null) =>

@@ -10,19 +10,19 @@
     "test": "jest"
   },
   "dependencies": {
-    "docx": "^9.9.0",
+    "docx": "^9.13.0",
     "exceljs": "^4.4.0",
-    "marked": "14.0.0",
+    "marked": "18.1.1",
     "pdfkit": "^0.20.2",
     "pptxgenjs": "^4.0.1"
   },
   "devDependencies": {
     "@renkei/document-text": "workspace:*",
     "@types/jest": "^30.0.0",
-    "@types/node": "^24.19.1",
+    "@types/node": "^24.19.2",
     "@types/pdfkit": "^0.17.6",
     "jest": "^30.5.2",
-    "ts-jest": "^29.4.14",
+    "ts-jest": "^29.4.15",
     "typescript": "^5.9.3"
   }
 }

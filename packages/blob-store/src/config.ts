@@ -4,8 +4,11 @@
  * every store operation answers `BLOB_UNCONFIGURED` and the upload UI
  * says so, rather than anything falling back to disk.
  *
- *   BLOB_STORE_PROVIDER   'azure' (the only backend today; 's3' is the
- *                         next slot and is refused until it exists)
+ *   BLOB_STORE_PROVIDER   'azure', or 'local' — files on this machine's
+ *                         disk, for development and the Playwright suite
+ *                         (local.ts); 's3' is the next slot and is refused
+ *                         until it exists
+ *   BLOB_STORE_LOCAL_DIR  where the local backend keeps its files
  *   AZURE_BLOB_ACCOUNT    storage account name (Azurite: devstoreaccount1)
  *   AZURE_BLOB_KEY        the account's shared key, base64
  *   AZURE_BLOB_CONTAINER  container name, default renkei-chat
@@ -24,7 +27,12 @@ export interface AzureBlobConfig {
   endpoint: string;
 }
 
-export type BlobStoreConfig = AzureBlobConfig;
+export interface LocalBlobConfig {
+  provider: 'local';
+  dir: string;
+}
+
+export type BlobStoreConfig = AzureBlobConfig | LocalBlobConfig;
 
 const DEFAULT_CONTAINER = 'renkei-chat';
 const CONTAINER_NAME = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/;
@@ -35,6 +43,15 @@ export function blobStoreConfig(
   const provider = (env.BLOB_STORE_PROVIDER ?? '').trim().toLowerCase();
   if (!provider) {
     return err('BLOB_UNCONFIGURED' as const, { message: 'BLOB_STORE_PROVIDER is not set.' });
+  }
+  if (provider === 'local') {
+    const dir = (env.BLOB_STORE_LOCAL_DIR ?? '').trim();
+    if (!dir) {
+      return err('BLOB_UNCONFIGURED' as const, {
+        message: 'BLOB_STORE_LOCAL_DIR is required for the local backend.',
+      });
+    }
+    return ok({ provider: 'local', dir });
   }
   if (provider !== 'azure') {
     return err('BLOB_UNCONFIGURED' as const, {

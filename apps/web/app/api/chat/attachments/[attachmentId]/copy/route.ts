@@ -13,7 +13,7 @@ import { NextResponse } from 'next/server';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { getAttachment } from '@/lib/chat/attachments';
-import { mayReadAttachment } from '@/lib/chat/attachment-access';
+import { mayReadAttachment } from '@/lib/chat/artifact-access';
 import { executeUpload } from '@/lib/upload-executors';
 
 export const runtime = 'nodejs';

@@ -74,7 +74,7 @@ export default function ShareModal({
     setError(null);
     const result = await chatClient.grant(kind, resourceId, {
       granteeSubject: chosen.subject,
-      role: kind === 'chat' ? 'viewer' : role,
+      role: kind === 'chat' || kind === 'artifact' ? 'viewer' : role,
       expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
     });
     setBusy(false);
@@ -104,7 +104,9 @@ export default function ShareModal({
         <p className="text-gray-600 dark:text-gray-400">
           {kind === 'chat'
             ? 'People you share with can read this chat and watch it live. Only you can continue it.'
-            : 'Only the people you add here can open this; its content is keyed to them.'}
+            : kind === 'artifact'
+              ? 'Artifacts aren’t secret: anyone in a project or chat this file is used in can already read it. Sharing lets a person use it in projects of their own — attach it, read it, copy it — never change it.'
+              : 'Only the people you add here can open this; its content is keyed to them.'}
         </p>
 
         <div className="space-y-2">
@@ -152,7 +154,7 @@ export default function ShareModal({
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2">
-            {kind !== 'chat' ? (
+            {kind !== 'chat' && kind !== 'artifact' ? (
               <select
                 value={role}
                 onChange={(event) => setRole(event.target.value === 'editor' ? 'editor' : 'viewer')}
@@ -195,7 +197,7 @@ export default function ShareModal({
                   <span className="min-w-0 flex-1 truncate">
                     {grant.granteeName ?? grant.granteeEmail ?? grant.granteeSubject}
                     <span className="ml-1 text-xs text-gray-500">
-                      {grant.role === 'editor' ? 'edit' : 'view'}
+                      {grant.role === 'editor' ? 'edit' : kind === 'artifact' ? 'use' : 'view'}
                       {grant.expiresAt ? (
                         <>
                           {' · '}

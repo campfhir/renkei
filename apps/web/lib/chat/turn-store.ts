@@ -128,7 +128,6 @@ export function createTurnStore(
         const created = await createAttachment(db, {
           ownerSubject: scope.subject,
           chatId: scope.chatId,
-          projectId: null,
           filename: file.filename,
           contentType: file.mediaType,
           bytes: Buffer.from(file.dataBase64, 'base64'),
@@ -136,6 +135,7 @@ export function createTurnStore(
           // Tool output was redacted at the MCP boundary already.
           redactor: null,
           cipher: scope.cipher,
+          key: { kind: 'chat', ref: scope.chatId },
           origin: 'model',
           messageId,
         });

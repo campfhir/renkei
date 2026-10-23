@@ -108,7 +108,8 @@ const DEEP_TOOLS = ['jira_search_issues', 'jira_add_comment'];
 
 const REVIEW_NOTES = [
   {
-    issue: 'The instructions never say what to do when an item already has an OPS ticket in progress.',
+    issue:
+      'The instructions never say what to do when an item already has an OPS ticket in progress.',
     fix: 'Add a rule under Rules: comment on the existing ticket instead of proposing a new one.',
   },
 ];
@@ -132,7 +133,12 @@ function turnDetail(input: {
   }[];
   finish?: 'done' | 'nothing_to_do' | 'failed';
   result?: string;
-  modelCalls?: { durationMs: number; stopReason: string; inputTokens: number; outputTokens: number }[];
+  modelCalls?: {
+    durationMs: number;
+    stopReason: string;
+    inputTokens: number;
+    outputTokens: number;
+  }[];
 }): string {
   return JSON.stringify(input);
 }
@@ -150,7 +156,8 @@ const SUBJECT_COLUMN: Record<string, string> = {
   agent_runs: 'owner_subject',
   agents: 'owner_subject',
   audit_events: 'actor_subject',
-  chat_attachments: 'owner_subject',
+  artifact_references: 'added_by',
+  artifacts: 'owner_subject',
   chat_projects: 'owner_subject',
   chats: 'owner_subject',
   identities: 'subject',
@@ -224,15 +231,17 @@ export async function seed(client: Client): Promise<void> {
     'sandbox_workspaces_enabled',
     'sandbox_services_enabled',
   ]) {
-    await client.query(
-      `INSERT INTO settings (key, value) VALUES ($1, 'true'::jsonb)`,
-      [key]
-    );
+    await client.query(`INSERT INTO settings (key, value) VALUES ($1, 'true'::jsonb)`, [key]);
   }
 
   await client.query(
     `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, $4)`,
-    [E2E_SESSION_ID, E2E_SUBJECT, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 365 * 24 * 3_600_000)]
+    [
+      E2E_SESSION_ID,
+      E2E_SUBJECT,
+      ['renkei-user', 'renkei-operator'],
+      new Date(Date.now() + 365 * 24 * 3_600_000),
+    ]
   );
 
   await client.query(
@@ -260,32 +269,57 @@ export async function seed(client: Client): Promise<void> {
   // scopes, not the classic pair: the tools gate on the granular catalog.
   await client.query(
     `INSERT INTO provider_grants\n       (provider, provider_account_id, subject, client_id, display_name,\n        encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes)\n     VALUES ('atlassian', 'e2e-jira-account', $1, 'e2e-client', 'E2E Jira',\n             'not-a-real-token', 'not-a-real-token', $2, $3)\n     ON CONFLICT DO NOTHING`,
-    [E2E_SUBJECT, new Date(Date.now() + 365 * 24 * 3_600_000), [
-              'read:issue:jira',
-              'write:issue:jira',
-              'read:user:jira',
-              'read:project:jira',
-              'read:jql:jira',
-              'read:field:jira',
-              'read:comment:jira',
-              'write:comment:jira',
-              'read:board-scope:jira-software',
-            ]]
+    [
+      E2E_SUBJECT,
+      new Date(Date.now() + 365 * 24 * 3_600_000),
+      [
+        'read:issue:jira',
+        'write:issue:jira',
+        'read:user:jira',
+        'read:project:jira',
+        'read:jql:jira',
+        'read:field:jira',
+        'read:comment:jira',
+        'write:comment:jira',
+        'read:board-scope:jira-software',
+      ],
+    ]
   );
 
   await client.query(
     `INSERT INTO agents\n       (id, owner_subject, name, description, description_status,\n        review_notes, instructions, tools, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, true)`,
-    [AGENT_RICH_ID, E2E_SUBJECT, 'Triage yesterday into tickets', 'Every weekday morning this agent reviews yesterday’s Jira activity, picks out what needs follow-up, and files a ticket for each item in the OPS project.', JSON.stringify(REVIEW_NOTES), RICH_INSTRUCTIONS, JSON.stringify(RICH_TOOLS)]
+    [
+      AGENT_RICH_ID,
+      E2E_SUBJECT,
+      'Triage yesterday into tickets',
+      'Every weekday morning this agent reviews yesterday’s Jira activity, picks out what needs follow-up, and files a ticket for each item in the OPS project.',
+      JSON.stringify(REVIEW_NOTES),
+      RICH_INSTRUCTIONS,
+      JSON.stringify(RICH_TOOLS),
+    ]
   );
 
   await client.query(
     `INSERT INTO agents\n       (id, owner_subject, name, description, description_status, instructions, tools, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, '[]'::jsonb, false)`,
-    [AGENT_PLAIN_ID, E2E_SUBJECT, 'Daily activity digest', 'Writes a short summary of the previous day.', PLAIN_INSTRUCTIONS]
+    [
+      AGENT_PLAIN_ID,
+      E2E_SUBJECT,
+      'Daily activity digest',
+      'Writes a short summary of the previous day.',
+      PLAIN_INSTRUCTIONS,
+    ]
   );
 
   await client.query(
     `INSERT INTO agents\n       (id, owner_subject, name, description, description_status, instructions, tools, enabled)\n     VALUES ($1, $2, $3, $4, 'ready', $5, $6, false)`,
-    [AGENT_DEEP_ID, E2E_SUBJECT, 'Sweep the request queue', 'Goes through every open request, escalates the critical ones, acknowledges the routine ones, and writes a note per request.', DEEP_INSTRUCTIONS, JSON.stringify(DEEP_TOOLS)]
+    [
+      AGENT_DEEP_ID,
+      E2E_SUBJECT,
+      'Sweep the request queue',
+      'Goes through every open request, escalates the critical ones, acknowledges the routine ones, and writes a note per request.',
+      DEEP_INSTRUCTIONS,
+      JSON.stringify(DEEP_TOOLS),
+    ]
   );
 
   const scheduleConfig = JSON.stringify({
@@ -303,50 +337,78 @@ export async function seed(client: Client): Promise<void> {
 
   await client.query(
     `INSERT INTO agent_memories (id, agent_id, kind, content)\n     VALUES ($1, $2, 'summary', $3),\n            ($4, $2, 'entry', $5),\n            ($6, $2, 'entry', $7)`,
-    ['77777777-7777-4777-8777-777777777771', AGENT_RICH_ID, 'The OPS project is the right home for infrastructure requests; HR questions go to the PEOPLE desk instead.', '77777777-7777-4777-8777-777777777772', 'Filed OPS-231 for the VPN outage thread; sender confirmed it covered their ask.', '77777777-7777-4777-8777-777777777773', 'Skipped the newsletter digest — recurring, never actionable.']
+    [
+      '77777777-7777-4777-8777-777777777771',
+      AGENT_RICH_ID,
+      'The OPS project is the right home for infrastructure requests; HR questions go to the PEOPLE desk instead.',
+      '77777777-7777-4777-8777-777777777772',
+      'Filed OPS-231 for the VPN outage thread; sender confirmed it covered their ask.',
+      '77777777-7777-4777-8777-777777777773',
+      'Skipped the newsletter digest — recurring, never actionable.',
+    ]
   );
 
   const snapshot = JSON.stringify({ instructions: RICH_INSTRUCTIONS, tools: RICH_TOOLS });
-  const runRows: [string, string, string | null, string | null, Date | null, Date | null, number][] =
+  const runRows: [
+    string,
+    string,
+    string | null,
+    string | null,
+    Date | null,
+    Date | null,
+    number,
+  ][] = [
+    // id, status, error_kind, error, started_at, finished_at, active_ms
+    [RUN_SUCCEEDED_ID, 'succeeded', null, null, hoursAgo(26), hoursAgo(25.9), 41_000],
     [
-      // id, status, error_kind, error, started_at, finished_at, active_ms
-      [RUN_SUCCEEDED_ID, 'succeeded', null, null, hoursAgo(26), hoursAgo(25.9), 41_000],
-      [
-        RUN_STEP_FAILED_ID,
-        'failed',
-        'agent_failed',
-        'Could not file the follow-up: the OPS project rejected the issue type “Task”.',
-        hoursAgo(2),
-        hoursAgo(1.9),
-        52_000,
-      ],
-      [
-        RUN_TIMEOUT_ID,
-        'failed',
-        'timeout',
-        'The run used its 30 minutes of active time.',
-        hoursAgo(50),
-        hoursAgo(49),
-        1_800_000,
-      ],
-      [RUN_RUNNING_ID, 'running', null, null, hoursAgo(0.05), null, 3_000],
-      // Parked by the engine: the owner's key was not delegated when the
-      // schedule fired (docs/delegate-key-design.md, phase 3). Their next
-      // sign-in re-queues it; until then the list says so.
-      [
-        RUN_PARKED_ID,
-        'waiting',
-        'needs-sign-in',
-        'Paused: your encryption key is not available to your agents. Sign in to resume.',
-        null,
-        null,
-        0,
-      ],
-    ];
+      RUN_STEP_FAILED_ID,
+      'failed',
+      'agent_failed',
+      'Could not file the follow-up: the OPS project rejected the issue type “Task”.',
+      hoursAgo(2),
+      hoursAgo(1.9),
+      52_000,
+    ],
+    [
+      RUN_TIMEOUT_ID,
+      'failed',
+      'timeout',
+      'The run used its 30 minutes of active time.',
+      hoursAgo(50),
+      hoursAgo(49),
+      1_800_000,
+    ],
+    [RUN_RUNNING_ID, 'running', null, null, hoursAgo(0.05), null, 3_000],
+    // Parked by the engine: the owner's key was not delegated when the
+    // schedule fired (docs/delegate-key-design.md, phase 3). Their next
+    // sign-in re-queues it; until then the list says so.
+    [
+      RUN_PARKED_ID,
+      'waiting',
+      'needs-sign-in',
+      'Paused: your encryption key is not available to your agents. Sign in to resume.',
+      null,
+      null,
+      0,
+    ],
+  ];
   for (const [id, status, errorKind, error, startedAt, finishedAt, activeMs] of runRows) {
     await client.query(
       `INSERT INTO agent_runs\n         (id, agent_id, owner_subject, trigger_kind, trigger_id,\n          definition_snapshot, status, error_kind, error,\n          started_at, finished_at, created_at, active_ms)\n       VALUES ($1, $2, $3, 'schedule', $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-      [id, AGENT_RICH_ID, E2E_SUBJECT, TRIGGER_RICH, snapshot, status, errorKind, error, startedAt, finishedAt, startedAt ?? new Date(), activeMs]
+      [
+        id,
+        AGENT_RICH_ID,
+        E2E_SUBJECT,
+        TRIGGER_RICH,
+        snapshot,
+        status,
+        errorKind,
+        error,
+        startedAt,
+        finishedAt,
+        startedAt ?? new Date(),
+        activeMs,
+      ]
     );
   }
 
@@ -354,13 +416,22 @@ export async function seed(client: Client): Promise<void> {
   // carried out — the timeline's batch rendering.
   await client.query(
     `INSERT INTO agent_runs\n       (id, agent_id, owner_subject, trigger_kind, definition_snapshot,\n        status, started_at, finished_at, created_at, active_ms)\n     VALUES ($1, $2, $3, 'manual', $4, 'succeeded', $5, $6, $5, 38000)`,
-    [RUN_ITERATIONS_ID, AGENT_DEEP_ID, E2E_SUBJECT, JSON.stringify({ instructions: DEEP_INSTRUCTIONS, tools: DEEP_TOOLS }), hoursAgo(5), hoursAgo(4.9)]
+    [
+      RUN_ITERATIONS_ID,
+      AGENT_DEEP_ID,
+      E2E_SUBJECT,
+      JSON.stringify({ instructions: DEEP_INSTRUCTIONS, tools: DEEP_TOOLS }),
+      hoursAgo(5),
+      hoursAgo(4.9),
+    ]
   );
 
   // Turn rows — one per model turn, step_id 'turn', attempt = the turn
   // number, exactly as the engine writes them (unsealed here: a row
   // without an envelope reads as it is).
-  const model = (ms: number) => [{ durationMs: ms, stopReason: 'tool_use', inputTokens: 900, outputTokens: 60 }];
+  const model = (ms: number) => [
+    { durationMs: ms, stopReason: 'tool_use', inputTokens: 900, outputTokens: 60 },
+  ];
   const turnRows: {
     runId: string;
     turn: number;
@@ -380,7 +451,12 @@ export async function seed(client: Client): Promise<void> {
         opening: 'Your schedule started this run. Work toward your goal now.',
         llmSummary: 'Looking up yesterday’s updated issues.',
         toolCalls: [
-          { tool: 'jira_search_issues', argsPreview: '{"jql":"updated >= -1d"}', resultPreview: 'OPS-231: VPN outage (no follow-up)', durationMs: 640 },
+          {
+            tool: 'jira_search_issues',
+            argsPreview: '{"jql":"updated >= -1d"}',
+            resultPreview: 'OPS-231: VPN outage (no follow-up)',
+            durationMs: 640,
+          },
         ],
         modelCalls: model(2100),
       }),
@@ -394,7 +470,15 @@ export async function seed(client: Client): Promise<void> {
       toolCallCount: 0,
       detail: turnDetail({
         llmSummary: 'OPS-231 already has a follow-up — nothing new to file.',
-        toolCalls: [{ tool: 'finish_run', argsPreview: '{"outcome":"done"}', resultPreview: '', durationMs: 0, free: true }],
+        toolCalls: [
+          {
+            tool: 'finish_run',
+            argsPreview: '{"outcome":"done"}',
+            resultPreview: '',
+            durationMs: 0,
+            free: true,
+          },
+        ],
         finish: 'done',
         modelCalls: model(1400),
       }),
@@ -410,7 +494,12 @@ export async function seed(client: Client): Promise<void> {
         opening: 'Your schedule started this run. Work toward your goal now.',
         llmSummary: 'Searching yesterday’s activity.',
         toolCalls: [
-          { tool: 'jira_search_issues', argsPreview: '{"jql":"updated >= -1d"}', resultPreview: 'OPS-240: printer queue stuck', durationMs: 590 },
+          {
+            tool: 'jira_search_issues',
+            argsPreview: '{"jql":"updated >= -1d"}',
+            resultPreview: 'OPS-240: printer queue stuck',
+            durationMs: 590,
+          },
         ],
         modelCalls: model(1900),
       }),
@@ -425,8 +514,20 @@ export async function seed(client: Client): Promise<void> {
       detail: turnDetail({
         llmSummary: 'Could not file the follow-up: the OPS project rejected the issue type “Task”.',
         toolCalls: [
-          { tool: 'jira_get_issue', argsPreview: '{"issueKey":"OPS-240"}', resultPreview: 'Issue type Task is not valid in OPS', durationMs: 310, isError: true },
-          { tool: 'finish_run', argsPreview: '{"outcome":"failed"}', resultPreview: '', durationMs: 0, free: true },
+          {
+            tool: 'jira_get_issue',
+            argsPreview: '{"issueKey":"OPS-240"}',
+            resultPreview: 'Issue type Task is not valid in OPS',
+            durationMs: 310,
+            isError: true,
+          },
+          {
+            tool: 'finish_run',
+            argsPreview: '{"outcome":"failed"}',
+            resultPreview: '',
+            durationMs: 0,
+            free: true,
+          },
         ],
         finish: 'failed',
         modelCalls: model(1700),
@@ -442,7 +543,14 @@ export async function seed(client: Client): Promise<void> {
       detail: turnDetail({
         opening: 'Your schedule started this run. Work toward your goal now.',
         llmSummary: 'Paging through every updated issue.',
-        toolCalls: [{ tool: 'jira_search_issues', argsPreview: '{"jql":"updated >= -1d"}', resultPreview: '50 of 1,204 results', durationMs: 900 }],
+        toolCalls: [
+          {
+            tool: 'jira_search_issues',
+            argsPreview: '{"jql":"updated >= -1d"}',
+            resultPreview: '50 of 1,204 results',
+            durationMs: 900,
+          },
+        ],
         modelCalls: model(2400),
       }),
       at: hoursAgo(50),
@@ -466,7 +574,12 @@ export async function seed(client: Client): Promise<void> {
         opening: 'Your owner started this run by hand. Work toward your goal now.',
         llmSummary: 'Finding the open requests.',
         toolCalls: [
-          { tool: 'jira_search_issues', argsPreview: '{"jql":"status = Open"}', resultPreview: 'OPS-301 (VPN outage), OPS-302 (laptop request)', durationMs: 733 },
+          {
+            tool: 'jira_search_issues',
+            argsPreview: '{"jql":"status = Open"}',
+            resultPreview: 'OPS-301 (VPN outage), OPS-302 (laptop request)',
+            durationMs: 733,
+          },
         ],
         modelCalls: model(2000),
       }),
@@ -480,7 +593,15 @@ export async function seed(client: Client): Promise<void> {
       toolCallCount: 2,
       detail: turnDetail({
         llmSummary: 'OPS-301 is critical, OPS-302 routine — proposing both comments in one batch.',
-        toolCalls: [{ tool: 'stage_actions', argsPreview: '{"summary":"Escalate one, acknowledge one"}', resultPreview: 'Accepted.', durationMs: 0, staged: 2 }],
+        toolCalls: [
+          {
+            tool: 'stage_actions',
+            argsPreview: '{"summary":"Escalate one, acknowledge one"}',
+            resultPreview: 'Accepted.',
+            durationMs: 0,
+            staged: 2,
+          },
+        ],
         modelCalls: model(2600),
       }),
       at: hoursAgo(4.97),
@@ -493,7 +614,15 @@ export async function seed(client: Client): Promise<void> {
       toolCallCount: 0,
       detail: turnDetail({
         llmSummary: 'Both comments were made. The queue is worked.',
-        toolCalls: [{ tool: 'finish_run', argsPreview: '{"outcome":"done"}', resultPreview: '', durationMs: 0, free: true }],
+        toolCalls: [
+          {
+            tool: 'finish_run',
+            argsPreview: '{"outcome":"done"}',
+            resultPreview: '',
+            durationMs: 0,
+            free: true,
+          },
+        ],
         finish: 'done',
         result: 'Escalated OPS-301; acknowledged OPS-302.',
         modelCalls: model(1100),
@@ -504,7 +633,16 @@ export async function seed(client: Client): Promise<void> {
   for (const row of turnRows) {
     await client.query(
       `INSERT INTO agent_run_steps\n         (id, run_id, step_id, step_index, attempt, iteration, status,\n          outcome, tool_call_count, detail, started_at, finished_at)\n       VALUES (gen_random_uuid(), $1, 'turn', $2, $2, 0, $3, $4, $5, $6, $7, $8)`,
-      [row.runId, row.turn, row.status, row.outcome, row.toolCallCount, row.detail, row.at, row.status === 'running' ? null : new Date(row.at.getTime() + 30_000)]
+      [
+        row.runId,
+        row.turn,
+        row.status,
+        row.outcome,
+        row.toolCallCount,
+        row.detail,
+        row.at,
+        row.status === 'running' ? null : new Date(row.at.getTime() + 30_000),
+      ]
     );
   }
   await client.query(
@@ -516,12 +654,30 @@ export async function seed(client: Client): Promise<void> {
       E2E_SUBJECT,
       'Escalate the VPN outage and acknowledge the laptop request.',
       JSON.stringify([
-        { tool: 'jira_add_comment', args: { issueKey: 'OPS-301', body: 'Escalating to on-call — building B is down.' }, reason: 'A building-wide outage is critical.' },
-        { tool: 'jira_add_comment', args: { issueKey: 'OPS-302', body: 'Thanks — queued for this week.' }, reason: 'Routine request: acknowledge it.' },
+        {
+          tool: 'jira_add_comment',
+          args: { issueKey: 'OPS-301', body: 'Escalating to on-call — building B is down.' },
+          reason: 'A building-wide outage is critical.',
+        },
+        {
+          tool: 'jira_add_comment',
+          args: { issueKey: 'OPS-302', body: 'Thanks — queued for this week.' },
+          reason: 'Routine request: acknowledge it.',
+        },
       ]),
       JSON.stringify([
-        { tool: 'jira_add_comment', outcome: 'succeeded', text: 'Comment 10041 added to OPS-301', durationMs: 410 },
-        { tool: 'jira_add_comment', outcome: 'succeeded', text: 'Comment 10042 added to OPS-302', durationMs: 380 },
+        {
+          tool: 'jira_add_comment',
+          outcome: 'succeeded',
+          text: 'Comment 10041 added to OPS-301',
+          durationMs: 410,
+        },
+        {
+          tool: 'jira_add_comment',
+          outcome: 'succeeded',
+          text: 'Comment 10042 added to OPS-302',
+          durationMs: 380,
+        },
       ]),
       hoursAgo(4.96),
       hoursAgo(4.94),
@@ -742,7 +898,16 @@ export async function seed(client: Client): Promise<void> {
       const startedAt = hoursAgo(1 + (index % 60));
       await client.query(
         `INSERT INTO tool_calls\n           (id, subject, tool, connector, status, duration_ms,\n            started_at, ended_at, error_summary)\n         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)`,
-        [row.subject, row.tool, row.connector, failed ? 'error' : 'ok', row.ms + index, startedAt, new Date(startedAt.getTime() + row.ms + index), failed ? 'The upstream API answered 500' : null]
+        [
+          row.subject,
+          row.tool,
+          row.connector,
+          failed ? 'error' : 'ok',
+          row.ms + index,
+          startedAt,
+          new Date(startedAt.getTime() + row.ms + index),
+          failed ? 'The upstream API answered 500' : null,
+        ]
       );
     }
   }

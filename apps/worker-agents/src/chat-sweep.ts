@@ -144,7 +144,7 @@ async function deleteAbandonedChats(db: Kysely<DB>): Promise<void> {
      WHERE c.last_message_at IS NULL
        AND c.created_at < NOW() - make_interval(hours => ${ABANDONED_CHAT_HOURS})
        AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.chat_id = c.id)
-       AND NOT EXISTS (SELECT 1 FROM chat_attachments a WHERE a.chat_id = c.id)
+       AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.chat_id = c.id)
     RETURNING c.id
   `.execute(db);
   if (deleted.rows.length === 0) return;
@@ -201,7 +201,7 @@ async function deleteAttachmentBlobs(
   store: BlobStore | null
 ): Promise<string[]> {
   const attachments = await db
-    .selectFrom('chat_attachments')
+    .selectFrom('artifacts')
     .select(['id', 'chat_id', 'blob_key'])
     .where('chat_id', 'in', chatIds)
     .execute();
@@ -214,7 +214,7 @@ async function deleteAttachmentBlobs(
     }
     const deleted = await store.deleteObject(attachment.blob_key);
     if (deleted.ok || deleted.err.type === 'NOT_FOUND') {
-      await db.deleteFrom('chat_attachments').where('id', '=', attachment.id).execute();
+      await db.deleteFrom('artifacts').where('id', '=', attachment.id).execute();
     } else {
       blocked.add(attachment.chat_id);
       logger.warn('chat retention could not delete a blob: {error}', {
@@ -232,6 +232,7 @@ async function pruneOrphanGrants(db: Kysely<DB>): Promise<void> {
      WHERE (g.resource_kind = 'chat' AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = g.resource_id))
         OR (g.resource_kind = 'chat_project' AND NOT EXISTS (SELECT 1 FROM chat_projects p WHERE p.id = g.resource_id))
         OR (g.resource_kind = 'prompt_library' AND NOT EXISTS (SELECT 1 FROM prompt_libraries l WHERE l.id = g.resource_id))
+        OR (g.resource_kind = 'artifact' AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.id = g.resource_id))
   `.execute(db);
   await delegateClient().pruneOrphanResourceKeys();
 }

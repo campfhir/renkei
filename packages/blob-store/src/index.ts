@@ -12,12 +12,19 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { blobStoreConfig } from './config';
 import { createAzureBlobStore } from './azure';
+import { createLocalBlobStore } from './local';
 import type { BlobStore } from './contract';
 
 export type { BlobError, BlobObject, BlobObjectStream, BlobStore } from './contract';
-export { blobStoreConfig, type AzureBlobConfig, type BlobStoreConfig } from './config';
+export {
+  blobStoreConfig,
+  type AzureBlobConfig,
+  type BlobStoreConfig,
+  type LocalBlobConfig,
+} from './config';
 export { chatAttachmentKey } from './keys';
 export { createAzureBlobStore } from './azure';
+export { createLocalBlobStore } from './local';
 export { stringToSign, sharedKeySignature, authorizationHeader } from './azure-sign';
 export { describeRefusal, type Refusal } from './azure-errors';
 export {
@@ -46,7 +53,10 @@ export function getBlobStore(): Result<BlobStore, 'BLOB_UNCONFIGURED'> {
   const fingerprint = JSON.stringify(config.val);
   const state = globalThis.__renkeiBlobStore;
   if (state?.store && state.fingerprint === fingerprint) return ok(state.store);
-  const store = createAzureBlobStore(config.val);
+  const store =
+    config.val.provider === 'local'
+      ? createLocalBlobStore(config.val)
+      : createAzureBlobStore(config.val);
   globalThis.__renkeiBlobStore = { store, fingerprint };
   return ok(store);
 }

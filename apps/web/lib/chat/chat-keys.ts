@@ -55,7 +55,7 @@ export interface KeyedResource {
   ownerSubject: string;
 }
 
-export type KeyedKind = Extract<ResourceKeyKind, 'chat' | 'chat_project'>;
+export type KeyedKind = Extract<ResourceKeyKind, 'chat' | 'chat_project' | 'artifact'>;
 
 const ref = (kind: KeyedKind, resourceId: string): ResourceRef => ({
   kind,
@@ -148,17 +148,37 @@ export async function wrapKeyUnderProject(
   chat: KeyedResource,
   projectId: string
 ): Promise<boolean> {
-  const key = await ensureKey(db, 'chat', chat);
-  if (typeof key === 'string') return false;
+  return wrapKeyUnder(db, 'chat', chat, ref('chat_project', projectId), chat.ownerSubject);
+}
+
+/**
+ * One resource's key under another's — an artifact's under the project
+ * (or the chat) that uses it, so whoever opens the parent opens it.
+ * Both keys are opened as `bySubject`: the owner, or a person who holds
+ * a wrapping of the child (a share) and may open the parent (a member).
+ */
+export async function wrapKeyUnder(
+  db: Kysely<DB>,
+  kind: KeyedKind,
+  resource: KeyedResource,
+  parent: ResourceRef,
+  bySubject: string = resource.ownerSubject
+): Promise<boolean> {
+  if (bySubject === resource.ownerSubject) {
+    const key = await ensureKey(db, kind, resource);
+    if (typeof key === 'string') return false;
+  }
   const wrapped = await delegateClient().wrapResourceKeyUnder(
-    ref('chat', chat.id),
-    chat.ownerSubject,
-    ref('chat_project', projectId)
+    ref(kind, resource.id),
+    bySubject,
+    parent
   );
   if (!wrapped.ok) {
-    warn('chat key could not be wrapped under its project: {reason}', {
-      resourceId: chat.id,
-      projectId,
+    warn('{kind} key could not be wrapped under its parent: {reason}', {
+      kind,
+      resourceId: resource.id,
+      parentKind: parent.kind,
+      parentId: parent.resourceId,
       reason: wrapped.err.type,
     });
   }
@@ -198,8 +218,9 @@ export async function cipherFor(
   kind: KeyedKind,
   resource: KeyedResource,
   viewerSubject: string,
-  via: 'owner' | 'grant' | 'project',
-  projectId: string | null = null
+  via: 'owner' | 'grant' | 'project' | 'chat',
+  /** The project (via 'project') or chat (via 'chat') whose key wraps this one. */
+  parentId: string | null = null
 ): Promise<ContentCipher> {
   const target = ref(kind, resource.id);
   if (via === 'owner') {
@@ -217,11 +238,11 @@ export async function cipherFor(
     const minted = await ensureKey(db, kind, resource);
     if (typeof minted !== 'string') {
       const healed =
-        via === 'project' && kind === 'chat' && projectId
+        (via === 'project' || via === 'chat') && parentId
           ? await keys.wrapResourceKeyUnder(
               target,
               resource.ownerSubject,
-              ref('chat_project', projectId)
+              ref(via === 'project' ? 'chat_project' : 'chat', parentId)
             )
           : await keys.shareResourceKey(target, resource.ownerSubject, viewerSubject);
       if (healed.ok) {
@@ -251,10 +272,7 @@ export async function cipherAsOwner(
 }
 
 /** `cipherAsOwner` for a chat, by id — for callers holding only the chat id. */
-export async function chatCipherById(
-  db: Kysely<DB>,
-  chatId: string
-): Promise<ContentCipher> {
+export async function chatCipherById(db: Kysely<DB>, chatId: string): Promise<ContentCipher> {
   const row = await db
     .selectFrom('chats')
     .select('owner_subject')
@@ -265,10 +283,7 @@ export async function chatCipherById(
 }
 
 /** `cipherAsOwner` for a project, by id. */
-export async function projectCipherById(
-  db: Kysely<DB>,
-  projectId: string
-): Promise<ContentCipher> {
+export async function projectCipherById(db: Kysely<DB>, projectId: string): Promise<ContentCipher> {
   const row = await db
     .selectFrom('chat_projects')
     .select('owner_subject')

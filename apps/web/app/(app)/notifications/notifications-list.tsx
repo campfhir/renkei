@@ -45,7 +45,7 @@ export interface NotificationCard {
    * 'run_started' | 'run_finished' | 'run_failed' | 'act' | 'agent_edited' |
    * 'agent_disabled' | 'batch_started' | 'batch_finished' | 'batch_failed' |
    * 'approval' | 'question' | 'chat_shared' | 'agent_shared' | 'chat_reply' |
-   * 'chat_permission'.
+   * 'chat_permission' | 'artifact_shared' | 'artifact_copied' | 'artifact_transferred'.
    */
   kind: string;
   connector: string | null;
@@ -115,7 +115,11 @@ function dayLabel(when: Date, today: Date): string {
   return when.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-export default function NotificationsList({ rows, unreadCount, initialHasMore }: {
+export default function NotificationsList({
+  rows,
+  unreadCount,
+  initialHasMore,
+}: {
   rows: NotificationCard[];
   /**
    * The TRUE unread total, not just how many of the loaded rows are
@@ -405,9 +409,7 @@ export default function NotificationsList({ rows, unreadCount, initialHasMore }:
                   ? 'Open chat'
                   : `Open ${row.entity ?? 'link'}`;
               const runHref =
-                row.runId && row.agentId
-                  ? `/agents/${row.agentId}/runs/${row.runId}`
-                  : null;
+                row.runId && row.agentId ? `/agents/${row.agentId}/runs/${row.runId}` : null;
               // A batch row points at the batch's own page — in-app, like
               // the agent links below, and rendered through the same
               // `agentHref` slot so the card's link/menu logic stays one path.
@@ -490,9 +492,19 @@ export default function NotificationsList({ rows, unreadCount, initialHasMore }:
                         >
                           <Icon path={ICONS.question} className="h-[18px] w-[18px]" />
                         </span>
-                      ) : row.kind === 'chat_shared' || row.kind === 'agent_shared' ? (
+                      ) : row.kind === 'chat_shared' ||
+                        row.kind === 'agent_shared' ||
+                        row.kind === 'artifact_shared' ||
+                        row.kind === 'artifact_transferred' ? (
                         <span title="Shared with you" className="text-blue-600 dark:text-blue-400">
                           <Icon path={ICONS.share} className="h-[18px] w-[18px]" />
+                        </span>
+                      ) : row.kind === 'artifact_copied' ? (
+                        <span
+                          title="Copied a file of yours"
+                          className="text-blue-600 dark:text-blue-400"
+                        >
+                          <Icon path={ICONS.copy} className="h-[18px] w-[18px]" />
                         </span>
                       ) : row.kind === 'chat_permission' ? (
                         <span
