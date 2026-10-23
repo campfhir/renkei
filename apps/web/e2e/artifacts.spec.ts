@@ -452,6 +452,7 @@ test('a project chat: Send answers the chooser, and the remembered choice can be
   // The remembered choice shows beside the paperclip; clicking it asks again next time.
   const remembered = page.getByRole('button', { name: 'Files → artifacts' });
   await expect(remembered).toBeVisible();
+  await shot(page, testInfo, 'artifacts-09-remembered-control');
   await remembered.click();
   await expect(remembered).toBeHidden();
   await page
