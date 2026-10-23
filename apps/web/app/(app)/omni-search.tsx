@@ -388,7 +388,7 @@ function buildSections({
     ...artifacts.slice(0, LIMITS.artifacts).map((item): Result => ({
       href: `/chat/artifacts?artifact=${item.id}`,
       label: item.filename,
-      detail: item.chat?.title ?? 'Artifact',
+      detail: item.summary ?? item.chat?.title ?? 'Artifact',
       icon: ICONS.layers,
     })),
   ];
