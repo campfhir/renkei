@@ -57,6 +57,8 @@ function fixtureFor(projectName: string) {
     projectId: id('project'),
     projectName: `Billing API (${projectName})`,
     chatId: id('chat'),
+    plainChatId: id('plain-chat'),
+    csvId: id('csv'),
     guideId: id('guide'),
     reportId: id('report'),
     manualId: id('manual'),
@@ -93,7 +95,7 @@ async function seed(f: Fixture): Promise<void> {
   await client.connect();
   try {
     await client.query('DELETE FROM resource_access_grants WHERE resource_id = ANY($1)', [
-      [f.guideId, f.reportId, f.manualId],
+      [f.guideId, f.reportId, f.manualId, f.csvId],
     ]);
     await deleteRowsOf(
       client,
@@ -182,6 +184,29 @@ async function seed(f: Fixture): Promise<void> {
         chatKey.seal(REPORT_TEXT),
       ]
     );
+    // A plain chat, in no project, with a file dropped into it: in the
+    // library like everything else the person owns, named by its chat.
+    await client.query(
+      `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)
+       VALUES ($1, $2, 'Reconcile March invoices', $3, NOW())`,
+      [f.plainChatId, f.subject, f.modelId]
+    );
+    const plainKey = await keyFor(client, {
+      kind: 'chat',
+      resourceId: f.plainChatId,
+      ownerSubject: f.subject,
+    });
+    await client.query(
+      `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, extracted_text, origin, key_kind, key_ref)
+       VALUES ($1, $2, $3, $4, 'march-invoices.csv', 'text/csv', 48, 'done', $5, 'upload', 'chat', $3)`,
+      [
+        f.csvId,
+        f.subject,
+        f.plainChatId,
+        `chat/e2e/${f.csvId}`,
+        plainKey.seal('id,amount\n1,10.00\n'),
+      ]
+    );
     // A colleague's file, shared with the person.
     const manualKey = await keyFor(client, {
       kind: 'artifact',
@@ -245,9 +270,14 @@ test('the library: filters, details, rename, share, delete with its impact', asy
   await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
   await expect(list.getByText(/generated in “Fix invoice rounding”/)).toBeVisible();
   await expect(list.getByText(/shared by Priya Friend/)).toBeVisible();
+  // A file dropped into a plain chat is here too, named by that chat.
+  await expect(list.getByText(/uploaded in “Reconcile March invoices”/)).toBeVisible();
   await shot(page, testInfo, 'artifacts-01-library');
 
   // The filters narrow to what each kind of file is.
+  await page.getByRole('button', { name: 'Uploaded', exact: true }).click();
+  await expect(list.getByText('march-invoices.csv')).toBeVisible();
+  await expect(list.getByText('rounding-analysis.md')).toBeHidden();
   await page.getByRole('button', { name: 'Generated', exact: true }).click();
   await expect(list.getByText('rounding-analysis.md')).toBeVisible();
   await expect(list.getByText('schema-guide.md')).toBeHidden();

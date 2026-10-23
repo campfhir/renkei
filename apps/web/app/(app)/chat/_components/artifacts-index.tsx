@@ -269,7 +269,11 @@ export default function ArtifactsIndex({
                                 <span className="text-amber-700 dark:text-amber-400">{status}</span>
                               </>
                             ) : null}
-                            {item.origin === 'model' ? ' · generated' : ''}
+                            {item.origin === 'model'
+                              ? ' · generated'
+                              : item.chat
+                                ? ' · uploaded'
+                                : ''}
                             {item.chat ? ` in “${item.chat.title ?? 'a chat'}”` : ''}
                             {item.ownerName ? ` · shared by ${item.ownerName}` : ''}
                             {' · '}
@@ -278,7 +282,17 @@ export default function ArtifactsIndex({
                         </span>
                         <span className="hidden min-w-0 max-w-[14rem] shrink-0 flex-wrap justify-end gap-1 sm:flex">
                           {item.projects.length === 0 ? (
-                            <span className="text-xs text-gray-400">Not attached</span>
+                            item.chat ? (
+                              <span
+                                className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
+                                title={`In the chat “${item.chat.title ?? 'Untitled'}” only`}
+                              >
+                                <Icon path={ICONS.chat} className="h-3 w-3 shrink-0" />
+                                <span className="truncate">{item.chat.title ?? 'a chat'}</span>
+                              </span>
+                            ) : (
+                              <span className="text-xs text-gray-400">Not attached</span>
+                            )
                           ) : (
                             item.projects.slice(0, 2).map((project) => (
                               <span
@@ -357,7 +371,11 @@ export default function ArtifactsIndex({
               <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
                 <h3 className="mb-2 text-xs font-semibold text-gray-500">Used in</h3>
                 {current.projects.length === 0 ? (
-                  <p className="text-xs text-gray-500">Not attached to a project.</p>
+                  <p className="text-xs text-gray-500">
+                    {current.chat
+                      ? 'In its chat only; it goes when the chat does unless a project takes it.'
+                      : 'Not attached to a project.'}
+                  </p>
                 ) : (
                   <ul className="space-y-1.5">
                     {current.projects.map((project) => (
