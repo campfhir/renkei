@@ -2190,8 +2190,12 @@ function handleAutomation(request, url, response) {
     const rule = site.rules.get(run[1]);
     if (!rule) return json(response, 404, { message: 'Rule not found.' });
     void readBody(request).then((body) => {
-      const answers = {};
-      for (const object of body?.objects ?? []) answers[object] = 'SUCCESS';
+      // One answer per object, keyed by its ARI — built as entries, so a
+      // caller-chosen key is never written onto an object as a property.
+      const objects = Array.isArray(body?.objects) ? body.objects : [];
+      const answers = Object.fromEntries(
+        objects.filter((object) => typeof object === 'string').map((object) => [object, 'SUCCESS'])
+      );
       json(response, 200, answers);
     });
     return;
