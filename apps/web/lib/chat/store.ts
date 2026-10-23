@@ -23,6 +23,8 @@ export interface ChatRow {
   thinkingEnabled: boolean;
   /** See ChatView.autoMode. */
   autoMode: boolean;
+  /** The model's one automatic title has been attempted (chat-title-tools.ts). */
+  autoTitleAsked: boolean;
   /** A code chat's worktree on the sandbox worker (lib/code/projects.ts); null until its first turn makes one. */
   workspaceId: string | null;
   lastMessageAt: Date | null;
@@ -40,6 +42,7 @@ const CHAT_COLUMNS = [
   'tool_config',
   'thinking_enabled',
   'auto_mode',
+  'auto_title_asked',
   'workspace_id',
   'last_message_at',
   'archived_at',
@@ -59,6 +62,7 @@ type RawChat = {
   tool_config: unknown;
   thinking_enabled: boolean;
   auto_mode: boolean;
+  auto_title_asked: boolean;
   workspace_id: string | null;
   last_message_at: Date | null;
   archived_at: Date | null;
@@ -76,6 +80,7 @@ function rowOf(raw: RawChat): ChatRow {
     toolConfig: parseToolConfig(raw.tool_config),
     thinkingEnabled: raw.thinking_enabled,
     autoMode: raw.auto_mode,
+    autoTitleAsked: raw.auto_title_asked,
     workspaceId: raw.workspace_id,
     lastMessageAt: raw.last_message_at,
     archivedAt: raw.archived_at,
@@ -309,4 +314,42 @@ export async function touchChat(
     })
     .where('id', '=', chatId)
     .execute();
+}
+
+/**
+ * Claims the chat's one automatic title (chat-title-tools.ts). Returns the
+ * title as it stands — the placeholder the send wrote from the first prompt —
+ * when this call is the one that claimed it, or null when it was already claimed.
+ */
+export async function claimAutoTitle(
+  db: Kysely<DB>,
+  chatId: string
+): Promise<{ placeholder: string | null } | null> {
+  const row = await db
+    .updateTable('chats')
+    .set({ auto_title_asked: true })
+    .where('id', '=', chatId)
+    .where('auto_title_asked', '=', false)
+    .returning('title')
+    .executeTakeFirst();
+  return row ? { placeholder: row.title } : null;
+}
+
+/**
+ * Renames the chat only while its title is still `expected`, so a title the
+ * person set by hand while the model was thinking is never overwritten.
+ */
+export async function renameChatIfTitledAs(
+  db: Kysely<DB>,
+  chatId: string,
+  expected: string | null,
+  title: string
+): Promise<boolean> {
+  const result = await db
+    .updateTable('chats')
+    .set({ title, updated_at: sql<Date>`NOW()` })
+    .where('id', '=', chatId)
+    .where((eb) => (expected === null ? eb('title', 'is', null) : eb('title', '=', expected)))
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows) > 0;
 }
