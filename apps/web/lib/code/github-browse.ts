@@ -44,10 +44,7 @@ export interface GitHubAccount {
 }
 
 /** The auth for one signed-in person, from a route's request. */
-export async function githubAuthFor(
-  request: NextRequest,
-  subject: string
-): Promise<GitHubAuth> {
+export async function githubAuthFor(request: NextRequest, subject: string): Promise<GitHubAuth> {
   const origin = await getOrigin(request);
   return githubAuthOf({ subject, origin: origin.ok ? origin.val : '' });
 }

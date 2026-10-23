@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-23',
     entries: [
       {
+        kind: 'changed',
+        title: 'New repositories start with a main branch',
+        detail:
+          'A repository created from the new-project form now has one commit on its default branch (a README), so a pull request has a branch to target from the start. Before, the repository was empty until the first chat cloned into it.',
+      },
+      {
         kind: 'added',
         title: 'A local file store for development',
         detail:

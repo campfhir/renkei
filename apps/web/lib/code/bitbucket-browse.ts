@@ -44,10 +44,7 @@ export async function bitbucketAuthFor(
 }
 
 /** The auth for one person outside a request (a server page). */
-export function bitbucketAuthOf(context: {
-  subject: string;
-  origin: string;
-}): BitbucketAuth {
+export function bitbucketAuthOf(context: { subject: string; origin: string }): BitbucketAuth {
   // The auth only needs the caller's identity and origin; every other
   // field of the tool context is a Jira concern these readers never touch.
   // Scopes are left unknown, so Bitbucket's own 403 is the answer for a
