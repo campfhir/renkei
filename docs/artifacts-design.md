@@ -11,12 +11,17 @@ be found again.
 
 ## What a person sees
 
-- **Artifacts** in the app menu (Chat group, `/chat/artifacts`): every
-  file they own — uploads and what their chats generated — and every file
-  shared with them, each with where it is used. The whole page is a drop
-  target. One selected at a time: its projects (with how each uses it),
-  who can read it, download, replace, rename, share, delete, or — for a
-  file someone shared — make a copy they own, or take it off their list.
+- **Artifacts** in the app menu (Workspace group, under Knowledge;
+  `/chat/artifacts`): every file they own — uploads and what their chats
+  generated — and every file shared with them, each with where it is
+  used. The whole page is a drop target. The list is paged (25 a page)
+  and scrolls in its own box, so the filters and the pager stay put. One
+  selected at a time: its projects (with how each uses it), who can read
+  it, download, replace, rename, share, delete, or — for a file someone
+  shared — make a copy they own, or take it off their list. On a wide
+  screen the details stand beside the list; on a phone the rows are cards
+  and a tap opens the details over the list, with a back button — the
+  way the code pane opens a file on a phone.
 - **An Artifacts card** on every project page, chat and code projects
   alike (the Files section it replaces was hidden on code projects). What
   the project holds, with an **Always / On demand** switch per file,

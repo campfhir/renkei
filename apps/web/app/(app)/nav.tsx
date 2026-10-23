@@ -174,6 +174,11 @@ export default function AppNav({
         { href: `/`, label: 'Home', icon: ICONS.home, exact: true },
         { href: `/agents`, label: 'Agents', icon: ICONS.agent },
         { href: `/knowledge`, label: 'Knowledge', icon: ICONS.book },
+        // Artifacts — the files a person uploads and the files chats generate,
+        // held by projects and chats by reference (docs/artifacts-design.md).
+        // Under Knowledge: they are what the person brings to read, not a
+        // kind of chat; the page keeps its address under /chat.
+        { href: `/chat/artifacts`, label: 'Artifacts', icon: ICONS.layers },
         { href: `/files`, label: 'Files', icon: ICONS.folder },
       ],
     },
@@ -194,9 +199,6 @@ export default function AppNav({
         // chats inside each sit among the person's chats below, marked with
         // the same glyph and naming their project.
         { href: `/code`, label: 'Code', icon: ICONS.code },
-        // Artifacts — the files a person uploads and the files chats generate,
-        // held by projects and chats by reference (docs/artifacts-design.md).
-        { href: `/chat/artifacts`, label: 'Artifacts', icon: ICONS.layers },
         { href: `/chat/prompts`, label: 'Prompt libraries', icon: ICONS.promptLibrary },
         { href: `/chat/memory`, label: 'Memory', icon: ICONS.brain },
       ],

@@ -1,9 +1,12 @@
 /**
  * Artifacts, end to end in a browser (docs/artifacts-design.md): the
  * library page with its filters and details panel; rename, share and
- * delete-with-impact on one file; a project page's Artifacts card with
- * the Always / On demand switch and attaching from the library; and the
- * composer's "where should it go?" chooser in a project chat. Every act
+ * delete-with-impact on one file; the list paged and scrolling in its
+ * own box, with a link opening to the page its file is on; a project
+ * page's Artifacts card with the Always / On demand switch and attaching
+ * from the library; the composer's "where should it go?" chooser in a
+ * project chat; and, at phone width, the cards that open a file's
+ * details over the list, a back button to return. Every act
  * goes through the real routes against the real dev database; only the
  * composer's upload is mocked at the browser edge, since e2e has no blob
  * store.
@@ -367,6 +370,102 @@ test('the library: filters, details, rename, share, delete with its impact', asy
   await expect(list.getByText('vendor-sdk-manual.txt')).toBeHidden();
 });
 
+/**
+ * Thirty more files of the person's own, all older than the fixture's, so
+ * the fixture's three of theirs lead and the pager has a second page: 25
+ * on the first, the oldest eight and the colleague's shared file (the
+ * library lists what is shared after what is owned) on the second.
+ */
+async function seedBacklog(f: Fixture): Promise<string[]> {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    const ids: string[] = [];
+    for (let n = 1; n <= 30; n += 1) {
+      const id = uuidFrom(`artifacts-e2e:backlog-${n}:${testProject(f)}`);
+      const name = `backlog-${String(n).padStart(2, '0')}.txt`;
+      const key = await keyFor(client, {
+        kind: 'artifact',
+        resourceId: id,
+        ownerSubject: f.subject,
+      });
+      await client.query(
+        `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, extracted_text, origin, key_kind, created_at)
+         VALUES ($1, $2, NULL, $3, $4, 'text/plain', 12, 'done', $5, 'upload', 'artifact', NOW() - INTERVAL '1 day' - $6 * INTERVAL '1 minute')`,
+        [id, f.subject, `chat/e2e/${id}`, name, key.seal('backlog note'), n]
+      );
+      ids.push(id);
+    }
+    return ids;
+  } finally {
+    await client.end();
+  }
+}
+
+test('the library: pages of 25, the list scrolling in its own box, a link opening to its page', async ({
+  page,
+}, testInfo) => {
+  const f = fixtureFor(testInfo.project.name);
+  await seed(f);
+  const backlog = await seedBacklog(f);
+  await signIn(page, f);
+  // Short enough that a page of rows is taller than the box it scrolls in.
+  await page.setViewportSize({ width: 1280, height: 640 });
+
+  await page.goto('/chat/artifacts');
+  const list = page.getByRole('region', { name: 'Artifacts' });
+  const pager = list.getByRole('navigation', { name: 'Pages' });
+  await expect(pager.getByText('1–25 of 34')).toBeVisible();
+  await expect(pager.getByText('Page 1 of 2')).toBeVisible();
+  await expect(pager.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+  await expect(list.getByText('backlog-22.txt')).toBeAttached();
+  await expect(list.getByText('backlog-23.txt')).toHaveCount(0);
+  await expect(list.getByText('vendor-sdk-manual.txt')).toHaveCount(0);
+
+  // The rows scroll inside the list; the filters and the pager stay where they are.
+  const rows = list.getByRole('list');
+  const box = await rows.evaluate((element) => ({
+    scrolls: element.scrollHeight > element.clientHeight,
+    overflow: getComputedStyle(element).overflowY,
+  }));
+  expect(box.scrolls).toBe(true);
+  expect(box.overflow).toBe('auto');
+  await expect(pager).toBeInViewport();
+  await expect(page.getByRole('group', { name: 'Show' })).toBeInViewport();
+  const pageScroll = await page.evaluate(
+    () => document.documentElement.scrollHeight - document.documentElement.clientHeight
+  );
+  expect(pageScroll).toBeLessThanOrEqual(0);
+  await shot(page, testInfo, 'artifacts-17-paged');
+
+  // The second page: the oldest eight and the shared one, and no further.
+  await pager.getByRole('button', { name: 'Next page' }).click();
+  await expect(pager.getByText('26–34 of 34')).toBeVisible();
+  await expect(list.getByText('backlog-23.txt')).toBeVisible();
+  await expect(list.getByText('backlog-30.txt')).toBeVisible();
+  await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
+  await expect(list.getByText('backlog-22.txt')).toHaveCount(0);
+  await expect(pager.getByRole('button', { name: 'Next page' })).toBeDisabled();
+  await shot(page, testInfo, 'artifacts-18-paged-second');
+
+  // A filter starts over on the first page of what it shows.
+  await page.getByLabel('Search artifacts by name').fill('backlog-2');
+  await expect(pager.getByText('1–10 of 10')).toBeVisible();
+  await expect(pager.getByRole('button', { name: 'Next page' })).toHaveCount(0);
+  await page.getByLabel('Search artifacts by name').fill('');
+  await expect(pager.getByText('Page 1 of 2')).toBeVisible();
+
+  // The link a notification carries opens to the page its file is on.
+  await page.goto(`/chat/artifacts?artifact=${backlog[29]}`);
+  await expect(pager.getByText('Page 2 of 2')).toBeVisible();
+  const details = page.getByRole('complementary', { name: 'Selected artifact' });
+  await expect(details.getByRole('link', { name: 'backlog-30.txt' })).toBeVisible();
+  await expect(list.getByRole('button', { name: /backlog-30\.txt/ })).toHaveAttribute(
+    'aria-current',
+    'true'
+  );
+});
+
 test('the library: a real upload lands, reads back, and is attached from the card', async ({
   page,
 }, testInfo) => {
@@ -626,16 +725,29 @@ test('phone: the library and the project card fit the viewport', async ({ page }
   await page.goto('/chat/artifacts');
   const list = page.getByRole('region', { name: 'Artifacts' });
   await expect(list.getByText('schema-guide.md')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Artifacts' })).toBeVisible();
+  await shot(page, testInfo, 'artifacts-07-phone-library');
+
+  // A card opens the file's details over the list — the list goes, a
+  // back button brings it back — the way the code pane opens a file.
   await list.getByRole('button', { name: /schema-guide\.md/ }).click();
-  await expect(page.getByRole('complementary', { name: 'Selected artifact' })).toBeVisible();
+  const details = page.getByRole('complementary', { name: 'Selected artifact' });
+  await expect(details).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'schema-guide.md' })).toBeVisible();
+  await expect(list).toHaveCount(0);
+  await expect(details.getByRole('button', { name: 'Close details' })).toHaveCount(0);
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
   expect(overflow).toBeLessThanOrEqual(0);
-  await shot(page, testInfo, 'artifacts-07-phone-library');
+  await shot(page, testInfo, 'artifacts-19-phone-details');
+  await page.getByRole('button', { name: 'Back to artifacts' }).click();
+  await expect(list.getByText('schema-guide.md')).toBeVisible();
+  await expect(details).toHaveCount(0);
+  await list.getByRole('button', { name: /schema-guide\.md/ }).click();
+  await expect(details).toBeVisible();
 
   // The owner's dialogs at phone width: share, then delete with its impact.
-  const details = page.getByRole('complementary', { name: 'Selected artifact' });
   await details.getByRole('button', { name: 'Share…' }).click();
   await expect(page.getByRole('dialog').getByText(/Sharing lets a person use it/)).toBeVisible();
   await shot(page, testInfo, 'artifacts-12-phone-share');

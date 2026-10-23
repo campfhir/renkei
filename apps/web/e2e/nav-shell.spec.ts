@@ -51,6 +51,7 @@ test('app menu column: open by default, toggles and is remembered', async ({ pag
     'Home',
     'Agents',
     'Knowledge',
+    'Artifacts',
     'Files',
     'Chat',
     'Projects',
