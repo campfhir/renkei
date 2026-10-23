@@ -58,6 +58,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
     readOnly: settings.readOnly,
     coachMarksEnabled: settings.coachMarksEnabled,
     phiConnectorsRequireCoveredModel: settings.phiConnectorsRequireCoveredModel,
+    artifactDigestEnabled: settings.artifactDigestEnabled,
     enableDcr: settings.enableDcr,
     sandboxBrowserEnabled: settings.sandboxBrowserEnabled,
     sandboxChartsEnabled: settings.sandboxChartsEnabled,
@@ -103,10 +104,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
       <h1 className="mb-1 text-xl font-bold">Settings</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Organization-wide controls. Changes take effect within a minute and are recorded in the{' '}
-        <Link
-          href={`/admin/audit`}
-          className="text-blue-600 hover:underline dark:text-blue-400"
-        >
+        <Link href={`/admin/audit`} className="text-blue-600 hover:underline dark:text-blue-400">
           audit trail
         </Link>
         .

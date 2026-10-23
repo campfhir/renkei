@@ -17,11 +17,18 @@
  * is no text to digest. The library page asks again for the pending
  * rows it shows, so a digest a recycled process dropped, or a row from
  * before digests existed, fills in as people look at their files.
+ *
+ * All of it behind the organization's switch (`artifactDigestEnabled`,
+ * admin → Settings → Knowledge search), off by default: while it is off
+ * no file text goes to a model on its own, rows stay `pending`, and the
+ * search matches names alone; turning it on digests them as they are
+ * looked at.
  */
 
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 import type { DB } from '@renkei/db';
+import { getOrgSettings } from '@renkei/settings';
 import { resolveAgentLlm, type LlmToolDef, type ResolvedLlm } from '@renkei/agent-llm';
 import { recordLlmCall } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
@@ -44,6 +51,12 @@ export type DigestStatus = 'none' | 'pending' | 'running' | 'done' | 'failed';
 export interface ArtifactDigest {
   summary: string;
   keywords: string[];
+}
+
+/** Whether the organization has digests switched on. */
+export async function digestsEnabled(): Promise<boolean> {
+  const settings = await getOrgSettings();
+  return settings.ok && settings.val.artifactDigestEnabled;
 }
 
 export function isDigestStatus(value: unknown): value is DigestStatus {
@@ -281,6 +294,7 @@ export async function digestPendingArtifacts(
   rows: AttachmentRow[],
   limit: number = DIGEST_BATCH
 ): Promise<void> {
+  if (!(await digestsEnabled())) return;
   const stale = Date.now() - RUNNING_STALE_MS;
   const wanted = rows
     .filter(

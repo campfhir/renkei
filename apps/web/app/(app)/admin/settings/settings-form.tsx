@@ -25,6 +25,7 @@ export interface EditableSettings {
   readOnly: boolean;
   coachMarksEnabled: boolean;
   phiConnectorsRequireCoveredModel: boolean;
+  artifactDigestEnabled: boolean;
   enableDcr: boolean;
   sandboxBrowserEnabled: boolean;
   sandboxChartsEnabled: boolean;
@@ -427,6 +428,16 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
         >
           {numberInput('knowledgeKeywordMinChars', '0–100,000')}
         </Row>
+        <Row
+          label="Summarize artifacts with the default model"
+          hint="One call to the organization's default LLM model per file that lands in Artifacts (an upload, a file a chat wrote, a scan after OCR), asking for a summary and keywords. They are stored in the clear beside the file's sealed text, shown on the file, and searched by the Artifacts page, so a file is found by what it is about. Off by default: the Artifacts search then matches file names only, and no file text goes to a model on its own. Needs a default model under LLM models."
+        >
+          <Toggle
+            on={values.artifactDigestEnabled}
+            onChange={(next) => set('artifactDigestEnabled', next)}
+            label="Summarize artifacts with the default model"
+          />
+        </Row>
       </Section>
 
       <Section title="MCP clients & tokens">
@@ -599,7 +610,9 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
               max={65536}
               step={64}
               value={Math.round(values.sandboxServiceMemoryBytes / MB)}
-              onChange={(event) => set('sandboxServiceMemoryBytes', Number(event.target.value) * MB)}
+              onChange={(event) =>
+                set('sandboxServiceMemoryBytes', Number(event.target.value) * MB)
+              }
               className={inputClass}
             />
             <span className="w-20 text-xs text-gray-400 dark:text-gray-600">64MB–64GB</span>

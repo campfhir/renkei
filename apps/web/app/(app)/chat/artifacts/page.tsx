@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { after } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
+import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { parseLibraryQuery } from '@/lib/chat/artifact-library-params';
@@ -18,8 +19,9 @@ import ArtifactsIndex from '../_components/artifacts-index';
  * database by what the URL asks for (artifact-library-params.ts):
  * `?q=` searches names and digests, `show`, `project` and `page` narrow
  * and turn; `?artifact=<id>` opens one — the link a notification
- * carries — on the page it sits on. Rows on the page still waiting for
- * their digest are asked for after the response, a few at a time.
+ * carries — on the page it sits on. With the organization's digest
+ * switch on, rows on the page still waiting for their digest are asked
+ * for after the response, a few at a time.
  */
 export default async function ArtifactsPage({
   searchParams,
@@ -32,11 +34,13 @@ export default async function ArtifactsPage({
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
   const query = parseLibraryQuery(await searchParams);
-  const [page, uploads, projectIds] = await Promise.all([
+  const [page, uploads, projectIds, settings] = await Promise.all([
     queryLibrary(db, session.subject, query),
     tenantBlobStoreConfigured(),
     listAccessibleProjectIds(db, session.subject),
+    getOrgSettings(),
   ]);
+  const digests = settings.ok && settings.val.artifactDigestEnabled;
   const projects =
     projectIds.length > 0
       ? await db
@@ -49,7 +53,7 @@ export default async function ArtifactsPage({
   const undigested = page.artifacts
     .filter((item) => item.digestStatus === 'pending' || item.digestStatus === 'running')
     .map((item) => item.id);
-  if (undigested.length > 0) {
+  if (digests && undigested.length > 0) {
     const subject = session.subject;
     after(async () => {
       await digestPendingArtifacts(db, subject, await getAttachments(db, undigested));
@@ -60,6 +64,7 @@ export default async function ArtifactsPage({
       page={page}
       query={query}
       uploads={uploads}
+      digests={digests}
       projects={projects}
       selectedId={query.focus}
     />

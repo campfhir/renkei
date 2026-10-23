@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-23',
     entries: [
       {
+        kind: 'added',
+        title: 'Artifacts: search by what a file is about',
+        detail:
+          "With the new Summarize artifacts with the default model switch on (admin → Settings → Knowledge search, off by default), each file that lands in Artifacts gets a short summary and keywords from the organization's default model, shown on the file and searched by the Artifacts search alongside file names. The file's text itself stays sealed; only the summary and keywords are stored in the clear.",
+      },
+      {
+        kind: 'changed',
+        title: 'Artifacts: paged list, phone layout, menu under Knowledge',
+        detail:
+          "The Artifacts page shows 25 files a page in a list that scrolls in its own box, with the filters and pager staying put; a link to a file opens the page it is on. On a phone the rows are cards and a tap opens the file's details over the list, with a back button. The Artifacts entry in the menu now sits in Workspace under Knowledge.",
+      },
+      {
         kind: 'changed',
         title: 'Files are encrypted at rest',
         detail:

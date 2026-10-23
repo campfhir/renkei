@@ -82,6 +82,7 @@ export default function ArtifactsIndex({
   page,
   query,
   uploads,
+  digests,
   projects,
   selectedId,
 }: {
@@ -90,6 +91,8 @@ export default function ArtifactsIndex({
   /** What the URL asked for, as the server read it. */
   query: LibraryQuery;
   uploads: boolean;
+  /** Whether the organization has the model write a digest for each file (admin → Settings). */
+  digests: boolean;
   projects: { id: string; name: string; kind: string }[];
   selectedId: string | null;
 }) {
@@ -295,36 +298,38 @@ export default function ArtifactsIndex({
         ) : null}
       </div>
 
-      <section
-        aria-label="About this file"
-        className="border-t border-gray-100 px-4 py-3 dark:border-gray-900"
-      >
-        <h3 className="mb-2 text-xs font-semibold text-gray-500">About</h3>
-        {current.summary ? (
-          <p className="text-sm text-gray-700 dark:text-gray-300">{current.summary}</p>
-        ) : (
-          <p className="text-xs text-gray-500">{digestLabel(current.digestStatus)}</p>
-        )}
-        {current.keywords.length > 0 ? (
-          <ul aria-label="Keywords" className="mt-2 flex flex-wrap gap-1">
-            {current.keywords.map((keyword) => (
-              <li key={keyword}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (narrow) select(null);
-                    filter({ query: keyword });
-                  }}
-                  title={`Search for “${keyword}”`}
-                  className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
-                >
-                  {keyword}
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
+      {digests || current.summary || current.keywords.length > 0 ? (
+        <section
+          aria-label="About this file"
+          className="border-t border-gray-100 px-4 py-3 dark:border-gray-900"
+        >
+          <h3 className="mb-2 text-xs font-semibold text-gray-500">About</h3>
+          {current.summary ? (
+            <p className="text-sm text-gray-700 dark:text-gray-300">{current.summary}</p>
+          ) : (
+            <p className="text-xs text-gray-500">{digestLabel(current.digestStatus)}</p>
+          )}
+          {current.keywords.length > 0 ? (
+            <ul aria-label="Keywords" className="mt-2 flex flex-wrap gap-1">
+              {current.keywords.map((keyword) => (
+                <li key={keyword}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (narrow) select(null);
+                      filter({ query: keyword });
+                    }}
+                    title={`Search for “${keyword}”`}
+                    className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    {keyword}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
 
       <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
         <h3 className="mb-2 text-xs font-semibold text-gray-500">Used in</h3>
@@ -605,8 +610,8 @@ export default function ArtifactsIndex({
         <p className="hidden shrink-0 text-sm text-gray-600 md:block dark:text-gray-400">
           Files you upload and files chats generate: manuals, design docs, style guides, reports.
           Stored once, under you, outside every repository; a project holds one by reference, so the
-          same file serves any number of projects. Search finds a file by its name or by what it is
-          about.
+          same file serves any number of projects.
+          {digests ? ' Search finds a file by its name or by what it is about.' : ''}
           {!uploads
             ? ' File storage is not set up for this organization, so nothing can be uploaded yet.'
             : ''}
@@ -622,7 +627,7 @@ export default function ArtifactsIndex({
             type="search"
             value={filters.query}
             onChange={(event) => filter({ query: event.target.value })}
-            placeholder="Search names and contents…"
+            placeholder={digests ? 'Search names and contents…' : 'Search names…'}
             aria-label="Search artifacts"
             className="w-64 max-w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
           />
@@ -666,7 +671,7 @@ export default function ArtifactsIndex({
               <p className="p-4 text-sm text-gray-500">
                 {page.libraryCount === 0
                   ? 'No artifacts yet. Upload a manual, a guide or a design doc, or drop one anywhere on this page; files your chats write land here on their own.'
-                  : searching
+                  : searching && digests
                     ? 'Nothing matches. Search looks at file names and at the summary and keywords written for each file.'
                     : 'Nothing matches.'}
               </p>

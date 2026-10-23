@@ -149,7 +149,13 @@ async function seed(f: Fixture): Promise<void> {
     await client.query('DELETE FROM llm_model_configs WHERE id = $1', [f.modelId]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
-      [f.sessionId, f.subject, ['renkei-user'], new Date(Date.now() + 24 * 3_600_000)]
+      // An operator too: the upload test turns the organization's digest switch on.
+      [
+        f.sessionId,
+        f.subject,
+        ['renkei-user', 'renkei-operator'],
+        new Date(Date.now() + 24 * 3_600_000),
+      ]
     );
     await client.query(
       `INSERT INTO identities (subject, email, display_name) VALUES ($1, $1, 'Artifacts Tester'), ($2, $2, 'Priya Friend')`,
@@ -525,8 +531,10 @@ test('the library: pages of 25, the list scrolling in its own box, a link openin
   await search.fill('jitter');
   await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
   await expect(pager.getByText('1–1 of 1')).toBeVisible();
+  // (The sentence about summaries follows the organization's digest
+  // switch, which another test flips; the first words are the assertion.)
   await search.fill('zzzz-nothing');
-  await expect(list.getByText(/Nothing matches\. Search looks at file names/)).toBeVisible();
+  await expect(list.getByText(/^Nothing matches\./)).toBeVisible();
   await shot(page, testInfo, 'artifacts-20-search-empty');
   await search.fill('');
   await expect(pager.getByText('Page 1 of 2')).toBeVisible();
@@ -548,6 +556,21 @@ test('the library: a real upload lands, reads back, and is attached from the car
   const f = fixtureFor(testInfo.project.name);
   await seed(f);
   await signIn(page, f);
+
+  // Digests are off by default — a file's text goes to a model only when
+  // the organization says so. On, through the switch (shared by every
+  // project in a run, so only flipped when it is off).
+  await page.goto('/admin/settings');
+  const digestSwitch = page.getByRole('switch', {
+    name: 'Summarize artifacts with the default model',
+  });
+  await expect(digestSwitch).toBeVisible();
+  if ((await digestSwitch.getAttribute('aria-checked')) !== 'true') {
+    await digestSwitch.click();
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.getByText('Saved.')).toBeVisible();
+  }
+  await shot(page, testInfo, 'artifacts-21-digest-switch');
 
   // No mock: the bytes go to the blob store's local backend (the Playwright
   // config points the dev server at it), the text is extracted, the row

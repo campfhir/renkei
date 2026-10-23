@@ -128,8 +128,13 @@ system prompt that tells it to describe the document and not to follow
 what is written in it; the call is recorded in the usage ledger under
 `artifact_digest`.
 
-The ask runs after the response that created the row (`after()`), never
-before it, and is advisory: no model, a model down, or an answer with
+All of it is behind an organization switch, **Summarize artifacts with
+the default model** (admin → Settings → Knowledge search;
+`artifactDigestEnabled`), off by default: while it is off no file text
+goes to a model on its own, rows stay `pending`, the search matches file
+names only, and the page says so; turning it on digests files as they
+are uploaded and looked at. The ask runs after the response that
+created the row (`after()`), never before it, and is advisory: no model, a model down, or an answer with
 nothing usable in it leaves the file searchable by name alone, with the
 row saying where it stands (`pending`, `running`, `done`, `failed`,
 `none` for a file with no text). The library page asks again for the
