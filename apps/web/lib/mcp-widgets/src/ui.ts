@@ -110,7 +110,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .done-icon.sent { background: var(--card-ok); }
 .done-icon.cancelled { background: var(--card-muted); }
-.done-headline { font-weight: 600; }
+.done-headline { font-weight: 600; overflow-wrap: anywhere; }
 .done-detail { color: var(--card-muted); font-size: 12px; overflow-wrap: anywhere; }
 .rows { display: flex; flex-direction: column; }
 .row {

@@ -60,6 +60,12 @@ export const CHANGELOG: ChangelogRelease[] = [
         detail:
           'Editing an organization agent model opens its form in a dialog over the list. Context window and max output tokens take counts such as 200k, 1.5m or 8000.',
       },
+      {
+        kind: 'fixed',
+        title: 'Long text in chat action cards wraps instead of running off the card',
+        detail:
+          'A card that says what the chat did, such as a calendar event it created, now wraps a long title or name onto more lines rather than cutting it off. An Outlook event’s ID no longer appears on the card.',
+      },
     ],
   },
   {
