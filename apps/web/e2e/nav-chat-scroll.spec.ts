@@ -8,7 +8,10 @@
  */
 
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
+import { Client } from 'pg';
+import { E2E_SUBJECT } from './seed';
 test.use({
   launchOptions: {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
@@ -69,4 +72,53 @@ test('app menu: version is pinned to the foot and the chat list scrolls on its o
       'nav-chat-scroll.png'
     ),
   });
+});
+
+test('app menu: three chats show at a desktop height without scrolling the list', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-light', 'A desktop column check.');
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  // Titles carry the project name: the projects run in parallel against one database.
+  const prefix = `Menu height e2e ${testInfo.project.name}`;
+  try {
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
+      E2E_SUBJECT,
+      `${prefix} %`,
+    ]);
+    for (let index = 1; index <= 5; index += 1) {
+      await client.query(
+        'INSERT INTO chats (id, owner_subject, title, last_message_at) VALUES ($1, $2, $3, NOW())',
+        [randomUUID(), E2E_SUBJECT, `${prefix} ${index}`]
+      );
+    }
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/agents`);
+    const chats = page
+      .getByRole('navigation', { name: 'Application' })
+      .getByRole('navigation', { name: 'Chats' });
+    const rows = chats.getByRole('link', { name: new RegExp(`^${prefix} \\d`) });
+    await expect(rows).toHaveCount(5);
+
+    // Each row whose top and bottom both sit inside the list's visible box.
+    const visible = await rows.evaluateAll(
+      (links, list) => {
+        const box = list.getBoundingClientRect();
+        return links.filter((link) => {
+          const row = link.getBoundingClientRect();
+          return row.top >= box.top && row.bottom <= box.bottom;
+        }).length;
+      },
+      await chats.elementHandle()
+    );
+    expect(visible).toBeGreaterThanOrEqual(3);
+  } finally {
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
+      E2E_SUBJECT,
+      `${prefix} %`,
+    ]);
+    await client.end();
+  }
 });

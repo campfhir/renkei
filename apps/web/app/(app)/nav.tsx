@@ -12,6 +12,7 @@ import { useCoachAnchor, type CoachAnchorProps } from '@/components/coach-marks/
 import { useCoachMarks } from '@/components/coach-marks/context';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import { ChatList } from './chat/_components/chat-nav';
+import { OmniSearch, type OmniPage } from './omni-search';
 
 interface NavProps {
   /** Display name from the identity spine, falling back to email/subject. */
@@ -282,6 +283,13 @@ export default function AppNav({
     }
   }
 
+  // Every place in the menu, for the top bar's search to find by name.
+  const pages: OmniPage[] = [
+    ...groups.flatMap((group) => group.items),
+    { href: `/chat/new`, label: 'New chat', icon: ICONS.plus },
+    ...accountGroups.flat(),
+  ].map(({ href, label, icon }) => ({ href, label, icon }));
+
   const initials = initialsOf(userName);
 
   const menu = (
@@ -289,10 +297,10 @@ export default function AppNav({
       {groups.map((group) => (
         <div
           key={group.label}
-          className={group.extra ? 'mb-5 flex flex-1 flex-col' : 'mb-5'}
+          className={group.extra ? 'mb-3 flex flex-1 flex-col' : 'mb-3'}
           {...(group.coach ? anchors[group.coach] : {})}
         >
-          <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
             {group.label}
           </p>
           <ul className="space-y-1">
@@ -305,7 +313,7 @@ export default function AppNav({
                   <Link
                     href={item.href}
                     aria-current={here ? 'page' : undefined}
-                    className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-3 py-2 text-sm ${
+                    className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm ${
                       here
                         ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
                         : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900'
@@ -340,7 +348,7 @@ export default function AppNav({
 
       {/* Pinned to the foot of the menu: the chat list above scrolls, this does not. */}
       <p
-        className="mt-auto shrink-0 truncate border-t border-gray-200 px-2 pt-2 text-xs text-gray-500 dark:border-gray-800"
+        className="mt-auto shrink-0 truncate border-t border-gray-200 px-2 pt-1.5 text-xs text-gray-500 dark:border-gray-800"
         title={version}
       >
         {version}
@@ -373,7 +381,9 @@ export default function AppNav({
           Renkei
         </Link>
 
-        <div className="ml-auto flex items-center gap-2">
+        <OmniSearch pages={pages} chats={chats} />
+
+        <div className="flex items-center gap-2">
           <div ref={menuRef} className="relative">
             <button
               type="button"
@@ -482,7 +492,7 @@ export default function AppNav({
         ref={drawerRef}
         tabIndex={-1}
         aria-label="Application"
-        className={`fixed inset-y-0 z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 outline-none transition-[left] duration-200 ease-out lg:hidden dark:border-gray-800 dark:bg-gray-950 ${
+        className={`fixed inset-y-0 z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-gray-200 bg-white p-3 outline-none transition-[left] duration-200 ease-out lg:hidden dark:border-gray-800 dark:bg-gray-950 ${
           open ? 'left-0' : '-left-full'
         }`}
       >
@@ -508,7 +518,7 @@ export default function AppNav({
         {pinned || revealed ? (
           <nav
             aria-label="Application"
-            className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-72 shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 lg:flex dark:border-gray-800 dark:bg-gray-950"
+            className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-72 shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white p-3 lg:flex dark:border-gray-800 dark:bg-gray-950"
           >
             {menu}
           </nav>
