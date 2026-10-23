@@ -21,8 +21,11 @@
  * does not get an entry — a changelog that lists refactors is one nobody
  * reads, and then the entries that matter are missed too.
  *
- * `date` is the day the work landed on `main`, ISO, or null for work that has
- * not shipped yet.
+ * `date` is the day the work landed on `main`, ISO. Entries are not written by
+ * hand into a finished release: `pnpm changelog add` stamps today's date as
+ * the work lands, and `pnpm changelog check` runs in CI and fails a pull
+ * request that changes the product without an entry (a commit saying
+ * `Changelog: none` opts out). `node scripts/changelog.mjs` documents both.
  */
 
 export interface ChangelogEntry {
@@ -34,8 +37,8 @@ export interface ChangelogEntry {
 }
 
 export interface ChangelogRelease {
-  /** ISO date, or null for unreleased work sitting on main. */
-  date: string | null;
+  /** ISO date (YYYY-MM-DD) the work landed on main. */
+  date: string;
   /** Optional theme, when a group of entries share one. */
   heading?: string;
   entries: ChangelogEntry[];
@@ -44,6 +47,29 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: '2026-10-23',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Chats get their own titles',
+        detail:
+          'A new chat is titled from its first message by the model, and you can ask the chat to rename itself at any time.',
+      },
+      {
+        kind: 'changed',
+        title: 'Agent model settings open in a dialog',
+        detail:
+          'Editing an organization agent model opens its form in a dialog over the list. Context window and max output tokens take counts such as 200k, 1.5m or 8000.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Long text in chat action cards wraps instead of running off the card',
+        detail:
+          'A card that says what the chat did, such as a calendar event it created, now wraps a long title or name onto more lines rather than cutting it off. An Outlook event’s ID no longer appears on the card.',
+      },
+    ],
+  },
+  {
+    date: '2026-10-20',
     entries: [
       {
         kind: 'changed',
@@ -56,12 +82,6 @@ export const CHANGELOG: ChangelogRelease[] = [
         title: 'Start an API-triggered agent from chat',
         detail:
           'Ask the chat to run an agent that has an API trigger, and it asks you to allow the run the same way it does for a scheduled agent — showing the inputs it will pass. You do not need to set a schedule. An agent with no schedule and no API trigger still cannot be started from chat.',
-      },
-      {
-        kind: 'fixed',
-        title: 'Long text in chat action cards wraps instead of running off the card',
-        detail:
-          'A card that says what the chat did, such as a calendar event it created, now wraps a long title or name onto more lines rather than cutting it off. An Outlook event’s ID no longer appears on the card.',
       },
     ],
   },

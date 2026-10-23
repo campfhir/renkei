@@ -216,8 +216,13 @@ test('admin: the model roster, listing, testing, and saving', async ({ page }, t
   await page.setViewportSize(MOBILE_VIEWPORT);
   await shot(page, testInfo, 'llm-models-07-mobile-list');
   await page.getByRole('button', { name: 'Edit' }).click();
-  await expect(page.getByText('Edit model', { exact: true })).toBeVisible();
+  // The edit form is a modal dialog over the roster, not a block at its foot.
+  const editDialog = page.getByRole('dialog', { name: 'Edit model' });
+  await expect(editDialog).toBeVisible();
   await shot(page, testInfo, 'llm-models-08-mobile-edit');
+  await editDialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(editDialog).toHaveCount(0);
+  await expect(page.getByText('Prod Claude')).toBeVisible();
 });
 
 test('admin: reasoning effort is free text — no fixed value list — and round-trips through save', async ({
@@ -494,4 +499,48 @@ test('admin: context window takes a typed count — 200k, 1m — and refuses wha
   await page.getByLabel('Context window (tokens)').fill('1m');
   await expect(page.getByLabel('Context window (tokens)')).toHaveValue('1m');
   await shot(page, testInfo, 'llm-models-context-window-03-mobile');
+});
+
+test('admin: max output tokens takes 4k and 8000, sits level with temperature on a phone', async ({
+  page,
+}, testInfo) => {
+  // Its own tenant, same reasoning as the specs above.
+  const fixture = fixtureFor(`${testInfo.project.name}-max-output`);
+  await seedTenant(fixture);
+  await signIn(page, fixture);
+
+  await page.goto(`/admin/llm-models`);
+  await page.getByRole('button', { name: '+ Add a model' }).click();
+  await page.getByLabel('Display name').fill('Verbose');
+  await page.getByLabel('Model id').fill('claude-sonnet-5');
+  await page.getByLabel('API key').fill('sk-ant-e2e-fake-key');
+
+  // A typed count like the context window's, not a number field.
+  const maxOutput = page.getByLabel('Max output tokens');
+  await expect(maxOutput).toHaveAttribute('placeholder', '4k');
+  await maxOutput.fill('lots');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(
+    page.getByText('Max output tokens must be a token count, such as 4k or 8000.')
+  ).toBeVisible();
+
+  await maxOutput.fill('4k');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Verbose')).toBeVisible();
+
+  // Stored as the whole count, shown back as a plain number to edit.
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByLabel('Max output tokens')).toHaveValue('4000');
+  await page.getByLabel('Max output tokens').fill('8000');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByLabel('Max output tokens')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByLabel('Max output tokens')).toHaveValue('8000');
+
+  // The two inputs share a top edge even when the label wraps at phone width.
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  const outputBox = await page.getByLabel('Max output tokens').boundingBox();
+  const temperatureBox = await page.getByLabel('Temperature').boundingBox();
+  expect(outputBox?.y).toBeCloseTo(temperatureBox?.y ?? NaN, 0);
+  await shot(page, testInfo, 'llm-models-max-output-mobile');
 });

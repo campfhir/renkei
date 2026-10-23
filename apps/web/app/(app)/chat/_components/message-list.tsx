@@ -46,6 +46,7 @@ import { parseCommitResult } from '@/lib/code/chat-commits';
 import { milestoneSentence, milestoneSummary, type MilestoneState } from '@/lib/code/milestones';
 import { codeToolLabel, gitGlyphFor } from '@/lib/code/tool-labels';
 import { parseTaskCompletion, TASK_COMPLETE_TOOL } from '@/lib/chat/auto-mode';
+import { CHAT_RENAME_TOOL } from '@/lib/chat/titles';
 import { CHAT_DELEGATE_TOOL, isSubagentTool } from '@/lib/chat/subagent-tools';
 import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
@@ -81,6 +82,7 @@ const GIT_ICONS = {
 function toolIconFor(name: string): string {
   if (name === 'chat_compact') return ICONS.package;
   if (name === TASK_COMPLETE_TOOL) return ICONS.check;
+  if (name === CHAT_RENAME_TOOL) return ICONS.pencil;
   if (name.startsWith('project_memory_') || name.startsWith('chat_memory_')) return ICONS.memory;
   const git = gitGlyphFor(name);
   if (git) return GIT_ICONS[git];
