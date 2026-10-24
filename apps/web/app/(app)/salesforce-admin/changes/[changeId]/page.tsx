@@ -1,22 +1,23 @@
 import React from 'react';
+import Link from 'next/link';
 import BackLink from '@/components/back-link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
+import { ROLE_OPERATOR } from '@/lib/access';
+import { getIdentityDisplay } from '@/lib/identity';
 import {
-  getChangeRequest,
+  getChangeRequestById,
+  mayView,
+  REQUEST_KIND,
+  requestDescription,
   stateOf,
   type ChangeRequest,
   type OperationResult,
 } from '@/lib/salesforce-admin/change-requests';
 import { deploys, readMetadataPayload, stepLabel } from '@/lib/salesforce-admin/plan';
-import {
-  accessForChange,
-  applyGate,
-  refreshApplying,
-  refreshValidation,
-} from '@/lib/salesforce-admin/apply';
+import { accessForChange, applyGate, refreshValidation } from '@/lib/salesforce-admin/apply';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
 import LocalTime from '@/components/local-time';
@@ -50,23 +51,24 @@ const OUTCOME_TONES: Record<OperationResult['outcome'], string> = {
   not_run: 'text-gray-500 dark:text-gray-400',
 };
 
-/** Finish a validation or a deploy that was still running, so the page says how it ended. */
+/**
+ * Finish a validation that was still running, so the page says how it
+ * ended. A deploy is not caught up here: the job that approved it follows
+ * it to the end (lib/salesforce-admin/apply-job.ts), and two parties
+ * finishing one deploy would each run its grants.
+ */
 async function catchUp(
-  db: Parameters<typeof refreshApplying>[0],
+  db: Parameters<typeof refreshValidation>[0],
   subject: string,
   change: ChangeRequest
 ): Promise<ChangeRequest> {
-  const running =
-    (change.status === 'applying' && change.results?.deployId) ||
-    (change.validation && 'deployId' in change.validation && !change.validation.done);
+  const running = change.validation && 'deployId' in change.validation && !change.validation.done;
   if (!running) return change;
   const context = { subject, db };
   const access = await accessForChange(context, change);
   if (typeof access === 'string') return change;
-  const moved =
-    (await refreshValidation(db, context, access, change)) ||
-    (await refreshApplying(db, context, access, change));
-  return moved ? ((await getChangeRequest(db, subject, change.id)) ?? change) : change;
+  const moved = await refreshValidation(db, context, access, change);
+  return moved ? ((await getChangeRequestById(db, change.id)) ?? change) : change;
 }
 
 /**
@@ -91,11 +93,26 @@ export default async function SalesforceAdminChangePage({
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
-  // Owner-scoped: someone else's request reads as not found.
-  const stored = await getChangeRequest(db, session.subject, changeId);
-  if (!stored) notFound();
+  // The requester sees their own and an operator sees everyone's; to anyone
+  // else a request reads as not found.
+  const operator = session.roles.includes(ROLE_OPERATOR);
+  const stored = await getChangeRequestById(db, changeId);
+  if (!stored || !mayView(stored, { subject: session.subject, operator })) notFound();
   const change = await catchUp(db, session.subject, stored);
-
+  const isOwner = change.subject === session.subject;
+  const [requester, approver] = await Promise.all([
+    getIdentityDisplay(change.subject),
+    change.approvedBy ? getIdentityDisplay(change.approvedBy) : Promise.resolve(null),
+  ]);
+  const requesterName = isOwner
+    ? 'you'
+    : (requester?.displayName ?? requester?.email ?? change.subject);
+  const approverName = change.approvedBy
+    ? change.approvedBy === session.subject
+      ? 'you'
+      : (approver?.displayName ?? approver?.email ?? change.approvedBy)
+    : null;
+  const isRequest = change.kind === REQUEST_KIND;
   const agent = change.agentId
     ? await db
         .selectFrom('agents')
@@ -115,8 +132,11 @@ export default async function SalesforceAdminChangePage({
   // The apply route asks this again on the click; asking now says why
   // Apply is off before anyone presses it.
   const gate =
-    state === 'pending' ? await applyGate(db, session.subject, session.roles, change) : null;
-  const running = state === 'applying' || validationState(validation) === 'running';
+    state === 'pending' && operator && !isRequest
+      ? await applyGate(db, session.subject, session.roles, change)
+      : null;
+  const inProgress = state === 'queued' || state === 'applying';
+  const running = inProgress || validationState(validation) === 'running';
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -149,15 +169,26 @@ export default async function SalesforceAdminChangePage({
             <span className="font-medium">Why:</span> {change.reason}
           </p>
         )}
-        <p className="text-gray-600 dark:text-gray-400">
-          Proposed <LocalTime at={change.createdAt} />{' '}
+        <p className="text-gray-600 dark:text-gray-400" data-testid="change-requester">
+          {isRequest ? 'Requested' : 'Proposed'} <LocalTime at={change.createdAt} /> by{' '}
+          {requesterName}
           {change.agentId
             ? agent
-              ? `by your agent “${agent.name}”`
-              : 'by one of your agents'
-            : 'from your chat or an AI app'}
+              ? `, through ${isOwner ? 'your' : 'their'} agent “${agent.name}”`
+              : `, through ${isOwner ? 'one of your agents' : 'an agent'}`
+            : ''}
           .
         </p>
+        {approverName && (
+          <p className="text-gray-600 dark:text-gray-400" data-testid="change-approver">
+            Approved <LocalTime at={change.approvedAt ?? change.createdAt} /> by {approverName}.
+          </p>
+        )}
+        {change.resolution && (
+          <p className="break-words" data-testid="change-resolution">
+            <span className="font-medium">Note:</span> {change.resolution}
+          </p>
+        )}
         {state === 'pending' && (
           <p className="text-gray-600 dark:text-gray-400">
             Expires <LocalTime at={change.expiresAt} />.
@@ -170,7 +201,50 @@ export default async function SalesforceAdminChangePage({
         )}
       </div>
 
-      {validation && (
+      {inProgress && (
+        <section
+          data-testid="change-progress"
+          role="status"
+          className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200"
+        >
+          <p className="flex items-center gap-2 font-semibold">
+            <span
+              aria-hidden
+              className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+            />
+            {state === 'queued' ? 'Approved — waiting to start' : 'Deploying'}
+          </p>
+          <p className="mt-1 break-words" data-testid="change-step">
+            {change.step ?? 'Working…'}
+          </p>
+          <p className="mt-2 text-xs">
+            This runs on the server. You can leave this page and come back, and you will be notified
+            when it finishes.{' '}
+            <Link href="/salesforce-admin/changes" className="font-medium underline">
+              See all change requests
+            </Link>
+          </p>
+        </section>
+      )}
+
+      {isRequest && (
+        <section
+          data-testid="change-request-text"
+          className="mb-4 rounded-md border border-gray-200 p-3 text-sm dark:border-gray-800"
+        >
+          <h2 className="mb-1 font-semibold">What was asked for</h2>
+          <p className="break-words whitespace-pre-line">{requestDescription(change.payload)}</p>
+          {state === 'pending' && operator && (
+            <p className="mt-2 text-gray-600 dark:text-gray-400">
+              Nothing here can be approved yet: it is a request in words. In chat, ask Renkei to
+              build it as a proposal (it can read this request by its id) and Salesforce will
+              validate it before you approve; or decline it with a reason.
+            </p>
+          )}
+        </section>
+      )}
+
+      {validation && !isRequest && (
         <section
           data-testid="change-validation"
           className="mb-4 rounded-md border border-gray-200 p-3 text-sm dark:border-gray-800"
@@ -218,9 +292,11 @@ export default async function SalesforceAdminChangePage({
         </section>
       )}
 
-      {results ? (
+      {isRequest ? null : results ? (
         <>
-          <h2 className="mb-2 text-sm font-semibold">What happened</h2>
+          <h2 className="mb-2 text-sm font-semibold">
+            {inProgress ? 'What has happened so far' : 'What happened'}
+          </h2>
           <ol className="space-y-2" data-testid="change-results">
             {results.operations.map((result, index) => (
               <li
@@ -240,12 +316,6 @@ export default async function SalesforceAdminChangePage({
                 )}
               </li>
             ))}
-            {state === 'applying' && (
-              <li className="rounded-md border border-dashed border-gray-300 p-3 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-400">
-                Salesforce is deploying it{results.deployId ? ` (deploy ${results.deployId})` : ''}.
-                This page updates when it is done.
-              </li>
-            )}
           </ol>
         </>
       ) : (
@@ -312,16 +382,21 @@ export default async function SalesforceAdminChangePage({
 
       {state === 'pending' && (
         <>
-          <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
-            {payload && !deploys(payload)
-              ? `Applying writes each of these on your own Salesforce Admin connection in ${orgName}, with the permissions you hold there; each is its own step, and the result lists every one.`
-              : `Applying first checks that nothing it was built on has changed in ${orgName}, then deploys it on your own Salesforce Admin connection — all of it or none of it — with the permissions you hold there.`}
-          </p>
+          {operator && !isRequest && (
+            <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+              {payload && !deploys(payload)
+                ? `Approving writes each of these on your own Salesforce Admin connection in ${orgName}, with the permissions you hold there; each is its own step, and the result lists every one.`
+                : `Approving first checks that nothing it was built on has changed in ${orgName}, then deploys it on your own Salesforce Admin connection — all of it or none of it — with the permissions you hold there. It runs in the background, so you do not need to stay on this page.`}
+            </p>
+          )}
           <ChangeActions
             changeId={change.id}
             orgName={orgName}
             applyBlocked={gate && !gate.ok ? gate.reason : null}
             dataOnly={payload !== null && !deploys(payload)}
+            canApprove={operator}
+            isRequest={isRequest}
+            isOwner={isOwner}
           />
         </>
       )}

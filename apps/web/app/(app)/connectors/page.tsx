@@ -1,7 +1,10 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { countPendingChangeRequests } from '@/lib/jira-admin/change-requests';
+import {
+  countAwaitingReview as countJiraAwaitingReview,
+  countPendingChangeRequests,
+} from '@/lib/jira-admin/change-requests';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import AtlassianConnector from './atlassian-connector';
@@ -54,7 +57,11 @@ import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { listSalesforceConnections } from '@/lib/salesforce-grants';
 import { SALESFORCE_ADMIN_KIND, SALESFORCE_CRM_KIND } from '@/lib/salesforce-kinds';
 import { takesChanges } from '@renkei/connector-salesforce';
-import { countPendingChangeRequests as countSalesforceAdminChanges } from '@/lib/salesforce-admin/change-requests';
+import {
+  countAwaitingReview as countSalesforceAwaitingReview,
+  countPendingChangeRequests as countSalesforceAdminChanges,
+} from '@/lib/salesforce-admin/change-requests';
+import { ROLE_OPERATOR } from '@/lib/access';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
 import { DEFAULT_ENTRA_DEVELOPER_SCOPES } from '@/lib/entra-developer-scopes';
@@ -257,8 +264,12 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
         };
       })
   );
+  // An operator is the one who approves, so the card counts everything
+  // waiting; anyone else's count is their own requests still undecided.
   const salesforcePending = shown.has(SALESFORCE_ADMIN_KIND.key)
-    ? await countSalesforceAdminChanges(db, session.subject)
+    ? session.roles.includes(ROLE_OPERATOR)
+      ? await countSalesforceAwaitingReview(db)
+      : await countSalesforceAdminChanges(db, session.subject)
     : new Map<string, number>();
 
   // The caller's own grants, one query, mapped by provider — connection
@@ -274,7 +285,9 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   // Proposals wait for their owner on the review page; the card says how
   // many, so an agent's proposal is not only a notification away.
   const pendingJiraAdminChanges = jiraAdminGrant
-    ? await countPendingChangeRequests(db, session.subject)
+    ? session.roles.includes(ROLE_OPERATOR)
+      ? await countJiraAwaitingReview(db)
+      : await countPendingChangeRequests(db, session.subject)
     : 0;
   const microsoftGrant = grants.get(MICROSOFT);
   const entraDeveloperGrant = grants.get(ENTRA_DEVELOPER);

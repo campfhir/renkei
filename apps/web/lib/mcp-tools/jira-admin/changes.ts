@@ -25,9 +25,14 @@ import { fieldTypeLabel, findCustomField, optionTypeOf } from './fields';
 import {
   CHANGE_REQUEST_TTL_HOURS,
   cancelChangeRequest,
+  closeRequestAsProposed,
   createChangeRequest,
-  getChangeRequest,
+  getChangeRequestById,
+  listAllChangeRequests,
   listChangeRequests,
+  mayView,
+  REQUEST_KIND,
+  requestDescription,
   stateOf,
   type ChangeRequest,
   type ChangeRequestState,
@@ -42,6 +47,8 @@ import {
   type OptionChangeInput,
 } from '@/lib/jira-admin/field-options';
 import { describeChange, operationLines } from '@/lib/jira-admin/describe';
+import { notifyChangeOutcome } from '@/lib/admin-changes/notify';
+import { ROLE_OPERATOR } from '@/lib/access';
 import { reviewPrefix } from './review-link';
 
 const optionList = (what: string) =>
@@ -158,8 +165,41 @@ async function spacesOf(
   return ids.map((id) => keys.get(id) || `id ${id}`);
 }
 
+/**
+ * What `replaces` does: the person's own earlier pending proposal is
+ * cancelled; a free-text request, anyone's, is closed as built (its
+ * requester is told). The line to tell the model what happened.
+ */
+export async function replaceRequest(
+  db: Parameters<typeof cancelChangeRequest>[0],
+  subject: string,
+  replaces: string,
+  proposalId: string
+): Promise<string> {
+  const earlier = await getChangeRequestById(db, replaces);
+  if (earlier?.kind === REQUEST_KIND) {
+    if (await closeRequestAsProposed(db, earlier.id, proposalId)) {
+      notifyChangeOutcome({
+        db,
+        connector: 'jira-admin',
+        changeId: earlier.id,
+        title: earlier.title,
+        requester: earlier.subject,
+        approver: null,
+        outcome: 'proposed',
+      });
+      return `Closed the request this builds (${replaces}); its requester has been told.`;
+    }
+  }
+  const cancelled = await cancelChangeRequest(db, subject, replaces);
+  return cancelled
+    ? `Cancelled the request it replaces (${replaces}).`
+    : `Did not cancel ${replaces}: it is not a pending request of this user’s.`;
+}
+
 const STATE_WORDS: Record<ChangeRequestState, string> = {
   pending: 'waiting for review',
+  queued: 'approved, waiting to start',
   applying: 'being applied',
   applied: 'applied',
   partial: 'partly applied',
@@ -382,16 +422,7 @@ export async function registerChangeTools(
       if (picked.note) notes.push(picked.note);
       const replaces = text(args.replaces);
       if (replaces) {
-        const cancelled = await cancelChangeRequest(
-          dbResult.val,
-          context.subject,
-          replaces
-        );
-        notes.push(
-          cancelled
-            ? `Cancelled the request it replaces (${replaces}).`
-            : `Did not cancel ${replaces}: it is not a pending request of this user’s.`
-        );
+        notes.push(await replaceRequest(dbResult.val, context.subject, replaces, change.id));
       }
 
       const link = `${reviewPrefix(context)}${change.id}`;
@@ -405,7 +436,7 @@ export async function registerChangeTools(
         '',
         `Review and apply: ${link}`,
         `Change request ${change.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours. Only the ` +
-          'user can apply it, from that page while signed in to Renkei — share the link.',
+          'operator can approve it, from that page while signed in to Renkei, and it then applies in the background — share the link. Operators have been told it is waiting.',
       ];
       return {
         content: [{ type: 'text' as const, text: lines.join('\n') }],
@@ -420,9 +451,10 @@ export async function registerChangeTools(
       title: 'Jira Admin · Read — List proposed admin changes',
       description:
         'The user’s Jira admin change requests, newest first: what each changes, whether it ' +
-        'is waiting for review, applied, failed or expired, and its review link. Pass change ' +
-        'with an id for one request in full, including what each operation returned when it ' +
-        'was applied.',
+        'is waiting for review, approved and running, applied, failed or expired, and its ' +
+        'review link. Pass change with an id for one request in full, including what each ' +
+        'operation returned when it was applied, or what a request in words (someone without ' +
+        'approval rights asking for a change) asked for. Operators can pass everyone: true.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         pending: z
@@ -430,6 +462,10 @@ export async function registerChangeTools(
           .describe('Only requests still waiting for review (default: all recent ones)')
           .optional(),
         change: z.string().describe('One change request’s id, for its full detail').optional(),
+        everyone: z
+          .boolean()
+          .describe('Operators only: everyone’s requests, not just yours')
+          .optional(),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -440,16 +476,36 @@ export async function registerChangeTools(
 
       const id = typeof args.change === 'string' ? args.change.trim() : '';
       if (id) {
-        const change = await getChangeRequest(db, context.subject, id);
+        const operator = context.roles?.includes(ROLE_OPERATOR) === true;
+        const found = await getChangeRequestById(db, id);
+        const change =
+          found && mayView(found, { subject: context.subject, operator }) ? found : null;
         if (!change) return errText(`No change request ${id} of this user’s.`);
-        const { operations, reach } = describeChange(change);
         const state = stateOf(change);
+        if (change.kind === REQUEST_KIND) {
+          return textResult(
+            [
+              change.title,
+              `Status: ${STATE_WORDS[state]} — a request in words`,
+              ...(change.reason ? [`Why: ${change.reason}`] : []),
+              ...(change.resolution ? [`Note: ${change.resolution}`] : []),
+              '',
+              requestDescription(change.payload),
+              '',
+              `Request ${change.id}: build it with the matching jira_admin_propose_ tool, passing this id as replaces.`,
+              `${reviewPrefix(context)}${change.id}`,
+            ].join('\n')
+          );
+        }
+        const { operations, reach } = describeChange(change);
         const lines = [
           change.title,
           `Status: ${STATE_WORDS[state]}` +
             (state === 'pending' ? ` (expires in ${hoursLeft(change)})` : ''),
           ...(reach ? [`Where: ${reach}`] : []),
           ...(change.reason ? [`Why: ${change.reason}`] : []),
+          ...(change.step ? [`Now: ${change.step}`] : []),
+          ...(change.resolution ? [`Note: ${change.resolution}`] : []),
           '',
           ...(change.results
             ? change.results.map(
@@ -464,10 +520,17 @@ export async function registerChangeTools(
         return textResult(lines.join('\n'));
       }
 
-      const changes = await listChangeRequests(db, context.subject, {
-        limit: 20,
-        pendingOnly: args.pending === true,
-      });
+      const everyone = args.everyone === true && context.roles?.includes(ROLE_OPERATOR) === true;
+      const found = everyone
+        ? await listAllChangeRequests(db, { limit: 20 })
+        : await listChangeRequests(db, context.subject, {
+            limit: 20,
+            pendingOnly: args.pending === true,
+          });
+      const changes =
+        everyone && args.pending === true
+          ? found.filter((change) => stateOf(change) === 'pending')
+          : found;
       if (changes.length === 0) {
         return textResult(
           args.pending === true
@@ -477,7 +540,13 @@ export async function registerChangeTools(
       }
       const prefix = reviewPrefix(context);
       return textResult(
-        changes.map((change) => changeLine(change, `${prefix}${change.id}`)).join('\n')
+        changes
+          .map(
+            (change) =>
+              changeLine(change, `${prefix}${change.id}`) +
+              (everyone ? `\n  asked by ${change.subject} (id ${change.id})` : '')
+          )
+          .join('\n')
       );
     }
   );

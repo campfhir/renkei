@@ -49,7 +49,7 @@ import {
   type ChangeRequest,
   type OperationResult,
 } from './change-requests';
-import { failureLines, quickDeploy, startDeploy, waitForDeploy } from './deploy';
+import { deployStatus, failureLines, quickDeploy, startDeploy, waitForDeploy } from './deploy';
 import {
   applyScopesFor,
   brokenPreconditions,
@@ -65,7 +65,45 @@ const CONNECTOR = SALESFORCE_ADMIN_KIND.key;
 /** How long one apply request waits on its deploy before leaving it to a later look. */
 export const APPLY_WAIT_MS = 90_000;
 
+/** Says what the apply is doing right now; the job writes it to the row, which is also its heartbeat. */
+export type StepReporter = (step: string) => Promise<void> | void;
+
+/** How often a running deploy is asked how far along it is. */
+const PROGRESS_POLL_MS = 3_000;
+
 type Gate = { ok: true } | { ok: false; reason: string };
+
+function deployProgress(outcome: DeployOutcome): string {
+  const counted =
+    outcome.componentsTotal > 0
+      ? ` — ${outcome.componentsDeployed} of ${outcome.componentsTotal} components`
+      : '';
+  return `Salesforce is deploying${counted} (${outcome.status})`;
+}
+
+/**
+ * Poll a deploy until it is done or the budget runs out, saying how far it
+ * is on each look. The last answer either way: a deploy still running is
+ * not a failure.
+ */
+export async function waitReporting(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  deployId: string,
+  budgetMs: number,
+  onStep?: StepReporter,
+  pollMs = PROGRESS_POLL_MS,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+): Promise<Awaited<ReturnType<typeof deployStatus>>> {
+  if (!onStep) return waitForDeploy(context, access, deployId, budgetMs);
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    const status = await deployStatus(context, access, deployId);
+    if (!status.ok || status.outcome.done || Date.now() + pollMs > deadline) return status;
+    await onStep(deployProgress(status.outcome));
+    await sleep(pollMs);
+  }
+}
 
 export async function applyGate(
   db: Kysely<DB>,
@@ -314,10 +352,14 @@ async function runStep(
 async function runDataSteps(
   context: SalesforceCallContext,
   access: SalesforceAccess,
-  steps: readonly DataStep[]
+  steps: readonly DataStep[],
+  onStep?: StepReporter
 ): Promise<OperationResult[]> {
   const results: OperationResult[] = [];
-  for (const step of steps) results.push(await runStep(context, access, step));
+  for (const [index, step] of steps.entries()) {
+    await onStep?.(`Granting access (${index + 1} of ${steps.length}): ${stepLabel(step)}`);
+    results.push(await runStep(context, access, step));
+  }
   return results;
 }
 
@@ -329,7 +371,8 @@ async function finish(
   change: ChangeRequest,
   outcome: DeployOutcome,
   base: ApplyResults,
-  appliedBy: string
+  appliedBy: string,
+  onStep?: StepReporter
 ): Promise<ApplyResults & { status: 'applied' | 'partial' | 'failed' }> {
   const payload = readMetadataPayload(change.payload);
   const deployLine: OperationResult = outcome.success
@@ -344,7 +387,9 @@ async function finish(
         detail: failureLines(outcome).join('\n') || `Salesforce says ${outcome.status}.`,
       };
   const grants =
-    outcome.success && payload ? await runDataSteps(context, access, payload.dataSteps) : [];
+    outcome.success && payload
+      ? await runDataSteps(context, access, payload.dataSteps, onStep)
+      : [];
   const operations = [...base.operations, deployLine, ...grants];
   const status = !outcome.success
     ? 'failed'
@@ -363,8 +408,10 @@ export async function applyChangeRequest(
   access: SalesforceAccess,
   change: ChangeRequest,
   appliedBy: string,
-  waitMs = APPLY_WAIT_MS
+  waitMs = APPLY_WAIT_MS,
+  onStep?: StepReporter
 ): Promise<{ status: ChangeRequest['status']; results: ApplyResults }> {
+  await onStep?.('Checking the org has not changed since this was proposed');
   const payload = readMetadataPayload(change.payload);
   if (!payload) {
     const results = {
@@ -400,7 +447,7 @@ export async function applyChangeRequest(
 
   if (!deploys(payload)) {
     // Data only: nothing to deploy, the steps are the change.
-    const steps = await runDataSteps(context, access, payload.dataSteps);
+    const steps = await runDataSteps(context, access, payload.dataSteps, onStep);
     const failures = steps.filter((step) => step.outcome === 'failed').length;
     const status = failures === 0 ? 'applied' : failures === steps.length ? 'failed' : 'partial';
     const results = { operations: [checked, ...steps] };
@@ -410,6 +457,7 @@ export async function applyChangeRequest(
 
   const validatedId =
     change.validation && 'deployId' in change.validation ? change.validation.deployId : '';
+  await onStep?.('Starting the deploy in Salesforce');
   let quick = false;
   let started = validatedId ? await quickDeploy(context, access, validatedId) : null;
   if (started?.ok) quick = true;
@@ -426,12 +474,12 @@ export async function applyChangeRequest(
 
   const waited = started.outcome.done
     ? { ok: true as const, outcome: started.outcome }
-    : await waitForDeploy(context, access, started.outcome.id, waitMs);
+    : await waitReporting(context, access, started.outcome.id, waitMs, onStep);
   if (!waited.ok || !waited.outcome.done) {
     // Still running in Salesforce: a later look finishes it.
     return { status: 'applying', results: base };
   }
-  const done = await finish(db, context, access, change, waited.outcome, base, appliedBy);
+  const done = await finish(db, context, access, change, waited.outcome, base, appliedBy, onStep);
   return { status: done.status, results: done };
 }
 
@@ -444,10 +492,12 @@ export async function refreshApplying(
   db: Kysely<DB>,
   context: SalesforceCallContext,
   access: SalesforceAccess,
-  change: ChangeRequest
+  change: ChangeRequest,
+  waitMs = 0,
+  onStep?: StepReporter
 ): Promise<boolean> {
   if (change.status !== 'applying' || !change.results?.deployId) return false;
-  const status = await waitForDeploy(context, access, change.results.deployId, 0);
+  const status = await waitReporting(context, access, change.results.deployId, waitMs, onStep);
   if (!status.ok || !status.outcome.done) return false;
   await finish(
     db,
@@ -456,7 +506,8 @@ export async function refreshApplying(
     change,
     status.outcome,
     change.results,
-    change.appliedBy ?? change.subject
+    change.approvedBy ?? change.appliedBy ?? change.subject,
+    onStep
   );
   return true;
 }

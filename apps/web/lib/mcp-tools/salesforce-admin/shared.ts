@@ -15,10 +15,15 @@ import type { MCPToolContext } from '../common';
 import { errText, type SalesforceAccess } from '../salesforce/client';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
+import { notifyChangeOutcome, notifyOperatorsOfRequest } from '@/lib/admin-changes/notify';
 import {
   cancelChangeRequest,
   CHANGE_REQUEST_TTL_HOURS,
+  closeRequestAsProposed,
   createChangeRequest,
+  createRequest,
+  getChangeRequestById,
+  REQUEST_KIND,
   setValidation,
   validationFrom,
   type Validation,
@@ -106,7 +111,12 @@ export async function proposeAndValidate(
   if (!context.subject) return errText('No signed-in identity on this request.');
   const db = dbOf(context);
   if (!db) return errText('Could not store the change request.');
-  if (input.replaces) await cancelChangeRequest(db, context.subject, input.replaces);
+  // Replacing your own earlier proposal cancels it. An operator may also
+  // replace someone's free-text request, which closes it as built.
+  const replaced = input.replaces ? await getChangeRequestById(db, input.replaces) : null;
+  if (input.replaces && replaced?.kind !== REQUEST_KIND) {
+    await cancelChangeRequest(db, context.subject, input.replaces);
+  }
   const change = await createChangeRequest(db, {
     subject: context.subject,
     agentId: context.agent?.agentId,
@@ -143,6 +153,27 @@ export async function proposeAndValidate(
     validation = waited.ok ? validationFrom(waited.outcome) : validationFrom(started.outcome);
   }
   await setValidation(db, change.id, validation);
+  if (replaced && replaced.kind === REQUEST_KIND) {
+    if (await closeRequestAsProposed(db, replaced.id, change.id)) {
+      notifyChangeOutcome({
+        db,
+        connector: 'salesforce-admin',
+        changeId: replaced.id,
+        title: replaced.title,
+        requester: replaced.subject,
+        approver: null,
+        outcome: 'proposed',
+      });
+    }
+  }
+  notifyOperatorsOfRequest({
+    db,
+    connector: 'salesforce-admin',
+    changeId: change.id,
+    title: change.title,
+    requester: context.subject,
+    freeText: false,
+  });
 
   const link = `${reviewPrefix(context)}${change.id}`;
   return {
@@ -155,8 +186,8 @@ export async function proposeAndValidate(
           '',
           ...validationLines(validation),
           '',
-          `Review and apply: ${link}`,
-          `Request ${change.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours. Only the person can apply it, from that page.`,
+          `Review and approve: ${link}`,
+          `Request ${change.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours. Only an operator can approve it, from that page, and it then deploys in the background; operators have been told it is waiting.`,
         ].join('\n'),
       },
     ],
@@ -270,4 +301,49 @@ export function fieldRows(spec: FieldSpec): ComponentView['rows'] {
   add('Help text', spec.helpText);
   add('Description', spec.description);
   return rows;
+}
+
+/** File a free-text request for an operator to build or decline, and answer with its link. */
+export async function fileRequest(
+  context: MCPToolContext,
+  access: SalesforceAccess,
+  input: { title: string; description: string; reason?: string }
+) {
+  if (!context.subject) return errText('No signed-in identity on this request.');
+  const db = dbOf(context);
+  if (!db) return errText('Could not store the change request.');
+  const request = await createRequest(db, {
+    subject: context.subject,
+    agentId: context.agent?.agentId,
+    connectorKey: access.connector,
+    orgId: access.orgId,
+    instanceUrl: access.instanceUrl,
+    title: input.title,
+    reason: input.reason,
+    description: input.description,
+  });
+  notifyOperatorsOfRequest({
+    db,
+    connector: 'salesforce-admin',
+    changeId: request.id,
+    title: request.title,
+    requester: context.subject,
+    freeText: true,
+  });
+  const link = `${reviewPrefix(context)}${request.id}`;
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: [
+          `Requested in ${access.connectorName}${access.sandbox ? ' (sandbox)' : ' (production)'} — nothing has changed in Salesforce.`,
+          'Operators have been told. One of them will build it as a proposal, which Salesforce validates before they approve it, or decline it with a reason.',
+          '',
+          `Follow it here: ${link}`,
+          `Request ${request.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours if nobody picks it up.`,
+        ].join('\n'),
+      },
+    ],
+    _meta: actMeta({ url: link }),
+  };
 }

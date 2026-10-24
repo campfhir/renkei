@@ -23,11 +23,8 @@ import type { JiraAdminAuth } from './jira-admin-auth';
 import { errText, jiraAdminGet, rec, records, str, type JiraAdminAccess } from './client';
 import { reviewPrefix } from './review-link';
 import { ATLASSIAN_ADMIN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
-import {
-  CHANGE_REQUEST_TTL_HOURS,
-  cancelChangeRequest,
-  createChangeRequest,
-} from '@/lib/jira-admin/change-requests';
+import { CHANGE_REQUEST_TTL_HOURS, createChangeRequest } from '@/lib/jira-admin/change-requests';
+import { replaceRequest } from './changes';
 import { describeChange, operationLines } from '@/lib/jira-admin/describe';
 import { resolveGroup, resolvePerson, type Group, type Person } from '@/lib/jira-admin/people';
 import {
@@ -363,16 +360,7 @@ export async function registerProposeSpaceTools(
 
       const replaces = text(args.replaces);
       if (replaces) {
-        const cancelled = await cancelChangeRequest(
-          db,
-          context.subject,
-          replaces
-        );
-        notes.push(
-          cancelled
-            ? `Cancelled the request it replaces (${replaces}).`
-            : `Did not cancel ${replaces}: it is not a pending request of this user’s.`
-        );
+        notes.push(await replaceRequest(db, context.subject, replaces, change.id));
       }
 
       const link = `${reviewPrefix(context)}${change.id}`;
@@ -386,7 +374,7 @@ export async function registerProposeSpaceTools(
         '',
         `Review and apply: ${link}`,
         `Change request ${change.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours. Only the ` +
-          'user can apply it, from that page while signed in to Renkei — share the link.',
+          'operator can approve it, from that page while signed in to Renkei, and it then applies in the background — share the link. Operators have been told it is waiting.',
       ];
       return {
         content: [{ type: 'text' as const, text: lines.join('\n') }],

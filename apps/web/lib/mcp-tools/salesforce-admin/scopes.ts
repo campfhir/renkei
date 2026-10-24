@@ -20,6 +20,12 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
     case 'salesforce_admin_get_record_type':
       return ['sfa-read'];
 
+    // Asking for a change in words needs only what looking things up
+    // needs: nothing can change from it (the approval is an operator's,
+    // in the browser).
+    case 'salesforce_admin_request_change':
+      return ['sfa-read'];
+
     case 'salesforce_admin_propose_object':
     case 'salesforce_admin_propose_fields':
     case 'salesforce_admin_propose_field_changes':

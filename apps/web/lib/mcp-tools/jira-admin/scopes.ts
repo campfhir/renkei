@@ -108,6 +108,12 @@ export function jiraAdminScopeFor(toolName: string): string[] {
     case 'jira_admin_propose_automation_run':
       return ['read:jira-work'];
 
+    // Asking for a change in words needs only what looking things up
+    // needs: nothing can change from it (the approval is an operator's, in
+    // the browser).
+    case 'jira_admin_request_change':
+      return ['read:jira-work'];
+
     // A tool nobody mapped stands on the whole admin set: registering it
     // for less could only produce 401s.
     default:

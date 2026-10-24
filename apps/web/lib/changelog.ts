@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-24',
     entries: [
       {
+        kind: 'changed',
+        title: 'Salesforce and Jira changes are approved by an operator and run in the background',
+        detail:
+          'Anyone can now ask for a change to Salesforce or Jira, but only an operator approves it, and it deploys on that operator’s own connection. Approving no longer holds the page: the change is queued, runs on the server, shows what it is doing (and where a deploy has got to), and notifies both the person who asked and the operator when it finishes or fails. Operators are notified when a request is waiting, see everyone’s requests with who asked, and can decline one with a reason the requester reads.',
+      },
+      {
+        kind: 'added',
+        title: 'Ask an operator for a Salesforce or Jira change in words',
+        detail:
+          'Without approval rights you keep the lookup tools (objects, fields, picklists, layouts, spaces) and get a request tool in place of the propose tools: describe what you want and why, and an operator builds it as a proposal that Salesforce or Jira validates, or declines it with a reason. Follow it from the Change requests link on the connector card.',
+      },
+      {
         kind: 'added',
         title: 'Unsent messages are kept per chat',
         detail:

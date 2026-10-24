@@ -123,9 +123,31 @@ Change requests also give:
 - **An audit trail.** Who proposed, who applied, what each operation
   returned: a record of every admin change Renkei made.
 
-A request belongs to the person it was proposed for — their chat, their MCP
-client, their agent — and only they can apply it, on their own grant. Only
-Jira admins make changes, so there is no hand-off to anyone else.
+Asking and approving are different people's jobs. A request belongs to
+whoever filed it (their chat, their MCP client, their agent), who can follow
+it and withdraw it; only an operator (`renkei-operator`) approves, and the
+operations run on **the approving operator's own Jira grant**, not the
+requester's. Everyone with an operator role sees every request on the review
+list, with who asked, and is notified when one is waiting (not the person who
+filed it). Someone known not to be an operator keeps the read tools and gets
+`jira_admin_request_change` in place of the `jira_admin_propose_*` tools: a
+request in words (`kind = 'request'`), which an operator builds with the
+matching propose tool (passing its id as `replaces`, which closes it as built)
+or declines with a reason the requester reads. Tokens with no recorded roles,
+an agent's among them, keep every tool — the approval, not the tool list, is
+the control.
+
+Approving does not apply inside the click. The route re-runs the gate,
+checks the operator's connection to the site, moves the row to `queued`
+(recording `approved_by`) and answers `202`; a job
+(`lib/jira-admin/apply-job.ts`) runs in the web process's `after()`, touching
+the row as it goes (`updated_at` is the heartbeat, `step` what it is doing).
+A sweep on every web process starts queued rows left by a process that went
+away. A job that dies partway is **never run again** — which operations reached
+Jira is unknown — it is ended as failed, saying to check Jira. The requester and
+the approver are both notified when it ends, including when it fails, and the
+review page and list refresh themselves while anything runs, so the operator
+can leave and come back.
 
 ### Stages
 

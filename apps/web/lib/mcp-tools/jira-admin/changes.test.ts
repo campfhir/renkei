@@ -28,8 +28,10 @@ jest.mock('@/lib/jira-admin/change-requests', () => {
     ...actual,
     createChangeRequest: jest.fn(),
     cancelChangeRequest: jest.fn(),
-    getChangeRequest: jest.fn(),
+    getChangeRequestById: jest.fn(),
+    closeRequestAsProposed: jest.fn(),
     listChangeRequests: jest.fn(),
+    listAllChangeRequests: jest.fn(),
   };
 });
 
@@ -41,7 +43,9 @@ import type { JiraAdminAuth } from './jira-admin-auth';
 import {
   cancelChangeRequest,
   createChangeRequest,
-  getChangeRequest,
+  closeRequestAsProposed,
+  getChangeRequestById,
+  listAllChangeRequests,
   listChangeRequests,
   type ChangeRequest,
 } from '@/lib/jira-admin/change-requests';
@@ -128,6 +132,10 @@ function storedChange(overrides: Partial<ChangeRequest> = {}): ChangeRequest {
     appliedBy: null,
     appliedAt: null,
     cancelledAt: null,
+    approvedBy: null,
+    approvedAt: null,
+    step: null,
+    resolution: null,
     ...overrides,
   };
 }
@@ -135,7 +143,9 @@ function storedChange(overrides: Partial<ChangeRequest> = {}): ChangeRequest {
 beforeEach(() => {
   jest.mocked(createChangeRequest).mockReset();
   jest.mocked(cancelChangeRequest).mockReset();
-  jest.mocked(getChangeRequest).mockReset();
+  jest.mocked(getChangeRequestById).mockReset();
+  jest.mocked(closeRequestAsProposed).mockReset();
+  jest.mocked(listAllChangeRequests).mockReset();
   jest.mocked(listChangeRequests).mockReset();
   jest
     .mocked(createChangeRequest)
@@ -326,6 +336,29 @@ describe('jira_admin_propose_option_changes', () => {
   });
 });
 
+describe('building a request in words', () => {
+  it('closes the free-text request it replaces, whoever filed it, instead of cancelling it', async () => {
+    jest
+      .mocked(getChangeRequestById)
+      .mockResolvedValueOnce(
+        storedChange({ id: 'b7c2a1d0-1111-4222-8333-944455556666', kind: 'request', subject: 'asker' })
+      );
+    jest.mocked(closeRequestAsProposed).mockResolvedValueOnce(true);
+    const result = await call('jira_admin_propose_option_changes', {
+      field: 'Source',
+      add: ['Vendor'],
+      replaces: 'b7c2a1d0-1111-4222-8333-944455556666',
+    });
+    expect(closeRequestAsProposed).toHaveBeenCalledWith(
+      expect.anything(),
+      'b7c2a1d0-1111-4222-8333-944455556666',
+      expect.any(String)
+    );
+    expect(cancelChangeRequest).not.toHaveBeenCalled();
+    expect(text(result)).toContain('Closed the request this builds');
+  });
+});
+
 describe('jira_admin_list_changes', () => {
   it('lists the user’s requests with their state and review links', async () => {
     jest.mocked(listChangeRequests).mockResolvedValueOnce([
@@ -347,7 +380,7 @@ describe('jira_admin_list_changes', () => {
   });
 
   it('shows one request with what each operation returned', async () => {
-    jest.mocked(getChangeRequest).mockResolvedValueOnce(
+    jest.mocked(getChangeRequestById).mockResolvedValueOnce(
       storedChange({
         status: 'partial',
         results: [
@@ -362,8 +395,22 @@ describe('jira_admin_list_changes', () => {
     expect(result).toContain('• Disable “Legacy” — failed: Jira answered 400.');
   });
 
+  it('shows an operator everyone’s requests, and an ordinary user only their own', async () => {
+    jest.mocked(listAllChangeRequests).mockResolvedValue([storedChange({ subject: 'asker' })]);
+    jest.mocked(listChangeRequests).mockResolvedValue([]);
+    const operator = text(
+      await call('jira_admin_list_changes', { everyone: true }, { ...context, roles: ['renkei-operator'] })
+    );
+    expect(operator).toContain('asked by asker');
+    const ordinary = text(
+      await call('jira_admin_list_changes', { everyone: true }, { ...context, roles: ['renkei-user'] })
+    );
+    expect(listAllChangeRequests).toHaveBeenCalledTimes(1);
+    expect(ordinary).toContain('No Jira admin change requests yet.');
+  });
+
   it('says so when a request is not the user’s', async () => {
-    jest.mocked(getChangeRequest).mockResolvedValueOnce(null);
+    jest.mocked(getChangeRequestById).mockResolvedValueOnce(null);
     const result = await call('jira_admin_list_changes', { change: CHANGE_ID });
     expect(result.isError).toBe(true);
   });

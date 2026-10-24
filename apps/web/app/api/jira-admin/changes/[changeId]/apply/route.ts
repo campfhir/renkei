@@ -1,36 +1,37 @@
 /**
- * Apply a Jira admin change request — the only way one ever reaches Jira
+ * Approve a Jira admin change request — the only way one ever reaches Jira
  * (docs/project-management-design.md, "The confirm rule").
  *
  * A browser session, never an MCP token: this is the click the confirm
- * rule is about, and no MCP host can prove a click was a person's. Only
- * the request's owner, on their own Jira Administration grant, and only
- * while the org would still let them propose it (applyGate). The
- * operations come from the stored row — the body is ignored — so what runs
- * is exactly what the review page showed.
+ * rule is about, and no MCP host can prove a click was a person's. Only an
+ * operator may approve, on their own Jira Administration grant, and only
+ * while the org would still let them apply it (applyGate). Whoever
+ * proposed it, the operator is the one who holds the key: the operations
+ * run on their connection, not the requester's.
+ *
+ * Approving does not apply inside this request. It queues the change and
+ * answers 202 at once; the job (lib/jira-admin/apply-job.ts) runs it on the
+ * server and reports progress on the row, so the operator can leave the
+ * page and come back to see how it went. The operations come from the
+ * stored row — the body is ignored — so what runs is exactly what the
+ * review page showed.
  */
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
-import { getOrigin } from '@/lib/get-origin';
-import { recordAuditEvent } from '@/lib/audit-events';
-import { logger } from '@/lib/logger';
-import { resolveJiraAdminAccess, type JiraAdminAccess } from '@/lib/mcp-tools/jira-admin/client';
-import { resolveJsmAccess } from '@/lib/mcp-tools/jira-admin/jsm-access';
-import { REQUEST_TYPE_KIND } from '@/lib/jira-admin/request-type';
-import { isAutomationKind } from '@/lib/jira-admin/automation';
-import { resolveAutomationAccess } from '@/lib/mcp-tools/jira-admin/automation-client';
+import { ROLE_OPERATOR } from '@/lib/access';
 import {
-  claimChangeRequest,
-  finishChangeRequest,
-  getChangeRequest,
+  getChangeRequestById,
+  queueChangeRequest,
+  REQUEST_KIND,
   stateOf,
-  type OperationResult,
 } from '@/lib/jira-admin/change-requests';
-import { applyChangeRequest, applyGate } from '@/lib/jira-admin/apply';
+import { applyGate } from '@/lib/jira-admin/apply';
+import { resolveApplyAccess, runApplyJob } from '@/lib/jira-admin/apply-job';
 
 const NOT_PENDING: Record<string, string> = {
+  queued: 'This change request is already approved and waiting to be applied.',
   applying: 'This change request is already being applied.',
   applied: 'This change request has already been applied.',
   partial: 'This change request has already been applied, in part.',
@@ -50,6 +51,12 @@ export async function POST(
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
+  if (!session.roles.includes(ROLE_OPERATOR)) {
+    return NextResponse.json(
+      { error: 'Only an operator can approve a change to Jira.' },
+      { status: 403 }
+    );
+  }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -57,10 +64,18 @@ export async function POST(
   }
   const db = dbResult.val;
 
-  // Owner-scoped: someone else's request is not found, not forbidden.
-  const change = await getChangeRequest(db, session.subject, changeId);
+  const change = await getChangeRequestById(db, changeId);
   if (!change) {
     return NextResponse.json({ error: 'Change request not found' }, { status: 404 });
+  }
+  if (change.kind === REQUEST_KIND) {
+    return NextResponse.json(
+      {
+        error:
+          'This is a request in words, not a proposal. Ask in chat to build it as a proposal, or decline it.',
+      },
+      { status: 409 }
+    );
   }
   const state = stateOf(change);
   if (state !== 'pending') {
@@ -72,118 +87,20 @@ export async function POST(
     return NextResponse.json({ error: gate.reason }, { status: 403 });
   }
 
-  const originResult = await getOrigin(request);
-  const access = await resolveJiraAdminAccess({
-    subject: session.subject,
-    origin: originResult.ok ? originResult.val : undefined,
-  });
-  if (typeof access === 'string') {
-    return NextResponse.json({ error: access }, { status: 409 });
-  }
-  if (access.cloudId !== change.cloudId) {
-    // Reconnecting to another site must not redirect an old proposal there.
-    return NextResponse.json(
-      {
-        error:
-          'Your Jira Administration connection is on a different Jira site than the one this ' +
-          'change was proposed for, so it was not applied.',
-      },
-      { status: 409 }
-    );
+  // Refuse now, with the reason, what the job would only fail later on: the
+  // operator has no usable connection to the site this was proposed for.
+  const resolved = await resolveApplyAccess(session.subject, change);
+  if (typeof resolved === 'string') {
+    return NextResponse.json({ error: resolved }, { status: 409 });
   }
 
-  // A request type runs on the JSM grant (lib/jira-admin/request-type.ts):
-  // resolved here, with the same site check, before the claim.
-  let jsm: JiraAdminAccess | undefined;
-  if (change.kind === REQUEST_TYPE_KIND) {
-    const resolved = await resolveJsmAccess(session.subject);
-    if (typeof resolved === 'string') {
-      return NextResponse.json({ error: resolved }, { status: 409 });
-    }
-    if (resolved.cloudId !== change.cloudId) {
-      return NextResponse.json(
-        {
-          error:
-            'Your Jira Service Management connection is on a different Jira site than the one ' +
-            'this change was proposed for, so it was not applied.',
-        },
-        { status: 409 }
-      );
-    }
-    jsm = resolved;
-  }
-
-  // Automation runs on the person's Atlassian API token, saved for a site.
-  let automation: JiraAdminAccess | undefined;
-  if (isAutomationKind(change.kind)) {
-    const resolved = await resolveAutomationAccess({ subject: session.subject });
-    if (typeof resolved === 'string') {
-      return NextResponse.json({ error: resolved }, { status: 409 });
-    }
-    if (resolved.cloudId !== change.cloudId) {
-      return NextResponse.json(
-        {
-          error:
-            'Your Atlassian API token was saved for a different Jira site than the one this ' +
-            'change was proposed for, so it was not applied. Save it again on the Connectors page.',
-        },
-        { status: 409 }
-      );
-    }
-    automation = resolved;
-  }
-
-  // Claim before running, so two clicks cannot both apply it.
-  if (!(await claimChangeRequest(db, session.subject, change.id))) {
+  if (!(await queueChangeRequest(db, change.id, session.subject))) {
     return NextResponse.json(
       { error: 'This change request is no longer pending.' },
       { status: 409 }
     );
   }
+  after(() => runApplyJob(db, change.id));
 
-  let outcome: { status: 'applied' | 'partial' | 'failed'; results: OperationResult[] };
-  try {
-    outcome = await applyChangeRequest({ subject: session.subject }, access, change, {
-      jsm,
-      automation,
-    });
-  } catch (error) {
-    logger.error('jira admin change apply threw', {
-      component: 'jira-admin/apply',
-      subject: session.subject,
-      changeId: change.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    outcome = {
-      status: 'failed',
-      results: [
-        {
-          label: 'Apply the change request',
-          outcome: 'failed',
-          detail: 'Something went wrong partway; check Jira for what reached it.',
-        },
-      ],
-    };
-  }
-
-  await finishChangeRequest(db, change.id, { ...outcome, appliedBy: session.subject });
-
-  const done = outcome.results.filter((result) => result.outcome === 'done').length;
-  recordAuditEvent({
-    actorSubject: session.subject,
-    action: 'jira_admin.change_applied',
-    targetKind: 'jira_admin_change',
-    targetLabel: change.title,
-    details: {
-      changeId: change.id,
-      kind: change.kind,
-      status: outcome.status,
-      operations: outcome.results.length,
-      done,
-      site: change.siteUrl ?? change.cloudId,
-      ...(change.agentId ? { proposedByAgent: change.agentId } : {}),
-    },
-  });
-
-  return NextResponse.json({ status: outcome.status, results: outcome.results });
+  return NextResponse.json({ status: 'queued' }, { status: 202 });
 }

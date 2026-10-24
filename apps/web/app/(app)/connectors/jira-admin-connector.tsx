@@ -99,7 +99,7 @@ export default function JiraAdminConnector({
             className="font-medium text-blue-700 hover:underline dark:text-blue-400"
           >
             {pendingChanges > 0
-              ? `${pendingChanges} proposed ${pendingChanges === 1 ? 'change' : 'changes'} waiting for your review`
+              ? `${pendingChanges} proposed ${pendingChanges === 1 ? 'change' : 'changes'} waiting for review`
               : 'Proposed changes'}
           </Link>
           <span aria-hidden="true" className="px-2 text-gray-400">

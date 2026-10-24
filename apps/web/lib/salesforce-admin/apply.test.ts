@@ -219,6 +219,10 @@ const change = (): ChangeRequest => ({
   appliedBy: null,
   appliedAt: null,
   cancelledAt: null,
+  approvedBy: null,
+  approvedAt: null,
+  step: null,
+  resolution: null,
 });
 
 const db = {} as Kysely<DB>;

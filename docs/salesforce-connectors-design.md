@@ -571,6 +571,29 @@ Salesforce gives this pattern something Jira does not — a dry run:
    sandbox): the same package, re-read and re-validated against the target, as a new change
    request. This is the admin's sandbox-to-production loop without change sets.
 
+**Who approves, and how it runs.** Asking and approving are different people's jobs. Anyone with an
+admin connection can *ask*; only an operator (`renkei-operator`) *approves*, from the review page,
+and the deploy runs on **the approving operator's own connection**, whoever proposed it. A person
+who is known not to be an operator keeps the read tools (describe an object, a field, a picklist,
+the layouts and permission sets) but not the `salesforce_admin_propose_*` tools: they get
+`salesforce_admin_request_change`, a request in words (`kind = 'request'`: what, and why) with no
+package and no validation. An operator builds it as a proposal with the matching propose tool,
+passing the request's id as `replaces` (which closes the request as built), or declines it with a
+reason the requester reads. (Tokens with no recorded roles, an agent's among them, keep every
+tool: the approval, not the tool list, is the control.)
+
+Approving does not deploy inside the request. The route re-runs the gate, checks the operator can
+reach the org, moves the row to `queued` (recording `approved_by`) and answers `202`; a job
+(`lib/salesforce-admin/apply-job.ts`) then runs in the web process's `after()`. The row is the
+queue: a sweep on every web process claims queued rows left by a process that went away, and takes
+over an `applying` row whose job stopped touching it (`updated_at` is the heartbeat; the job writes
+its latest `step` there, such as "Salesforce is deploying — 2 of 5 components"). A job that dies
+after Salesforce gave the deploy an id is followed to the end, never started again; one that died
+before is ended as failed, saying to look at Setup → Deployment Status. The review page and the
+list poll while anything is queued or running, so the operator can leave and come back. Operators
+are notified when a request is waiting (the person who filed it is not), and the requester and the
+approver are both notified when it ends, including when it fails.
+
 Deploys are transactional (`rollbackOnError`, which production requires anyway), so a request
 applies entirely or not at all. Test level: `NoTestRun` when the package holds no Apex (allowed in
 production), otherwise `RunLocalTests`.

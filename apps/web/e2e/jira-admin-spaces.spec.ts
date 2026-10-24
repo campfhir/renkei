@@ -124,7 +124,7 @@ async function seedTenant(fixture: Fixture, scopes = ALL_SCOPES): Promise<string
     await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
-      [fixture.sessionId, fixture.subject, ['renkei-user'], new Date(Date.now() + 24 * 3_600_000)]
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
       `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,

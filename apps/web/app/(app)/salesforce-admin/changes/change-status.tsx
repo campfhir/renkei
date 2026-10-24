@@ -8,6 +8,7 @@ import type { ChangeRequestState, Validation } from '@/lib/salesforce-admin/chan
 
 const LABELS: Record<ChangeRequestState, string> = {
   pending: 'Waiting for review',
+  queued: 'Approved · queued',
   applying: 'Deploying',
   applied: 'Applied',
   // Deployed, and a later step (a permission grant) did not finish.
@@ -28,6 +29,7 @@ function tone(state: ChangeRequestState): string {
     case 'failed':
       return 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300';
     case 'pending':
+    case 'queued':
     case 'applying':
       return 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300';
     default:
