@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { addEntry, isProductPath, optsOut, validate } from './changelog.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const NOW = new Date('2026-10-22T12:00:00Z');
+const NOW = new Date('2026-10-24T12:00:00Z');
 
 const release = (date, entries = [{ kind: 'added', title: 'A thing', detail: 'It works.' }]) =>
   `{\n  date: ${date},\n  entries: [\n${entries
@@ -47,7 +47,7 @@ test('an impossible calendar date is rejected', () => {
 
 test('a future date is rejected, with a day of slack for time zones', () => {
   assert.deepEqual(validate(file(release("'2026-10-23'")), NOW), []);
-  assert.match(validate(file(release("'2026-10-25'")), NOW)[0], /in the future/);
+  assert.match(validate(file(release("'2026-10-26'")), NOW)[0], /in the future/);
 });
 
 test('releases out of newest-first order are rejected', () => {
