@@ -716,7 +716,9 @@ async function executeTurnBody(
         ...(auto ? [taskCompleteTool()] : []),
       ]
     ).filter((tool) => !denied.has(tool.def.name));
-    const discoveryTool = findToolsTool(surface.discoverable);
+    // Offered even with nothing to find: a new chat starts with core
+    // connectors only, and its model should still find the tool when asked.
+    const discoveryTool = findToolsTool(surface.discoverable, { alwaysOffer: true });
     const localTools = createLocalToolSet(
       discoveryTool ? [...baseLocalTools, discoveryTool] : baseLocalTools
     );
@@ -757,7 +759,7 @@ async function executeTurnBody(
         chatSummary: summary,
         chatFiles: context.chatFiles,
         hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
-        hasDiscoverableTools: discoveryTool !== null,
+        hasDiscoverableTools: surface.discoverable.length > 0,
         hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
         voice: input.voice === true,
         hasDelegate: delegate !== null,
