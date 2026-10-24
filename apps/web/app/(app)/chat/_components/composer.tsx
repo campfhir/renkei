@@ -587,7 +587,7 @@ export default function Composer({
         {...composerAnchor}
         className={`transition ${
           bare
-            ? `border-t ${
+            ? `border-t py-2 ${
                 dragging
                   ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
                   : 'border-gray-200 dark:border-gray-800'
