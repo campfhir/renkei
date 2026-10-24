@@ -170,6 +170,15 @@ test('app menu: the column never scrolls, only the chat list does, on desktop an
         listScrolls: true,
         footerInside: true,
       });
+      // The list always has room for four chats at once.
+      const fourShown = await chats.evaluate((list) => {
+        const box = list.getBoundingClientRect();
+        return [...list.querySelectorAll('a')].filter((link) => {
+          const row = link.getBoundingClientRect();
+          return row.top >= box.top && row.bottom <= box.bottom;
+        }).length;
+      });
+      expect(fourShown, `chats shown at ${size.width}px`).toBeGreaterThanOrEqual(4);
     }
   } finally {
     await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [

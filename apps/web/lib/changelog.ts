@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-24',
     entries: [
       {
+        kind: 'changed',
+        title: "The menu's chat list always shows four chats",
+        detail:
+          'The chat list in the app menu keeps room for at least four chats before the menu itself has to scroll.',
+      },
+      {
         kind: 'fixed',
         title: 'The app menu no longer scrolls as a whole',
         detail:
