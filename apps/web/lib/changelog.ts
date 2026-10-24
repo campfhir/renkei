@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Salesforce Admin proposals validate again',
+        detail:
+          'Proposing or applying a Salesforce change no longer fails with an invalid multipart request error, so new objects and fields can be proposed and deployed.',
+      },
+      {
+        kind: 'fixed',
         title: 'Chats no longer lose all their tools',
         detail:
           "A fault in one Salesforce Admin tool could stop every connector's tools from loading, so a chat reported it had none. That tool is fixed, a broken tool is now skipped instead of taking the rest down, and a chat's find_tools always answers, saying what is enabled or that the tool service failed.",
