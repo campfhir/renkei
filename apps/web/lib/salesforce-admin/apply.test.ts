@@ -42,6 +42,7 @@ const FULL = '0Af00000000000FAAA';
 
 let fieldExistsNow: boolean;
 let quickQualifies: boolean;
+let quickRefusal: { status: number; errorCode: string; message: string };
 let deployDone: boolean;
 let deploySucceeds: boolean;
 let grantFails: boolean;
@@ -141,7 +142,9 @@ global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   if (method === 'POST' && url.pathname === `${V}/metadata/deployRequest/${VALIDATED}`) {
     return quickQualifies
       ? answer(201, result(QUICK))
-      : answer(404, [{ errorCode: 'NOT_FOUND', message: 'no' }]);
+      : answer(quickRefusal.status, [
+          { errorCode: quickRefusal.errorCode, message: quickRefusal.message },
+        ]);
   }
   if (method === 'POST' && url.pathname === `${V}/metadata/deployRequest`)
     return answer(201, result(FULL));
@@ -227,6 +230,7 @@ beforeEach(() => {
   requests = [];
   fieldExistsNow = false;
   quickQualifies = true;
+  quickRefusal = { status: 404, errorCode: 'NOT_FOUND', message: 'no' };
   deployDone = true;
   deploySucceeds = true;
   grantFails = false;
@@ -308,6 +312,29 @@ describe('applyChangeRequest', () => {
       'Content-Disposition: form-data; name="json"\r\nContent-Type: application/json\r\n\r\n'
     );
     expect(text).toContain('name="file"; filename="deploy.zip"');
+  });
+
+  it('deploys in full when the validation ran no tests, which Salesforce refuses with INVALID_ID_FIELD', async () => {
+    quickQualifies = false;
+    quickRefusal = {
+      status: 400,
+      errorCode: 'INVALID_ID_FIELD',
+      message: 'Source validate did not run tests in the org',
+    };
+    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    expect(outcome.status).toBe('applied');
+    expect(outcome.results.deployId).toBe(FULL);
+    expect(outcome.results.quick).toBe(false);
+  });
+
+  it('does not deploy in full after a quick deploy is refused for any other reason', async () => {
+    quickQualifies = false;
+    quickRefusal = { status: 400, errorCode: 'INVALID_FIELD', message: 'something else' };
+    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    expect(outcome.status).toBe('failed');
+    expect(
+      requests.some((r) => r.method === 'POST' && r.path === `${V}/metadata/deployRequest`)
+    ).toBe(false);
   });
 
   it('fails in Salesforce’s words, and grants nothing, when the deploy fails', async () => {

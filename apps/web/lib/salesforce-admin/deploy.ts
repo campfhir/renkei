@@ -167,7 +167,8 @@ export async function deployStatus(
 
 /**
  * Deploy a passed validation without running it again. `null` when
- * Salesforce says it no longer qualifies (404) — deploy in full instead.
+ * Salesforce says it does not qualify (404, or INVALID_ID_FIELD for a
+ * validation that ran no tests) — deploy in full instead.
  */
 export async function quickDeploy(
   context: SalesforceCallContext,
@@ -181,7 +182,15 @@ export async function quickDeploy(
     `/metadata/deployRequest/${encodeURIComponent(validatedId)}`,
     { validatedDeployRequestId: validatedId }
   );
-  if (!result.ok) return result.status === 404 ? null : { ok: false, error: result.error };
+  if (!result.ok) {
+    // Not qualifying comes back as a 404, or as INVALID_ID_FIELD ("Source
+    // validate did not run tests in the org") — the case for every
+    // production validation here, since a package without Apex runs none.
+    const doesNotQualify =
+      result.status === 404 ||
+      result.errors.some((error) => error.errorCode === 'INVALID_ID_FIELD');
+    return doesNotQualify ? null : { ok: false, error: result.error };
+  }
   return { ok: true, outcome: parseDeployResult(result.body) };
 }
 

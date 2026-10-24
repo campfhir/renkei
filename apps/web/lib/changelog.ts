@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Applying a Salesforce change no longer fails after it validates',
+        detail:
+          'A proposal that Salesforce had validated could still fail when applied with a message about tests not running; it now deploys normally instead.',
+      },
+      {
+        kind: 'fixed',
         title: 'Salesforce Admin proposals validate again',
         detail:
           'Proposing or applying a Salesforce change no longer fails with an invalid multipart request error, so new objects and fields can be proposed and deployed.',
