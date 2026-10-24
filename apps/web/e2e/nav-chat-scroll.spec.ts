@@ -158,8 +158,9 @@ test('app menu: the column never scrolls, only the chat list does, on desktop an
       await expect(column.getByRole('link', { name: `${prefix} 1`, exact: true })).toBeAttached();
 
       const layout = await column.evaluate((element) => {
-        const list = element.querySelector('nav[aria-label="Chats"]') as HTMLElement;
-        const footer = [...element.querySelectorAll(':scope > p')].pop() as HTMLElement;
+        const list = element.querySelector<HTMLElement>('nav[aria-label="Chats"]')!;
+        const footers = element.querySelectorAll<HTMLElement>(':scope > p');
+        const footer = footers[footers.length - 1];
         return {
           columnScrolls: element.scrollHeight > element.clientHeight + 1,
           listScrolls: list.scrollHeight > list.clientHeight + 1,
@@ -218,9 +219,6 @@ test('app menu: day headings stick to the top of the history, and the filter sta
     const list = column.getByRole('navigation', { name: 'Chats' });
     await expect(list.getByRole('link', { name: `${prefix} 1`, exact: true })).toBeAttached();
     const filter = column.getByRole('button', { name: 'Filter chats' });
-    const topOf = (locator: ReturnType<typeof list.getByText>) =>
-      locator.first().evaluate((element) => element.getBoundingClientRect().top);
-
     // Scrolled to the bottom, the oldest day's heading holds the top of the list.
     await list.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
