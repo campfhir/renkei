@@ -610,7 +610,6 @@ RUN python3 -m venv /opt/sandbox-python && \
 ARG TS_LANGUAGE_SERVER_VERSION=6.0.0
 ARG TYPESCRIPT_VERSION=5.9.3
 ARG PYRIGHT_VERSION=1.1.414
-ARG BASH_LANGUAGE_SERVER_VERSION=5.8.1
 ARG GO_VERSION=1.27.3
 ARG GOPLS_VERSION=v0.23.0
 # gopls is built here rather than installed as released: its release pins
@@ -647,10 +646,31 @@ ARG JDTLS_VERSION=1.61.0
 RUN npm install -g \
       typescript-language-server@${TS_LANGUAGE_SERVER_VERSION} \
       typescript@${TYPESCRIPT_VERSION} \
-      pyright@${PYRIGHT_VERSION} \
-      bash-language-server@${BASH_LANGUAGE_SERVER_VERSION} && \
+      pyright@${PYRIGHT_VERSION} && \
     rm -rf /root/.npm && \
     typescript-language-server --version && pyright --version
+
+# The shell server is installed from docker/bash-language-server rather than
+# globally: bash-language-server 5.8.1 (the newest release) pins zod 3.25.76,
+# which has an open HIGH advisory (CVE-2023-54404, the image scan's finding)
+# fixed only in zod 4. The package.json there overrides zod to 4.6.6, the
+# lockfile pins every package by checksum, and apply-zod4.mjs makes the two
+# config schemas that behave differently under zod 4 (a nested .default({})
+# and a .partial() of defaulted fields) act as they do under zod 3.
+# verify-zod4.mjs then checks the patched schemas against answers recorded
+# from zod 3, and the build fails if either script's expectations do not hold
+# — which is what a different bash-language-server release will do, so a
+# version bump there means re-reading this. Drop all of it, and install the
+# server globally above again, once upstream ships a zod 4 release.
+COPY docker/bash-language-server /usr/local/lib/bash-language-server
+RUN cd /usr/local/lib/bash-language-server && \
+    npm ci --omit=dev --no-audit --no-fund && \
+    rm -rf /root/.npm && \
+    node apply-zod4.mjs node_modules/bash-language-server/out/config.js && \
+    node verify-zod4.mjs node_modules/bash-language-server/out && \
+    ln -s /usr/local/lib/bash-language-server/node_modules/.bin/bash-language-server /usr/local/bin/bash-language-server && \
+    chmod -R a+rX /usr/local/lib/bash-language-server && \
+    bash-language-server --version
 
 # C and C++: Debian's clangd. R: Debian's R with the languageserver package
 # from CRAN. Its heavier dependencies (stringi's ICU, xml2, roxygen2,
