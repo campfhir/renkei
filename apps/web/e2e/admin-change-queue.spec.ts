@@ -501,7 +501,8 @@ test('the notification rows for a waiting request and a finished change open the
   const note = main(page).getByText('A Jira change is waiting for your approval');
   await expect(note).toBeVisible();
   await shot(page, testInfo, 'admin-change-queue-12-notification');
-  await main(page).getByRole('link', { name: /Open change request/ }).first().click();
+  // The headline is the row's link, stretched over the whole card.
+  await main(page).getByRole('link', { name: /A Jira change is waiting for your approval/ }).click();
   await expect(page).toHaveURL(new RegExp(`/jira-admin/changes/${id}$`), { timeout: 30_000 });
   await expect(main(page).getByTestId('change-title')).toHaveText(
     'Queue: add “Vendor” (waiting)'
