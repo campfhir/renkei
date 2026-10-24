@@ -113,7 +113,8 @@ export function notificationSourceLabel(row: {
     row.kind === 'chat_shared' ||
     row.kind === 'chat_reply' ||
     row.kind === 'chat_permission' ||
-    row.kind.startsWith('artifact_')
+    row.kind.startsWith('artifact_') ||
+    row.kind.startsWith('change_')
   ) {
     return 'Renkei';
   }

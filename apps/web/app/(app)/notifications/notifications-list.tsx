@@ -534,6 +534,24 @@ export default function NotificationsList({
                         >
                           <Icon path={ICONS.fileText} className="h-[18px] w-[18px]" />
                         </span>
+                      ) : row.kind === 'change_request' || row.kind === 'change_result' ? (
+                        // Our own glyph, not the Salesforce or Jira logo: a change
+                        // request must not read as one more Salesforce/Jira event.
+                        <span
+                          data-testid="change-notification-icon"
+                          title={
+                            row.kind === 'change_request'
+                              ? 'A change request is waiting'
+                              : 'A change request finished'
+                          }
+                          className={
+                            row.kind === 'change_request'
+                              ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-blue-600 dark:text-blue-400'
+                          }
+                        >
+                          <Icon path={ICONS.changeRequest} className="h-[18px] w-[18px]" />
+                        </span>
                       ) : row.connector ? (
                         <ConnectorIcon
                           capabilityKey={row.connector}

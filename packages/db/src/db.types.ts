@@ -476,6 +476,8 @@ export interface SalesforceAdminChangeRequests {
   agent_id: string | null;
   applied_at: Timestamp | null;
   applied_by: string | null;
+  approved_at: Timestamp | null;
+  approved_by: string | null;
   cancelled_at: Timestamp | null;
   connector_key: string;
   created_at: Generated<Timestamp>;
@@ -486,8 +488,10 @@ export interface SalesforceAdminChangeRequests {
   org_id: string;
   payload: Json;
   reason: string | null;
+  resolution: string | null;
   results: Json | null;
   status: Generated<string>;
+  step: string | null;
   subject: string;
   title: string;
   updated_at: Generated<Timestamp>;
@@ -893,6 +897,8 @@ export interface JiraAdminChangeRequests {
   agent_id: string | null;
   applied_at: Timestamp | null;
   applied_by: string | null;
+  approved_at: Timestamp | null;
+  approved_by: string | null;
   cancelled_at: Timestamp | null;
   cloud_id: string;
   created_at: Generated<Timestamp>;
@@ -901,9 +907,11 @@ export interface JiraAdminChangeRequests {
   kind: string;
   payload: Json;
   reason: string | null;
+  resolution: string | null;
   results: Json | null;
   site_url: string | null;
   status: Generated<string>;
+  step: string | null;
   subject: string;
   title: string;
   updated_at: Generated<Timestamp>;

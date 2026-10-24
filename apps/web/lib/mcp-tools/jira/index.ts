@@ -26,6 +26,7 @@ import { registerFilterTools } from './filters';
 import { registerCommentTools } from './comments';
 import { registerWatchTools } from './watches';
 import { registerHistoryTools } from './history';
+import { registerRequestAdminChangeTool } from './request-admin-change';
 
 export async function registerJiraTools(
   server: McpServer,
@@ -54,4 +55,6 @@ export async function registerJiraTools(
   // No auth param: analyze_transcript makes no Jira API calls at all.
   await registerUtilityTools(server, context);
   await registerWorklogTools(server, context, auth);
+  // A request in words for an admin to build: anyone with Jira may ask.
+  registerRequestAdminChangeTool(server, context);
 }

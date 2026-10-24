@@ -104,6 +104,16 @@ export async function register() {
       })
     );
     startTurnRecovery(dbResult.val);
+
+    // Approved Salesforce and Jira admin changes run as jobs in this
+    // process (an after() from the approve route); this sweep starts any
+    // that were queued as a process went away, and takes over any whose job
+    // stopped reporting. See lib/salesforce-admin/apply-job.ts.
+    const { startApplyJobRecovery } = await import('@/lib/salesforce-admin/apply-job');
+    startApplyJobRecovery(dbResult.val);
+    const { startApplyJobRecovery: startJiraApplyJobRecovery } =
+      await import('@/lib/jira-admin/apply-job');
+    startJiraApplyJobRecovery(dbResult.val);
   }
 }
 

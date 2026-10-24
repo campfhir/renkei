@@ -66,6 +66,11 @@ function fixtureFor(projectName: string) {
     production: uuidFrom(`salesforce-admin-e2e-production:${projectName}`),
     access: uuidFrom(`salesforce-admin-e2e-access:${projectName}`),
     picklist: uuidFrom(`salesforce-admin-e2e-picklist:${projectName}`),
+    // Not an operator: may ask for a change in words, may not approve one.
+    askerSessionId: uuidFrom(`salesforce-admin-e2e-asker-session:${projectName}`),
+    askerSubject: `e2e-salesforce-admin-asker-${projectName}@example.com`,
+    request: uuidFrom(`salesforce-admin-e2e-request:${projectName}`),
+    running: uuidFrom(`salesforce-admin-e2e-running:${projectName}`),
   };
 }
 
@@ -83,8 +88,13 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 
 async function clear(client: Client, fixture: Fixture): Promise<void> {
   await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
-  await client.query('DELETE FROM salesforce_admin_change_requests WHERE subject = $1', [
-    fixture.subject,
+  await client.query('DELETE FROM salesforce_admin_change_requests WHERE subject = ANY($1)', [
+    [fixture.subject, fixture.askerSubject],
+  ]);
+  await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.askerSubject]);
+  await client.query('DELETE FROM identities WHERE subject = $1', [fixture.askerSubject]);
+  await client.query('DELETE FROM agent_notifications WHERE subject = ANY($1)', [
+    [fixture.subject, fixture.askerSubject],
   ]);
   await client.query(`DELETE FROM connector_configs WHERE connector = 'salesforce-admin'`);
 }
@@ -459,13 +469,13 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
   await expect(uat.getByText('Connected', { exact: true })).toBeVisible();
   // Counted per org: four wait in UAT, one in production.
   await expect(
-    uat.getByRole('link', { name: '4 change requests waiting for your review' })
+    uat.getByRole('link', { name: '4 change requests waiting for review' })
   ).toBeVisible();
   const production = cards.filter({
     has: page.getByRole('heading', { name: /Salesforce Admin · Production/ }),
   });
   await expect(
-    production.getByRole('link', { name: '1 change request waiting for your review' })
+    production.getByRole('link', { name: '1 change request waiting for review' })
   ).toBeVisible();
   await expect(production.getByText('This production org is read only here')).toBeVisible();
   await shot(page, testInfo, 'salesforce-admin-02-cards');
@@ -522,7 +532,7 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
     'Show the Site_Visit__c tab to Program_Staff (in their navigation by default)'
   );
   await expect(page.getByRole('button', { name: 'Apply in UAT' })).toBeEnabled();
-  await expect(page.getByRole('button', { name: /Deploy to/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /deploy to/i })).toHaveCount(0);
   await shot(page, testInfo, 'salesforce-admin-04b-access');
   await page.setViewportSize(MOBILE_VIEWPORT);
   await expect(page.getByRole('button', { name: 'Apply in UAT' })).toBeVisible();
@@ -554,8 +564,9 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
   await expect(page.getByRole('button', { name: 'Deploy to UAT' })).toBeDisabled();
   await expect(page.getByText(/Salesforce has not validated this change/)).toBeVisible();
 
-  // Its cancel is the real route.
-  await page.getByRole('button', { name: 'Cancel it' }).click();
+  // Declining it is the real cancel route.
+  await page.getByRole('button', { name: 'Decline it' }).click();
+  await page.getByRole('button', { name: 'Send the decline' }).click();
   await expect(page.getByRole('main').getByTestId('change-state')).toHaveText('Cancelled', {
     timeout: 30_000,
   });
@@ -592,4 +603,144 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
     `/api/salesforce-admin/changes/${uuidFrom('nobody')}/apply`
   );
   expect(stranger.status()).toBe(404);
+
+  // --- Asking without approving rights, and a deploy running on the server. ---
+  await withDb(async (client) => {
+    await client.query(
+      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
+      [
+        fixture.askerSessionId,
+        fixture.askerSubject,
+        ['renkei-user'],
+        new Date(Date.now() + 24 * 3_600_000),
+      ]
+    );
+    await client.query(
+      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
+      [fixture.askerSubject, fixture.askerSubject, 'Arlo Asker']
+    );
+    // Enrolled, so the write-down dialog does not cover the page.
+    await enrollForE2E(client, fixture.askerSubject);
+    // What salesforce_admin_request_change stores: words, no package.
+    await client.query(
+      `INSERT INTO salesforce_admin_change_requests
+         (id, subject, connector_key, org_id, instance_url, kind, title, reason, payload, expires_at)
+       VALUES ($1, $2, 'uat', $3, $4, 'request', 'Add an Outcome picklist to Site Visit',
+               'The program tracks outcomes now', $5, NOW() + INTERVAL '1 day')`,
+      [
+        fixture.request,
+        fixture.askerSubject,
+        ORG_ID,
+        `https://${UAT}`,
+        JSON.stringify({ description: 'Site_Visit__c needs Outcome__c: Completed, No show.' }),
+      ]
+    );
+    // What the job leaves while a deploy runs: approved, applying, its latest step.
+    await client.query(
+      `INSERT INTO salesforce_admin_change_requests
+         (id, subject, connector_key, org_id, instance_url, kind, title, payload, validation,
+          status, step, approved_by, approved_at, results, expires_at)
+       VALUES ($1, $2, 'uat', $3, $4, 'fields', 'Site Visit: add the field Notes (running)',
+               '{"files":{},"members":[],"components":[],"preconditions":[],"dataSteps":[]}'::jsonb,
+               $5, 'applying', 'Salesforce is deploying — 2 of 5 components (InProgress)', $6, NOW(),
+               '{"deployId":"0Af000000000009AAA","operations":[]}'::jsonb, NOW() + INTERVAL '1 day')`,
+      [
+        fixture.running,
+        fixture.askerSubject,
+        ORG_ID,
+        `https://${UAT}`,
+        JSON.stringify({
+          checkedAt: new Date().toISOString(),
+          deployId: '0Af000000000008AAA',
+          done: true,
+          success: true,
+          status: 'Succeeded',
+          failures: [],
+        }),
+        fixture.subject,
+      ]
+    );
+  });
+
+  // The operator sees the running deploy and how far it is, and who asked.
+  await page.goto('/salesforce-admin/changes');
+  const runningList = page.getByRole('main').getByTestId('changes-running');
+  const runningRow = runningList.getByRole('link', { name: /add the field Notes/ });
+  await expect(runningRow).toContainText('Salesforce is deploying — 2 of 5 components');
+  await expect(runningRow).toContainText('by Arlo Asker');
+  await shot(page, testInfo, 'salesforce-admin-06-running-list');
+  await runningRow.click();
+  const progress = page.getByRole('main').getByTestId('change-progress');
+  await expect(progress).toContainText('Deploying', { timeout: 30_000 });
+  await expect(page.getByRole('main').getByTestId('change-step')).toHaveText(
+    'Salesforce is deploying — 2 of 5 components (InProgress)'
+  );
+  await expect(progress).toContainText('You can leave this page and come back');
+  await expect(page.getByRole('main').getByTestId('change-approver')).toContainText('by you');
+  await expect(page.getByRole('button', { name: /Approve|Decline/ })).toHaveCount(0);
+  await shot(page, testInfo, 'salesforce-admin-07-running');
+
+  // A request in words: what was asked, and nothing to approve — only to build or decline.
+  await page.goto(`/salesforce-admin/changes/${fixture.request}`);
+  await expect(page.getByRole('main').getByTestId('change-request-text')).toContainText(
+    'Site_Visit__c needs Outcome__c: Completed, No show.'
+  );
+  await expect(page.getByRole('button', { name: /Approve/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Decline it' })).toBeVisible();
+  const words = await page.request.post(`/api/salesforce-admin/changes/${fixture.request}/apply`);
+  expect(words.status()).toBe(409);
+
+  // The person who asked: their request waits for an operator, nothing to approve.
+  await page.context().clearCookies();
+  await page.context().addCookies([
+    {
+      name: 'renkei_session',
+      value: fixture.askerSessionId,
+      domain: '127.0.0.1',
+      path: '/',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Lax',
+    },
+  ]);
+  await page.goto('/salesforce-admin/changes');
+  await expect(page.getByRole('heading', { name: 'Waiting for an operator' })).toBeVisible();
+  // Their own two, and none of the operator's.
+  await expect(page.getByRole('main').getByTestId('changes-waiting').getByRole('link')).toHaveCount(
+    1
+  );
+  await expect(page.getByRole('main').getByTestId('changes-running').getByRole('link')).toHaveCount(
+    1
+  );
+  await shot(page, testInfo, 'salesforce-admin-08-asker-list');
+  await page.getByRole('main').getByTestId('changes-waiting').getByRole('link').click();
+  await expect(page.getByRole('main').getByTestId('change-request-text')).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByRole('main').getByTestId('change-requester')).toContainText('by you');
+  await expect(page.getByRole('button', { name: /Approve|Decline/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Withdraw it' })).toBeVisible();
+  await expect(
+    page.getByText(/An operator reviews and approves changes to UAT/)
+  ).toBeVisible();
+  await shot(page, testInfo, 'salesforce-admin-09-asker-review');
+  // The route holds the line, whatever the page shows.
+  const notAllowed = await page.request.post(
+    `/api/salesforce-admin/changes/${fixture.running}/apply`
+  );
+  expect(notAllowed.status()).toBe(403);
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    )
+  ).toBeLessThanOrEqual(0);
+  await shot(page, testInfo, 'salesforce-admin-10-asker-review-mobile');
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  // They withdraw it.
+  await page.getByRole('button', { name: 'Withdraw it' }).click();
+  await expect(page.getByRole('main').getByTestId('change-state')).toHaveText('Cancelled', {
+    timeout: 30_000,
+  });
 });

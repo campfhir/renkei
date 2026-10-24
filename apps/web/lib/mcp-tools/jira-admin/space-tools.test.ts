@@ -188,6 +188,10 @@ beforeEach(() => {
       appliedBy: null,
       appliedAt: null,
       cancelledAt: null,
+      approvedBy: null,
+      approvedAt: null,
+      step: null,
+      resolution: null,
     };
     return change;
   });

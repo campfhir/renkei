@@ -1,0 +1,12 @@
+{
+  "name": "sandbox-bash-language-server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The code pane's shell language server, with zod raised past CVE-2023-54404 (see apply-zod4.mjs and docker/Dockerfile).",
+  "dependencies": {
+    "bash-language-server": "5.8.1"
+  },
+  "overrides": {
+    "zod": "4.6.6"
+  }
+}

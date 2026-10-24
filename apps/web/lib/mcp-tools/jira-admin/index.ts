@@ -40,6 +40,8 @@ import { registerScreenTools } from './screens';
 import { registerProposeRequestTypeTools } from './propose-request-type';
 import { holdsRequestTypeScopes } from './jsm-access';
 import { registerAutomationTools } from './automation-tools';
+import { registerRequestTools } from './request-change';
+import { ROLE_OPERATOR } from '@/lib/access';
 
 export const JIRA_ADMIN_MCP_CONNECTOR = 'jira-admin';
 
@@ -52,25 +54,56 @@ export async function registerJiraAdminTools(
     jiraAdminScopeFor(name)
   );
 
-  await registerAccessTools(server, context, auth);
-  await registerFieldTools(server, context, auth);
-  await registerSpaceTools(server, context, auth);
-  await registerPlanTools(server, context, auth);
-  await registerChangeTools(server, context, auth);
-  await registerTemplateTools(server, context, auth);
-  await registerProposeSpaceTools(server, context, auth);
-  await registerProposeFieldTools(server, context, auth);
-  await registerProposeWorkTypeTools(server, context, auth);
-  await registerScreenTools(server, context, auth);
+  // Approving is an operator's, so building a proposal is too: someone who
+  // is known not to hold the role keeps every read (the field, space and
+  // plan lookups they need to describe what they want) and gets a request
+  // in words (request-change.ts) in place of the propose tools. Roles are
+  // empty for an agent's token and for tokens older than their recording;
+  // those keep every tool, since the approval, not the tool list, is the
+  // control.
+  const roles = context.roles ?? [];
+  const knownNonOperator = roles.length > 0 && !roles.includes(ROLE_OPERATOR);
+  const visible = knownNonOperator
+    ? withoutTools(server, (name) => name.startsWith('jira_admin_propose_'))
+    : server;
+
+  await registerAccessTools(visible, context, auth);
+  await registerFieldTools(visible, context, auth);
+  await registerSpaceTools(visible, context, auth);
+  await registerPlanTools(visible, context, auth);
+  await registerChangeTools(visible, context, auth);
+  await registerTemplateTools(visible, context, auth);
+  await registerProposeSpaceTools(visible, context, auth);
+  await registerProposeFieldTools(visible, context, auth);
+  await registerProposeWorkTypeTools(visible, context, auth);
+  await registerScreenTools(visible, context, auth);
   // Request types are a Jira Administration tool that writes on the Jira
   // Service Management grant (jsm-access.ts): offered only when that grant
   // is connected with the scopes the write takes, on top of this one's.
   if (context.jsmGrant && holdsRequestTypeScopes(context.jsmGrant.scopes)) {
-    await registerProposeRequestTypeTools(server, context, auth);
+    await registerProposeRequestTypeTools(visible, context, auth);
   }
   // Automation rules take the person's own Atlassian API token (the API
   // refuses OAuth apps): offered once one is saved beside this grant.
   if (context.jiraAdminTokenAvailable === true) {
-    await registerAutomationTools(server, context, auth);
+    await registerAutomationTools(visible, context, auth);
   }
+  // A request in words is the everyday Jira connector's to offer
+  // (jira_request_admin_change); this one is for a person who holds only
+  // the admin connection, so nobody sees two tools for one thing.
+  if (!context.jiraAuth) registerRequestTools(visible, context, auth);
+}
+
+/** The server, less the tools `skip` names: they are never registered. */
+function withoutTools(server: McpServer, skip: (name: string) => boolean): McpServer {
+  return new Proxy(server, {
+    get(target, property, receiver) {
+      if (property === 'registerTool') {
+        return (...args: Parameters<McpServer['registerTool']>) =>
+          skip(args[0]) ? undefined : target.registerTool(...args);
+      }
+      const value: unknown = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }

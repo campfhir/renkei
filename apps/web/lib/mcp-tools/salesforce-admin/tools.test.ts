@@ -25,8 +25,17 @@ jest.mock('@/lib/salesforce-app', () => ({ listSalesforceConnectors: jest.fn() }
 jest.mock('@/lib/salesforce-admin/change-requests', () => ({
   ...jest.requireActual('@/lib/salesforce-admin/change-requests'),
   createChangeRequest: jest.fn(),
+  createRequest: jest.fn(),
+  getChangeRequestById: jest.fn(),
+  closeRequestAsProposed: jest.fn(),
+  listAllChangeRequests: jest.fn(),
+  listChangeRequests: jest.fn(),
   setValidation: jest.fn(),
   cancelChangeRequest: jest.fn(),
+}));
+jest.mock('@/lib/admin-changes/notify', () => ({
+  notifyOperatorsOfRequest: jest.fn(),
+  notifyChangeOutcome: jest.fn(),
 }));
 
 import JSZip from 'jszip';
@@ -44,9 +53,18 @@ import { salesforceAdminScopeFor } from './scopes';
 const app = jest.requireMock<{ listSalesforceConnectors: jest.Mock }>('@/lib/salesforce-app');
 const store = jest.requireMock<{
   createChangeRequest: jest.Mock;
+  createRequest: jest.Mock;
+  getChangeRequestById: jest.Mock;
+  closeRequestAsProposed: jest.Mock;
+  listAllChangeRequests: jest.Mock;
+  listChangeRequests: jest.Mock;
   setValidation: jest.Mock;
   cancelChangeRequest: jest.Mock;
 }>('@/lib/salesforce-admin/change-requests');
+const notify = jest.requireMock<{
+  notifyOperatorsOfRequest: jest.Mock;
+  notifyChangeOutcome: jest.Mock;
+}>('@/lib/admin-changes/notify');
 
 type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean };
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
@@ -490,7 +508,10 @@ const fetchSpy = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
   return fakeOrg(method, url.pathname, url.search.slice(1));
 });
 
-async function tools(scopes: string[] | null = ALL_SALESFORCE_ADMIN_SCOPES) {
+async function tools(
+  scopes: string[] | null = ALL_SALESFORCE_ADMIN_SCOPES,
+  roles?: string[]
+) {
   const handlers = new Map<string, ToolHandler>();
   const server = {
     registerTool: (name: string, _config: unknown, handler: ToolHandler) => {
@@ -504,14 +525,19 @@ async function tools(scopes: string[] | null = ALL_SALESFORCE_ADMIN_SCOPES) {
       origin: 'https://renkei.example',
       db: {},
       salesforceAdminScopes: scopes ?? undefined,
+      ...(roles ? { roles } : {}),
     } as unknown as MCPToolContext,
     stubAuth
   );
   return handlers;
 }
 
-async function call(name: string, args: Record<string, unknown>): Promise<ToolResult> {
-  const handler = (await tools()).get(name);
+async function call(
+  name: string,
+  args: Record<string, unknown>,
+  roles?: string[]
+): Promise<ToolResult> {
+  const handler = (await tools(ALL_SALESFORCE_ADMIN_SCOPES, roles)).get(name);
   if (!handler) throw new Error(`${name} is not registered`);
   return handler(args);
 }
@@ -625,6 +651,167 @@ describe('registration', () => {
     expect(readOnly.has('salesforce_admin_propose_fields')).toBe(false);
     expect([...(await tools(null)).keys()]).toEqual(['salesforce_admin_list_orgs']);
   });
+
+  it('gives someone known not to be an operator the reads and a request in words, not the proposals', async () => {
+    const ordinary = [...(await tools(ALL_SALESFORCE_ADMIN_SCOPES, ['renkei-user'])).keys()];
+    expect(ordinary).toContain('salesforce_admin_request_change');
+    expect(ordinary).toContain('salesforce_admin_describe_object');
+    expect(ordinary).toContain('salesforce_admin_list_permission_sets');
+    expect(ordinary).toContain('salesforce_admin_list_change_requests');
+    expect(ordinary.filter((name) => name.startsWith('salesforce_admin_propose_'))).toEqual([]);
+    // An operator, and a token with no roles recorded (an agent's), keep the proposals.
+    expect([...(await tools(ALL_SALESFORCE_ADMIN_SCOPES, ['renkei-operator'])).keys()]).toContain(
+      'salesforce_admin_propose_fields'
+    );
+    expect([...(await tools()).keys()]).toContain('salesforce_admin_propose_fields');
+    // The request needs only what looking things up needs.
+    expect([...(await tools(['sfa-read'], ['renkei-user'])).keys()]).toContain(
+      'salesforce_admin_request_change'
+    );
+  });
+});
+
+describe('salesforce_admin_request_change', () => {
+  beforeEach(() => {
+    store.createRequest.mockImplementation(async (_db: unknown, input: Record<string, unknown>) => ({
+      id: '99999999-2222-4333-8444-555555555555',
+      ...input,
+    }));
+  });
+
+  it('stores a request in words, tells the operators, and changes nothing in the org', async () => {
+    const result = await call(
+      'salesforce_admin_request_change',
+      {
+        title: 'Add an Outcome picklist to Site Visit',
+        description: 'Site_Visit__c needs Outcome__c: Completed, No show.',
+        reason: 'The program tracks outcomes now',
+      },
+      ['renkei-user']
+    );
+    expect(result.isError).toBeUndefined();
+    expect(store.createRequest.mock.calls[0][1]).toMatchObject({
+      subject: 'subject-1',
+      connectorKey: 'uat',
+      orgId: '00D000000000062EAA',
+      title: 'Add an Outcome picklist to Site Visit',
+      description: 'Site_Visit__c needs Outcome__c: Completed, No show.',
+      reason: 'The program tracks outcomes now',
+    });
+    expect(notify.notifyOperatorsOfRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connector: 'salesforce-admin',
+        changeId: '99999999-2222-4333-8444-555555555555',
+        requester: 'subject-1',
+        freeText: true,
+      })
+    );
+    expect(text(result)).toContain('nothing has changed in Salesforce');
+    expect(text(result)).toContain(
+      'https://renkei.example/salesforce-admin/changes/99999999-2222-4333-8444-555555555555'
+    );
+    // No deploy, no write: it never reaches the org.
+    expect(requests.filter((r) => r.method !== 'GET')).toEqual([]);
+  });
+
+  it('is refused for a production org that takes no changes, before anything is stored', async () => {
+    connector = org('production', false);
+    const result = await call(
+      'salesforce_admin_request_change',
+      { title: 'x', description: 'y' },
+      ['renkei-user']
+    );
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('does not take change requests');
+    expect(store.createRequest).not.toHaveBeenCalled();
+    expect(notify.notifyOperatorsOfRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('building a request in words', () => {
+  it('closes the free-text request it replaces, whoever filed it, and tells its requester', async () => {
+    store.getChangeRequestById.mockResolvedValue({
+      id: 'b7c2a1d0-1111-4222-8333-944455556666',
+      kind: 'request',
+      subject: 'asker',
+      title: 'Add an Outcome picklist',
+    });
+    store.closeRequestAsProposed.mockResolvedValue(true);
+    await call(
+      'salesforce_admin_propose_fields',
+      {
+        object: 'Site Visit',
+        fields: [{ label: 'Outcome', type: 'Picklist', values: ['Completed'] }],
+        replaces: 'b7c2a1d0-1111-4222-8333-944455556666',
+      },
+      ['renkei-operator']
+    );
+    expect(store.closeRequestAsProposed).toHaveBeenCalledWith(
+      expect.anything(),
+      'b7c2a1d0-1111-4222-8333-944455556666',
+      '11111111-2222-4333-8444-555555555555'
+    );
+    // It is closed as built, not cancelled as the operator's own.
+    expect(store.cancelChangeRequest).not.toHaveBeenCalled();
+    expect(notify.notifyChangeOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ requester: 'asker', outcome: 'proposed' })
+    );
+    // And the operators (the others) hear a proposal is waiting.
+    expect(notify.notifyOperatorsOfRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ freeText: false, requester: 'subject-1' })
+    );
+  });
+});
+
+describe('salesforce_admin_list_change_requests', () => {
+  const row = (overrides: Record<string, unknown>) => ({
+    id: '11111111-2222-4333-8444-555555555555',
+    title: 'Add an Outcome picklist',
+    kind: 'request',
+    subject: 'asker',
+    connectorKey: 'uat',
+    status: 'pending',
+    expiresAt: new Date(Date.now() + 3_600_000),
+    updatedAt: new Date(),
+    results: null,
+    validation: null,
+    payload: { description: 'Site_Visit__c needs Outcome__c.' },
+    step: null,
+    resolution: null,
+    ...overrides,
+  });
+
+  it('shows an operator everyone’s, with what each asked for, and an ordinary user only their own', async () => {
+    store.listAllChangeRequests.mockResolvedValue([row({})]);
+    store.listChangeRequests.mockResolvedValue([]);
+    const operator = await call(
+      'salesforce_admin_list_change_requests',
+      { everyone: true },
+      ['renkei-operator']
+    );
+    expect(text(operator)).toContain('asked by asker');
+    expect(text(operator)).toContain('Asked for: Site_Visit__c needs Outcome__c.');
+    const ordinary = await call(
+      'salesforce_admin_list_change_requests',
+      { everyone: true },
+      ['renkei-user']
+    );
+    expect(store.listAllChangeRequests).toHaveBeenCalledTimes(1);
+    expect(text(ordinary)).toBe('No change requests.');
+  });
+
+  it('says what a queued change is doing right now', async () => {
+    store.listChangeRequests.mockResolvedValue([
+      row({
+        kind: 'fields',
+        status: 'applying',
+        step: 'Salesforce is deploying — 2 of 5 components (InProgress)',
+      }),
+    ]);
+    const result = await call('salesforce_admin_list_change_requests', {});
+    expect(text(result)).toContain('applying');
+    expect(text(result)).toContain('Now: Salesforce is deploying — 2 of 5 components (InProgress)');
+  });
 });
 
 describe('salesforce_admin_propose_fields', () => {
@@ -684,7 +871,7 @@ describe('salesforce_admin_propose_fields', () => {
     expect(text(result)).toContain('nothing has changed in Salesforce yet');
     expect(text(result)).toContain('Salesforce validated it');
     expect(text(result)).toContain(
-      'Review and apply: https://renkei.example/salesforce-admin/changes/11111111-2222-4333-8444-555555555555'
+      'Review and approve: https://renkei.example/salesforce-admin/changes/11111111-2222-4333-8444-555555555555'
     );
     // Nothing deployed for real, no data written.
     expect(requests.some((r) => r.method === 'POST' && !r.path.endsWith('/deployRequest'))).toBe(

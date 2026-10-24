@@ -31,7 +31,14 @@ import { limitField, objectField } from '../salesforce/fields';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
 import { readValidationRule, toolingQuery } from '@/lib/salesforce-admin/plan';
-import { listChangeRequests, stateOf } from '@/lib/salesforce-admin/change-requests';
+import {
+  listAllChangeRequests,
+  listChangeRequests,
+  REQUEST_KIND,
+  requestDescription,
+  stateOf,
+} from '@/lib/salesforce-admin/change-requests';
+import { ROLE_OPERATOR } from '@/lib/access';
 import { reviewPrefix } from './review-link';
 
 const PERMISSIONS: [string, string][] = [
@@ -262,10 +269,17 @@ export function registerAdminReadTools(
       title: 'Salesforce Admin · Read — Your change requests',
       description:
         'The person’s Salesforce admin change requests, newest first: what each changes, whether ' +
-        'Salesforce validated it, whether it is applied, and its review link.',
+        'Salesforce validated it, whether it is queued or applied, and its review link. A request ' +
+        'in words (someone without approval rights asking for a change) shows what they asked ' +
+        'for; an operator can pass everyone: true to see everyone’s, and build a request into a ' +
+        'proposal with the matching propose tool, passing its id as replaces.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         pendingOnly: z.boolean().optional().describe('Only those still waiting to be applied.'),
+        everyone: z
+          .boolean()
+          .optional()
+          .describe('Operators only: everyone’s requests, not just yours.'),
         limit: limitField(50, 20),
       }),
     },
@@ -278,10 +292,17 @@ export function registerAdminReadTools(
           return result.ok ? result.val : null;
         })();
       if (!db) return errText('Could not read your change requests.');
-      const changes = await listChangeRequests(db, context.subject, {
-        limit: args.limit ?? 20,
-        pendingOnly: args.pendingOnly,
-      });
+      const everyone = args.everyone === true && context.roles?.includes(ROLE_OPERATOR) === true;
+      const found = everyone
+        ? await listAllChangeRequests(db, { limit: args.limit ?? 20 })
+        : await listChangeRequests(db, context.subject, {
+            limit: args.limit ?? 20,
+            pendingOnly: args.pendingOnly,
+          });
+      const changes =
+        everyone && args.pendingOnly
+          ? found.filter((change) => stateOf(change) === 'pending')
+          : found;
       if (changes.length === 0) return textResult('No change requests.');
       const prefix = reviewPrefix(context);
       return textResult(
@@ -297,7 +318,17 @@ export function registerAdminReadTools(
                   : validation.success
                     ? 'validated'
                     : `validation failed (${validation.failures.length} error(s))`;
-            return `${change.title} — ${stateOf(change)}, ${checked}, in ${change.connectorKey}\n  ${prefix}${change.id}`;
+            const request =
+              change.kind === REQUEST_KIND
+                ? `\n  Asked for: ${requestDescription(change.payload).slice(0, 600)}`
+                : '';
+            const progress = change.step ? `\n  Now: ${change.step}` : '';
+            const resolution = change.resolution ? `\n  Note: ${change.resolution}` : '';
+            const owner = everyone ? `, asked by ${change.subject}` : '';
+            return (
+              `${change.title} — ${stateOf(change)}, ${change.kind === REQUEST_KIND ? 'a request in words' : checked}, ` +
+              `in ${change.connectorKey}${owner} (id ${change.id})\n  ${prefix}${change.id}${request}${progress}${resolution}`
+            );
           })
           .join('\n')
       );

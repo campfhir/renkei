@@ -28,6 +28,8 @@ import { registerAdminObjectTools } from './propose-object';
 import { registerAdminPermissionTools } from './permissions';
 import { registerAdminPicklistTools } from './picklist-tools';
 import { registerAdminRecordTypeTools } from './record-type-tools';
+import { registerAdminRequestTools } from './request-change';
+import { ROLE_OPERATOR } from '@/lib/access';
 
 export const SALESFORCE_ADMIN_MCP_CONNECTOR = SALESFORCE_ADMIN_KIND.key;
 
@@ -50,12 +52,43 @@ export function registerSalesforceAdminTools(
     prefix: 'salesforce_admin_',
     describe: (org) => (takesChanges(org) ? 'takes change requests' : 'read only'),
   });
-  registerAdminReadTools(server, context, auth);
-  registerAdminProposalTools(server, context, auth);
-  registerAdminObjectTools(server, context, auth);
-  registerAdminChangeTools(server, context, auth);
-  registerAdminPicklistTools(server, context, auth);
-  registerAdminRecordTypeTools(server, context, auth);
-  registerAdminLayoutTools(server, context, auth);
-  registerAdminPermissionTools(server, context, auth);
+  // Approving is an operator's, so building a proposal is too: someone who
+  // is known not to hold the role keeps every read (the object, field,
+  // picklist, layout and permission-set lookups they need to describe what
+  // they want) and gets a request in words (request-change.ts) in place of
+  // the propose tools. Roles are empty for an agent's token and for tokens
+  // older than their recording; those keep every tool, since the approval,
+  // not the tool list, is the control.
+  const roles = context.roles ?? [];
+  const knownNonOperator = roles.length > 0 && !roles.includes(ROLE_OPERATOR);
+  const visible = knownNonOperator
+    ? withoutTools(server, (name) => name.startsWith('salesforce_admin_propose_'))
+    : server;
+
+  registerAdminReadTools(visible, context, auth);
+  registerAdminProposalTools(visible, context, auth);
+  registerAdminObjectTools(visible, context, auth);
+  registerAdminChangeTools(visible, context, auth);
+  registerAdminPicklistTools(visible, context, auth);
+  registerAdminRecordTypeTools(visible, context, auth);
+  registerAdminLayoutTools(visible, context, auth);
+  registerAdminPermissionTools(visible, context, auth);
+  // A request in words is the CRM connector's to offer
+  // (salesforce_request_admin_change); this one is for a person who holds
+  // only the admin connection, so nobody sees two tools for one thing.
+  if (!context.salesforceScopes?.includes('sf-records-read')) registerAdminRequestTools(visible, context, auth);
+}
+
+/** The server, less the tools `skip` names: they are never registered. */
+function withoutTools(server: McpServer, skip: (name: string) => boolean): McpServer {
+  return new Proxy(server, {
+    get(target, property, receiver) {
+      if (property === 'registerTool') {
+        return (...args: Parameters<McpServer['registerTool']>) =>
+          skip(args[0]) ? undefined : target.registerTool(...args);
+      }
+      const value: unknown = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }

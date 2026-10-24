@@ -28,6 +28,7 @@ import { registerWriteTools } from './writes';
 import { registerBulkTools } from './bulk';
 import { registerReportTools } from './reports';
 import { registerFileTools } from './files';
+import { registerRequestAdminChangeTool } from './request-admin-change';
 import { registerOrgTools } from './orgs';
 import { orgField, withOrgSelection } from './org-choice';
 
@@ -52,4 +53,5 @@ export function registerSalesforceTools(
   registerBulkTools(server, context, auth);
   registerReportTools(server, context, auth);
   registerFileTools(server, context, auth);
+  registerRequestAdminChangeTool(server, context, auth);
 }

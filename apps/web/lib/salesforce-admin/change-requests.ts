@@ -32,7 +32,16 @@ export const CHANGE_REQUEST_TTL_HOURS = 24;
 const INTERRUPTED_AFTER_MS = 10 * 60 * 1000;
 
 export type ChangeRequestStatus =
-  'pending' | 'applying' | 'applied' | 'partial' | 'failed' | 'cancelled';
+  'pending' | 'queued' | 'applying' | 'applied' | 'partial' | 'failed' | 'cancelled';
+
+/**
+ * A free-text ask from someone who cannot build a package: nothing to
+ * deploy, an operator turns it into a proposal or declines it.
+ */
+export const REQUEST_KIND = 'request';
+
+/** A job that has not touched its row for this long lost its process. */
+export const JOB_STALE_MS = 90 * 1000;
 
 export type ChangeRequestState = ChangeRequestStatus | 'expired' | 'interrupted';
 
@@ -86,10 +95,18 @@ export interface ChangeRequest {
   appliedBy: string | null;
   appliedAt: Date | null;
   cancelledAt: Date | null;
+  /** The operator who approved it, whose own connection the job acts on. */
+  approvedBy: string | null;
+  approvedAt: Date | null;
+  /** What the job is doing right now, while it is queued or applying. */
+  step: string | null;
+  /** Why it was declined, or what it was built as — for the requester. */
+  resolution: string | null;
 }
 
 const STATUSES: readonly ChangeRequestStatus[] = [
   'pending',
+  'queued',
   'applying',
   'applied',
   'partial',
@@ -207,6 +224,10 @@ type Row = {
   applied_by: string | null;
   applied_at: Date | null;
   cancelled_at: Date | null;
+  approved_by: string | null;
+  approved_at: Date | null;
+  step: string | null;
+  resolution: string | null;
 };
 
 function fromRow(row: Row): ChangeRequest {
@@ -230,6 +251,10 @@ function fromRow(row: Row): ChangeRequest {
     appliedBy: row.applied_by,
     appliedAt: row.applied_at ? new Date(row.applied_at) : null,
     cancelledAt: row.cancelled_at ? new Date(row.cancelled_at) : null,
+    approvedBy: row.approved_by,
+    approvedAt: row.approved_at ? new Date(row.approved_at) : null,
+    step: row.step,
+    resolution: row.resolution,
   };
 }
 
@@ -253,6 +278,10 @@ const COLUMNS = [
   'applied_by',
   'applied_at',
   'cancelled_at',
+  'approved_by',
+  'approved_at',
+  'step',
+  'resolution',
 ] as const;
 
 const TABLE = 'salesforce_admin_change_requests';
@@ -421,6 +450,7 @@ export async function finishChangeRequest(
       applied_by: outcome.appliedBy,
       applied_at: sql<Date>`NOW()`,
       updated_at: sql<Date>`NOW()`,
+      step: null,
     })
     .where('id', '=', id)
     .where('status', '=', 'applying')
@@ -428,23 +458,226 @@ export async function finishChangeRequest(
   return Number(result.numUpdatedRows ?? 0) > 0;
 }
 
-/** Withdraw a pending request. False when it is not this person's, or no longer pending. */
+/**
+ * Withdraw a pending request. The requester may withdraw their own; an
+ * operator (`operator: true`) may decline anyone's, with a note the
+ * requester reads. False when it is not theirs to cancel, or no longer pending.
+ */
 export async function cancelChangeRequest(
   db: Kysely<DB>,
   subject: string,
-  id: string
+  id: string,
+  options: { operator?: boolean; note?: string } = {}
 ): Promise<boolean> {
   if (!isUuid(id)) return false;
+  let query = db
+    .updateTable(TABLE)
+    .set({
+      status: 'cancelled',
+      cancelled_at: sql<Date>`NOW()`,
+      updated_at: sql<Date>`NOW()`,
+      ...(options.note?.trim() ? { resolution: options.note.trim().slice(0, 2000) } : {}),
+    })
+    .where('id', '=', id)
+    .where('status', '=', 'pending');
+  if (!options.operator) query = query.where('subject', '=', subject);
+  const result = await query.executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0) > 0;
+}
+
+/** One request by id, whoever owns it. The caller decides who may see it (`mayView`). */
+export async function getChangeRequestById(
+  db: Kysely<DB>,
+  id: string
+): Promise<ChangeRequest | null> {
+  if (!isUuid(id)) return null;
+  const row = await db.selectFrom(TABLE).select(COLUMNS).where('id', '=', id).executeTakeFirst();
+  return row ? fromRow(row) : null;
+}
+
+/** The requester sees their own; an operator sees everyone's. Anyone else sees nothing. */
+export function mayView(
+  change: Pick<ChangeRequest, 'subject'>,
+  viewer: { subject: string; operator: boolean }
+): boolean {
+  return viewer.operator || change.subject === viewer.subject;
+}
+
+/** Everyone's requests, newest first — an operator's queue. */
+export async function listAllChangeRequests(
+  db: Kysely<DB>,
+  options: { limit?: number } = {}
+): Promise<ChangeRequest[]> {
+  const rows = await db
+    .selectFrom(TABLE)
+    .select(COLUMNS)
+    .orderBy('created_at', 'desc')
+    .limit(options.limit ?? 100)
+    .execute();
+  return rows.map(fromRow);
+}
+
+/** How many requests are waiting for an operator, per connector, for the cards and the nav. */
+export async function countAwaitingReview(db: Kysely<DB>): Promise<Map<string, number>> {
+  const rows = await db
+    .selectFrom(TABLE)
+    .select(['connector_key', (eb) => eb.fn.countAll<string>().as('count')])
+    .where('status', '=', 'pending')
+    .where('expires_at', '>', sql<Date>`NOW()`)
+    .groupBy('connector_key')
+    .execute();
+  return new Map(rows.map((row) => [row.connector_key, Number(row.count)]));
+}
+
+/**
+ * Approve: hand a pending request to the job queue, on this operator's
+ * connection. A conditional update, so two approvals cannot both queue it.
+ */
+export async function queueChangeRequest(
+  db: Kysely<DB>,
+  id: string,
+  approver: string
+): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  const result = await db
+    .updateTable(TABLE)
+    .set({
+      status: 'queued',
+      approved_by: approver,
+      approved_at: sql<Date>`NOW()`,
+      updated_at: sql<Date>`NOW()`,
+      step: 'Waiting to start',
+    })
+    .where('id', '=', id)
+    .where('kind', '<>', REQUEST_KIND)
+    .where('status', '=', 'pending')
+    .where('expires_at', '>', sql<Date>`NOW()`)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0) > 0;
+}
+
+/** The job takes a queued request. Of two processes, exactly one wins. */
+export async function startQueuedChange(db: Kysely<DB>, id: string): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  const result = await db
+    .updateTable(TABLE)
+    .set({ status: 'applying', updated_at: sql<Date>`NOW()`, step: 'Starting' })
+    .where('id', '=', id)
+    .where('status', '=', 'queued')
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0) > 0;
+}
+
+/**
+ * Take over an 'applying' request whose job stopped touching it (its
+ * process died). A conditional update on the heartbeat, so of two sweeps
+ * exactly one takes it.
+ */
+export async function reclaimStaleChange(
+  db: Kysely<DB>,
+  id: string,
+  staleMs: number = JOB_STALE_MS
+): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  const result = await db
+    .updateTable(TABLE)
+    .set({ updated_at: sql<Date>`NOW()` })
+    .where('id', '=', id)
+    .where('status', '=', 'applying')
+    .where('updated_at', '<', sql<Date>`NOW() - (${staleMs} * INTERVAL '1 millisecond')`)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0) > 0;
+}
+
+/** Say what the job is doing, which is also its heartbeat. */
+export async function setStep(db: Kysely<DB>, id: string, step: string): Promise<void> {
+  await db
+    .updateTable(TABLE)
+    .set({ step: step.slice(0, 500), updated_at: sql<Date>`NOW()` })
+    .where('id', '=', id)
+    .where('status', 'in', ['queued', 'applying'])
+    .execute();
+}
+
+/** Ids the job sweep should look at: queued, or applying with a dead job. */
+export async function listRunnableChanges(
+  db: Kysely<DB>,
+  staleMs: number = JOB_STALE_MS,
+  limit = 5
+): Promise<{ id: string; status: 'queued' | 'applying' }[]> {
+  const rows = await db
+    .selectFrom(TABLE)
+    .select(['id', 'status'])
+    .where((eb) =>
+      eb.or([
+        eb('status', '=', 'queued'),
+        eb.and([
+          eb('status', '=', 'applying'),
+          eb('updated_at', '<', sql<Date>`NOW() - (${staleMs} * INTERVAL '1 millisecond')`),
+        ]),
+      ])
+    )
+    .orderBy('updated_at', 'asc')
+    .limit(limit)
+    .execute();
+  return rows.map((row) => ({
+    id: row.id,
+    status: row.status === 'queued' ? 'queued' : 'applying',
+  }));
+}
+
+/** An operator built a free-text request into a proposal: close it, saying so. */
+export async function closeRequestAsProposed(
+  db: Kysely<DB>,
+  requestId: string,
+  proposalId: string
+): Promise<boolean> {
+  if (!isUuid(requestId)) return false;
   const result = await db
     .updateTable(TABLE)
     .set({
       status: 'cancelled',
       cancelled_at: sql<Date>`NOW()`,
       updated_at: sql<Date>`NOW()`,
+      resolution: `An operator turned this into a proposal (${proposalId}).`,
     })
-    .where('id', '=', id)
-    .where('subject', '=', subject)
+    .where('id', '=', requestId)
+    .where('kind', '=', REQUEST_KIND)
     .where('status', '=', 'pending')
     .executeTakeFirst();
   return Number(result.numUpdatedRows ?? 0) > 0;
+}
+
+/** File a free-text request: no package, no validation, just words for an operator. */
+export async function createRequest(
+  db: Kysely<DB>,
+  input: {
+    subject: string;
+    agentId?: string;
+    connectorKey: string;
+    orgId: string;
+    instanceUrl: string;
+    title: string;
+    reason?: string;
+    description: string;
+  }
+): Promise<ChangeRequest> {
+  const request = await createChangeRequest(db, {
+    subject: input.subject,
+    agentId: input.agentId,
+    connectorKey: input.connectorKey,
+    orgId: input.orgId,
+    instanceUrl: input.instanceUrl,
+    kind: REQUEST_KIND,
+    title: input.title,
+    reason: input.reason,
+    payload: { description: input.description },
+  });
+  return request;
+}
+
+/** The words of a free-text request. */
+export function requestDescription(payload: unknown): string {
+  const value = record(payload).description;
+  return typeof value === 'string' ? value : '';
 }

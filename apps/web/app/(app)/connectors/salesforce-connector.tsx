@@ -102,12 +102,12 @@ export default function SalesforceConnector({
         )}
       </p>
 
-      {admin && connected && (
+      {admin && (
         <p className="mt-2 text-sm">
           <Link href="/salesforce-admin/changes" className="underline">
             {pendingChanges > 0
-              ? `${pendingChanges} change request${pendingChanges === 1 ? '' : 's'} waiting for your review`
-              : 'Your change requests'}
+              ? `${pendingChanges} change request${pendingChanges === 1 ? '' : 's'} waiting for review`
+              : 'Change requests'}
           </Link>
         </p>
       )}

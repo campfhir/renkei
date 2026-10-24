@@ -43,6 +43,25 @@ const related = (args: Args) =>
     .filter(Boolean);
 
 export const SALESFORCE_PREVIEWS: Record<string, PreviewBuilder> = {
+  salesforce_request_admin_change: (args) => ({
+    verb: 'Request',
+    icon: 'doc',
+    title: text(args.title) || 'Ask for a change to Salesforce',
+    subtitle: where(args),
+    confirmLabel: 'Send the request',
+    body: {
+      kind: 'change',
+      subject: ref(text(args.title) || 'A change request', 'Request'),
+      rows: [
+        { label: 'Asking for', value: clip(text(args.description), 400), block: true },
+        ...(text(args.reason) ? [{ label: 'Why', value: clip(text(args.reason), 200) }] : []),
+      ],
+      notes: [
+        'Nothing changes in Salesforce. Operators who administer the org are told; one builds it as a proposal for Salesforce to validate and approves it, or declines it with a reason.',
+      ],
+    },
+  }),
+
   salesforce_create_record: (args) => {
     const object = text(args.object);
     const parent = record(args.parent);

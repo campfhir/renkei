@@ -81,7 +81,7 @@ async function seedTenant(fixture: Fixture): Promise<void> {
     await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
-      [fixture.sessionId, fixture.subject, ['renkei-user'], new Date(Date.now() + 24 * 3_600_000)]
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
       `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
@@ -93,6 +93,10 @@ async function seedTenant(fixture: Fixture): Promise<void> {
     );
     await client.query(
       `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)\n       VALUES ('atlassian-admin', true, 'not-a-real-secret', '{}'::jsonb)`
+    );
+    // Another spec's person may hold this account id: it is one row per account.
+    await client.query(
+      `DELETE FROM provider_grants WHERE provider = 'atlassian-admin' AND provider_account_id = 'e2e-jira-admin-account'`
     );
     await client.query(
       `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian-admin', 'e2e-jira-admin-account', $1, 'e2e-admin-client',\n               'E2E Jira Admin', $2, $3, $4, $5, $6)`,

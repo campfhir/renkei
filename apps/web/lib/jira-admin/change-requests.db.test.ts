@@ -12,11 +12,22 @@ import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import {
   cancelChangeRequest,
   claimChangeRequest,
+  closeRequestAsProposed,
+  countAwaitingReview,
   countPendingChangeRequests,
   createChangeRequest,
+  createRequest,
   finishChangeRequest,
   getChangeRequest,
+  getChangeRequestById,
+  listAllChangeRequests,
   listChangeRequests,
+  listRunnableChanges,
+  queueChangeRequest,
+  reclaimStaleChange,
+  requestDescription,
+  setStep,
+  startQueuedChange,
   stateOf,
 } from './change-requests';
 
@@ -27,6 +38,7 @@ maybe('jira_admin_change_requests', () => {
   const suiteId = randomUUID();
   const owner = `owner-${suiteId.slice(0, 8)}`;
   const stranger = `stranger-${suiteId.slice(0, 8)}`;
+  const operator = `operator-${suiteId.slice(0, 8)}`;
 
   const propose = (title = 'Source (Ops): add “Vendor”') =>
     createChangeRequest(db, {
@@ -46,7 +58,7 @@ maybe('jira_admin_change_requests', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM jira_admin_change_requests WHERE subject IN (${owner}, ${stranger})`.execute(db);
+    await sql`DELETE FROM jira_admin_change_requests WHERE subject IN (${owner}, ${stranger}, ${operator})`.execute(db);
     await closeDatabase();
   });
 
@@ -130,5 +142,90 @@ maybe('jira_admin_change_requests', () => {
     const updatedAt = new Date(now.getTime() - 11 * 60 * 1000);
     expect(stateOf({ status: 'applying', expiresAt: now, updatedAt }, now)).toBe('interrupted');
     expect(stateOf({ status: 'applying', expiresAt: now, updatedAt: now }, now)).toBe('applying');
+  });
+
+  describe('the approval queue', () => {
+    it('queues a pending proposal once, under the approving operator, and runs it from the queue', async () => {
+      const change = await propose('Queued');
+      const queued = await Promise.all([
+        queueChangeRequest(db, change.id, operator),
+        queueChangeRequest(db, change.id, owner),
+      ]);
+      expect(queued.filter(Boolean)).toHaveLength(1);
+
+      const read = await getChangeRequestById(db, change.id);
+      expect(read?.status).toBe('queued');
+      expect(read?.subject).toBe(owner);
+      expect([operator, owner]).toContain(read?.approvedBy);
+      expect(await cancelChangeRequest(db, owner, change.id)).toBe(false);
+      expect((await listRunnableChanges(db, 90_000, 100)).map((job) => job.id)).toContain(
+        change.id
+      );
+
+      const started = await Promise.all([
+        startQueuedChange(db, change.id),
+        startQueuedChange(db, change.id),
+      ]);
+      expect(started.filter(Boolean)).toHaveLength(1);
+      expect(await setStep(db, change.id, 'Applying the change in Jira')).toBe(true);
+      expect((await getChangeRequestById(db, change.id))?.step).toBe(
+        'Applying the change in Jira'
+      );
+      expect(await reclaimStaleChange(db, change.id)).toBe(false);
+
+      await sql`UPDATE jira_admin_change_requests SET updated_at = NOW() - INTERVAL '5 minutes' WHERE id = ${change.id}`.execute(
+        db
+      );
+      expect((await listRunnableChanges(db, 90_000, 100)).map((job) => job.id)).toContain(
+        change.id
+      );
+      const takers = await Promise.all([
+        reclaimStaleChange(db, change.id),
+        reclaimStaleChange(db, change.id),
+      ]);
+      expect(takers.filter(Boolean)).toHaveLength(1);
+
+      await finishChangeRequest(db, change.id, {
+        status: 'applied',
+        results: [{ label: 'Add “Vendor”', outcome: 'done' }],
+        appliedBy: operator,
+      });
+      const done = await getChangeRequestById(db, change.id);
+      expect(done?.status).toBe('applied');
+      expect(done?.step).toBeNull();
+      // Once finished the heartbeat has nothing to say.
+      expect(await setStep(db, change.id, 'late')).toBe(false);
+    });
+
+    it('will not queue a request in words, and closes one as built when it is proposed', async () => {
+      const words = await createRequest(db, {
+        subject: stranger,
+        cloudId: 'cloud-1',
+        siteUrl: 'https://acme.atlassian.net',
+        title: 'Add a Vendor option',
+        description: 'The Source field in OPS needs Vendor.',
+      });
+      expect(requestDescription(words.payload)).toContain('Vendor');
+      expect(await queueChangeRequest(db, words.id, operator)).toBe(false);
+
+      const before = await countAwaitingReview(db);
+      const proposal = await propose('Built from words');
+      expect(await countAwaitingReview(db)).toBe(before + 1);
+      expect(await closeRequestAsProposed(db, words.id, proposal.id)).toBe(true);
+      expect(await closeRequestAsProposed(db, words.id, proposal.id)).toBe(false);
+      const closed = await getChangeRequestById(db, words.id);
+      expect(closed?.status).toBe('cancelled');
+      expect(closed?.resolution).toContain(proposal.id);
+    });
+
+    it('lets an operator decline anyone’s request with a note, while a stranger cannot', async () => {
+      const mine = await propose('To decline');
+      expect(await cancelChangeRequest(db, stranger, mine.id)).toBe(false);
+      expect(
+        await cancelChangeRequest(db, operator, mine.id, { operator: true, note: 'Not this way' })
+      ).toBe(true);
+      expect((await getChangeRequest(db, owner, mine.id))?.resolution).toBe('Not this way');
+      expect((await listAllChangeRequests(db, { limit: 500 })).map((c) => c.id)).toContain(mine.id);
+    });
   });
 });

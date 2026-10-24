@@ -115,7 +115,7 @@ describe('registration', () => {
       },
     } as unknown as McpServer;
     await registerJiraAdminTools(server, { subject: 'subject-1' } as MCPToolContext, stubAuth);
-    expect(configs.length).toBe(18);
+    expect(configs.length).toBe(19);
     // The writes are proposals, which only store a Renkei change request,
     // and templates, which are Renkei's own records — Act tools all the
     // same, so read-only mode hides them. Applying a proposal is a
@@ -133,9 +133,37 @@ describe('registration', () => {
       'jira_admin_propose_space',
       'jira_admin_propose_space_field',
       'jira_admin_propose_work_type',
+      'jira_admin_request_change',
       'jira_admin_save_space_template',
     ]);
     expect(configs.some((config) => /apply|confirm|approve/.test(config.name))).toBe(false);
+  });
+
+  it('gives someone known not to be an operator the reads and a request in words, not the proposals', async () => {
+    const registered = async (roles?: string[]) => {
+      const names: string[] = [];
+      const server = {
+        registerTool: (name: string) => {
+          names.push(name);
+        },
+      } as unknown as McpServer;
+      await registerJiraAdminTools(
+        server,
+        { subject: 'subject-1', ...(roles ? { roles } : {}) } as MCPToolContext,
+        stubAuth
+      );
+      return names;
+    };
+    const ordinary = await registered(['renkei-user']);
+    expect(ordinary).toContain('jira_admin_request_change');
+    expect(ordinary).toContain('jira_admin_get_field');
+    expect(ordinary).toContain('jira_admin_list_changes');
+    expect(ordinary.filter((name) => name.startsWith('jira_admin_propose_'))).toEqual([]);
+    // An operator, and a token with no roles recorded (an agent's), keep the proposals.
+    expect(await registered(['renkei-user', 'renkei-operator'])).toContain(
+      'jira_admin_propose_option_changes'
+    );
+    expect(await registered()).toContain('jira_admin_propose_option_changes');
   });
 
   it('offers automation only once an Atlassian API token is saved beside the grant', async () => {

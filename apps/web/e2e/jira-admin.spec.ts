@@ -266,7 +266,10 @@ test('jira administration: register the app, connect with narrowed classic scope
   await panel.getByRole('button', { name: 'Yes, disconnect' }).click();
   await expect(panel.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
   const remaining = await withDb((client) =>
-    client.query(`SELECT 1 FROM provider_grants WHERE provider = 'atlassian-admin'`)
+    // This person's: the table is shared, and other specs leave grants of their own.
+    client.query(`SELECT 1 FROM provider_grants WHERE provider = 'atlassian-admin' AND subject = $1`, [
+      fixture.subject,
+    ])
   );
   expect(remaining.rowCount).toBe(0);
   // Separate apps, separate grants: everyday Jira is still connected.

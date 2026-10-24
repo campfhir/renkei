@@ -25,11 +25,8 @@ import type { JiraAdminAuth } from './jira-admin-auth';
 import { errText, jiraAdminGet, jiraAdminPages, rec, records, str } from './client';
 import { fieldTypeLabel, findCustomField } from './fields';
 import { reviewPrefix } from './review-link';
-import {
-  CHANGE_REQUEST_TTL_HOURS,
-  cancelChangeRequest,
-  createChangeRequest,
-} from '@/lib/jira-admin/change-requests';
+import { CHANGE_REQUEST_TTL_HOURS, createChangeRequest } from '@/lib/jira-admin/change-requests';
+import { replaceRequest } from './changes';
 import { describeChange, operationLines } from '@/lib/jira-admin/describe';
 import { readContextOptions } from '@/lib/jira-admin/field-options';
 import {
@@ -452,16 +449,7 @@ export async function registerProposeFieldTools(
 
       const replaces = text(args.replaces);
       if (replaces) {
-        const cancelled = await cancelChangeRequest(
-          db,
-          context.subject,
-          replaces
-        );
-        notes.push(
-          cancelled
-            ? `Cancelled the request it replaces (${replaces}).`
-            : `Did not cancel ${replaces}: it is not a pending request of this user’s.`
-        );
+        notes.push(await replaceRequest(db, context.subject, replaces, change.id));
       }
 
       const link = `${reviewPrefix(context)}${change.id}`;
@@ -475,7 +463,7 @@ export async function registerProposeFieldTools(
         '',
         `Review and apply: ${link}`,
         `Change request ${change.id}; it expires in ${CHANGE_REQUEST_TTL_HOURS} hours. Only the ` +
-          'user can apply it, from that page while signed in to Renkei — share the link.',
+          'operator can approve it, from that page while signed in to Renkei, and it then applies in the background — share the link. Operators have been told it is waiting.',
       ];
       return {
         content: [{ type: 'text' as const, text: lines.join('\n') }],
