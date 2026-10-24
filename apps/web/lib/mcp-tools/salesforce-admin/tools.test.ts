@@ -523,16 +523,22 @@ const deploys = () =>
 /** The deploy Salesforce received: its options, and the files in its zip. */
 async function received(index = 0) {
   const body = deploys()[index]?.body;
-  if (!(body instanceof FormData)) throw new Error('not multipart');
-  const json = body.get('json');
-  const file = body.get('file');
-  if (!(json instanceof Blob) || !(file instanceof Blob)) throw new Error('parts missing');
+  if (!(body instanceof Uint8Array)) throw new Error('not multipart');
+  // The body is written by hand (the json part must carry no filename), so
+  // parse it back the way Salesforce would: the boundary is its first line.
+  const boundary = Buffer.from(body).toString('latin1').split('\r\n', 1)[0]?.slice(2);
+  const form = await new Response(new Blob([new Uint8Array(body)]), {
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+  }).formData();
+  const json = form.get('json');
+  const file = form.get('file');
+  if (typeof json !== 'string' || !(file instanceof Blob)) throw new Error('parts missing');
   const zip = await JSZip.loadAsync(await file.arrayBuffer());
   const files: Record<string, string> = {};
   for (const [name, entry] of Object.entries(zip.files)) {
     if (!entry.dir) files[name] = await entry.async('string');
   }
-  return { options: JSON.parse(await json.text()).deployOptions, files };
+  return { options: JSON.parse(json).deployOptions, files };
 }
 
 beforeEach(() => {
