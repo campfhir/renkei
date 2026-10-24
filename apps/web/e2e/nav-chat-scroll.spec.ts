@@ -143,8 +143,10 @@ test('app menu: the column never scrolls, only the chat list does, on desktop an
       );
     }
 
+    // The phone drawer, a laptop, and a desktop: the menu never scrolls at any of them.
     for (const size of [
       { width: 390, height: 844 },
+      { width: 1366, height: 768 },
       { width: 1440, height: 900 },
     ]) {
       await page.setViewportSize(size);
