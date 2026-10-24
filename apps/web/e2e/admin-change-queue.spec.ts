@@ -25,7 +25,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { sealForSubject } from './keys';
+import { enrollForE2E, sealForSubject } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -110,6 +110,8 @@ async function seed(fixture: Fixture): Promise<void> {
         `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
         [person.subject, person.subject, person.name]
       );
+      // Enrolled, so the write-down dialog does not cover the page.
+      await enrollForE2E(client, person.subject);
       // No coach marks tour stealing focus mid-screenshot.
       await client.query(
         `INSERT INTO user_preferences (subject, key, value)

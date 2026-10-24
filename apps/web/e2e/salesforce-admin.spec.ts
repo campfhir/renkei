@@ -619,6 +619,8 @@ test('salesforce admin: per-org connectors, connect, and change requests up to t
       `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
       [fixture.askerSubject, fixture.askerSubject, 'Arlo Asker']
     );
+    // Enrolled, so the write-down dialog does not cover the page.
+    await enrollForE2E(client, fixture.askerSubject);
     // What salesforce_admin_request_change stores: words, no package.
     await client.query(
       `INSERT INTO salesforce_admin_change_requests
