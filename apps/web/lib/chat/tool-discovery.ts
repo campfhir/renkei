@@ -127,6 +127,10 @@ const NOTHING_TO_FIND =
   'No connectors beyond the tools already offered are enabled on this chat. The person can turn ' +
   "more on from the chat's tools button.";
 
+/** What find_tools says when the tool service did not answer this turn. */
+const UNAVAILABLE =
+  'The connector tools could not be loaded for this turn (the tool service did not respond), so nothing can be found right now. Tell the person this is a temporary fault, not that the connectors are missing, and suggest sending the message again.';
+
 /**
  * `find_tools`, or null when the chat has nothing beyond its core tools —
  * offering a search over an empty catalog would otherwise be a dead end.
@@ -136,7 +140,7 @@ const NOTHING_TO_FIND =
  */
 export function findToolsTool(
   discoverable: DiscoverableTool[],
-  options: { alwaysOffer?: boolean } = {}
+  options: { alwaysOffer?: boolean; unavailable?: boolean } = {}
 ): LocalTool | null {
   if (discoverable.length === 0 && !options.alwaysOffer) return null;
   const summary = connectorSummaryOf(discoverable);
@@ -163,6 +167,7 @@ export function findToolsTool(
     async execute(input) {
       const query = typeof input.query === 'string' ? input.query.trim() : '';
       if (!query) return errorResult('Give a query describing what you need, or a connector name.');
+      if (options.unavailable) return errorResult(UNAVAILABLE);
       if (discoverable.length === 0) return errorResult(NOTHING_TO_FIND);
       const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
       const scored = discoverable

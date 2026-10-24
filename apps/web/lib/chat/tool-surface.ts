@@ -267,6 +267,12 @@ export interface ChatToolSurface {
    */
   widgetResourceUris: ReadonlyMap<string, string>;
   mcp: McpClient | null;
+  /**
+   * True when the tool endpoint did not answer: the turn runs with no
+   * connector tools at all, which is a fault to say so about, not a chat
+   * that simply has none enabled.
+   */
+  unavailable?: boolean;
   /** Revokes the turn's token; safe to call more than once. */
   release(): Promise<void>;
 }
@@ -356,8 +362,15 @@ export async function resolveChatToolSurface(
     clientName: 'renkei-chat',
   });
   try {
-    await mcp.initialize();
-    const live = await mcp.listTools();
+    // One retry: the endpoint is this process's own, so a first-call failure
+    // is usually a cold route or a dropped connection, not an outage.
+    const live = await mcp
+      .initialize()
+      .then(() => mcp.listTools())
+      .catch(async () => {
+        await mcp.initialize();
+        return mcp.listTools();
+      });
     const { eager, discoverable } = partitionChatTools(
       candidates,
       live,
@@ -400,6 +413,7 @@ export async function resolveChatToolSurface(
       blockedPreviews: routing.blockedPreviews,
       widgetResourceUris: new Map(),
       mcp: null,
+      unavailable: true,
       release: async () => {},
     };
   }

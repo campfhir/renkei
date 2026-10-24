@@ -718,7 +718,10 @@ async function executeTurnBody(
     ).filter((tool) => !denied.has(tool.def.name));
     // Offered even with nothing to find: a new chat starts with core
     // connectors only, and its model should still find the tool when asked.
-    const discoveryTool = findToolsTool(surface.discoverable, { alwaysOffer: true });
+    const discoveryTool = findToolsTool(surface.discoverable, {
+      alwaysOffer: true,
+      unavailable: surface.unavailable === true,
+    });
     const localTools = createLocalToolSet(
       discoveryTool ? [...baseLocalTools, discoveryTool] : baseLocalTools
     );
