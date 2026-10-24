@@ -259,6 +259,19 @@ async function noHorizontalOverflow(page: Page): Promise<void> {
 // Each test visits several pages that `next dev` compiles on first sight.
 test.describe.configure({ mode: 'serial', timeout: 180_000 });
 
+// The tables are shared and an operator's views count everyone's: leave nothing pending behind.
+// eslint-disable-next-line no-empty-pattern -- Playwright needs the fixtures object first
+test.afterEach(async ({}, testInfo) => {
+  const fixture = fixtureFor(testInfo.project.name);
+  const subjects = [fixture.operator.subject, fixture.asker.subject];
+  await withDb(async (client) => {
+    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = ANY($1)', [
+      subjects,
+    ]);
+    await client.query('DELETE FROM agent_notifications WHERE subject = ANY($1)', [subjects]);
+  });
+});
+
 test('an ordinary person asks and follows; an operator sees who asked and declines with a reason', async ({
   page,
 }, testInfo) => {
@@ -430,6 +443,8 @@ test('approving queues the change, the server applies it, and the operator need 
   await page.goto('/notifications');
   const note = main(page).getByText(/Your Jira change was applied/);
   await expect(note).toBeVisible();
+  // Its own icon, not Jira's logo: it must not read as another Jira event.
+  await expect(main(page).getByTestId('change-notification-icon').first()).toBeVisible();
   await shot(page, testInfo, 'admin-change-queue-08-asker-notified');
   await page.setViewportSize(MOBILE_VIEWPORT);
   await noHorizontalOverflow(page);
@@ -500,6 +515,7 @@ test('the notification rows for a waiting request and a finished change open the
   await page.goto('/notifications');
   const note = main(page).getByText('A Jira change is waiting for your approval');
   await expect(note).toBeVisible();
+  await expect(main(page).getByTestId('change-notification-icon')).toBeVisible();
   await shot(page, testInfo, 'admin-change-queue-12-notification');
   // The headline is the row's link, stretched over the whole card.
   await main(page).getByRole('link', { name: /A Jira change is waiting for your approval/ }).click();

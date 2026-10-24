@@ -128,6 +128,10 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)\n       VALUES ('atlassian-admin', true, 'not-a-real-secret', '{}'::jsonb)`
     );
     // Connected, with sealed tokens far from expiry so nothing refreshes.
+    // Another spec's person may hold this account id: it is one row per account.
+    await client.query(
+      `DELETE FROM provider_grants WHERE provider = 'atlassian-admin' AND provider_account_id = 'e2e-jira-admin-account'`
+    );
     await client.query(
       `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian-admin', 'e2e-jira-admin-account', $1, 'e2e-admin-client',\n               'E2E Jira Admin', $2, $3, $4, $5, $6)`,
       [
@@ -281,11 +285,23 @@ test('a proposal waits for review, and applying it changes Jira exactly as shown
     ],
   });
 
-  // The Connectors page says one is waiting, and leads to it.
+  // The Connectors page says how many wait, and leads to it. An operator's
+  // count is everyone's, and other specs share the table: count what is
+  // pending now rather than assuming this spec's one is alone.
+  const pending = await withDb(async (client) => {
+    const rows = await client.query<{ count: string }>(
+      `SELECT count(*) FROM jira_admin_change_requests
+        WHERE status = 'pending' AND expires_at > NOW()`
+    );
+    return Number(rows.rows[0]?.count ?? 0);
+  });
+  expect(pending).toBeGreaterThanOrEqual(1);
   await page.goto(`/connectors`);
   const card = page.locator('[data-coach="card-jira-admin"]');
   const waiting = card.getByTestId('jira-admin-changes-link');
-  await expect(waiting).toHaveText('1 proposed change waiting for review');
+  await expect(waiting).toHaveText(
+    `${pending} proposed ${pending === 1 ? 'change' : 'changes'} waiting for review`
+  );
   // Client-side navigations: on a cold `next dev` a route compiles on its
   // first visit (the review page took ~5s), past the default 5s wait.
   await waiting.click();

@@ -141,6 +141,10 @@ async function seedTenant(fixture: Fixture, scopes = ALL_SCOPES): Promise<string
     await client.query(
       `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)\n       VALUES ('atlassian-admin', true, 'not-a-real-secret', '{}'::jsonb)`
     );
+    // Another spec's person may hold this account id: it is one row per account.
+    await client.query(
+      `DELETE FROM provider_grants WHERE provider = 'atlassian-admin' AND provider_account_id = 'e2e-jira-admin-account'`
+    );
     await client.query(
       `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian-admin', 'e2e-jira-admin-account', $1, 'e2e-admin-client',\n               'E2E Jira Admin', $2, $3, $4, $5, $6)`,
       [

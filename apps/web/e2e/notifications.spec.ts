@@ -198,7 +198,8 @@ test('notifications — the whole row opens the link', async ({ page }, testInfo
 
   // A declined invitation carries no link, and must not pretend to.
   await expect(page.getByRole('link', { name: /Declined a meeting invitation/ })).toHaveCount(0);
-  await expect(page.getByText(/Declined a meeting invitation/)).toBeVisible();
+  // In the page's own content: a toast for the same row can be on screen too.
+  await expect(page.getByRole('main').getByText(/Declined a meeting invitation/)).toBeVisible();
 
   // Every per-card action lives in the ⋯ menu now — no standalone Run
   // link, no external-link arrow outside the menu.
@@ -251,8 +252,8 @@ test('notifications — select and delete through the menu', async ({ page }, te
   await shot(page, testInfo, 'review-notifications-confirm', false);
 
   await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
-  await expect(page.getByText('Created a Jira issue PROJ-1042')).toHaveCount(0);
-  await expect(page.getByText(/Scheduled a Zoom meeting/)).toHaveCount(0);
+  await expect(page.getByRole('main').getByText('Created a Jira issue PROJ-1042')).toHaveCount(0);
+  await expect(page.getByRole('main').getByText(/Scheduled a Zoom meeting/)).toHaveCount(0);
   // Selection mode ended with its rows.
   await expect(page.getByText('2 selected')).toHaveCount(0);
 });
@@ -261,24 +262,35 @@ test('preferences — acts enumerated per connector', async ({ page }, testInfo)
   await page.goto(`/preferences`);
   await expect(page.getByRole('heading', { name: 'Preferences' })).toBeVisible();
 
-  // No grid: the words that named its columns are gone.
-  await expect(page.getByRole('columnheader')).toHaveCount(0);
-  await expect(page.getByText('Anything else', { exact: true })).toHaveCount(0);
+  // Each connector's acts are listed under it (its catch-all reads "Anything else in …").
 
   await shot(page, testInfo, 'review-preferences-collapsed');
 
-  const jira = page.locator('details', { hasText: 'Jira' }).first();
+  // Everyday Jira, not Jira Administration (which has its own group and sorts alongside).
+  const notifications = page.getByRole('region', { name: 'Notifications' });
+  const jira = notifications
+    .locator('details')
+    .filter({ hasText: 'Jira' })
+    .filter({ hasNotText: 'Jira Administration' })
+    .filter({ hasNotText: 'Jira Service Management' })
+    .first();
   await jira.locator('summary').click();
-  await expect(page.getByText('Created an issue')).toBeVisible();
-  await expect(page.getByText('Raised a service request')).toBeVisible();
-  await expect(page.getByText('Moved an issue through its workflow')).toBeVisible();
-  await expect(page.getByText('Anything else in Jira')).toBeVisible();
+  // A connector's acts are grouped by what they do, each with its own switches.
+  await expect(jira.getByText('Creates something')).toBeVisible();
+  await expect(jira.getByText('Updates something')).toBeVisible();
+  await expect(jira.getByText('Anything else')).toBeVisible();
+  await expect(jira.getByRole('checkbox', { name: /Creates something — App$/ })).toBeVisible();
   await shot(page, testInfo, 'review-preferences-jira', false);
 
   // Outlook is where the user's own list came from — check it reads back.
-  await page.locator('details', { hasText: 'Outlook' }).first().locator('summary').click();
-  await expect(page.getByText('Accepted or declined an invitation')).toBeVisible();
-  await expect(page.getByText('Moved an email to another folder')).toBeVisible();
+  // By its summary: an open group's table mentions "Outlook" as a column too.
+  const outlook = notifications
+    .locator('details')
+    .filter({ has: page.locator('summary', { hasText: /^\s*Outlook/ }) })
+    .first();
+  await outlook.locator('summary').click();
+  await expect(outlook.getByText('Sends something')).toBeVisible();
+  await expect(outlook.getByRole('checkbox', { name: /Sends something — App$/ })).toBeVisible();
   await shot(page, testInfo, 'review-preferences-outlook', false);
 });
 
