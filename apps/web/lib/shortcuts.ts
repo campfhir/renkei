@@ -5,38 +5,37 @@
  *
  * Two kinds:
  *
- *  - Chords (⌘/Ctrl + a key) work everywhere, a text field included.
- *  - Sequences are bare keys typed one after another — `c`, `a` `g` — and
- *    only count when the person is not typing in a field or looking at a
- *    dialog (see `isTypingTarget`). A sequence that begins another (`c`,
- *    and `c` `h`) waits a moment for the longer one before it fires.
+ *  - Chords (⌘/Ctrl or ⌥/Alt with a key) work everywhere, a text field
+ *    included.
+ *  - Sequences are bare keys typed one after another and only count when
+ *    the person is not typing in a field or looking at a dialog (see
+ *    `isTypingTarget`). Today there is the one, `c`; a sequence that begins
+ *    another waits a moment for the longer one before it fires.
  *
  * Chords match by the physical key (`event.code`), not the character: on a
  * Mac, Option turns J into "∆". Sequences match the character typed
  * (`event.key`), so they follow the person's keyboard layout.
  *
  * Browsers keep Ctrl/⌘+N, +T, +W and Ctrl+Tab for themselves — a page cannot
- * intercept them. On a Mac, ⌘ , (Preferences) belongs to the browser's menu
- * and some browsers do not pass it to the page either.
+ * intercept them, and on a Mac ⌘ ` (the system's switch-window key) may
+ * never reach the page.
  */
 
 export type Platform = 'mac' | 'other';
 
-export type ChordId = 'search' | 'switch-chat' | 'tutorials' | 'preferences' | 'organization';
-
-export type SequenceId =
-  | 'new-chat'
-  | 'chat-history'
+export type ChordId =
+  | 'search'
+  | 'switch-chat'
+  | 'tutorials'
   | 'code'
-  | 'agents'
-  | 'home'
-  | 'knowledge'
-  | 'files'
-  | 'artifacts'
+  | 'preferences'
+  | 'organization'
+  | 'notifications'
   | 'projects'
-  | 'prompts'
-  | 'memory'
-  | 'notifications';
+  | 'home'
+  | 'artifacts';
+
+export type SequenceId = 'new-chat';
 
 export type ShortcutId = ChordId | SequenceId;
 
@@ -58,37 +57,34 @@ export const CHORDS: Record<ChordId, ChordDef> = {
   search: { code: 'KeyK', key: 'K', mod: true },
   'switch-chat': { code: 'KeyJ', key: 'J', mod: true },
   tutorials: { code: 'Slash', key: '?', mod: true, shift: true, shiftImplied: true },
-  preferences: { code: 'Comma', key: ',', mod: true },
-  organization: { code: 'Comma', key: ',', mod: true, shift: true },
+  code: { code: 'Backquote', key: '`', mod: true },
+  preferences: { code: 'Comma', key: ',', alt: true },
+  organization: { code: 'Comma', key: ',', mod: true, alt: true, shift: true },
+  notifications: { code: 'Digit1', key: '!', alt: true, shift: true, shiftImplied: true },
+  projects: { code: 'KeyP', key: 'P', alt: true },
+  home: { code: 'KeyH', key: 'H', alt: true },
+  artifacts: { code: 'KeyA', key: 'A', alt: true },
 };
 
 interface SequenceDef {
   /** The characters typed, in order. */
   keys: string[];
-  /** Where it goes; absent for the two that open a dialog. */
-  href?: string;
 }
 
 export const SEQUENCES: Record<SequenceId, SequenceDef> = {
   'new-chat': { keys: ['c'] },
-  'chat-history': { keys: ['c', 'h'] },
-  code: { keys: ['\\', 'c'], href: '/code' },
-  agents: { keys: ['a', 'g'], href: '/agents' },
-  home: { keys: ['h', 'o'], href: '/' },
-  knowledge: { keys: ['k', 'n'], href: '/knowledge' },
-  files: { keys: ['f', 'i'], href: '/files' },
-  artifacts: { keys: ['a', 'r'], href: '/chat/artifacts' },
-  projects: { keys: ['p', 'r'], href: '/chat/projects' },
-  prompts: { keys: ['p', 'l'], href: '/chat/prompts' },
-  memory: { keys: ['m', 'e'], href: '/chat/memory' },
-  notifications: { keys: ['n', 'o'], href: '/notifications' },
 };
 
 /** Where the chords that only navigate go. */
 export const CHORD_HREFS: Partial<Record<ChordId, string>> = {
   tutorials: '/tutorials',
+  code: '/code',
   preferences: '/preferences',
   organization: '/admin',
+  notifications: '/notifications',
+  projects: '/chat/projects',
+  home: '/',
+  artifacts: '/chat/artifacts',
 };
 
 /** How long a key that could begin a longer sequence waits for the next. */

@@ -87,7 +87,7 @@ export const GETTING_STARTED_TOURS: CoachMarkTour[] = [
       {
         id: 'go-to',
         title: 'Jump to any page',
-        body: 'Type two letters to go there: {shortcut:agents} for Agents, {shortcut:knowledge} for Knowledge, {shortcut:code} for Code. {shortcut:preferences} opens Preferences and {shortcut:tutorials} opens Tutorials. Letter shortcuts only work when you are not typing in a field.',
+        body: 'Go straight to a page: {shortcut:home} for Home, {shortcut:projects} for Projects, {shortcut:artifacts} for Artifacts, {shortcut:code} for Code and {shortcut:preferences} for Preferences. {shortcut:tutorials} opens Tutorials.',
       },
     ],
   },

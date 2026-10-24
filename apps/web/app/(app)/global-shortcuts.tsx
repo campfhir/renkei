@@ -6,13 +6,13 @@
  *
  *  - Quick chat (`c`): a box for a prompt; Enter starts a new chat with it
  *    and goes to the thread, where the reply is already coming.
- *  - Recent chats (⌘/Ctrl J, or `c` `h`): the chats as a list, like an app
- *    switcher. It opens on the chat before this one; pressing the shortcut
- *    again (Shift to go back) or the arrow keys move, Enter opens.
- *  - Go-to keys (`a` `g` for Agents…) and the ⌘/Ctrl chords for Tutorials,
- *    Preferences and the Organization.
+ *  - Recent chats (⌘/Ctrl J): the chats as a list, like an app switcher. It
+ *    opens on the chat before this one; pressing the shortcut again (Shift
+ *    to go back) or the arrow keys move, Enter opens.
+ *  - Chords that go to a page: Home, Projects, Artifacts, Code, Notifications,
+ *    Preferences, Tutorials and, for operators, the Organization.
  *
- * The bare keys stand down in a text field and over a dialog. The search
+ * The bare key stands down in a text field and over a dialog. The search
  * (⌘/Ctrl K) lives with the search box itself.
  */
 
@@ -25,9 +25,9 @@ import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import type { ChatListItem } from '@/lib/chat/views';
 import {
   CHORD_HREFS,
-  SEQUENCES,
   SEQUENCE_WAIT_MS,
   formatShortcut,
+  isChordId,
   isTypingTarget,
   matchesShortcut,
   shortcutKeys,
@@ -102,21 +102,14 @@ export function GlobalShortcuts({
     [pathname, router]
   );
 
-  const run = useCallback(
-    (id: SequenceId) => {
-      if (id === 'new-chat') {
+  const run = useCallback((id: SequenceId) => {
+    switch (id) {
+      case 'new-chat':
         setSwitchOpen(false);
         setQuickOpen(true);
-      } else if (id === 'chat-history') {
-        setQuickOpen(false);
-        setSwitchOpen(true);
-      } else {
-        const href = SEQUENCES[id].href;
-        if (href) go(href);
-      }
-    },
-    [go]
-  );
+        break;
+    }
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -129,14 +122,13 @@ export function GlobalShortcuts({
         else setSwitchOpen(true);
         return;
       }
-      const chord = (['tutorials', 'preferences', 'organization'] as const).find(
-        (id) => matchesShortcut(id, event, platform) && (id !== 'organization' || isOperator)
-      );
-      const chordHref = chord ? CHORD_HREFS[chord] : undefined;
-      if (chordHref) {
+      for (const [id, href] of Object.entries(CHORD_HREFS)) {
+        if (!isChordId(id) || !matchesShortcut(id, event, platform)) continue;
+        // The Organization is the operators'; for anyone else the keys are free.
+        if (id === 'organization' && !isOperator) continue;
         event.preventDefault();
         clearTyped();
-        go(chordHref);
+        go(href);
         return;
       }
 

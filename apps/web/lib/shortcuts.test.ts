@@ -40,18 +40,28 @@ describe('formatShortcut', () => {
     expect(formatShortcut('switch-chat', 'mac')).toBe('⌘ J');
     expect(formatShortcut('switch-chat', 'other')).toBe('Ctrl J');
     expect(formatShortcut('tutorials', 'mac')).toBe('⌘ ?');
-    expect(formatShortcut('preferences', 'other')).toBe('Ctrl ,');
+    expect(formatShortcut('code', 'mac')).toBe('⌘ `');
+    expect(formatShortcut('code', 'other')).toBe('Ctrl `');
+    expect(formatShortcut('preferences', 'mac')).toBe('⌥ ,');
+    expect(formatShortcut('preferences', 'other')).toBe('Alt ,');
+    expect(formatShortcut('home', 'mac')).toBe('⌥ H');
+    expect(formatShortcut('projects', 'other')).toBe('Alt P');
+    expect(formatShortcut('artifacts', 'mac')).toBe('⌥ A');
   });
 
-  it('writes Shift before Command on a Mac and after Ctrl elsewhere', () => {
-    expect(formatShortcut('organization', 'mac')).toBe('⇧ ⌘ ,');
-    expect(formatShortcut('organization', 'other')).toBe('Ctrl Shift ,');
+  it('writes Shift first on a Mac (⇧⌥⌘) and last elsewhere', () => {
+    expect(formatShortcut('organization', 'mac')).toBe('⇧ ⌥ ⌘ ,');
+    expect(formatShortcut('organization', 'other')).toBe('Ctrl Alt Shift ,');
   });
 
-  it('writes a sequence as keys typed in turn, the same on every keyboard', () => {
+  it('leaves Shift out of a key that already says it', () => {
+    expect(formatShortcut('notifications', 'mac')).toBe('⌥ !');
+    expect(formatShortcut('notifications', 'other')).toBe('Alt !');
+  });
+
+  it('writes a bare key as itself, the same on every keyboard', () => {
     expect(formatShortcut('new-chat', 'mac')).toBe('C');
-    expect(formatShortcut('agents', 'other')).toBe('A then G');
-    expect(formatShortcut('code', 'mac')).toBe('\\ then C');
+    expect(formatShortcut('new-chat', 'other')).toBe('C');
   });
 });
 
@@ -69,13 +79,37 @@ describe('matchesShortcut', () => {
     expect(matchesShortcut('switch-chat', shifted, 'other', true)).toBe(true);
   });
 
-  it('tells Preferences from the Organization chord by Shift', () => {
-    const comma = press('Comma', { metaKey: true });
-    const shiftComma = press('Comma', { metaKey: true, shiftKey: true });
-    expect(matchesShortcut('preferences', comma, 'mac')).toBe(true);
-    expect(matchesShortcut('organization', comma, 'mac')).toBe(false);
-    expect(matchesShortcut('organization', shiftComma, 'mac')).toBe(true);
-    expect(matchesShortcut('preferences', shiftComma, 'mac')).toBe(false);
+  it('tells Preferences from the Organization chord by the keys held with it', () => {
+    const option = press('Comma', { altKey: true });
+    const all = press('Comma', { metaKey: true, altKey: true, shiftKey: true });
+    expect(matchesShortcut('preferences', option, 'mac')).toBe(true);
+    expect(matchesShortcut('organization', option, 'mac')).toBe(false);
+    expect(matchesShortcut('organization', all, 'mac')).toBe(true);
+    expect(matchesShortcut('preferences', all, 'mac')).toBe(false);
+    expect(
+      matchesShortcut(
+        'organization',
+        press('Comma', { ctrlKey: true, altKey: true, shiftKey: true }),
+        'other'
+      )
+    ).toBe(true);
+  });
+
+  it('reads the Option letters by the physical key, not the character they type', () => {
+    expect(matchesShortcut('home', press('KeyH', { altKey: true }), 'mac')).toBe(true);
+    expect(matchesShortcut('home', press('KeyH', {}), 'mac')).toBe(false);
+    expect(
+      matchesShortcut('projects', press('KeyP', { altKey: true, shiftKey: true }), 'mac')
+    ).toBe(false);
+  });
+
+  it('reads ⌥ ! as Option and Shift on the 1 key, and ⌘ ` on the backquote key', () => {
+    expect(
+      matchesShortcut('notifications', press('Digit1', { altKey: true, shiftKey: true }), 'mac')
+    ).toBe(true);
+    expect(matchesShortcut('notifications', press('Digit1', { altKey: true }), 'mac')).toBe(false);
+    expect(matchesShortcut('code', press('Backquote', { metaKey: true }), 'mac')).toBe(true);
+    expect(matchesShortcut('code', press('Backquote', { ctrlKey: true }), 'mac')).toBe(false);
   });
 
   it('reads ⌘ ? as Command and Shift on the slash key', () => {
@@ -87,26 +121,21 @@ describe('matchesShortcut', () => {
 });
 
 describe('stepSequence', () => {
-  it('fires a sequence nothing longer begins at once', () => {
-    expect(stepSequence([], 'n')).toEqual({ kind: 'pending', buffer: ['n'], fire: null });
-    expect(stepSequence(['n'], 'o')).toEqual({ kind: 'fire', id: 'notifications' });
-    expect(stepSequence([], '\\')).toEqual({ kind: 'pending', buffer: ['\\'], fire: null });
-    expect(stepSequence(['\\'], 'c')).toEqual({ kind: 'fire', id: 'code' });
+  it('fires `c` at once, since no longer sequence begins with it', () => {
+    expect(stepSequence([], 'c')).toEqual({ kind: 'fire', id: 'new-chat' });
   });
 
-  it('holds `c` for `c h`, and settles on new chat if no h comes', () => {
-    expect(stepSequence([], 'c')).toEqual({ kind: 'pending', buffer: ['c'], fire: 'new-chat' });
-    expect(stepSequence(['c'], 'h')).toEqual({ kind: 'fire', id: 'chat-history' });
+  it('ignores keys that lead nowhere', () => {
+    expect(stepSequence([], 'x')).toEqual({ kind: 'none' });
+    expect(stepSequence(['x'], 'z')).toEqual({ kind: 'none' });
   });
 
-  it('starts over from a key that leads nowhere', () => {
-    expect(stepSequence(['a'], 'c')).toEqual({ kind: 'pending', buffer: ['c'], fire: 'new-chat' });
-    expect(stepSequence(['a'], 'x')).toEqual({ kind: 'none' });
-    expect(stepSequence([], 'z')).toEqual({ kind: 'none' });
+  it('starts over from a key that follows a stray one', () => {
+    expect(stepSequence(['x'], 'c')).toEqual({ kind: 'fire', id: 'new-chat' });
   });
 
-  it('ignores case, so Caps Lock does not hide the shortcuts', () => {
-    expect(stepSequence(['a'], 'G')).toEqual({ kind: 'fire', id: 'agents' });
+  it('ignores case, so Caps Lock does not hide the shortcut', () => {
+    expect(stepSequence([], 'C')).toEqual({ kind: 'fire', id: 'new-chat' });
   });
 
   it('keeps every sequence reachable: no two share keys, and each fires when typed', () => {
