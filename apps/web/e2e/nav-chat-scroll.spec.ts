@@ -122,3 +122,60 @@ test('app menu: three chats show at a desktop height without scrolling the list'
     await client.end();
   }
 });
+
+test('app menu: the column never scrolls, only the chat list does, on desktop and in the phone drawer', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-light', 'A layout check at two widths.');
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const prefix = 'Menu scroll e2e';
+  try {
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
+      E2E_SUBJECT,
+      `${prefix} %`,
+    ]);
+    // More chats than the menu holds, so the list has to scroll.
+    for (let index = 1; index <= 14; index += 1) {
+      await client.query(
+        "INSERT INTO chats (id, owner_subject, title, last_message_at) VALUES ($1, $2, $3, NOW() - ($4 || ' minutes')::interval)",
+        [randomUUID(), E2E_SUBJECT, `${prefix} ${index}`, index]
+      );
+    }
+
+    for (const size of [
+      { width: 390, height: 844 },
+      { width: 1440, height: 900 },
+    ]) {
+      await page.setViewportSize(size);
+      await page.goto('/agents');
+      if (size.width < 1024) await page.getByRole('button', { name: 'Open menu' }).click();
+      const column = page.locator('nav[aria-label="Application"]:visible').first();
+      const chats = column.getByRole('navigation', { name: 'Chats' });
+      await expect(chats).toBeVisible();
+      await expect(column.getByRole('link', { name: `${prefix} 1`, exact: true })).toBeAttached();
+
+      const layout = await column.evaluate((element) => {
+        const list = element.querySelector('nav[aria-label="Chats"]') as HTMLElement;
+        const footer = [...element.querySelectorAll(':scope > p')].pop() as HTMLElement;
+        return {
+          columnScrolls: element.scrollHeight > element.clientHeight + 1,
+          listScrolls: list.scrollHeight > list.clientHeight + 1,
+          footerInside:
+            footer.getBoundingClientRect().bottom <= element.getBoundingClientRect().bottom + 1,
+        };
+      });
+      expect(layout, `menu at ${size.width}px`).toEqual({
+        columnScrolls: false,
+        listScrolls: true,
+        footerInside: true,
+      });
+    }
+  } finally {
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
+      E2E_SUBJECT,
+      `${prefix} %`,
+    ]);
+    await client.end();
+  }
+});

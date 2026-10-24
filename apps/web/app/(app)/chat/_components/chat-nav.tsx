@@ -118,11 +118,11 @@ export function ChatList({ data }: {
   }, [mine]);
 
   return (
-    <div className="flex flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
+    <div className="flex min-h-0 flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
       <div className="mb-1 flex shrink-0 justify-end">
         <StateFilter states={states} onChange={setStates} counts={counts} />
       </div>
-      <nav aria-label="Chats" className="min-h-24 flex-1 overflow-y-auto">
+      <nav aria-label="Chats" className="min-h-0 flex-1 overflow-y-auto">
         {groups.length === 0 && shared.length === 0 ? (
           <p className="px-2 text-xs text-gray-500">
             {allChats.length === 0 && moreBefore === null
