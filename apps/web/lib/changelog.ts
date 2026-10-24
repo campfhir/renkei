@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: 'The chat filter sits on the day heading row',
+        detail:
+          "The Active and Archived filter is on the top day heading's row and stays there while the chat history scrolls.",
+      },
+      {
+        kind: 'changed',
         title: 'The chat filter is always visible in the app menu',
         detail:
           'The Active and Archived filter sits above the chat history and stays in view while the history scrolls.',

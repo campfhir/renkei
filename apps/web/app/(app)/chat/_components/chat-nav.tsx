@@ -118,9 +118,9 @@ export function ChatList({ data }: {
   }, [mine]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
-      {/* Pinned above the list, so the funnel is always there while the history scrolls. */}
-      <div className="mb-1 flex shrink-0 justify-end">
+    <div className="relative flex min-h-0 flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
+      {/* On the top heading's row, above the list, so it is there while the history scrolls. */}
+      <div className="absolute top-2 right-2 z-20 rounded-md bg-white dark:bg-gray-950">
         <StateFilter states={states} onChange={setStates} counts={counts} />
       </div>
       <nav aria-label="Chats" className="min-h-0 flex-1 overflow-y-auto">

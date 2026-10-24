@@ -233,10 +233,11 @@ test('app menu: day headings stick to the top of the history, and the filter sta
       )
       .toBeLessThanOrEqual(listTop + 2);
 
-    // The filter stays pinned above the list, so it is still there at the bottom.
+    // The filter sits on the top heading's row, above the list, so it is still
+    // there at the bottom: level with the list's top edge.
     await expect(filter).toBeInViewport();
     const control = await filter.boundingBox();
-    expect(control!.y + control!.height).toBeLessThanOrEqual(listTop);
+    expect(Math.abs(control!.y - listTop)).toBeLessThan(4);
   } finally {
     await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
       E2E_SUBJECT,
