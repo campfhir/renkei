@@ -36,6 +36,10 @@ import {
   type ShortcutId,
 } from '@/lib/shortcuts';
 import { usePlatform } from '@/lib/use-platform';
+import { CoachAnchorContext } from '@/components/coach-marks/context';
+import { getEchoCancellation, getMicrophone } from '@/lib/voice/device-settings';
+import Composer, { type ComposerSubmit } from './chat/_components/composer';
+import ModelSelect from './chat/_components/model-select';
 
 const SWITCHER_LIMIT = 10;
 
@@ -189,70 +193,149 @@ export function GlobalShortcuts({
   );
 }
 
+type ComposerSetup = Awaited<ReturnType<typeof chatClient.composerSetup>>['data'];
+
+/**
+ * The box `c` opens: the thread's own composer on a chat made as it opens,
+ * so attachments, prompts, dictation and the model picker are the ones the
+ * thread has. Send starts the turn and goes to the thread. A chat nobody
+ * sent anything in is deleted again as the box closes.
+ */
 function QuickChat({ onClose }: { onClose: () => void }) {
   const router = useRouter();
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [setup, setSetup] = useState<NonNullable<ComposerSetup> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [modelId, setModelId] = useState<string | null>(null);
+  const [thinking, setThinking] = useState(false);
+  const sent = useRef(false);
+  const body = useRef<HTMLDivElement>(null);
+  // Read once the box is open (there is no storage on the server).
+  const [echoCancellation] = useState(getEchoCancellation);
+  const [microphone] = useState(getMicrophone);
 
-  const start = async () => {
-    const prompt = text.trim();
-    if (!prompt || busy) return;
-    setBusy(true);
+  useEffect(() => {
+    let cancelled = false;
+    let made: string | null = null;
+    void (async () => {
+      const [created, loaded] = await Promise.all([
+        chatClient.createChat({}),
+        chatClient.composerSetup(),
+      ]);
+      if (created.error || !created.data) {
+        if (!cancelled) setError(created.error ?? 'Could not start a chat');
+        return;
+      }
+      made = created.data.chatId;
+      if (cancelled) {
+        void chatClient.deleteChat(made);
+        return;
+      }
+      if (!loaded.data) {
+        setError(loaded.error ?? 'Could not load the composer');
+        return;
+      }
+      setSetup(loaded.data);
+      setModelId(
+        loaded.data.models.find((m) => m.isDefault)?.id ?? loaded.data.models[0]?.id ?? null
+      );
+      setChatId(made);
+    })();
+    return () => {
+      cancelled = true;
+      if (made && !sent.current) void chatClient.deleteChat(made);
+    };
+  }, []);
+
+  // The cursor goes straight to the box.
+  useEffect(() => {
+    if (chatId) body.current?.querySelector('textarea')?.focus();
+  }, [chatId]);
+
+  const submit = async (input: ComposerSubmit): Promise<boolean> => {
+    if (!chatId) return false;
     setError(null);
-    const created = await chatClient.createChat({});
-    if (created.error || !created.data) {
-      setBusy(false);
-      setError(created.error ?? 'Could not start a chat');
-      return;
+    const result = await chatClient.sendTurn(chatId, {
+      text: input.text,
+      attachmentIds: input.attachments.map((attachment) => attachment.id),
+      llmModelId: modelId,
+    });
+    if (result.error) {
+      setError(result.error);
+      return false;
     }
-    const chatId = created.data.chatId;
-    const sent = await chatClient.sendTurn(chatId, { text: prompt, attachmentIds: [] });
-    if (sent.error) {
-      // The chat exists and is empty: open it with the words left to send.
-      setBusy(false);
-      setError(sent.error);
-      return;
-    }
+    sent.current = true;
     router.push(`/chat/${chatId}`);
+    return true;
   };
 
+  const models = setup?.models ?? [];
+  const voice = setup?.voice ?? null;
   return (
-    <Modal title="New chat" onClose={onClose}>
-      <textarea
-        autoFocus
-        value={text}
-        rows={4}
-        aria-label="Prompt"
-        placeholder="Ask anything…"
-        disabled={busy}
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={(event) => {
-          // Enter sends; Shift+Enter is a new line; a composition in
-          // progress (an IME) keeps its Enter.
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            void start();
-          }
-        }}
-        className="w-full resize-none rounded-lg border border-gray-300 bg-white p-2.5 text-base outline-none focus:border-blue-400 sm:text-sm dark:border-gray-700 dark:bg-gray-900 dark:focus:border-blue-700"
-      />
-      {error ? (
-        <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
-          {error}
-        </p>
-      ) : null}
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <p className="text-xs text-gray-500">Enter to start · Shift+Enter for a new line</p>
-        <button
-          type="button"
-          onClick={() => void start()}
-          disabled={busy || text.trim() === ''}
-          className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {busy ? 'Starting…' : 'Start chat'}
-        </button>
-      </div>
+    <Modal title="New chat" size="lg" onClose={onClose}>
+      {/* This composer is not the thread's: its anchors must not bring the chat tour here. */}
+      <CoachAnchorContext.Provider value={null}>
+        <div ref={body}>
+          {chatId && setup ? (
+            <Composer
+              chatId={chatId}
+              disabled={models.length === 0}
+              running={false}
+              queue={[]}
+              onRemoveQueued={() => {}}
+              onClearQueue={() => {}}
+              uploads={setup.uploadsEnabled}
+              massUploadThreshold={setup.massUploadThreshold}
+              onSubmit={submit}
+              onCompact={async () => false}
+              onStop={async () => {}}
+              editing={null}
+              onCancelEdit={() => {}}
+              modelControl={
+                <ModelSelect
+                  models={models}
+                  value={modelId}
+                  onChange={(id) => {
+                    setModelId(id);
+                    void chatClient.updateChat(chatId, { llmModelId: id });
+                  }}
+                  thinking={thinking}
+                  onThinking={(on) => {
+                    setThinking(on);
+                    void chatClient.updateChat(chatId, { thinkingEnabled: on });
+                  }}
+                  hasHistory={false}
+                />
+              }
+              dictation={
+                voice
+                  ? {
+                      locale: voice.prefs.locale ?? voice.defaultLocale,
+                      detectLanguage: voice.prefs.detectLanguage,
+                      onHeard: () => {},
+                      accent: voice.prefs.userAccent,
+                      echoCancellation,
+                      microphone,
+                    }
+                  : null
+              }
+            />
+          ) : error ? null : (
+            <p className="py-6 text-center text-sm text-gray-500">Getting ready…</p>
+          )}
+          {error ? (
+            <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+              {error}
+            </p>
+          ) : null}
+          {chatId && models.length === 0 ? (
+            <p className="mt-2 text-sm text-gray-500">
+              No model is configured for this organization yet. An administrator can add one under
+              Agent models.
+            </p>
+          ) : null}
+        </div>
+      </CoachAnchorContext.Provider>
     </Modal>
   );
 }

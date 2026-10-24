@@ -21,7 +21,7 @@
  * on <html>, so the panel keeps its dark styling outside the shell.
  */
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon, ICONS } from './icons';
 
@@ -48,10 +48,16 @@ export default function Modal({
   // one-frame delay, and rendering nothing first keeps hydration honest.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  const overlay = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && dismissible) onClose();
+      if (event.key !== 'Escape' || !dismissible) return;
+      // Over another dialog (a picker opened from this one) Escape is that
+      // one's: the newest is last in the document.
+      const open = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (open.length > 0 && open[open.length - 1] !== overlay.current) return;
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -61,6 +67,7 @@ export default function Modal({
 
   return createPortal(
     <div
+      ref={overlay}
       role="dialog"
       aria-modal="true"
       aria-label={title}

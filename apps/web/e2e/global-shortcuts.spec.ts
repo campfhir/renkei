@@ -18,11 +18,16 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { enrollForE2E } from './keys';
+import { enrollForE2E, secretbox } from './keys';
 
 test.describe.configure({ mode: 'serial' });
 
 const subjectFor = (project: string) => `e2e-shortcuts-${project}@example.com`;
+/** A stable, valid-looking UUID for this project's session and model. */
+const uuidFor = (project: string, what: string): string => {
+  const hex = createHash('sha1').update(`global-shortcuts:${what}:${project}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+};
 function sessionIdFor(project: string): string {
   const hex = createHash('sha1').update(`global-shortcuts:${project}`).digest('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
@@ -131,6 +136,22 @@ test.beforeAll(async ({}, testInfo) => {
   );
   // Enrolled with a key, so the key dialog does not sit over a chat page.
   await enrollForE2E(client, subject);
+  // The composer needs a model to send with; the org has none unless a spec adds one.
+  await client.query('DELETE FROM llm_model_configs WHERE id = $1', [
+    uuidFor(testInfo.project.name, 'model'),
+  ]);
+  await client.query(
+    `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)
+     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, true, false)`,
+    [
+      uuidFor(testInfo.project.name, 'model'),
+      `QC ${testInfo.project.name.replace('desktop-', '')}`,
+      secretbox(
+        JSON.stringify({ apiKey: 'e2e' }),
+        Buffer.from(process.env.TOKEN_ENCRYPTION_KEY ?? '', 'base64')
+      ),
+    ]
+  );
   await client.query(
     `INSERT INTO user_preferences (subject, key, value)
      VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
@@ -138,8 +159,12 @@ test.beforeAll(async ({}, testInfo) => {
   );
 });
 
-test.afterAll(async () => {
+// eslint-disable-next-line no-empty-pattern
+test.afterAll(async ({}, testInfo) => {
   await client.query('DELETE FROM chats WHERE owner_subject = $1', [subject]);
+  await client.query('DELETE FROM llm_model_configs WHERE id = $1', [
+    uuidFor(testInfo.project.name, 'model'),
+  ]);
   await client.end();
 });
 
@@ -155,9 +180,11 @@ test('the search hint shows the key for this OS', async ({ page }, testInfo) => 
   await expect(other.locator('kbd', { hasText: 'Ctrl K' })).toBeVisible();
 });
 
-test('quick chat starts a chat from any page with Enter', async ({ page }, testInfo) => {
+test('quick chat is the thread composer: attachments, model, prompts, and Enter to start', async ({
+  page,
+}, testInfo) => {
   await fakePlatform(page, 'Win32');
-  let sent: { text?: string } | null = null;
+  let sent: { text?: string; attachmentIds?: string[]; llmModelId?: string } | null = null;
   await page.route('**/api/chat/chats/*/turns', async (route) => {
     sent = route.request().postDataJSON();
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
@@ -165,23 +192,79 @@ test('quick chat starts a chat from any page with Enter', async ({ page }, testI
 
   await page.goto(`/agents`);
   const dialog = page.getByRole('dialog', { name: 'New chat' });
-  await pressUntilOpen(page, 'c', dialog);
-  await expect(dialog.getByLabel('Prompt')).toBeFocused();
+  // A cold dev server compiles the chat routes on this first hit.
+  await expect(async () => {
+    await page.keyboard.press('c');
+    await expect(dialog.getByLabel('Message')).toBeVisible({ timeout: 2500 });
+  }).toPass({ timeout: 40_000, intervals: [2500] });
+  const box = dialog.getByLabel('Message');
+  await expect(box).toBeFocused();
+  // The composer's own controls, not a lookalike.
+  await expect(dialog.getByRole('button', { name: 'Attach a file' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Insert a prompt' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Model' })).toContainText('QC ');
   await shot(page, testInfo, 'shortcuts-quick-chat');
 
   // Enter with nothing typed does nothing.
   await page.keyboard.press('Enter');
   await expect(dialog).toBeVisible();
 
-  await page.keyboard.type('Summarise my week');
-  await page.keyboard.press('Shift+Enter');
-  await page.keyboard.type('in three bullets');
+  // The prompt picker opens over the box; Escape closes it and only it.
+  await dialog.getByRole('button', { name: 'Insert a prompt' }).click();
+  const picker = page.getByRole('dialog', { name: 'Insert a prompt' });
+  await expect(picker).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(picker).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+
+  // A file is uploaded on the new chat and shown as a chip.
+  await dialog
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({
+      name: 'meeting-notes.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Decisions: ship on Friday.'),
+    });
+  await expect(dialog.getByText('meeting-notes.txt')).toBeVisible({ timeout: 20_000 });
+  await shot(page, testInfo, 'shortcuts-quick-chat-attached');
+
+  await box.fill('Summarise my week');
+  await box.press('Shift+Enter');
+  await box.pressSequentially('in three bullets');
   await page.keyboard.press('Enter');
 
-  // A cold dev server compiles the chat routes on this first hit.
   await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/, { timeout: 30_000 });
-  expect(sent).toEqual(expect.objectContaining({ text: 'Summarise my week\nin three bullets' }));
+  expect(sent).toEqual(
+    expect.objectContaining({
+      text: 'Summarise my week\nin three bullets',
+      attachmentIds: [expect.any(String)],
+      llmModelId: uuidFor(testInfo.project.name, 'model'),
+    })
+  );
   await expect(dialog).toHaveCount(0);
+});
+
+test('closing quick chat without sending leaves no empty chat behind', async ({ page }) => {
+  await fakePlatform(page, 'Win32');
+  const empty = () =>
+    client
+      .query(
+        `SELECT count(*)::int AS n FROM chats WHERE owner_subject = $1 AND last_message_at IS NULL`,
+        [subject]
+      )
+      .then((result) => result.rows[0].n);
+  const before = await empty();
+  await page.goto(`/agents`);
+  const dialog = page.getByRole('dialog', { name: 'New chat' });
+  await expect(async () => {
+    await page.keyboard.press('c');
+    await expect(dialog.getByLabel('Message')).toBeVisible({ timeout: 2500 });
+  }).toPass({ timeout: 20_000, intervals: [2500] });
+  await expect.poll(empty).toBe(before + 1);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(empty).toBe(before);
 });
 
 test('chords use the Command key on a Mac, and quick chat works at phone width', async ({
@@ -204,11 +287,11 @@ test('chords use the Command key on a Mac, and quick chat works at phone width',
 
   await page.keyboard.press('c');
   const dialog = page.getByRole('dialog', { name: 'New chat' });
-  await expect(dialog).toBeVisible();
-  const box = await dialog.locator('> div').boundingBox();
-  expect(box!.x).toBeGreaterThanOrEqual(0);
-  expect(box!.x + box!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
-  await page.keyboard.type('Draft a reply to the vendor about the delayed invoice');
+  await expect(dialog.getByLabel('Message')).toBeVisible({ timeout: 20_000 });
+  const panel = await dialog.locator('> div').boundingBox();
+  expect(panel!.x).toBeGreaterThanOrEqual(0);
+  expect(panel!.x + panel!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+  await dialog.getByLabel('Message').fill('Draft a reply to the vendor about the delayed invoice');
   await shot(page, testInfo, 'shortcuts-quick-chat-phone');
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
