@@ -121,6 +121,7 @@ import {
 } from '@/lib/mcp-tools/summary/collect-docs';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import { narrowedScopes } from '@/lib/mcp-tools/narrowed-scopes';
+import { withSchemaGuard } from '@/lib/mcp-tools/schema-guard';
 
 /** Which connectors this caller has connected, and on what scopes. */
 export interface ConnectorAvailability {
@@ -586,7 +587,9 @@ export async function registerRenkeiTools(
     never reaches a person's systems without a card. Registered once
     every module has run — see the flush at the end.
   */
-  const { server, flush: flushGenericPreviews } = withActPreviews(withKindStamp(rawServer));
+  const { server, flush: flushGenericPreviews } = withActPreviews(
+    withKindStamp(withSchemaGuard(rawServer))
+  );
 
   const {
     webexAvailable,
