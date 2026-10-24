@@ -507,6 +507,12 @@ export interface SandboxSizeRequests {
   subject: string;
 }
 
+export interface ChatDrafts {
+  chat_id: string;
+  content: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ChatQueuedSends {
   chat_id: string;
   queue: Json;
@@ -1664,6 +1670,7 @@ export interface DB {
   batch_processed_files: BatchProcessedFiles;
   chat_messages: ChatMessages;
   chat_presence: ChatPresence;
+  chat_drafts: ChatDrafts;
   chat_queued_sends: ChatQueuedSends;
   chat_project_memories: ChatProjectMemories;
   chat_projects: ChatProjects;

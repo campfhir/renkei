@@ -209,6 +209,8 @@ export interface ChatView {
   contextTokens: number | null;
   /** The owner's messages waiting behind the running turn, in send order (queued-sends.ts). */
   queue: QueuedSend[];
+  /** The owner's unsent composer text, '' when there is none (drafts.ts). */
+  draft: string;
 }
 
 /**

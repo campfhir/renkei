@@ -188,6 +188,7 @@ export const EXPECTED_MIGRATIONS = [
   '162-chat-auto-title',
   '163-artifacts',
   '164-artifact-digest',
+  '165-chat-drafts',
 ];
 
 export interface MigrationStatus {
