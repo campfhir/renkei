@@ -122,23 +122,40 @@ function summarizeInputSchema(schema: Record<string, unknown>): string {
     .join('; ');
 }
 
+/** What find_tools says when the chat has no connectors beyond its core tools. */
+const NOTHING_TO_FIND =
+  'No connectors beyond the tools already offered are enabled on this chat. The person can turn ' +
+  "more on from the chat's tools button.";
+
+/** What find_tools says when the tool service did not answer this turn. */
+const UNAVAILABLE =
+  'The connector tools could not be loaded for this turn (the tool service did not respond), so nothing can be found right now. Tell the person this is a temporary fault, not that the connectors are missing, and suggest sending the message again.';
+
 /**
  * `find_tools`, or null when the chat has nothing beyond its core tools —
- * offering a search over an empty catalog would just be a dead end.
+ * offering a search over an empty catalog would otherwise be a dead end.
+ * `alwaysOffer` keeps it on regardless: a model asked about its tools should
+ * find the tool and be told what is enabled, not report it missing (an
+ * ordinary chat starts with only the core connectors, all offered up front).
  */
-export function findToolsTool(discoverable: DiscoverableTool[]): LocalTool | null {
-  if (discoverable.length === 0) return null;
+export function findToolsTool(
+  discoverable: DiscoverableTool[],
+  options: { alwaysOffer?: boolean; unavailable?: boolean } = {}
+): LocalTool | null {
+  if (discoverable.length === 0 && !options.alwaysOffer) return null;
   const summary = connectorSummaryOf(discoverable);
 
   return {
     readOnly: true,
     def: {
       name: FIND_TOOLS_NAME,
-      description:
-        'Search for tools from connectors enabled on this chat but not offered up front — ' +
-        `${summary}. Call with a short query describing what you need to do (e.g. "create a ` +
-        'jira issue", "search sharepoint files", or just a connector name), and matching tools ' +
-        'become callable for the rest of this chat.',
+      description: summary
+        ? 'Search for tools from connectors enabled on this chat but not offered up front — ' +
+          `${summary}. Call with a short query describing what you need to do (e.g. "create a ` +
+          'jira issue", "search sharepoint files", or just a connector name), and matching tools ' +
+          'become callable for the rest of this chat.'
+        : 'Search for tools from connectors enabled on this chat but not offered up front. ' +
+          `Right now there are none: ${NOTHING_TO_FIND}`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -150,6 +167,8 @@ export function findToolsTool(discoverable: DiscoverableTool[]): LocalTool | nul
     async execute(input) {
       const query = typeof input.query === 'string' ? input.query.trim() : '';
       if (!query) return errorResult('Give a query describing what you need, or a connector name.');
+      if (options.unavailable) return errorResult(UNAVAILABLE);
+      if (discoverable.length === 0) return errorResult(NOTHING_TO_FIND);
       const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
       const scored = discoverable
         .map((entry) => ({

@@ -73,6 +73,29 @@ describe('findToolsTool', () => {
     expect(findToolsTool([])).toBeNull();
   });
 
+  it('can be offered with nothing to find, and says so when called', async () => {
+    const tool = findToolsTool([], { alwaysOffer: true });
+    expect(tool?.def.name).toBe(FIND_TOOLS_NAME);
+    const result = await createLocalToolSet([tool!]).run(
+      FIND_TOOLS_NAME,
+      { query: 'jira' },
+      context
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('No connectors beyond');
+  });
+
+  it('says the tool service failed, not that nothing is enabled, when the surface was unavailable', async () => {
+    const tool = findToolsTool([], { alwaysOffer: true, unavailable: true });
+    const result = await createLocalToolSet([tool!]).run(
+      FIND_TOOLS_NAME,
+      { query: 'jira' },
+      context
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('could not be loaded');
+  });
+
   it('names the enabled connectors and their counts in its own description', () => {
     const tool = findToolsTool([jiraSearch, jiraCreate, sharepointSearch]);
     expect(tool?.def.description).toContain('jira (2)');
