@@ -21,7 +21,7 @@
  * on <html>, so the panel keeps its dark styling outside the shell.
  */
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon, ICONS } from './icons';
 
@@ -31,6 +31,7 @@ export default function Modal({
   children,
   size = 'md',
   dismissible = true,
+  flush = false,
 }: {
   title: string;
   onClose: () => void;
@@ -42,16 +43,27 @@ export default function Modal({
    * once): no close button, and the backdrop and Escape do nothing.
    */
   dismissible?: boolean;
+  /**
+   * No padding around the content: it runs to the panel's edges under the
+   * title, for content that brings its own (a composer).
+   */
+  flush?: boolean;
 }) {
   // There is no document on the server; the portal target exists only once
   // this has mounted. A dialog is opened by a click, so nobody sees the
   // one-frame delay, and rendering nothing first keeps hydration honest.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  const overlay = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && dismissible) onClose();
+      if (event.key !== 'Escape' || !dismissible) return;
+      // Over another dialog (a picker opened from this one) Escape is that
+      // one's: the newest is last in the document.
+      const open = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (open.length > 0 && open[open.length - 1] !== overlay.current) return;
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -61,6 +73,7 @@ export default function Modal({
 
   return createPortal(
     <div
+      ref={overlay}
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -69,9 +82,9 @@ export default function Modal({
     >
       <div
         onClick={(event) => event.stopPropagation()}
-        className={`w-full ${size === 'wide' ? 'max-w-6xl' : size === 'lg' ? 'max-w-2xl' : 'max-w-md'} rounded-xl border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-800 dark:bg-gray-950`}
+        className={`w-full ${size === 'wide' ? 'max-w-6xl' : size === 'lg' ? 'max-w-2xl' : 'max-w-md'} rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-800 dark:bg-gray-950 ${flush ? 'overflow-hidden' : 'p-5'}`}
       >
-        <div className="mb-3 flex items-center justify-between">
+        <div className={`flex items-center justify-between ${flush ? 'px-5 py-3' : 'mb-3'}`}>
           <h2 className="text-sm font-semibold">{title}</h2>
           {dismissible ? (
             <button

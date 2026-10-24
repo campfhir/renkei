@@ -1,6 +1,6 @@
 import type { CoachMarkTour } from '../types';
 
-/** The first thing a newcomer sees: the shell, and where everything is. */
+/** The first things a newcomer sees: the shell, where everything is, and the keyboard. */
 export const GETTING_STARTED_TOURS: CoachMarkTour[] = [
   {
     id: 'welcome',
@@ -51,6 +51,43 @@ export const GETTING_STARTED_TOURS: CoachMarkTour[] = [
         id: 'done',
         title: 'That is the lay of the land',
         body: 'Other pages have short tours of their own the first time you visit. Find them all under Tutorials in your account menu.',
+      },
+    ],
+  },
+  {
+    id: 'shortcuts',
+    area: 'Getting started',
+    version: 1,
+    title: 'Keyboard shortcuts',
+    description:
+      'Search, start a chat, or jump back to a recent chat without leaving the keyboard.',
+    startPath: '/',
+    autoStart: true,
+    // Follows the welcome tour: same page, next in registry order.
+    requires: ['home-feed'],
+    audience: 'everyone',
+    steps: [
+      {
+        id: 'search',
+        title: 'Search from anywhere',
+        target: 'nav-search',
+        placement: 'bottom',
+        body: 'Press {shortcut:search} on any page to search chats, projects and settings, then use the arrow keys and Enter to open one.',
+      },
+      {
+        id: 'new-chat',
+        title: 'Start a chat in a flash',
+        body: 'Press {shortcut:new-chat} anywhere you are not typing to open a box for your prompt. Press Enter and a new chat starts with it.',
+      },
+      {
+        id: 'switch-chat',
+        title: 'Hop between recent chats',
+        body: 'Press {shortcut:switch-chat} to see your recent chats, like an app switcher. Press it again to move down the list, and Enter to open the one you want.',
+      },
+      {
+        id: 'go-to',
+        title: 'Jump to any page',
+        body: 'Go straight to a page: {shortcut:home} for Home, {shortcut:projects} for Projects, {shortcut:artifacts} for Artifacts, {shortcut:code} for Code and {shortcut:preferences} for Preferences. {shortcut:tutorials} opens Tutorials.',
       },
     ],
   },

@@ -22,6 +22,7 @@ import type { ArtifactImpact, LibraryItem } from './artifact-library';
 import type { ProjectArtifactListItem, QueuedSend } from './views';
 import type { StartedTurn } from './start-turn';
 import type { ChatSearchHit } from './search-text';
+import type { VoiceAvailability } from '@/lib/voice/availability';
 import type { WidgetModelContextOutcome } from './widget-tools';
 
 const base = () => `/api/chat`;
@@ -41,6 +42,15 @@ function browserTimeZone(): string | undefined {
 
 export const chatClient = {
   sidebar: () => getJson<ChatSidebarData>(`${base()}/chats`),
+
+  /** The composer's inputs — models, uploads, voice — for a box that opens on any page. */
+  composerSetup: () =>
+    getJson<{
+      models: ModelOption[];
+      uploadsEnabled: boolean;
+      massUploadThreshold: number;
+      voice: VoiceAvailability | null;
+    }>(`${base()}/composer-setup`),
 
   /** The next page of the viewer's own chats older than `before` — the sidebar's "Load more". */
   moreChats: (before: string) =>

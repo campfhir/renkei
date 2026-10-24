@@ -19,6 +19,7 @@ it in passing (a step in the welcome tour, say) but nothing walks through it.
 | Feature             | Where                        | Audience | Tour            | Status  |
 | ------------------- | ---------------------------- | -------- | --------------- | ------- |
 | Home feed           | `/[slug]`                    | everyone | `welcome`       | Covered |
+| Keyboard shortcuts  | any page; tour on `/[slug]`  | everyone | `shortcuts`     | Covered |
 | Agents list         | `/[slug]/agents`             | everyone | `agents`        | Covered |
 | Agent builder       | `/[slug]/agents/new`, `edit` | everyone | `agent-builder` | Covered |
 | Agent runs          | `/[slug]/agents/[id]/runs`   | everyone | `agent-runs`    | Covered |

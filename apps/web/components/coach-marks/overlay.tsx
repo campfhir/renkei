@@ -37,6 +37,8 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { Icon, ICONS } from '@/components/icons';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { usePlatform } from '@/lib/use-platform';
+import { expandShortcutTokens } from '@/lib/shortcuts';
 import type { CoachAnchor } from '@/lib/coach-marks/anchors';
 import type { CoachMarkPlacement, CoachMarkTour } from '@/lib/coach-marks/types';
 import { isVisible } from './visible';
@@ -190,6 +192,7 @@ export default function CoachMarkOverlay({
   useEffect(() => setMounted(true), []);
 
   // null while looking, or when nothing was found; a Box once found.
+  const platform = usePlatform();
   const [spot, setSpot] = useState<Box | null>(null);
   const [looked, setLooked] = useState(false);
   const [cardPos, setCardPos] = useState<{ top: number; left: number } | null>(null);
@@ -355,7 +358,7 @@ export default function CoachMarkOverlay({
         {step.title}
       </h2>
       <p id={bodyId} className="mt-1.5 text-sm leading-relaxed text-gray-700 dark:text-gray-300">
-        {step.body}
+        {expandShortcutTokens(step.body, platform)}
       </p>
       <div className="mt-4 flex items-center gap-2">
         <button

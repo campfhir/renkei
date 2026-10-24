@@ -127,6 +127,7 @@ export default function Composer({
   editing,
   onCancelEdit,
   project = null,
+  bare = false,
 }: {
   chatId: string;
   disabled: boolean;
@@ -167,6 +168,11 @@ export default function Composer({
    * attached to this message only. The choice is remembered per project.
    */
   project?: { id: string; name: string } | null;
+  /**
+   * No bar of its own: no background, border or padding around the box, for
+   * a composer that sits inside a dialog which has its own edges.
+   */
+  bare?: boolean;
 }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
@@ -466,7 +472,13 @@ export default function Composer({
   };
 
   return (
-    <div className="@container shrink-0 border-t border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-900/60">
+    <div
+      className={`@container shrink-0 ${
+        bare
+          ? ''
+          : 'border-t border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-900/60'
+      }`}
+    >
       {editing ? (
         <div className="mb-2 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
           <Icon path={ICONS.pencil} className="h-3.5 w-3.5 shrink-0" />
@@ -573,10 +585,18 @@ export default function Composer({
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
         {...composerAnchor}
-        className={`rounded-xl border bg-white transition dark:bg-gray-900 ${
-          dragging
-            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
-            : 'border-gray-300 dark:border-gray-700'
+        className={`transition ${
+          bare
+            ? `border-t py-2 ${
+                dragging
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
+                  : 'border-gray-200 dark:border-gray-800'
+              }`
+            : `rounded-xl border bg-white dark:bg-gray-900 ${
+                dragging
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
+                  : 'border-gray-300 dark:border-gray-700'
+              }`
         }`}
       >
         {pendingDrop && project ? (
@@ -902,9 +922,13 @@ export default function Composer({
           )}
         </div>
       </div>
-      {uploadError ? <p className="mt-1 text-xs text-red-600">{uploadError}</p> : null}
-      {dictationError ? <p className="mt-1 text-xs text-red-600">{dictationError}</p> : null}
-      <p className="mt-1 hidden text-[11px] text-gray-400 sm:block">
+      {uploadError ? (
+        <p className={`mt-1 text-xs text-red-600 ${bare ? 'px-3' : ''}`}>{uploadError}</p>
+      ) : null}
+      {dictationError ? (
+        <p className={`mt-1 text-xs text-red-600 ${bare ? 'px-3' : ''}`}>{dictationError}</p>
+      ) : null}
+      <p className={`mt-1 hidden text-[11px] text-gray-400 sm:block ${bare ? 'px-3 pb-2' : ''}`}>
         Enter to send, Shift+Enter for a new line, / for a prompt.
       </p>
       {prompts ? (
