@@ -302,7 +302,12 @@ describe('applyChangeRequest', () => {
     const full = requests.find(
       (r) => r.method === 'POST' && r.path === `${V}/metadata/deployRequest`
     );
-    expect(full?.body).toBeInstanceOf(FormData);
+    const text = Buffer.from(full?.body as Uint8Array).toString('latin1');
+    // The json part carries no filename — Salesforce refuses one as an invalid multipart request.
+    expect(text).toContain(
+      'Content-Disposition: form-data; name="json"\r\nContent-Type: application/json\r\n\r\n'
+    );
+    expect(text).toContain('name="file"; filename="deploy.zip"');
   });
 
   it('fails in Salesforce’s words, and grants nothing, when the deploy fails', async () => {

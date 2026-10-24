@@ -46,6 +46,31 @@ export async function zipFiles(files: Record<string, string>): Promise<Uint8Arra
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
 }
 
+/**
+ * The deployRequest body, written by hand: Salesforce wants the `json` part
+ * as a bare `form-data; name="json"` with its own content type, and
+ * FormData always stamps a `filename` on a Blob part, which Salesforce
+ * refuses as INVALID_MULTIPART_REQUEST.
+ */
+export function deployMultipart(
+  json: unknown,
+  zip: Uint8Array
+): { body: Uint8Array<ArrayBuffer>; contentType: string } {
+  const boundary = `renkei-${crypto.randomUUID()}`;
+  const encoder = new TextEncoder();
+  const head = encoder.encode(
+    `--${boundary}\r\nContent-Disposition: form-data; name="json"\r\nContent-Type: application/json\r\n\r\n` +
+      `${JSON.stringify(json)}\r\n` +
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="deploy.zip"\r\nContent-Type: application/zip\r\n\r\n`
+  );
+  const tail = encoder.encode(`\r\n--${boundary}--\r\n`);
+  const body = new Uint8Array(head.byteLength + zip.byteLength + tail.byteLength);
+  body.set(head, 0);
+  body.set(zip, head.byteLength);
+  body.set(tail, head.byteLength + zip.byteLength);
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
 function errorsOf(body: unknown): SalesforceError[] {
   return (Array.isArray(body) ? body : [body]).flatMap((item: unknown) => {
     const entry = rec(item);
@@ -77,23 +102,14 @@ export async function startDeploy(
     allowMissingFiles: false,
     ...(access.sandbox ? { testLevel: 'NoTestRun' } : {}),
   };
-  const form = new FormData();
-  form.append(
-    'json',
-    new Blob([JSON.stringify({ deployOptions })], { type: 'application/json' }),
-    'deployOptions.json'
-  );
-  // A plain ArrayBuffer copy: Blob does not take a view over a possibly-shared buffer.
-  const payload = new ArrayBuffer(zip.byteLength);
-  new Uint8Array(payload).set(zip);
-  form.append('file', new Blob([payload], { type: 'application/zip' }), 'deploy.zip');
+  const { body, contentType } = deployMultipart({ deployOptions }, zip);
 
   let response: Response;
   try {
     response = await access.auth(`${access.instanceUrl}${dataPath('/metadata/deployRequest')}`, {
       method: 'POST',
-      headers: { Accept: 'application/json' },
-      body: form,
+      headers: { Accept: 'application/json', 'Content-Type': contentType },
+      body,
       signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
