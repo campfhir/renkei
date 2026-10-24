@@ -16,6 +16,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -107,6 +108,8 @@ test.beforeAll(async ({}, testInfo) => {
      VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')`,
     [sessionIdFor(testInfo.project.name), subject, ['renkei-user', 'renkei-operator']]
   );
+  // Enrolled with a key, so the key dialog does not sit over a chat page.
+  await enrollForE2E(client, subject);
   await client.query(
     `INSERT INTO user_preferences (subject, key, value)
      VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
@@ -161,7 +164,9 @@ test('quick chat starts a chat from any page with Enter', async ({ page }, testI
   await expect(dialog).toHaveCount(0);
 });
 
-test('quick chat uses the Command key on a Mac and works at phone width', async ({ page }) => {
+test('quick chat uses the Command key on a Mac and works at phone width', async ({
+  page,
+}, testInfo) => {
   await fakePlatform(page, 'MacIntel');
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`/agents`);
@@ -174,6 +179,8 @@ test('quick chat uses the Command key on a Mac and works at phone width', async 
   const box = await dialog.locator('> div').boundingBox();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+  await page.keyboard.type('Draft a reply to the vendor about the delayed invoice');
+  await shot(page, testInfo, 'shortcuts-quick-chat-phone');
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
 });
@@ -231,6 +238,16 @@ test('the shortcuts coach marks follow the welcome tour on the home page', async
   await expect(card).toHaveAttribute('data-coach-tour', 'welcome');
   await card.getByRole('button', { name: 'Skip tour' }).click();
   await expect(card).toHaveCount(0);
+  // Settled on the server before the page is left, or the tour comes back.
+  await expect
+    .poll(async () => {
+      const result = await client.query(
+        `SELECT status FROM coach_mark_progress WHERE subject = $1 AND tour_id = 'welcome'`,
+        [subject]
+      );
+      return result.rows[0]?.status;
+    })
+    .toBe('dismissed');
 
   // The next visit to the home page brings the shortcuts tour.
   await page.goto(`/`);
