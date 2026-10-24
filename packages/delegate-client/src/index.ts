@@ -43,6 +43,8 @@ export {
   delegateApiKeyFromEnv,
   delegateConfigFromEnv,
   developmentDelegateKeyRefusal,
+  isConnectionFailure,
+  setRetryDelayForTests,
   DEVELOPMENT_DELEGATE_KEY,
   type DelegateCallError,
   type DelegateConfig,
@@ -165,6 +167,9 @@ function delegationBody(input: DelegationInput): Record<string, unknown> {
   };
 }
 
+/** A read: safe to send again after a dropped connection (transport.ts). */
+const READ = { retry: true } as const;
+
 export class DelegateClient {
   constructor(private readonly transport: DelegateTransport) {}
 
@@ -193,9 +198,10 @@ export class DelegateClient {
 
   private async key(
     op: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    options: { retry?: boolean } = {}
   ): Promise<Result<ResourceKey, KeyOpError>> {
-    const answer = await this.transport.call(op, body);
+    const answer = await this.transport.call(op, body, options);
     if (!answer.ok) return err(keyOpError(answer.err));
     const key = keyOf(answer.val);
     return key ? ok(key) : err('DELEGATE_ERROR' as const);
@@ -203,9 +209,10 @@ export class DelegateClient {
 
   private async keys(
     op: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    options: { retry?: boolean } = {}
   ): Promise<Result<Record<string, unknown>, KeysOpError>> {
-    const answer = await this.transport.call(op, body);
+    const answer = await this.transport.call(op, body, options);
     return answer.ok ? ok(answer.val) : err(keysOpError(answer.err));
   }
 
@@ -224,7 +231,7 @@ export class DelegateClient {
    * to?"). Both null when the delegate has no signing key.
    */
   async keyInstancesSigned(): Promise<Result<SignedInstanceList, KeysOpError>> {
-    const answer = await this.keys('keys/instances', {});
+    const answer = await this.keys('keys/instances', {}, READ);
     if (!answer.ok) return answer;
     const instances: LiveInstance[] = [];
     if (Array.isArray(answer.val.instances)) {
@@ -242,11 +249,8 @@ export class DelegateClient {
   }
 
   /** A person's enrollment and what is delegated for them, as of this session when given. */
-  async keyStatus(
-    subject: string,
-    sessionId?: string
-  ): Promise<Result<KeyStatus, KeysOpError>> {
-    const answer = await this.keys('keys/status', { subject, sessionId });
+  async keyStatus(subject: string, sessionId?: string): Promise<Result<KeyStatus, KeysOpError>> {
+    const answer = await this.keys('keys/status', { subject, sessionId }, READ);
     return answer.ok ? ok(statusOf(answer.val)) : answer;
   }
 
@@ -304,9 +308,10 @@ export class DelegateClient {
     return answer.ok ? ok(answer.val.shredded === true) : answer;
   }
 
-  async enrollmentCensus(
-): Promise<Result<{ held: number; managed: number; own: number }, KeysOpError>> {
-    const answer = await this.keys('keys/census', { });
+  async enrollmentCensus(): Promise<
+    Result<{ held: number; managed: number; own: number }, KeysOpError>
+  > {
+    const answer = await this.keys('keys/census', {}, READ);
     if (!answer.ok) return answer;
     const count = (value: unknown): number => (typeof value === 'number' ? value : 0);
     return ok({
@@ -345,7 +350,7 @@ export class DelegateClient {
 
   /** The resource's key as this person holds it. */
   openResourceKey(ref: ResourceRef, subject: string): Promise<Result<ResourceKey, KeyOpError>> {
-    return this.key('resource-key/open', { ...refBody(ref), subject });
+    return this.key('resource-key/open', { ...refBody(ref), subject }, READ);
   }
 
   /** Many at once (the sidebar's search): a resource missing from the map could not be opened. */
@@ -354,7 +359,7 @@ export class DelegateClient {
     entries: { resourceId: string; subject: string }[]
   ): Promise<Result<Map<string, ResourceKey>, KeyOpError>> {
     if (entries.length === 0) return ok(new Map());
-    const answer = await this.transport.call('resource-key/open-many', { kind, entries });
+    const answer = await this.transport.call('resource-key/open-many', { kind, entries }, READ);
     if (!answer.ok) return err(keyOpError(answer.err));
     const out = new Map<string, ResourceKey>();
     if (isRecord(answer.val.keys)) {
@@ -417,12 +422,12 @@ export class DelegateClient {
   }
 
   async hasResourceKey(ref: ResourceRef): Promise<Result<boolean, KeyOpError>> {
-    const answer = await this.transport.call('resource-key/has', refBody(ref));
+    const answer = await this.transport.call('resource-key/has', refBody(ref), READ);
     return answer.ok ? ok(answer.val.exists === true) : err(keyOpError(answer.err));
   }
 
   async listResourceKeyHolders(ref: ResourceRef): Promise<Result<ResourceKeyHolder[], KeyOpError>> {
-    const answer = await this.transport.call('resource-key/holders', refBody(ref));
+    const answer = await this.transport.call('resource-key/holders', refBody(ref), READ);
     if (!answer.ok) return err(keyOpError(answer.err));
     const holders: ResourceKeyHolder[] = [];
     if (Array.isArray(answer.val.holders)) {
@@ -472,7 +477,7 @@ export class DelegateClient {
     stored: string[]
   ): Promise<Result<(string | null)[], KeyOpError>> {
     if (stored.length === 0) return ok([]);
-    const answer = await this.transport.call('user-sealed/open', { subject, stored });
+    const answer = await this.transport.call('user-sealed/open', { subject, stored }, READ);
     if (!answer.ok) return err(keyOpError(answer.err));
     const opened = Array.isArray(answer.val.opened) ? answer.val.opened : [];
     const out: (string | null)[] = [];

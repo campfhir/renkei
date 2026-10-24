@@ -8,6 +8,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { cache } from 'react';
 import type { NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDatabase } from '@renkei/db';
@@ -80,10 +81,7 @@ export async function createSession(
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
   try {
-    await db
-      .insertInto('sessions')
-      .values({ id, subject, roles, expires_at: expiresAt })
-      .execute();
+    await db.insertInto('sessions').values({ id, subject, roles, expires_at: expiresAt }).execute();
   } catch (error) {
     logger.error('Failed to create session', {
       component: 'auth/session',
@@ -153,21 +151,26 @@ export async function getSessionById(sessionId: string): Promise<Session | null>
 }
 
 /** For route handlers, which receive the request directly. */
-export async function getSessionFromRequest(
-  request: NextRequest
-): Promise<Session | null> {
+export async function getSessionFromRequest(request: NextRequest): Promise<Session | null> {
   const sessionId = request.cookies.get(sessionCookieName())?.value;
   if (!sessionId) return null;
   return getSessionById(sessionId);
 }
 
-/** For server components, which read cookies from the async store. */
-export async function getSessionFromCookies(): Promise<Session | null> {
+/**
+ * For server components, which read cookies from the async store. One
+ * lookup per request: the app layout, a section's layout and the page
+ * each check the session (lib/route-auth-coverage.test.ts holds every
+ * page to it), and each check used to be its own SELECT and UPDATE of
+ * the row. React's cache() shares the first answer with the rest of the
+ * same render; outside a render (tests) it simply calls through.
+ */
+export const getSessionFromCookies = cache(async (): Promise<Session | null> => {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(sessionCookieName())?.value;
   if (!sessionId) return null;
   return getSessionById(sessionId);
-}
+});
 
 export async function destroySession(sessionId: string): Promise<void> {
   const dbResult = getDatabase();

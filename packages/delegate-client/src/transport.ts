@@ -35,6 +35,54 @@ export type DelegateCallError = Err<string>;
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * Retrying a call the delegate never took. A keep-alive socket the
+ * delegate closed as idle in the same instant this process reused it, or
+ * a delegate restarting (a deploy, a crash and its restart), fails the
+ * request at the connection — nothing reached a handler — and a page
+ * made the error its own: every chat on it read as "the key service
+ * could not be reached" for one dropped socket. Only a call the caller
+ * marks safe to repeat (`retry`): a read, never a write, which may have
+ * started before the connection dropped. The delays are short — a
+ * fresh connection is all a stale socket needs — and never apply to a
+ * timeout, whose request may be running.
+ */
+const RETRY_DELAYS_MS = [250, 1_000];
+let retryDelay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Test hook: the wait between retries, without real time passing. */
+export function setRetryDelayForTests(delay: ((ms: number) => Promise<void>) | null): void {
+  retryDelay = delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+}
+
+const CONNECTION_FAILURE_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EPIPE',
+  'EAI_AGAIN',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+/**
+ * A fetch that never reached the delegate's handler: refused, reset, or
+ * the socket gone under it (undici's "other side closed"). Not a
+ * timeout: that request may be running.
+ */
+export function isConnectionFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === 'TimeoutError' || error.name === 'AbortError') return false;
+  const cause: { code?: unknown; message?: unknown } | undefined =
+    typeof error.cause === 'object' && error.cause !== null ? error.cause : undefined;
+  if (typeof cause?.code === 'string' && CONNECTION_FAILURE_CODES.has(cause.code)) return true;
+  if (typeof cause?.message === 'string' && /other side closed|socket hang up/i.test(cause.message))
+    return true;
+  return (
+    [...CONNECTION_FAILURE_CODES].some((code) => error.message.includes(code)) ||
+    /other side closed|socket hang up/i.test(error.message)
+  );
+}
+
 /** The bearer key prefix the compose files ship for development (one per caller); worthless in production. */
 export const DEVELOPMENT_DELEGATE_KEY = 'renkei-dev-delegate-key';
 
@@ -144,25 +192,39 @@ export class DelegateTransport {
     return merged;
   }
 
-  /** One op; the parsed JSON body on 2xx, the delegate's error tag otherwise. */
+  /**
+   * One op; the parsed JSON body on 2xx, the delegate's error tag
+   * otherwise. `retry` marks an op safe to send again after a dropped
+   * connection (a read); a write is sent exactly once.
+   */
   async call(
     op: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    options: { retry?: boolean } = {}
   ): Promise<Result<Record<string, unknown>, string>> {
     if (!this.config) return err('DELEGATE_UNCONFIGURED');
+    const payload = JSON.stringify(this.withBoundFields(body));
     let response: Response;
-    try {
-      response = await this.fetchImpl(`${this.config.url}/v1/${op}`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${this.config.apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify(this.withBoundFields(body)),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch (cause) {
-      return err('DELEGATE_UNREACHABLE', { cause });
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        response = await this.fetchImpl(`${this.config.url}/v1/${op}`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${this.config.apiKey}`,
+            'content-type': 'application/json',
+          },
+          body: payload,
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+        break;
+      } catch (cause) {
+        const delay = RETRY_DELAYS_MS[attempt];
+        if (options.retry === true && delay !== undefined && isConnectionFailure(cause)) {
+          await retryDelay(delay);
+          continue;
+        }
+        return err('DELEGATE_UNREACHABLE', { cause });
+      }
     }
     const json: unknown = await response.json().catch(() => null);
     if (!response.ok) {

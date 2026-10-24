@@ -35,6 +35,7 @@ import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { CodeProjectView } from '@/lib/code/project-view';
 import ExternalLink from '@/components/external-link';
+import LocalTime from '@/components/local-time';
 import PipelinesSummary from './pipelines-summary';
 import ActionsSummary from './actions-summary';
 import ServicesSummaryCard from './services-summary';
@@ -47,10 +48,6 @@ const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
 const POLL_MS = 2_500;
-
-function when(value: string): string {
-  return new Date(value).toLocaleString();
-}
 
 function bytes(value: number): string {
   if (value < 1_048_576) return `${Math.max(1, Math.round(value / 1024))} KB`;
@@ -133,7 +130,14 @@ export function CodeRepoStrip({
               ? `The last clone failed: ${workspace.error ?? 'unknown reason'}. The next chat tries again.`
               : workspace.status === 'cloning'
                 ? 'Cloning on the sandbox worker; this page follows it.'
-                : `${bytes(workspace.sizeBytes)} on the sandbox · expires ${when(workspace.expiresAt)} unless used · each chat works in a worktree of it, and clones again if it has expired.`}
+                : null}
+        {code.enabled && workspace?.status === 'ready' ? (
+          <>
+            {bytes(workspace.sizeBytes)} on the sandbox · expires{' '}
+            <LocalTime at={workspace.expiresAt} /> unless used · each chat works in a worktree of
+            it, and clones again if it has expired.
+          </>
+        ) : null}
       </p>
       {code.enabled && workspace?.status === 'ready' ? (
         <SizeRequest
@@ -147,7 +151,12 @@ export function CodeRepoStrip({
 }
 
 /** The cards beside (or below) the chats: pulls, commits, CI, services, then the environment. */
-export function CodeRail({ projectId, code, canEdit, envProblems }: {
+export function CodeRail({
+  projectId,
+  code,
+  canEdit,
+  envProblems,
+}: {
   projectId: string;
   code: CodeProjectView['code'];
   canEdit: boolean;
@@ -196,19 +205,10 @@ export function CodeRail({ projectId, code, canEdit, envProblems }: {
 
   return (
     <>
-      <PullsSummary
-        href={`/code/${projectId}/pulls`}
-        projectId={projectId}
-      />
-      <CommitsSummary
-        href={`/code/${projectId}/commits`}
-        projectId={projectId}
-      />
+      <PullsSummary href={`/code/${projectId}/pulls`} projectId={projectId} />
+      <CommitsSummary href={`/code/${projectId}/commits`} projectId={projectId} />
       {isGitHub ? (
-        <ActionsSummary
-          href={`/code/${projectId}/actions`}
-          projectId={projectId}
-        />
+        <ActionsSummary href={`/code/${projectId}/actions`} projectId={projectId} />
       ) : (
         <PipelinesSummary
           href={`/code/${projectId}/pipelines`}
@@ -217,10 +217,7 @@ export function CodeRail({ projectId, code, canEdit, envProblems }: {
         />
       )}
       {code.enabled ? (
-        <ServicesSummaryCard
-          href={`/code/${projectId}/services`}
-          projectId={projectId}
-        />
+        <ServicesSummaryCard href={`/code/${projectId}/services`} projectId={projectId} />
       ) : null}
       <section className={sectionClass}>
         <div className="mb-2">
@@ -248,8 +245,13 @@ export function CodeRail({ projectId, code, canEdit, envProblems }: {
                 <span className="min-w-0 flex-1 truncate">
                   <span className="font-mono">{variable.name}</span>
                   <span className="ml-2 text-xs text-gray-500">
-                    set {when(variable.updatedAt)}
-                    {variable.lastUsedAt ? ` · last used ${when(variable.lastUsedAt)}` : ''}
+                    set <LocalTime at={variable.updatedAt} />
+                    {variable.lastUsedAt ? (
+                      <>
+                        {' · last used '}
+                        <LocalTime at={variable.lastUsedAt} />
+                      </>
+                    ) : null}
                   </span>
                 </span>
                 {canEdit ? (

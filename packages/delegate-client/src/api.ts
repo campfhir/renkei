@@ -12,7 +12,13 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { DelegateTransport, delegateConfigFromEnv, isRecord, type FetchLike } from './transport';
+import {
+  DelegateTransport,
+  delegateConfigFromEnv,
+  isConnectionFailure,
+  isRecord,
+  type FetchLike,
+} from './transport';
 
 /** Whose grant a request rides on. One of subject, accountId or pending is required. */
 
@@ -229,19 +235,29 @@ export class DelegateGrants {
       'x-delegate-redirect': init.redirect === 'manual' ? 'manual' : (options.redirect ?? 'follow'),
     };
     if (options.timeoutMs) headers['x-delegate-timeout-ms'] = String(options.timeoutMs);
-    try {
-      return await this.fetchImpl(`${this.url}/v1/api`, {
-        method: 'POST',
-        headers,
-        body,
-        signal: init.signal ?? undefined,
-      });
-    } catch (error) {
-      return refusal(
-        'DELEGATE_UNREACHABLE',
-        503,
-        error instanceof Error ? error.message : undefined
-      );
+    // A read of the provider (GET, HEAD) is sent again, once, after a
+    // dropped connection to the delegate — the same stale-socket case
+    // transport.ts retries for its own reads; a write is sent once.
+    const retries = method === 'GET' || method === 'HEAD' ? 1 : 0;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.fetchImpl(`${this.url}/v1/api`, {
+          method: 'POST',
+          headers,
+          body,
+          signal: init.signal ?? undefined,
+        });
+      } catch (error) {
+        if (attempt < retries && isConnectionFailure(error) && !init.signal?.aborted) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          continue;
+        }
+        return refusal(
+          'DELEGATE_UNREACHABLE',
+          503,
+          error instanceof Error ? error.message : undefined
+        );
+      }
     }
   }
 
@@ -313,7 +329,7 @@ export class DelegateGrants {
   }
 
   async describe(grant: GrantRef): Promise<Result<GrantDescription, GrantOpError>> {
-    const answer = await this.transport.call('grant/describe', { ...grant });
+    const answer = await this.transport.call('grant/describe', { ...grant }, { retry: true });
     if (!answer.ok) return err(grantOpError(answer.err.type));
     const value = answer.val;
     if (typeof value.accountId !== 'string') return err('DELEGATE_ERROR');
