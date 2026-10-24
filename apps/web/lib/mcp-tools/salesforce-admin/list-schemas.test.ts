@@ -47,11 +47,11 @@ function unconvertibleTools(register: (server: McpServer, context: MCPToolContex
   const failures: string[] = [];
   let registered = 0;
   const collector = {
-    registerTool: (name: string, config: { inputSchema?: unknown }) => {
+    registerTool: (name: string, config: { inputSchema?: z.ZodType }) => {
       registered += 1;
       try {
         const schema = config.inputSchema;
-        if (schema !== undefined) z.toJSONSchema(schema as z.ZodType, { io: 'input' });
+        if (schema !== undefined) z.toJSONSchema(schema, { io: 'input' });
       } catch (error) {
         failures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
       }
