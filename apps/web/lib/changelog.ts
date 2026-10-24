@@ -50,6 +50,24 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: 'Code project pages open faster',
+        detail:
+          "A project's README is read from GitHub in one request instead of several, and the page checks the session and loads its preferences once rather than several times in a row.",
+      },
+      {
+        kind: 'added',
+        title: 'A page that fails shows a Try again card',
+        detail:
+          'When a page cannot load, it shows what happened inside the app, with a Try again button and a reference code for support, instead of a blank application error screen.',
+      },
+      {
+        kind: 'fixed',
+        title: 'A dropped connection to the key service no longer errors the page',
+        detail:
+          'A momentary loss of the connection to the key service used to show every chat on a page as unreadable and the key banner as unreachable; reads are now retried on a fresh connection, and the service keeps connections open long enough that the drop stops happening.',
+      },
+      {
+        kind: 'changed',
         title: 'The chat filter sits on the day heading row',
         detail:
           "The Active and Archived filter is on the top day heading's row and stays there while the chat history scrolls.",
