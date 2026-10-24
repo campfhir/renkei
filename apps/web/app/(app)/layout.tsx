@@ -58,9 +58,7 @@ export async function generateMetadata(): Promise<Metadata> {
  * pages is caught by the page, not here — lib/route-auth-coverage.test.ts
  * holds every page to that.
  */
-export default async function TenantLayout({ children }: {
-  children: ReactNode;
-}) {
+export default async function TenantLayout({ children }: { children: ReactNode }) {
   const session = await getSessionFromCookies();
   if (!session) {
     // Back to the page they asked for, query and all — the proxy put it on
@@ -73,30 +71,36 @@ export default async function TenantLayout({ children }: {
   // The nav shows a person, not an OIDC subject: the identity spine has the
   // display name and email recorded at sign-in. The subject is the fallback
   // for a session recorded before the spine existed.
-  const identity = await getIdentityDisplay(session.subject);
-  const userName = identity?.displayName ?? identity?.email ?? session.subject;
-
-  const prefs = await getNotificationPrefs(session.subject, { fresh: true });
-  const theme = await getThemePrefs(session.subject, { fresh: true });
-  const coachMarks = await getCoachMarkPrefs(session.subject, { fresh: true });
+  // Independent reads, side by side: this shell renders on every page,
+  // and each of these awaited in turn was a round trip the page waited
+  // on before its own data could start.
   // The org's switch for the tours (the escape hatch) — off, the engine
   // mounts inert and the Tutorials door goes away. A settings read that
   // fails reads as on: the switch is for a misbehaving tour, not a
   // misbehaving database.
-  const orgSettings = await getOrgSettings();
-  const coachMarksEnabled = orgSettings.ok ? orgSettings.val.coachMarksEnabled : true;
-
   // The menu carries the person's chats on every page, and the coach-mark
   // engine needs to know which tours this person has already settled.
   const dbResult = getDatabase();
-  const [chats, coachMarkProgress] = dbResult.ok
-    ? await Promise.all([
-        loadChatSidebar(dbResult.val, session.subject, {
-          since: chatSidebarActiveSince(),
-        }),
-        listCoachMarkProgress(dbResult.val, session.subject),
-      ])
-    : [null, []];
+  const noDatabase: Promise<[null, Awaited<ReturnType<typeof listCoachMarkProgress>>]> =
+    Promise.resolve([null, []]);
+  const [identity, prefs, theme, coachMarks, orgSettings, [chats, coachMarkProgress]] =
+    await Promise.all([
+      getIdentityDisplay(session.subject),
+      getNotificationPrefs(session.subject, { fresh: true }),
+      getThemePrefs(session.subject, { fresh: true }),
+      getCoachMarkPrefs(session.subject, { fresh: true }),
+      getOrgSettings(),
+      dbResult.ok
+        ? Promise.all([
+            loadChatSidebar(dbResult.val, session.subject, {
+              since: chatSidebarActiveSince(),
+            }),
+            listCoachMarkProgress(dbResult.val, session.subject),
+          ])
+        : noDatabase,
+    ]);
+  const userName = identity?.displayName ?? identity?.email ?? session.subject;
+  const coachMarksEnabled = orgSettings.ok ? orgSettings.val.coachMarksEnabled : true;
 
   const version = getVersionInfo();
 

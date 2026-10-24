@@ -266,7 +266,7 @@ export function createJsonRpcServer(options: CreateJsonRpcServerOptions): Server
     await handler(body, response, context);
   }
 
-  return createServer((request, response) => {
+  const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
       options.onUnhandledError(error);
       if (!response.headersSent) {
@@ -276,4 +276,20 @@ export function createJsonRpcServer(options: CreateJsonRpcServerOptions): Server
       }
     });
   });
+  // Idle keep-alive sockets are closed by the CALLER, never by this
+  // server. Node's default closes one after five seconds, and a caller
+  // (undici, behind every process's fetch) that picks the socket up in
+  // that same instant gets its request back as a reset — "other side
+  // closed" — with nothing having reached a handler: the web app's pages
+  // read it as the delegate, or the sandbox, being unreachable. undici
+  // honours the Keep-Alive hint this sets and gives a socket up a second
+  // before it, so the race is gone rather than merely rarer.
+  server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+  // Must stay above keepAliveTimeout, or Node ends idle connections with
+  // a 408 before the keep-alive window has passed.
+  server.headersTimeout = KEEP_ALIVE_TIMEOUT_MS + 1_000;
+  return server;
 }
+
+/** How long this server keeps an idle connection, outlasting any caller's own keep-alive. */
+export const KEEP_ALIVE_TIMEOUT_MS = 65_000;

@@ -1,3 +1,4 @@
+import type { Instrumentation } from 'next';
 import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
@@ -105,6 +106,33 @@ export async function register() {
     startTurnRecovery(dbResult.val);
   }
 }
+
+/**
+ * Every error a page render, route handler or server action let escape,
+ * on its way to the browser's error boundary (app/(app)/error.tsx). Next
+ * prints these to the console only; this puts them in the log table too,
+ * keyed by the digest the boundary shows the person, so an "it errored
+ * again" report can be matched to its cause. Headers are left out: they
+ * carry the session cookie.
+ */
+export const onRequestError: Instrumentation.onRequestError = (error, request, context) => {
+  const digest =
+    typeof error === 'object' && error !== null && 'digest' in error
+      ? String(error.digest)
+      : undefined;
+  logger.error('Unhandled {routeType} error on {routePath}: {message}', {
+    component: 'web/request-error',
+    message: error instanceof Error ? error.message : String(error),
+    name: error instanceof Error ? error.name : undefined,
+    stack: error instanceof Error ? error.stack : undefined,
+    digest,
+    method: request.method,
+    path: request.path,
+    routePath: context.routePath,
+    routeType: context.routeType,
+    renderSource: context.renderSource,
+  });
+};
 
 /**
  * Say loudly, once, at startup if the schema is behind the code.

@@ -22,7 +22,6 @@ import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import type { RepoChoice, SourceEntry } from './bitbucket-browse';
 
 const README_MAX_CHARS = 60_000;
-const README_NAMES = ['README.md', 'readme.md', 'README.MD', 'Readme.md', 'README', 'README.txt'];
 const SOURCE_FILE_MAX_CHARS = 200_000;
 
 /** repos/{owner}/{repo} path, both halves encoded. */
@@ -172,6 +171,14 @@ export async function createRepository(
  * branch), as Markdown text — or null when there is none, the branch is
  * unknown, or GitHub cannot be read. Best effort: a project page never
  * fails for want of a README.
+ *
+ * One call: GitHub's own README endpoint finds the file whatever it is
+ * named (README.md, readme, README.rst…), where probing the contents
+ * endpoint name by name cost up to six round trips — each through the
+ * delegate — on every project page open, and all six for a repository
+ * without one. The JSON answer carries the path and the content in
+ * base64; a README too large for that (over a megabyte, so content
+ * comes back empty) is read raw in a second call.
  */
 export async function readReadme(
   auth: GitHubAuth,
@@ -180,26 +187,24 @@ export async function readReadme(
 ): Promise<{ path: string; text: string } | null> {
   const [owner, repo] = fullName.split('/');
   if (!owner || !repo) return null;
-  const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-  let ref = branch;
-  if (!ref) {
-    const info = await ghJson(auth, ['repository'], base);
-    if (!info.ok) return null;
-    ref = str(rec(info.body).default_branch);
-    if (!ref) return null;
+  const base = repoBase(owner, repo);
+  const query = branch ? `?ref=${encodeURIComponent(branch)}` : '';
+  const readme = await ghJson(auth, ['repository'], `${base}/readme${query}`);
+  if (!readme.ok) return null;
+  const record = rec(readme.body);
+  const path = str(record.path) || str(record.name) || 'README.md';
+  if (str(record.encoding) === 'base64' && str(record.content)) {
+    const text = Buffer.from(str(record.content), 'base64').toString('utf8');
+    return text.trim() ? { path, text: text.slice(0, README_MAX_CHARS) } : null;
   }
-  for (const name of README_NAMES) {
-    const file = await ghRawText(
-      auth,
-      ['repository'],
-      `${base}/contents/${encodeURIComponent(name)}?ref=${encodeURIComponent(ref)}`,
-      'application/vnd.github.raw+json'
-    );
-    if (file.ok && file.text.trim()) {
-      return { path: name, text: file.text.slice(0, README_MAX_CHARS) };
-    }
-  }
-  return null;
+  const raw = await ghRawText(
+    auth,
+    ['repository'],
+    `${base}/readme${query}`,
+    'application/vnd.github.raw+json'
+  );
+  if (!raw.ok || !raw.text.trim()) return null;
+  return { path, text: raw.text.slice(0, README_MAX_CHARS) };
 }
 
 /**

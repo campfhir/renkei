@@ -20,6 +20,7 @@ import {
   sendJson,
   str,
   createJsonRpcServer,
+  KEEP_ALIVE_TIMEOUT_MS,
 } from './http';
 
 describe('isRecord', () => {
@@ -207,6 +208,13 @@ describe('createJsonRpcServer', () => {
     const response = await fetch(`${base}/health`);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
+  });
+
+  it('keeps an idle connection longer than any caller does, and says so in the Keep-Alive hint', async () => {
+    expect(server.keepAliveTimeout).toBe(KEEP_ALIVE_TIMEOUT_MS);
+    expect(server.headersTimeout).toBeGreaterThan(server.keepAliveTimeout);
+    const response = await fetch(`${base}/health`);
+    expect(response.headers.get('keep-alive')).toBe(`timeout=${KEEP_ALIVE_TIMEOUT_MS / 1000}`);
   });
 
   it('refuses a missing or wrong key', async () => {
