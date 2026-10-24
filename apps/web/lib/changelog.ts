@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-24',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'The app menu no longer scrolls as a whole',
+        detail:
+          'Only the chat list scrolls, so the version line stays at the foot of the menu on desktop and in the phone drawer.',
+      },
+    ],
+  },
+  {
     date: '2026-10-23',
     entries: [
       {
