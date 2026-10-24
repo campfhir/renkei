@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-24',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Chats no longer lose all their tools',
+        detail:
+          "A fault in one Salesforce Admin tool could stop every connector's tools from loading, so a chat reported it had none. That tool is fixed, a broken tool is now skipped instead of taking the rest down, and a chat's find_tools always answers, saying what is enabled or that the tool service failed.",
+      },
+      {
         kind: 'added',
         title: 'Keyboard shortcuts',
         detail:
