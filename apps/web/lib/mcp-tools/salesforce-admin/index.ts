@@ -73,7 +73,10 @@ export function registerSalesforceAdminTools(
   registerAdminRecordTypeTools(visible, context, auth);
   registerAdminLayoutTools(visible, context, auth);
   registerAdminPermissionTools(visible, context, auth);
-  registerAdminRequestTools(visible, context, auth);
+  // A request in words is the CRM connector's to offer
+  // (salesforce_request_admin_change); this one is for a person who holds
+  // only the admin connection, so nobody sees two tools for one thing.
+  if (!context.salesforceScopes?.includes('sf-records-read')) registerAdminRequestTools(visible, context, auth);
 }
 
 /** The server, less the tools `skip` names: they are never registered. */

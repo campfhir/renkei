@@ -24,6 +24,11 @@ export function salesforceScopeFor(toolName: string): string[] {
     case 'salesforce_download_file':
       return ['sf-records-read'];
 
+    // Asking an admin for a change in words: anyone who can look things up.
+    // Nothing changes from it; an operator approves, in the browser.
+    case 'salesforce_request_admin_change':
+      return ['sf-records-read'];
+
     case 'salesforce_create_record':
     case 'salesforce_update_record':
     case 'salesforce_upsert_record':

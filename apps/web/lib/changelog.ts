@@ -58,7 +58,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'Ask an operator for a Salesforce or Jira change in words',
         detail:
-          'Without approval rights you keep the lookup tools (objects, fields, picklists, layouts, spaces) and get a request tool in place of the propose tools: describe what you want and why, and an operator builds it as a proposal that Salesforce or Jira validates, or declines it with a reason. Follow it from the Change requests link on the connector card.',
+          'Anyone connected to Jira or the Salesforce CRM connector can describe the change they want and why — no admin connection needed — and an operator who administers it builds it as a proposal that Salesforce or Jira validates, or declines it with a reason. Only operators with a Salesforce Admin or Jira Administration connection can approve. Follow a request from the Change requests link on the connector card.',
       },
       {
         kind: 'added',

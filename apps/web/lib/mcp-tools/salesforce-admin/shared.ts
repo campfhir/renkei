@@ -53,7 +53,15 @@ export function dbOf(context: MCPToolContext): Kysely<DB> | null {
 }
 
 /** Why this org takes no proposals, or null. */
-export async function refusesChanges(access: SalesforceAccess): Promise<string | null> {
+/** The part of an access a request in words needs: which admin org it is for. */
+export type RequestTarget = Pick<
+  SalesforceAccess,
+  'connector' | 'connectorName' | 'orgId' | 'instanceUrl' | 'sandbox'
+>;
+
+export async function refusesChanges(
+  access: Pick<SalesforceAccess, 'connector'>
+): Promise<string | null> {
   const org = (await listSalesforceConnectors(SALESFORCE_ADMIN_KIND)).find(
     (candidate) => candidate.key === access.connector
   );
@@ -306,7 +314,7 @@ export function fieldRows(spec: FieldSpec): ComponentView['rows'] {
 /** File a free-text request for an operator to build or decline, and answer with its link. */
 export async function fileRequest(
   context: MCPToolContext,
-  access: SalesforceAccess,
+  access: RequestTarget,
   input: { title: string; description: string; reason?: string }
 ) {
   if (!context.subject) return errText('No signed-in identity on this request.');

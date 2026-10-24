@@ -129,9 +129,13 @@ it and withdraw it; only an operator (`renkei-operator`) approves, and the
 operations run on **the approving operator's own Jira grant**, not the
 requester's. Everyone with an operator role sees every request on the review
 list, with who asked, and is notified when one is waiting (not the person who
-filed it). Someone known not to be an operator keeps the read tools and gets
-`jira_admin_request_change` in place of the `jira_admin_propose_*` tools: a
-request in words (`kind = 'request'`), which an operator builds with the
+filed it). Someone known not to be an operator keeps the read tools and loses the
+`jira_admin_propose_*` tools. Asking needs no admin connection: anyone with the
+everyday **Jira connector** has `jira_request_admin_change`, a request in words
+(`kind = 'request'`, recording the site it was made on); a person holding only
+the admin connection gets `jira_admin_request_change` instead, so nobody sees two
+tools for one thing. Approving requires the operator role *and* a connected Jira
+Administration grant on that site. An operator builds a request with the
 matching propose tool (passing its id as `replaces`, which closes it as built)
 or declines with a reason the requester reads. Tokens with no recorded roles,
 an agent's among them, keep every tool — the approval, not the tool list, is

@@ -575,9 +575,13 @@ Salesforce gives this pattern something Jira does not — a dry run:
 admin connection can *ask*; only an operator (`renkei-operator`) *approves*, from the review page,
 and the deploy runs on **the approving operator's own connection**, whoever proposed it. A person
 who is known not to be an operator keeps the read tools (describe an object, a field, a picklist,
-the layouts and permission sets) but not the `salesforce_admin_propose_*` tools: they get
-`salesforce_admin_request_change`, a request in words (`kind = 'request'`: what, and why) with no
-package and no validation. An operator builds it as a proposal with the matching propose tool,
+the layouts and permission sets) but not the `salesforce_admin_propose_*` tools. Asking needs no admin
+connection at all: anyone connected through the **CRM connector** has `salesforce_request_admin_change`,
+a request in words (`kind = 'request'`: what, and why) with no package and no validation, filed on the
+org's admin connector (matched by My Domain, so an org with none, or one that takes no changes, refuses
+it up front — nobody could approve it). A person holding only the admin connection gets
+`salesforce_admin_request_change` instead, so nobody sees two tools for one thing. Approving, by
+contrast, requires the operator role *and* a connected Salesforce Admin connection to the org. An operator builds it as a proposal with the matching propose tool,
 passing the request's id as `replaces` (which closes the request as built), or declines it with a
 reason the requester reads. (Tokens with no recorded roles, an agent's among them, keep every
 tool: the approval, not the tool list, is the control.)

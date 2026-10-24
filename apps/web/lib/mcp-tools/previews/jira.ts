@@ -12,6 +12,25 @@ const issue = (key: string) => ref(key, undefined, undefined);
 const COMMENT = [{ key: 'comment', label: 'Comment', multiline: true }];
 
 export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
+  jira_request_admin_change: (args) => ({
+    verb: 'Request',
+    icon: 'doc',
+    title: text(args.title) || 'Ask for a change to Jira',
+    subtitle: JIRA,
+    confirmLabel: 'Send the request',
+    body: {
+      kind: 'change',
+      subject: ref(text(args.title) || 'A change request', 'Request'),
+      rows: [
+        { label: 'Asking for', value: clip(text(args.description), 400), block: true },
+        ...(text(args.reason) ? [{ label: 'Why', value: clip(text(args.reason), 200) }] : []),
+      ],
+      notes: [
+        'Nothing changes in Jira. Operators who administer Jira are told; one builds it as a proposal and approves it, or declines it with a reason.',
+      ],
+    },
+  }),
+
   jira_add_comment: (args) => ({
     verb: 'Comment',
     icon: 'comment',

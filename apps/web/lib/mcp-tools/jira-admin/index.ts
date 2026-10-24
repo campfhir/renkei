@@ -88,7 +88,10 @@ export async function registerJiraAdminTools(
   if (context.jiraAdminTokenAvailable === true) {
     await registerAutomationTools(visible, context, auth);
   }
-  registerRequestTools(visible, context, auth);
+  // A request in words is the everyday Jira connector's to offer
+  // (jira_request_admin_change); this one is for a person who holds only
+  // the admin connection, so nobody sees two tools for one thing.
+  if (!context.jiraAuth) registerRequestTools(visible, context, auth);
 }
 
 /** The server, less the tools `skip` names: they are never registered. */
