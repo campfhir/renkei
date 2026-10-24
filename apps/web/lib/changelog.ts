@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-24',
     entries: [
       {
+        kind: 'added',
+        title: 'Keyboard shortcuts',
+        detail:
+          'Press C anywhere you are not typing to start a chat in a box with attachments, prompts, dictation and a model picker. Press Cmd or Ctrl J for your recent chats, and Option or Alt with H, P, A, comma or ! to jump to Home, Projects, Artifacts, Preferences or Notifications. Keys are shown for your own keyboard, and a short tour on the home page covers them.',
+      },
+      {
         kind: 'changed',
         title: 'The chat filter sits on the day heading row',
         detail:
