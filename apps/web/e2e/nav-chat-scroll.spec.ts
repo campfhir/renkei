@@ -191,7 +191,7 @@ test('app menu: the column never scrolls, only the chat list does, on desktop an
   }
 });
 
-test('app menu: day headings stick to the top of the history, and the filter stays on the top heading', async ({
+test('app menu: day headings stick to the top of the history, and the filter stays available', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'A desktop layout check.');
@@ -233,15 +233,10 @@ test('app menu: day headings stick to the top of the history, and the filter sta
       )
       .toBeLessThanOrEqual(listTop + 2);
 
-    // The filter is anchored to the first heading, so at the top of the list
-    // it sits on that row.
-    await list.evaluate((element) => {
-      element.scrollTop = 0;
-    });
-    const today = await list.getByText('Today', { exact: true }).locator('..').boundingBox();
+    // The filter stays pinned above the list, so it is still there at the bottom.
+    await expect(filter).toBeInViewport();
     const control = await filter.boundingBox();
-    expect(control!.y).toBeGreaterThanOrEqual(today!.y - 1);
-    expect(control!.y + control!.height).toBeLessThanOrEqual(today!.y + today!.height + 1);
+    expect(control!.y + control!.height).toBeLessThanOrEqual(listTop);
   } finally {
     await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
       E2E_SUBJECT,

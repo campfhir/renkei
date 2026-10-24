@@ -117,14 +117,13 @@ export function ChatList({ data }: {
     return [...out.entries()];
   }, [mine]);
 
-  const stateFilter = <StateFilter states={states} onChange={setStates} counts={counts} />;
-
   return (
     <div className="flex min-h-0 flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
+      {/* Pinned above the list, so the funnel is always there while the history scrolls. */}
+      <div className="mb-1 flex shrink-0 justify-end">
+        <StateFilter states={states} onChange={setStates} counts={counts} />
+      </div>
       <nav aria-label="Chats" className="min-h-0 flex-1 overflow-y-auto">
-        {groups.length === 0 && shared.length === 0 ? (
-          <div className="flex justify-end">{stateFilter}</div>
-        ) : null}
         {groups.length === 0 && shared.length === 0 ? (
           <p className="px-2 text-xs text-gray-500">
             {allChats.length === 0 && moreBefore === null
@@ -136,9 +135,9 @@ export function ChatList({ data }: {
                   : 'No archived chats.'}
           </p>
         ) : null}
-        {groups.map(([label, dayChats], index) => (
+        {groups.map(([label, dayChats]) => (
           <div key={label} className="mb-3">
-            <SectionTitle trailing={index === 0 ? stateFilter : undefined}>{label}</SectionTitle>
+            <SectionTitle>{label}</SectionTitle>
             {dayChats.map((chat) => (
               <ChatRow
                 key={chat.id}
@@ -152,9 +151,7 @@ export function ChatList({ data }: {
         ))}
         {shared.length > 0 ? (
           <div className="mb-3">
-            <SectionTitle trailing={groups.length === 0 ? stateFilter : undefined}>
-              Shared with me
-            </SectionTitle>
+            <SectionTitle>Shared with me</SectionTitle>
             {shared.map((chat) => (
               <ChatRow
                 key={chat.id}
@@ -259,20 +256,12 @@ function kindOf(chat: ChatListItem): { kind: 'chat' | 'project' | 'code'; path: 
 
 /**
  * A day's heading. It sticks to the top of the list while that day's chats
- * scroll past, and the next day's heading takes its place. The filter sits
- * on the first heading, so it stays with the list's top row.
+ * scroll past, and the next day's heading takes its place.
  */
-function SectionTitle({
-  children,
-  trailing,
-}: {
-  children: React.ReactNode;
-  trailing?: React.ReactNode;
-}) {
+function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div className="sticky top-0 z-10 mb-1 flex items-center justify-between bg-white px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-950">
-      <span>{children}</span>
-      {trailing}
+    <div className="sticky top-0 z-10 mb-1 bg-white px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-950">
+      {children}
     </div>
   );
 }
