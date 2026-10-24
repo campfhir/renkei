@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-24',
     entries: [
       {
+        kind: 'added',
+        title: 'Unsent messages are kept per chat',
+        detail:
+          "What you have typed in a chat's message box but not sent is saved a moment after you stop typing, so it is still there after a reload, when you switch chats, and when you open the chat on another device.",
+      },
+      {
         kind: 'fixed',
         title: 'Salesforce Admin proposals validate again',
         detail:
