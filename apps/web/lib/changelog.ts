@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: 'Day headings stay on screen in the app menu',
+        detail:
+          "While you scroll the chat history, the day heading stays at the top of the list until the next day's heading takes its place, and the filter sits on the top heading.",
+      },
+      {
+        kind: 'changed',
         title: "The menu's chat list always shows four chats",
         detail:
           'The chat list in the app menu keeps room for at least four chats before the menu itself has to scroll.',

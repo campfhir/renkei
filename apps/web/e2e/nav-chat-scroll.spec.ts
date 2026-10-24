@@ -190,3 +190,63 @@ test('app menu: the column never scrolls, only the chat list does, on desktop an
     await client.end();
   }
 });
+
+test('app menu: day headings stick to the top of the history, and the filter stays on the top heading', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-light', 'A desktop layout check.');
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const prefix = 'Sticky heading e2e';
+  try {
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
+      E2E_SUBJECT,
+      `${prefix} %`,
+    ]);
+    // Chats in several day groups, with enough old ones to scroll.
+    const hours = [1, 1, 30, 30, 100, 100, ...Array.from({ length: 10 }, () => 500)];
+    for (const [index, age] of hours.entries()) {
+      await client.query(
+        "INSERT INTO chats (id, owner_subject, title, last_message_at, updated_at) VALUES ($1, $2, $3, NOW() - ($4 || ' hours')::interval, NOW() - ($4 || ' hours')::interval)",
+        [randomUUID(), E2E_SUBJECT, `${prefix} ${index + 1}`, age]
+      );
+    }
+
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto('/agents');
+    const column = page.locator('nav[aria-label="Application"]:visible').first();
+    const list = column.getByRole('navigation', { name: 'Chats' });
+    await expect(list.getByRole('link', { name: `${prefix} 1`, exact: true })).toBeAttached();
+    const filter = column.getByRole('button', { name: 'Filter chats' });
+    const topOf = (locator: ReturnType<typeof list.getByText>) =>
+      locator.first().evaluate((element) => element.getBoundingClientRect().top);
+
+    // Scrolled to the bottom, the oldest day's heading holds the top of the list.
+    await list.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    const listTop = (await list.boundingBox())!.y;
+    await expect
+      .poll(
+        async () =>
+          (await list.getByText('Earlier', { exact: true }).locator('..').boundingBox())!.y
+      )
+      .toBeLessThanOrEqual(listTop + 2);
+
+    // The filter is anchored to the first heading, so at the top of the list
+    // it sits on that row.
+    await list.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    const today = await list.getByText('Today', { exact: true }).locator('..').boundingBox();
+    const control = await filter.boundingBox();
+    expect(control!.y).toBeGreaterThanOrEqual(today!.y - 1);
+    expect(control!.y + control!.height).toBeLessThanOrEqual(today!.y + today!.height + 1);
+  } finally {
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
+      E2E_SUBJECT,
+      `${prefix} %`,
+    ]);
+    await client.end();
+  }
+});
