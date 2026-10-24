@@ -272,7 +272,7 @@ function QuickChat({ onClose }: { onClose: () => void }) {
   const models = setup?.models ?? [];
   const voice = setup?.voice ?? null;
   return (
-    <Modal title="New chat" size="lg" onClose={onClose}>
+    <Modal title="New chat" size="lg" flush onClose={onClose}>
       {/* This composer is not the thread's: its anchors must not bring the chat tour here. */}
       <CoachAnchorContext.Provider value={null}>
         <div ref={body}>
@@ -290,6 +290,7 @@ function QuickChat({ onClose }: { onClose: () => void }) {
               onCompact={async () => false}
               onStop={async () => {}}
               editing={null}
+              bare
               onCancelEdit={() => {}}
               modelControl={
                 <ModelSelect
@@ -321,15 +322,15 @@ function QuickChat({ onClose }: { onClose: () => void }) {
               }
             />
           ) : error ? null : (
-            <p className="py-6 text-center text-sm text-gray-500">Getting ready…</p>
+            <p className="px-5 pb-6 text-center text-sm text-gray-500">Getting ready…</p>
           )}
           {error ? (
-            <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+            <p role="alert" className="px-5 pb-3 text-sm text-red-600 dark:text-red-400">
               {error}
             </p>
           ) : null}
           {chatId && models.length === 0 ? (
-            <p className="mt-2 text-sm text-gray-500">
+            <p className="px-5 pb-3 text-sm text-gray-500">
               No model is configured for this organization yet. An administrator can add one under
               Agent models.
             </p>
