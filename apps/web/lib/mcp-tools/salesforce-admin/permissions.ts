@@ -237,7 +237,7 @@ export function registerAdminPermissionTools(
         search: z.string().optional().describe('Words in the name or label.'),
         permissionSet: z.string().optional().describe('A set’s API name or label, to read it.'),
         object: z.string().optional().describe('With permissionSet: field access on this object.'),
-        limit: limitField,
+        limit: limitField(200, 100),
       }),
     },
     async (args) => {
