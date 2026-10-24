@@ -106,6 +106,10 @@ export const chatClient = {
       timeZone: browserTimeZone(),
     }),
 
+  /** Save the composer's unsent text; empty clears it. `keepalive` lets a save finish while the page unloads. */
+  saveDraft: (chatId: string, text: string, keepalive = false) =>
+    sendJsonFull(`${base()}/chats/${chatId}/draft`, 'PUT', { text }, keepalive),
+
   /** Replace the chat's held sends with `queue` — the whole list, so a stale write cannot resurrect a sent one. */
   saveQueue: (chatId: string, queue: QueuedSend[]) =>
     sendJsonFull(`${base()}/chats/${chatId}/queue`, 'PUT', { queue }),

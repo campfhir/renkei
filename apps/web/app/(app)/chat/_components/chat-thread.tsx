@@ -1311,6 +1311,7 @@ export default function ChatThread({
             {isOwner ? (
               <Composer
                 chatId={chat.id}
+                draft={initialChat.draft}
                 disabled={sending || models.length === 0}
                 running={running}
                 queue={queueView}

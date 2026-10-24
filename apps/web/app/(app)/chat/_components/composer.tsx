@@ -31,6 +31,7 @@ import AttachmentChip from './attachment-chip';
 import ComposerToolsMenu from './composer-tools-menu';
 import PromptPicker from './prompt-picker';
 import { VoiceWaveIcon, type WaveAccent } from './voice-wave';
+import { useDraftSync } from './use-draft-sync';
 
 /**
  * Dictation, when the org has a voice service: a microphone beside the
@@ -128,6 +129,7 @@ export default function Composer({
   onCancelEdit,
   project = null,
   bare = false,
+  draft,
 }: {
   chatId: string;
   disabled: boolean;
@@ -173,8 +175,14 @@ export default function Composer({
    * a composer that sits inside a dialog which has its own edges.
    */
   bare?: boolean;
+  /**
+   * The chat's saved unsent text (drafts.ts): given, the box starts with it
+   * and keeps it saved as the person types; left out, the box is not
+   * persisted at all (a throwaway composer in a dialog).
+   */
+  draft?: string;
 }) {
-  const [text, setText] = useState('');
+  const [text, setText] = useState(draft ?? '');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
   const [uploading, setUploading] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -198,6 +206,8 @@ export default function Composer({
   const [prompts, setPrompts] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // An earlier prompt being rewritten fills the box but is not a draft of the next one.
+  useDraftSync(chatId, text, draft !== undefined && !editing, draft ?? '');
   const composerAnchor = useCoachAnchor('chat-composer');
   const sendAnchor = useCoachAnchor('chat-send');
   const attachAnchor = useCoachAnchor('chat-attach');

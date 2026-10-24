@@ -36,13 +36,16 @@ export async function sendJson(
 export async function sendJsonFull<T = unknown>(
   url: string,
   method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
-  body?: unknown
+  body?: unknown,
+  /** Let the request outlive the page (an unload-time save). */
+  keepalive = false
 ): Promise<{ data: T | null; status: number; error: string | null }> {
   try {
     const response = await fetch(url, {
       method,
       headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      ...(keepalive ? { keepalive: true } : {}),
     });
     const parsed = await response.json().catch(() => null);
     if (!response.ok) {
