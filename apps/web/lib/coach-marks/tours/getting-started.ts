@@ -75,14 +75,19 @@ export const GETTING_STARTED_TOURS: CoachMarkTour[] = [
         body: 'Press {shortcut:search} on any page to search chats, projects and settings, then use the arrow keys and Enter to open one.',
       },
       {
-        id: 'quick-chat',
+        id: 'new-chat',
         title: 'Start a chat in a flash',
-        body: 'Press {shortcut:quick-chat} anywhere to open a box for your prompt. Press Enter and a new chat starts with it.',
+        body: 'Press {shortcut:new-chat} anywhere you are not typing to open a box for your prompt. Press Enter and a new chat starts with it.',
       },
       {
         id: 'switch-chat',
         title: 'Hop between recent chats',
         body: 'Press {shortcut:switch-chat} to see your recent chats, like an app switcher. Press it again to move down the list, and Enter to open the one you want.',
+      },
+      {
+        id: 'go-to',
+        title: 'Jump to any page',
+        body: 'Type two letters to go there: {shortcut:agents} for Agents, {shortcut:knowledge} for Knowledge, {shortcut:code} for Code. {shortcut:preferences} opens Preferences and {shortcut:tutorials} opens Tutorials. Letter shortcuts only work when you are not typing in a field.',
       },
     ],
   },

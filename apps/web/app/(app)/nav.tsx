@@ -389,7 +389,7 @@ export default function AppNav({
         </Link>
 
         <OmniSearch pages={pages} chats={chats} isOperator={isOperator} />
-        <GlobalShortcuts chats={chats} />
+        <GlobalShortcuts chats={chats} isOperator={isOperator} />
 
         <div className="flex items-center gap-2">
           <div ref={menuRef} className="relative">

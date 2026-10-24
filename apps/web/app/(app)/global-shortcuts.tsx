@@ -1,16 +1,19 @@
 'use client';
 
 /**
- * Two shortcuts that work from anywhere in the app:
+ * The keyboard shortcuts that work from anywhere in the app (see
+ * lib/shortcuts.ts for the keys and why they are these):
  *
- *  - Quick chat (⌘/Ctrl J): a box for a prompt; Enter starts a new chat with
- *    it and goes to the thread, where the reply is already coming.
- *  - Switch chat (⌥/Alt J): the recent chats as a list, like an app
+ *  - Quick chat (`c`): a box for a prompt; Enter starts a new chat with it
+ *    and goes to the thread, where the reply is already coming.
+ *  - Recent chats (⌘/Ctrl J, or `c` `h`): the chats as a list, like an app
  *    switcher. It opens on the chat before this one; pressing the shortcut
  *    again (Shift to go back) or the arrow keys move, Enter opens.
+ *  - Go-to keys (`a` `g` for Agents…) and the ⌘/Ctrl chords for Tutorials,
+ *    Preferences and the Organization.
  *
- * The search (⌘/Ctrl K) lives with the search box itself. The keys are
- * written for the person's keyboard — see lib/shortcuts.ts.
+ * The bare keys stand down in a text field and over a dialog. The search
+ * (⌘/Ctrl K) lives with the search box itself.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -20,7 +23,18 @@ import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import type { ChatListItem } from '@/lib/chat/views';
-import { formatShortcut, matchesShortcut, shortcutKeys, type ShortcutId } from '@/lib/shortcuts';
+import {
+  CHORD_HREFS,
+  SEQUENCES,
+  SEQUENCE_WAIT_MS,
+  formatShortcut,
+  isTypingTarget,
+  matchesShortcut,
+  shortcutKeys,
+  stepSequence,
+  type SequenceId,
+  type ShortcutId,
+} from '@/lib/shortcuts';
 import { usePlatform } from '@/lib/use-platform';
 
 const SWITCHER_LIMIT = 10;
@@ -57,35 +71,116 @@ function recentChats(chats: ChatListItem[]): ChatListItem[] {
     .slice(0, SWITCHER_LIMIT);
 }
 
-export function GlobalShortcuts({ chats }: { chats: ChatSidebarData | null }) {
+export function GlobalShortcuts({
+  chats,
+  isOperator,
+}: {
+  chats: ChatSidebarData | null;
+  isOperator: boolean;
+}) {
   const platform = usePlatform();
+  const router = useRouter();
   const [quickOpen, setQuickOpen] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
   const [step, setStep] = useState<{ delta: number; at: number } | null>(null);
   const pathname = usePathname();
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (matchesShortcut('quick-chat', event, platform)) {
-        event.preventDefault();
+  // The bare keys typed so far, and the pause that settles a key which could
+  // begin a longer sequence (`c`, or `c` `h`).
+  const typed = useRef<string[]>([]);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearTyped = useCallback(() => {
+    typed.current = [];
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  }, []);
+
+  const go = useCallback(
+    (href: string) => {
+      if (href !== pathname) router.push(href);
+    },
+    [pathname, router]
+  );
+
+  const run = useCallback(
+    (id: SequenceId) => {
+      if (id === 'new-chat') {
         setSwitchOpen(false);
         setQuickOpen(true);
-      } else if (matchesShortcut('switch-chat', event, platform, true)) {
+      } else if (id === 'chat-history') {
+        setQuickOpen(false);
+        setSwitchOpen(true);
+      } else {
+        const href = SEQUENCES[id].href;
+        if (href) go(href);
+      }
+    },
+    [go]
+  );
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      // Chords work everywhere, a text field included.
+      if (matchesShortcut('switch-chat', event, platform, true)) {
         event.preventDefault();
+        clearTyped();
         setQuickOpen(false);
         if (switchOpen) setStep({ delta: event.shiftKey ? -1 : 1, at: Date.now() });
         else setSwitchOpen(true);
+        return;
       }
+      const chord = (['tutorials', 'preferences', 'organization'] as const).find(
+        (id) => matchesShortcut(id, event, platform) && (id !== 'organization' || isOperator)
+      );
+      const chordHref = chord ? CHORD_HREFS[chord] : undefined;
+      if (chordHref) {
+        event.preventDefault();
+        clearTyped();
+        go(chordHref);
+        return;
+      }
+
+      // Bare keys only count off the keyboard's business: not with a
+      // modifier held, not in a field, not over a dialog (the switcher, a
+      // tour, a confirmation), not as the repeat of a held key.
+      if (event.key === 'Escape') return clearTyped();
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (event.repeat || event.isComposing || event.defaultPrevented) return;
+      if (event.key.length !== 1) return;
+      if (event.target instanceof HTMLElement && isTypingTarget(event.target)) return;
+      if (document.querySelector('[role="dialog"]')) return clearTyped();
+
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      const next = stepSequence(typed.current, event.key);
+      if (next.kind === 'none') {
+        typed.current = [];
+        return;
+      }
+      event.preventDefault();
+      if (next.kind === 'fire') {
+        clearTyped();
+        run(next.id);
+        return;
+      }
+      typed.current = next.buffer;
+      timer.current = setTimeout(() => {
+        clearTyped();
+        if (next.fire) run(next.fire);
+      }, SEQUENCE_WAIT_MS);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [platform, switchOpen]);
+  }, [platform, switchOpen, isOperator, go, run, clearTyped]);
+
+  useEffect(() => clearTyped, [clearTyped]);
 
   // Going anywhere closes both.
   useEffect(() => {
+    clearTyped();
     setQuickOpen(false);
     setSwitchOpen(false);
-  }, [pathname]);
+  }, [pathname, clearTyped]);
 
   return (
     <>

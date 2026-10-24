@@ -1,9 +1,12 @@
 /**
  * The global keyboard shortcuts, end to end: the key caps match the OS
  * (⌘ on a Mac, Ctrl elsewhere — the browser's platform is faked both ways),
- * the quick-chat modal starts a chat from any page with Enter, the
- * recent-chats switcher walks the list and opens a chat, and the shortcuts
- * coach marks follow the welcome tour on the home page.
+ * the quick-chat modal (`c`) starts a chat from any page with Enter, the
+ * recent-chats switcher (⌘/Ctrl J, or `c` `h`) walks the list and opens a
+ * chat, the letter shortcuts go to pages but stand down in a text field and
+ * over a dialog, the ⌘/Ctrl chords reach Preferences, Tutorials and the
+ * Organization, and the shortcuts coach marks follow the welcome tour on
+ * the home page.
  *
  * The first turn's POST is answered at the browser edge — there is no model
  * to run it in e2e — so the chat itself is real and the reply is not.
@@ -76,12 +79,31 @@ async function fakePlatform(page: Page, platform: 'MacIntel' | 'Win32'): Promise
   }, platform);
 }
 
-/** Press a shortcut until its dialog is up — the first press can land before the page has hydrated. */
-async function pressUntilOpen(page: Page, key: string, dialog: Locator): Promise<void> {
+/**
+ * Type keys until what they do shows — the first press can land before the
+ * page has hydrated. `settle` is how long one try waits for the effect (a
+ * bare `c` waits half a second in case an `h` follows).
+ */
+async function pressUntil(
+  page: Page,
+  keys: string[],
+  seen: () => Promise<void>,
+  settle = 1500
+): Promise<void> {
   await expect(async () => {
-    await page.keyboard.press(key);
-    await expect(dialog).toBeVisible({ timeout: 700 });
-  }).toPass({ timeout: 15_000 });
+    for (const key of keys) await page.keyboard.press(key);
+    await seen();
+  }).toPass({ timeout: 20_000, intervals: [settle] });
+}
+
+/** Press a shortcut until its dialog is up. */
+async function pressUntilOpen(
+  page: Page,
+  key: string,
+  dialog: Locator,
+  settle = 1500
+): Promise<void> {
+  await pressUntil(page, [key], () => expect(dialog).toBeVisible({ timeout: settle }), settle);
 }
 
 async function makeChat(title: string, updatedMinutesAgo: number): Promise<string> {
@@ -143,9 +165,8 @@ test('quick chat starts a chat from any page with Enter', async ({ page }, testI
   });
 
   await page.goto(`/agents`);
-  await page.keyboard.press('Control+j');
   const dialog = page.getByRole('dialog', { name: 'New chat' });
-  await expect(dialog).toBeVisible();
+  await pressUntilOpen(page, 'c', dialog);
   await expect(dialog.getByLabel('Prompt')).toBeFocused();
   await shot(page, testInfo, 'shortcuts-quick-chat');
 
@@ -164,16 +185,22 @@ test('quick chat starts a chat from any page with Enter', async ({ page }, testI
   await expect(dialog).toHaveCount(0);
 });
 
-test('quick chat uses the Command key on a Mac and works at phone width', async ({
+test('chords use the Command key on a Mac, and quick chat works at phone width', async ({
   page,
 }, testInfo) => {
   await fakePlatform(page, 'MacIntel');
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`/agents`);
-  // Control+J is not the Mac shortcut.
+  const switcher = page.getByRole('dialog', { name: 'Recent chats' });
+  await pressUntilOpen(page, 'Meta+j', switcher);
+  await page.keyboard.press('Escape');
+  await expect(switcher).toHaveCount(0);
+  // Control+J is not the Mac chord.
   await page.keyboard.press('Control+j');
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.keyboard.press('Meta+j');
+  await page.waitForTimeout(300);
+  await expect(switcher).toHaveCount(0);
+
+  await page.keyboard.press('c');
   const dialog = page.getByRole('dialog', { name: 'New chat' });
   await expect(dialog).toBeVisible();
   const box = await dialog.locator('> div').boundingBox();
@@ -183,6 +210,60 @@ test('quick chat uses the Command key on a Mac and works at phone width', async 
   await shot(page, testInfo, 'shortcuts-quick-chat-phone');
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
+});
+
+test('letter shortcuts go to pages, and stand down in a field and over a dialog', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await fakePlatform(page, 'Win32');
+  await page.goto(`/agents`);
+
+  await pressUntil(page, ['k', 'n'], () =>
+    expect(page).toHaveURL(/\/knowledge$/, { timeout: 1500 })
+  );
+  await pressUntil(page, ['\\', 'c'], () => expect(page).toHaveURL(/\/code$/, { timeout: 1500 }));
+  await pressUntil(page, ['a', 'g'], () => expect(page).toHaveURL(/\/agents$/, { timeout: 1500 }));
+
+  // `c` then `h` is chat history — the switcher — not a new chat.
+  const switcher = page.getByRole('dialog', { name: 'Recent chats' });
+  await pressUntil(page, ['c', 'h'], () => expect(switcher).toBeVisible({ timeout: 1500 }));
+  // Over a dialog the bare keys do nothing.
+  await page.keyboard.press('k');
+  await page.keyboard.press('n');
+  await page.waitForTimeout(300);
+  await expect(page).toHaveURL(/\/agents$/);
+  await page.keyboard.press('Escape');
+  await expect(switcher).toHaveCount(0);
+
+  // In a text field they are just letters.
+  const search = page.getByRole('searchbox', { name: 'Search Renkei' });
+  await search.click();
+  await page.keyboard.type('kn c ag');
+  await page.waitForTimeout(800);
+  await expect(search).toHaveValue('kn c ag');
+  await expect(page).toHaveURL(/\/agents$/);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('the Preferences, Tutorials and Organization chords work from a text field', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await fakePlatform(page, 'Win32');
+  await page.goto(`/agents`);
+  const search = page.getByRole('searchbox', { name: 'Search Renkei' });
+  await search.click();
+
+  await pressUntil(page, ['Control+,'], () =>
+    expect(page).toHaveURL(/\/preferences$/, { timeout: 1500 })
+  );
+  await pressUntil(page, ['Control+Shift+/'], () =>
+    expect(page).toHaveURL(/\/tutorials$/, { timeout: 1500 })
+  );
+  await pressUntil(page, ['Control+Shift+,'], () =>
+    expect(page).toHaveURL(/\/admin$/, { timeout: 1500 })
+  );
 });
 
 test('the switcher opens on the previous chat, walks the list and opens one', async ({
@@ -197,7 +278,7 @@ test('the switcher opens on the previous chat, walks the list and opens one', as
   await fakePlatform(page, 'Win32');
   await page.goto(`/chat/${newest}`);
   const dialog = page.getByRole('dialog', { name: 'Recent chats' });
-  await pressUntilOpen(page, 'Alt+j', dialog);
+  await pressUntilOpen(page, 'Control+j', dialog);
   const options = dialog.getByRole('option');
   await expect(options.nth(0)).toContainText('Quarterly report draft');
   await expect(options.nth(0)).toContainText('Current');
@@ -207,9 +288,9 @@ test('the switcher opens on the previous chat, walks the list and opens one', as
   await shot(page, testInfo, 'shortcuts-switcher');
 
   // Again moves on; Shift goes back.
-  await page.keyboard.press('Alt+j');
+  await page.keyboard.press('Control+j');
   await expect(options.nth(2)).toHaveAttribute('aria-selected', 'true');
-  await page.keyboard.press('Alt+Shift+J');
+  await page.keyboard.press('Control+Shift+J');
   await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('ArrowDown');
   await expect(options.nth(2)).toHaveAttribute('aria-selected', 'true');
@@ -220,7 +301,7 @@ test('the switcher opens on the previous chat, walks the list and opens one', as
 
   // From a page that is not a chat, it opens on the most recent one.
   await page.goto(`/agents`);
-  await pressUntilOpen(page, 'Alt+j', dialog);
+  await pressUntilOpen(page, 'Control+j', dialog);
   await expect(dialog.getByRole('option').first()).toHaveAttribute('aria-selected', 'true');
   await expect(dialog.getByRole('option').first()).toContainText('Quarterly report draft');
   await dialog.getByRole('option', { name: /Expense policy/ }).click();
@@ -259,14 +340,21 @@ test('the shortcuts coach marks follow the welcome tour on the home page', async
   await shot(page, testInfo, 'shortcuts-coach-1-search');
 
   await card.getByRole('button', { name: 'Next' }).click();
-  await expect(card).toHaveAttribute('data-coach-step', 'quick-chat');
-  await expect(card).toContainText('⌘ J');
+  await expect(card).toHaveAttribute('data-coach-step', 'new-chat');
+  await expect(card).toContainText('Press C anywhere');
 
   await card.getByRole('button', { name: 'Next' }).click();
   await expect(card).toHaveAttribute('data-coach-step', 'switch-chat');
-  await expect(card).toContainText('⌥ J');
+  await expect(card).toContainText('⌘ J');
   await page.waitForTimeout(350);
   await shot(page, testInfo, 'shortcuts-coach-3-switch');
+
+  await card.getByRole('button', { name: 'Next' }).click();
+  await expect(card).toHaveAttribute('data-coach-step', 'go-to');
+  await expect(card).toContainText('A then G');
+  await expect(card).toContainText('⌘ ,');
+  await page.waitForTimeout(350);
+  await shot(page, testInfo, 'shortcuts-coach-4-go-to');
 
   await card.getByRole('button', { name: 'Finish' }).click();
   await expect(card).toHaveCount(0);
