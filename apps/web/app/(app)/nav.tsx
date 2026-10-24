@@ -13,6 +13,7 @@ import { useCoachMarks } from '@/components/coach-marks/context';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import { ChatList } from './chat/_components/chat-nav';
 import { OmniSearch, type OmniPage } from './omni-search';
+import { GlobalShortcuts } from './global-shortcuts';
 import { scrollToHash } from '@/lib/hash-scroll';
 
 interface NavProps {
@@ -388,6 +389,7 @@ export default function AppNav({
         </Link>
 
         <OmniSearch pages={pages} chats={chats} isOperator={isOperator} />
+        <GlobalShortcuts chats={chats} />
 
         <div className="flex items-center gap-2">
           <div ref={menuRef} className="relative">

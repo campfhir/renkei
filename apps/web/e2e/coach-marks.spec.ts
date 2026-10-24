@@ -195,7 +195,15 @@ test('the welcome tour greets a newcomer on the home page and records a completi
       dismissed_count: 0,
     });
 
-  // Finished means finished: it does not come back.
+  // Finished means finished: it does not come back. The next home-page
+  // tour (the keyboard shortcuts) takes its place; skip it to leave the
+  // home page tour-free for what follows.
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
+  await expect(card).toHaveAttribute('data-coach-tour', 'shortcuts');
+  await card.getByRole('button', { name: 'Skip tour' }).click();
+  await expect(card).toHaveCount(0);
+  await expect.poll(() => progressOf('shortcuts')).toMatchObject({ status: 'dismissed' });
   await page.reload();
   await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
   await expectNoTour(page);
@@ -340,10 +348,10 @@ test('"Don\'t show tutorials" and the switch both stop tours starting unasked', 
   await shot(page, testInfo, 'coach-tutorials-off');
 
   // Off: a tour never taken (the agents' was skipped; reset it) stays away.
-  await client.query(
-    'DELETE FROM coach_mark_progress WHERE subject = $1 AND tour_id = $2',
-    [subject, 'agents']
-  );
+  await client.query('DELETE FROM coach_mark_progress WHERE subject = $1 AND tour_id = $2', [
+    subject,
+    'agents',
+  ]);
   await page.goto(`/agents`);
   await expect(page.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
   await expectNoTour(page);

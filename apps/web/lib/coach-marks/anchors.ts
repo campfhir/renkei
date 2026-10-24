@@ -14,6 +14,8 @@
 export const COACH_ANCHORS = [
   /** The hamburger in the top bar. */
   'nav-menu-button',
+  /** The search box in the top bar (Ctrl/⌘ K). */
+  'nav-search',
   /** The Workspace group in the menu column. */
   'nav-workspace',
   /** The Chat group in the menu column. */

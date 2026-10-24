@@ -3,7 +3,7 @@
 /**
  * The search in the top bar: one box for what a person is after — a page
  * or a setting in the menu, a chat project or code project, a chat by its
- * title or by what was said in it. Ctrl/⌘K moves to it from anywhere, and
+ * title or by what was said in it. Ctrl/⌘K (⌘ on a Mac) moves to it from anywhere, and
  * the arrow keys and Enter pick a result. The chats searched are the whole
  * history, fetched on first focus (the menu only carries the recent window);
  * what was said is found through the search route, debounced.
@@ -20,6 +20,9 @@ import { CHAT_SEARCH_MIN_CHARS, normalizeQuery } from '@/lib/chat/search-text';
 import type { ChatListItem } from '@/lib/chat/views';
 import { matchPlaces, type AppPlace } from '@/lib/app-index';
 import { scrollToHash } from '@/lib/hash-scroll';
+import { formatShortcut, matchesShortcut } from '@/lib/shortcuts';
+import { usePlatform } from '@/lib/use-platform';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /** A place in the app's menu, from the menu's own list so the two agree. */
 export interface OmniPage {
@@ -53,6 +56,8 @@ export function OmniSearch({
   isOperator: boolean;
 }) {
   const pathname = usePathname();
+  const platform = usePlatform();
+  const searchAnchor = useCoachAnchor('nav-search');
   const router = useRouter();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -127,7 +132,7 @@ export function OmniSearch({
   // Ctrl/⌘K from anywhere in the app.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {
+      if (matchesShortcut('search', event, platform)) {
         event.preventDefault();
         inputRef.current?.focus();
         setOpen(true);
@@ -136,7 +141,7 @@ export function OmniSearch({
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [allChats]);
+  }, [allChats, platform]);
 
   const sections = buildSections({
     needle,
@@ -186,7 +191,10 @@ export function OmniSearch({
         ref={ref}
         className={`relative mx-auto min-w-0 max-w-xl flex-1 ${expanded ? '' : 'hidden sm:block'}`}
       >
-        <div className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-2.5 focus-within:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:focus-within:border-blue-700">
+        <div
+          {...searchAnchor}
+          className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-2.5 focus-within:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:focus-within:border-blue-700"
+        >
           <Icon path={ICONS.search} className="h-4 w-4 shrink-0 text-gray-400" />
           <input
             ref={inputRef}
@@ -229,7 +237,7 @@ export function OmniSearch({
             aria-hidden="true"
             className="hidden shrink-0 rounded border border-gray-300 px-1 text-[11px] text-gray-500 sm:block dark:border-gray-700"
           >
-            Ctrl K
+            {formatShortcut('search', platform)}
           </kbd>
           <button
             type="button"
