@@ -300,7 +300,7 @@ export default function AppNav({
       {groups.map((group) => (
         <div
           key={group.label}
-          className={group.extra ? 'mb-3 flex flex-1 flex-col' : 'mb-3'}
+          className={group.extra ? 'mb-3 flex min-h-[25.5rem] flex-1 flex-col' : 'mb-3'}
           {...(group.coach ? anchors[group.coach] : {})}
         >
           <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -345,7 +345,9 @@ export default function AppNav({
               );
             })}
           </ul>
-          {group.extra ? <div className="mt-2 flex flex-1 flex-col">{group.extra}</div> : null}
+          {group.extra ? (
+            <div className="mt-2 flex min-h-0 flex-1 flex-col">{group.extra}</div>
+          ) : null}
         </div>
       ))}
 

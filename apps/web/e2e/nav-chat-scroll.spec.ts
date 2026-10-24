@@ -122,3 +122,125 @@ test('app menu: three chats show at a desktop height without scrolling the list'
     await client.end();
   }
 });
+
+test('app menu: the column never scrolls, only the chat list does, on desktop and in the phone drawer', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-light', 'A layout check at two widths.');
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const prefix = 'Menu scroll e2e';
+  try {
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
+      E2E_SUBJECT,
+      `${prefix} %`,
+    ]);
+    // More chats than the menu holds, so the list has to scroll.
+    for (let index = 1; index <= 14; index += 1) {
+      await client.query(
+        "INSERT INTO chats (id, owner_subject, title, last_message_at) VALUES ($1, $2, $3, NOW() - ($4 || ' minutes')::interval)",
+        [randomUUID(), E2E_SUBJECT, `${prefix} ${index}`, index]
+      );
+    }
+
+    // The phone drawer, a laptop, and a desktop: the menu never scrolls at any of them.
+    for (const size of [
+      { width: 390, height: 844 },
+      { width: 1366, height: 768 },
+      { width: 1440, height: 900 },
+    ]) {
+      await page.setViewportSize(size);
+      await page.goto('/agents');
+      if (size.width < 1024) await page.getByRole('button', { name: 'Open menu' }).click();
+      const column = page.locator('nav[aria-label="Application"]:visible').first();
+      const chats = column.getByRole('navigation', { name: 'Chats' });
+      await expect(chats).toBeVisible();
+      await expect(column.getByRole('link', { name: `${prefix} 1`, exact: true })).toBeAttached();
+
+      const layout = await column.evaluate((element) => {
+        const list = element.querySelector<HTMLElement>('nav[aria-label="Chats"]')!;
+        const footers = element.querySelectorAll<HTMLElement>(':scope > p');
+        const footer = footers[footers.length - 1];
+        return {
+          columnScrolls: element.scrollHeight > element.clientHeight + 1,
+          listScrolls: list.scrollHeight > list.clientHeight + 1,
+          footerInside:
+            footer.getBoundingClientRect().bottom <= element.getBoundingClientRect().bottom + 1,
+        };
+      });
+      expect(layout, `menu at ${size.width}px`).toEqual({
+        columnScrolls: false,
+        listScrolls: true,
+        footerInside: true,
+      });
+      // The list always has room for four chats at once.
+      const fourShown = await chats.evaluate((list) => {
+        const box = list.getBoundingClientRect();
+        return [...list.querySelectorAll('a')].filter((link) => {
+          const row = link.getBoundingClientRect();
+          return row.top >= box.top && row.bottom <= box.bottom;
+        }).length;
+      });
+      expect(fourShown, `chats shown at ${size.width}px`).toBeGreaterThanOrEqual(4);
+    }
+  } finally {
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
+      E2E_SUBJECT,
+      `${prefix} %`,
+    ]);
+    await client.end();
+  }
+});
+
+test('app menu: day headings stick to the top of the history, and the filter stays available', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-light', 'A desktop layout check.');
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const prefix = 'Sticky heading e2e';
+  try {
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
+      E2E_SUBJECT,
+      `${prefix} %`,
+    ]);
+    // Chats in several day groups, with enough old ones to scroll.
+    const hours = [1, 1, 30, 30, 100, 100, ...Array.from({ length: 10 }, () => 500)];
+    for (const [index, age] of hours.entries()) {
+      await client.query(
+        "INSERT INTO chats (id, owner_subject, title, last_message_at, updated_at) VALUES ($1, $2, $3, NOW() - ($4 || ' hours')::interval, NOW() - ($4 || ' hours')::interval)",
+        [randomUUID(), E2E_SUBJECT, `${prefix} ${index + 1}`, age]
+      );
+    }
+
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto('/agents');
+    const column = page.locator('nav[aria-label="Application"]:visible').first();
+    const list = column.getByRole('navigation', { name: 'Chats' });
+    await expect(list.getByRole('link', { name: `${prefix} 1`, exact: true })).toBeAttached();
+    const filter = column.getByRole('button', { name: 'Filter chats' });
+    // Scrolled to the bottom, the oldest day's heading holds the top of the list.
+    await list.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    const listTop = (await list.boundingBox())!.y;
+    await expect
+      .poll(
+        async () =>
+          (await list.getByText('Earlier', { exact: true }).locator('..').boundingBox())!.y
+      )
+      .toBeLessThanOrEqual(listTop + 2);
+
+    // The filter sits on the top heading's row, above the list, so it is still
+    // there at the bottom: level with the list's top edge.
+    await expect(filter).toBeInViewport();
+    const control = await filter.boundingBox();
+    expect(Math.abs(control!.y - listTop)).toBeLessThan(4);
+  } finally {
+    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
+      E2E_SUBJECT,
+      `${prefix} %`,
+    ]);
+    await client.end();
+  }
+});

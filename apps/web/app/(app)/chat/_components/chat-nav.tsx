@@ -118,11 +118,12 @@ export function ChatList({ data }: {
   }, [mine]);
 
   return (
-    <div className="flex flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
-      <div className="mb-1 flex shrink-0 justify-end">
+    <div className="relative flex min-h-0 flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
+      {/* On the top heading's row, above the list, so it is there while the history scrolls. */}
+      <div className="absolute top-2 right-2 z-20 rounded-md bg-white dark:bg-gray-950">
         <StateFilter states={states} onChange={setStates} counts={counts} />
       </div>
-      <nav aria-label="Chats" className="min-h-24 flex-1 overflow-y-auto">
+      <nav aria-label="Chats" className="min-h-0 flex-1 overflow-y-auto">
         {groups.length === 0 && shared.length === 0 ? (
           <p className="px-2 text-xs text-gray-500">
             {allChats.length === 0 && moreBefore === null
@@ -253,9 +254,13 @@ function kindOf(chat: ChatListItem): { kind: 'chat' | 'project' | 'code'; path: 
   return { kind: 'chat', path: ICONS.chat };
 }
 
+/**
+ * A day's heading. It sticks to the top of the list while that day's chats
+ * scroll past, and the next day's heading takes its place.
+ */
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-1 flex items-center px-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+    <div className="sticky top-0 z-10 mb-1 bg-white px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-950">
       {children}
     </div>
   );

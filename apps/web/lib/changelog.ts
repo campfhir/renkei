@@ -46,6 +46,41 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-24',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'The chat filter sits on the day heading row',
+        detail:
+          "The Active and Archived filter is on the top day heading's row and stays there while the chat history scrolls.",
+      },
+      {
+        kind: 'changed',
+        title: 'The chat filter is always visible in the app menu',
+        detail:
+          'The Active and Archived filter sits above the chat history and stays in view while the history scrolls.',
+      },
+      {
+        kind: 'changed',
+        title: 'Day headings stay on screen in the app menu',
+        detail:
+          "While you scroll the chat history, the day heading stays at the top of the list until the next day's heading takes its place, and the filter sits on the top heading.",
+      },
+      {
+        kind: 'changed',
+        title: "The menu's chat list always shows four chats",
+        detail:
+          'The chat list in the app menu keeps room for at least four chats before the menu itself has to scroll.',
+      },
+      {
+        kind: 'fixed',
+        title: 'The app menu no longer scrolls as a whole',
+        detail:
+          'Only the chat list scrolls, so the version line stays at the foot of the menu on desktop and in the phone drawer.',
+      },
+    ],
+  },
+  {
     date: '2026-10-23',
     entries: [
       {
