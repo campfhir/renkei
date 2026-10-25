@@ -14,6 +14,8 @@ import type { McpClient } from '@renkei/mcp-client';
 import { createLocalToolSet, textResult, type LocalTool } from './local-tools';
 import { openTurnChannel, resetTurnChannels, type TurnChannel } from './turn-events';
 import {
+  attachmentBlocksOfMeta,
+  DEFAULT_TURN_LIMITS,
   runChatTurn,
   toolGroups,
   type TurnInput,
@@ -743,7 +745,9 @@ describe('runChatTurn', () => {
       async complete(request) {
         systems.push(request.system);
         calls += 1;
-        return calls === 1 ? err('context_length' as const, { message: 'too long' }) : ok(text('ok'));
+        return calls === 1
+          ? err('context_length' as const, { message: 'too long' })
+          : ok(text('ok'));
       },
     };
     const outcome = await runChatTurn(
@@ -2125,5 +2129,47 @@ describe('runChatTurn Stop while a tool call runs', () => {
     const outcome = await run;
     expect(outcome.status).toBe('canceled');
     expect(seen?.aborted).toBe(true);
+  });
+});
+
+describe('attachmentBlocksOfMeta', () => {
+  const budget = () => ({ blocks: 0, base64Chars: 0 });
+  // Five MB of decoded bytes is 5 * 1_048_576 bytes, about 6.99M base64 characters.
+  const bigBase64 = Buffer.alloc(5 * 1_048_576 + 1).toString('base64');
+  const smallBase64 = Buffer.alloc(1024).toString('base64');
+
+  it('passes a document under 5 MB to the model', () => {
+    const blocks = attachmentBlocksOfMeta(
+      {
+        renkeiDocuments: [
+          { mediaType: 'application/pdf', dataBase64: smallBase64, title: 'small.pdf' },
+        ],
+      },
+      budget(),
+      DEFAULT_TURN_LIMITS
+    );
+    expect(blocks).toEqual([
+      {
+        type: 'document',
+        mediaType: 'application/pdf',
+        dataBase64: smallBase64,
+        title: 'small.pdf',
+      },
+    ]);
+  });
+
+  it('leaves out a document over 5 MB and keeps the rest', () => {
+    const blocks = attachmentBlocksOfMeta(
+      {
+        renkeiDocuments: [
+          { mediaType: 'application/pdf', dataBase64: bigBase64, title: 'big.pdf' },
+          { mediaType: 'application/pdf', dataBase64: smallBase64, title: 'small.pdf' },
+        ],
+      },
+      budget(),
+      DEFAULT_TURN_LIMITS
+    );
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ type: 'document', title: 'small.pdf' });
   });
 });

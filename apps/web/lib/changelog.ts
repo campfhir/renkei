@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: 'Large files are not read into a chat in full',
+        detail:
+          "A file over 5 MB attached to a chat is no longer put into the model's context. The model reads it in pages on request, so a big upload cannot fill the context window.",
+      },
+      {
+        kind: 'changed',
         title: 'Max attachment size accepts units',
         detail:
           "Type a size such as 70MB or 2GB in the admin settings' Max attachment size field instead of a byte count. Chat files from tools and the sandbox now follow that setting too, so raising it lets larger files be kept.",

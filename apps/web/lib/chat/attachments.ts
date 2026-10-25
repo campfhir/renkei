@@ -31,6 +31,11 @@ import type { AttachmentView } from './views';
 
 /** What a prompt inlines per attachment; the rest is read on demand. */
 export const INLINE_EXCERPT_CHARS = 40_000;
+/**
+ * A file over this is never put in a prompt, as text or as a document or
+ * image block: the model reads it on demand with chat_read_attachment.
+ */
+export const PROMPT_FILE_MAX_BYTES = 5 * 1_048_576;
 /** What is kept of the extracted text at all. */
 export const EXTRACTED_TEXT_MAX_CHARS = 200_000;
 
@@ -726,22 +731,25 @@ export async function attachmentPromptBlocks(
   const blocks: LlmContentBlock[] = [];
   for (const raw of rows) {
     const row = rowOf(raw);
-    const text = raw.extracted_text ? openText(raw.extracted_text, cipher) : null;
+    const oversize = row.sizeBytes > PROMPT_FILE_MAX_BYTES;
+    const text = !oversize && raw.extracted_text ? openText(raw.extracted_text, cipher) : null;
     const excerpt = text ? text.slice(0, INLINE_EXCERPT_CHARS) : null;
     const clipped = text !== null && text.length > INLINE_EXCERPT_CHARS;
     blocks.push({
       type: 'text',
       text:
         `<attachment id="${row.id}" name="${row.filename}" type="${row.contentType}" size="${row.sizeBytes}">\n` +
-        (excerpt !== null
-          ? `${excerpt}${clipped ? `\n…[${text.length - INLINE_EXCERPT_CHARS} more characters; read on with chat_read_attachment]` : ''}`
-          : `[no text could be extracted (${row.extractStatus}); chat_attach_to_sandbox stages the bytes]`) +
+        (oversize
+          ? '[over 5 MB, so its contents are not inlined; read it with chat_read_attachment, in pages]'
+          : excerpt !== null
+            ? `${excerpt}${clipped ? `\n…[${text.length - INLINE_EXCERPT_CHARS} more characters; read on with chat_read_attachment]` : ''}`
+            : `[no text could be extracted (${row.extractStatus}); chat_attach_to_sandbox stages the bytes]`) +
         '\n</attachment>',
     });
     const renderable =
       row.contentType === 'application/pdf' ||
       ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(row.contentType);
-    if (renderable && row.sizeBytes <= 8_000_000) {
+    if (renderable && !oversize) {
       const object = await readAttachmentBytes(row, cipher);
       if (object.ok) {
         const dataBase64 = Buffer.from(object.val).toString('base64');

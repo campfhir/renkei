@@ -71,6 +71,7 @@ import { secure } from '@/lib/logger';
 import type { McpClient, McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext, LocalToolSet } from './local-tools';
 import { parseDigest, type ArtifactDigest } from './artifact-digest-input';
+import { PROMPT_FILE_MAX_BYTES } from './attachments';
 import type { ChatStreamEvent } from './stream-events';
 import type { TurnChannel } from './turn-events';
 import type { AttachmentView, PendingToolPermission, ToolPermissionDecision } from './views';
@@ -519,6 +520,7 @@ export function attachmentBlocksOfMeta(
     const record: { mediaType?: unknown; dataBase64?: unknown; title?: unknown } = entry;
     if (typeof record.mediaType !== 'string' || typeof record.dataBase64 !== 'string') continue;
     if (!record.dataBase64) continue;
+    if (Buffer.byteLength(record.dataBase64, 'base64') > PROMPT_FILE_MAX_BYTES) continue;
     if (budget.blocks >= limits.attachmentMaxBlocks) break;
     if (budget.base64Chars + record.dataBase64.length > limits.attachmentMaxBase64Chars) continue;
     const title = typeof record.title === 'string' && record.title ? record.title : undefined;
