@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-25',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'Max attachment size accepts units',
+        detail:
+          "Type a size such as 70MB or 2GB in the admin settings' Max attachment size field instead of a byte count. Chat files from tools and the sandbox now follow that setting too, so raising it lets larger files be kept.",
+      },
+    ],
+  },
+  {
     date: '2026-10-24',
     entries: [
       {
