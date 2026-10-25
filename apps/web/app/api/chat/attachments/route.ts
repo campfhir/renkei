@@ -99,6 +99,11 @@ export async function PUT(request: NextRequest): Promise<Response> {
   }
   const bytes = new Uint8Array(await request.arrayBuffer());
   if (bytes.byteLength === 0) return jsonError(400, 'empty', 'The file is empty.');
+  // A body cut short on its way in is not the file the person sent; keep
+  // nothing rather than a truncated copy.
+  if (declared > 0 && bytes.byteLength !== declared) {
+    return jsonError(400, 'incomplete', 'The upload was cut short. Try again.');
+  }
   if (bytes.byteLength > maxBytes) {
     return jsonError(
       413,
