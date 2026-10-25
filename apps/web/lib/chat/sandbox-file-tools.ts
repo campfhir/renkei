@@ -36,10 +36,11 @@ import {
   type AttachmentRow,
 } from './attachments';
 import type { ContentCipher } from './content-crypto';
+import { formatByteSize } from '@/lib/byte-size';
 import { checkFilename, KEPT_LINE } from './file-tools';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 import { DIGEST_INPUT_PROPERTIES, digestFieldsOf } from './artifact-digest-input';
-import { ARTIFACT_MAX_BYTES } from './turn-store';
+import { chatFileMaxBytes } from './turn-store';
 
 export const ATTACH_TO_SANDBOX_TOOL = 'chat_attach_to_sandbox';
 export const ATTACH_FROM_SANDBOX_TOOL = 'chat_attach_from_sandbox';
@@ -224,9 +225,10 @@ export function sandboxFileTools(): LocalTool[] {
         const bytes = read.val.bytes;
         if (bytes.byteLength === 0)
           return errorResult(`${name.filename} is empty; nothing to keep.`);
-        if (bytes.byteLength > ARTIFACT_MAX_BYTES) {
+        const maxBytes = await chatFileMaxBytes();
+        if (bytes.byteLength > maxBytes) {
           return errorResult(
-            `${name.filename} is ${bytes.byteLength} bytes; a chat keeps files up to ${ARTIFACT_MAX_BYTES}. Send it to a network share with sandbox_send_to_upload instead.`
+            `${name.filename} is ${bytes.byteLength} bytes; a chat keeps files up to ${formatByteSize(maxBytes)}. Send it to a network share with sandbox_send_to_upload instead.`
           );
         }
         // The worker's type when it knows one; else by the extension, as a
