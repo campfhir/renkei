@@ -1,6 +1,7 @@
 'use client';
 
 import { anchorId } from '@/lib/hash-scroll';
+import { formatByteSize, parseByteSize } from '@/lib/byte-size';
 import { useState } from 'react';
 import { sendJsonFull } from '@/lib/fetch-json';
 import CoachTarget, { useCoachAnchor } from '@/components/coach-marks/anchor';
@@ -72,6 +73,44 @@ const MB = 1_048_576;
 
 const inputClass =
   'w-28 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm tabular-nums dark:border-gray-700 dark:bg-gray-900';
+
+/**
+ * A byte count typed with a unit ("70MB", "2GB") or as bare bytes. While the
+ * text is not a size it keeps the typing and changes nothing; leaving the
+ * field puts back the last size that parsed.
+ */
+function ByteSizeInput({
+  label,
+  value,
+  onChange,
+  range,
+}: {
+  label: string;
+  value: number;
+  onChange: (bytes: number) => void;
+  range: string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const invalid = draft !== null && parseByteSize(draft) === null;
+  return (
+    <span className="flex items-center gap-2">
+      <input
+        type="text"
+        aria-label={label}
+        aria-invalid={invalid}
+        value={draft ?? formatByteSize(value)}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          const bytes = parseByteSize(event.target.value);
+          if (bytes !== null) onChange(bytes);
+        }}
+        onBlur={() => setDraft(null)}
+        className={`${inputClass} ${invalid ? 'border-red-500' : ''}`}
+      />
+      <span className="w-20 text-xs text-gray-400 dark:text-gray-600">{range}</span>
+    </span>
+  );
+}
 
 function Section({
   title,
@@ -494,10 +533,15 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
           {numberInput('maxJqlResults', '1–1,000')}
         </Row>
         <Row
-          label="Max attachment size (bytes)"
-          hint="Largest attachment a tool will upload or download."
+          label="Max attachment size"
+          hint="Largest attachment a tool will upload or download. Type a size with a unit, such as 70MB or 2GB."
         >
-          {numberInput('maxAttachmentBytes', '1MB–100MB')}
+          <ByteSizeInput
+            label="maxAttachmentBytes"
+            value={values.maxAttachmentBytes}
+            onChange={(bytes) => set('maxAttachmentBytes', bytes)}
+            range="1MB–100MB"
+          />
         </Row>
         <Row
           label="Mass upload threshold (files)"
