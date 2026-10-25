@@ -38,6 +38,7 @@ import { useMediaQuery } from '@/lib/use-media-query';
 import ShareModal from './share-modal';
 import AttachArtifactsPicker from './attach-to-project-modal';
 import { CopyArtifactModal, DeleteArtifactModal, RenameArtifactModal } from './artifact-dialogs';
+import { BulkAddModal, BulkDeleteModal } from './artifact-bulk-dialogs';
 import { ModeToggle, sizeOf, statusLabel, TypeBadge } from './artifact-bits';
 
 /**
@@ -130,6 +131,11 @@ export default function ArtifactsIndex({
   const [dialog, setDialog] = useState<
     'share' | 'delete' | 'copy' | 'rename' | 'attach' | 'replace' | null
   >(null);
+  // The rows ticked for a bulk act, and the one-at-a-time detach in flight
+  // ("file:project"), so a second click on it does nothing.
+  const [picked, setPicked] = useState<string[]>([]);
+  const [bulk, setBulk] = useState<'add' | 'delete' | null>(null);
+  const [detaching, setDetaching] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -151,6 +157,11 @@ export default function ArtifactsIndex({
   const reload = useCallback(() => {
     startTransition(() => router.refresh());
   }, [router]);
+  // A new page of the library is the server's answer to a detach, so the
+  // one in flight is over.
+  useEffect(() => {
+    setDetaching(null);
+  }, [page]);
 
   // A filter change starts over at the first page of what it shows; the
   // search box waits for typing to pause.
@@ -183,6 +194,7 @@ export default function ArtifactsIndex({
   };
 
   const onPage = items.find((item) => item.id === selected) ?? null;
+  const pickedItems = items.filter((item) => picked.includes(item.id));
   const current = onPage ?? (remembered?.id === selected ? remembered : null);
   useEffect(() => {
     if (onPage) setRemembered(onPage);
@@ -220,11 +232,20 @@ export default function ArtifactsIndex({
   };
 
   const detach = async (item: LibraryItem, projectId: string) => {
+    const key = `${item.id}:${projectId}`;
+    if (detaching === key) return;
+    setDetaching(key);
     setError(null);
     const result = await chatClient.detachArtifact(projectId, item.id);
-    if (result.error) setError(result.error);
+    if (result.error) {
+      setError(result.error);
+      setDetaching(null);
+    }
     reload();
   };
+
+  const togglePick = (id: string) =>
+    setPicked((ids) => (ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id]));
 
   const leave = async (item: LibraryItem) => {
     setError(null);
@@ -363,8 +384,9 @@ export default function ArtifactsIndex({
                 <button
                   type="button"
                   onClick={() => void detach(current, project.id)}
+                  disabled={detaching === `${current.id}:${project.id}`}
                   aria-label={`Detach from ${project.name}`}
-                  className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-900"
+                  className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50 dark:hover:bg-gray-900"
                 >
                   <Icon path={ICONS.close} className="h-3.5 w-3.5" />
                 </button>
@@ -494,6 +516,17 @@ export default function ArtifactsIndex({
             reload();
           }}
         />
+      ) : null}
+      {bulk === 'add' && pickedItems.length > 0 ? (
+        <BulkAddModal
+          items={pickedItems}
+          projects={projects}
+          onDone={reload}
+          onClose={() => setBulk(null)}
+        />
+      ) : null}
+      {bulk === 'delete' && pickedItems.length > 0 ? (
+        <BulkDeleteModal items={pickedItems} onDone={reload} onClose={() => setBulk(null)} />
       ) : null}
       {dialog === 'delete' && current ? (
         <DeleteArtifactModal
@@ -667,6 +700,35 @@ export default function ArtifactsIndex({
             aria-busy={isPending}
             className={`flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-gray-200 transition-opacity dark:border-gray-800 ${isPending ? 'opacity-60' : ''}`}
           >
+            {pickedItems.length > 0 ? (
+              <div
+                role="toolbar"
+                aria-label="Selected artifacts"
+                className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-3 py-2 text-sm dark:border-gray-800"
+              >
+                <span className="font-medium">{pickedItems.length} selected</span>
+                <button type="button" onClick={() => setBulk('add')} className={smallButton}>
+                  Add to project…
+                </button>
+                <button type="button" onClick={() => setBulk('delete')} className={smallButton}>
+                  Delete…
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPicked(items.map((item) => item.id))}
+                  className="text-xs text-gray-500 hover:underline"
+                >
+                  Select all on this page
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPicked([])}
+                  className="ml-auto text-xs text-gray-500 hover:underline"
+                >
+                  Clear
+                </button>
+              </div>
+            ) : null}
             {items.length === 0 ? (
               <p className="p-4 text-sm text-gray-500">
                 {page.libraryCount === 0
@@ -691,73 +753,84 @@ export default function ArtifactsIndex({
                       data-artifact={item.id}
                       className="max-md:overflow-hidden max-md:rounded-md max-md:border max-md:border-gray-200 max-md:dark:border-gray-800"
                     >
-                      <button
-                        type="button"
-                        onClick={() => select(isSelected && !narrow ? null : item)}
-                        aria-current={isSelected ? 'true' : undefined}
-                        className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : ''}`}
-                      >
-                        <TypeBadge filename={item.filename} contentType={item.contentType} />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-medium">{item.filename}</span>
-                          <span className="block truncate text-xs text-gray-500">
-                            {sizeOf(item.sizeBytes)}
-                            {status ? (
-                              <>
-                                {' · '}
-                                <span className="text-amber-700 dark:text-amber-400">{status}</span>
-                              </>
-                            ) : null}
-                            {item.origin === 'model'
-                              ? ' · generated'
-                              : item.chat
-                                ? ' · uploaded'
-                                : ''}
-                            {item.chat ? ` in “${item.chat.title ?? 'a chat'}”` : ''}
-                            {item.ownerName ? ` · shared by ${item.ownerName}` : ''}
-                            {' · '}
-                            <LocalTime at={item.createdAt} format="date" />
-                          </span>
-                          {item.summary ? (
-                            <span className="mt-0.5 line-clamp-1 text-xs text-gray-500">
-                              {item.summary}
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="hidden min-w-0 max-w-[14rem] shrink-0 flex-wrap justify-end gap-1 md:flex">
-                          {item.projects.length === 0 ? (
-                            item.chat ? (
-                              <span
-                                className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
-                                title={`In the chat “${item.chat.title ?? 'Untitled'}” only`}
-                              >
-                                <Icon path={ICONS.chat} className="h-3 w-3 shrink-0" />
-                                <span className="truncate">{item.chat.title ?? 'a chat'}</span>
-                              </span>
-                            ) : (
-                              <span className="text-xs text-gray-400">Not attached</span>
-                            )
-                          ) : (
-                            item.projects.slice(0, 2).map((project) => (
-                              <span
-                                key={project.id}
-                                className="truncate rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-900"
-                              >
-                                {project.name}
-                              </span>
-                            ))
-                          )}
-                          {item.projects.length > 2 ? (
-                            <span className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-900">
-                              +{item.projects.length - 2}
-                            </span>
-                          ) : null}
-                        </span>
-                        <Icon
-                          path={ICONS.chevron}
-                          className="h-4 w-4 shrink-0 text-gray-400 md:hidden"
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={picked.includes(item.id)}
+                          onChange={() => togglePick(item.id)}
+                          aria-label={`Select ${item.filename}`}
+                          className="ml-3 h-4 w-4 shrink-0 rounded border-gray-300"
                         />
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => select(isSelected && !narrow ? null : item)}
+                          aria-current={isSelected ? 'true' : undefined}
+                          className={`flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : ''}`}
+                        >
+                          <TypeBadge filename={item.filename} contentType={item.contentType} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium">{item.filename}</span>
+                            <span className="block truncate text-xs text-gray-500">
+                              {sizeOf(item.sizeBytes)}
+                              {status ? (
+                                <>
+                                  {' · '}
+                                  <span className="text-amber-700 dark:text-amber-400">
+                                    {status}
+                                  </span>
+                                </>
+                              ) : null}
+                              {item.origin === 'model'
+                                ? ' · generated'
+                                : item.chat
+                                  ? ' · uploaded'
+                                  : ''}
+                              {item.chat ? ` in “${item.chat.title ?? 'a chat'}”` : ''}
+                              {item.ownerName ? ` · shared by ${item.ownerName}` : ''}
+                              {' · '}
+                              <LocalTime at={item.createdAt} format="date" />
+                            </span>
+                            {item.summary ? (
+                              <span className="mt-0.5 line-clamp-1 text-xs text-gray-500">
+                                {item.summary}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="hidden min-w-0 max-w-[14rem] shrink-0 flex-wrap justify-end gap-1 md:flex">
+                            {item.projects.length === 0 ? (
+                              item.chat ? (
+                                <span
+                                  className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
+                                  title={`In the chat “${item.chat.title ?? 'Untitled'}” only`}
+                                >
+                                  <Icon path={ICONS.chat} className="h-3 w-3 shrink-0" />
+                                  <span className="truncate">{item.chat.title ?? 'a chat'}</span>
+                                </span>
+                              ) : (
+                                <span className="text-xs text-gray-400">Not attached</span>
+                              )
+                            ) : (
+                              item.projects.slice(0, 2).map((project) => (
+                                <span
+                                  key={project.id}
+                                  className="truncate rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-900"
+                                >
+                                  {project.name}
+                                </span>
+                              ))
+                            )}
+                            {item.projects.length > 2 ? (
+                              <span className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-900">
+                                +{item.projects.length - 2}
+                              </span>
+                            ) : null}
+                          </span>
+                          <Icon
+                            path={ICONS.chevron}
+                            className="h-4 w-4 shrink-0 text-gray-400 md:hidden"
+                          />
+                        </button>
+                      </div>
                     </li>
                   );
                 })}
