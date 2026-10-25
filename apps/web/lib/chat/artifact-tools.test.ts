@@ -14,7 +14,13 @@ jest.mock('./attachments', () => ({
   findChatAttachment: jest.fn(),
 }));
 jest.mock('./artifact-access', () => ({ resolveArtifactAccess: jest.fn() }));
-jest.mock('./artifact-library', () => ({ attachToProject: jest.fn(), shareArtifact: jest.fn() }));
+jest.mock('./artifact-library', () => ({
+  artifactImpact: jest.fn(),
+  attachToProject: jest.fn(),
+  deleteArtifact: jest.fn(),
+  renameArtifact: jest.fn(),
+  shareArtifact: jest.fn(),
+}));
 jest.mock('./artifact-digest', () => ({ storeDigest: jest.fn() }));
 
 import {
@@ -24,7 +30,12 @@ import {
   listProjectArtifacts,
 } from './attachments';
 import { resolveArtifactAccess } from './artifact-access';
-import { attachToProject } from './artifact-library';
+import {
+  artifactImpact,
+  attachToProject,
+  deleteArtifact,
+  renameArtifact,
+} from './artifact-library';
 import { storeDigest } from './artifact-digest';
 import { artifactDescribeTool, artifactTools, scoreText, termsOf } from './artifact-tools';
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
@@ -243,5 +254,66 @@ describe('artifact_describe', () => {
       context({ readOnly: true })
     );
     expect(frozen.isError).toBe(true);
+  });
+});
+
+describe('artifact_rename and artifact_delete', () => {
+  const impactMock = jest.mocked(artifactImpact);
+  const deleteMock = jest.mocked(deleteArtifact);
+  const renameMock = jest.mocked(renameArtifact);
+  const none = { projects: [], sharedWith: [], chat: null };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    findMock.mockResolvedValue(row('a1', 'notes.txt') as never);
+  });
+
+  it('renames an owned file through the library, and refuses under read-only mode', async () => {
+    renameMock.mockResolvedValue(true);
+    const tools = createLocalToolSet(artifactTools({ inProject: true }));
+    const done = await tools.run(
+      'artifact_rename',
+      { attachmentId: 'a1', newName: 'plan.txt' },
+      context()
+    );
+    expect(done.isError).toBeFalsy();
+    expect(renameMock).toHaveBeenCalledWith(
+      null,
+      expect.objectContaining({
+        ownerSubject: 'auth0|alice',
+        artifactId: 'a1',
+        filename: 'plan.txt',
+      })
+    );
+    const readOnly = await tools.run(
+      'artifact_rename',
+      { attachmentId: 'a1', newName: 'x.txt' },
+      context({ readOnly: true })
+    );
+    expect(readOnly.isError).toBe(true);
+    expect(renameMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('deletes a file nobody else uses', async () => {
+    impactMock.mockResolvedValue(none);
+    deleteMock.mockResolvedValue(true);
+    const tools = createLocalToolSet(artifactTools({ inProject: false }));
+    const done = await tools.run('artifact_delete', { attachmentId: 'a1' }, context());
+    expect(done.isError).toBeFalsy();
+    expect(deleteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to delete a file a project or a colleague still uses, and says who', async () => {
+    impactMock.mockResolvedValue({
+      projects: [{ id: 'p1', name: 'Rollout', kind: 'chat', members: 3, mode: 'on_demand' }],
+      sharedWith: [{ subject: 'auth0|bob', name: 'Bob', email: 'bob@example.com' }],
+      chat: null,
+    });
+    const tools = createLocalToolSet(artifactTools({ inProject: true }));
+    const refused = await tools.run('artifact_delete', { attachmentId: 'a1' }, context());
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toContain('project Rollout');
+    expect(refused.content[0]?.text).toContain('Bob');
+    expect(deleteMock).not.toHaveBeenCalled();
   });
 });

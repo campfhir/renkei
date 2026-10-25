@@ -6,7 +6,10 @@
  * the digest (summary and keywords) the model wrote for it, a link
  * opening to the page its file is on; a project page's Artifacts card
  * with the Always / On demand switch and attaching from the library;
- * the composer's "where should it go?" chooser in a project chat; and,
+ * the composer's "where should it go?" chooser in a project chat; ticking
+ * several files in the library to delete them (the impact warned first) or
+ * add them to a project; a second press on a project's remove button after the
+ * server has answered, which must not reach it again; and,
  * at phone width, the cards that open a file's details over the list, a
  * back button to return. Every act goes through the real routes against
  * the real dev database; the model is the sandbox stub, which answers a
@@ -911,4 +914,71 @@ test('phone: the library and the project card fit the viewport', async ({ page }
   );
   expect(row).toBeLessThanOrEqual(0);
   await shot(page, testInfo, 'artifacts-16-phone-remembered');
+});
+
+test('the library: several files are ticked, deleted with the impact warned, or added to a project', async ({
+  page,
+}, testInfo) => {
+  const f = fixtureFor(testInfo.project.name);
+  await seed(f);
+  await signIn(page, f);
+
+  await page.goto('/chat/artifacts');
+  const list = page.getByRole('region', { name: 'Artifacts' });
+  await expect(list.getByText('schema-guide.md')).toBeVisible(COLD);
+  await page.getByRole('checkbox', { name: 'Select schema-guide.md' }).check();
+  await page.getByRole('checkbox', { name: 'Select rounding-analysis.md' }).check();
+  const toolbar = page.getByRole('toolbar', { name: 'Selected artifacts' });
+  await expect(toolbar.getByText('2 selected')).toBeVisible();
+
+  // Delete: the warning names the project that loses schema-guide.md.
+  await toolbar.getByRole('button', { name: 'Delete…' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('Delete 2 files?')).toBeVisible();
+  await expect(dialog.getByText('Working out who uses them…')).toHaveCount(0, COLD);
+  await expect(dialog.getByText(`schema-guide.md: ${f.projectName}`)).toBeVisible();
+  await shot(page, testInfo, 'artifacts-bulk-06-delete-warning');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toBeHidden();
+
+  // Add to project: only the file the project does not hold yet is added.
+  await toolbar.getByRole('button', { name: 'Add to project…' }).click();
+  await expect(dialog.getByText('1 will be added.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Add 1' }).click();
+  await expect(dialog).toBeHidden();
+  await page.reload();
+  const row = page.locator('[data-artifact]', { hasText: 'rounding-analysis.md' });
+  await expect(row.getByText(f.projectName)).toBeVisible();
+});
+
+test('a project page: pressing remove again after the server has answered takes one request and shows no error', async ({
+  page,
+}, testInfo) => {
+  const f = fixtureFor(testInfo.project.name);
+  await seed(f);
+  await signIn(page, f);
+
+  await page.goto(`/chat/projects/${f.projectId}`);
+  const card = page.getByRole('region', { name: 'Artifacts' });
+  await expect(card.getByText('schema-guide.md')).toBeVisible(COLD);
+  const detaches: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() !== 'GET' && request.url().includes('/artifacts/')) {
+      detaches.push(request.method());
+    }
+  });
+  const remove = card.getByRole('button', {
+    name: `Remove schema-guide.md from ${f.projectName}`,
+  });
+  const answered = page.waitForResponse(
+    (response) => response.request().method() !== 'GET' && response.url().includes('/artifacts/')
+  );
+  await remove.click();
+  await answered;
+  // The second press: the row may still be on screen while the page refreshes.
+  if (await remove.isVisible()) await remove.click({ force: true });
+  await expect(card.getByText('schema-guide.md')).toBeHidden();
+  await expect(card.getByRole('alert')).toHaveCount(0);
+  await page.waitForLoadState('networkidle');
+  expect(detaches).toHaveLength(1);
 });
