@@ -14,6 +14,8 @@
  *     or one a tool wrote — as a project artifact, so every chat in the
  *     project has it from now on.
  *   - artifact_share: lets a person use an artifact the chat's owner owns.
+ *   - artifact_rename, artifact_delete: the owner's changes to a file of
+ *     this chat, refused while anyone else uses it (artifactDeleteTool).
  *
  * Attaching and sharing are the person's acts done on their say-so; both
  * refuse under read-only mode, and both go through artifact-library.ts
@@ -30,7 +32,13 @@ import {
 import { resolveArtifactAccess } from './artifact-access';
 import { storeDigest } from './artifact-digest';
 import { DIGEST_INPUT_PROPERTIES, parseDigest } from './artifact-digest-input';
-import { attachToProject, shareArtifact } from './artifact-library';
+import {
+  artifactImpact,
+  attachToProject,
+  deleteArtifact,
+  renameArtifact,
+  shareArtifact,
+} from './artifact-library';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 
 const WINDOW_CHARS = 1_200;
@@ -333,6 +341,94 @@ export function artifactShareTool(): LocalTool {
 }
 
 /**
+ * artifact_rename and artifact_delete: the owner's two changes to a file of
+ * this chat, through the same library calls the Artifacts page makes. The
+ * page's delete dialog warns who loses the file and offers a hand-over; a
+ * chat cannot hold that conversation, so delete refuses while a project or a
+ * colleague still uses the file and says who, and the person finishes it on
+ * the Artifacts page. Both are asked of the person first, as any change is.
+ */
+export function artifactRenameTool(): LocalTool {
+  return {
+    def: {
+      name: 'artifact_rename',
+      description:
+        'Rename a file of this chat that this person owns. Its bytes and every project and share stay as they are. Only when the person asks. Name the file by id, or by its current name.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          attachmentId: { type: 'string' },
+          filename: { type: 'string', description: 'The current name, if no id.' },
+          newName: { type: 'string' },
+        },
+        required: ['newName'],
+      },
+    },
+    readOnly: false,
+    async execute(input, context) {
+      if (context.readOnly) return errorResult('Read-only mode: nothing can be renamed.');
+      const newName = typeof input.newName === 'string' ? input.newName.trim() : '';
+      if (!newName) return errorResult('Say the new name.');
+      const row = await findChatAttachment(context.db, {
+        chatId: context.chatId,
+        ownerSubject: context.subject,
+        id: typeof input.attachmentId === 'string' ? input.attachmentId.trim() : null,
+        filename: typeof input.filename === 'string' ? input.filename.trim() : null,
+      });
+      if (!row) return errorResult('No such file of yours in this chat; name it by id or name.');
+      const renamed = await renameArtifact(context.db, {
+        ownerSubject: context.subject,
+        artifactId: row.id,
+        filename: newName,
+      });
+      if (!renamed) return errorResult(`${row.filename} could not be renamed.`);
+      return textResult(`Renamed ${row.filename} to ${newName}.`);
+    },
+  };
+}
+
+export function artifactDeleteTool(): LocalTool {
+  return {
+    def: {
+      name: 'artifact_delete',
+      description:
+        'Delete a file of this chat that this person owns, for everyone. Only when the person asks for it by name. Refused while a project or a colleague still uses the file; then say who, and that the person can hand it over or detach it on the Artifacts page.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          attachmentId: { type: 'string' },
+          filename: { type: 'string' },
+        },
+      },
+    },
+    readOnly: false,
+    async execute(input, context) {
+      if (context.readOnly) return errorResult('Read-only mode: nothing can be deleted.');
+      const row = await findChatAttachment(context.db, {
+        chatId: context.chatId,
+        ownerSubject: context.subject,
+        id: typeof input.attachmentId === 'string' ? input.attachmentId.trim() : null,
+        filename: typeof input.filename === 'string' ? input.filename.trim() : null,
+      });
+      if (!row) return errorResult('No such file of yours in this chat; name it by id or name.');
+      const impact = await artifactImpact(context.db, row);
+      if (impact.projects.length > 0 || impact.sharedWith.length > 0) {
+        const users = [
+          ...impact.projects.map((project) => `project ${project.name}`),
+          ...impact.sharedWith.map((person) => person.name ?? person.email ?? 'a colleague'),
+        ];
+        return errorResult(
+          `${row.filename} is used by ${users.join(', ')}. Deleting it would remove it for everyone, so it was not deleted. Hand it over or detach it on the Artifacts page first.`
+        );
+      }
+      const deleted = await deleteArtifact(context.db, row);
+      if (!deleted) return errorResult(`${row.filename} could not be deleted.`);
+      return textResult(`Deleted ${row.filename}.`);
+    },
+  };
+}
+
+/**
  * artifact_describe — the model's summary and keywords for a file of this
  * chat it did not hand over itself (a screenshot, a download, a file
  * another tool brought back), or one it wrote before descriptions were
@@ -377,7 +473,8 @@ export function artifactDescribeTool(): LocalTool {
 }
 
 export function artifactTools(input: { inProject: boolean }): LocalTool[] {
+  const owned = [artifactRenameTool(), artifactDeleteTool()];
   return input.inProject
-    ? [artifactSearchTool(), artifactAttachTool(), artifactShareTool()]
-    : [artifactSearchTool(), artifactShareTool()];
+    ? [artifactSearchTool(), artifactAttachTool(), artifactShareTool(), ...owned]
+    : [artifactSearchTool(), artifactShareTool(), ...owned];
 }

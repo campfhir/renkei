@@ -9,7 +9,7 @@
  * goes through the API and refreshes the page.
  */
 
-import { useRef, useState, type DragEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -23,7 +23,7 @@ import { ModeToggle, sizeOf, statusLabel, tokensLabel, TypeBadge } from './artif
 export default function ArtifactsCard({
   projectId,
   projectName,
-  files,
+  files: serverFiles,
   alwaysTokens,
   canEdit,
   viewerSubject,
@@ -45,6 +45,13 @@ export default function ArtifactsCard({
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Files taken off the list before the server has said so: a second click
+  // on the same row then finds nothing to do, instead of a 404.
+  const [removing, setRemoving] = useState<string[]>([]);
+  const files = serverFiles.filter((file) => !removing.includes(file.id));
+  useEffect(() => {
+    setRemoving([]);
+  }, [serverFiles]);
 
   const upload = async (list: FileList | File[] | null) => {
     const items = list ? [...list] : [];
@@ -69,11 +76,14 @@ export default function ArtifactsCard({
   };
 
   const detach = async (file: ProjectArtifactView) => {
-    setBusyId(file.id);
+    if (removing.includes(file.id)) return;
+    setRemoving((ids) => [...ids, file.id]);
     setError(null);
     const result = await chatClient.detachArtifact(projectId, file.id);
-    setBusyId(null);
-    if (result.error) setError(result.error);
+    if (result.error) {
+      setError(result.error);
+      setRemoving((ids) => ids.filter((id) => id !== file.id));
+    }
     router.refresh();
   };
 

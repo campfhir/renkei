@@ -49,6 +49,24 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-25',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Removing an artifact from a project no longer errors on a second click',
+        detail:
+          'Removing a file from a project now takes it off the list at once and ignores repeat clicks, so a double click no longer returns an error.',
+      },
+      {
+        kind: 'added',
+        title: 'Chats can rename and delete your files',
+        detail:
+          'Ask a chat to rename a file you own, or to delete it. A file a project or a colleague still uses is not deleted; the chat says who uses it.',
+      },
+      {
+        kind: 'added',
+        title: 'Select several artifacts to add to a project or delete',
+        detail:
+          'On the Artifacts page, tick files to add them to a project or delete them together. Deleting warns first about any project or colleague that loses a file.',
+      },
+      {
         kind: 'changed',
         title: 'Large files are not read into a chat in full',
         detail:
