@@ -21,6 +21,10 @@ jest.mock('./attachments', () => ({
 }));
 jest.mock('./attachment-tools', () => ({ findAttachment: jest.fn() }));
 jest.mock('./artifact-access', () => ({ fileCipherFor: jest.fn() }));
+// The org's attachment limit, set to 1 MiB so the test's oversize file stays small.
+jest.mock('@renkei/settings', () => ({
+  getOrgSettings: async () => ({ ok: true, val: { maxAttachmentBytes: 1_048_576 } }),
+}));
 
 import { sbReadFile, sbWriteFile } from '@renkei/sandbox-client';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
@@ -34,7 +38,6 @@ import {
   pickByName,
   sandboxFileTools,
 } from './sandbox-file-tools';
-import { ARTIFACT_MAX_BYTES } from './turn-store';
 import { resourceCipher } from './content-crypto';
 
 const readMock = jest.mocked(sbReadFile);
@@ -416,7 +419,7 @@ describe(ATTACH_FROM_SANDBOX_TOOL, () => {
       val: {
         filename: 'huge.bin',
         contentType: null,
-        bytes: new Uint8Array(ARTIFACT_MAX_BYTES + 1),
+        bytes: new Uint8Array(1_048_577),
       },
     });
     const huge = await tools.run(ATTACH_FROM_SANDBOX_TOOL, { fileId: STAGED.id }, context());

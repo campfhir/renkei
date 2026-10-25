@@ -8,6 +8,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { recordLlmCall, type LlmCallModel } from '@renkei/agents/runs';
+import { getOrgSettings } from '@renkei/settings';
 import { logger } from '@/lib/logger';
 import { after } from 'next/server';
 import { createAttachment, toAttachmentView } from './attachments';
@@ -29,12 +30,16 @@ import type { AttachmentView } from './views';
 import type { ContentCipher } from './content-crypto';
 
 /**
- * A tool's file beyond this is not kept; the model saw what it saw. A
- * tool that reads bytes back from somewhere else to hand over
+ * The largest file a chat keeps, read from the org's attachment limit: a
+ * tool's file beyond this is not kept; the model saw what it saw. A tool
+ * that reads bytes back from somewhere else to hand over
  * (chat_attach_from_sandbox) checks against it first, so it can say why
  * rather than hand over nothing.
  */
-export const ARTIFACT_MAX_BYTES = 25_000_000;
+export async function chatFileMaxBytes(): Promise<number> {
+  const settings = await getOrgSettings();
+  return settings.ok ? settings.val.maxAttachmentBytes : 20_971_520;
+}
 
 export function createTurnStore(
   db: Kysely<DB>,
@@ -126,6 +131,7 @@ export function createTurnStore(
     },
     async storeArtifacts(messageId, files) {
       const kept: AttachmentView[] = [];
+      const maxBytes = await chatFileMaxBytes();
       for (const file of files) {
         const created = await createAttachment(db, {
           ownerSubject: scope.subject,
@@ -133,7 +139,7 @@ export function createTurnStore(
           filename: file.filename,
           contentType: file.mediaType,
           bytes: Buffer.from(file.dataBase64, 'base64'),
-          maxBytes: ARTIFACT_MAX_BYTES,
+          maxBytes,
           // Tool output was redacted at the MCP boundary already.
           redactor: null,
           cipher: scope.cipher,
