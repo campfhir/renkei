@@ -1088,6 +1088,8 @@ test('the library: OCR is asked for on a scan, its progress and estimate show wh
 
   // Done: the pages it read, the summary the model wrote, and search finds it.
   await expect(details.getByText('Read 2 pages by OCR.')).toBeVisible({ timeout: 60_000 });
+  // A read is kept, and it can be read again from the file as it is now.
+  await expect(details.getByRole('button', { name: 'Read again with OCR' })).toBeVisible();
   await expect(details.getByText(/Stub summary/)).toBeVisible(COLD);
   await shot(page, testInfo, 'ocr-02-done-with-summary');
 

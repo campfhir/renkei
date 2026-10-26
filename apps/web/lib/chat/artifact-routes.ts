@@ -207,7 +207,6 @@ export async function startOcrRoute(request: NextRequest, artifactId: string): P
   if (refusal) {
     const message: Record<OcrRefusal, string> = {
       unsupported: 'OCR reads PDFs and images only.',
-      'already-read': 'This file already has its text.',
       unconfigured: 'OCR is not set up for this organization.',
       running: 'OCR is already running on this file.',
     };

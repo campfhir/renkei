@@ -290,10 +290,12 @@ export async function ocrOne(
     throw error;
   }
   if (status !== 'done') {
+    // A re-read that finds nothing leaves the text it already had in place.
+    const keepsText = status === 'none' && row.extractStatus === 'done';
     await db
       .updateTable('artifacts')
       .set(
-        status === 'ocr_failed' || status === 'none'
+        (status === 'ocr_failed' || status === 'none') && !keepsText
           ? { ocr_started_at: null, extract_status: status, updated_at: new Date() }
           : { ocr_started_at: null, updated_at: new Date() }
       )

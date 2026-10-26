@@ -14,11 +14,12 @@ import { isPicture } from './artifact-bits';
 
 /** A file OCR can read that has no text yet, and no read in flight. */
 export function canRunOcr(item: LibraryItem): boolean {
-  return (
-    item.ocrSupported &&
-    item.ocr === null &&
-    (item.extractStatus === 'needs_ocr' || item.extractStatus === 'ocr_failed')
-  );
+  return item.ocrSupported && item.ocr === null;
+}
+
+/** OCR has read the file already: its text is there, and a read again replaces it. */
+function alreadyRead(item: LibraryItem): boolean {
+  return item.extractStatus === 'done';
 }
 
 /** “45 s”, “2 min”, “1 min 12 s”. */
@@ -117,13 +118,21 @@ export default function OcrPanel({
   }
 
   if (canRunOcr(item)) {
+    const read = alreadyRead(item);
     return (
       <section aria-label="OCR" className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
         <h3 className="mb-2 text-xs font-semibold text-gray-500">OCR</h3>
+        {item.ocrPages !== null ? (
+          <p className="mb-1 text-sm text-gray-700 dark:text-gray-300">
+            Read {item.ocrPages} {item.ocrPages === 1 ? 'page' : 'pages'} by OCR.
+          </p>
+        ) : null}
         <p className="text-sm text-gray-700 dark:text-gray-300">
-          {isPicture(item.contentType)
-            ? 'OCR reads any text in this picture. Its description is written from the picture itself.'
-            : 'This file has no text yet. OCR reads it so it can be summarized and searched.'}
+          {read
+            ? 'The full text is read. A read again replaces it with a fresh OCR of the file.'
+            : isPicture(item.contentType)
+              ? 'OCR reads any text in this picture. Its description is written from the picture itself.'
+              : 'OCR reads the full text of this file, for the assistant and for people, including scans and pages a text layer misses.'}
         </p>
         {!digests ? (
           <p className="mt-1 text-xs text-gray-500">
@@ -140,19 +149,12 @@ export default function OcrPanel({
           }}
           className="mt-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {item.extractStatus === 'ocr_failed' ? 'Try OCR again' : 'Run OCR'}
+          {read
+            ? 'Read again with OCR'
+            : item.extractStatus === 'ocr_failed'
+              ? 'Try OCR again'
+              : 'Run OCR'}
         </button>
-      </section>
-    );
-  }
-
-  if (item.ocrPages !== null) {
-    return (
-      <section aria-label="OCR" className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
-        <h3 className="mb-2 text-xs font-semibold text-gray-500">OCR</h3>
-        <p className="text-sm text-gray-700 dark:text-gray-300">
-          Read {item.ocrPages} {item.ocrPages === 1 ? 'page' : 'pages'} by OCR.
-        </p>
       </section>
     );
   }

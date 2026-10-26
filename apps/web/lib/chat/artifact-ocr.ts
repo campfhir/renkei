@@ -25,13 +25,12 @@ export const OCR_STALE_MS = 15 * 60_000;
 /** The most recent finished runs the estimate reads. */
 const OCR_SAMPLE_LIMIT = 200;
 
-export type OcrRefusal = 'unsupported' | 'already-read' | 'unconfigured' | 'running';
+export type OcrRefusal = 'unsupported' | 'unconfigured' | 'running';
 
 /** Whether OCR can be asked for this file now, and if not, why not. */
 export function ocrRefusalFor(access: ArtifactAccess): OcrRefusal | null {
   const row = access.row;
   if (!isOcrCandidate(row.filename, row.contentType)) return 'unsupported';
-  if (row.extractStatus === 'done') return 'already-read';
   return null;
 }
 
