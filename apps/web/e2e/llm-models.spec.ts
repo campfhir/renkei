@@ -126,6 +126,15 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
+/**
+ * The Edit button on the roster row of the model with this name. The roster
+ * is the organization's, and every spec in a run shares it, so a row is found
+ * by its own name rather than as the only one.
+ */
+function editOf(page: Page, name: string) {
+  return page.getByRole('button', { name: `Remove ${name}` }).locator('..').getByRole('button', { name: 'Edit' });
+}
+
 test('admin: the model roster, listing, testing, and saving', async ({ page }, testInfo) => {
   const fixture = fixtureFor(testInfo.project.name);
   await seedTenant(fixture);
@@ -215,7 +224,7 @@ test('admin: the model roster, listing, testing, and saving', async ({ page }, t
   // viewport size answers without pulling in WebKit or a touch profile.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await shot(page, testInfo, 'llm-models-07-mobile-list');
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Prod Claude').click();
   // The edit form is a modal dialog over the roster, not a block at its foot.
   const editDialog = page.getByRole('dialog', { name: 'Edit model' });
   await expect(editDialog).toBeVisible();
@@ -258,7 +267,7 @@ test('admin: reasoning effort is free text — no fixed value list — and round
 
   // Round-trips through the real save route and DB: reopening the row
   // shows the typed value still there, not stripped back to blank.
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Astra Reasoning').click();
   await expect(page.getByLabel('Reasoning effort')).toHaveValue('xhigh');
   await expect(page.getByLabel('Context window (tokens)')).toHaveValue('400000');
 });
@@ -294,7 +303,7 @@ test('admin: reasoning effort is offered for a Claude row too, with its own hint
 
   // Round-trips through the real save route and DB — the payload parser
   // never gated the setting on the provider, only the form did.
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Sonnet quick').click();
   await expect(page.getByLabel('Reasoning effort')).toHaveValue('low');
 
   // Phone width: the field and its hint still fit the form.
@@ -335,7 +344,7 @@ test('admin: API surface can opt an OpenAI-compatible model into the Responses A
   await expect(page.getByText('Astra Responses')).toBeVisible();
 
   // Round-trips through the real save route and DB.
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Astra Responses').click();
   await expect(page.getByLabel('API surface')).toHaveValue('responses');
 });
 
@@ -391,7 +400,7 @@ test('admin: the Images API surface makes an image generation model — never th
   await expect(page.getByText('Default', { exact: true })).toHaveCount(0);
 
   // Round-trips through the real save route and DB.
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Painter').click();
   await expect(page.getByLabel('API surface')).toHaveValue('images');
 
   // Switching the provider to Anthropic drops the surface: it has no Images API.
@@ -426,7 +435,7 @@ test('admin: data handling — residency, retention and the BAA flag round-trip 
   await expect(page.getByText('Retention unknown')).toBeVisible();
   await shot(page, testInfo, 'llm-models-data-handling-01-retention-unknown');
 
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Covered Claude').click();
   await expect(page.getByRole('checkbox', { name: /Business Associate Agreement/ })).toBeChecked();
   await page.getByLabel('Data residency').fill('Azure East US, DataZone');
   await page.getByLabel('Data retention').selectOption('none');
@@ -439,7 +448,7 @@ test('admin: data handling — residency, retention and the BAA flag round-trip 
   await shot(page, testInfo, 'llm-models-data-handling-03-covered');
 
   // Through the real save route and the settings jsonb, back into the form.
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Covered Claude').click();
   await expect(page.getByLabel('Data residency')).toHaveValue('Azure East US, DataZone');
   await expect(page.getByLabel('Data retention')).toHaveValue('none');
   await expect(page.getByLabel('Notes')).toHaveValue(
@@ -479,14 +488,14 @@ test('admin: context window takes a typed count — 200k, 1m — and refuses wha
   await expect(page.getByText('Long Context')).toBeVisible();
 
   // Stored as the whole count, shown back as a plain number to edit.
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Long Context').click();
   await expect(page.getByLabel('Context window (tokens)')).toHaveValue('1000000');
   await page.getByLabel('Context window (tokens)').fill('200k');
   await page.getByRole('button', { name: 'Save' }).click();
   // The form closes once the list has reloaded; until then the old row
   // (with its old count) is still on screen and Edit would reopen that.
   await expect(page.getByLabel('Context window (tokens)')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Long Context').click();
   await expect(page.getByLabel('Context window (tokens)')).toHaveValue('200000');
   await shot(page, testInfo, 'llm-models-context-window-02-saved');
 
@@ -529,12 +538,12 @@ test('admin: max output tokens takes 4k and 8000, sits level with temperature on
   await expect(page.getByText('Verbose')).toBeVisible();
 
   // Stored as the whole count, shown back as a plain number to edit.
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Verbose').click();
   await expect(page.getByLabel('Max output tokens')).toHaveValue('4000');
   await page.getByLabel('Max output tokens').fill('8000');
   await page.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByLabel('Max output tokens')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Edit' }).click();
+  await editOf(page, 'Verbose').click();
   await expect(page.getByLabel('Max output tokens')).toHaveValue('8000');
 
   // The two inputs share a top edge even when the label wraps at phone width.

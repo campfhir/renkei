@@ -82,6 +82,8 @@ test.beforeAll(async () => {
 test('talking while the reply is worked out queues the next message instead of stopping it', async ({
   page,
 }, testInfo) => {
+  // The run takes most of a minute on its own: a busy run needs more than the default.
+  test.setTimeout(120_000);
   // The reply takes a while: the second utterance lands while "Thinking…".
   await mockVendor(page, { replyDelayMs: 14_000 });
   let cancels = 0;
