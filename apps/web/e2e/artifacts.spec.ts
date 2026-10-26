@@ -1097,6 +1097,14 @@ test('the library: OCR is asked for on a scan, its progress and estimate show wh
   await expect(list.locator('[data-artifact]', { hasText: 'scan-e.png' })).toHaveCount(0);
   await shot(page, testInfo, 'ocr-03-search-finds-the-scan');
 
+  // Usage: four scans read (two pages each) and summarized from their text.
+  await page.goto('/utilization');
+  await expect(page.getByTestId('document-usage-pages')).toHaveText('8', { timeout: 30_000 });
+  // Five scans were each described from their pixels at upload, and four were then summarized from their text.
+  await expect(page.getByText(/8 pages/)).toBeVisible();
+  await expect(page.getByText(/4 summaries · 5 pictures described/)).toBeVisible();
+  await page.goto('/chat/artifacts');
+
   // Phone width: the offer opens over the list, and the page does not scroll sideways.
   await page.setViewportSize(MOBILE_VIEWPORT);
   // Reloaded, so no details from the desktop layout cover the list.
