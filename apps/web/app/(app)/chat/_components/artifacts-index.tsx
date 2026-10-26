@@ -39,6 +39,7 @@ import ShareModal from './share-modal';
 import AttachArtifactsPicker from './attach-to-project-modal';
 import { CopyArtifactModal, DeleteArtifactModal, RenameArtifactModal } from './artifact-dialogs';
 import { BulkAddModal, BulkDeleteModal } from './artifact-bulk-dialogs';
+import ArtifactUploadModal, { type UploadTransfer } from './artifact-upload-modal';
 import { ModeToggle, sizeOf, statusLabel, TypeBadge } from './artifact-bits';
 
 /**
@@ -126,13 +127,17 @@ export default function ArtifactsIndex({
     () => page.artifacts.find((item) => item.id === selectedId) ?? null
   );
   const [dragging, setDragging] = useState(false);
-  const [uploading, setUploading] = useState(0);
+  /** The upload in flight, or null when none is: its progress shows in a modal. */
+  const [transfer, setTransfer] = useState<UploadTransfer | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<
     'share' | 'delete' | 'copy' | 'rename' | 'attach' | 'replace' | null
   >(null);
-  // The rows ticked for a bulk act, and the one-at-a-time detach in flight
-  // ("file:project"), so a second click on it does nothing.
+  // Select mode shows a checkmark on every row, and a click on a row ticks
+  // it instead of opening its details. The rows ticked for a bulk act, and
+  // the one-at-a-time detach in flight ("file:project"), so a second click
+  // on it does nothing.
+  const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);
   const [bulk, setBulk] = useState<'add' | 'delete' | null>(null);
   const [detaching, setDetaching] = useState<string | null>(null);
@@ -200,20 +205,36 @@ export default function ArtifactsIndex({
     if (onPage) setRemembered(onPage);
   }, [onPage]);
 
+  /**
+   * Sends each file in turn with a progress bar over all of them. The page
+   * stays on the table: when the last file is answered the table is read
+   * again, and any file that failed is named in the error line.
+   */
   const upload = async (list: FileList | File[] | null) => {
     const files = list ? [...list] : [];
     if (files.length === 0) return;
     setError(null);
-    setUploading(files.length);
-    let last: string | null = null;
-    for (const file of files) {
-      const result = await chatClient.uploadArtifact({}, file);
-      if (result.error) setError(`${file.name}: ${result.error}`);
-      else last = result.data?.id ?? null;
-      setUploading((count) => count - 1);
+    const bytes = files.reduce((sum, file) => sum + file.size, 0);
+    let sent = 0;
+    const failures: string[] = [];
+    for (const [index, file] of files.entries()) {
+      const before = sent;
+      setTransfer({
+        count: files.length,
+        index: index + 1,
+        name: file.name,
+        loaded: before,
+        bytes,
+      });
+      const result = await chatClient.uploadArtifact({}, file, (loaded) => {
+        setTransfer((current) => current && { ...current, loaded: before + loaded });
+      });
+      sent = before + file.size;
+      if (result.error) failures.push(`${file.name}: ${result.error}`);
     }
-    if (last) reveal(last);
-    else reload();
+    setTransfer(null);
+    if (failures.length > 0) setError(failures.join('; '));
+    reload();
   };
 
   const replace = async (file: File | null) => {
@@ -528,6 +549,7 @@ export default function ArtifactsIndex({
       {bulk === 'delete' && pickedItems.length > 0 ? (
         <BulkDeleteModal items={pickedItems} onDone={reload} onClose={() => setBulk(null)} />
       ) : null}
+      {transfer ? <ArtifactUploadModal transfer={transfer} /> : null}
       {dialog === 'delete' && current ? (
         <DeleteArtifactModal
           item={current}
@@ -617,12 +639,12 @@ export default function ArtifactsIndex({
           <>
             <button
               type="button"
-              disabled={uploading > 0}
+              disabled={transfer !== null}
               onClick={() => fileInput.current?.click()}
               className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               <Icon path={ICONS.upload} className="h-4 w-4" />
-              {uploading > 0 ? `Uploading ${uploading}…` : 'Upload'}
+              {transfer !== null ? 'Uploading…' : 'Upload'}
             </button>
             <input
               ref={fileInput}
@@ -700,35 +722,19 @@ export default function ArtifactsIndex({
             aria-busy={isPending}
             className={`flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-gray-200 transition-opacity dark:border-gray-800 ${isPending ? 'opacity-60' : ''}`}
           >
-            {pickedItems.length > 0 ? (
-              <div
-                role="toolbar"
-                aria-label="Selected artifacts"
-                className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-3 py-2 text-sm dark:border-gray-800"
+            <div className="flex h-9 shrink-0 items-center justify-end border-b border-gray-200 px-3 dark:border-gray-800">
+              <button
+                type="button"
+                aria-pressed={selecting}
+                onClick={() => {
+                  setSelecting(!selecting);
+                  setPicked([]);
+                }}
+                className={smallButton}
               >
-                <span className="font-medium">{pickedItems.length} selected</span>
-                <button type="button" onClick={() => setBulk('add')} className={smallButton}>
-                  Add to project…
-                </button>
-                <button type="button" onClick={() => setBulk('delete')} className={smallButton}>
-                  Delete…
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPicked(items.map((item) => item.id))}
-                  className="text-xs text-gray-500 hover:underline"
-                >
-                  Select all on this page
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPicked([])}
-                  className="ml-auto text-xs text-gray-500 hover:underline"
-                >
-                  Clear
-                </button>
-              </div>
-            ) : null}
+                {selecting ? 'Done selecting' : 'Select'}
+              </button>
+            </div>
             {items.length === 0 ? (
               <p className="p-4 text-sm text-gray-500">
                 {page.libraryCount === 0
@@ -747,6 +753,10 @@ export default function ArtifactsIndex({
                 {items.map((item) => {
                   const status = statusLabel(item.extractStatus);
                   const isSelected = item.id === selected;
+                  const ticked = picked.includes(item.id);
+                  // In select mode the whole row is the checkmark: a click
+                  // ticks or unticks it and never opens the details.
+                  const highlighted = selecting ? ticked : isSelected;
                   return (
                     <li
                       key={item.id}
@@ -754,18 +764,25 @@ export default function ArtifactsIndex({
                       className="max-md:overflow-hidden max-md:rounded-md max-md:border max-md:border-gray-200 max-md:dark:border-gray-800"
                     >
                       <div className="flex items-center">
-                        <input
-                          type="checkbox"
-                          checked={picked.includes(item.id)}
-                          onChange={() => togglePick(item.id)}
-                          aria-label={`Select ${item.filename}`}
-                          className="ml-3 h-4 w-4 shrink-0 rounded border-gray-300"
-                        />
+                        {selecting ? (
+                          <input
+                            type="checkbox"
+                            checked={ticked}
+                            onChange={() => togglePick(item.id)}
+                            aria-label={`Select ${item.filename}`}
+                            className="ml-3 h-4 w-4 shrink-0 rounded border-gray-300"
+                          />
+                        ) : null}
                         <button
                           type="button"
-                          onClick={() => select(isSelected && !narrow ? null : item)}
-                          aria-current={isSelected ? 'true' : undefined}
-                          className={`flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : ''}`}
+                          onClick={() =>
+                            selecting
+                              ? togglePick(item.id)
+                              : select(isSelected && !narrow ? null : item)
+                          }
+                          aria-current={!selecting && isSelected ? 'true' : undefined}
+                          aria-pressed={selecting ? ticked : undefined}
+                          className={`flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${highlighted ? 'bg-blue-50 dark:bg-blue-950/30' : ''}`}
                         >
                           <TypeBadge filename={item.filename} contentType={item.contentType} />
                           <span className="min-w-0 flex-1">
@@ -836,6 +853,52 @@ export default function ArtifactsIndex({
                 })}
               </ul>
             )}
+            {selecting ? (
+              // Below the list, so the rows above it stay where they are when
+              // a file is ticked; on a phone it wraps under the list.
+              <div
+                role="toolbar"
+                aria-label="Selected artifacts"
+                className="flex shrink-0 flex-wrap items-center gap-2 border-t border-gray-200 px-3 py-2 text-sm dark:border-gray-800"
+              >
+                <span className="font-medium">
+                  {pickedItems.length > 0
+                    ? `${pickedItems.length} selected`
+                    : 'Tap files to select'}
+                </span>
+                <button
+                  type="button"
+                  disabled={pickedItems.length === 0}
+                  onClick={() => setBulk('add')}
+                  className={`${smallButton} disabled:opacity-40`}
+                >
+                  Add to project…
+                </button>
+                <button
+                  type="button"
+                  disabled={pickedItems.length === 0}
+                  onClick={() => setBulk('delete')}
+                  className={`${smallButton} disabled:opacity-40`}
+                >
+                  Delete…
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPicked(items.map((item) => item.id))}
+                  className="text-xs text-gray-500 hover:underline"
+                >
+                  Select all on this page
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPicked([])}
+                  disabled={pickedItems.length === 0}
+                  className="ml-auto text-xs text-gray-500 hover:underline disabled:opacity-40 disabled:hover:no-underline"
+                >
+                  Clear
+                </button>
+              </div>
+            ) : null}
             <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-800">
               {uploads ? (
                 <span className="hidden items-center gap-2 md:flex">

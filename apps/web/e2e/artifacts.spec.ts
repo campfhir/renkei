@@ -586,6 +586,9 @@ test('the library: a real upload lands, reads back, and is attached from the car
   });
   const list = page.getByRole('region', { name: 'Artifacts' });
   await expect(list.getByText('api-style-guide.md')).toBeVisible(COLD);
+  // The upload stays on the table: the page does not turn to the file.
+  await expect(page).toHaveURL(/\/chat\/artifacts(\?.*)?$/);
+  await list.getByText('api-style-guide.md').click();
   const details = page.getByRole('complementary', { name: 'Selected artifact' });
   await expect(details.getByText('Ready to read')).toBeVisible();
   const href = await details.getByRole('link', { name: 'api-style-guide.md' }).getAttribute('href');
@@ -926,6 +929,12 @@ test('the library: several files are ticked, deleted with the impact warned, or 
   await page.goto('/chat/artifacts');
   const list = page.getByRole('region', { name: 'Artifacts' });
   await expect(list.getByText('schema-guide.md')).toBeVisible(COLD);
+  // No checkmarks until select mode is on; in it, a click on the row ticks
+  // it and leaves the details alone.
+  await expect(page.getByRole('checkbox', { name: 'Select schema-guide.md' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await list.getByText('schema-guide.md').click();
+  await expect(page).not.toHaveURL(/artifact=/);
   await page.getByRole('checkbox', { name: 'Select schema-guide.md' }).check();
   await page.getByRole('checkbox', { name: 'Select rounding-analysis.md' }).check();
   const toolbar = page.getByRole('toolbar', { name: 'Selected artifacts' });
