@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { chatClient } from '@/lib/chat/client';
 import type { LibraryItem } from '@/lib/chat/artifact-library';
 import { MIN_SAMPLES } from '@/lib/chat/artifact-ocr-estimate';
 import { isPicture } from './artifact-bits';
@@ -126,6 +127,15 @@ export default function OcrPanel({
           <p className="mb-1 text-sm text-gray-700 dark:text-gray-300">
             Read {item.ocrPages} {item.ocrPages === 1 ? 'page' : 'pages'} by OCR.
           </p>
+        ) : null}
+        {read ? (
+          <a
+            href={chatClient.attachmentTextUrl(item.id)}
+            download
+            className="mb-1 inline-block text-sm text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Download the text
+          </a>
         ) : null}
         <p className="text-sm text-gray-700 dark:text-gray-300">
           {read

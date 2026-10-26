@@ -417,6 +417,8 @@ export const chatClient = {
     sendJsonFull(`${base()}/projects/${projectId}/artifacts/${artifactId}`, 'DELETE'),
 
   attachmentUrl: (attachmentId: string) => `${base()}/attachments/${attachmentId}`,
+  /** The text the file holds (its OCR read, or the text it had), as a download. */
+  attachmentTextUrl: (attachmentId: string) => `${base()}/attachments/${attachmentId}/text`,
 
   grants: (kind: ResourceKind, resourceId: string) =>
     getJson<{ grants: GrantView[] }>(`${base()}/${grantPath(kind, resourceId)}`),

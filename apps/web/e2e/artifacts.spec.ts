@@ -1090,6 +1090,13 @@ test('the library: OCR is asked for on a scan, its progress and estimate show wh
   await expect(details.getByText('Read 2 pages by OCR.')).toBeVisible({ timeout: 60_000 });
   // A read is kept, and it can be read again from the file as it is now.
   await expect(details.getByRole('button', { name: 'Read again with OCR' })).toBeVisible();
+  // The read downloads as text: the OCR markdown, not the scan's bytes.
+  const textHref = await details
+    .getByRole('link', { name: 'Download the text' })
+    .getAttribute('href');
+  const download = await page.request.get(textHref!);
+  expect(download.headers()['content-type']).toContain('text/plain');
+  expect(await download.text()).toContain('Total due: 1,250.00');
   await expect(details.getByText(/Stub summary/)).toBeVisible(COLD);
   await shot(page, testInfo, 'ocr-02-done-with-summary');
 
