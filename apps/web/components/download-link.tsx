@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, type AnchorHTMLAttributes, type MouseEvent } from 'react';
+import { useEffect, useState, type AnchorHTMLAttributes, type MouseEvent } from 'react';
 
 /**
  * An <a> that downloads a file from this app — and doesn't strand the
@@ -29,36 +29,72 @@ export function isIosStandalone(): boolean {
   return Reflect.get(navigator, 'standalone') === true;
 }
 
-/** Files fetched ahead of a tap, by URL; null while the fetch is in flight or after it failed. */
-const fetched = new Map<string, File | null>();
+/** Files fetched ahead of a tap, by URL: a file is here only once it can be shared. */
+const fetched = new Map<string, File>();
+/** Fetches in progress, by URL, so a second ask waits on the first. */
+const inFlight = new Map<string, Promise<boolean>>();
 const KEEP = 8;
 
 function canShareFiles(): boolean {
   return typeof navigator.share === 'function' && typeof navigator.canShare === 'function';
 }
 
-function prefetchFile(href: string, filename: string | undefined): void {
-  if (fetched.has(href) || !isIosStandalone() || !canShareFiles()) return;
-  fetched.set(href, null);
-  while (fetched.size > KEEP) {
-    const oldest = fetched.keys().next().value;
-    if (oldest === undefined) break;
-    fetched.delete(oldest);
-  }
-  void fetch(href, { credentials: 'same-origin' })
-    .then(async (response) => {
+/**
+ * Fetches the file for the share sheet, and resolves whether it is in hand.
+ * Only iOS home-screen apps that can share files fetch; anywhere else this
+ * resolves false at once and the link keeps its own download.
+ */
+function prefetchFile(href: string, filename: string | undefined): Promise<boolean> {
+  if (fetched.has(href)) return Promise.resolve(true);
+  if (!isIosStandalone() || !canShareFiles()) return Promise.resolve(false);
+  const running = inFlight.get(href);
+  if (running) return running;
+  const started = (async () => {
+    try {
+      const response = await fetch(href, { credentials: 'same-origin' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       const name =
         filename ||
         decodeURIComponent(new URL(href, location.href).pathname.split('/').pop() ?? 'download');
       const file = new File([blob], name, { type: blob.type });
-      if (navigator.canShare({ files: [file] })) fetched.set(href, file);
-      else fetched.delete(href);
-    })
-    .catch(() => {
-      fetched.delete(href);
+      if (!navigator.canShare({ files: [file] })) return false;
+      fetched.set(href, file);
+      while (fetched.size > KEEP) {
+        const oldest = fetched.keys().next().value;
+        if (oldest === undefined) break;
+        fetched.delete(oldest);
+      }
+      return true;
+    } catch {
+      return false;
+    } finally {
+      inFlight.delete(href);
+    }
+  })();
+  inFlight.set(href, started);
+  return started;
+}
+
+/**
+ * 'pending' while a download's file is fetched for the share sheet, then
+ * 'ready'. Show the link only once it is 'ready', and its first tap opens the
+ * share sheet with the file already in hand. Anywhere the file cannot be
+ * shared, it is 'ready' straight away and the link downloads as usual.
+ */
+export function useDownloadReady(href: string, filename: string | undefined): 'pending' | 'ready' {
+  const [state, setState] = useState<'pending' | 'ready'>('pending');
+  useEffect(() => {
+    let live = true;
+    setState('pending');
+    void prefetchFile(href, filename).then(() => {
+      if (live) setState('ready');
     });
+    return () => {
+      live = false;
+    };
+  }, [href, filename]);
+  return state;
 }
 
 export default function DownloadLink({

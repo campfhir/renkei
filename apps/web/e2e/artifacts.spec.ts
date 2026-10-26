@@ -1193,3 +1193,45 @@ test('the library: a photo with no text is described from the picture, OCR finds
   await expect(page.getByText(/1 OCR read, 2 pages · 1 picture described/)).toBeVisible();
   await shot(page, testInfo, 'documents-03-usage-documents-card');
 });
+
+declare global {
+  interface Window {
+    /** Files the iOS share stub was handed, by name (see the share test). */
+    __shared: string[];
+  }
+}
+
+test('the OCR text goes to the share sheet on the first tap in an iOS home-screen app', async ({
+  page,
+}, testInfo) => {
+  const f = fixtureFor(testInfo.project.name);
+  await seed(f);
+  await signIn(page, f);
+  await mistralStubConfigured();
+  // The iOS home-screen app's surface, stubbed: navigator.standalone is set,
+  // and share records the file it was given instead of opening a sheet.
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'standalone', { value: true, configurable: true });
+    Object.defineProperty(window, '__shared', { value: [], configurable: true });
+    Object.defineProperty(navigator, 'canShare', { value: () => true, configurable: true });
+    Object.defineProperty(navigator, 'share', {
+      value: async (data: { files: File[] }) => {
+        window.__shared.push(...data.files.map((file) => file.name));
+      },
+      configurable: true,
+    });
+  });
+
+  await page.goto('/chat/artifacts');
+  const list = page.getByRole('region', { name: 'Artifacts' });
+  const details = page.getByRole('complementary', { name: 'Selected artifact' });
+  await uploadScan(page, 'scan-share.png');
+  await list.getByText('scan-share.png').click();
+  await details.getByRole('button', { name: 'Run OCR' }).click();
+  const text = details.getByRole('link', { name: 'Download the text' });
+  await expect(text).toBeVisible(COLD);
+  // The first tap, straight after the link appears: the text was prefetched when it appeared.
+  await text.click();
+  await expect.poll(() => page.evaluate(() => window.__shared)).toEqual(['scan-share.txt']);
+  await shot(page, testInfo, 'ocr-text-share-first-tap');
+});
