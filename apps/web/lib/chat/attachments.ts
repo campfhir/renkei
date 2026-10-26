@@ -20,7 +20,11 @@ import type { LlmContentBlock } from '@renkei/agent-llm';
 import { chatAttachmentKey, resolveTenantBlobStore, type BlobStore } from '@renkei/blob-store';
 import { isResourceSealedBytes } from '@renkei/crypto';
 import { extractText, isExtractableCandidate } from '@renkei/document-text';
-import { callMistralOcr, resolveMistralOcrConfig } from '@renkei/connector-mistral-ocr';
+import {
+  callMistralOcr,
+  describeMistralOcrError,
+  resolveMistralOcrConfig,
+} from '@renkei/connector-mistral-ocr';
 import { getOrgSettings, getKeyDomain } from '@renkei/settings';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
@@ -305,6 +309,22 @@ export async function ocrOne(
   return status;
 }
 
+/**
+ * Records why an OCR read did not finish, with the file it was for. The
+ * library shows only the status, so this is where the reason is kept.
+ */
+function logOcrFailure(row: AttachmentRow, outcome: 'failed' | 'deferred', reason: string): void {
+  logger.warn('OCR {outcome} for {filename}: {reason}', {
+    component: 'chat/ocr',
+    outcome,
+    artifactId: row.id,
+    filename: row.filename,
+    contentType: row.contentType,
+    sizeBytes: Number(row.sizeBytes),
+    reason,
+  });
+}
+
 async function ocrAttempt(
   db: Kysely<DB>,
   row: AttachmentRow,
@@ -318,9 +338,15 @@ async function ocrAttempt(
   if (!bytes.ok) {
     // No store, or no key right now, is worth another try; a missing or
     // unreadable object is the file.
-    return bytes.err.type === 'UNCONFIGURED' || bytes.err.type === 'CONTENT_KEY'
-      ? NEEDS_OCR
-      : 'ocr_failed';
+    const reason = `could not read the file from storage (${bytes.err.type}${
+      bytes.err.message ? `: ${bytes.err.message}` : ''
+    })`;
+    if (bytes.err.type === 'UNCONFIGURED' || bytes.err.type === 'CONTENT_KEY') {
+      logOcrFailure(row, 'deferred', reason);
+      return NEEDS_OCR;
+    }
+    logOcrFailure(row, 'failed', reason);
+    return 'ocr_failed';
   }
   const ocr = await callMistralOcr(config.val, {
     bytes: bytes.val,
@@ -335,7 +361,13 @@ async function ocrAttempt(
     : '';
   if (!ocr.ok) {
     // An unreachable service is worth another try; anything else is the file.
-    return ocr.err.type !== 'unreachable' ? 'ocr_failed' : NEEDS_OCR;
+    const reason = describeMistralOcrError(ocr.err);
+    if (ocr.err.type !== 'unreachable') {
+      logOcrFailure(row, 'failed', reason);
+      return 'ocr_failed';
+    }
+    logOcrFailure(row, 'deferred', reason);
+    return NEEDS_OCR;
   }
   // The pages were read and billed whether or not any text came back.
   await recordDocumentUsage(db, {
@@ -347,7 +379,10 @@ async function ocrAttempt(
   // A photo has no text to read: that is what the file holds, not a failure.
   if (!markdown.trim()) return 'none';
   const sealed = sealText(redactor ? redactor.apply(markdown).text : markdown, cipher);
-  if (!sealed.ok) return NEEDS_OCR;
+  if (!sealed.ok) {
+    logOcrFailure(row, 'deferred', `could not seal the OCR text (${sealed.err.type})`);
+    return NEEDS_OCR;
+  }
   const finishedAt = Date.now();
   await db
     .updateTable('artifacts')
