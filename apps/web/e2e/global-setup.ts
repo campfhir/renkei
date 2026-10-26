@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Client } from 'pg';
 import { E2E_SESSION_ID } from './seed';
-import { TEMPLATE_DATABASE, databaseUrlNamed } from './worker-env';
+import { TEMPLATE_DATABASE, databaseUrlNamed, startStacks } from './stacks';
 
 export const STORAGE_STATE_PATH = path.join(
   import.meta.dirname,
@@ -44,7 +44,7 @@ async function ensureTemplate(databaseUrl: string): Promise<void> {
   });
 }
 
-export default async function globalSetup(): Promise<void> {
+export default async function globalSetup(): Promise<() => Promise<void>> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     throw new Error(
@@ -53,7 +53,8 @@ export default async function globalSetup(): Promise<void> {
   }
 
   await ensureTemplate(databaseUrl);
-
+  // One stack per worker, started now so a worker that restarts does not boot them again.
+  const stopStacks = await startStacks(databaseUrl, Number(process.env.E2E_WORKERS ?? 3));
 
   // The cookie is the whole credential: an opaque session id (lib/session.ts).
   mkdirSync(path.dirname(STORAGE_STATE_PATH), { recursive: true });
@@ -79,4 +80,5 @@ export default async function globalSetup(): Promise<void> {
       2
     )
   );
+  return stopStacks;
 }

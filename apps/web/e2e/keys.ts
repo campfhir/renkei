@@ -208,7 +208,8 @@ export async function enrollForE2E(
   subject: string,
   options: { automation?: boolean } = {}
 ): Promise<E2EKeys> {
-  const cacheKey = subject;
+  // Enrolled per database: a worker's stack has its own, and the same person enrolls in each.
+  const cacheKey = `${(await client.query<{ name: string }>('SELECT current_database() AS name')).rows[0].name}:${subject}`;
   let keys = enrolled.get(cacheKey);
   if (!keys) {
     keys = keysOf(subject);

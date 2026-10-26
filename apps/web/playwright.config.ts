@@ -30,6 +30,8 @@ export default defineConfig({
   reporter: [['html', { open: 'never' }]],
   globalSetup: './e2e/global-setup.ts',
   timeout: 60_000,
+  // One worker per stack global setup starts (e2e/stacks.ts).
+  workers: Number(process.env.E2E_WORKERS ?? 3),
   use: {
     baseURL: BASE_URL,
     storageState: path.join(HERE, 'test-results', 'storage-state.json'),
