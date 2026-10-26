@@ -40,6 +40,10 @@ import AttachArtifactsPicker from './attach-to-project-modal';
 import { CopyArtifactModal, DeleteArtifactModal, RenameArtifactModal } from './artifact-dialogs';
 import { BulkAddModal, BulkDeleteModal } from './artifact-bulk-dialogs';
 import ArtifactUploadModal, { type UploadTransfer } from './artifact-upload-modal';
+import OcrPanel, { canRunOcr } from './artifact-ocr-panel';
+
+/** How often the page is read again while an OCR run is in flight, to move its progress. */
+const OCR_POLL_MS = 3000;
 import { ModeToggle, sizeOf, statusLabel, TypeBadge } from './artifact-bits';
 
 /**
@@ -162,6 +166,14 @@ export default function ArtifactsIndex({
   const reload = useCallback(() => {
     startTransition(() => router.refresh());
   }, [router]);
+  // While a read is in flight the page is read again, so its progress and
+  // estimate move; it stops once nothing on the page is being read.
+  const ocrRunning = items.some((item) => item.ocr !== null);
+  useEffect(() => {
+    if (!ocrRunning) return;
+    const timer = setInterval(reload, OCR_POLL_MS);
+    return () => clearInterval(timer);
+  }, [ocrRunning, reload]);
   // A new page of the library is the server's answer to a detach, so the
   // one in flight is over.
   useEffect(() => {
@@ -268,6 +280,18 @@ export default function ArtifactsIndex({
   const togglePick = (id: string) =>
     setPicked((ids) => (ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id]));
 
+  /** Asks for a read of each file in turn; each one then goes on in the background. */
+  const runOcrOn = async (list: LibraryItem[]) => {
+    setError(null);
+    const failures: string[] = [];
+    for (const item of list) {
+      const result = await chatClient.startArtifactOcr(item.id);
+      if (result.error) failures.push(`${item.filename}: ${result.error}`);
+    }
+    if (failures.length > 0) setError(failures.join('; '));
+    reload();
+  };
+
   const leave = async (item: LibraryItem) => {
     setError(null);
     const result = await chatClient.deleteArtifact(item.id);
@@ -371,6 +395,21 @@ export default function ArtifactsIndex({
             </ul>
           ) : null}
         </section>
+      ) : null}
+
+      {current.ocrSupported || current.ocr || current.ocrPages !== null ? (
+        // Keyed on the run, so a new run starts its clock from its own snapshot.
+        <OcrPanel
+          key={`${current.id}:${current.ocr?.startedAt ?? ''}`}
+          item={current}
+          digests={digests}
+          onStart={async (item) => {
+            setError(null);
+            const result = await chatClient.startArtifactOcr(item.id);
+            if (result.error) setError(result.error);
+            reload();
+          }}
+        />
       ) : null}
 
       <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
@@ -751,7 +790,7 @@ export default function ArtifactsIndex({
                 className="min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto max-md:space-y-1.5 max-md:divide-y-0 max-md:p-2 dark:divide-gray-900"
               >
                 {items.map((item) => {
-                  const status = statusLabel(item.extractStatus);
+                  const status = item.ocr ? 'OCR running' : statusLabel(item.extractStatus);
                   const isSelected = item.id === selected;
                   const ticked = picked.includes(item.id);
                   // In select mode the whole row is the checkmark: a click
@@ -873,6 +912,14 @@ export default function ArtifactsIndex({
                   className={`${smallButton} disabled:opacity-40`}
                 >
                   Add to project…
+                </button>
+                <button
+                  type="button"
+                  disabled={!pickedItems.some(canRunOcr)}
+                  onClick={() => void runOcrOn(pickedItems.filter(canRunOcr))}
+                  className={`${smallButton} disabled:opacity-40`}
+                >
+                  Run OCR
                 </button>
                 <button
                   type="button"

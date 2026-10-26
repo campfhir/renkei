@@ -443,6 +443,10 @@ export interface Artifacts {
   key_ref: string | null;
   keywords: Generated<string[]>;
   message_id: string | null;
+  ocr_finished_at: Timestamp | null;
+  ocr_millis: number | null;
+  ocr_pages: number | null;
+  ocr_started_at: Timestamp | null;
   origin: Generated<string>;
   owner_subject: string;
   search_vector: string | null;

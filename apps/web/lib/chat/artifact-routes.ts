@@ -16,6 +16,7 @@ import { isUuid } from '@/lib/uuid';
 import { isGrantRole } from './access';
 import { isReferenceMode, listProjectArtifacts, type ReferenceMode } from './attachments';
 import { resolveArtifactAccess } from './artifact-access';
+import { claimArtifactOcr, ocrRefusalFor, runArtifactOcr, type OcrRefusal } from './artifact-ocr';
 import {
   ALWAYS_BUDGET_TOKENS,
   alwaysTokensOf,
@@ -189,6 +190,32 @@ export async function deleteArtifactRoute(
     return NextResponse.json({ ok: true, outcome: 'left' });
   }
   return actError('FORBIDDEN');
+}
+
+/**
+ * Starts OCR on a file the owner holds. The answer comes back at once with
+ * 202; the read runs after it, and the library shows its progress.
+ */
+export async function startOcrRoute(request: NextRequest, artifactId: string): Promise<Response> {
+  const ready = await chatRequestContext(request);
+  if (!ready.ok) return ready.response;
+  const { db, session } = ready.context;
+  const access = await resolveArtifactAccess(db, session.subject, artifactId);
+  if (!access) return jsonError(404, 'not-found', 'No such file');
+  if (access.role !== 'owner') return actError('FORBIDDEN');
+  const refusal = ocrRefusalFor(access) ?? (await claimArtifactOcr(db, artifactId));
+  if (refusal) {
+    const message: Record<OcrRefusal, string> = {
+      unsupported: 'OCR reads PDFs and images only.',
+      'already-read': 'This file already has its text.',
+      unconfigured: 'OCR is not set up for this organization.',
+      running: 'OCR is already running on this file.',
+    };
+    const status = refusal === 'unconfigured' ? 503 : refusal === 'running' ? 409 : 422;
+    return jsonError(status, refusal, message[refusal]);
+  }
+  after(() => runArtifactOcr(db, artifactId, session.subject));
+  return NextResponse.json({ ok: true }, { status: 202 });
 }
 
 export async function impactRoute(request: NextRequest, artifactId: string): Promise<Response> {

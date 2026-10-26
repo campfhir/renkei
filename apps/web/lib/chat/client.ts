@@ -342,6 +342,10 @@ export const chatClient = {
     }
   },
 
+  /** Starts OCR on a file the owner holds; the read goes on in the background. */
+  startArtifactOcr: (artifactId: string) =>
+    sendJsonFull(`${base()}/artifacts/${artifactId}/ocr`, 'POST', {}),
+
   renameArtifact: (artifactId: string, filename: string) =>
     sendJsonFull(`${base()}/artifacts/${artifactId}`, 'PATCH', { filename }),
 
