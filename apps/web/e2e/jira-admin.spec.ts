@@ -257,7 +257,8 @@ test('jira administration: register the app, connect with narrowed classic scope
   // --- Connected: the callback's row, then the real disconnect route. ---
   await connectJiraAdmin(fixture);
   await page.reload();
-  await expect(panel.getByText('Connected as')).toBeVisible();
+  // The line is "Connected as <name>.", with the name in its own element: match the paragraph.
+  await expect(panel.locator('p', { hasText: /^Connected as/ })).toBeVisible();
   await expect(panel.getByText('E2E Jira Admin')).toBeVisible();
   await shot(page, testInfo, 'jira-admin-03-connected');
 
