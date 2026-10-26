@@ -19,6 +19,7 @@ export const TEMPLATE_DATABASE = 'renkei_e2e_template';
 const WEB_ROOT = path.resolve(import.meta.dirname, '..');
 const RESULTS = path.join(WEB_ROOT, 'test-results');
 const MANIFEST = path.join(RESULTS, 'stacks.json');
+const BUILD_DIR = '.next-e2e';
 const DEV_PORT_BASE = 3100;
 const DELEGATE_PORT_BASE = 8200;
 
@@ -128,24 +129,6 @@ async function cloneTemplate(sharedUrl: string, name: string): Promise<void> {
   }
 }
 
-/**
- * A fresh dev server compiles an API route on its first hit, which can outlast a
- * test's expect timeout: a PATCH to a chat that does not exist compiles the route
- * and answers 404, and that answer is ignored.
- */
-async function warmRoutes(base: string): Promise<void> {
-  try {
-    await fetch(`${base}/api/chat/chats/00000000-0000-4000-8000-000000000000`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json', cookie: `renkei_session=${E2E_SESSION_ID}` },
-      body: JSON.stringify({ title: 'warm-up' }),
-      signal: AbortSignal.timeout(60_000),
-    });
-  } catch {
-    // Warming is best-effort.
-  }
-}
-
 /** Starts one stack: clone, delegate, seed, dev server. */
 async function startStack(
   sharedUrl: string,
@@ -196,7 +179,7 @@ async function startStack(
       DATABASE_URL: databaseUrl,
       DELEGATE_WORKER_URL: delegateUrl,
       DELEGATE_WORKER_API_KEY: 'e2e-delegate-key',
-      E2E_DIST_DIR: `.next-w${index}`,
+      E2E_DIST_DIR: BUILD_DIR,
       BITBUCKET_API_BASE_URL: 'http://127.0.0.1:8092/bitbucket/2.0',
       JIRA_ADMIN_API_BASE_URL: 'http://127.0.0.1:8092/jira',
       JIRA_AUTOMATION_API_BASE_URL: 'http://127.0.0.1:8092/automation',
@@ -204,20 +187,41 @@ async function startStack(
     };
     const dev = start(
       'pnpm',
-      ['exec', 'next', 'dev', '-p', String(port), '--hostname', '127.0.0.1'],
+      ['exec', 'next', 'start', '-p', String(port), '--hostname', '127.0.0.1'],
       devEnv,
-      path.join(logs, `w${index}-dev.log`)
+      path.join(logs, `w${index}-server.log`)
     );
     children.push(dev);
     const baseURL = `http://127.0.0.1:${port}`;
     // Three cold compiles at once take minutes; later runs reuse each stack's build cache.
-    await waitForHttp(`${baseURL}/`, 900_000, 'The dev server');
-    await warmRoutes(baseURL);
+    await waitForHttp(`${baseURL}/`, 120_000, 'The server');
     return { stack: { index, baseURL, databaseUrl, delegateUrl }, children };
   } catch (error) {
     await Promise.all(children.map(stop));
     throw error;
   }
+}
+
+/**
+ * One production build of the app, shared by every stack. Each stack then runs
+ * `next start` on it, so no stack compiles anything on a first visit.
+ * E2E_SKIP_BUILD reuses the build already in place.
+ */
+async function buildApp(): Promise<void> {
+  mkdirSync(path.join(RESULTS, 'workers'), { recursive: true });
+  const out = openSync(path.join(RESULTS, 'workers', 'build.log'), 'w');
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('pnpm', ['exec', 'next', 'build'], {
+      cwd: WEB_ROOT,
+      env: { ...process.env, E2E_DIST_DIR: BUILD_DIR },
+      stdio: ['ignore', out, out],
+    });
+    child.once('exit', (code) =>
+      code === 0
+        ? resolve()
+        : reject(new Error(`next build failed (exit ${code}); see test-results/workers/build.log`))
+    );
+  });
 }
 
 /**
@@ -238,6 +242,7 @@ export async function startStacks(sharedUrl: string, count: number): Promise<() 
     writeFileSync(tsconfig, savedTsconfig);
   };
   try {
+    if (!process.env.E2E_SKIP_BUILD) await buildApp();
     const settled = await Promise.allSettled(
       Array.from({ length: count }, (_, index) => startStack(sharedUrl, index))
     );
