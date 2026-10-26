@@ -19,7 +19,11 @@
 import { createHash } from 'node:crypto';
 import { test, expect, type Page } from './worker-env';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
+import { isolateFile } from './worker-env';
 
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 test.use({
   // The mobile project's device descriptor asks for WebKit, which is not
@@ -72,7 +76,12 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
     await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
-      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
+      [
+        fixture.sessionId,
+        fixture.subject,
+        ['renkei-user', 'renkei-operator'],
+        new Date(Date.now() + 24 * 3_600_000),
+      ]
     );
     await client.query(
       `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
@@ -98,8 +107,15 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
     // distinct from both the personal default above and the core default.
     await client.query(
       `INSERT INTO chat_projects (id, owner_subject, name, tool_config)\n       VALUES ($1, $2, $3, $4::jsonb)`,
-      [fixture.projectId, fixture.subject, 'Docs project', JSON.stringify({ connectors: ['agents'] })]
+      [
+        fixture.projectId,
+        fixture.subject,
+        'Docs project',
+        JSON.stringify({ connectors: ['agents'] }),
+      ]
     );
+    // Enrolled the way a browser would: the key prompt would otherwise sit over the chat.
+    await enrollForE2E(client, fixture.subject);
   } finally {
     await client.end();
   }

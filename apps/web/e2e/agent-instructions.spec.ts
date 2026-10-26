@@ -22,6 +22,10 @@ import { test, expect, type Page, type TestInfo } from './worker-env';
 import { Client } from 'pg';
 import { enrollForE2E } from './keys';
 import { deleteRowsOf } from './seed';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };

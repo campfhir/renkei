@@ -13,6 +13,10 @@ import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from './worker-env';
 import { Client } from 'pg';
 import { deleteRowsOf } from './seed';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 /** A port no real listener holds; the callback is intercepted with page.route. */

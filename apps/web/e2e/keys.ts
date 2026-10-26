@@ -197,6 +197,11 @@ async function liveInstances(client: Client): Promise<{ id: string; publicKey: B
   return rows.rows.map((row) => ({ id: row.id, publicKey: Buffer.from(row.public_key, 'base64') }));
 }
 
+/** Forgets every enrollment this process made: the database it went into is gone. */
+export function forgetEnrollments(): void {
+  enrolled.clear();
+}
+
 /**
  * Enroll the person as their browser would, delegating to every live
  * instance for every session the person has (the spec's cookie session

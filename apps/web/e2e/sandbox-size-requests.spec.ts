@@ -23,6 +23,10 @@ import path from 'node:path';
 import { test, expect as baseExpect, type Page, type TestInfo } from './worker-env';
 import { Client } from 'pg';
 import { enrollForE2E } from './keys';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');

@@ -2,6 +2,10 @@ import path from 'node:path';
 import { test, expect } from './worker-env';
 import { Client } from 'pg';
 import { AGENT_RICH_ID } from './seed';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 // Knowledge notes are not seeded (they normally need an embedding provider),
 // so this writes chunks directly — enough for the panel, which only reads

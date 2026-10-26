@@ -11,6 +11,10 @@
  */
 
 import { test, expect } from './worker-env';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 test.use({
   launchOptions: {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',

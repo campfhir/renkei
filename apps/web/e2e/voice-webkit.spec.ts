@@ -15,6 +15,10 @@ import {
   mockVendor,
   seedVoice,
 } from './voice-fixtures';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 test.use({ browserName: 'webkit' });
 

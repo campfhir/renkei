@@ -32,6 +32,10 @@ import { Client } from 'pg';
 import { enrollForE2E, keyFor } from './keys';
 import { encodeGif } from '@renkei/document-render';
 import { deleteRowsOf } from './seed';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };

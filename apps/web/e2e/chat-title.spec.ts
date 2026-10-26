@@ -12,6 +12,10 @@ import { test, expect } from './worker-env';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
 import { keyFor } from './keys';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 
 test.use({

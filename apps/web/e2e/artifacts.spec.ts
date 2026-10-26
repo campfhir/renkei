@@ -33,6 +33,10 @@ import { Client } from 'pg';
 import { encrypt, loadKeyring } from '@renkei/crypto';
 import { enrollForE2E, keyFor } from './keys';
 import { deleteRowsOf } from './seed';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
@@ -582,7 +586,7 @@ test('the library: a real upload lands, reads back, and is attached from the car
   // config points the dev server at it), the text is extracted, the row
   // appears, and the download serves the same bytes back.
   await page.goto('/chat/artifacts');
-  await page.getByLabel('Upload artifacts').setInputFiles({
+  await page.getByRole('main').getByLabel('Upload artifacts').setInputFiles({
     name: 'api-style-guide.md',
     mimeType: 'text/markdown',
     buffer: Buffer.from('# API style guide\n\nMoney fields are snake_case and numeric.\n'),
@@ -1026,7 +1030,7 @@ async function mistralStubConfigured(): Promise<void> {
 
 /** A scan the library holds as needs_ocr. Its text says SLOW, so the stub holds the read for a few seconds. */
 async function uploadScan(page: Page, name: string): Promise<void> {
-  await page.getByLabel('Upload artifacts').setInputFiles({
+  await page.getByRole('main').getByLabel('Upload artifacts').setInputFiles({
     name,
     mimeType: 'image/png',
     buffer: Buffer.from(`SLOW ${name} invoice\n`),
@@ -1156,7 +1160,7 @@ test('the library: a photo with no text is described from the picture, OCR finds
   await page.goto('/chat/artifacts');
   const list = page.getByRole('region', { name: 'Artifacts' });
   const details = page.getByRole('complementary', { name: 'Selected artifact' });
-  await page.getByLabel('Upload artifacts').setInputFiles({
+  await page.getByRole('main').getByLabel('Upload artifacts').setInputFiles({
     name: 'car-street.png',
     mimeType: 'image/png',
     buffer: Buffer.from('NOTEXT a red car on a street\n'),

@@ -35,6 +35,10 @@ import { keyFor } from './keys';
 import { renderDocument } from '@renkei/document-render';
 import { sheetFromXlsx } from '../lib/chat/sheet-preview';
 import { deleteRowsOf } from './seed';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };

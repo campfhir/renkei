@@ -10,6 +10,10 @@
 import { test, expect } from './worker-env';
 import { Client } from 'pg';
 import { CHAT_ID, CHAT_TITLE, mockVendor, seedVoice, shot } from './voice-fixtures';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 test.use({
   browserName: 'chromium',

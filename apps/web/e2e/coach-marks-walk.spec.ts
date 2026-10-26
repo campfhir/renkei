@@ -28,6 +28,10 @@ import { Client } from 'pg';
 import { COACH_MARK_TOURS } from '../lib/coach-marks/tours';
 import { AGENT_RICH_ID, E2E_SUBJECT, seed } from './seed';
 import { giveChatWorktree } from './worktree';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 /** A project and a prompt library of the seed's person, made for the walk and removed after. */
 const WALK_PROJECT_ID = '77777777-7777-4777-8777-77777777c0a1';

@@ -15,6 +15,10 @@ import { test, expect, type Page } from './worker-env';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
 import { MODEL_ID, seedVoice, shot } from './voice-fixtures';
+import { isolateFile } from './worker-env';
+
+// Each file starts from a database of its own: this runs before the file's other hooks.
+test.beforeAll(isolateFile);
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const DRAFT = 'Remind me which endpoint posts refunds, and who owns it';
