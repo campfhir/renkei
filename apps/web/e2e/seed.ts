@@ -214,6 +214,8 @@ export async function seed(client: Client): Promise<void> {
   // (packages/mcp-client/src/token.ts) — a row that does not cascade from
   // the tenant, so an earlier run's would block the re-creation here.
   await client.query('DELETE FROM oauth_access_tokens');
+  // Refresh tokens are the clients' children: a run's own (oauth-consent) would block their delete.
+  await client.query('DELETE FROM oauth_refresh_tokens');
   await client.query('DELETE FROM oauth_clients');
   // Org settings do not cascade from the tenant: migration 151 writes one row
   // (the registration default) for every tenant that exists when it runs,
