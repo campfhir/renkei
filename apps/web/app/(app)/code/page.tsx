@@ -7,6 +7,7 @@ import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { codeProjectProviderAccess, codeProjectAccessMessage } from '@/lib/code/access';
 import CodeIndex from './_components/code-index';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Code projects: mine, and the ones shared with me or published to the
@@ -17,6 +18,7 @@ import CodeIndex from './_components/code-index';
  */
 export default async function CodePage() {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/code`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
@@ -31,11 +33,11 @@ export default async function CodePage() {
   // connected but missing a capability beats "connect it at all").
   const accessNotice = canCreate
     ? null
-    : (bitbucketAccess.connected
+    : ((bitbucketAccess.connected
         ? codeProjectAccessMessage(bitbucketAccess, ATLASSIAN_BITBUCKET)
         : null) ??
       (githubAccess.connected ? codeProjectAccessMessage(githubAccess, GITHUB) : null) ??
-      `${codeProjectAccessMessage(bitbucketAccess, ATLASSIAN_BITBUCKET)} Or connect GitHub instead.`;
+      `${codeProjectAccessMessage(bitbucketAccess, ATLASSIAN_BITBUCKET)} Or connect GitHub instead.`);
   return (
     <CodeIndex
       projects={sidebar.code.projects}

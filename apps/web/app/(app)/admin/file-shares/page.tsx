@@ -2,6 +2,7 @@ import React from 'react';
 import { redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import ShareList from './share-list';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Org file shares (SMB/SFTP) — the registry. Each share is a host plus a
@@ -11,7 +12,9 @@ import ShareList from './share-list';
  * grant, whatever the file server itself would allow.
  */
 export default async function AdminFileSharesPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

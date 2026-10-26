@@ -5,18 +5,16 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { resolveProjectAccess } from '@/lib/chat/access';
 import { loadProjectView } from '@/lib/chat/project-view';
 import ProjectView from '../../_components/project-view';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * One project: instructions, files, memory, toolset and the chats inside
  * it. Editors change it; viewers read it and start their own chats in it.
  */
-export default async function ProjectPage({
-  params,
-}: {
-  params: Promise<{ projectId: string }>;
-}) {
+export default async function ProjectPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/chat/projects/${projectId}`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();

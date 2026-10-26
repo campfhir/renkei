@@ -8,6 +8,7 @@ import { listCoachMarkReport } from '@/lib/coach-marks/store';
 import LocalTime from '@/components/local-time';
 import CoachTarget from '@/components/coach-marks/anchor';
 import PersonTours, { type PersonTourRow } from './person-tours';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The operator's view of the coach marks: per tour, how many people have
@@ -26,7 +27,9 @@ interface TourTotals {
 }
 
 export default async function AdminTutorialsPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

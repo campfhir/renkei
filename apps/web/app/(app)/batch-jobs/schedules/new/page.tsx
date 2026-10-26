@@ -6,9 +6,11 @@ import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { loadCalendarOptions } from '@/lib/schedule-calendars';
 import NewScheduleForm from './new-schedule-form';
+import { noteLogUser } from '@/lib/log-context';
 
 export default async function NewBatchJobSchedulePage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/batch-jobs/schedules/new`));
   }

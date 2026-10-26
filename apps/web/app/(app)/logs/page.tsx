@@ -2,18 +2,22 @@ import { requireAuth } from '@/lib/require-auth';
 import { searchLogs } from './actions';
 import LogsViewer from './logs-viewer';
 import { defaultLogWindow, DEFAULT_LOG_LEVELS } from './window';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Server-render the first page of logs, then hand off to the viewer, which
  * calls `searchLogs` for every subsequent filter change. Role and scope are
  * resolved inside that action, so there is nothing to decide here.
  */
-export default async function LogsPage({ searchParams }: {
+export default async function LogsPage({
+  searchParams,
+}: {
   searchParams: Promise<{ accountId?: string }>;
 }) {
   const { accountId } = await searchParams;
 
-  await requireAuth(`/logs`);
+  const signedIn = await requireAuth(`/logs`);
+  noteLogUser(signedIn.subject);
 
   // Computed here, not in both places: the server render and the picker the
   // client seeds from have to agree about what is being searched.
@@ -28,11 +32,5 @@ export default async function LogsPage({ searchParams }: {
     accountId: accountId ?? null,
   });
 
-  return (
-    <LogsViewer
-      accountId={accountId ?? null}
-      initial={initial}
-      initialWindow={window}
-    />
-  );
+  return <LogsViewer accountId={accountId ?? null} initial={initial} initialWindow={window} />;
 }

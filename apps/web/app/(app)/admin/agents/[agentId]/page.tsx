@@ -4,11 +4,16 @@ import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getAgentForAdmin } from '@/lib/agents/runs-view';
-import { getAgentTokenUsage, getAgentToolUsage, getTokenUsageByModel } from '@/lib/agents/agent-usage';
+import {
+  getAgentTokenUsage,
+  getAgentToolUsage,
+  getTokenUsageByModel,
+} from '@/lib/agents/agent-usage';
 import BackLink from '@/components/back-link';
 import LocalTime from '@/components/local-time';
 import AgentUsagePanel from '@/components/agent-usage-panel';
 import AdminAgentToggle from './admin-agent-toggle';
+import { noteLogUser } from '@/lib/log-context';
 
 const TOOL_USAGE_WINDOW_DAYS = 30;
 
@@ -25,7 +30,9 @@ export default async function AdminAgentDetailPage({
   params: Promise<{ agentId: string }>;
 }): Promise<React.ReactNode> {
   const { agentId } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

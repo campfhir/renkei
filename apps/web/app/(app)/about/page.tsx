@@ -7,6 +7,7 @@ import { CHANGELOG, buildLabel, type ChangelogEntry } from '@/lib/changelog';
 import RenkeiMark from '@/components/renkei-mark';
 import packageJson from '../../../package.json';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 export const metadata: Metadata = { title: 'About' };
 
@@ -65,6 +66,7 @@ const KIND_STYLE: Record<ChangelogEntry['kind'], { label: string; className: str
  */
 export default async function AboutPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/about`));
   }

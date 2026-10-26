@@ -7,6 +7,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import AutoRefresh from '@/components/auto-refresh';
 import NotificationsList, { type NotificationCard } from './notifications-list';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * What your agents have been doing.
@@ -24,6 +25,7 @@ const PAGE_SIZE = 100;
 
 export default async function NotificationsPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/notifications`));
 
   const dbResult = getDatabase();
@@ -80,10 +82,7 @@ export default async function NotificationsPage(): Promise<React.ReactNode> {
         What your agents and batch jobs did — the things that changed something, not every step they
         took.{' '}
         <CoachTarget name="notifications-preferences-link" as="span">
-          <Link
-            href={`/preferences`}
-            className="text-blue-600 hover:underline dark:text-blue-400"
-          >
+          <Link href={`/preferences`} className="text-blue-600 hover:underline dark:text-blue-400">
             Choose what appears here
           </Link>
         </CoachTarget>
@@ -95,11 +94,7 @@ export default async function NotificationsPage(): Promise<React.ReactNode> {
           Nothing yet. When one of your agents files a ticket or sends a message, it lands here.
         </p>
       ) : (
-        <NotificationsList
-          rows={cards}
-          unreadCount={unreadCount}
-          initialHasMore={hasMore}
-        />
+        <NotificationsList rows={cards} unreadCount={unreadCount} initialHasMore={hasMore} />
       )}
     </div>
   );

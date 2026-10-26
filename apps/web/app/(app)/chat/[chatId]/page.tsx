@@ -9,19 +9,17 @@ import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { getOrgSettings } from '@renkei/settings';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
 import ChatThread from '../_components/chat-thread';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * One chat. The owner gets the composer; a viewer (shared by name, or a
  * fellow member of the chat's project) reads it and watches it live.
  * Someone with neither gets a 404, never a 403.
  */
-export default async function ChatPage({
-  params,
-}: {
-  params: Promise<{ chatId: string }>;
-}) {
+export default async function ChatPage({ params }: { params: Promise<{ chatId: string }> }) {
   const { chatId } = await params;
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/chat/${chatId}`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();

@@ -16,6 +16,7 @@ import {
 import LocalTime from '@/components/local-time';
 import { ChangeStatePill } from './change-status';
 import { RefreshWhileRunning } from './[changeId]/change-actions';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Jira admin change requests. An operator sees everyone's — those waiting
@@ -25,6 +26,7 @@ import { RefreshWhileRunning } from './[changeId]/change-actions';
  */
 export default async function JiraAdminChangesPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/jira-admin/changes`));
   }

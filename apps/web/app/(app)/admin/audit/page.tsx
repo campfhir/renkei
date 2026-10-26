@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import AuditList, { type AuditEventRow } from './audit-list';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The tenant's audit trail (migration 038): who signed in, connected or
@@ -16,7 +17,9 @@ import CoachTarget from '@/components/coach-marks/anchor';
  * which the server does not know.
  */
 export default async function AuditPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 
@@ -35,8 +38,7 @@ export default async function AuditPage(): Promise<React.ReactNode> {
   const rows = await dbResult.val
     .selectFrom('audit_events')
     .leftJoin('identities', (join) =>
-      join
-        .onRef('identities.subject', '=', 'audit_events.actor_subject')
+      join.onRef('identities.subject', '=', 'audit_events.actor_subject')
     )
     .select([
       'audit_events.id as id',

@@ -6,6 +6,7 @@ import { codeProjectProviderAccess } from '@/lib/code/access';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import NewCodeProject from '../_components/new-code-project';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * A new code project: a name, a repository from the person's own
@@ -17,6 +18,7 @@ import NewCodeProject from '../_components/new-code-project';
  */
 export default async function NewCodeProjectPage() {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/code/new`));
   if (!(await sandboxWorkspacesEnabled())) redirect(`/code`);
   const dbResult = getDatabase();
@@ -26,9 +28,6 @@ export default async function NewCodeProjectPage() {
   const githubConnected = access[GITHUB]!.ok;
   if (!bitbucketConnected && !githubConnected) redirect(`/code`);
   return (
-    <NewCodeProject
-      bitbucketConnected={bitbucketConnected}
-      githubConnected={githubConnected}
-    />
+    <NewCodeProject bitbucketConnected={bitbucketConnected} githubConnected={githubConnected} />
   );
 }

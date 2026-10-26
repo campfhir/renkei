@@ -9,7 +9,9 @@ import { redirect } from 'next/navigation';
  * home-realm route, and a bookmark costs nothing to honour. The query string
  * rides along so an `?archived=1` link keeps working.
  */
-export default async function HomeRedirect({ searchParams }: {
+export default async function HomeRedirect({
+  searchParams,
+}: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }): Promise<never> {
   const query = new URLSearchParams();

@@ -10,6 +10,7 @@ import { SettingsForm, type EditableSettings } from './settings-form';
 import IdentityForm from './identity-form';
 import { observedIdpGroups } from '@/lib/identity';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The org's operating settings — everything adjustable that has no more
@@ -19,7 +20,9 @@ import CoachTarget from '@/components/coach-marks/anchor';
  * limits) and says where the others went instead of duplicating them.
  */
 export default async function SettingsPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

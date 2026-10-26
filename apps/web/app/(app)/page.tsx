@@ -6,6 +6,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import ActionableCards from './cards';
 import ActionableFeed from './actionable-feed';
 import AutoRefresh from '@/components/auto-refresh';
+import { noteLogUser } from '@/lib/log-context';
 
 /** How many cards a page of the feed shows — a tenant's full history can
  * run into the hundreds, and rendering all of it (evidence blocks, action
@@ -19,10 +20,13 @@ const PAGE_SIZE = 10;
  * to the full history, archived cards included; `?page=` pages through it,
  * PAGE_SIZE at a time.
  */
-export default async function HomePage({ searchParams }: {
+export default async function HomePage({
+  searchParams,
+}: {
   searchParams: Promise<{ archived?: string; page?: string }>;
 }): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/`));
   }
@@ -83,11 +87,7 @@ export default async function HomePage({ searchParams }: {
       <AutoRefresh />
       <ActionableFeed showArchived={showArchived} page={page} hasMore={hasMore}>
         {dbResult.ok ? (
-          <ActionableCards
-            items={items}
-            subject={session.subject}
-            showArchived={showArchived}
-          />
+          <ActionableCards items={items} subject={session.subject} showArchived={showArchived} />
         ) : (
           <p className="text-sm text-red-700 dark:text-red-300">
             Unable to connect to the database. Please try again later.

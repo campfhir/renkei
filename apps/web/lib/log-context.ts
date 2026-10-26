@@ -36,7 +36,13 @@ export function withLogContext<T>(context: LogContext, work: () => Promise<T>): 
 /** Records the signed-in person on the current request's context, if there is one. */
 export function noteLogUser(subject: string): void {
   const current = store.getStore();
-  if (current) current.user = subject;
+  if (current) {
+    current.user = subject;
+    return;
+  }
+  // A server component renders outside any route wrapper: the context starts
+  // here, for the rest of this render.
+  store.enterWith({ user: subject });
 }
 
 /** What a request says about its caller, for the log context. */

@@ -2,6 +2,7 @@ import React from 'react';
 import { redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import RedactionForm from './redaction-form';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Org-admin configuration for the redaction gate (see @renkei/redaction).
@@ -13,7 +14,9 @@ import RedactionForm from './redaction-form';
  * configuring.
  */
 export default async function AdminRedactionPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

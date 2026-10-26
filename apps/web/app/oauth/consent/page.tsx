@@ -4,6 +4,7 @@ import { DEFAULT_ORG_SETTINGS, getOrgSettings } from '@renkei/settings';
 import RenkeiMark from '@/components/renkei-mark';
 import { getSessionFromCookies } from '@/lib/session';
 import { describeRedirectTarget } from '@/lib/oauth-redirect-uri';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The consent page of the MCP OAuth flow: the one screen between a
@@ -72,6 +73,7 @@ export default async function ConsentPage({
   }
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session || session.id !== pending.session_id) {
     return (
       <Notice

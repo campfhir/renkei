@@ -9,6 +9,7 @@ import { listAgents } from '@/lib/agents/store';
 import { listAgentsSharedWith } from '@/lib/agents/access-grants';
 import { AgentsList } from './agents-list';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Your agents — every signed-in user's own list (agents are per-user
@@ -18,6 +19,7 @@ import CoachTarget from '@/components/coach-marks/anchor';
  */
 export default async function AgentsPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/agents`));
   }

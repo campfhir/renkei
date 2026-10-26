@@ -4,6 +4,7 @@ import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getRunForAdmin } from '@/lib/agents/runs-view';
 import AdminRunLive from './run-live';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Admin run detail. The projection this page receives already withheld
@@ -19,7 +20,9 @@ export default async function AdminRunDetailPage({
   params: Promise<{ agentId: string; runId: string }>;
 }): Promise<React.ReactNode> {
   const { agentId, runId } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

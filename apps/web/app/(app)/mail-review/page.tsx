@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import ReviewList from './review-list';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * A signed-in user's own mail classification history, and the only place
@@ -13,6 +14,7 @@ import ReviewList from './review-list';
  */
 export default async function MailReviewPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/mail-review`));
   }

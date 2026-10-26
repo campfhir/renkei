@@ -7,6 +7,7 @@ import { loadCodeProjectView } from '@/lib/code/project-view';
 import ProjectView from '../../chat/_components/project-view';
 import { CodeRail, CodeRepoStrip } from '../_components/code-sections';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * One code project, laid out by how often each part is touched: the
@@ -27,6 +28,7 @@ export default async function CodeProjectPage({
   const { projectId } = await params;
   const { envProblems } = await searchParams;
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/code/${projectId}`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
@@ -46,9 +48,7 @@ export default async function CodeProjectPage({
       defaultInstructions={DEFAULT_CODE_INSTRUCTIONS}
       readme={view.code.readme}
       usage={view.code.usage}
-      strip={
-        <CodeRepoStrip key="strip" projectId={projectId} code={view.code} />
-      }
+      strip={<CodeRepoStrip key="strip" projectId={projectId} code={view.code} />}
       rail={
         <CodeRail
           key="rail"

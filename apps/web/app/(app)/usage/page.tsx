@@ -1,6 +1,7 @@
 import { requireAuth } from '@/lib/require-auth';
 import { getUsageReport, getAvailableTools } from './actions';
 import UsageViewer from './usage-viewer';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Server-render the default window, then hand off to the viewer, which calls
@@ -11,12 +12,10 @@ import UsageViewer from './usage-viewer';
  * not vary with the period being charted.
  */
 export default async function UsagePage() {
-  await requireAuth(`/usage`);
+  const signedIn = await requireAuth(`/usage`);
+  noteLogUser(signedIn.subject);
 
-  const [initial, tools] = await Promise.all([
-    getUsageReport(7),
-    getAvailableTools(),
-  ]);
+  const [initial, tools] = await Promise.all([getUsageReport(7), getAvailableTools()]);
 
   return <UsageViewer initial={initial} tools={tools} />;
 }

@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { readStorage } from '@/lib/storage-admin';
 import StorageForm from './storage-form';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Where the organization's files live: the Azure Blob account that holds
@@ -10,7 +11,9 @@ import StorageForm from './storage-form';
  * and the model is told not to produce files.
  */
 export default async function StoragePage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
   const view = await readStorage();

@@ -18,6 +18,7 @@ import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
 import LocalTime from '@/components/local-time';
 import { ChangeStatePill, ValidationPill } from './change-status';
 import { RefreshWhileRunning } from './[changeId]/change-actions';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Salesforce admin change requests. An operator sees everyone's — those
@@ -27,6 +28,7 @@ import { RefreshWhileRunning } from './[changeId]/change-actions';
  */
 export default async function SalesforceAdminChangesPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl('/salesforce-admin/changes'));
   }

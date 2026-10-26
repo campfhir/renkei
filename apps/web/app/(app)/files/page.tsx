@@ -4,6 +4,7 @@ import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import FilesBrowser from './files-browser';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The files browser: the human face of the same seam the fileshare_* tools
@@ -13,6 +14,7 @@ import CoachTarget from '@/components/coach-marks/anchor';
  */
 export default async function FilesPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/files`));
   }

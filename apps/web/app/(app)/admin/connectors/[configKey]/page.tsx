@@ -13,6 +13,7 @@ import { getDatabase } from '@renkei/db';
 import { observedIdpGroups } from '@/lib/identity';
 import { getTenantOidcClaims } from '@/lib/tenant-operations';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * One connector's page: its credentials form, and the org-wide switches
@@ -25,7 +26,9 @@ export default async function AdminConnectorPage({
   params: Promise<{ configKey: string }>;
 }): Promise<React.ReactNode> {
   const { configKey } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

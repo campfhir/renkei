@@ -20,6 +20,7 @@ import { applyGate } from '@/lib/jira-admin/apply';
 import LocalTime from '@/components/local-time';
 import { ChangeStatePill } from '../change-status';
 import ChangeActions, { RefreshWhileRunning } from './change-actions';
+import { noteLogUser } from '@/lib/log-context';
 
 const OUTCOME_LABELS: Record<OperationResult['outcome'], string> = {
   done: 'Done',
@@ -48,6 +49,7 @@ export default async function JiraAdminChangePage({
   const { changeId } = await params;
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/jira-admin/changes/${changeId}`));
   }

@@ -6,6 +6,7 @@ import { isUuid } from '@/lib/uuid';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { createChat } from '@/lib/chat/store';
 import { getProjectRow } from '@/lib/chat/projects';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * "+ New": an empty chat is created here and now (optionally inside the
@@ -29,6 +30,7 @@ export default async function NewChatPage({
 }) {
   const { project: requestedProjectId } = await searchParams;
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     const query = requestedProjectId ? `?project=${encodeURIComponent(requestedProjectId)}` : '';
     redirect(signInUrl(`/chat/new${query}`));

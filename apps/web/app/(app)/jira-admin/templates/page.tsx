@@ -8,6 +8,7 @@ import { viewGate } from '@/lib/jira-admin/apply';
 import { componentsText, listSpaceTemplates } from '@/lib/jira-admin/space-templates';
 import { SCHEME_KEYS, SCHEME_LABELS } from '@/lib/jira-admin/space-config';
 import LocalTime from '@/components/local-time';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The organization's Jira space templates (migration 124), read-only:
@@ -18,6 +19,7 @@ import LocalTime from '@/components/local-time';
  */
 export default async function JiraAdminTemplatesPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/jira-admin/templates`));
   }

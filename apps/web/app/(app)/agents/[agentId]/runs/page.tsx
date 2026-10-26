@@ -12,6 +12,7 @@ import RunsSearch from '../../runs-search';
 import { errorSummary, statusLabel } from '@/lib/agents/run-labels';
 import LocalTime from '@/components/local-time';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 /** The status tabs the pages offer; 'queued' stays reachable via All. */
 const STATUS_TABS = ['succeeded', 'failed', 'stopped', 'waiting', 'running', 'canceled'] as const;
@@ -32,6 +33,7 @@ export default async function AgentRunsPage({
   const { status, q } = await searchParams;
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/agents/${agentId}/runs`));
   }

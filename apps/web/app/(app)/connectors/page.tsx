@@ -77,6 +77,7 @@ import {
 import { resolveUserCatalog, type UserCatalog } from '@/lib/connectors/user-catalog';
 import { resolveAudienceAllows } from '@/lib/connectors/audience';
 import { connectorEntryFor } from '@/lib/connector-catalog';
+import { noteLogUser } from '@/lib/log-context';
 
 /** The org's stored scopes string for a connector, from non-secret settings. */
 function storedScopes(settings: unknown): string | null {
@@ -122,6 +123,7 @@ function removable(catalog: UserCatalog, keys: string[]) {
  */
 export default async function ConnectorsPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/connectors`));
   }

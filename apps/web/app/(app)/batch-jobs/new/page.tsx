@@ -4,9 +4,11 @@ import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import NewBatchJobForm from './new-batch-job-form';
+import { noteLogUser } from '@/lib/log-context';
 
 export default async function NewBatchJobPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/batch-jobs/new`));
   }

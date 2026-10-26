@@ -3,6 +3,7 @@ import { getUtilizationReport } from './actions';
 import { DEFAULT_PERIOD_KEY } from './window';
 import { headers } from 'next/headers';
 import UtilizationViewer from './utilization-viewer';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Server-render the default window, then hand off to the viewer, which
@@ -10,7 +11,8 @@ import UtilizationViewer from './utilization-viewer';
  * shape. The subject is decided inside the action from the session.
  */
 export default async function UtilizationPage() {
-  await requireAuth(`/utilization`);
+  const signedIn = await requireAuth(`/utilization`);
+  noteLogUser(signedIn.subject);
 
   // The first render has no browser to ask, so it uses the zone the
   // viewer's proxy or CDN forwards when one does; the client re-fetches in

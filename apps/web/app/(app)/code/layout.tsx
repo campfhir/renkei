@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import ChatFrame from '../chat/_components/chat-frame';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The Code pages' frame — the chat pages' own (a code project is a chat
@@ -10,10 +11,9 @@ import ChatFrame from '../chat/_components/chat-frame';
  * pages). Signed-out visitors go to sign-in from here; every page under
  * it still checks the session for itself.
  */
-export default async function CodeLayout({ children }: {
-  children: ReactNode;
-}) {
+export default async function CodeLayout({ children }: { children: ReactNode }) {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/code`));
   return (
     <ChatFrame>

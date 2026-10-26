@@ -2,6 +2,7 @@ import React from 'react';
 import { redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import CalendarForms from './calendar-forms';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Org holiday calendars (schedule_calendars): named sets of blackout
@@ -11,7 +12,9 @@ import CalendarForms from './calendar-forms';
  * scheduled next run.
  */
 export default async function AdminCalendarsPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

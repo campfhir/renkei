@@ -5,6 +5,7 @@ import { getDatabase } from '@renkei/db';
 import type { Json } from '@renkei/db';
 import EventsList, { type EventRow, type EventStatus } from './events-list';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The event monitor: every webhook delivery and internal event, its source,
@@ -50,7 +51,9 @@ function statusOf(status: string, attempts: number): EventStatus {
 }
 
 export default async function EventsPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

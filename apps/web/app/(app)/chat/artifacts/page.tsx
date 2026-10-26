@@ -11,6 +11,7 @@ import { digestPendingArtifacts } from '@/lib/chat/artifact-digest';
 import { getAttachments } from '@/lib/chat/attachments';
 import { listAccessibleProjectIds } from '@/lib/chat/access';
 import ArtifactsIndex from '../_components/artifacts-index';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Artifacts: the files this person uploaded and the files their chats
@@ -29,6 +30,7 @@ export default async function ArtifactsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/chat/artifacts`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();

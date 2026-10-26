@@ -22,6 +22,7 @@ import ThemeSync from '@/components/theme-sync';
 import { CodeLineNumbersProvider } from '@/components/code-display-context';
 import { getVersionInfo } from '@/lib/version-info';
 import AppNav from './nav';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Overrides the root layout's `<link rel="manifest">` (app/manifest.ts,
@@ -60,6 +61,7 @@ export async function generateMetadata(): Promise<Metadata> {
  */
 export default async function TenantLayout({ children }: { children: ReactNode }) {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     // Back to the page they asked for, query and all — the proxy put it on
     // the request. Without it (the proxy's own error path), the home page.

@@ -33,6 +33,7 @@ import SharedWithPanel from './shared-with-panel';
 import ImprovePanel from './improve-panel';
 import { latestOptimization } from '@/lib/agents/optimization-store';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 const TOOL_USAGE_WINDOW_DAYS = 30;
 
@@ -54,10 +55,7 @@ interface InvocationCounts {
  * buckets, not trailing windows, because the numbers exist to be read
  * against the org's per-day cap, which is calendar-shaped in spirit.
  */
-async function invocationCountsOf(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<InvocationCounts> {
+async function invocationCountsOf(db: Kysely<DB>, agentId: string): Promise<InvocationCounts> {
   const result = await sql<{
     today: string;
     week: string;
@@ -109,6 +107,7 @@ export default async function AgentOverviewPage({
   const { agentId } = await params;
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/agents/${agentId}`));
   }
@@ -135,9 +134,7 @@ export default async function AgentOverviewPage({
     listRunsForOwner(dbResult.val, access.ownerSubject, agentId, { limit: 5 }),
     invocationCountsOf(dbResult.val, agentId),
     getOrgSettings(),
-    access.viewerIsOwner
-      ? Promise.resolve(null)
-      : getIdentityDisplay(access.ownerSubject),
+    access.viewerIsOwner ? Promise.resolve(null) : getIdentityDisplay(access.ownerSubject),
     getAgentTokenUsage(dbResult.val, agentId),
     getTokenUsageByModel(dbResult.val, agentId),
     getAgentToolUsage(dbResult.val, agentId, TOOL_USAGE_WINDOW_DAYS),
@@ -274,12 +271,7 @@ export default async function AgentOverviewPage({
               </p>
               {/* Beside the schedule, because "every weekday at 8am" is
                   exactly what makes someone want to fire it once by hand. */}
-              {eventOnly ? null : (
-                <RunNowButton
-                  agentId={agentId}
-                  agentName={agent.name}
-                />
-              )}
+              {eventOnly ? null : <RunNowButton agentId={agentId} agentName={agent.name} />}
             </div>
             {agent.triggers.length > 0 ? (
               <ul className="mt-1 space-y-2">
@@ -336,10 +328,7 @@ export default async function AgentOverviewPage({
                owner followed a link to see it, not to find it. */
             <div id="improve" className="scroll-mt-16">
               <CollapsibleSection title="Improve" defaultOpen={optimization !== null}>
-                <ImprovePanel
-                  agentId={agentId}
-                  initial={optimization}
-                />
+                <ImprovePanel agentId={agentId} initial={optimization} />
               </CollapsibleSection>
             </div>
           ) : null}

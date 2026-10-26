@@ -4,6 +4,7 @@ import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { readUserMemory } from '@/lib/chat/user-memory';
 import MemoryIndex from '../_components/memory-index';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Memory: alongside Projects and Prompt libraries under Chat, not tucked
@@ -11,6 +12,7 @@ import MemoryIndex from '../_components/memory-index';
  */
 export default async function ChatMemoryPage() {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/chat/memory`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();

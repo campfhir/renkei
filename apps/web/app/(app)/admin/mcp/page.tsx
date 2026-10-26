@@ -2,6 +2,7 @@ import React from 'react';
 import { redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import ServerManager from './server-manager';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Remote MCP servers — the list. Each row is one server an admin chose to
@@ -11,7 +12,9 @@ import ServerManager from './server-manager';
  * whatever the server lists for them.
  */
 export default async function AdminMcpPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

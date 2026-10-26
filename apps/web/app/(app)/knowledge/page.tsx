@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import KnowledgeSearch from './search';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Self-service search over what Renkei has indexed — the human-facing twin
@@ -12,6 +13,7 @@ import KnowledgeSearch from './search';
  */
 export default async function KnowledgePage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/knowledge`));
   }

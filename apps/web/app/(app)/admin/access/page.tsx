@@ -11,6 +11,7 @@ import RevokeGrantButton from './revoke-grant-button';
 import ShredKeyButton from './shred-key-button';
 import RevokeSessionsButton from './revoke-sessions-button';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Access: who is connected to what — one table, a row per person and
@@ -56,6 +57,7 @@ interface GrantRow {
 
 export default async function AccessPage(): Promise<React.ReactNode> {
   const session = await checkAccess([ROLE_OPERATOR]);
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(`/admin`);
   }
@@ -74,10 +76,7 @@ export default async function AccessPage(): Promise<React.ReactNode> {
   const db = dbResult.val;
 
   const [identities, grants, activity, keyRows] = await Promise.all([
-    db
-      .selectFrom('identities')
-      .select(['subject', 'display_name', 'email'])
-      .execute(),
+    db.selectFrom('identities').select(['subject', 'display_name', 'email']).execute(),
     db
       .selectFrom('provider_grants')
       .select(['subject', 'provider', 'provider_account_id', 'display_name', 'expires_at'])
@@ -90,10 +89,7 @@ export default async function AccessPage(): Promise<React.ReactNode> {
       .execute(),
     // Who holds an encryption key (docs/delegate-key-design.md): the one
     // thing an operator may remove for a person who is gone for good.
-    db
-      .selectFrom('user_encryption_keys')
-      .select(['subject', 'mode'])
-      .execute(),
+    db.selectFrom('user_encryption_keys').select(['subject', 'mode']).execute(),
   ]);
   const keyModeBySubject = new Map(keyRows.map((row) => [row.subject, row.mode]));
 
@@ -147,10 +143,7 @@ export default async function AccessPage(): Promise<React.ReactNode> {
         they hold — they sign in again and nothing of theirs is lost. Removing a person&apos;s
         encryption key is final: it is for someone who is gone and whose key is lost. A
         person&apos;s usage, groups and agents are on{' '}
-        <Link
-          href={`/admin/usage`}
-          className="text-blue-600 hover:underline dark:text-blue-400"
-        >
+        <Link href={`/admin/usage`} className="text-blue-600 hover:underline dark:text-blue-400">
           Organization usage
         </Link>
         .
@@ -200,10 +193,7 @@ export default async function AccessPage(): Promise<React.ReactNode> {
                             displayName={person.name}
                           />
                           {keyModeBySubject.has(person.subject) ? (
-                            <ShredKeyButton
-                              subject={person.subject}
-                              displayName={person.name}
-                            />
+                            <ShredKeyButton subject={person.subject} displayName={person.name} />
                           ) : null}
                         </span>
                       ) : null}

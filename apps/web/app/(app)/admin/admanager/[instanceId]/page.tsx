@@ -5,6 +5,7 @@ import { getDatabase } from '@renkei/db';
 import { getInstance } from '@renkei/connector-admanager';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import InstanceConfigForm from './instance-config-form';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * One ADManager Plus instance's management page: connection details,
@@ -19,7 +20,9 @@ export default async function AdminAdManagerInstancePage({
   params: Promise<{ instanceId: string }>;
 }): Promise<React.ReactNode> {
   const { instanceId } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

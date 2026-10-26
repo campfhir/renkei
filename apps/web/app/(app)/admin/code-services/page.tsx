@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { sandboxServicesEnabled } from '@renkei/sandbox-client';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import ImageRuleForms from './image-rule-forms';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The org's service image allow-list (code_service_image_rules): which
@@ -13,7 +14,9 @@ import ImageRuleForms from './image-rule-forms';
  * removes what they do not want, or puts the defaults back.
  */
 export default async function AdminCodeServicesPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
   const enabled = await sandboxServicesEnabled();

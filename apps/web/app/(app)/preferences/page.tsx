@@ -30,6 +30,7 @@ import VoiceForm from './voice-form';
 import ImageModelForm from './image-model-form';
 import ChatArchiveForm from './chat-archive-form';
 import EncryptionKeySection from './encryption-key-section';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The page the nav's Preferences item has been pointing at since before it
@@ -38,6 +39,7 @@ import EncryptionKeySection from './encryption-key-section';
  */
 export default async function PreferencesPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/preferences`));
 
   const dbResult = getDatabase();
@@ -193,10 +195,7 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
         />
       </div>
       <div className="mb-6">
-        <ToolPermissionsForm
-          groups={actToolGroups}
-          initial={toolPermissions}
-        />
+        <ToolPermissionsForm groups={actToolGroups} initial={toolPermissions} />
       </div>
       <PreferencesForm
         connectors={connectors}

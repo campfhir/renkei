@@ -9,16 +9,20 @@ import { BatchStatusPill, batchStatusLabel, batchProgress } from './batch-status
 import LocalTime from '@/components/local-time';
 import AutoRefresh from '@/components/auto-refresh';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { noteLogUser } from '@/lib/log-context';
 
 const STATUS_TABS = ['running', 'succeeded', 'partial', 'failed'] as const;
 
 /** Your batch jobs — a per-user list, the runs-page precedent. */
-export default async function BatchJobsPage({ searchParams }: {
+export default async function BatchJobsPage({
+  searchParams,
+}: {
   searchParams: Promise<{ status?: string }>;
 }): Promise<React.ReactNode> {
   const { status } = await searchParams;
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/batch-jobs`));
   }

@@ -9,6 +9,7 @@ import { parseScheduleConfig, type ScheduleConfig } from '@renkei/agents';
 import { loadCalendarOptions } from '@/lib/schedule-calendars';
 import EditScheduleForm, { type SourceValue } from './edit-schedule-form';
 import { afterProcessingValueOf, skipProcessedOf } from '@/lib/batch-jobs/pipeline-form-value';
+import { noteLogUser } from '@/lib/log-context';
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -46,6 +47,7 @@ export default async function EditBatchJobSchedulePage({
   const { scheduleId } = await params;
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/batch-jobs/schedules/${scheduleId}`));
   }

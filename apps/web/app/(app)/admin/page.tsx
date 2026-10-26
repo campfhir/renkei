@@ -6,6 +6,7 @@ import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import CoachTarget from '@/components/coach-marks/anchor';
 import { adminSections } from '@/lib/admin-areas';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The Organization page: the admin console's front door, and the only
@@ -18,6 +19,7 @@ import { adminSections } from '@/lib/admin-areas';
  */
 export default async function AdminPage(): Promise<React.ReactNode> {
   const access = await checkAccess([ROLE_OPERATOR]);
+  if (access) noteLogUser(access.subject);
   if (access) {
     return (
       <div className="mx-auto max-w-4xl">
@@ -53,6 +55,7 @@ export default async function AdminPage(): Promise<React.ReactNode> {
   }
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/admin`));
   }

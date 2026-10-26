@@ -2,6 +2,7 @@ import React from 'react';
 import { redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import PipelineTemplateForms from './pipeline-template-forms';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The org's catalog of pipeline templates (pipeline_templates): starting
@@ -12,7 +13,9 @@ import PipelineTemplateForms from './pipeline-template-forms';
  * it — so this catalog is a set of starting points, not a policy.
  */
 export default async function AdminPipelineTemplatesPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
   return (

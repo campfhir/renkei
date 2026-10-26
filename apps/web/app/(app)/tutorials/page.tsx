@@ -10,6 +10,7 @@ import { COACH_MARK_TOURS } from '@/lib/coach-marks/tours';
 import { toursFor } from '@/lib/coach-marks/select';
 import { listCoachMarkProgress } from '@/lib/coach-marks/store';
 import TutorialsList from './tutorials-list';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The Tutorials page, behind the avatar: every tour this person may take,
@@ -22,6 +23,7 @@ import TutorialsList from './tutorials-list';
  */
 export default async function TutorialsPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/tutorials`));
   const isOperator = session.roles.includes(ROLE_OPERATOR);
 

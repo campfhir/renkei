@@ -5,6 +5,7 @@ import { getDatabase } from '@renkei/db';
 import { getShare } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import ShareConfigForm from './share-config-form';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * One share's management page: connection details, nothing else. There is
@@ -18,7 +19,9 @@ export default async function AdminFileSharePage({
   params: Promise<{ shareId: string }>;
 }): Promise<React.ReactNode> {
   const { shareId } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

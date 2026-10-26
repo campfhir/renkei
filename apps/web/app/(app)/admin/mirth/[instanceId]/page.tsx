@@ -5,6 +5,7 @@ import { getDatabase } from '@renkei/db';
 import { getInstance } from '@renkei/connector-mirth';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import InstanceConfigForm from './instance-config-form';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * One Mirth instance's management page: connection details, nothing else.
@@ -18,7 +19,9 @@ export default async function AdminMirthInstancePage({
   params: Promise<{ instanceId: string }>;
 }): Promise<React.ReactNode> {
   const { instanceId } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

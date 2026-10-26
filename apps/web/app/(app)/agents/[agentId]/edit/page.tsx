@@ -7,6 +7,7 @@ import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { loadBuilderData } from '@/lib/agents/builder-data';
 import AgentEnabledToggle from '@/components/agent-enabled-toggle';
 import { AgentBuilder } from '../../builder/agent-builder';
+import { noteLogUser } from '@/lib/log-context';
 
 export default async function EditAgentPage({
   params,
@@ -16,6 +17,7 @@ export default async function EditAgentPage({
   const { agentId } = await params;
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/agents/${agentId}/edit`));
   }
@@ -54,7 +56,8 @@ export default async function EditAgentPage({
           )}
         </div>
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Changes apply to future runs — anything already running keeps the instructions it started with.
+          Changes apply to future runs — anything already running keeps the instructions it started
+          with.
         </p>
       </div>
       <AgentBuilder

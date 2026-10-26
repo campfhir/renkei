@@ -6,6 +6,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { getOwnerRunPageData } from '@/lib/agents/run-page-data';
 import RunLive from './run-live';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * One run with every attempt's full content — the owner's view, which a
@@ -25,6 +26,7 @@ export default async function AgentRunDetailPage({
   const { agentId, runId } = await params;
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/agents/${agentId}/runs/${runId}`));
   }
@@ -45,12 +47,7 @@ export default async function AgentRunDetailPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <RunLive
-        agentId={agentId}
-        runId={runId}
-        agentName={agent.name}
-        initialData={data}
-      />
+      <RunLive agentId={agentId} runId={runId} agentName={agent.name} initialData={data} />
     </div>
   );
 }

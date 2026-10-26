@@ -23,6 +23,7 @@ import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
 import LocalTime from '@/components/local-time';
 import { ChangeStatePill, ValidationPill, validationState } from '../change-status';
 import ChangeActions, { RefreshWhileRunning } from './change-actions';
+import { noteLogUser } from '@/lib/log-context';
 
 /** A component's Metadata API type, as the review page names it. */
 const TYPE_LABELS: Record<string, string> = {
@@ -86,6 +87,7 @@ export default async function SalesforceAdminChangePage({
   const { changeId } = await params;
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/salesforce-admin/changes/${changeId}`));
   }

@@ -6,6 +6,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
 import ActionsPage from '../../_components/actions-page';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * A GitHub code project's recent Actions runs, on a page of its own —
@@ -19,16 +20,12 @@ export default async function CodeProjectActionsPage({
 }) {
   const { projectId } = await params;
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/code/${projectId}/actions`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveResourceAccess(db, session.subject, 'chat_project', projectId);
   if (!access) notFound();
   const project = await getProjectRow(db, projectId);
   if (!project || project.kind !== 'code' || !project.repo) notFound();

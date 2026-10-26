@@ -12,6 +12,7 @@ import {
 } from '@/lib/agents/agent-usage';
 import { RetentionForm } from './retention-form';
 import OversightCards, { type RunBuckets } from './oversight-cards';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Agent oversight: every agent in the org, owner-attributed, with run,
@@ -92,7 +93,9 @@ const BUCKET_COLUMNS = sql`
 `;
 
 export default async function AdminAgentsPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

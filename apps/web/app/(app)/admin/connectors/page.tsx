@@ -5,6 +5,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { CONNECTOR_DEFINITIONS } from '@/lib/connectors/definitions';
 import ConnectorList, { type ConnectorRow } from './connector-list';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Org-admin provisioning of connectors (RENKEI.md Decision #13), as a
@@ -17,7 +18,9 @@ import ConnectorList, { type ConnectorRow } from './connector-list';
  * is enabled, the org switched its tools off. Secrets never reach this page.
  */
 export default async function AdminConnectorsPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 
@@ -27,10 +30,7 @@ export default async function AdminConnectorsPage(): Promise<React.ReactNode> {
 
   const dbResult = getDatabase();
   const configs = dbResult.ok
-    ? await dbResult.val
-        .selectFrom('connector_configs')
-        .select(['connector', 'enabled'])
-        .execute()
+    ? await dbResult.val.selectFrom('connector_configs').select(['connector', 'enabled']).execute()
     : [];
   const configByKey = new Map(configs.map((row) => [row.connector, row.enabled]));
 

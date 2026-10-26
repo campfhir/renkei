@@ -6,6 +6,7 @@ import { getDatabase } from '@renkei/db';
 import { readAtlassianMetadata } from '@renkei/provider-grants';
 import CoachTarget from '@/components/coach-marks/anchor';
 import ExternalLink from '@/components/external-link';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Every external place this org's Renkei reaches, in two kinds:
@@ -36,7 +37,9 @@ const WATCH_KIND: Record<string, string> = {
 };
 
 export default async function SitesPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 
@@ -102,10 +105,7 @@ export default async function SitesPage(): Promise<React.ReactNode> {
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         The external places this organization reaches — derived from connected accounts and content
         watches. Access is per-person: manage it on{' '}
-        <Link
-          href={`/admin/access`}
-          className="text-blue-600 hover:underline dark:text-blue-400"
-        >
+        <Link href={`/admin/access`} className="text-blue-600 hover:underline dark:text-blue-400">
           Access
         </Link>
         .

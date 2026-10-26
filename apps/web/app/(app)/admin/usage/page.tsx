@@ -4,6 +4,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrgUsageReport } from './actions';
 import { DEFAULT_PERIOD_KEY } from './window';
 import OrgUsageViewer from './usage-viewer';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Organization Usage: the operator's tenant-wide counterpart to "My
@@ -13,11 +14,15 @@ import OrgUsageViewer from './usage-viewer';
  * Operator-only, checked here and again inside every server action the
  * viewer calls.
  */
-export default async function OrgUsagePage({ searchParams }: {
+export default async function OrgUsagePage({
+  searchParams,
+}: {
   searchParams: Promise<{ user?: string | string[]; period?: string | string[] }>;
 }) {
   const query = await searchParams;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import ChatFrame from './_components/chat-frame';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * The chat pages' frame: the page fills the main column edge to edge, its
@@ -12,10 +13,9 @@ import ChatFrame from './_components/chat-frame';
  * session for itself, since a layout check does not re-run on partial
  * navigations.
  */
-export default async function ChatLayout({ children }: {
-  children: ReactNode;
-}) {
+export default async function ChatLayout({ children }: { children: ReactNode }) {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/chat`));
   return (
     <ChatFrame>

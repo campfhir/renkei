@@ -2,6 +2,7 @@ import React from 'react';
 import { redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import InstanceList from './instance-list';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Mirth Connect instances — the registry. Each row is one Mirth server
@@ -11,7 +12,9 @@ import InstanceList from './instance-list';
  * page, and the Mirth server's roles judge each account.
  */
 export default async function AdminMirthPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

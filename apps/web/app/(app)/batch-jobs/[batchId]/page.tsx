@@ -11,6 +11,7 @@ import LocalTime from '@/components/local-time';
 import AutoRefresh from '@/components/auto-refresh';
 
 import { afterProcessingValueOf, skipProcessedOf } from '@/lib/batch-jobs/pipeline-form-value';
+import { noteLogUser } from '@/lib/log-context';
 
 const ITEM_STATUS_TABS = ['pending', 'processing', 'succeeded', 'failed', 'skipped'] as const;
 
@@ -44,6 +45,7 @@ export default async function BatchJobDetailPage({
   const { status } = await searchParams;
 
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) {
     redirect(signInUrl(`/batch-jobs/${batchId}`));
   }
@@ -59,9 +61,7 @@ export default async function BatchJobDetailPage({
   const items = await listItems(dbResult.val, batch.id, { limit: 200, status: filter });
 
   const tabHref = (tabStatus?: string) =>
-    tabStatus
-      ? `/batch-jobs/${batchId}?status=${tabStatus}`
-      : `/batch-jobs/${batchId}`;
+    tabStatus ? `/batch-jobs/${batchId}?status=${tabStatus}` : `/batch-jobs/${batchId}`;
 
   return (
     <div className="mx-auto max-w-3xl">

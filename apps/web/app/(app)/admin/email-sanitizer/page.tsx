@@ -6,6 +6,7 @@ import { chatModelsOnly } from '@renkei/agent-llm';
 import RuleForms from './rule-forms';
 import SuggestRulesPanel from './suggest-rules-panel';
 import CleanerScripts from './cleaner-scripts';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * Org-admin configuration for the email sanitizer (see
@@ -17,7 +18,9 @@ import CleanerScripts from './cleaner-scripts';
  * feature's design, not an oversight.
  */
 export default async function AdminEmailSanitizerPage(): Promise<React.ReactNode> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const viewerSession = await checkAccess([ROLE_OPERATOR]);
+  if (viewerSession) noteLogUser(viewerSession.subject);
+  if (!viewerSession) {
     redirect(`/admin`);
   }
 

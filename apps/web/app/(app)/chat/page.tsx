@@ -3,6 +3,7 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listOwnedChats } from '@/lib/chat/store';
+import { noteLogUser } from '@/lib/log-context';
 
 /**
  * "Chat" in the menu: the person's most recent chat, picked up where it
@@ -11,6 +12,7 @@ import { listOwnedChats } from '@/lib/chat/store';
  */
 export default async function ChatIndexPage() {
   const session = await getSessionFromCookies();
+  if (session) noteLogUser(session.subject);
   if (!session) redirect(signInUrl(`/chat`));
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
