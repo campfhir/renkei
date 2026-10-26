@@ -30,6 +30,7 @@ import {
 } from 'node:crypto';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { log } from '@renkei/logging';
 
 const ALGORITHM = 'aes-256-gcm';
 const VERSION_V1 = 'v1';
@@ -200,6 +201,10 @@ function open(
   } catch (cause) {
     // Wrong key or tampered payload both land here. Deliberately opaque: the
     // caller has no legitimate use for knowing which.
+    log.warn('Token decryption failed: {message}', {
+      component: 'crypto/secretbox',
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
     return err('DECRYPTION_ERROR' as const, {
       message: 'token decryption failed (wrong key or tampered payload)',
       cause,

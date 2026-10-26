@@ -24,6 +24,7 @@ import { AnthropicProvider } from './anthropic';
 import { OpenAiProvider } from './openai';
 import { OpenAiResponsesProvider } from './openai-responses';
 import { dataHandlingOf, type LlmDataHandling } from './data-handling';
+import { log } from '@renkei/logging';
 
 export interface ResolvedLlm {
   provider: LlmProvider;
@@ -170,7 +171,12 @@ function apiKeyOf(row: ModelRow): Result<string, ResolveLlmError> {
   try {
     const secrets: { apiKey?: unknown } = JSON.parse(secretsResult.val);
     if (typeof secrets.apiKey === 'string') apiKey = secrets.apiKey;
-  } catch {
+  } catch (error) {
+    log.warn('The stored secrets for model {modelId} are malformed: {message}', {
+      component: 'agent-llm/resolve',
+      modelId: row.id,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('CONFIG_ERROR' as const, { message: 'The stored secrets are malformed.' });
   }
   if (!apiKey) return err('CONFIG_ERROR' as const, { message: 'The model has no API key stored.' });

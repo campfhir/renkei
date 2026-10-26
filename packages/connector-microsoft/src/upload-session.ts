@@ -21,6 +21,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest, type GraphRequestOptions } from './client';
+import { log } from '@renkei/logging';
 
 /** 16 × 320KiB — Graph requires non-final chunks be 320KiB multiples. */
 export const UPLOAD_SESSION_CHUNK_BYTES = 16 * 320 * 1024;
@@ -76,6 +77,11 @@ export async function graphUploadViaSession(
       // Best-effort cancel so Graph does not hold a dangling session.
       await fetch(uploadUrl, { method: 'DELETE' }).catch(() => undefined);
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      log.warn('Upload session chunk did not upload: {message}', {
+        component: 'connector-microsoft/upload-session',
+        timedOut,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('GRAPH_API_ERROR' as const, {
         message: timedOut
           ? `upload session chunk timed out after ${CHUNK_TIMEOUT_MS}ms`

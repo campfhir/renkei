@@ -25,6 +25,7 @@
 
 import { createCipheriv, createDecipheriv, randomBytes, randomInt, scryptSync } from 'node:crypto';
 import { isBlockedIP } from './egress-guard';
+import { log } from '@renkei/logging';
 
 export const SECRET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const SECRET_FIELD_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -156,7 +157,12 @@ export function openSecretFieldsWithKey(
     const parsed: unknown = JSON.parse(plaintext);
     const fields = validateSecretFields(parsed);
     return fields.ok ? fields.fields : null;
-  } catch {
+  } catch (error) {
+    // The error text is not logged: a JSON parse error can quote the plaintext.
+    log.warn('Sealed secret did not open (wrong key or damaged data): {errorName}', {
+      component: 'connectors/sandbox',
+      errorName: error instanceof Error ? error.name : 'unknown',
+    });
     return null;
   }
 }

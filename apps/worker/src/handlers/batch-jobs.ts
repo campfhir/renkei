@@ -193,7 +193,13 @@ export function createBatchItemHandler(): EventHandler {
     try {
       outcome = await kind.runItem(db, batch, claimed);
     } catch (error) {
-      outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn('Batch item of kind {kind} failed: {message}', {
+        component: COMPONENT,
+        kind: batch.kind,
+        message,
+      });
+      outcome = { ok: false, error: message };
     }
     // Whichever item lands last finalizes the batch and announces it —
     // `finalize` is outside the try so an announcement problem is never

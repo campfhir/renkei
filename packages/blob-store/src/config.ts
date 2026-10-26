@@ -18,6 +18,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { log } from '@renkei/logging';
 
 export interface AzureBlobConfig {
   provider: 'azure';
@@ -85,7 +86,11 @@ export function blobStoreConfig(
   while (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1);
   try {
     new URL(endpoint);
-  } catch {
+  } catch (error) {
+    log.warn('AZURE_BLOB_ENDPOINT is not a URL: {message}', {
+      component: 'blob-store/config',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('BLOB_UNCONFIGURED' as const, { message: 'AZURE_BLOB_ENDPOINT is not a URL.' });
   }
   return ok({ provider: 'azure', account, key, container, endpoint });

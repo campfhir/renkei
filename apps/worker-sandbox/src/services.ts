@@ -55,6 +55,7 @@ import {
 import { DockerError, type DockerEngine, type RegistryAuth } from './docker';
 import * as store from './service-store';
 import * as rules from './image-rules-store';
+import { log } from '@renkei/logging';
 import { logger } from './logger';
 
 export const SERVICE_LABEL = 'renkei.sandbox.service';
@@ -131,9 +132,7 @@ export class ServiceManager {
   }
 
   /** Which rule admits an image, and the credential its host pulls with — or the refusal. */
-  private async admit(
-    image: ImageReference
-  ): Promise<{ auth: RegistryAuth | null }> {
+  private async admit(image: ImageReference): Promise<{ auth: RegistryAuth | null }> {
     const all = await rules.listImageRulesForMatching(this.db);
     const winner = matchImageRule(all, image);
     if (!winner) {
@@ -400,6 +399,11 @@ export class ServiceManager {
       };
     } catch (error) {
       if (error instanceof DockerError && error.status === 404) return { service, entries: [] };
+      log.warn('Could not read the logs of service {service}: {reason}', {
+        component: 'worker-sandbox/services',
+        service: service.name,
+        reason: engineMessage(error),
+      });
       throw new ServiceOpError('engine', `The logs could not be read: ${engineMessage(error)}`);
     }
   }
@@ -431,7 +435,14 @@ export class ServiceManager {
           filterLogEntries(parseStampedLogs(service.name, text), input.match ?? null)
         );
       } catch (error) {
-        if (!(error instanceof DockerError && error.status === 404)) unreadable.push(service.name);
+        if (!(error instanceof DockerError && error.status === 404)) {
+          log.warn('Could not read the logs of service {service}: {reason}', {
+            component: 'worker-sandbox/services',
+            service: service.name,
+            reason: engineMessage(error),
+          });
+          unreadable.push(service.name);
+        }
       }
     }
     return { ...mergeLogEntries(perService), unreadable };
@@ -444,6 +455,11 @@ export class ServiceManager {
         await this.engine.stopContainer(service.containerId, STOP_GRACE_SECONDS);
         await this.engine.removeContainer(service.containerId);
       } catch (error) {
+        log.warn('Could not remove container {container}: {reason}', {
+          component: 'worker-sandbox/services',
+          container: service.containerId,
+          reason: engineMessage(error),
+        });
         throw new ServiceOpError(
           'engine',
           `The container could not be removed: ${engineMessage(error)}`

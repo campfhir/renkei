@@ -19,6 +19,7 @@
 
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
+import { log } from '@renkei/logging';
 
 export const ATLASSIAN_GATEWAY = 'https://api.atlassian.com/ex';
 /**
@@ -85,6 +86,12 @@ export async function atlassianFetch(call: AtlassianCall): Promise<AtlassianResp
     });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'TimeoutError';
+    log.warn('Atlassian {product} request failed: {message}', {
+      component: 'connector-atlassian/client',
+      product: call.product,
+      timedOut,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return {
       ok: false,
       status: 0,
@@ -107,7 +114,13 @@ export async function atlassianFetch(call: AtlassianCall): Promise<AtlassianResp
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
-  } catch {
+  } catch (error) {
+    log.warn('Atlassian {product} answered with malformed JSON: {message}', {
+      component: 'connector-atlassian/client',
+      product: call.product,
+      status: response.status,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return { ok: false, status: response.status, error: 'malformed JSON response' };
   }
   return {

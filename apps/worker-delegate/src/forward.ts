@@ -41,6 +41,7 @@ import {
 import { openForSubject } from '@renkei/user-keys';
 import { isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
 import type { Grants } from './grants';
+import { logger } from './logger';
 
 const MAX_JSON_BYTES = 16 * 1_048_576;
 /** A file written to a share; the worker applies the org's own transfer cap after this one. */
@@ -291,7 +292,15 @@ export class Forwarder {
     }
     try {
       return { ok: true, value: JSON.parse(opened.val) };
-    } catch {
+    } catch (error) {
+      logger.warn(
+        'Stored credentials for {subject} are not valid JSON after decryption: {message}',
+        {
+          component: 'worker-delegate/forward',
+          subject,
+          message: error instanceof Error ? error.message : String(error),
+        }
+      );
       return { ok: false, status: 503, type: 'bad_credentials' };
     }
   }

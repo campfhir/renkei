@@ -16,6 +16,7 @@ import type { DB, Json } from '@renkei/db';
 import { decrypt, encrypt } from '@renkei/crypto';
 import type { CrawlRecipe } from '@renkei/connector-sandbox';
 import type { CrawledTable } from './crawl-page-script';
+import { log } from '@renkei/logging';
 
 export interface CrawlTarget {
   subject: string;
@@ -145,6 +146,10 @@ export function openPageContent(sealed: string, key: Buffer): PageContent | null
     const parsed: unknown = JSON.parse(opened.val);
     return isPageContent(parsed) ? parsed : null;
   } catch {
+    // Not logged with the parser's message: it can quote the decrypted page.
+    log.warn('A stored crawl page is not valid JSON once opened', {
+      component: 'worker-sandbox/crawl-store',
+    });
     return null;
   }
 }

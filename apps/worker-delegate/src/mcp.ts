@@ -39,6 +39,7 @@ import {
 } from '@renkei/connector-mcp';
 import { assertPublicHttpsUrl } from '@renkei/connector-sandbox';
 import { isRecord, sendJson, str } from '@renkei/worker-kit';
+import { logger } from './logger';
 
 const TIMEOUT_MS = 15_000;
 
@@ -131,7 +132,12 @@ export class McpPreparer {
       if (!answer.ok) return null;
       const parsed: unknown = await answer.json();
       return parsed;
-    } catch {
+    } catch (error) {
+      logger.warn('MCP discovery document {url} could not be fetched: {message}', {
+        component: 'worker-delegate/mcp',
+        url,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -167,10 +173,13 @@ export class McpPreparer {
     try {
       answer = await request;
     } catch (error) {
-      throw new PrepareFailure(
-        'DISCOVERY_FAILED',
-        `Could not reach the MCP server: ${error instanceof Error ? error.message : String(error)}`
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn('MCP server {slug} could not be reached: {message}', {
+        component: 'worker-delegate/mcp',
+        slug: server.slug,
+        message,
+      });
+      throw new PrepareFailure('DISCOVERY_FAILED', `Could not reach the MCP server: ${message}`);
     }
     const challenge = answer.headers.get('www-authenticate');
     await answer.body?.cancel().catch(() => undefined);
@@ -227,10 +236,13 @@ export class McpPreparer {
     try {
       await this.assertPublic(url);
     } catch (error) {
-      throw new PrepareFailure(
-        'DISCOVERY_FAILED',
-        `Refusing ${url}: ${error instanceof Error ? error.message : 'not a public https address'}`
-      );
+      const message = error instanceof Error ? error.message : 'not a public https address';
+      logger.warn('MCP discovery refused endpoint {url}: {message}', {
+        component: 'worker-delegate/mcp',
+        url,
+        message,
+      });
+      throw new PrepareFailure('DISCOVERY_FAILED', `Refusing ${url}: ${message}`);
     }
   }
 
@@ -261,10 +273,13 @@ export class McpPreparer {
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
     } catch (error) {
-      throw new PrepareFailure(
-        'REGISTRATION_FAILED',
-        error instanceof Error ? error.message : 'registration failed'
-      );
+      const message = error instanceof Error ? error.message : 'registration failed';
+      logger.warn('MCP client registration for {slug} failed: {message}', {
+        component: 'worker-delegate/mcp',
+        slug: server.slug,
+        message,
+      });
+      throw new PrepareFailure('REGISTRATION_FAILED', message);
     }
     const json: unknown = await answer.json().catch(() => null);
     if (!answer.ok || !isRecord(json) || typeof json.client_id !== 'string') {

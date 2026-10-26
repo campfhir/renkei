@@ -57,6 +57,7 @@ import {
   type SalesforceOrg,
 } from '@renkei/connector-salesforce';
 import { onbaseWorkerRefresh } from './onbase-worker';
+import { logger } from './logger';
 
 export interface ProviderSpec {
   /** The connector_configs row the app registration lives in. */
@@ -368,7 +369,12 @@ function standInOrigin(provider: string): string | null {
   if (!value) return null;
   try {
     return new URL(value).origin;
-  } catch {
+  } catch (error) {
+    logger.warn('Stand-in origin in {envName} is not a URL; ignoring it: {message}', {
+      component: 'worker-delegate/providers',
+      envName: name,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }

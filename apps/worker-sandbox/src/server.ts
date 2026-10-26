@@ -81,6 +81,7 @@ import type { ScriptRunner } from './scripts';
 import { orgSandboxFeatures, type OrgFeaturesLookup, type SandboxCapabilities } from './features';
 import type { NetworkIsolation } from './workspaces';
 import type { LspSessions } from './lsp-sessions';
+import { log } from '@renkei/logging';
 import { logger } from './logger';
 
 /**
@@ -585,11 +586,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       sendError(response, 413, 'quota_exceeded', 'The scratch space quota is full.');
       return null;
     }
-    const cap = Math.min(
-      await maxFileBytes(),
-      DEFAULT_MAX_FILE_BYTES,
-      headroom.remaining
-    );
+    const cap = Math.min(await maxFileBytes(), DEFAULT_MAX_FILE_BYTES, headroom.remaining);
     const produced = await produce();
     if (produced.bytes.byteLength > cap) {
       sendError(response, 413, 'too_large', `The file exceeds the ${cap}-byte limit.`);
@@ -825,6 +822,14 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       }
     } catch (error) {
       if (error instanceof ChartRenderError) {
+        // Timeouts and an unavailable renderer are failures the render path does not log itself.
+        if (error.type === 'timeout' || error.type === 'charts_unavailable') {
+          log.warn('A chart could not be rendered: {reason}', {
+            component: 'worker-sandbox/server',
+            type: error.type,
+            reason: error.message,
+          });
+        }
         return sendError(response, CHART_ERROR_STATUS[error.type], error.type, error.message);
       }
       throw error;

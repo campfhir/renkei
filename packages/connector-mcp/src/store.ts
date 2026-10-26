@@ -23,6 +23,7 @@ import {
   type McpOAuthMetadata,
   type McpTransport,
 } from './pure';
+import { log } from '@renkei/logging';
 
 export type StoreError = 'DB_ERROR' | 'SLUG_TAKEN' | 'NOT_FOUND';
 
@@ -200,7 +201,15 @@ export async function createServer(
       .executeTakeFirstOrThrow();
     return ok(fromRow(row));
   } catch (error) {
-    return err(isUniqueViolation(error) ? ('SLUG_TAKEN' as const) : ('DB_ERROR' as const));
+    const slugTaken = isUniqueViolation(error);
+    if (!slugTaken) {
+      log.warn('Could not save MCP server {slug}: {message}', {
+        component: 'connector-mcp/store',
+        slug: input.slug,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return err(slugTaken ? ('SLUG_TAKEN' as const) : ('DB_ERROR' as const));
   }
 }
 

@@ -10,6 +10,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { openForSubject, sealForSubject, type SealError } from '@renkei/user-keys';
+import { log } from '@renkei/logging';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import {
@@ -44,7 +45,12 @@ export async function openCredentialsForSubject(
   let parsed: unknown;
   try {
     parsed = JSON.parse(opened.val);
-  } catch {
+  } catch (error) {
+    log.warn('Stored ADManager credentials are not valid JSON after decryption: {message}', {
+      component: 'connector-admanager/credentials',
+      subject,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('MALFORMED_CREDENTIALS' as const);
   }
   const credentials = parseAdManagerCredentials(parsed);

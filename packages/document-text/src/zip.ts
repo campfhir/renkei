@@ -22,6 +22,7 @@
 import { inflateRawSync } from 'node:zlib';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { log } from '@renkei/logging';
 
 export type ZipErrorTag = 'CORRUPT' | 'ENCRYPTED' | 'UNSUPPORTED_COMPRESSION' | 'ZIP_BOMB';
 
@@ -216,7 +217,11 @@ export function readZipFiles(
     let inflated: Buffer;
     try {
       inflated = inflateRawSync(raw, { maxOutputLength: bounds.maxEntryBytes });
-    } catch {
+    } catch (error) {
+      log.warn('A zip entry could not be inflated: {message}', {
+        component: 'document-text/zip',
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('CORRUPT' as const, { message: `entry ${entry.name} failed to inflate` });
     }
     // Declared sizes are attacker-controlled, so the limit checks above were

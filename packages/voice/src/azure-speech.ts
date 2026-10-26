@@ -41,6 +41,7 @@ import {
   type VoiceOutcome,
   type VoiceProvider,
 } from './provider';
+import { log } from '@renkei/logging';
 
 /** MP3 at 24 kHz: every browser plays it, and a sentence is a few KB. */
 
@@ -327,6 +328,10 @@ export class AzureSpeechProvider implements VoiceProvider {
       voices.sort((a, b) => a.locale.localeCompare(b.locale) || a.name.localeCompare(b.name));
       return { ok: true, val: voices };
     } catch (error) {
+      log.warn('Listing voices failed: {message}', {
+        component: 'voice/azure-speech',
+        message: error instanceof Error ? error.message : String(error),
+      });
       return { ok: false, error: fetchFailure(error) };
     } finally {
       timeout.clear();
@@ -367,6 +372,10 @@ export class AzureSpeechProvider implements VoiceProvider {
       };
     } catch (error) {
       timeout.clear();
+      log.warn('Speech synthesis failed: {message}', {
+        component: 'voice/azure-speech',
+        message: error instanceof Error ? error.message : String(error),
+      });
       return { ok: false, error: fetchFailure(error) };
     }
   }
@@ -421,6 +430,10 @@ export class AzureSpeechProvider implements VoiceProvider {
       const text = typeof parsed.DisplayText === 'string' ? parsed.DisplayText.trim() : '';
       return { ok: true, val: { text, locale: request.locale } };
     } catch (error) {
+      log.warn('Transcription request failed: {message}', {
+        component: 'voice/azure-speech',
+        message: error instanceof Error ? error.message : String(error),
+      });
       return { ok: false, error: fetchFailure(error) };
     } finally {
       timeout.clear();
@@ -455,6 +468,10 @@ export class AzureSpeechProvider implements VoiceProvider {
       }
       return { ok: true, val: result };
     } catch (error) {
+      log.warn('Language detection request failed: {message}', {
+        component: 'voice/azure-speech',
+        message: error instanceof Error ? error.message : String(error),
+      });
       return { ok: false, error: fetchFailure(error) };
     } finally {
       timeout.clear();

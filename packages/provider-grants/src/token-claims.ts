@@ -1,3 +1,5 @@
+import { log } from '@renkei/logging';
+
 /**
  * What an access token ACTUALLY carries, decoded from its own claims — the
  * source of truth for granted_scopes. A provider's token response and our
@@ -19,7 +21,11 @@ export function scopesFromAccessToken(accessToken: string): string[] | null {
       string,
       unknown
     >;
-  } catch {
+  } catch (error) {
+    log.warn('Access token payload could not be decoded; granted scopes unknown: {message}', {
+      component: 'provider-grants/token-claims',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 

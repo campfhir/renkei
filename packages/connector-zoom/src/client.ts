@@ -14,6 +14,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
+import { log } from '@renkei/logging';
 
 const API_BASE = 'https://api.zoom.us/v2';
 /**
@@ -95,6 +96,12 @@ export class ZoomClient {
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      log.warn('Zoom request {path} failed: {message}', {
+        component: 'connector-zoom/client',
+        path,
+        timedOut,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('ZOOM_API_ERROR' as const, {
         message: timedOut
           ? `Zoom API timed out after ${REQUEST_TIMEOUT_MS}ms for ${path}`
@@ -168,6 +175,11 @@ export class ZoomClient {
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      log.warn('Zoom download failed: {message}', {
+        component: 'connector-zoom/client',
+        timedOut,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('ZOOM_API_ERROR' as const, {
         message: timedOut
           ? `Zoom download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`

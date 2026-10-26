@@ -7,6 +7,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { log } from '@renkei/logging';
 import type { OnBaseIdpEndpoints } from './types';
 
 export type DiscoveryError = 'INVALID_ISSUER' | 'MALFORMED_DISCOVERY';
@@ -67,7 +68,12 @@ function urlField(record: Record<string, unknown>, key: string): string | null {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
-  } catch {
+  } catch (error) {
+    log.warn('OIDC discovery field {key} is not a URL: {message}', {
+      component: 'connector-onbase/discovery',
+      key,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
   return value;

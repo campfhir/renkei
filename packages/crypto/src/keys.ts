@@ -49,6 +49,7 @@ import {
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { encrypt, decrypt, parseEncryptionKey } from './secretbox';
+import { log } from '@renkei/logging';
 
 export const DATA_KEY_BYTES = 32;
 export const USER_KEY_SALT_BYTES = 32;
@@ -327,6 +328,11 @@ export function openBytesWithResourceKey(
     decipher.setAuthTag(parsed.tag);
     return ok(Buffer.concat([decipher.update(parsed.ciphertext), decipher.final()]));
   } catch (cause) {
+    log.warn('Resource bytes sealed under {keyId} could not be opened: {message}', {
+      component: 'crypto/keys',
+      keyId,
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
     return err('DECRYPTION_ERROR' as const, {
       message: 'bytes could not be opened (wrong key or tampered content)',
       cause,

@@ -80,6 +80,7 @@ import { callInPage } from './crawl-page-script';
 import type { CrawlContext, CrawlPage } from './crawler';
 import type { BrowserSnapshotNode } from '@renkei/connector-sandbox';
 import { startEgressProxy, type EgressProxy } from './browser-proxy';
+import { log } from '@renkei/logging';
 import { logger } from './logger';
 import type { BrowserStateStore, SavedBrowserState } from './browser-state';
 
@@ -689,7 +690,12 @@ export class BrowserSessions {
       await this.settle(page);
       try {
         walked = await page.evaluate<PageWalkResult>(pageScriptSource(BROWSER_SNAPSHOT_MAX_NODES));
-      } catch {
+      } catch (retryError) {
+        log.warn('Could not read the page after a retry: {reason}', {
+          component: 'worker-sandbox/browser',
+          reason: firstLine(firstError),
+          retryReason: firstLine(retryError),
+        });
         throw new BrowserOpError(
           'action_failed',
           `Could not read the page: ${firstLine(firstError)}`
@@ -773,7 +779,11 @@ export class BrowserSessions {
       walked = await page.evaluate<PageWalkResult>(
         pageScriptSource(BROWSER_SNAPSHOT_MAX_NODES, PROBE_ATTRIBUTE)
       );
-    } catch {
+    } catch (error) {
+      log.warn('Could not re-walk the page to find a moved ref: {reason}', {
+        component: 'worker-sandbox/browser',
+        reason: firstLine(error),
+      });
       return null;
     }
     const matches = walked.nodes.filter((node) => node.ref && signatureOf(node) === remembered.sig);
@@ -790,7 +800,11 @@ export class BrowserSessions {
         },
         { probe: PROBE_ATTRIBUTE, ref: REF_ATTRIBUTE, value: ref }
       );
-    } catch {
+    } catch (error) {
+      log.warn('Could not mark a moved ref on the page: {reason}', {
+        component: 'worker-sandbox/browser',
+        reason: firstLine(error),
+      });
       return null;
     }
     const locator = this.locatorFor(page, ref);
@@ -814,6 +828,11 @@ export class BrowserSessions {
         try {
           await page.goto(url.toString(), { waitUntil: 'domcontentloaded' });
         } catch (error) {
+          log.warn('Could not open {host}: {reason}', {
+            component: 'worker-sandbox/browser',
+            host: url.hostname,
+            reason: firstLine(error),
+          });
           throw new BrowserOpError(
             'navigation_failed',
             `Could not open ${url.hostname}: ${firstLine(error)}`
@@ -837,6 +856,10 @@ export class BrowserSessions {
           try {
             await page.goto(newTabHref, { waitUntil: 'domcontentloaded' });
           } catch (error) {
+            log.warn('Could not follow a link into this tab: {reason}', {
+              component: 'worker-sandbox/browser',
+              reason: firstLine(error),
+            });
             throw new BrowserOpError(
               'navigation_failed',
               `Could not open the link: ${firstLine(error)}`
@@ -848,6 +871,10 @@ export class BrowserSessions {
         try {
           await locator.click();
         } catch (error) {
+          log.warn('A click failed: {reason}', {
+            component: 'worker-sandbox/browser',
+            reason: firstLine(error),
+          });
           throw new BrowserOpError('action_failed', `Click failed: ${firstLine(error)}`);
         }
         return { moves: true, popup };
@@ -870,10 +897,12 @@ export class BrowserSessions {
           }
           if (step.submit) await locator.press('Enter');
         } catch (error) {
-          throw new BrowserOpError(
-            'action_failed',
-            `Typing failed: ${scrubSecretValues(firstLine(error), session.secretValues)}`
-          );
+          const reason = scrubSecretValues(firstLine(error), session.secretValues);
+          log.warn('Typing into a field failed: {reason}', {
+            component: 'worker-sandbox/browser',
+            reason,
+          });
+          throw new BrowserOpError('action_failed', `Typing failed: ${reason}`);
         }
         return { moves: step.submit === true, popup };
       }
@@ -882,6 +911,10 @@ export class BrowserSessions {
         try {
           await locator.selectOption(step.values);
         } catch (error) {
+          log.warn('A select failed: {reason}', {
+            component: 'worker-sandbox/browser',
+            reason: firstLine(error),
+          });
           throw new BrowserOpError('action_failed', `Select failed: ${firstLine(error)}`);
         }
         return { moves: false };
@@ -891,6 +924,10 @@ export class BrowserSessions {
         try {
           await page.keyboard.press(step.key);
         } catch (error) {
+          log.warn('A key press failed: {reason}', {
+            component: 'worker-sandbox/browser',
+            reason: firstLine(error),
+          });
           throw new BrowserOpError('action_failed', `Key press failed: ${firstLine(error)}`);
         }
         return { moves: true, popup };
@@ -909,6 +946,10 @@ export class BrowserSessions {
           await page.waitForTimeout(SCROLL_SETTLE_MS);
         } catch (error) {
           if (error instanceof BrowserOpError) throw error;
+          log.warn('A scroll failed: {reason}', {
+            component: 'worker-sandbox/browser',
+            reason: firstLine(error),
+          });
           throw new BrowserOpError('action_failed', `Scroll failed: ${firstLine(error)}`);
         }
         return { moves: false };
@@ -922,6 +963,10 @@ export class BrowserSessions {
               .first()
               .waitFor({ state: 'visible', timeout: BROWSER_WAIT_MAX_MS });
           } catch {
+            log.warn('Page text did not appear within the wait limit', {
+              component: 'worker-sandbox/browser',
+              timedOut: true,
+            });
             throw new BrowserOpError(
               'action_failed',
               `"${step.text}" did not appear on the page within ${BROWSER_WAIT_MAX_MS / 1000}s.`
@@ -934,6 +979,10 @@ export class BrowserSessions {
         try {
           await page.goBack({ waitUntil: 'domcontentloaded' });
         } catch (error) {
+          log.warn('Could not go back: {reason}', {
+            component: 'worker-sandbox/browser',
+            reason: firstLine(error),
+          });
           throw new BrowserOpError('navigation_failed', `Could not go back: ${firstLine(error)}`);
         }
         return { moves: true };
@@ -1086,6 +1135,10 @@ export class BrowserSessions {
         // The page after a failed navigation may be unreadable; the failure
         // already says why, so the run answers without a snapshot rather
         // than hiding how far it got.
+        log.warn('Could not snapshot the page at the end of a run: {reason}', {
+          component: 'worker-sandbox/browser',
+          reason: firstLine(error),
+        });
         if (!failed) throw error;
       }
       return { completed, page, failed };
@@ -1102,6 +1155,10 @@ export class BrowserSessions {
       try {
         bytes = await page.screenshot({ type: 'png', fullPage });
       } catch (error) {
+        log.warn('Taking a screenshot failed: {reason}', {
+          component: 'worker-sandbox/browser',
+          reason: firstLine(error),
+        });
         throw new BrowserOpError('action_failed', `Screenshot failed: ${firstLine(error)}`);
       }
       return { bytes, url: page.url(), title: await page.title().catch(() => '') };

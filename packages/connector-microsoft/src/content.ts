@@ -30,6 +30,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 import { graphRequest, GRAPH_BASE_URL } from './client';
+import { log } from '@renkei/logging';
 
 /**
  * Deliberately separate from client.ts's 15s JSON budget: a 25MB file over a
@@ -99,7 +100,11 @@ async function readCapped(
       }
       chunks.push(value);
     }
-  } catch {
+  } catch (error) {
+    log.warn('Download body was interrupted: {message}', {
+      component: 'connector-microsoft/content',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('GRAPH_API_ERROR' as const, { message: 'download interrupted' });
   }
 
@@ -127,6 +132,11 @@ async function fetchUnauthenticated(
     response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'TimeoutError';
+    log.warn('Download did not complete: {message}', {
+      component: 'connector-microsoft/content',
+      timedOut,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('GRAPH_API_ERROR' as const, {
       message: timedOut ? `download timed out after ${timeoutMs}ms` : 'download unreachable',
     });
@@ -199,7 +209,11 @@ export async function graphDownload(
       redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
     });
-  } catch {
+  } catch (error) {
+    log.warn('Content request failed: {message}', {
+      component: 'connector-microsoft/content',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('GRAPH_API_ERROR' as const, { message: 'content request failed' });
   }
 

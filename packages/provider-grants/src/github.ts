@@ -20,6 +20,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { log } from '@renkei/logging';
 
 export const GITHUB = 'github';
 
@@ -60,6 +61,12 @@ export class GitHubAdapter implements ProviderAdapter {
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      log.warn('Token refresh for {provider} did not reach the token endpoint: {message}', {
+        component: 'provider-grants/github',
+        provider: this.provider,
+        timedOut,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('REFRESH_FAILED' as const, {
         message: timedOut
           ? 'github.com token endpoint timed out after 15000ms'

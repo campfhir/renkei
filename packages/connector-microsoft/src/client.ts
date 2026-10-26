@@ -14,6 +14,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import type { RequestLane } from '@renkei/rate-limit';
 import { GRAPH_BASE_URL, REQUEST_TIMEOUT_MS, GateTimeoutError, graphFetch } from './fetch';
+import { log } from '@renkei/logging';
 
 export { GRAPH_BASE_URL } from './fetch';
 
@@ -55,6 +56,12 @@ export async function graphRequest(
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'TimeoutError';
     const busy = error instanceof GateTimeoutError;
+    log.warn('Graph request did not complete: {message}', {
+      component: 'connector-microsoft/client',
+      timedOut,
+      busy,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('GRAPH_API_ERROR' as const, {
       message: timedOut
         ? `Graph API timed out after ${init?.timeoutMs ?? REQUEST_TIMEOUT_MS}ms for ${url}`

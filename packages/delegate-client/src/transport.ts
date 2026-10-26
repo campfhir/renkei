@@ -17,6 +17,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Err, Result } from '@campfhir/safe-functions/types';
+import { log } from '@renkei/logging';
 
 export interface DelegateConfig {
   url: string;
@@ -218,6 +219,12 @@ export class DelegateTransport {
         });
         break;
       } catch (cause) {
+        log.warn('Delegate request {op} failed on attempt {attempt}: {message}', {
+          component: 'delegate-client/transport',
+          op,
+          attempt: attempt + 1,
+          message: cause instanceof Error ? cause.message : String(cause),
+        });
         const delay = RETRY_DELAYS_MS[attempt];
         if (options.retry === true && delay !== undefined && isConnectionFailure(cause)) {
           await retryDelay(delay);

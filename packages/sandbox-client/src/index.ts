@@ -23,6 +23,7 @@
  */
 
 import { getOrgSettings } from '@renkei/settings';
+import { log } from '@renkei/logging';
 
 export interface WireSandboxFile {
   id: string;
@@ -118,7 +119,11 @@ export async function sbCapabilities(): Promise<SandboxCapabilities | null> {
     const response = await fetch(`${cfg.url}/health`, { signal: AbortSignal.timeout(5_000) });
     if (!response.ok) return null;
     return parseCapabilities(await response.json());
-  } catch {
+  } catch (error) {
+    log.warn('Sandbox capabilities check against the worker failed: {reason}', {
+      component: 'sandbox/client',
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }
@@ -309,6 +314,11 @@ async function callOp(
         await retryDelay(delay);
         continue;
       }
+      log.warn('Sandbox {op} request could not reach the worker: {reason}', {
+        component: 'sandbox/client',
+        op,
+        reason: error instanceof Error ? error.message : String(error),
+      });
       return unreachable(error instanceof Error ? error.message : String(error));
     }
     if (!response.ok) {
@@ -333,6 +343,10 @@ async function callJson(
   try {
     return { ok: true, val: await called.val.json() };
   } catch {
+    log.warn('Sandbox {op} answered a response that is not valid JSON', {
+      component: 'sandbox/client',
+      op,
+    });
     return unreachable('The sandbox service answered an unreadable response.');
   }
 }
@@ -423,6 +437,10 @@ export async function sbReadFile(
     const bytes = new Uint8Array(await called.val.arrayBuffer());
     return { ok: true, val: { filename, contentType, bytes } };
   } catch (error) {
+    log.warn('Sandbox file read could not read the response body: {reason}', {
+      component: 'sandbox/client',
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return unreachable(error instanceof Error ? error.message : String(error));
   }
 }
@@ -454,6 +472,10 @@ export async function sbWriteFile(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
+    log.warn('Sandbox file write could not reach the worker: {reason}', {
+      component: 'sandbox/client',
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return unreachable(error instanceof Error ? error.message : String(error));
   }
   if (!response.ok) return opFailure(response);
@@ -1093,6 +1115,10 @@ export async function sbWorkspaceUpload(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
+    log.warn('Sandbox workspace upload could not reach the worker: {reason}', {
+      component: 'sandbox/client',
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return unreachable(error instanceof Error ? error.message : String(error));
   }
   if (!response.ok) return opFailure(response);
@@ -1100,6 +1126,9 @@ export async function sbWorkspaceUpload(
   try {
     value = await response.json();
   } catch {
+    log.warn('Sandbox workspace upload answered a response that is not valid JSON', {
+      component: 'sandbox/client',
+    });
     return unreachable('The sandbox service answered an unreadable response.');
   }
   if (!isRecord(value)) return malformed();
@@ -1206,6 +1235,10 @@ export async function sbWorkspaceExec(
     });
   } catch (error) {
     if (options.signal?.aborted) return unreachable('The command was stopped.');
+    log.warn('Sandbox workspace exec could not reach the worker: {reason}', {
+      component: 'sandbox/client',
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return unreachable(error instanceof Error ? error.message : String(error));
   }
   if (!response.ok) return opFailure(response);
@@ -1213,6 +1246,9 @@ export async function sbWorkspaceExec(
   try {
     value = await response.json();
   } catch {
+    log.warn('Sandbox workspace exec answered a response that is not valid JSON', {
+      component: 'sandbox/client',
+    });
     return unreachable('The sandbox service answered an unreadable response.');
   }
   if (!isRecord(value) || typeof value.stdout !== 'string' || typeof value.stderr !== 'string') {
@@ -1623,6 +1659,10 @@ export async function sbServiceStart(
       signal: AbortSignal.timeout(6 * 60_000),
     });
   } catch (error) {
+    log.warn('Sandbox service start could not reach the worker: {reason}', {
+      component: 'sandbox/client',
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return unreachable(error instanceof Error ? error.message : String(error));
   }
   if (!response.ok) return opFailure(response);
@@ -1630,6 +1670,9 @@ export async function sbServiceStart(
   try {
     value = await response.json();
   } catch {
+    log.warn('Sandbox service start answered a response that is not valid JSON', {
+      component: 'sandbox/client',
+    });
     return unreachable('The sandbox service answered an unreadable response.');
   }
   const service = isRecord(value) ? serviceOf(value.service) : null;
@@ -1761,7 +1804,7 @@ function imageRulesOf(value: unknown): WireImageRule[] | null {
 }
 
 export async function sbImageRulesList(): Promise<ClientResult<WireImageRule[]>> {
-  const result = await callJson('services/rules/list', { });
+  const result = await callJson('services/rules/list', {});
   if (!result.ok) return result;
   const rules = imageRulesOf(result.val);
   return rules ? { ok: true, val: rules } : malformed();
@@ -1774,16 +1817,14 @@ export async function sbImageRulesList(): Promise<ClientResult<WireImageRule[]>>
  * `clearCredential` removes it. `dropped` says what the worker took off
  * the pattern (a tag, a digest) to make a rule of it.
  */
-export async function sbImageRuleSet(
-  input: {
-    id?: string;
-    pattern: string;
-    note?: string | null;
-    registryUsername?: string;
-    registrySecret?: string;
-    clearCredential?: boolean;
-  }
-): Promise<ClientResult<{ rule: WireImageRule; dropped: string | null }>> {
+export async function sbImageRuleSet(input: {
+  id?: string;
+  pattern: string;
+  note?: string | null;
+  registryUsername?: string;
+  registrySecret?: string;
+  clearCredential?: boolean;
+}): Promise<ClientResult<{ rule: WireImageRule; dropped: string | null }>> {
   const result = await callJson('services/rules/set', { ...input });
   if (!result.ok) return result;
   const rule = isRecord(result.val) ? imageRuleOf(result.val.rule) : null;
@@ -1794,9 +1835,7 @@ export async function sbImageRuleSet(
   };
 }
 
-export async function sbImageRuleDelete(
-  id: string
-): Promise<ClientResult<{ id: string }>> {
+export async function sbImageRuleDelete(id: string): Promise<ClientResult<{ id: string }>> {
   const result = await callJson('services/rules/delete', { id });
   if (!result.ok) return result;
   if (!isRecord(result.val) || !result.val.deleted) return malformed();
@@ -1804,9 +1843,10 @@ export async function sbImageRuleDelete(
 }
 
 /** Put the seeded public images back, leaving what the organization added or kept. */
-export async function sbImageRulesRestore(
-): Promise<ClientResult<{ added: number; rules: WireImageRule[] }>> {
-  const result = await callJson('services/rules/restore', { });
+export async function sbImageRulesRestore(): Promise<
+  ClientResult<{ added: number; rules: WireImageRule[] }>
+> {
+  const result = await callJson('services/rules/restore', {});
   if (!result.ok) return result;
   const rules = imageRulesOf(result.val);
   if (!rules || !isRecord(result.val)) return malformed();
@@ -1887,6 +1927,10 @@ export async function sbRunScript(
     });
   } catch (error) {
     if (options.signal?.aborted) return unreachable('The script was stopped.');
+    log.warn('Sandbox script run could not reach the worker: {reason}', {
+      component: 'sandbox/client',
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return unreachable(error instanceof Error ? error.message : String(error));
   }
   if (!response.ok) return opFailure(response);
@@ -1894,6 +1938,9 @@ export async function sbRunScript(
   try {
     value = await response.json();
   } catch {
+    log.warn('Sandbox script run answered a response that is not valid JSON', {
+      component: 'sandbox/client',
+    });
     return unreachable('The sandbox service answered an unreadable response.');
   }
   if (!isRecord(value) || typeof value.stdout !== 'string' || typeof value.stderr !== 'string') {
@@ -2172,6 +2219,10 @@ export async function sbLspEvents(
       signal,
     });
   } catch (error) {
+    log.warn('Sandbox workspace LSP events could not reach the worker: {reason}', {
+      component: 'sandbox/client',
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return unreachable(error instanceof Error ? error.message : String(error));
   }
   if (!response.ok) return opFailure(response);
@@ -2226,6 +2277,10 @@ export async function sbChartRender(
     const bytes = new Uint8Array(await called.val.arrayBuffer());
     return { ok: true, val: { bytes, mediaType, ...chartMeasure(called.val.headers) } };
   } catch (error) {
+    log.warn('Sandbox chart render could not read the response body: {reason}', {
+      component: 'sandbox/client',
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return unreachable(error instanceof Error ? error.message : String(error));
   }
 }

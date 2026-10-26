@@ -26,6 +26,7 @@ import {
   utf8ToBytes,
   type Bytes,
 } from './encoding';
+import { log } from '@renkei/logging';
 
 /**
  * WebCrypto's types, read off the global so this module needs neither the
@@ -115,7 +116,11 @@ export async function secretboxOpen(payload: string, key: Uint8Array): Promise<s
       concatBytes(ciphertext, tag)
     );
     return bytesToUtf8(new Uint8Array(opened));
-  } catch {
+  } catch (error) {
+    log.warn('Secretbox could not be opened: {message}', {
+      component: 'crypto/browser/webcrypto',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }
@@ -209,7 +214,11 @@ export async function openSealedBox(recipient: RawKeyPair, sealed: string): Prom
     );
     const key = await boxKey(shared, ephemeralPublic, recipient.publicKey);
     return unwrapBytes(rest.slice(colon + 1), key);
-  } catch {
+  } catch (error) {
+    log.warn('Sealed box could not be opened in the browser: {message}', {
+      component: 'crypto/browser/webcrypto',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }

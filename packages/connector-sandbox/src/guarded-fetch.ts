@@ -33,6 +33,7 @@
 import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
 import { assertSafeHttpsUrl, BlockedUrlError, resolvePublicAddress } from './egress-guard';
+import { log } from '@renkei/logging';
 
 /** The most redirect hops a guarded fetch follows before refusing. */
 export const GUARDED_FETCH_MAX_REDIRECTS = 5;
@@ -227,7 +228,16 @@ export async function guardedFetch(
     let next: URL;
     try {
       next = new URL(location, url);
-    } catch {
+    } catch (error) {
+      log.warn(
+        'Redirect from {host} answered a Location header that is not a valid URL: {reason}',
+        {
+          component: 'connectors/sandbox',
+          host: url.host,
+          status: upstream.status,
+          reason: error instanceof Error ? error.message : String(error),
+        }
+      );
       throw new BlockedUrlError('redirect target is not a valid URL');
     }
     // The same checks the first URL passed: https only (so a Location to

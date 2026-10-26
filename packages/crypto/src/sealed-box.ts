@@ -27,6 +27,7 @@ import {
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { encrypt, decrypt } from './secretbox';
+import { log } from '@renkei/logging';
 
 export const SEALED_BOX_PREFIX = 'sbox1:';
 const INFO = Buffer.from('renkei/sealed-box/v1', 'utf8');
@@ -120,6 +121,10 @@ export function openSealedBox(
       publicKey: publicKeyObject(ephemeralPublic),
     });
   } catch (cause) {
+    log.warn('Sealed box key agreement failed: {message}', {
+      component: 'crypto/sealed-box',
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
     return err('DECRYPTION_ERROR' as const, { message: 'key agreement failed', cause });
   }
   const key = boxKey(shared, ephemeralPublic, recipient.publicKey);

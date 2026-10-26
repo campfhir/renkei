@@ -1007,6 +1007,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
         await this.drive();
       } catch (error) {
         if (error instanceof RunAbort) {
+          logger.warn('run {runId} failed: {kind} {message}', {
+            component: 'worker-agents/engine',
+            runId: this.runRow.id,
+            kind: error.kind,
+            message: error.message,
+          });
           await this.saveClock();
           await this.closeOpenTurn('failed');
           await finalizeRun(this.runRow, 'failed', error.kind, error.message, {});
@@ -2133,9 +2139,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .execute();
       } catch (error) {
-        throw new TransientFailure(
-          `batch for turn ${row.attempt} already exists: ${error instanceof Error ? error.message : String(error)}`
-        );
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn('action batch for run {runId} turn {turn} could not be written: {message}', {
+          component: 'worker-agents/engine',
+          runId: this.runRow.id,
+          turn: row.attempt,
+          message,
+        });
+        throw new TransientFailure(`batch for turn ${row.attempt} already exists: ${message}`);
       }
       row.tool_call_count += actions.length;
       row.detail.pause = { kind: 'actions', toolUseId: use.id, batchId };

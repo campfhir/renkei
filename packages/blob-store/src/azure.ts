@@ -11,6 +11,7 @@ import { authorizationHeader } from './azure-sign';
 import { describeRefusal } from './azure-errors';
 import type { AzureBlobConfig } from './config';
 import type { BlobError, BlobObject, BlobObjectStream, BlobStore } from './contract';
+import { log } from '@renkei/logging';
 
 const API_VERSION = '2023-11-03';
 const REQUEST_TIMEOUT_MS = 90_000;
@@ -74,6 +75,11 @@ export function createAzureBlobStore(config: AzureBlobConfig): BlobStore {
       });
       return ok(response);
     } catch (error) {
+      log.warn('Azure Blob {verb} request could not be sent: {message}', {
+        component: 'blob-store/azure',
+        verb,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('NETWORK' as const, {
         message: error instanceof Error ? error.message : String(error),
       });
@@ -124,6 +130,10 @@ export function createAzureBlobStore(config: AzureBlobConfig): BlobStore {
         const object: BlobObject = { bytes, contentType: streamed.val.contentType };
         return ok(object);
       } catch (error) {
+        log.warn('Azure Blob body could not be read: {message}', {
+          component: 'blob-store/azure',
+          message: error instanceof Error ? error.message : String(error),
+        });
         return err('NETWORK' as const, {
           message: error instanceof Error ? error.message : String(error),
         });

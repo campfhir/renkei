@@ -20,6 +20,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
+import { log } from '@renkei/logging';
 
 const API_BASE = 'https://webexapis.com/v1';
 /** The largest page WebEx serves for /rooms. */
@@ -296,6 +297,13 @@ export class WebexClient {
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      log.warn('WebEx request {method} {path} failed: {message}', {
+        component: 'connector-webex/client',
+        method,
+        path,
+        timedOut,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('WEBEX_API_ERROR' as const, {
         message: timedOut
           ? `WebEx API timed out after ${REQUEST_TIMEOUT_MS}ms for ${path}`
@@ -356,6 +364,12 @@ export class WebexClient {
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      log.warn('WebEx upload {path} failed: {message}', {
+        component: 'connector-webex/client',
+        path,
+        timedOut,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('WEBEX_API_ERROR' as const, {
         message: timedOut
           ? `WebEx API timed out after ${UPLOAD_TIMEOUT_MS}ms for ${path}`

@@ -72,6 +72,7 @@ import {
   execUidFor,
   subjectSegmentOf,
 } from '@renkei/connector-sandbox';
+import { log } from '@renkei/logging';
 import { logger } from './logger';
 import { configuredDirectory } from './configured-path';
 
@@ -940,7 +941,16 @@ export async function readWorkspaceFile(
   let handle;
   try {
     handle = await open(path, 'r');
-  } catch {
+  } catch (error) {
+    // ENOENT is the answer "no such file"; anything else is a failed read.
+    if (errnoCode(error) !== 'ENOENT') {
+      log.warn('Could not open workspace file {path}: {reason}', {
+        component: 'worker-sandbox/workspaces',
+        path: relativePath,
+        code: errnoCode(error) ?? 'unknown',
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
     return { error: `No such file: ${relativePath || '.'}` };
   }
   try {
@@ -1109,7 +1119,15 @@ export async function renameWorkspaceFile(
   const from = await containedPath(dir, fromRelative);
   try {
     await lstat(from);
-  } catch {
+  } catch (error) {
+    if (errnoCode(error) !== 'ENOENT') {
+      log.warn('Could not stat rename source {path}: {reason}', {
+        component: 'worker-sandbox/workspaces',
+        path: fromRelative,
+        code: errnoCode(error) ?? 'unknown',
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
     throw new WorkspacePathError(`No such file or folder: ${fromRelative || '.'}`);
   }
   const to = await containedPath(dir, toRelative);
@@ -1141,7 +1159,15 @@ export async function listDirectory(
   let entries;
   try {
     entries = await readdir(path, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    if (errnoCode(error) !== 'ENOENT') {
+      log.warn('Could not list workspace directory {path}: {reason}', {
+        component: 'worker-sandbox/workspaces',
+        path: relativePath,
+        code: errnoCode(error) ?? 'unknown',
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
     return { error: `No such directory: ${relativePath || '.'}` };
   }
   const listed: FileEntry[] = [];

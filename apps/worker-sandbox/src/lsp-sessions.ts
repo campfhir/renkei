@@ -48,6 +48,7 @@ import {
   type ExecIdentity,
   type RunInput,
 } from './workspaces';
+import { log } from '@renkei/logging';
 import { logger } from './logger';
 
 const COMPONENT = 'worker-sandbox/lsp';
@@ -397,11 +398,17 @@ export class LspSessions {
     try {
       child = this.deps.spawnServer ? this.deps.spawnServer(input, id) : spawnServer(input, id);
     } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      log.warn('Language server {server} could not be spawned: {reason}', {
+        component: COMPONENT,
+        server: input.server,
+        reason,
+      });
       return {
         ok: false,
         status: 500,
         type: 'spawn_failed',
-        message: error instanceof Error ? error.message : String(error),
+        message: reason,
       };
     }
     const session: Session = {

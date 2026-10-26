@@ -35,6 +35,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ExtractErrorTag } from './types';
+import { log } from '@renkei/logging';
 
 export interface PdfText {
   text: string;
@@ -102,6 +103,10 @@ async function loadPdfjs(): Promise<PdfJsModule | null> {
     lastLoadError = '';
   } catch (error) {
     lastLoadError = error instanceof Error ? error.message : String(error);
+    log.warn('The PDF engine could not be loaded: {message}', {
+      component: 'document-text/pdf',
+      message: lastLoadError,
+    });
     return null;
   }
   return cached;
@@ -175,9 +180,9 @@ export async function extractPdfText(
     if (name === 'PasswordException') {
       return err('ENCRYPTED' as const, { message: 'the PDF is password protected' });
     }
-    return err('CORRUPT' as const, {
-      message: error instanceof Error ? error.message : 'unreadable PDF',
-    });
+    const message = error instanceof Error ? error.message : 'unreadable PDF';
+    log.warn('Could not read a PDF: {message}', { component: 'document-text/pdf', message });
+    return err('CORRUPT' as const, { message });
   } finally {
     // The fake worker keeps message handlers alive; in a long-running worker
     // process, skipping this leaks per document. Guarded because a throw here

@@ -47,6 +47,7 @@ import type {
   LlmStreamOptions,
   LlmUsage,
 } from './contract';
+import { log } from '@renkei/logging';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -307,6 +308,10 @@ export class OpenAiProvider implements LlmProvider {
           signal,
         });
       } catch (error) {
+        log.warn('The OpenAI chat request failed: {message}', {
+          component: 'agent-llm/openai',
+          message: error instanceof Error ? error.message : String(error),
+        });
         return err(transportErrorKind(error, callerSignal), {
           message: error instanceof Error ? error.message : String(error),
           cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
@@ -502,6 +507,10 @@ export class OpenAiProvider implements LlmProvider {
         }
       }
     } catch (error) {
+      log.warn('The OpenAI chat stream failed: {message}', {
+        component: 'agent-llm/openai',
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err(transportErrorKind(error, options.signal), {
         message: error instanceof Error ? error.message : String(error),
       });

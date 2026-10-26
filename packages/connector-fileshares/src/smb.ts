@@ -33,6 +33,7 @@ import {
   withTimeout,
 } from './limits';
 import type { RawEntry, ShareSummary } from './types';
+import { log } from '@renkei/logging';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -199,6 +200,12 @@ export function openSmbBackend(
         } else if (!isRetryableStatus(cause)) {
           throw cause;
         }
+        log.warn('SMB {operation} attempt {attempt} failed transiently: {reason}', {
+          component: 'connectors/fileshares',
+          operation,
+          attempt: attempt + 1,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        });
         lastCause = cause;
       }
     }
@@ -238,6 +245,12 @@ export function openSmbBackend(
         return ok(entries);
       } catch (cause) {
         const info = mapError('readdir', cause);
+        log.warn('SMB {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'readdir',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -267,6 +280,12 @@ export function openSmbBackend(
         });
       } catch (cause) {
         const info = mapError('stat', cause);
+        log.warn('SMB {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'stat',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -296,6 +315,12 @@ export function openSmbBackend(
         return ok(new Uint8Array(content));
       } catch (cause) {
         const info = mapError('readFile', cause);
+        log.warn('SMB {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'readFile',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -316,6 +341,12 @@ export function openSmbBackend(
         return ok(undefined);
       } catch (cause) {
         const info = mapError('writeFile', cause);
+        log.warn('SMB {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'writeFile',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -328,6 +359,12 @@ export function openSmbBackend(
         return ok(undefined);
       } catch (cause) {
         const info = mapError('mkdir', cause);
+        log.warn('SMB {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'mkdir',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -351,6 +388,12 @@ export function openSmbBackend(
         // (they need the kind), so a genuinely-missing target is their
         // answer to give.
         if (info.kind === 'not_found') return ok(undefined);
+        log.warn('SMB {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: kind === 'dir' ? 'rmdir' : 'unlink',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },

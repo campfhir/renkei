@@ -11,6 +11,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { log } from '@renkei/logging';
 
 export const WEBEX_USER = 'webex';
 
@@ -41,7 +42,12 @@ export class WebexUserAdapter implements ProviderAdapter {
           refresh_token: refreshToken,
         }),
       });
-    } catch {
+    } catch (error) {
+      log.warn('Token refresh for {provider} could not reach webexapis.com: {message}', {
+        component: 'provider-grants/webex',
+        provider: this.provider,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('REFRESH_FAILED' as const, { message: 'Could not reach webexapis.com' });
     }
 

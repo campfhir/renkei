@@ -33,6 +33,7 @@ import type {
   QueueProducer,
 } from './contract';
 import { failureDisposition, DEFAULT_RETRY_POLICY, type RetryPolicy } from './policy';
+import { log } from '@renkei/logging';
 
 /** How long a claim may be held before it counts as abandoned. */
 const DEFAULT_STALE_CLAIM_MINUTES = 10;
@@ -124,6 +125,12 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
         `.execute(dbResult.val);
         return ok();
       } catch (error) {
+        log.warn('Could not enqueue a {type} message from {source}: {message}', {
+          component: 'queue/postgres',
+          message: error instanceof Error ? error.message : String(error),
+          type: message.type,
+          source: message.source,
+        });
         return err('QUEUE_ERROR' as const, {
           message: error instanceof Error ? error.message : String(error),
         });
@@ -287,6 +294,10 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
           }))
         );
       } catch (error) {
+        log.warn('Could not list queue messages: {message}', {
+          component: 'queue/postgres',
+          message: error instanceof Error ? error.message : String(error),
+        });
         return err('QUEUE_ERROR' as const, {
           message: error instanceof Error ? error.message : String(error),
         });
@@ -313,6 +324,10 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
         `.execute(dbResult.val);
         return ok(Number(result.numAffectedRows ?? 0));
       } catch (error) {
+        log.warn('Could not requeue dead messages: {message}', {
+          component: 'queue/postgres',
+          message: error instanceof Error ? error.message : String(error),
+        });
         return err('QUEUE_ERROR' as const, {
           message: error instanceof Error ? error.message : String(error),
         });
@@ -329,6 +344,10 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
         `.execute(dbResult.val);
         return ok(Number(result.numAffectedRows ?? 0));
       } catch (error) {
+        log.warn('Could not purge dead messages: {message}', {
+          component: 'queue/postgres',
+          message: error instanceof Error ? error.message : String(error),
+        });
         return err('QUEUE_ERROR' as const, {
           message: error instanceof Error ? error.message : String(error),
         });
@@ -363,6 +382,11 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
         `.execute(dbResult.val);
         return ok(Number(result.numAffectedRows ?? 0));
       } catch (error) {
+        log.warn('Could not discard pending {type} messages: {message}', {
+          component: 'queue/postgres',
+          message: error instanceof Error ? error.message : String(error),
+          type,
+        });
         return err('QUEUE_ERROR' as const, {
           message: error instanceof Error ? error.message : String(error),
         });

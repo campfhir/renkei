@@ -31,6 +31,7 @@ import type {
   LlmStreamOptions,
   LlmUsage,
 } from './contract';
+import { log } from '@renkei/logging';
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -419,6 +420,10 @@ export class AnthropicProvider implements LlmProvider {
         signal,
       });
     } catch (error) {
+      log.warn('The Anthropic request failed: {message}', {
+        component: 'agent-llm/anthropic',
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err(transportErrorKind(error, callerSignal), {
         message: error instanceof Error ? error.message : String(error),
         cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
@@ -576,6 +581,10 @@ export class AnthropicProvider implements LlmProvider {
         if (ended) break;
       }
     } catch (error) {
+      log.warn('The Anthropic stream failed: {message}', {
+        component: 'agent-llm/anthropic',
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err(transportErrorKind(error, options.signal), {
         message: error instanceof Error ? error.message : String(error),
       });

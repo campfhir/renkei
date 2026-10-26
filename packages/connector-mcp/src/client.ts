@@ -20,6 +20,7 @@ import {
   type McpListedTool,
   type McpTransport,
 } from './pure';
+import { log } from '@renkei/logging';
 
 export type McpFetch = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -135,7 +136,11 @@ function notificationMethod(data: string): string | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
-  } catch {
+  } catch (error) {
+    log.warn('An MCP server message was not JSON: {message}', {
+      component: 'connector-mcp/client',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
   const message = asRecord(parsed);
@@ -234,6 +239,10 @@ class StreamableHttpSession extends BaseSession {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
+      log.warn('Could not reach the MCP server: {message}', {
+        component: 'connector-mcp/client',
+        message: error instanceof Error ? error.message : String(error),
+      });
       throw new McpRemoteError(
         `Could not reach the MCP server: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -348,6 +357,10 @@ class SseSession extends BaseSession {
         signal: this.abort.signal,
       });
     } catch (error) {
+      log.warn('Could not reach the MCP server: {message}', {
+        component: 'connector-mcp/client',
+        message: error instanceof Error ? error.message : String(error),
+      });
       throw new McpRemoteError(
         `Could not reach the MCP server: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -414,6 +427,10 @@ class SseSession extends BaseSession {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
+      log.warn('Could not reach the MCP server: {message}', {
+        component: 'connector-mcp/client',
+        message: error instanceof Error ? error.message : String(error),
+      });
       throw new McpRemoteError(
         `Could not reach the MCP server: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -453,6 +470,10 @@ export async function openMcpSession(options: OpenSessionOptions): Promise<McpRe
     if (session instanceof SseSession) await session.open();
     await session.initialize();
   } catch (error) {
+    log.warn('Could not open an MCP session: {message}', {
+      component: 'connector-mcp/client',
+      message: error instanceof Error ? error.message : String(error),
+    });
     await session.close();
     throw error;
   }
@@ -517,6 +538,10 @@ export async function watchToolListChanges(
     return streamed ? 'ended' : 'unsupported';
   } catch (error) {
     if (signal.aborted) return 'ended';
+    log.warn('The MCP server listen stream failed: {message}', {
+      component: 'connector-mcp/client',
+      message: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   } finally {
     await session.close();

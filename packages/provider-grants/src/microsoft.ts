@@ -12,6 +12,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { log } from '@renkei/logging';
 
 export const MICROSOFT = 'microsoft';
 /**
@@ -71,6 +72,12 @@ export class MicrosoftAdapter implements ProviderAdapter {
       );
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      log.warn('Token refresh for {provider} did not reach the token endpoint: {message}', {
+        component: 'provider-grants/microsoft',
+        provider: this.provider,
+        timedOut,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('REFRESH_FAILED' as const, {
         message: timedOut ? 'token endpoint timed out after 15000ms' : 'token endpoint unreachable',
       });

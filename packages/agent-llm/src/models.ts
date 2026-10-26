@@ -20,6 +20,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import { isAzureHost, looksLikeCredentialFailure } from './contract';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmErrorKind } from './contract';
+import { log } from '@renkei/logging';
 
 const ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
@@ -71,6 +72,10 @@ async function getJson(
   } catch (error) {
     const kind: LlmErrorKind =
       error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'network';
+    log.warn('The models endpoint could not be reached: {message}', {
+      component: 'agent-llm/models',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err(kind, { message: error instanceof Error ? error.message : String(error) });
   }
   if (!response.ok) {

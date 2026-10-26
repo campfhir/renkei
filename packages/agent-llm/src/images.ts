@@ -35,6 +35,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { isAzureHost, looksLikeCredentialFailure, transportErrorKind } from './contract';
 import type { LlmErrorKind } from './contract';
+import { log } from '@renkei/logging';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 /** Generation takes 10–30 s, up to a minute for complex prompts. */
@@ -177,7 +178,11 @@ async function pollForSample(
   try {
     target = new URL(pollingUrl);
     origin = new URL(endpoint).origin;
-  } catch {
+  } catch (error) {
+    log.warn('The provider polling URL was not a URL: {message}', {
+      component: 'agent-llm/images',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('provider_error' as const, { message: 'The polling URL was not a URL.' });
   }
   if (target.protocol !== 'https:' || (target.origin !== origin && !isBflHost(pollingUrl))) {
@@ -198,6 +203,10 @@ async function pollForSample(
           : AbortSignal.timeout(30_000),
       });
     } catch (error) {
+      log.warn('The image polling request failed: {message}', {
+        component: 'agent-llm/images',
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err(transportErrorKind(error, signal), {
         message: error instanceof Error ? error.message : String(error),
       });
@@ -211,7 +220,11 @@ async function pollForSample(
     let body: unknown;
     try {
       body = JSON.parse(text);
-    } catch {
+    } catch (error) {
+      log.warn('The image polling answer was not JSON: {message}', {
+        component: 'agent-llm/images',
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('provider_error' as const, { message: 'Polling did not answer JSON.' });
     }
     if (typeof body !== 'object' || body === null) {
@@ -346,7 +359,11 @@ async function downloadImage(
   let target: URL;
   try {
     target = new URL(link);
-  } catch {
+  } catch (error) {
+    log.warn('The provider image link was not a URL: {message}', {
+      component: 'agent-llm/images',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('provider_error' as const, { message: 'The image link was not a URL.' });
   }
   const host = target.hostname.toLowerCase();
@@ -385,6 +402,10 @@ async function downloadImage(
     }
     return ok(bytes);
   } catch (error) {
+    log.warn('Downloading a generated image failed: {message}', {
+      component: 'agent-llm/images',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err(transportErrorKind(error, signal), {
       message: error instanceof Error ? error.message : String(error),
     });
@@ -425,6 +446,10 @@ export async function generateImage(
         : AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
+    log.warn('The images request failed: {message}', {
+      component: 'agent-llm/images',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err(transportErrorKind(error, request.signal), {
       message: error instanceof Error ? error.message : String(error),
     });
@@ -439,7 +464,11 @@ export async function generateImage(
   let payload: unknown;
   try {
     payload = JSON.parse(text);
-  } catch {
+  } catch (error) {
+    log.warn('The images endpoint answer was not JSON: {message}', {
+      component: 'agent-llm/images',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('provider_error' as const, { message: 'The images endpoint did not answer JSON.' });
   }
   const parsed: { data?: unknown; usage?: unknown; error?: { message?: unknown } } =

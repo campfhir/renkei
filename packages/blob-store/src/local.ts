@@ -18,6 +18,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LocalBlobConfig } from './config';
 import type { BlobError, BlobObject, BlobObjectStream, BlobStore } from './contract';
+import { log } from '@renkei/logging';
 
 const SAFE_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
 
@@ -154,7 +155,15 @@ async function readContentType(metaFile: string): Promise<string | null> {
     if (typeof parsed !== 'object' || parsed === null || !('contentType' in parsed)) return null;
     const contentType: unknown = parsed.contentType;
     return typeof contentType === 'string' ? contentType : null;
-  } catch {
+  } catch (error) {
+    // A missing meta file is the normal case for an object without one.
+    const code = error instanceof Error && 'code' in error ? error.code : undefined;
+    if (code !== 'ENOENT') {
+      log.warn('Blob metadata could not be read: {message}', {
+        component: 'blob-store/local',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
     return null;
   }
 }

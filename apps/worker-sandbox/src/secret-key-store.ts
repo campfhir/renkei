@@ -21,6 +21,7 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { join } from 'node:path';
 import { decrypt, encrypt } from '@renkei/crypto';
 import { envSecretsKey } from './env-secrets';
+import { log } from '@renkei/logging';
 import { logger } from './logger';
 
 export interface SecretOwner {
@@ -91,7 +92,15 @@ export function createSecretKeyStore(
       let sealed: string;
       try {
         sealed = await readFile(pathFor(secretId), 'utf8');
-      } catch {
+      } catch (error) {
+        // No file is the usual answer; any other failure to read it is worth a line.
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
+          log.warn('Could not read a held secret key file: {reason}', {
+            component: 'worker-sandbox/secret-keys',
+            secretId,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
         return null;
       }
       if (!sealed.startsWith(PREFIX)) return null;
@@ -110,6 +119,11 @@ export function createSecretKeyStore(
       try {
         parsed = JSON.parse(opened.val);
       } catch {
+        // Not logged with the parser's message: it can quote the decrypted key.
+        log.warn('A held secret key record is not valid JSON', {
+          component: 'worker-sandbox/secret-keys',
+          secretId,
+        });
         return null;
       }
       if (!isHeldRecord(parsed)) return null;

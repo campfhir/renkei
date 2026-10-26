@@ -37,6 +37,7 @@ import {
   withTimeout,
 } from './limits';
 import type { RawEntry, ShareSummary } from './types';
+import { log } from '@renkei/logging';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -115,11 +116,23 @@ export async function openSftpBackend(
   } catch (cause) {
     await client.end().catch(() => undefined);
     if (hostKey.verdict && !hostKey.verdict.accepted) {
+      const mismatch = hostKeyMismatchMessage(share.host, hostKey.verdict);
+      log.warn('SFTP host key did not match the pinned key: {reason}', {
+        component: 'connectors/fileshares',
+        host: share.host,
+        reason: mismatch,
+      });
       return err('connection' as const, {
-        message: hostKeyMismatchMessage(share.host, hostKey.verdict),
+        message: mismatch,
       });
     }
     const info = mapError('connect', cause);
+    log.warn('SFTP {operation} failed ({kind}): {reason}', {
+      component: 'connectors/fileshares',
+      operation: 'connect',
+      kind: info.kind,
+      reason: info.message,
+    });
     return err(info.kind, { message: info.message });
   }
 
@@ -153,6 +166,12 @@ export async function openSftpBackend(
       return ok(normalized.val);
     } catch (cause) {
       const info = mapError('realpath', cause);
+      log.warn('SFTP {operation} failed ({kind}): {reason}', {
+        component: 'connectors/fileshares',
+        operation: 'realpath',
+        kind: info.kind,
+        reason: info.message,
+      });
       return err(info.kind, { message: info.message });
     }
   }
@@ -179,6 +198,12 @@ export async function openSftpBackend(
       return ok(normalized.val === '/' ? '/' + name : normalized.val + '/' + name);
     } catch (cause) {
       const info = mapError('realpath', cause);
+      log.warn('SFTP {operation} failed ({kind}): {reason}', {
+        component: 'connectors/fileshares',
+        operation: 'realpath',
+        kind: info.kind,
+        reason: info.message,
+      });
       return err(info.kind, { message: info.message });
     }
   }
@@ -198,6 +223,12 @@ export async function openSftpBackend(
         return ok(entries);
       } catch (cause) {
         const info = mapError('list', cause);
+        log.warn('SFTP {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'list',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -221,6 +252,12 @@ export async function openSftpBackend(
         });
       } catch (cause) {
         const info = mapError('stat', cause);
+        log.warn('SFTP {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'stat',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -249,6 +286,12 @@ export async function openSftpBackend(
         return ok(new Uint8Array(content));
       } catch (cause) {
         const info = mapError('get', cause);
+        log.warn('SFTP {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'get',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -265,6 +308,12 @@ export async function openSftpBackend(
         return ok(undefined);
       } catch (cause) {
         const info = mapError('put', cause);
+        log.warn('SFTP {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'put',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -277,6 +326,12 @@ export async function openSftpBackend(
         return ok(undefined);
       } catch (cause) {
         const info = mapError('mkdir', cause);
+        log.warn('SFTP {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'mkdir',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -302,6 +357,12 @@ export async function openSftpBackend(
       } catch (cause) {
         const info = mapError(kind === 'dir' ? 'rmdir' : 'delete', cause);
         if (info.kind === 'not_found') return ok(undefined);
+        log.warn('SFTP {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: kind === 'dir' ? 'rmdir' : 'delete',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },
@@ -330,6 +391,12 @@ export async function openSftpBackend(
         return ok(undefined);
       } catch (cause) {
         const info = mapError('rename', cause);
+        log.warn('SFTP {operation} failed ({kind}): {reason}', {
+          component: 'connectors/fileshares',
+          operation: 'rename',
+          kind: info.kind,
+          reason: info.message,
+        });
         return err(info.kind, { message: info.message });
       }
     },

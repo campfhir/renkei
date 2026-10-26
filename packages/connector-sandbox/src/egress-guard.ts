@@ -1,5 +1,6 @@
 import { lookup } from 'node:dns/promises';
 import net from 'node:net';
+import { log } from '@renkei/logging';
 
 /**
  * SSRF guard for `sandbox_download_url`, `sandbox_fetch_page`, the sandbox
@@ -132,7 +133,12 @@ export async function resolvePublicAddress(hostname: string): Promise<string> {
   let addresses: Array<{ address: string }>;
   try {
     addresses = await lookup(bare, { all: true });
-  } catch {
+  } catch (error) {
+    log.warn('DNS lookup for {host} failed: {reason}', {
+      component: 'connectors/sandbox',
+      host: bare,
+      reason: error instanceof Error ? error.message : String(error),
+    });
     throw new BlockedUrlError(`could not resolve ${bare}`);
   }
   if (addresses.length === 0) throw new BlockedUrlError(`could not resolve ${bare}`);

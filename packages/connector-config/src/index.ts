@@ -12,6 +12,7 @@
 
 import { getDatabase } from '@renkei/db';
 import { encrypt, decrypt } from '@renkei/crypto';
+import { log } from '@renkei/logging';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -66,7 +67,12 @@ export async function getConnectorConfig(
   let parsed: unknown;
   try {
     parsed = JSON.parse(secretsJson.val);
-  } catch {
+  } catch (error) {
+    log.warn('Decrypted secrets for connector {connector} are not valid JSON: {message}', {
+      component: 'connector-config',
+      connector,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('DECRYPTION_ERROR' as const);
   }
 

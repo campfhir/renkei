@@ -60,6 +60,7 @@ const DEBUG_BODY_PREVIEW_CHARS = 4_000;
  */
 export interface MistralOcrLogger {
   debug(message: string, attrs?: Record<string, unknown>): void;
+  warn?(message: string, attrs?: Record<string, unknown>): void;
 }
 
 export interface MistralOcrInput {
@@ -103,7 +104,10 @@ function documentTypeFor(input: MistralOcrInput): 'document_url' | 'image_url' {
   return isPdf ? 'document_url' : 'image_url';
 }
 
-function buildRequestBody(config: MistralOcrConfig, input: MistralOcrInput): Record<string, unknown> {
+function buildRequestBody(
+  config: MistralOcrConfig,
+  input: MistralOcrInput
+): Record<string, unknown> {
   const type = documentTypeFor(input);
   const url = dataUrl(input.bytes, input.contentType);
   return {
@@ -112,7 +116,9 @@ function buildRequestBody(config: MistralOcrConfig, input: MistralOcrInput): Rec
   };
 }
 
-function parseResponse(body: unknown): { ok: true; val: MistralOcrResult } | { ok: false; message: string } {
+function parseResponse(
+  body: unknown
+): { ok: true; val: MistralOcrResult } | { ok: false; message: string } {
   if (!isRecord(body) || !Array.isArray(body.pages)) {
     return { ok: false, message: 'answered no pages array' };
   }
@@ -124,7 +130,8 @@ function parseResponse(body: unknown): { ok: true; val: MistralOcrResult } | { o
     pages.push({ index: raw.index, markdown: raw.markdown });
   }
   const usage = isRecord(body.usage_info) ? body.usage_info : {};
-  const pagesProcessed = typeof usage.pages_processed === 'number' ? usage.pages_processed : pages.length;
+  const pagesProcessed =
+    typeof usage.pages_processed === 'number' ? usage.pages_processed : pages.length;
   return { ok: true, val: { pages, pagesProcessed } };
 }
 
@@ -214,13 +221,21 @@ export async function callMistralOcr(
   });
 
   if (!response.ok) {
-    return { ok: false, err: { type: 'refused', status: response.status, message: bodyText.slice(0, 500) } };
+    return {
+      ok: false,
+      err: { type: 'refused', status: response.status, message: bodyText.slice(0, 500) },
+    };
   }
 
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(bodyText);
-  } catch {
+  } catch (error) {
+    log?.warn?.('mistral ocr response was not valid JSON: {message}', {
+      component,
+      status: response.status,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return { ok: false, err: { type: 'malformed', message: 'response was not valid JSON' } };
   }
   const parsed = parseResponse(parsedJson);

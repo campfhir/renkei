@@ -11,6 +11,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { OnBaseRefresh, RefreshedTokens, RefreshError } from '@renkei/provider-grants';
+import { logger } from './logger';
 
 const TIMEOUT_MS = 30_000;
 
@@ -38,7 +39,12 @@ export async function onbaseWorkerCall(
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-  } catch {
+  } catch (error) {
+    logger.warn('OnBase worker call {op} failed: {message}', {
+      component: 'worker-delegate/onbase',
+      op,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('UNREACHABLE');
   }
   const json: unknown = await response.json().catch(() => null);
@@ -83,4 +89,3 @@ export function onbaseWorkerRefresh(connector: string): OnBaseRefresh {
     return refreshed ? ok(refreshed) : err<RefreshError>('REFRESH_FAILED');
   };
 }
-

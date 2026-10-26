@@ -10,6 +10,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { openForSubject, sealForSubject, type SealError } from '@renkei/user-keys';
+import { log } from '@renkei/logging';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { parseShareCredentials, type ShareCredentials, type CredentialError } from './credentials';
@@ -41,6 +42,12 @@ export async function openCredentialsForSubject(
   try {
     parsed = JSON.parse(opened.val);
   } catch {
+    // The parser's own message can quote fragments of the decrypted text, so
+    // only the fact and the subject are logged, never the reason.
+    log.warn('Stored share credential is not valid JSON after decryption', {
+      component: 'connectors/fileshares',
+      subject,
+    });
     return err('MALFORMED_CREDENTIALS' as const);
   }
   const credentials = parseShareCredentials(parsed);

@@ -25,6 +25,7 @@
  */
 
 import type { EntryKind, ShareCredentials } from '@renkei/connector-fileshares';
+import { log } from '@renkei/logging';
 
 export interface WireShareRef {
   id: string;
@@ -148,7 +149,13 @@ async function callOp(op: string, body: unknown): Promise<ClientResult<Response>
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    return unreachable(error instanceof Error ? error.message : String(error));
+    const reason = error instanceof Error ? error.message : String(error);
+    log.warn('File share {op} request could not reach the worker: {reason}', {
+      component: 'fileshares/client',
+      op,
+      reason,
+    });
+    return unreachable(reason);
   }
   if (!response.ok) return opFailure(response);
   return { ok: true, val: response };
@@ -159,7 +166,12 @@ async function callJson(op: string, body: unknown): Promise<ClientResult<unknown
   if (!called.ok) return called;
   try {
     return { ok: true, val: await called.val.json() };
-  } catch {
+  } catch (error) {
+    log.warn('File share {op} response could not be read as JSON: {reason}', {
+      component: 'fileshares/client',
+      op,
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return unreachable('The file share service answered an unreadable response.');
   }
 }
@@ -255,7 +267,12 @@ export async function fsReadFile(
   try {
     return { ok: true, val: new Uint8Array(await called.val.arrayBuffer()) };
   } catch (error) {
-    return unreachable(error instanceof Error ? error.message : String(error));
+    const reason = error instanceof Error ? error.message : String(error);
+    log.warn('File share read could not read the file bytes: {reason}', {
+      component: 'fileshares/client',
+      reason,
+    });
+    return unreachable(reason);
   }
 }
 
@@ -280,7 +297,12 @@ export async function fsWriteFile(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    return unreachable(error instanceof Error ? error.message : String(error));
+    const reason = error instanceof Error ? error.message : String(error);
+    log.warn('File share write could not reach the worker: {reason}', {
+      component: 'fileshares/client',
+      reason,
+    });
+    return unreachable(reason);
   }
   if (!response.ok) return opFailure(response);
   try {

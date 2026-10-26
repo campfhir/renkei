@@ -1,5 +1,6 @@
 import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
+import { log } from '@renkei/logging';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { DB } from './db.types';
@@ -49,7 +50,11 @@ export function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
       );
     });
     return ok(state.pool);
-  } catch {
+  } catch (error) {
+    log.warn('Database pool could not be created: {message}', {
+      component: 'db/client',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('DB_INIT_ERROR' as const);
   }
 }
@@ -67,7 +72,11 @@ export function getDatabase(): Result<Kysely<DB>, 'DB_INIT_ERROR'> {
       dialect: new PostgresDialect({ pool: poolResult.val }),
     });
     return ok(state.db);
-  } catch {
+  } catch (error) {
+    log.warn('Query builder could not be created: {message}', {
+      component: 'db/client',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('DB_INIT_ERROR' as const);
   }
 }

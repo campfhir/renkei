@@ -30,6 +30,7 @@ import { join } from 'node:path';
 import type { BrowserContext } from 'playwright-core';
 import { decrypt, encrypt } from '@renkei/crypto';
 import { envSecretsKey } from './env-secrets';
+import { log } from '@renkei/logging';
 import { logger } from './logger';
 
 export interface BrowserStateTarget {
@@ -77,7 +78,11 @@ function fileNameFor(domain: string, target: BrowserStateTarget): string {
  * by HKDF. `domain` is the key domain (@renkei/settings getKeyDomain) the
  * saved sessions were first sealed under.
  */
-export function browserStateKey(rootKey: Buffer, domain: string, target: BrowserStateTarget): Buffer {
+export function browserStateKey(
+  rootKey: Buffer,
+  domain: string,
+  target: BrowserStateTarget
+): Buffer {
   return Buffer.from(hkdfSync('sha256', rootKey, HKDF_SALT, `${domain}\n${target.subject}`, 32));
 }
 
@@ -118,7 +123,14 @@ export function createBrowserStateStore(
       let sealed: string;
       try {
         sealed = await readFile(pathFor(target), 'utf8');
-      } catch {
+      } catch (error) {
+        // No saved session is the usual answer; any other failure to read it is worth a line.
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
+          log.warn('Could not read a saved browser session file: {reason}', {
+            component: 'worker-sandbox/browser-state',
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
         return null;
       }
       if (!sealed.startsWith(PREFIX)) return null;
@@ -134,6 +146,10 @@ export function createBrowserStateStore(
       try {
         parsed = JSON.parse(opened.val);
       } catch {
+        // Not logged with the parser's message: it can quote the decrypted session.
+        log.warn('A saved browser session is not valid JSON', {
+          component: 'worker-sandbox/browser-state',
+        });
         return null;
       }
       if (!isSavedState(parsed)) return null;

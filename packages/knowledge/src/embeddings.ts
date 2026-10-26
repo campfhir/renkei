@@ -15,6 +15,7 @@
 import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { LaneLimiter, RateLimitTimeoutError, type RequestLane } from '@renkei/rate-limit';
+import { log } from '@renkei/logging';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -138,6 +139,11 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
       await limiter.take(laneOf(purpose), queueTimeoutFor(purpose));
     } catch (error) {
       if (error instanceof RateLimitTimeoutError) {
+        log.warn('Embedding request timed out waiting for a {purpose} slot: {message}', {
+          component: 'knowledge/embeddings',
+          purpose,
+          message: error.message,
+        });
         return err('EMBEDDING_FAILED' as const, { message: error.message });
       }
       throw error;
@@ -156,6 +162,12 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      log.warn('Embeddings request to {model} failed: {message}', {
+        component: 'knowledge/embeddings',
+        model: this.model,
+        timedOut,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('EMBEDDING_FAILED' as const, {
         message: timedOut
           ? `embeddings endpoint timed out after ${this.timeoutMs}ms`
@@ -237,10 +249,7 @@ export async function resolveKnowledge(): Promise<KnowledgeProvider | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
 
-  const configResult = await readConnectorConfigCached(
-    EMBEDDINGS_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await readConnectorConfigCached(EMBEDDINGS_CONNECTOR, keyResult.val);
   if (!configResult.ok) return null;
   const config = configResult.val;
   if (!config || !config.enabled) return null;
@@ -262,8 +271,7 @@ export async function resolveKnowledge(): Promise<KnowledgeProvider | null> {
 }
 
 /** The embedder alone, for callers that only index. */
-export async function resolveEmbeddingProvider(
-): Promise<EmbeddingProvider | null> {
+export async function resolveEmbeddingProvider(): Promise<EmbeddingProvider | null> {
   const resolved = await resolveKnowledge();
   return resolved ? resolved.embedder : null;
 }

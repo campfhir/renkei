@@ -46,6 +46,7 @@ export {
   type ExtractNote,
   type ExtractedDocument,
 } from './types';
+import { log } from '@renkei/logging';
 
 const OOXML: Record<'docx' | 'xlsx' | 'pptx', RegExp> = {
   docx: DOCX_PARTS,
@@ -148,6 +149,11 @@ export async function extractText(
         break;
     }
   } catch (error) {
+    log.warn('Could not extract text from a {format} file: {message}', {
+      component: 'document-text/index',
+      format,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return err('EXTRACTION_FAILED' as const, {
       message: error instanceof Error ? error.message : String(error),
       cause: error,

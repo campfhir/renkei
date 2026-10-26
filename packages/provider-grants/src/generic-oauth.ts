@@ -11,6 +11,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { log } from '@renkei/logging';
 
 export class GenericOAuthAdapter implements ProviderAdapter {
   constructor(
@@ -49,7 +50,12 @@ export class GenericOAuthAdapter implements ProviderAdapter {
         body: form.toString(),
         signal: AbortSignal.timeout(15_000),
       });
-    } catch {
+    } catch (error) {
+      log.warn('Token refresh for {provider} could not reach the token endpoint: {message}', {
+        component: 'provider-grants/generic-oauth',
+        provider: this.provider,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return err('REFRESH_FAILED' as const, { message: 'Could not reach the token endpoint' });
     }
 

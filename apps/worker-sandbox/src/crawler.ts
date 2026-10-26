@@ -39,6 +39,7 @@ import {
   type LinkHarvestLimits,
 } from './crawl-page-script';
 import type { CrawlRow, CrawlStore, CrawlTarget, PageSummary, QueuedPage } from './crawl-store';
+import { log } from '@renkei/logging';
 import { logger } from './logger';
 
 /** Crawls running at once across this worker. */
@@ -324,11 +325,19 @@ export class Crawler {
     try {
       await this.deps.guard(url);
     } catch (error) {
+      log.warn('A crawl refused to read a page: {reason}', {
+        component: 'worker-sandbox/crawler',
+        reason: firstLine(error),
+      });
       return { ok: false, error: `Refused: ${firstLine(error)}` };
     }
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT_MS });
     } catch (error) {
+      log.warn('A crawl could not load a page: {reason}', {
+        component: 'worker-sandbox/crawler',
+        reason: firstLine(error),
+      });
       return { ok: false, error: `Could not load the page: ${firstLine(error)}` };
     }
     // A JavaScript-rendered page fills in after the document loads.
@@ -361,6 +370,10 @@ export class Crawler {
       const links = [...new Set([...harvested, ...extract.links])];
       return { ok: true, extract: { ...extract, links } };
     } catch (error) {
+      log.warn('A crawl could not read a page: {reason}', {
+        component: 'worker-sandbox/crawler',
+        reason: firstLine(error),
+      });
       return { ok: false, error: `Could not read the page: ${firstLine(error)}` };
     }
   }
