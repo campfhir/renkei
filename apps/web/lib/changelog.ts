@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Large uploads are no longer cut off at 10 MB',
+        detail:
+          'Uploads over 10 MB were silently truncated on the way to the server. They now go through whole, up to the largest attachment size an organization can set (100 MB). An upload that is still cut short is refused with a message rather than saved as a partial file.',
+      },
+      {
+        kind: 'fixed',
         title: 'Removing an artifact from a project no longer errors on a second click',
         detail:
           'Removing a file from a project now takes it off the list at once and ignores repeat clicks, so a double click no longer returns an error.',
