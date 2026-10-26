@@ -2303,6 +2303,31 @@ function handleJiraAdmin(request, url, response) {
  * content_block_start/delta/stop, message_delta, message_stop — and
  * nothing more.
  */
+/**
+ * Mistral OCR, one call per file. The file's own bytes decide how long it
+ * takes: one that says SLOW is held for a few seconds, so a spec can see a
+ * read in flight; any other file answers at once.
+ */
+async function handleMistralOcr(request, response) {
+  if (request.method !== 'POST') return error(response, 405, 'method_not_allowed');
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+  const document = body.document ?? {};
+  const dataUrl = document.document_url ?? document.image_url ?? '';
+  const bytes = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
+  if (bytes.includes('SLOW')) await new Promise((resolve) => setTimeout(resolve, 6000));
+  const name = bytes.toString('utf8').match(/^[^\n]*/)?.[0] ?? '';
+  // A photo of a car: read, and nothing in it to read.
+  const markdown = bytes.includes('NOTEXT')
+    ? ''
+    : `# Scanned ${name.replace(/SLOW\s*/, '').trim()}\n\nTotal due: 1,250.00`;
+  return json(response, 200, {
+    pages: [{ index: 0, markdown }],
+    usage_info: { pages_processed: 2 },
+  });
+}
+
 function handleAnthropic(request, url, response) {
   if (request.method !== 'POST' || url.pathname !== '/anthropic/v1/messages') {
     return json(response, 404, { type: 'error', error: { type: 'not_found_error' } });
@@ -2338,14 +2363,29 @@ function handleAnthropic(request, url, response) {
     // file's digest land and search by it.
     const digested = text.replace(/^<file[^>]*>\n?/, '').replace(/\n?<\/file>$/, '');
     const digestLine = digested.split('\n').find((line) => line.trim()) ?? '';
+    // A picture comes with its bytes as an image block, and is described
+    // rather than read: a fixed description, so a spec can see a photo
+    // with no text come back as what it shows.
+    const pictured = JSON.stringify(body.messages ?? []).includes('"type":"image"');
     const forced =
       body.tool_choice?.type === 'tool' && body.tool_choice.name === 'artifact_digest'
         ? [
             'artifact_digest',
-            JSON.stringify({
-              summary: `Stub summary: ${digestLine.trim()}`,
-              keywords: [...new Set(digested.toLowerCase().match(/[a-z]{4,}/g) ?? [])].slice(0, 8),
-            }),
+            JSON.stringify(
+              pictured
+                ? {
+                    summary:
+                      'A red car on a street beside a beach, with modern buildings along the shoreline.',
+                    keywords: ['car', 'red', 'street', 'beach', 'buildings', 'shoreline', 'modern'],
+                  }
+                : {
+                    summary: `Stub summary: ${digestLine.trim()}`,
+                    keywords: [...new Set(digested.toLowerCase().match(/[a-z]{4,}/g) ?? [])].slice(
+                      0,
+                      8
+                    ),
+                  }
+            ),
           ]
         : null;
     const call = scripted ? [scripted[1], scripted[2] ?? '{}'] : forced;
@@ -2436,6 +2476,7 @@ const server = createServer((request, response) => {
       },
     });
   // The model, stood in for: a seeded model config points its base_url here.
+  if (url.pathname === '/mistral/v1/ocr') return handleMistralOcr(request, response);
   if (url.pathname.startsWith('/anthropic/')) return handleAnthropic(request, url, response);
   // Bitbucket, stood in for: the app is pointed here with
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's

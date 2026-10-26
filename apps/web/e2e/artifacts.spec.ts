@@ -30,6 +30,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { encrypt, loadKeyring } from '@renkei/crypto';
 import { enrollForE2E, keyFor } from './keys';
 import { deleteRowsOf } from './seed';
 
@@ -144,6 +145,7 @@ async function seed(f: Fixture): Promise<void> {
         'artifacts',
         'chats',
         'chat_projects',
+        'document_usage',
         'user_preferences',
         'sessions',
         'identities',
@@ -586,6 +588,9 @@ test('the library: a real upload lands, reads back, and is attached from the car
   });
   const list = page.getByRole('region', { name: 'Artifacts' });
   await expect(list.getByText('api-style-guide.md')).toBeVisible(COLD);
+  // The upload stays on the table: the page does not turn to the file.
+  await expect(page).toHaveURL(/\/chat\/artifacts(\?.*)?$/);
+  await list.getByText('api-style-guide.md').click();
   const details = page.getByRole('complementary', { name: 'Selected artifact' });
   await expect(details.getByText('Ready to read')).toBeVisible();
   const href = await details.getByRole('link', { name: 'api-style-guide.md' }).getAttribute('href');
@@ -926,6 +931,12 @@ test('the library: several files are ticked, deleted with the impact warned, or 
   await page.goto('/chat/artifacts');
   const list = page.getByRole('region', { name: 'Artifacts' });
   await expect(list.getByText('schema-guide.md')).toBeVisible(COLD);
+  // No checkmarks until select mode is on; in it, a click on the row ticks
+  // it and leaves the details alone.
+  await expect(page.getByRole('checkbox', { name: 'Select schema-guide.md' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await list.getByText('schema-guide.md').click();
+  await expect(page).not.toHaveURL(/artifact=/);
   await page.getByRole('checkbox', { name: 'Select schema-guide.md' }).check();
   await page.getByRole('checkbox', { name: 'Select rounding-analysis.md' }).check();
   const toolbar = page.getByRole('toolbar', { name: 'Selected artifacts' });
@@ -981,4 +992,204 @@ test('a project page: pressing remove again after the server has answered takes 
   await expect(card.getByRole('alert')).toHaveCount(0);
   await page.waitForLoadState('networkidle');
   expect(detaches).toHaveLength(1);
+});
+
+/**
+ * Points OCR at the sandbox stub's Mistral route, with a key sealed the way
+ * the app seals it. The connector's config is read through a cache for a
+ * minute, so a spec that needs it right away asks for it again.
+ */
+async function mistralStubConfigured(): Promise<void> {
+  const keyring = loadKeyring('TOKEN_ENCRYPTION_KEY');
+  if (!keyring.ok) throw new Error('TOKEN_ENCRYPTION_KEY is not set');
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)
+       VALUES ('mistral-ocr', true, $1, $2::jsonb)
+       ON CONFLICT (connector) DO UPDATE
+         SET enabled = true, encrypted_secrets = EXCLUDED.encrypted_secrets, settings = EXCLUDED.settings`,
+      [
+        encrypt(JSON.stringify({ apiKey: 'e2e-ocr-key' }), keyring.val),
+        JSON.stringify({
+          endpoint: 'http://127.0.0.1:8092/mistral/v1/ocr',
+          model: 'mistral-ocr-4-0',
+        }),
+      ]
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/** A scan the library holds as needs_ocr. Its text says SLOW, so the stub holds the read for a few seconds. */
+async function uploadScan(page: Page, name: string): Promise<void> {
+  await page.getByLabel('Upload artifacts').setInputFiles({
+    name,
+    mimeType: 'image/png',
+    buffer: Buffer.from(`SLOW ${name} invoice\n`),
+  });
+  await expect(page.getByRole('region', { name: 'Artifacts' }).getByText(name)).toBeVisible(COLD);
+}
+
+test('the library: OCR is asked for on a scan, its progress and estimate show while it runs, and the summary makes it searchable', async ({
+  page,
+}, testInfo) => {
+  const f = fixtureFor(testInfo.project.name);
+  await seed(f);
+  await signIn(page, f);
+  await mistralStubConfigured();
+
+  // Summaries on, as the upload test turns them: search reads them.
+  await page.goto('/admin/settings');
+  const digestSwitch = page.getByRole('switch', {
+    name: 'Summarize artifacts with the default model',
+  });
+  await expect(digestSwitch).toBeVisible();
+  if ((await digestSwitch.getAttribute('aria-checked')) !== 'true') {
+    await digestSwitch.click();
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.getByText('Saved.')).toBeVisible();
+  }
+
+  await page.goto('/chat/artifacts');
+  const list = page.getByRole('region', { name: 'Artifacts' });
+  const details = page.getByRole('complementary', { name: 'Selected artifact' });
+
+  // Three scans read in a bulk run give the estimate its finished reads.
+  for (const name of ['scan-a.png', 'scan-b.png', 'scan-c.png']) {
+    await uploadScan(page, name);
+  }
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  for (const name of ['scan-a.png', 'scan-b.png', 'scan-c.png']) {
+    await page.getByRole('checkbox', { name: `Select ${name}` }).check();
+  }
+  const toolbar = page.getByRole('toolbar', { name: 'Selected artifacts' });
+  await shot(page, testInfo, 'ocr-bulk-06-toolbar-below-list');
+  await toolbar.getByRole('button', { name: 'Run OCR' }).click();
+  await expect(list.getByText('OCR running').first()).toBeVisible(COLD);
+  await expect(list.getByText('OCR running')).toHaveCount(0, { timeout: 60_000 });
+  await page.getByRole('button', { name: 'Done selecting' }).click();
+
+  // A fourth, read from its details: while it runs, the page shows how long
+  // it has been, and how long the three finished reads say it has left.
+  await uploadScan(page, 'scan-d.png');
+  await uploadScan(page, 'scan-e.png');
+  await list.getByText('scan-e.png').click();
+  await expect(details.getByRole('button', { name: 'Run OCR' })).toBeVisible();
+  await shot(page, testInfo, 'ocr-00-offered-in-details');
+  await list.getByText('scan-d.png').click();
+  await details.getByRole('button', { name: 'Run OCR' }).click();
+  await expect(details.getByText(/Reading the scan · \d+ s so far/)).toBeVisible(COLD);
+  await expect(details.getByText(/About \d+ s left, from \d+ similar files\./)).toBeVisible(COLD);
+  await expect(details.getByRole('progressbar', { name: 'OCR progress' })).toBeVisible();
+  await shot(page, testInfo, 'ocr-01-running-with-estimate');
+
+  // Done: the pages it read, the summary the model wrote, and search finds it.
+  await expect(details.getByText('Read 2 pages by OCR.')).toBeVisible({ timeout: 60_000 });
+  // A read is kept, and it can be read again from the file as it is now.
+  await expect(details.getByRole('button', { name: 'Read again with OCR' })).toBeVisible();
+  // The read downloads as text: the OCR markdown, not the scan's bytes.
+  const textHref = await details
+    .getByRole('link', { name: 'Download the text' })
+    .getAttribute('href');
+  const download = await page.request.get(textHref!);
+  expect(download.headers()['content-type']).toContain('text/plain');
+  expect(await download.text()).toContain('Total due: 1,250.00');
+  await expect(details.getByText(/Stub summary/)).toBeVisible(COLD);
+  await shot(page, testInfo, 'ocr-02-done-with-summary');
+
+  await page.getByLabel('Search artifacts').fill('invoice');
+  await expect(list.locator('[data-artifact]', { hasText: 'scan-d.png' })).toBeVisible();
+  // scan-e was never read, so nothing about it is in the index.
+  await expect(list.locator('[data-artifact]', { hasText: 'scan-e.png' })).toHaveCount(0);
+  await shot(page, testInfo, 'ocr-03-search-finds-the-scan');
+
+  // Usage: four scans read (two pages each) and summarized from their text.
+  await page.goto('/utilization');
+  await expect(page.getByTestId('document-usage-pages')).toHaveText('8', { timeout: 30_000 });
+  // Five scans were each described from their pixels at upload, and four were then summarized from their text.
+  await expect(page.getByText(/8 pages/)).toBeVisible();
+  await expect(page.getByText(/4 summaries · 5 pictures described/)).toBeVisible();
+  await page.goto('/chat/artifacts');
+
+  // Phone width: the offer opens over the list, and the page does not scroll sideways.
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  // Reloaded, so no details from the desktop layout cover the list.
+  await page.goto('/chat/artifacts');
+  await page.getByLabel('Search artifacts').fill('');
+  await page
+    .locator('[data-artifact]', { hasText: 'scan-e.png' })
+    .getByRole('button')
+    .first()
+    .click();
+  await expect(page.getByRole('button', { name: 'Run OCR' })).toBeVisible();
+  const overflows = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth
+  );
+  expect(overflows).toBe(false);
+  await shot(page, testInfo, 'ocr-04-phone-offer');
+});
+
+test('the library: a photo with no text is described from the picture, OCR finds nothing to read in it, and the usage counts it under Documents', async ({
+  page,
+}, testInfo) => {
+  const f = fixtureFor(testInfo.project.name);
+  await seed(f);
+  await signIn(page, f);
+  await mistralStubConfigured();
+
+  // Summaries and descriptions on, as the other specs turn them.
+  await page.goto('/admin/settings');
+  const digestSwitch = page.getByRole('switch', {
+    name: 'Summarize artifacts with the default model',
+  });
+  await expect(digestSwitch).toBeVisible();
+  if ((await digestSwitch.getAttribute('aria-checked')) !== 'true') {
+    await digestSwitch.click();
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.getByText('Saved.')).toBeVisible();
+  }
+
+  await page.goto('/chat/artifacts');
+  const list = page.getByRole('region', { name: 'Artifacts' });
+  const details = page.getByRole('complementary', { name: 'Selected artifact' });
+  await page.getByLabel('Upload artifacts').setInputFiles({
+    name: 'car-street.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('NOTEXT a red car on a street\n'),
+  });
+  await expect(list.getByText('car-street.png')).toBeVisible(COLD);
+  await list.getByText('car-street.png').click();
+
+  // Described from the picture itself: no text, and not waiting for OCR.
+  await expect(
+    details.getByText(
+      'A red car on a street beside a beach, with modern buildings along the shoreline.'
+    )
+  ).toBeVisible(COLD);
+  await expect(details.getByText('Waiting for OCR')).toHaveCount(0);
+  await shot(page, testInfo, 'documents-01-photo-described');
+
+  // OCR asked for: it reads nothing, which is a result, and the description stays.
+  await details.getByRole('button', { name: 'Run OCR' }).click();
+  await expect(details.getByText('No text', { exact: true })).toBeVisible(COLD);
+  await expect(
+    details.getByText(
+      'A red car on a street beside a beach, with modern buildings along the shoreline.'
+    )
+  ).toBeVisible();
+  await shot(page, testInfo, 'documents-02-ocr-finds-no-text');
+
+  // The uploader's usage: one picture described, and the pages OCR read.
+  await page.goto('/utilization');
+  const card = page.getByTestId('document-usage-card');
+  await expect(card).toBeVisible(COLD);
+  await expect(page.getByTestId('document-usage-summaries')).toHaveText('1');
+  await expect(page.getByTestId('document-usage-pages')).toHaveText('2');
+  await expect(card.getByText(/12 tokens in/)).toBeVisible();
+  // The Documents row in the breakdown says what the work was, not just its tokens.
+  await expect(page.getByText(/1 OCR read, 2 pages · 1 picture described/)).toBeVisible();
+  await shot(page, testInfo, 'documents-03-usage-documents-card');
 });

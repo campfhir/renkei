@@ -55,7 +55,13 @@ const SERIES: { key: Series; label: string }[] = [
 ];
 
 const TOKEN_SEGMENTS: {
-  key: 'chatTokens' | 'chatProjectTokens' | 'codeProjectTokens' | 'agentTokens' | 'imageTokens';
+  key:
+    | 'chatTokens'
+    | 'chatProjectTokens'
+    | 'codeProjectTokens'
+    | 'agentTokens'
+    | 'imageTokens'
+    | 'documentTokens';
   label: string;
   className: string;
 }[] = [
@@ -65,6 +71,8 @@ const TOKEN_SEGMENTS: {
   { key: 'agentTokens', label: 'Agents', className: 'bg-purple-500' },
   // Pink, distinct from the Agents purple; the breakdown's Images row and the leaderboard match.
   { key: 'imageTokens', label: 'Images', className: 'bg-pink-500' },
+  // Summaries and picture descriptions the model wrote; green, apart from the rest.
+  { key: 'documentTokens', label: 'Documents', className: 'bg-emerald-500' },
 ];
 
 interface Segment {
@@ -207,10 +215,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
  * Who the selected person is: identity, groups and the agents they own.
  * Their connectors live on the Access page, which is linked from here.
  */
-function PersonCard({ subject, person }: {
-  subject: string;
-  person: PersonProfile | null;
-}) {
+function PersonCard({ subject, person }: { subject: string; person: PersonProfile | null }) {
   const name = person?.name ?? subject;
   return (
     <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
@@ -229,10 +234,7 @@ function PersonCard({ subject, person }: {
               'never signed in'
             )}
           </span>
-          <Link
-            href={`/admin/access`}
-            className="text-blue-600 hover:underline dark:text-blue-400"
-          >
+          <Link href={`/admin/access`} className="text-blue-600 hover:underline dark:text-blue-400">
             Connectors on Access
           </Link>
         </span>
@@ -307,9 +309,7 @@ function syncUrl(periodKey: string, subject: string | null): void {
   window.history.replaceState(window.history.state, '', url);
 }
 
-export default function OrgUsageViewer({ initial }: {
-  initial: OrgUsageReport;
-}) {
+export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport }) {
   const [report, setReport] = useState(initial);
   const [series, setSeries] = useState<Series>('tokens');
   const [includeAgents, setIncludeAgents] = useState(initial.includeAgentsInTopUsers);
@@ -320,12 +320,7 @@ export default function OrgUsageViewer({ initial }: {
   function refresh(periodKey: string, nextIncludeAgents: boolean, subject: string | null) {
     startTransition(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const next = await getOrgUsageReport(
-        periodKey,
-        timeZone,
-        nextIncludeAgents,
-        subject
-      );
+      const next = await getOrgUsageReport(periodKey, timeZone, nextIncludeAgents, subject);
       setReport(next);
       syncUrl(next.periodKey, next.subject);
     });
@@ -419,10 +414,7 @@ export default function OrgUsageViewer({ initial }: {
     <div className="flex flex-col gap-5" data-wide-page>
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">Organization usage</h1>
-        <Link
-          href={`/admin`}
-          className="text-sm text-blue-600 hover:underline dark:text-blue-400"
-        >
+        <Link href={`/admin`} className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Organization
         </Link>
         <p className="w-full text-sm text-gray-500 dark:text-gray-400">
@@ -538,7 +530,7 @@ export default function OrgUsageViewer({ initial }: {
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <TokenSurfaceBreakdown tokens={tokens} />
+        <TokenSurfaceBreakdown tokens={tokens} documents={report.document} />
         <Leaderboard<ModelTokenRow>
           heading="Tokens by model"
           hint={

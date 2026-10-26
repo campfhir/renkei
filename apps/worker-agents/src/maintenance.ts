@@ -189,18 +189,28 @@ export function createUsageRetentionSweep(db: Kysely<DB>) {
         LIMIT ${RETENTION_BATCH}
       ) RETURNING id
     `.execute(db);
+    const documents = await sql<{ id: string }>`
+      DELETE FROM document_usage WHERE id IN (
+        SELECT id FROM document_usage
+        WHERE created_at < NOW() - make_interval(days => ${days})
+        ORDER BY created_at
+        LIMIT ${RETENTION_BATCH}
+      ) RETURNING id
+    `.execute(db);
     if (
       runs.rows.length > 0 ||
       calls.rows.length > 0 ||
       voice.rows.length > 0 ||
-      images.rows.length > 0
+      images.rows.length > 0 ||
+      documents.rows.length > 0
     ) {
       logger.info(
-        'retention pruned {runs} run log row(s), {calls} token ledger row(s), {voice} voice ledger row(s) and {images} image ledger row(s)',
+        'retention pruned {runs} run log row(s), {calls} token ledger row(s), {voice} voice ledger row(s), {images} image ledger row(s) and {documents} document ledger row(s)',
         {
           component: 'worker-agents/usage-retention',
           voice: voice.rows.length,
           images: images.rows.length,
+          documents: documents.rows.length,
           runs: runs.rows.length,
           calls: calls.rows.length,
         }

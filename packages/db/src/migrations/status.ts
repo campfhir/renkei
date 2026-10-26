@@ -190,6 +190,8 @@ export const EXPECTED_MIGRATIONS = [
   '164-artifact-digest',
   '165-chat-drafts',
   '166-admin-change-queue',
+  '167-artifact-ocr',
+  '168-document-usage',
 ];
 
 export interface MigrationStatus {

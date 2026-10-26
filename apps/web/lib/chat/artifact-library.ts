@@ -38,6 +38,7 @@ import {
   deleteAttachment,
   getAttachment,
   getAttachmentText,
+  isOcrCandidate,
   listReferencesOf,
   readAttachmentBytes,
   removeProjectReference,
@@ -46,6 +47,7 @@ import {
   type AttachmentRow,
   type ReferenceMode,
 } from './attachments';
+import { ocrRunFor, ocrSamples, type OcrRun } from './artifact-ocr';
 import { mayUse, resolveArtifactAccess, type ArtifactAccess } from './artifact-access';
 import {
   cipherAsOwner,
@@ -687,6 +689,12 @@ export interface LibraryItem {
   summary: string | null;
   keywords: string[];
   digestStatus: string;
+  /** Whether OCR takes this file (a PDF or an image), so the page can offer it. */
+  ocrSupported: boolean;
+  /** The OCR run in flight, with how long it has taken and how long it has left. */
+  ocr: OcrRun | null;
+  /** Pages the last OCR read, once one has finished. */
+  ocrPages: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -750,12 +758,17 @@ export async function libraryItems(
     summary: string | null;
     keywords: string[];
     digest_status: string;
+    ocr_started_at: Date | null;
+    ocr_pages: number | null;
     created_at: Date;
     updated_at: Date;
   }[],
   viaOf: (row: { id: string }) => 'grant' | 'project' | 'chat'
 ): Promise<LibraryItem[]> {
   if (rows.length === 0) return [];
+  // The estimate's samples are read only when a run is in flight to need one.
+  const samples = rows.some((row) => row.ocr_started_at) ? await ocrSamples(db) : [];
+  const now = Date.now();
   const sharedRows = rows.filter((row) => row.owner_subject !== viewerSubject);
   const ids = rows.map((row) => row.id);
   const [references, shares, chats, identities] = await Promise.all([
@@ -828,6 +841,9 @@ export async function libraryItems(
       summary: row.summary,
       keywords: row.keywords,
       digestStatus: row.digest_status,
+      ocrSupported: isOcrCandidate(row.filename, row.content_type),
+      ocr: ocrRunFor(row.ocr_started_at, Number(row.size_bytes), samples, now),
+      ocrPages: row.ocr_pages,
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     };

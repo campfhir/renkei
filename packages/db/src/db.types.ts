@@ -429,6 +429,17 @@ export interface ArtifactReferences {
   project_id: string;
 }
 
+export interface DocumentUsage {
+  artifact_id: string | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  input_tokens: Generated<number>;
+  kind: string;
+  output_tokens: Generated<number>;
+  pages: Generated<number>;
+  subject: string;
+}
+
 export interface Artifacts {
   blob_key: string;
   chat_id: string | null;
@@ -443,6 +454,10 @@ export interface Artifacts {
   key_ref: string | null;
   keywords: Generated<string[]>;
   message_id: string | null;
+  ocr_finished_at: Timestamp | null;
+  ocr_millis: number | null;
+  ocr_pages: number | null;
+  ocr_started_at: Timestamp | null;
   origin: Generated<string>;
   owner_subject: string;
   search_vector: string | null;
@@ -1765,6 +1780,7 @@ export interface DB {
   settings: Settings;
   tool_calls: ToolCalls;
   image_usage: ImageUsage;
+  document_usage: DocumentUsage;
   upload_slots: UploadSlots;
   user_encryption_keys: UserEncryptionKeys;
   user_preferences: UserPreferences;

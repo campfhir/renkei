@@ -52,6 +52,8 @@ const COLUMNS = [
   'summary',
   'keywords',
   'digest_status',
+  'ocr_started_at',
+  'ocr_pages',
   'created_at',
   'updated_at',
 ] as const;

@@ -71,6 +71,8 @@ export interface OrgBucket {
   imageTokens: number;
   images: number;
   imageBytes: number;
+  /** Tokens the model billed for summaries of uploaded files and descriptions of their pictures. */
+  documentTokens: number;
   runs: number;
   failures: number;
   toolCalls: number;
@@ -154,6 +156,7 @@ function emptyBucket(key: string, label: string): OrgBucket {
     imageTokens: 0,
     images: 0,
     imageBytes: 0,
+    documentTokens: 0,
     runs: 0,
     failures: 0,
     toolCalls: 0,
@@ -169,6 +172,7 @@ function addRow(bucket: OrgBucket, row: OrgDay): void {
   bucket.imageTokens += row.imageInputTokens + row.imageOutputTokens;
   bucket.images += row.images;
   bucket.imageBytes += row.imageBytes;
+  bucket.documentTokens += row.documentInputTokens + row.documentOutputTokens;
   bucket.runs += row.runs;
   bucket.failures += row.failures;
   bucket.toolCalls += row.toolCalls;

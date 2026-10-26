@@ -48,6 +48,13 @@ export interface OrgTokenTotals {
    * counts those by the picture and the byte.
    */
   images: SurfaceTokens;
+  /**
+   * What the model billed for summaries of uploaded files and descriptions
+   * of their pictures (document_usage, migration 168), charged to the uploader.
+   * OCR bills pages rather than tokens, so its reads are counted on the
+   * Documents card and not here.
+   */
+  documents: SurfaceTokens;
 }
 
 export interface OrgActivityTotals {
@@ -77,6 +84,9 @@ export interface OrgDay {
   imageOutputTokens: number;
   images: number;
   imageBytes: number;
+  /** What the model billed for summaries and picture descriptions this hour or day. */
+  documentInputTokens: number;
+  documentOutputTokens: number;
   runs: number;
   failures: number;
   toolCalls: number;
@@ -127,7 +137,7 @@ export async function getSurfaceTokenTotals(
   timeZone: string,
   ownerSubject: string | null = null
 ): Promise<OrgTokenTotals> {
-  const [chatResult, agentRow, imageRow] = await Promise.all([
+  const [chatResult, agentRow, imageRow, documentRow] = await Promise.all([
     sql<ChatBucketRow>`
       SELECT
         ${CHAT_BUCKET_CASE} AS bucket,
@@ -155,6 +165,13 @@ export async function getSurfaceTokenTotals(
       WHERE ${inSpan('created_at', span, timeZone)}
         ${ownedBy('subject', ownerSubject)}
     `.execute(db),
+    sql<{ input_tokens: string; output_tokens: string }>`
+      SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens
+      FROM document_usage
+      WHERE ${inSpan('created_at', span, timeZone)}
+        ${ownedBy('subject', ownerSubject)}
+    `.execute(db),
   ]);
   return {
     chat: surfaceOf(chatResult.rows, 'chat'),
@@ -167,6 +184,10 @@ export async function getSurfaceTokenTotals(
     images: {
       input: Number(imageRow.rows[0]?.input_tokens ?? 0),
       output: Number(imageRow.rows[0]?.output_tokens ?? 0),
+    },
+    documents: {
+      input: Number(documentRow.rows[0]?.input_tokens ?? 0),
+      output: Number(documentRow.rows[0]?.output_tokens ?? 0),
     },
   };
 }
@@ -266,7 +287,7 @@ export async function getOrgDailySeries(
     .groupBy(sql`day`);
   if (ownerSubject !== null) callsQuery = callsQuery.where('subject', '=', ownerSubject);
 
-  const [chatRows, agentRows, runRows, callRows, imageRows] = await Promise.all([
+  const [chatRows, agentRows, runRows, callRows, imageRows, documentRows] = await Promise.all([
     sql<ChatBucketRow & { day: string }>`
       SELECT
         to_char(ct.started_at AT TIME ZONE ${timeZone}, ${pattern}) AS day,
@@ -309,6 +330,15 @@ export async function getOrgDailySeries(
         ${ownedBy('subject', ownerSubject)}
       GROUP BY day
     `.execute(db),
+    sql<{ day: string; input_tokens: string; output_tokens: string }>`
+      SELECT to_char(created_at AT TIME ZONE ${timeZone}, ${pattern}) AS day,
+             COALESCE(SUM(input_tokens), 0) AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens
+      FROM document_usage
+      WHERE ${inSpan('created_at', span, timeZone)}
+        ${ownedBy('subject', ownerSubject)}
+      GROUP BY day
+    `.execute(db),
   ]);
 
   const byDay = new Map<string, OrgDay>();
@@ -329,6 +359,8 @@ export async function getOrgDailySeries(
       imageOutputTokens: 0,
       images: 0,
       imageBytes: 0,
+      documentInputTokens: 0,
+      documentOutputTokens: 0,
       runs: 0,
       failures: 0,
       toolCalls: 0,
@@ -363,6 +395,11 @@ export async function getOrgDailySeries(
     point.imageOutputTokens += Number(row.output_tokens ?? 0);
     point.images += Number(row.images ?? 0);
     point.imageBytes += Number(row.bytes ?? 0);
+  }
+  for (const row of documentRows.rows) {
+    const point = dayOf(row.day);
+    point.documentInputTokens += Number(row.input_tokens ?? 0);
+    point.documentOutputTokens += Number(row.output_tokens ?? 0);
   }
   for (const row of runRows) {
     const point = dayOf(row.day);
@@ -423,10 +460,7 @@ export async function getTopUsers(
         AND ${inSpan('created_at', span, timeZone)}
       GROUP BY subject
     `.execute(db),
-    db
-      .selectFrom('identities')
-      .select(['subject', 'display_name', 'email'])
-      .execute(),
+    db.selectFrom('identities').select(['subject', 'display_name', 'email']).execute(),
   ]);
 
   const identityBySubject = new Map(identityRows.map((row) => [row.subject, row]));

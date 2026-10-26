@@ -25,6 +25,7 @@ import { getOrgSettings, getKeyDomain } from '@renkei/settings';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { recordDocumentUsage } from '@/lib/usage/document-usage';
 import { openBytes, openText, sealBytes, sealText, type ContentCipher } from './content-crypto';
 import type { OutboundRedactor } from './outbound-redaction';
 import type { AttachmentView } from './views';
@@ -42,6 +43,25 @@ export const EXTRACTED_TEXT_MAX_CHARS = 200_000;
 /** Extract status of a file whose text needs OCR: a scan, or an image. */
 export const NEEDS_OCR = 'needs_ocr';
 const OCR_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/tiff']);
+
+/**
+ * Pictures a vision model can look at: the formats the model APIs take
+ * (TIFF is read by OCR only). A picture like this is described even when
+ * it has no text.
+ */
+const DESCRIBABLE_PICTURE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+export function isDescribablePicture(contentType: string): boolean {
+  return DESCRIBABLE_PICTURE_TYPES.has(contentType);
+}
+
+/** Whether the OCR connector takes this file: a PDF or one of the image types above. */
+export function isOcrCandidate(filename: string, contentType: string): boolean {
+  return (
+    contentType === 'application/pdf' ||
+    /\.pdf$/i.test(filename) ||
+    OCR_IMAGE_TYPES.has(contentType)
+  );
+}
 /** How many files one OCR pass works on at once. */
 const OCR_CONCURRENCY = 3;
 
@@ -239,11 +259,58 @@ async function extract(
  * OCR cannot read is marked ocr_failed, so a mass upload never retries
  * the same file forever; with no OCR connector the file stays needs_ocr.
  */
-async function ocrOne(
+/**
+ * OCRs one file and stores the text. Its start and, on success, its
+ * duration and page count are recorded (artifacts' ocr_* columns), which is
+ * what the library's progress and ETA are worked out from. A file that
+ * failed is marked ocr_failed and a run that did not finish clears its
+ * start, so nothing looks in flight after it has stopped.
+ */
+export async function ocrOne(
   db: Kysely<DB>,
   row: AttachmentRow,
   redactor: OutboundRedactor | null,
   cipher: ContentCipher
+): Promise<string> {
+  const startedAt = Date.now();
+  await db
+    .updateTable('artifacts')
+    .set({ ocr_started_at: new Date(startedAt), updated_at: new Date() })
+    .where('id', '=', row.id)
+    .execute();
+  let status: string;
+  try {
+    status = await ocrAttempt(db, row, redactor, cipher, startedAt);
+  } catch (error) {
+    await db
+      .updateTable('artifacts')
+      .set({ ocr_started_at: null, updated_at: new Date() })
+      .where('id', '=', row.id)
+      .execute();
+    throw error;
+  }
+  if (status !== 'done') {
+    // A re-read that finds nothing leaves the text it already had in place.
+    const keepsText = status === 'none' && row.extractStatus === 'done';
+    await db
+      .updateTable('artifacts')
+      .set(
+        (status === 'ocr_failed' || status === 'none') && !keepsText
+          ? { ocr_started_at: null, extract_status: status, updated_at: new Date() }
+          : { ocr_started_at: null, updated_at: new Date() }
+      )
+      .where('id', '=', row.id)
+      .execute();
+  }
+  return status;
+}
+
+async function ocrAttempt(
+  db: Kysely<DB>,
+  row: AttachmentRow,
+  redactor: OutboundRedactor | null,
+  cipher: ContentCipher,
+  startedAt: number
 ): Promise<string> {
   const config = await resolveMistralOcrConfig();
   if (!config.ok) return NEEDS_OCR;
@@ -266,19 +333,33 @@ async function ocrOne(
         .join('\n\n')
         .slice(0, EXTRACTED_TEXT_MAX_CHARS)
     : '';
-  if (!ocr.ok || !markdown.trim()) {
+  if (!ocr.ok) {
     // An unreachable service is worth another try; anything else is the file.
-    return ocr.ok || ocr.err.type !== 'unreachable' ? 'ocr_failed' : NEEDS_OCR;
+    return ocr.err.type !== 'unreachable' ? 'ocr_failed' : NEEDS_OCR;
   }
+  // The pages were read and billed whether or not any text came back.
+  await recordDocumentUsage(db, {
+    subject: row.ownerSubject,
+    artifactId: row.id,
+    kind: 'ocr',
+    pages: ocr.val.pagesProcessed,
+  });
+  // A photo has no text to read: that is what the file holds, not a failure.
+  if (!markdown.trim()) return 'none';
   const sealed = sealText(redactor ? redactor.apply(markdown).text : markdown, cipher);
   if (!sealed.ok) return NEEDS_OCR;
+  const finishedAt = Date.now();
   await db
     .updateTable('artifacts')
     .set({
       extracted_text: sealed.val,
       extract_status: 'done',
       digest_status: 'pending',
-      updated_at: new Date(),
+      ocr_started_at: null,
+      ocr_finished_at: new Date(finishedAt),
+      ocr_millis: finishedAt - startedAt,
+      ocr_pages: ocr.val.pagesProcessed,
+      updated_at: new Date(finishedAt),
     })
     .where('id', '=', row.id)
     .execute();
@@ -390,7 +471,8 @@ export async function createAttachment(
         extracted_text: sealedText,
         extract_status: extracted.status,
         // Text to digest for the search index, once the row is there.
-        digest_status: sealedText !== null ? 'pending' : 'none',
+        digest_status:
+          sealedText !== null || isDescribablePicture(contentType) ? 'pending' : 'none',
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();

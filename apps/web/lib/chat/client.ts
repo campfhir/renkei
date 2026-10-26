@@ -28,6 +28,27 @@ import type { WidgetModelContextOutcome } from './widget-tools';
 const base = () => `/api/chat`;
 
 /**
+ * PUTs a file's bytes. `fetch` cannot report how far an upload has got, so
+ * a caller that wants a progress bar gets an XHR whose upload events feed
+ * it; the answer comes back as a Response either way.
+ */
+function putFile(
+  url: string,
+  file: File,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<Response> {
+  if (!onProgress) return fetch(url, { method: 'PUT', body: file });
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.upload.onprogress = (event) => onProgress(event.loaded, event.total);
+    xhr.onload = () => resolve(new Response(xhr.responseText, { status: xhr.status }));
+    xhr.onerror = () => reject(new TypeError('network error'));
+    xhr.send(file);
+  });
+}
+
+/**
  * The browser's IANA zone, sent with every prompt so the model knows the
  * person's local day and time instead of guessing it (from an office
  * address, say). Undefined where Intl cannot say.
@@ -288,7 +309,8 @@ export const chatClient = {
   /** Upload into the library (no home), a project, or a chat; `keep` makes a chat upload an artifact too. */
   uploadArtifact: async (
     home: { projectId?: string; chatId?: string; keep?: boolean; mode?: 'always' | 'on_demand' },
-    file: File
+    file: File,
+    onProgress?: (loaded: number, total: number) => void
   ): Promise<{
     data: (AttachmentView & { attached?: { mode: 'always' | 'on_demand' } | null }) | null;
     error: string | null;
@@ -302,10 +324,7 @@ export const chatClient = {
       ...(home.mode ? { mode: home.mode } : {}),
     });
     try {
-      const response = await fetch(`${base()}/attachments?${query.toString()}`, {
-        method: 'PUT',
-        body: file,
-      });
+      const response = await putFile(`${base()}/attachments?${query.toString()}`, file, onProgress);
       const body = await response.json().catch(() => null);
       if (!response.ok) {
         return {
@@ -322,6 +341,10 @@ export const chatClient = {
       return { data: null, error: 'Could not reach the server' };
     }
   },
+
+  /** Starts OCR on a file the owner holds; the read goes on in the background. */
+  startArtifactOcr: (artifactId: string) =>
+    sendJsonFull(`${base()}/artifacts/${artifactId}/ocr`, 'POST', {}),
 
   renameArtifact: (artifactId: string, filename: string) =>
     sendJsonFull(`${base()}/artifacts/${artifactId}`, 'PATCH', { filename }),
@@ -394,6 +417,8 @@ export const chatClient = {
     sendJsonFull(`${base()}/projects/${projectId}/artifacts/${artifactId}`, 'DELETE'),
 
   attachmentUrl: (attachmentId: string) => `${base()}/attachments/${attachmentId}`,
+  /** The text the file holds (its OCR read, or the text it had), as a download. */
+  attachmentTextUrl: (attachmentId: string) => `${base()}/attachments/${attachmentId}/text`,
 
   grants: (kind: ResourceKind, resourceId: string) =>
     getJson<{ grants: GrantView[] }>(`${base()}/${grantPath(kind, resourceId)}`),
