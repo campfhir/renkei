@@ -16,6 +16,9 @@ const nextConfig: NextConfig = {
   // No `X-Powered-By: Next.js`: it names the framework to every client for
   // nothing in return.
   poweredByHeader: false,
+  // A test worker runs its own dev server beside the others (e2e/worker-env.ts),
+  // and two dev servers cannot share one build directory.
+  distDir: process.env.E2E_DIST_DIR || '.next',
   // The proxy buffers a request body up to this size and silently cuts it off
   // past it (Next's default is 10MB, which truncated uploads). Set above the
   // largest Max attachment size an organization may choose (100MB).

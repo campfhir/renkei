@@ -12,15 +12,10 @@
 
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { test, expect, type Page, type TestInfo } from './worker-env';
 import { Client } from 'pg';
 import { enrollForE2E } from './keys';
-import { lockOrganization, unlockOrganization } from './org-lock';
 
-// The organization's rows are shared by every spec in a run: this one holds the
-// lock for its whole file, so the rows are its own while it runs.
-test.beforeAll(lockOrganization);
-test.afterAll(unlockOrganization);
 
 /**
  * A tenant per project: the three projects run side by side, and a tenant
