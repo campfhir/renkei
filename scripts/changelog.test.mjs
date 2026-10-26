@@ -16,9 +16,11 @@ const release = (date, entries = [{ kind: 'added', title: 'A thing', detail: 'It
 const file = (...releases) =>
   `export const CHANGELOG: ChangelogRelease[] = [\n${releases.join('\n')}\n];\n`;
 
+// The real file is checked against the real clock: its entries are dated
+// the day the work landed, so a pinned date would call today's entries the future.
 test('the repository changelog is well-formed', () => {
   const source = readFileSync(path.join(ROOT, 'apps/web/lib/changelog.ts'), 'utf8');
-  assert.deepEqual(validate(source, NOW), []);
+  assert.deepEqual(validate(source, new Date()), []);
 });
 
 test('a release with a real date and entries is accepted', () => {
