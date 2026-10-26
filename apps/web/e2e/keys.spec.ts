@@ -22,6 +22,12 @@ import path from 'node:path';
 import { test, expect, type Browser, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import { deviceCodeOf, enrollForE2E, formatUserKey, keyFor, secretbox } from './keys';
+import { lockOrganization, unlockOrganization } from './org-lock';
+
+// The organization's rows are shared by every spec in a run: this one holds the
+// lock for its whole file, so the rows are its own while it runs.
+test.beforeAll(lockOrganization);
+test.afterAll(unlockOrganization);
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };

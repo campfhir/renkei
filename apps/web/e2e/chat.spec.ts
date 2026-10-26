@@ -14,6 +14,12 @@ import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
 import { keyFor } from './keys';
+import { lockOrganization, unlockOrganization } from './org-lock';
+
+// The organization's rows are shared by every spec in a run: this one holds the
+// lock for its whole file, so the rows are its own while it runs.
+test.beforeAll(lockOrganization);
+test.afterAll(unlockOrganization);
 
 test.use({
   launchOptions: {

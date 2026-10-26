@@ -11,6 +11,12 @@ import { createCipheriv, randomBytes } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
+import { lockOrganization, unlockOrganization } from './org-lock';
+
+// The organization's rows are shared by every spec in a run: this one holds the
+// lock for its whole file, so the rows are its own while it runs.
+test.beforeAll(lockOrganization);
+test.afterAll(unlockOrganization);
 
 test.use({
   browserName: 'chromium',

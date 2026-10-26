@@ -19,6 +19,12 @@ import { createHash } from 'node:crypto';
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import { enrollForE2E, secretbox } from './keys';
+import { lockOrganization, unlockOrganization } from './org-lock';
+
+// The organization's rows are shared by every spec in a run: this one holds the
+// lock for its whole file, so the rows are its own while it runs.
+test.beforeAll(lockOrganization);
+test.afterAll(unlockOrganization);
 
 test.describe.configure({ mode: 'serial' });
 
