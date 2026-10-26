@@ -1098,6 +1098,8 @@ test('the library: OCR is asked for on a scan, its progress and estimate show wh
 
   // Phone width: the offer opens over the list, and the page does not scroll sideways.
   await page.setViewportSize(MOBILE_VIEWPORT);
+  // Reloaded, so no details from the desktop layout cover the list.
+  await page.goto('/chat/artifacts');
   await page.getByLabel('Search artifacts').fill('');
   await page
     .locator('[data-artifact]', { hasText: 'scan-e.png' })
