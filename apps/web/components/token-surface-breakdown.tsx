@@ -7,6 +7,7 @@
 
 import { formatTokens } from '@/lib/format-tokens';
 import type { OrgTokenTotals, SurfaceTokens } from '@/lib/usage/org-usage';
+import type { DocumentTotals } from '@/lib/usage/document-usage';
 
 const SURFACES: { key: keyof OrgTokenTotals; label: string; className: string }[] = [
   { key: 'chat', label: 'Chat', className: 'bg-blue-500' },
@@ -19,16 +20,37 @@ const SURFACES: { key: keyof OrgTokenTotals; label: string; className: string }[
   { key: 'documents', label: 'Documents', className: 'bg-emerald-500' },
 ];
 
+/**
+ * The Documents row's activity, in the words of the work done: OCR reads
+ * (and their pages), summaries of text, and pictures described.
+ */
+function documentsDetail(documents: DocumentTotals): string | null {
+  const parts = [
+    documents.ocrReads > 0
+      ? `${documents.ocrReads.toLocaleString('en-US')} OCR ${documents.ocrReads === 1 ? 'read' : 'reads'}, ${documents.pages.toLocaleString('en-US')} ${documents.pages === 1 ? 'page' : 'pages'}`
+      : null,
+    documents.summaries > 0
+      ? `${documents.summaries.toLocaleString('en-US')} ${documents.summaries === 1 ? 'summary' : 'summaries'}`
+      : null,
+    documents.pictures > 0
+      ? `${documents.pictures.toLocaleString('en-US')} ${documents.pictures === 1 ? 'picture' : 'pictures'} described`
+      : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
 function Row({
   label,
   tokens,
   shareOfTotal,
   className,
+  detail,
 }: {
   label: string;
   tokens: SurfaceTokens;
   shareOfTotal: number;
   className: string;
+  detail?: string | null;
 }) {
   return (
     <li>
@@ -41,6 +63,7 @@ function Row({
           </span>
         </span>
       </div>
+      {detail ? <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{detail}</p> : null}
       <div
         className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800"
         aria-hidden="true"
@@ -53,9 +76,12 @@ function Row({
 
 export function TokenSurfaceBreakdown({
   tokens,
+  documents,
   heading = 'Tokens by surface',
 }: {
   tokens: OrgTokenTotals;
+  /** The Documents work behind the Documents row: OCR reads and pages, summaries, pictures. */
+  documents?: DocumentTotals;
   heading?: string;
 }) {
   const total = SURFACES.reduce(
@@ -77,6 +103,7 @@ export function TokenSurfaceBreakdown({
                 : 0
             }
             className={surface.className}
+            detail={surface.key === 'documents' && documents ? documentsDetail(documents) : null}
           />
         ))}
       </ul>

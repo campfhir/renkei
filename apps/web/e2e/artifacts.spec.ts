@@ -1172,5 +1172,7 @@ test('the library: a photo with no text is described from the picture, OCR finds
   await expect(page.getByTestId('document-usage-summaries')).toHaveText('1');
   await expect(page.getByTestId('document-usage-pages')).toHaveText('2');
   await expect(card.getByText(/12 tokens in/)).toBeVisible();
+  // The Documents row in the breakdown says what the work was, not just its tokens.
+  await expect(page.getByText(/1 OCR read, 2 pages · 1 picture described/)).toBeVisible();
   await shot(page, testInfo, 'documents-03-usage-documents-card');
 });

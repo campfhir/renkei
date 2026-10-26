@@ -530,7 +530,7 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <TokenSurfaceBreakdown tokens={tokens} />
+        <TokenSurfaceBreakdown tokens={tokens} documents={report.document} />
         <Leaderboard<ModelTokenRow>
           heading="Tokens by model"
           hint={

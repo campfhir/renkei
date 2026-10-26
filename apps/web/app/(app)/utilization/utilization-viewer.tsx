@@ -343,7 +343,7 @@ export default function UtilizationViewer({ initial }: { initial: UtilizationRep
         />
       </section>
 
-      <TokenSurfaceBreakdown tokens={report.surfaceTokens} />
+      <TokenSurfaceBreakdown tokens={report.surfaceTokens} documents={report.document} />
 
       {report.voiceAvailable ||
       report.voice.speech.calls > 0 ||
