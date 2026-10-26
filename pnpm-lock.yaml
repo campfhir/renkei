@@ -1450,8 +1450,8 @@ importers:
         specifier: ^24.19.2
         version: 24.19.2
       '@types/pdfkit':
-        specifier: ^0.17.6
-        version: 0.17.6
+        specifier: ^0.17.7
+        version: 0.17.7
       jest:
         specifier: ^30.5.2
         version: 30.5.2(@types/node@24.19.2)
@@ -3317,8 +3317,8 @@ packages:
   '@types/node@26.6.5':
     resolution: {integrity: sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==}
 
-  '@types/pdfkit@0.17.6':
-    resolution: {integrity: sha512-tIwzxk2uWKp0Cq9JIluQXJid77lYhF52EsIOwhsMF4iWLA6YneoBR1xVKYYdAysHuepUB0OX4tdwMiUDdGKmig==}
+  '@types/pdfkit@0.17.7':
+    resolution: {integrity: sha512-VMOZDWw7HtNtLbjIuHIhVArm9PlV0gxpz32jAl1IuXWlIgbr1lKFoTsrtvEzY8a9BIpQJEE5DwNPKD50otTs6g==}
 
   '@types/pg@8.23.1':
     resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
@@ -7961,7 +7961,7 @@ snapshots:
     dependencies:
       undici-types: 8.9.0
 
-  '@types/pdfkit@0.17.6':
+  '@types/pdfkit@0.17.7':
     dependencies:
       '@types/node': 24.19.2
 
