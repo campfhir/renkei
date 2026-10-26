@@ -47,6 +47,7 @@ import { getActiveTurn } from './turns';
 import { internalMcpEndpoint } from './internal-origin';
 import { toChatBlocks, widgetStateKeyOf } from './views';
 import type { ChatMessageView, WidgetDecisionState } from './views';
+import { logger } from '@/lib/logger';
 
 const CALL_TTL_SECONDS = 5 * 60;
 const MODEL_CONTEXT_MAX_CHARS = 4_000;
@@ -110,7 +111,12 @@ export async function confirmWidgetTool(
     await mcp.initialize();
     const result = await mcp.callTool(input.name, input.arguments);
     return { ok: true, result };
-  } catch {
+  } catch (error) {
+    logger.warn('chat widget tool call failed: {message}', {
+      component: 'chat/widget-tools',
+      tool: input.name,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return { ok: false, reason: 'call-failed' };
   } finally {
     await revokeRunToken(db, token);

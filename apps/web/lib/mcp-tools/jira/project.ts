@@ -64,7 +64,9 @@ async function searchUsersOnce(
     const body: unknown = await response.json();
     return { ok: true, query, users: Array.isArray(body) ? body : [] };
   } catch (error) {
-    return { ok: false, query, reason: error instanceof Error ? error.message : String(error) };
+    const reason = error instanceof Error ? error.message : String(error);
+    logger.warn('Jira user search failed: {message}', { component: 'mcp/jira', message: reason });
+    return { ok: false, query, reason };
   }
 }
 

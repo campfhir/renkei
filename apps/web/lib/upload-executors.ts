@@ -121,7 +121,13 @@ async function jiraAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Uploa
     await response.text().catch(() => '');
     return { ok: true, detail: `Attached "${slot.filename}" to ${issueKey}.` };
   } catch (error) {
-    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+    const detail = error instanceof Error ? error.message : String(error);
+    logger.warn('Jira attachment upload failed: {message}', {
+      component: 'connectors/atlassian',
+      slotId: slot.id,
+      message: detail,
+    });
+    return { ok: false, detail };
   }
 }
 
@@ -174,7 +180,13 @@ async function jsmAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Upload
     await attach.text().catch(() => '');
     return { ok: true, detail: `Attached "${slot.filename}" to ${requestKey}.` };
   } catch (error) {
-    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+    const detail = error instanceof Error ? error.message : String(error);
+    logger.warn('Jira Service Management attachment upload failed: {message}', {
+      component: 'connectors/atlassian',
+      slotId: slot.id,
+      message: detail,
+    });
+    return { ok: false, detail };
   }
 }
 
@@ -322,14 +334,19 @@ async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Uplo
       signal: timeoutSignal(undefined, UPLOAD_TIMEOUT_MS),
     });
   } catch (error) {
-    return {
-      ok: false,
-      detail: isTimeoutError(error)
-        ? `WebEx did not respond within ${UPLOAD_TIMEOUT_MS}ms.`
-        : error instanceof Error
-          ? error.message
-          : String(error),
-    };
+    const timedOut = isTimeoutError(error);
+    const detail = timedOut
+      ? `WebEx did not respond within ${UPLOAD_TIMEOUT_MS}ms.`
+      : error instanceof Error
+        ? error.message
+        : String(error);
+    logger.warn('WebEx attachment upload failed: {message}', {
+      component: 'connectors/webex',
+      slotId: slot.id,
+      timedOut,
+      message: detail,
+    });
+    return { ok: false, detail };
   }
   const refused = refusalTextOf(response, 'WebEx');
   if (refused) return { ok: false, detail: refused };

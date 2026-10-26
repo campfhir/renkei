@@ -86,7 +86,12 @@ export async function resolveProject(auth: JiraAuth, keyOrId: string): Promise<R
       },
     };
   } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    const reason = error instanceof Error ? error.message : String(error);
+    logger.warn('Jira work type lookup failed: {message}', {
+      component: 'mcp/jira',
+      message: reason,
+    });
+    return { ok: false, reason };
   }
 }
 

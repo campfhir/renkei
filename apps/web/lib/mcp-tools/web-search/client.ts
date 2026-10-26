@@ -19,6 +19,7 @@
 
 import { weekdayOf } from '@renkei/agents';
 import type { WebSearchConfig, WebSearchLocation } from './config';
+import { logger } from '@/lib/logger';
 
 /** A search can be agentic (several searches, page opens) — well past the 15s read budget. */
 export const WEB_SEARCH_TIMEOUT_MS = 90_000;
@@ -224,6 +225,11 @@ export async function runWebSearch(
     });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'TimeoutError';
+    logger.warn('web search request failed: {message}', {
+      component: 'mcp/web-search',
+      timedOut,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return {
       ok: false,
       error: {

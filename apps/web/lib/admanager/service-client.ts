@@ -19,6 +19,7 @@
  */
 
 import type { HttpMethod, AdManagerCredentials } from '@renkei/connector-admanager';
+import { logger } from '@/lib/logger';
 
 export type AdManagerClientError =
   /** DELEGATE_WORKER_URL / _API_KEY are not set. */
@@ -128,7 +129,12 @@ async function callOp(op: string, body: unknown): Promise<AdManagerClientResult<
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    return unreachable(error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('the ADManager Plus worker could not be reached: {message}', {
+      component: 'connectors/admanager',
+      message,
+    });
+    return unreachable(message);
   }
   if (!response.ok) return opFailure(response);
   try {

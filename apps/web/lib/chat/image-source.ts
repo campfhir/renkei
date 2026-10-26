@@ -17,6 +17,7 @@ import { sanitizeBytes } from '@renkei/document-render';
 import { fileCipherFor } from './artifact-access';
 import { listAttachments, readAttachmentBytes, type AttachmentRow } from './attachments';
 import type { ContentCipher } from './content-crypto';
+import { logger } from '@/lib/logger';
 
 /** What the picker needs of a stored file. */
 export interface ImageFile {
@@ -91,7 +92,11 @@ export async function loadSourceImage(scope: SourceScope, wanted: string): Promi
   let rows: AttachmentRow[];
   try {
     rows = await listAttachments(scope.db, { chatId: scope.chatId });
-  } catch {
+  } catch (error) {
+    logger.warn('chat picture source could not list the chat files: {message}', {
+      component: 'chat/image-source',
+      message: error instanceof Error ? error.message : String(error),
+    });
     return { ok: false, reason: 'This chat’s files could not be read just now.' };
   }
   const picked = pickSourceImage(rows, wanted);

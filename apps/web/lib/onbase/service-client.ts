@@ -29,6 +29,7 @@
  */
 
 import type { OnBaseIdpEndpoints } from '@renkei/connector-onbase';
+import { logger } from '@/lib/logger';
 
 export type OnBaseClientError =
   /** DELEGATE_WORKER_URL / _API_KEY are not set. */
@@ -139,7 +140,12 @@ async function callOp(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    return unreachable(error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('the OnBase worker could not be reached: {message}', {
+      component: 'connectors/onbase',
+      message,
+    });
+    return unreachable(message);
   }
   if (!response.ok) return opFailure(response);
   return { ok: true, val: response };
@@ -243,9 +249,7 @@ export async function obPutBytes(input: {
   filePart: number;
   bytes: Uint8Array;
 }): Promise<OnBaseClientResult<{ status: number }>> {
-  const query = `?uploadId=${encodeURIComponent(
-    input.uploadId
-  )}&filePart=${input.filePart}`;
+  const query = `?uploadId=${encodeURIComponent(input.uploadId)}&filePart=${input.filePart}`;
   const called = await callOp('put-bytes', undefined, {
     query,
     // A fresh ArrayBuffer-backed copy: fetch's BodyInit refuses the wider

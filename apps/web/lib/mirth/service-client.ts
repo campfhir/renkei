@@ -18,6 +18,7 @@
  */
 
 import type { HttpMethod, MirthCredentials } from '@renkei/connector-mirth';
+import { logger } from '@/lib/logger';
 
 export type MirthClientError =
   /** DELEGATE_WORKER_URL / _API_KEY are not set. */
@@ -128,7 +129,12 @@ async function callOp(op: string, body: unknown): Promise<MirthClientResult<unkn
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    return unreachable(error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('the Mirth worker could not be reached: {message}', {
+      component: 'connectors/mirth',
+      message,
+    });
+    return unreachable(message);
   }
   if (!response.ok) return opFailure(response);
   try {
