@@ -1061,10 +1061,8 @@ test.describe('code projects', () => {
     //    Create project) behaves identically to an existing repository ──
     await expect(page.getByText(`acme/${ids.createdRepoSlug}`)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Choose another' })).toBeVisible();
-    await expect(page.getByLabel('Branch (optional)')).toHaveAttribute(
-      'placeholder',
-      'main branch'
-    );
+    // The repository's own default branch, as the picker reports it.
+    await expect(page.getByLabel('Branch (optional)')).toHaveAttribute('placeholder', 'main');
     const create = page.getByRole('button', { name: 'Create project' });
     await expect(create).toBeEnabled();
     await create.click();

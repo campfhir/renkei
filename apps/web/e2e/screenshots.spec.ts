@@ -113,7 +113,7 @@ test('agent overview — memory section open', async ({ page }, testInfo) => {
     await page.getByRole('button', { name: 'Memory' }).click();
     await expect(page.getByRole('dialog', { name: 'Memory' })).toBeVisible();
   } else {
-    await page.getByText('Memory', { exact: true }).click();
+    await page.getByRole('main').getByText('Memory', { exact: true }).click();
   }
   await expect(page.getByText('Summary (compacted', { exact: false })).toBeVisible();
   await shot(page, testInfo, 'agent-overview-memory-open');
@@ -142,9 +142,9 @@ test('agent overview — invocations open', async ({ page }, testInfo) => {
     await page.getByRole('button', { name: 'Invocations' }).click();
     await expect(page.getByRole('dialog', { name: 'Invocations' })).toBeVisible();
   } else {
-    await page.getByText('Invocations', { exact: true }).click();
+    await page.getByRole('main').getByText('Invocations', { exact: true }).click();
   }
-  await expect(page.getByText('All time')).toBeVisible();
+  await expect(page.locator('dt', { hasText: /^All time$/ })).toBeVisible();
   // Seeded counters: 3 today +4 this week (2d ago) +6 this month (12d) …
   await expect(page.getByText('per-day cap', { exact: false })).toBeVisible();
   await shot(page, testInfo, 'agent-overview-invocations-open');
@@ -405,7 +405,7 @@ test.describe('admin — organization usage', () => {
     await expect(page.getByRole('figure', { name: 'Active days' })).toBeVisible();
     await expect(page.getByRole('group', { name: 'Activity by day' })).toBeVisible();
     // The only spender is the selected person, so they rank first, highlighted.
-    await expect(page.getByText('#1')).toBeVisible();
+    await expect(page.locator('[aria-current="true"]', { hasText: /^#1/ }).first()).toBeVisible();
     await shot(page, testInfo, 'admin-organization-usage-person');
 
     // A quarter lays the days out as tiny month calendars.

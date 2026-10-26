@@ -16,7 +16,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG } from './seed';
+import { enrollForE2E } from './keys';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -124,6 +124,8 @@ test.beforeAll(async ({}, testInfo) => {
     `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')`,
     [sessionIdFor(testInfo.project.name), subject, ['renkei-user', 'renkei-operator']]
   );
+  // Enrolled the way a browser would, so the key prompt does not sit over the pages.
+  await enrollForE2E(client, subject);
 });
 
 test.afterAll(async () => {
@@ -282,7 +284,7 @@ test('the Tutorials page lists every tour with its state and replays one', async
   await page.getByTestId('tutorial-welcome').getByRole('button', { name: 'Replay' }).click();
   const card = page.getByTestId(CARD);
   await expect(card).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}$`));
+  await expect(page).toHaveURL(/\/$/);
   await expect(card).toHaveAttribute('data-coach-tour', 'welcome');
   await expect(card.getByRole('button', { name: "Don't show tutorials" })).toHaveCount(0);
   await shot(page, testInfo, 'coach-replay');
@@ -385,10 +387,11 @@ test('the operator report shows who viewed, finished and skipped', async ({ page
   // included — so the assertion is on this person's own row.
   const row = page.getByTestId('tutorial-person').filter({ hasText: subject });
   await expect(row).toHaveCount(1);
-  // chat completed; welcome (replayed, then skipped), agents, connectors
-  // (Escape) and admin ("don't show") skipped.
+  // chat completed; welcome (replayed, then skipped), shortcuts (skipped
+  // where the replay landed), agents, connectors (Escape) and admin ("don't
+  // show") skipped.
   await expect(row.getByTestId('person-completed')).toHaveText('1');
-  await expect(row.getByTestId('person-skipped')).toHaveText('4');
+  await expect(row.getByTestId('person-skipped')).toHaveText('5');
   await expect(row.getByTestId('person-in-progress')).toHaveText('0');
   await expect(row.getByText('Welcome to Renkei')).toBeVisible();
   await expect(page.getByTestId('tour-totals-welcome')).toBeVisible();

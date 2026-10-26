@@ -101,9 +101,7 @@ test('setup: the Voice section under Preferences', async ({ page }, testInfo) =>
   const section = page.getByRole('region', { name: 'Voice' });
   await expect(section).toBeVisible();
   await expect(section.getByRole('combobox', { name: 'Voice' })).toContainText('Sonia');
-  await expect(
-    section.getByRole('button', { name: /Hear a sample in British English/ })
-  ).toBeVisible();
+  await expect(section.getByTitle('A sentence in British English')).toBeVisible();
   await section.scrollIntoViewIfNeeded();
   await shot(page, testInfo, 'voice-04-preferences', false);
 });
@@ -132,7 +130,7 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
     'Reading the reply aloud'
   );
   await shot(page, testInfo, 'voice-06-reply-read-aloud', false);
-  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.locator('button', { hasText: /^Stop$/ }).click();
 
   // Dictation: the microphone beside the box; the fake microphone speaks
   // at three seconds and the words land in the box, to edit and send.

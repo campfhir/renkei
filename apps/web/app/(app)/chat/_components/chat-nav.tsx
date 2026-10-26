@@ -275,10 +275,12 @@ function ChatRow({ chat, projects, active, onDeleted }: {
 }) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
-  // The menu opens below its row, or above it when there is no room below:
-  // the chat list is its own scroll box, so a menu past its bottom edge
-  // would be clipped rather than reach the page.
-  const [menuUp, setMenuUp] = useState(false);
+  // Where the menu sits in the window, once measured: below its row, or
+  // above it when there is no room below. Fixed to the window rather than
+  // to the row, because the chat list is its own scroll box and clips
+  // whatever runs past its edges.
+  const [menuAt, setMenuAt] = useState<{ top: number; right: number } | null>(null);
+  const actionsRef = useRef<HTMLButtonElement>(null);
   const [dialog, setDialog] = useState<'rename' | 'move' | 'share' | 'delete' | null>(null);
   const [title, setTitle] = useState(chat.title ?? '');
   const [busy, setBusy] = useState(false);
@@ -286,14 +288,25 @@ function ChatRow({ chat, projects, active, onDeleted }: {
   const menuRef = useRef<HTMLDivElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
   useDismiss(menuOpen, menuRef, () => setMenuOpen(false));
-  // Measured before paint, so a menu that flips never shows in the wrong place.
+  // Measured before paint, so a menu never shows in the wrong place.
   useLayoutEffect(() => {
     const panel = menuPanelRef.current;
-    if (!menuOpen || !panel) return;
-    // The nearest nav is the chat list, the scroll box the menu sits in; the
-    // window's edge counts too, when the list runs past it.
-    const list = panel.closest('nav')?.getBoundingClientRect().bottom ?? window.innerHeight;
-    setMenuUp(panel.getBoundingClientRect().bottom > Math.min(list, window.innerHeight));
+    const trigger = actionsRef.current;
+    if (!menuOpen || !panel || !trigger) return;
+    const button = trigger.getBoundingClientRect();
+    const height = panel.getBoundingClientRect().height;
+    const below = window.innerHeight - button.bottom >= height + 4;
+    setMenuAt({
+      top: below ? button.bottom + 4 : Math.max(4, button.top - height - 4),
+      right: window.innerWidth - button.right,
+    });
+  }, [menuOpen]);
+  // The menu is fixed where it was measured: a scroll would leave it behind.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => setMenuOpen(false);
+    window.addEventListener('scroll', close, true);
+    return () => window.removeEventListener('scroll', close, true);
   }, [menuOpen]);
   const isOwner = chat.via === 'owner';
   const mark = kindOf(chat);
@@ -355,12 +368,12 @@ function ChatRow({ chat, projects, active, onDeleted }: {
       {isOwner ? (
         <div ref={menuRef} className="relative">
           <button
+            ref={actionsRef}
             type="button"
             aria-label="Chat actions"
             onClick={() => {
-              // Each open starts below and is measured again, so a menu that
-              // flipped up last time is not left up where there is room below.
-              setMenuUp(false);
+              // Each open is measured again from its own button.
+              setMenuAt(null);
               setMenuOpen((value) => !value);
             }}
             className="rounded p-1 text-gray-400 opacity-0 hover:bg-gray-200 hover:text-gray-700 focus:opacity-100 group-hover:opacity-100 dark:hover:bg-gray-800 dark:hover:text-gray-200"
@@ -370,7 +383,8 @@ function ChatRow({ chat, projects, active, onDeleted }: {
           {menuOpen ? (
             <div
               ref={menuPanelRef}
-              className={`absolute right-0 z-40 w-40 overflow-hidden rounded-md border border-gray-200 bg-white text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900 ${menuUp ? 'bottom-full mb-1' : 'mt-1'}`}
+              style={menuAt ? { top: menuAt.top, right: menuAt.right } : { visibility: 'hidden' }}
+              className="fixed z-40 w-40 overflow-hidden rounded-md border border-gray-200 bg-white text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900"
             >
               {actions.map((item) => (
                 <button

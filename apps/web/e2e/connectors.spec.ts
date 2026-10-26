@@ -21,8 +21,9 @@
 
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -97,6 +98,8 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{"added": ["zoom", "webex"]}'::jsonb)`,
       [fixture.subject]
     );
+    // Enrolled the way a browser would, so the key prompt does not cover the page.
+    await enrollForE2E(client, fixture.subject);
   } finally {
     await client.end();
   }
@@ -137,6 +140,18 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
+/** A card sits above a heading on the page (the "Needs setup" side of it). */
+async function expectAbove(card: Locator, heading: Locator): Promise<void> {
+  const [cardBox, headingBox] = [await card.boundingBox(), await heading.boundingBox()];
+  expect(cardBox!.y).toBeLessThan(headingBox!.y);
+}
+
+/** A card sits below a heading on the page (the "Connected" side of it). */
+async function expectBelow(card: Locator, heading: Locator): Promise<void> {
+  const [cardBox, headingBox] = [await card.boundingBox(), await heading.boundingBox()];
+  expect(cardBox!.y).toBeGreaterThan(headingBox!.y);
+}
+
 test('connectors page: needs-setup ordering, live scope picker, real disconnect', async ({
   page,
 }, testInfo) => {
@@ -147,12 +162,15 @@ test('connectors page: needs-setup ordering, live scope picker, real disconnect'
   await page.goto(`/connectors`);
   await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
 
-  // Both cards start unconnected: one "Needs setup" section, no "Connected"
-  // section at all.
+  // Both cards start unconnected: they sit in "Needs setup", above the
+  // "Connected" section the seed's Atlassian card fills.
   const zoomCard = page.locator('[data-coach="card-zoom"]');
   const webexCard = page.locator('[data-coach="card-webex"]');
+  const connectedHeading = page.getByRole('heading', { name: 'Connected', exact: true });
   await expect(page.getByRole('heading', { name: 'Needs setup' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Connected', exact: true })).toHaveCount(0);
+  await expect(connectedHeading).toHaveCount(1);
+  await expectAbove(zoomCard, connectedHeading);
+  await expectAbove(webexCard, connectedHeading);
   await expect(zoomCard.getByText('Not connected')).toBeVisible();
   await expect(webexCard.getByText('Not connected')).toBeVisible();
   await shot(page, testInfo, 'connectors-01-needs-setup');
@@ -175,7 +193,8 @@ test('connectors page: needs-setup ordering, live scope picker, real disconnect'
   await connectZoom(fixture);
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Needs setup' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Connected', exact: true })).toBeVisible();
+  await expect(connectedHeading).toBeVisible();
+  await expectBelow(zoomCard, connectedHeading);
   await expect(zoomCard.getByText('Connected', { exact: true })).toBeVisible();
   await expect(webexCard.getByText('Not connected')).toBeVisible();
   await shot(page, testInfo, 'connectors-02-mixed');
@@ -196,7 +215,7 @@ test('connectors page: needs-setup ordering, live scope picker, real disconnect'
   await expect(zoomCard.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
   // Back to a single "Needs setup" section — the disconnect's router.refresh()
   // re-read the DB and re-sorted both cards into it.
-  await expect(page.getByRole('heading', { name: 'Connected', exact: true })).toHaveCount(0);
+  await expectAbove(zoomCard, connectedHeading);
   await shot(page, testInfo, 'connectors-03-disconnected');
 
   // Mobile: a resized Chromium viewport, not a device descriptor — see

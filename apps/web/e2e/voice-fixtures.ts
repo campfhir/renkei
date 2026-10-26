@@ -453,7 +453,7 @@ export async function mockVendor(
     heard?: { locale: string; text: string };
   } = {}
 ): Promise<void> {
-  await page.route(/\/api\/tenant\/[^/]+\/voice$/, (route) =>
+  await page.route(/\/api\/voice$/, (route) =>
     route.fulfill({
       json: {
         configured: true,
@@ -474,14 +474,14 @@ export async function mockVendor(
       },
     })
   );
-  await page.route(/\/api\/tenant\/[^/]+\/voice\/speech$/, (route) => {
+  await page.route(/\/api\/voice\/speech$/, (route) => {
     const body: unknown = route.request().postDataJSON();
     const pcm = typeof body === 'object' && body !== null && Reflect.get(body, 'format') === 'pcm';
     return pcm
       ? route.fulfill({ status: 200, contentType: 'audio/pcm', body: SPOKEN_PIECE_PCM })
       : route.fulfill({ status: 200, contentType: 'audio/wav', body: SPOKEN_PIECE });
   });
-  await page.route(/\/api\/tenant\/[^/]+\/voice\/transcribe/, async (route) => {
+  await page.route(/\/api\/voice\/transcribe/, async (route) => {
     const detecting = route.request().url().includes('detect=1');
     if (detecting && options.heard) {
       // The slower answer: behind the quick one, as the vendor's is.
@@ -490,10 +490,10 @@ export async function mockVendor(
     }
     return route.fulfill({ json: { text: UTTERANCE } });
   });
-  await page.route(/\/api\/admin\/[^/]+\/connectors\/voice\/test$/, (route) =>
+  await page.route(/\/api\/admin\/connectors\/voice\/test$/, (route) =>
     route.fulfill({ json: { ok: true, voices: 612, locales: 153, defaultVoiceKnown: true } })
   );
-  await page.route(/\/api\/tenant\/[^/]+\/chat\/chats\/[^/]+\/turns$/, (route) =>
+  await page.route(/\/api\/chat\/chats\/[^/]+\/turns$/, (route) =>
     route.fulfill({
       status: 202,
       json: {
@@ -533,22 +533,23 @@ export async function mockVendor(
   }
   const asking = askingStream();
   let decided = false;
+  let connections = 0;
   await page.route(/\/turns\/[^/]+\/permission$/, (route) => {
     decided = true;
     return route.fulfill({ json: { ok: true, decision: 'once' } });
   });
   await page.route(/\/turns\/[^/]+\/stream$/, async (route) => {
-    const after = Number(route.request().headers()['last-event-id'] ?? '0');
-    // What the browser has seen decides the stage — the page may open
-    // more than one source for a turn, so a connection count would not.
-    // A model takes a moment, and so does a search: each stage is held
-    // long enough to be seen (the reconnect itself adds the browser's retry).
-    const stage = decided ? 2 : after >= asking.stages[0] ? 1 : 0;
+    // Each connection replays the turn from its first event, the way the
+    // server's ring does for a source that opened without Last-Event-ID
+    // (the page's source is not always a reconnect of the last one). The
+    // first connection sees the search; any later one sees the ask.
+    connections += 1;
+    const stage = decided ? 2 : connections >= 2 ? 1 : 0;
     if (stage < 2) await new Promise((resolve) => setTimeout(resolve, 2_500));
     const upTo = asking.stages[stage];
     const body = asking.events
       .map((event, index) => ({ event, id: index + 1 }))
-      .filter(({ id }) => id > after && id <= upTo)
+      .filter(({ id }) => id <= upTo)
       .map(({ event, id }) => frame(id, event))
       .join('');
     await route.fulfill({
@@ -585,7 +586,7 @@ export async function expectComposerStillWhileReading(page: Page): Promise<void>
   await expect.poll(() => box.evaluate((element) => element.style.height)).toMatch(/px$/);
   const [boxBefore, speakerBefore] = await Promise.all([box.boundingBox(), speaker.boundingBox()]);
   await page.getByRole('button', { name: 'Listen' }).click();
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  await expect(page.locator('button', { hasText: /^Stop$/ })).toBeVisible();
   await expect(speaker.locator('.voice-bars')).toBeVisible();
   // Several readings while the audio plays: none may have moved a thing.
   for (let sample = 0; sample < 8; sample += 1) {

@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -74,7 +75,11 @@ async function withDb<T>(run: (client: Client) => Promise<T>): Promise<T> {
 async function seedTenant(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
     await client.query('DELETE FROM events');
-    await client.query('DELETE FROM webhook_subscriptions WHERE subject = $1', [fixture.subject]);
+    // One row per account and resource, whoever wrote it: an earlier run's rows are the account's too.
+    await client.query(
+      `DELETE FROM webhook_subscriptions WHERE provider = 'microsoft' AND account_id = $1`,
+      [fixture.accountId]
+    );
     await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
     await client.query('DELETE FROM connector_configs');
     await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
@@ -123,6 +128,8 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       );
     }
   });
+  // Enrolled the way a browser would, so the key prompt does not cover the card.
+  await withDb((client) => enrollForE2E(client, fixture.subject));
 }
 
 async function savedIndexing(fixture: Fixture): Promise<unknown> {

@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -112,6 +113,8 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       [fixture.subject]
     );
   });
+  // Enrolled the way a browser would, so the key prompt does not cover the page.
+  await withDb((client) => enrollForE2E(client, fixture.subject));
 }
 
 /** The row the OAuth callback writes once Microsoft sends the person back. */
@@ -271,7 +274,9 @@ test('entra developer: register the app, connect with narrowed scopes, disconnec
   await card.getByRole('button', { name: 'Yes, disconnect' }).click();
   await expect(card.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
   const remaining = await withDb((client) =>
-    client.query(`SELECT provider FROM provider_grants ORDER BY provider`)
+    client.query(`SELECT provider FROM provider_grants WHERE subject = $1 ORDER BY provider`, [
+      fixture.subject,
+    ])
   );
   // Separate apps, separate grants: Microsoft 365 is still connected.
   expect(remaining.rows.map((row) => row.provider)).toEqual(['microsoft']);

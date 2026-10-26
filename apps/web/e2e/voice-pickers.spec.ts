@@ -63,7 +63,7 @@ test('preferences: the language and voice pickers', async ({ page }, testInfo) =
   await voices.getByText('Xiaoxiao (晓晓)').click();
   await expect(section.getByRole('combobox', { name: 'Voice' })).toContainText('Xiaoxiao');
   await expect(section.getByRole('combobox', { name: 'Language' })).toContainText('zh-CN');
-  await expect(section.getByRole('button', { name: /Hear a sample in Chinese/ })).toBeVisible();
+  await expect(section.getByTitle('A sentence in Chinese')).toBeVisible();
   await shot(page, testInfo, 'pickers-05-preferences-chinese-chosen', false);
 
   // The language list: regions under their language, Chinese now first;

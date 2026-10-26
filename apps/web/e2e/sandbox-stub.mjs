@@ -276,26 +276,34 @@ const RULE_SEED = [
   ['mcr.microsoft.com/mssql/server', 'SQL Server on Linux'],
   ['mcr.microsoft.com/azure-storage/azurite', 'Azurite, the Azure Storage emulator'],
 ];
-const rulesByTenant = new Map();
+// One organization, so one rule set: kept for the life of the stub.
+let organizationRules = null;
 function rulesOf() {
-  let rules = rulesByTenant.get();
-  if (!rules) {
-    rules = new Map();
+  if (!organizationRules) {
+    organizationRules = new Map();
     for (const [pattern, note] of RULE_SEED) {
       const id = randomUUID();
       const now = new Date().toISOString();
-      rules.set(id, { id, pattern, note, registryUsername: null, createdAt: now, updatedAt: now });
+      organizationRules.set(id, {
+        id,
+        pattern,
+        note,
+        registryUsername: null,
+        createdAt: now,
+        updatedAt: now,
+      });
     }
-    rulesByTenant.set(rules);
   }
-  return rules;
+  return organizationRules;
 }
 
 /** The worker's normalizeImageRule, in miniature: enough for what the page types. */
 function normalizeRule(raw) {
+  // The worker lower-cases a host and a namespace: docker references are lower-case.
   let value = String(raw ?? '')
     .trim()
-    .replace(/\/+$/, '');
+    .replace(/\/+$/, '')
+    .toLowerCase();
   if (!value || /\s/.test(value)) return { error: 'A rule is required.' };
   if (value.includes('*') && !value.endsWith('/*')) {
     return {

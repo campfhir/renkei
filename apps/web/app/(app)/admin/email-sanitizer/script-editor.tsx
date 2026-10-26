@@ -13,10 +13,14 @@
  * Monaco is self-hosted and configured once for the app (lib/monaco/setup.ts).
  */
 
-import Editor, { type Monaco } from '@monaco-editor/react';
+import Editor from '@monaco-editor/react';
 import { CLEANER_TYPES } from '@/lib/email-sanitizer/cleaner-types';
 import { LoadingLine } from '@/components/skeleton';
 import { configureMonacoOnce, MONACO_THEME } from '@/lib/monaco/setup';
+// The TypeScript language service, imported directly: monaco.languages.typescript
+// is only attached when the whole editor entry point is loaded, and this app loads
+// the parts it uses.
+import * as ts from 'monaco-editor/languages/features/typescript/register.js';
 import { useMonacoDark } from '@/lib/monaco/use-dark-theme';
 
 configureMonacoOnce();
@@ -37,8 +41,7 @@ export default function ScriptEditor({
 }: ScriptEditorProps) {
   const dark = useMonacoDark();
 
-  function handleBeforeMount(monaco: Monaco): void {
-    const ts = monaco.languages.typescript;
+  function handleBeforeMount(): void {
     ts.typescriptDefaults.setCompilerOptions({
       target: ts.ScriptTarget.ES2020,
       lib: ['es2020'],

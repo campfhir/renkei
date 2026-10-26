@@ -227,8 +227,11 @@ export async function getOrgActivityTotals(
     ownerSubject === null
       ? db
           .selectFrom('llm_calls')
-          .select(sql<string>`count(DISTINCT subject)`.as('n'))
-          .where(inSpan('created_at', span, timeZone))
+          // Only people the organization has: the total below counts identities,
+          // so a spender without one would push the share past everyone.
+          .innerJoin('identities', 'identities.subject', 'llm_calls.subject')
+          .select(sql<string>`count(DISTINCT llm_calls.subject)`.as('n'))
+          .where(inSpan('llm_calls.created_at', span, timeZone))
           .executeTakeFirst()
       : Promise.resolve(undefined),
     ownerSubject === null

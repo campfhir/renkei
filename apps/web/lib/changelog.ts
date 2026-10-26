@@ -46,6 +46,29 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-26',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'The cleaner script editor loads its TypeScript checks',
+        detail:
+          'The admin cleaner editor failed to start its TypeScript language service, so it showed no types.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Active users never exceed the people in the organization',
+        detail:
+          "Usage counted anyone who spent tokens, so a person without an account could push the active count above the organization's total.",
+      },
+      {
+        kind: 'fixed',
+        title: 'The chat row menu opens inside the window',
+        detail:
+          "On a short window the menu for a chat in the sidebar was cut off at the list's edge; it now opens fully on screen, above or below its row.",
+      },
+    ],
+  },
+  {
     date: '2026-10-25',
     entries: [
       {
