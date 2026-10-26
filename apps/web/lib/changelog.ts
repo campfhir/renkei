@@ -46,6 +46,29 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-26',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Documents in usage',
+        detail:
+          'Summaries, picture descriptions and OCR pages are counted under Documents on the admin and personal usage pages, billed to the person who uploaded the file.',
+      },
+      {
+        kind: 'added',
+        title: 'OCR on request, and pictures described',
+        detail:
+          "PDFs and images can be read with OCR from the file's details or in bulk, with progress and an estimate. A photo with no text is described from the picture itself, and the full text can be downloaded.",
+      },
+      {
+        kind: 'added',
+        title: 'Select mode and upload progress in the Artifacts library',
+        detail:
+          'Checkmarks show only after pressing Select, and a click on a row ticks it. Uploads stay on the table, with one progress bar across all the files.',
+      },
+    ],
+  },
+  {
     date: '2026-10-25',
     entries: [
       {
