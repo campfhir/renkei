@@ -86,6 +86,20 @@ export function statusLabel(status: string): string | null {
   }
 }
 
+/**
+ * A picture is described from its own bytes, so it is never "waiting for
+ * OCR" as far as the person is concerned: OCR only adds any text in it.
+ */
+export function isPicture(contentType: string): boolean {
+  return contentType.startsWith('image/');
+}
+
+/** The status a file shows: a picture with no text is ready to read, not waiting. */
+export function statusFor(extractStatus: string, contentType: string): string | null {
+  if (extractStatus === 'needs_ocr' && isPicture(contentType)) return null;
+  return statusLabel(extractStatus);
+}
+
 export type Mode = 'always' | 'on_demand';
 
 /** Always / On demand, as the segmented switch the code pane uses for Chat / Code. */

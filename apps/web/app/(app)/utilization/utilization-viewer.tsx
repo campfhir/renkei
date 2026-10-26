@@ -26,6 +26,7 @@ import {
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { VoiceUsageCard } from '@/components/voice-usage-card';
 import { ImageUsageCard } from '@/components/image-usage-card';
+import { DocumentUsageCard } from '@/components/document-usage-card';
 import { Leaderboard } from '@/components/leaderboard';
 import type { EfficientAgentRow } from '@/lib/usage/org-usage';
 import type { AgentUtilizationRow } from '@/lib/usage/user-utilization';
@@ -155,7 +156,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 }
 
 /** The "By agent" table's rows — shared between the on and off groups. */
-function AgentTable({ agents }: { agents: AgentUtilizationRow[]; }) {
+function AgentTable({ agents }: { agents: AgentUtilizationRow[] }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
       <table className="w-full text-sm">
@@ -232,9 +233,7 @@ function AgentTable({ agents }: { agents: AgentUtilizationRow[]; }) {
   );
 }
 
-export default function UtilizationViewer({ initial }: {
-  initial: UtilizationReport;
-}) {
+export default function UtilizationViewer({ initial }: { initial: UtilizationReport }) {
   const [report, setReport] = useState(initial);
   const periodAnchor = useCoachAnchor('utilization-period');
   const statsAnchor = useCoachAnchor('utilization-stats');
@@ -269,10 +268,7 @@ export default function UtilizationViewer({ initial }: {
     <div className="flex flex-col gap-5" data-wide-page>
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">My usage</h1>
-        <Link
-          href={`/usage`}
-          className="text-sm text-blue-600 hover:underline dark:text-blue-400"
-        >
+        <Link href={`/usage`} className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Tools
         </Link>
         <p className="w-full text-sm text-gray-500 dark:text-gray-400">
@@ -355,6 +351,13 @@ export default function UtilizationViewer({ initial }: {
         <VoiceUsageCard
           totals={report.voice}
           hint="Replies read aloud to you, and what you said to the chat by voice, over the period."
+        />
+      ) : null}
+
+      {report.document.ocrReads + report.document.summaries + report.document.pictures > 0 ? (
+        <DocumentUsageCard
+          totals={report.document}
+          hint="Files you uploaded that were read by OCR, summarized, or described: pages read, and what the model billed for the summaries."
         />
       ) : null}
 

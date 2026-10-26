@@ -47,6 +47,11 @@ import {
 } from '@/lib/usage/image-usage';
 import { rankImageUsers, type RankedImageUserRow } from '@/lib/usage/image-window';
 import {
+  getDocumentTotals,
+  ZERO_DOCUMENT_TOTALS,
+  type DocumentTotals,
+} from '@/lib/usage/document-usage';
+import {
   activityCells,
   bucketOrgSeries,
   rankUsers,
@@ -94,6 +99,8 @@ export interface OrgUsageReport {
   selectedSpeaker: RankedVoiceUserRow | null;
   /** Images over the window, scoped like the tokens. */
   image: ImageTotals;
+  /** Summaries and picture descriptions the model wrote, and the OCR reads over the window, scoped like the tokens. */
+  document: DocumentTotals;
   /** Who has the most images drawn (by the bytes kept), and the selected person's rank. */
   topImageUsers: RankedImageUserRow[];
   selectedImageUser: RankedImageUserRow | null;
@@ -106,6 +113,7 @@ const ZERO_TOKENS: OrgTokenTotals = {
   chat: { input: 0, output: 0 },
   chatProjects: { input: 0, output: 0 },
   images: { input: 0, output: 0 },
+  documents: { input: 0, output: 0 },
   codeProjects: { input: 0, output: 0 },
   agents: { input: 0, output: 0 },
 };
@@ -152,6 +160,7 @@ export async function getOrgUsageReport(
     topSpeakers: [],
     selectedSpeaker: null,
     image: ZERO_IMAGE_TOTALS,
+    document: ZERO_DOCUMENT_TOTALS,
     topImageUsers: [],
     selectedImageUser: null,
   };
@@ -182,6 +191,7 @@ export async function getOrgUsageReport(
       voiceUsers,
       image,
       imageUsers,
+      document,
     ] = await Promise.all([
       getSurfaceTokenTotals(db, period, timeZone, subject),
       getOrgActivityTotals(db, period, timeZone, subject),
@@ -199,6 +209,7 @@ export async function getOrgUsageReport(
       getVoiceUsers(db, period, timeZone),
       getImageTotals(db, period, timeZone, subject),
       getImageUsers(db, period, timeZone),
+      getDocumentTotals(db, period, timeZone, subject),
     ]);
     const now = new Date();
     const ranked = rankUsers(allUsers, subject, TOP_USERS);
@@ -229,6 +240,7 @@ export async function getOrgUsageReport(
       topSpeakers: speakers.top,
       selectedSpeaker: speakers.selected,
       image,
+      document,
       topImageUsers: imagers.top,
       selectedImageUser: imagers.selected,
     };

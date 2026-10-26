@@ -71,7 +71,7 @@ describe('bucketOrgSeries', () => {
       [
         {
           ...ZERO_DAY,
-          day: '2026-09-01',
+          day: '2026-09-01', documentInputTokens: 0, documentOutputTokens: 0,
           chatInputTokens: 100,
           chatOutputTokens: 20,
           agentInputTokens: 50,
@@ -103,8 +103,8 @@ describe('bucketOrgSeries', () => {
   it('sums days into Monday-start weeks for a quarter', () => {
     const buckets = bucketOrgSeries(
       [
-        { ...ZERO_DAY, day: '2026-08-31', chatInputTokens: 1, runs: 1 },
-        { ...ZERO_DAY, day: '2026-09-01', chatInputTokens: 2, runs: 1, toolCalls: 3 },
+        { ...ZERO_DAY, day: '2026-08-31', documentInputTokens: 0, documentOutputTokens: 0, chatInputTokens: 1, runs: 1 },
+        { ...ZERO_DAY, day: '2026-09-01', documentInputTokens: 0, documentOutputTokens: 0, chatInputTokens: 2, runs: 1, toolCalls: 3 },
       ],
       { days: 90, endOffsetDays: 0 },
       NOW,
@@ -132,7 +132,7 @@ describe('bucketOrgSeries', () => {
 
   it('draws today as 24 hours and yesterday as the day before', () => {
     const today = bucketOrgSeries(
-      [{ ...ZERO_DAY, day: '2026-09-02T13', chatInputTokens: 5, toolCalls: 2 }],
+      [{ ...ZERO_DAY, day: '2026-09-02T13', documentInputTokens: 0, documentOutputTokens: 0, chatInputTokens: 5, toolCalls: 2 }],
       TODAY,
       NOW,
       'UTC'
@@ -152,10 +152,10 @@ describe('activityCells', () => {
   it('marks a day active for tokens, runs or tool calls alone, and shades by tokens', () => {
     const cells = activityCells(
       [
-        { ...ZERO_DAY, day: '2026-08-28', toolCalls: 3 },
-        { ...ZERO_DAY, day: '2026-08-30', chatInputTokens: 100 },
-        { ...ZERO_DAY, day: '2026-09-01', agentInputTokens: 30 },
-        { ...ZERO_DAY, day: '2026-09-02', runs: 1 },
+        { ...ZERO_DAY, day: '2026-08-28', documentInputTokens: 0, documentOutputTokens: 0, toolCalls: 3 },
+        { ...ZERO_DAY, day: '2026-08-30', documentInputTokens: 0, documentOutputTokens: 0, chatInputTokens: 100 },
+        { ...ZERO_DAY, day: '2026-09-01', documentInputTokens: 0, documentOutputTokens: 0, agentInputTokens: 30 },
+        { ...ZERO_DAY, day: '2026-09-02', documentInputTokens: 0, documentOutputTokens: 0, runs: 1 },
       ],
       WEEK,
       NOW,
@@ -179,7 +179,7 @@ describe('activityCells', () => {
 
   it('counts hours for a one-day window', () => {
     const cells = activityCells(
-      [{ ...ZERO_DAY, day: '2026-09-01T09', chatInputTokens: 1 }],
+      [{ ...ZERO_DAY, day: '2026-09-01T09', documentInputTokens: 0, documentOutputTokens: 0, chatInputTokens: 1 }],
       YESTERDAY,
       NOW,
       'UTC'
@@ -250,7 +250,7 @@ describe('bucketOrgSeries — images', () => {
       [
         {
           ...ZERO_DAY,
-          day: '2026-09-02T09',
+          day: '2026-09-02T09', documentInputTokens: 0, documentOutputTokens: 0,
           chatInputTokens: 100,
           chatOutputTokens: 20,
           imageInputTokens: 61,
@@ -258,7 +258,7 @@ describe('bucketOrgSeries — images', () => {
           images: 2,
           imageBytes: 3_000_000,
         },
-        { ...ZERO_DAY, day: '2026-09-02T14', images: 1, imageBytes: 500_000 },
+        { ...ZERO_DAY, day: '2026-09-02T14', documentInputTokens: 0, documentOutputTokens: 0, images: 1, imageBytes: 500_000 },
       ],
       TODAY,
       NOW,
@@ -282,7 +282,7 @@ describe('bucketOrgSeries — images', () => {
       [
         {
           ...ZERO_DAY,
-          day: '2026-08-31',
+          day: '2026-08-31', documentInputTokens: 0, documentOutputTokens: 0,
           imageInputTokens: 10,
           imageOutputTokens: 5,
           images: 1,
@@ -290,7 +290,7 @@ describe('bucketOrgSeries — images', () => {
         },
         {
           ...ZERO_DAY,
-          day: '2026-09-01',
+          day: '2026-09-01', documentInputTokens: 0, documentOutputTokens: 0,
           imageInputTokens: 1,
           imageOutputTokens: 1,
           images: 2,

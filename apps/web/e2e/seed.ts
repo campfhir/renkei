@@ -160,6 +160,7 @@ const SUBJECT_COLUMN: Record<string, string> = {
   artifacts: 'owner_subject',
   chat_projects: 'owner_subject',
   chats: 'owner_subject',
+  document_usage: 'subject',
   identities: 'subject',
   image_usage: 'subject',
   jira_admin_change_requests: 'subject',

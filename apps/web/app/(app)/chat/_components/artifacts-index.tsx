@@ -44,7 +44,7 @@ import OcrPanel, { canRunOcr } from './artifact-ocr-panel';
 
 /** How often the page is read again while an OCR run is in flight, to move its progress. */
 const OCR_POLL_MS = 3000;
-import { ModeToggle, sizeOf, statusLabel, TypeBadge } from './artifact-bits';
+import { ModeToggle, sizeOf, statusFor, TypeBadge, isPicture } from './artifact-bits';
 
 /**
  * Below Tailwind's `md` the details open over the list instead of beside
@@ -70,15 +70,17 @@ const keyOf = (filters: LibraryFilters) =>
   `${filters.show}|${filters.projectId ?? ''}|${filters.query}`;
 
 /** What the digest's state says in the details, or null when it says nothing worth a line. */
-function digestLabel(status: string): string | null {
+function digestLabel(status: string, picture: boolean): string | null {
   switch (status) {
     case 'pending':
     case 'running':
-      return 'Summary on its way…';
+      return picture ? 'Describing the picture…' : 'Summary on its way…';
     case 'failed':
-      return 'No summary could be written for this file.';
+      return picture
+        ? 'No description could be written for this picture.'
+        : 'No summary could be written for this file.';
     case 'none':
-      return 'No text to summarize.';
+      return picture ? 'Nothing to describe.' : 'No text to summarize.';
     default:
       return null;
   }
@@ -341,9 +343,9 @@ export default function ArtifactsIndex({
             {current.via === 'owner' ? 'owned by you' : `${current.ownerName ?? 'someone'}’s`}
           </p>
           <p className="mt-1 text-xs">
-            {statusLabel(current.extractStatus) ? (
+            {statusFor(current.extractStatus, current.contentType) ? (
               <span className="text-amber-700 dark:text-amber-400">
-                {statusLabel(current.extractStatus)}
+                {statusFor(current.extractStatus, current.contentType)}
               </span>
             ) : (
               <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-800 dark:bg-green-900/40 dark:text-green-300">
@@ -373,7 +375,9 @@ export default function ArtifactsIndex({
           {current.summary ? (
             <p className="text-sm text-gray-700 dark:text-gray-300">{current.summary}</p>
           ) : (
-            <p className="text-xs text-gray-500">{digestLabel(current.digestStatus)}</p>
+            <p className="text-xs text-gray-500">
+              {digestLabel(current.digestStatus, isPicture(current.contentType))}
+            </p>
           )}
           {current.keywords.length > 0 ? (
             <ul aria-label="Keywords" className="mt-2 flex flex-wrap gap-1">
@@ -790,7 +794,9 @@ export default function ArtifactsIndex({
                 className="min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto max-md:space-y-1.5 max-md:divide-y-0 max-md:p-2 dark:divide-gray-900"
               >
                 {items.map((item) => {
-                  const status = item.ocr ? 'OCR running' : statusLabel(item.extractStatus);
+                  const status = item.ocr
+                    ? 'OCR running'
+                    : statusFor(item.extractStatus, item.contentType);
                   const isSelected = item.id === selected;
                   const ticked = picked.includes(item.id);
                   // In select mode the whole row is the checkmark: a click

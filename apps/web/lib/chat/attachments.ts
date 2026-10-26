@@ -25,6 +25,7 @@ import { getOrgSettings, getKeyDomain } from '@renkei/settings';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { recordDocumentUsage } from '@/lib/usage/document-usage';
 import { openBytes, openText, sealBytes, sealText, type ContentCipher } from './content-crypto';
 import type { OutboundRedactor } from './outbound-redaction';
 import type { AttachmentView } from './views';
@@ -42,6 +43,16 @@ export const EXTRACTED_TEXT_MAX_CHARS = 200_000;
 /** Extract status of a file whose text needs OCR: a scan, or an image. */
 export const NEEDS_OCR = 'needs_ocr';
 const OCR_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/tiff']);
+
+/**
+ * Pictures a vision model can look at: the formats the model APIs take
+ * (TIFF is read by OCR only). A picture like this is described even when
+ * it has no text.
+ */
+const DESCRIBABLE_PICTURE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+export function isDescribablePicture(contentType: string): boolean {
+  return DESCRIBABLE_PICTURE_TYPES.has(contentType);
+}
 
 /** Whether the OCR connector takes this file: a PDF or one of the image types above. */
 export function isOcrCandidate(filename: string, contentType: string): boolean {
@@ -282,8 +293,8 @@ export async function ocrOne(
     await db
       .updateTable('artifacts')
       .set(
-        status === 'ocr_failed'
-          ? { ocr_started_at: null, extract_status: 'ocr_failed', updated_at: new Date() }
+        status === 'ocr_failed' || status === 'none'
+          ? { ocr_started_at: null, extract_status: status, updated_at: new Date() }
           : { ocr_started_at: null, updated_at: new Date() }
       )
       .where('id', '=', row.id)
@@ -320,10 +331,19 @@ async function ocrAttempt(
         .join('\n\n')
         .slice(0, EXTRACTED_TEXT_MAX_CHARS)
     : '';
-  if (!ocr.ok || !markdown.trim()) {
+  if (!ocr.ok) {
     // An unreachable service is worth another try; anything else is the file.
-    return ocr.ok || ocr.err.type !== 'unreachable' ? 'ocr_failed' : NEEDS_OCR;
+    return ocr.err.type !== 'unreachable' ? 'ocr_failed' : NEEDS_OCR;
   }
+  // The pages were read and billed whether or not any text came back.
+  await recordDocumentUsage(db, {
+    subject: row.ownerSubject,
+    artifactId: row.id,
+    kind: 'ocr',
+    pages: ocr.val.pagesProcessed,
+  });
+  // A photo has no text to read: that is what the file holds, not a failure.
+  if (!markdown.trim()) return 'none';
   const sealed = sealText(redactor ? redactor.apply(markdown).text : markdown, cipher);
   if (!sealed.ok) return NEEDS_OCR;
   const finishedAt = Date.now();
@@ -449,7 +469,8 @@ export async function createAttachment(
         extracted_text: sealedText,
         extract_status: extracted.status,
         // Text to digest for the search index, once the row is there.
-        digest_status: sealedText !== null ? 'pending' : 'none',
+        digest_status:
+          sealedText !== null || isDescribablePicture(contentType) ? 'pending' : 'none',
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();

@@ -1,6 +1,6 @@
 /**
  * "Tokens by surface": how spend splits across chat, chat projects, code
- * projects, agents and images — the same five buckets and the same colors whether
+ * projects, agents, images and documents — the same five buckets and the same colors whether
  * it's read org-wide (Organization Usage) or for one person (My usage),
  * so a color always means the same surface everywhere it appears.
  */
@@ -15,6 +15,8 @@ const SURFACES: { key: keyof OrgTokenTotals; label: string; className: string }[
   { key: 'agents', label: 'Agents', className: 'bg-purple-500' },
   // What image generation models billed; pink — distinct from the Agents purple — like the Images leaderboard and chart segment.
   { key: 'images', label: 'Images', className: 'bg-pink-500' },
+  // What the model billed to summarize uploaded files and describe their pictures; green, distinct from the rest.
+  { key: 'documents', label: 'Documents', className: 'bg-emerald-500' },
 ];
 
 function Row({

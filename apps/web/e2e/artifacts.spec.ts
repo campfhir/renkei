@@ -145,6 +145,7 @@ async function seed(f: Fixture): Promise<void> {
         'artifacts',
         'chats',
         'chat_projects',
+        'document_usage',
         'user_preferences',
         'sessions',
         'identities',
@@ -1112,4 +1113,64 @@ test('the library: OCR is asked for on a scan, its progress and estimate show wh
   );
   expect(overflows).toBe(false);
   await shot(page, testInfo, 'ocr-04-phone-offer');
+});
+
+test('the library: a photo with no text is described from the picture, OCR finds nothing to read in it, and the usage counts it under Documents', async ({
+  page,
+}, testInfo) => {
+  const f = fixtureFor(testInfo.project.name);
+  await seed(f);
+  await signIn(page, f);
+  await mistralStubConfigured();
+
+  // Summaries and descriptions on, as the other specs turn them.
+  await page.goto('/admin/settings');
+  const digestSwitch = page.getByRole('switch', {
+    name: 'Summarize artifacts with the default model',
+  });
+  await expect(digestSwitch).toBeVisible();
+  if ((await digestSwitch.getAttribute('aria-checked')) !== 'true') {
+    await digestSwitch.click();
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.getByText('Saved.')).toBeVisible();
+  }
+
+  await page.goto('/chat/artifacts');
+  const list = page.getByRole('region', { name: 'Artifacts' });
+  const details = page.getByRole('complementary', { name: 'Selected artifact' });
+  await page.getByLabel('Upload artifacts').setInputFiles({
+    name: 'car-street.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('NOTEXT a red car on a street\n'),
+  });
+  await expect(list.getByText('car-street.png')).toBeVisible(COLD);
+  await list.getByText('car-street.png').click();
+
+  // Described from the picture itself: no text, and not waiting for OCR.
+  await expect(
+    details.getByText(
+      'A red car on a street beside a beach, with modern buildings along the shoreline.'
+    )
+  ).toBeVisible(COLD);
+  await expect(details.getByText('Waiting for OCR')).toHaveCount(0);
+  await shot(page, testInfo, 'documents-01-photo-described');
+
+  // OCR asked for: it reads nothing, which is a result, and the description stays.
+  await details.getByRole('button', { name: 'Run OCR' }).click();
+  await expect(details.getByText('No text', { exact: true })).toBeVisible(COLD);
+  await expect(
+    details.getByText(
+      'A red car on a street beside a beach, with modern buildings along the shoreline.'
+    )
+  ).toBeVisible();
+  await shot(page, testInfo, 'documents-02-ocr-finds-no-text');
+
+  // The uploader's usage: one picture described, and the pages OCR read.
+  await page.goto('/utilization');
+  const card = page.getByTestId('document-usage-card');
+  await expect(card).toBeVisible(COLD);
+  await expect(page.getByTestId('document-usage-summaries')).toHaveText('1');
+  await expect(page.getByTestId('document-usage-pages')).toHaveText('2');
+  await expect(card.getByText(/12 tokens in/)).toBeVisible();
+  await shot(page, testInfo, 'documents-03-usage-documents-card');
 });

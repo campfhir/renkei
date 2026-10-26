@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import type { LibraryItem } from '@/lib/chat/artifact-library';
 import { MIN_SAMPLES } from '@/lib/chat/artifact-ocr-estimate';
+import { isPicture } from './artifact-bits';
 
 /** A file OCR can read that has no text yet, and no read in flight. */
 export function canRunOcr(item: LibraryItem): boolean {
@@ -120,12 +121,14 @@ export default function OcrPanel({
       <section aria-label="OCR" className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
         <h3 className="mb-2 text-xs font-semibold text-gray-500">OCR</h3>
         <p className="text-sm text-gray-700 dark:text-gray-300">
-          This file has no text yet. OCR reads it so it can be summarized and searched.
+          {isPicture(item.contentType)
+            ? 'OCR reads any text in this picture. Its description is written from the picture itself.'
+            : 'This file has no text yet. OCR reads it so it can be summarized and searched.'}
         </p>
         {!digests ? (
           <p className="mt-1 text-xs text-gray-500">
-            Summaries are off for this organization, so search will not find the text until they are
-            on (Admin → Settings).
+            Summaries and descriptions are off for this organization, so search will not find this
+            file by its content until they are on (Admin → Settings).
           </p>
         ) : null}
         <button

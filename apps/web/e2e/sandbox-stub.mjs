@@ -2318,13 +2318,12 @@ async function handleMistralOcr(request, response) {
   const bytes = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
   if (bytes.includes('SLOW')) await new Promise((resolve) => setTimeout(resolve, 6000));
   const name = bytes.toString('utf8').match(/^[^\n]*/)?.[0] ?? '';
+  // A photo of a car: read, and nothing in it to read.
+  const markdown = bytes.includes('NOTEXT')
+    ? ''
+    : `# Scanned ${name.replace(/SLOW\s*/, '').trim()}\n\nTotal due: 1,250.00`;
   return json(response, 200, {
-    pages: [
-      {
-        index: 0,
-        markdown: `# Scanned ${name.replace(/SLOW\s*/, '').trim()}\n\nTotal due: 1,250.00`,
-      },
-    ],
+    pages: [{ index: 0, markdown }],
     usage_info: { pages_processed: 2 },
   });
 }
@@ -2364,14 +2363,29 @@ function handleAnthropic(request, url, response) {
     // file's digest land and search by it.
     const digested = text.replace(/^<file[^>]*>\n?/, '').replace(/\n?<\/file>$/, '');
     const digestLine = digested.split('\n').find((line) => line.trim()) ?? '';
+    // A picture comes with its bytes as an image block, and is described
+    // rather than read: a fixed description, so a spec can see a photo
+    // with no text come back as what it shows.
+    const pictured = JSON.stringify(body.messages ?? []).includes('"type":"image"');
     const forced =
       body.tool_choice?.type === 'tool' && body.tool_choice.name === 'artifact_digest'
         ? [
             'artifact_digest',
-            JSON.stringify({
-              summary: `Stub summary: ${digestLine.trim()}`,
-              keywords: [...new Set(digested.toLowerCase().match(/[a-z]{4,}/g) ?? [])].slice(0, 8),
-            }),
+            JSON.stringify(
+              pictured
+                ? {
+                    summary:
+                      'A red car on a street beside a beach, with modern buildings along the shoreline.',
+                    keywords: ['car', 'red', 'street', 'beach', 'buildings', 'shoreline', 'modern'],
+                  }
+                : {
+                    summary: `Stub summary: ${digestLine.trim()}`,
+                    keywords: [...new Set(digested.toLowerCase().match(/[a-z]{4,}/g) ?? [])].slice(
+                      0,
+                      8
+                    ),
+                  }
+            ),
           ]
         : null;
     const call = scripted ? [scripted[1], scripted[2] ?? '{}'] : forced;

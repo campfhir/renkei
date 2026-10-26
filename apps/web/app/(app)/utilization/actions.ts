@@ -30,6 +30,11 @@ import {
 } from '@/lib/usage/org-usage';
 import { getVoiceTotals, ZERO_VOICE_TOTALS, type VoiceTotals } from '@/lib/usage/voice-usage';
 import { getImageTotals, ZERO_IMAGE_TOTALS, type ImageTotals } from '@/lib/usage/image-usage';
+import {
+  getDocumentTotals,
+  ZERO_DOCUMENT_TOTALS,
+  type DocumentTotals,
+} from '@/lib/usage/document-usage';
 import { listImageModels } from '@/lib/chat/models';
 import { resolveVoiceProvider } from '@/lib/voice/config';
 import {
@@ -60,6 +65,8 @@ export interface UtilizationReport {
   image: ImageTotals;
   /** The org has an image generation model; with none, and nothing ever drawn, the image card is left out. */
   imageAvailable: boolean;
+  /** Summaries and descriptions the model wrote for files they uploaded, and their OCR reads. */
+  document: DocumentTotals;
   error?: string;
   signedOut?: boolean;
 }
@@ -79,6 +86,7 @@ const ZERO_SURFACE_TOKENS: OrgTokenTotals = {
   chat: { input: 0, output: 0 },
   chatProjects: { input: 0, output: 0 },
   images: { input: 0, output: 0 },
+  documents: { input: 0, output: 0 },
   codeProjects: { input: 0, output: 0 },
   agents: { input: 0, output: 0 },
 };
@@ -105,6 +113,7 @@ export async function getUtilizationReport(
     voiceAvailable: false,
     image: ZERO_IMAGE_TOTALS,
     imageAvailable: false,
+    document: ZERO_DOCUMENT_TOTALS,
   };
 
   const session = await getSessionFromCookies();
@@ -131,6 +140,7 @@ export async function getUtilizationReport(
       voiceProvider,
       image,
       imageModels,
+      document,
     ] = await Promise.all([
       getUtilizationTotals(db, subject, span, timeZone),
       getUtilizationSeries(db, subject, span, timeZone, seriesGranularity(period.days)),
@@ -142,6 +152,7 @@ export async function getUtilizationReport(
       resolveVoiceProvider(),
       getImageTotals(db, span, timeZone, subject),
       listImageModels(db),
+      getDocumentTotals(db, span, timeZone, subject),
     ]);
     return {
       periodKey: period.key,
@@ -157,6 +168,7 @@ export async function getUtilizationReport(
       voiceAvailable: voiceProvider !== null,
       image,
       imageAvailable: imageModels.length > 0,
+      document,
     };
   } catch (error) {
     return { ...empty, error: error instanceof Error ? error.message : 'Could not read usage' };
