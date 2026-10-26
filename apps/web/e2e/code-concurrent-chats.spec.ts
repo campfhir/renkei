@@ -13,7 +13,7 @@
  * database.
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from './worker-env';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
 import { giveChatWorktree } from './worktree';
@@ -77,7 +77,7 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
       branch: 'main',
       cloneUrl: 'https://bitbucket.org/acme/ledger-service.git',
       gitProxy: {
-        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
+        base: `${process.env.E2E_DELEGATE_URL}/git/e2e/bitbucket.org/`,
         insteadOf: 'https://bitbucket.org/',
       },
     }),

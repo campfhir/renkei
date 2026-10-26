@@ -17,7 +17,10 @@ import { mkdirSync, openSync } from 'node:fs';
 import path from 'node:path';
 import { Client } from 'pg';
 import { test as base } from '@playwright/test';
-import { seed } from './seed';
+
+// Everything else the specs take from Playwright, unchanged.
+export * from '@playwright/test';
+import { E2E_SESSION_ID, seed } from './seed';
 
 export const TEMPLATE_DATABASE = 'renkei_e2e_template';
 
@@ -129,6 +132,24 @@ async function stop(child: ChildProcess): Promise<void> {
   });
 }
 
+/**
+ * A fresh dev server compiles an API route on its first hit, which can outlast a
+ * test's expect timeout: a PATCH to a chat that does not exist compiles the route
+ * and answers 404, and that answer is ignored.
+ */
+async function warmRoutes(base: string): Promise<void> {
+  try {
+    await fetch(`${base}/api/chat/chats/00000000-0000-4000-8000-000000000000`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie: `renkei_session=${E2E_SESSION_ID}` },
+      body: JSON.stringify({ title: 'warm-up' }),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch {
+    // Warming is best-effort.
+  }
+}
+
 /** Where a worker's child process writes its output. */
 function workerLog(index: number, name: string): string {
   const dir = path.join(WEB_ROOT, 'test-results', 'workers');
@@ -207,6 +228,8 @@ export const test = base.extend<{ baseURL: string }, { stack: WorkerStack }>({
       );
       try {
         await waitForHttp(`http://127.0.0.1:${port}/`, 180_000, 'The dev server');
+        await warmRoutes(`http://127.0.0.1:${port}`);
+        process.env.E2E_DELEGATE_URL = delegateUrl;
         await use({ baseURL: `http://127.0.0.1:${port}`, databaseUrl });
       } finally {
         await stop(dev);
@@ -221,4 +244,3 @@ export const test = base.extend<{ baseURL: string }, { stack: WorkerStack }>({
   },
 });
 
-export { expect } from '@playwright/test';

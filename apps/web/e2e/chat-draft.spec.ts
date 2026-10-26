@@ -11,7 +11,7 @@
  * Playwright projects do not share a draft.
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from './worker-env';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
 import { MODEL_ID, seedVoice, shot } from './voice-fixtures';

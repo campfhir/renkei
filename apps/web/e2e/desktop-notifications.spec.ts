@@ -14,7 +14,7 @@
  * with a canned-but-realistic subscription object.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './worker-env';
 import pg from 'pg';
 import { E2E_SUBJECT } from './seed';
 

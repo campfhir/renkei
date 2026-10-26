@@ -20,15 +20,10 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { test, expect as baseExpect, type Page, type TestInfo } from '@playwright/test';
+import { test, expect as baseExpect, type Page, type TestInfo } from './worker-env';
 import { Client } from 'pg';
 import { enrollForE2E } from './keys';
-import { lockOrganization, unlockOrganization } from './org-lock';
 
-// The organization's rows are shared by every spec in a run: this one holds the
-// lock for its whole file, so the rows are its own while it runs.
-test.beforeAll(lockOrganization);
-test.afterAll(unlockOrganization);
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -83,7 +78,7 @@ async function seed(fixture: Fixture): Promise<void> {
       branch: 'main',
       cloneUrl: 'https://bitbucket.org/acme/monorepo.git',
       gitProxy: {
-        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
+        base: `${process.env.E2E_DELEGATE_URL}/git/e2e/bitbucket.org/`,
         insteadOf: 'https://bitbucket.org/',
       },
     }),

@@ -15,7 +15,7 @@
  */
 
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { test, expect, type Page, type TestInfo } from './worker-env';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
 

@@ -12,7 +12,7 @@
  */
 
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
+import { test, expect } from './worker-env';
 test.use({
   browserName: 'chromium',
   launchOptions: {

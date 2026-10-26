@@ -4,7 +4,7 @@
  * so no section falls back to a heading such as "Unreleased".
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './worker-env';
 
 test.use({
   launchOptions: {

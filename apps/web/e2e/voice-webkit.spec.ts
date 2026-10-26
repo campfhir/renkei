@@ -6,7 +6,7 @@
  * bars move. Same fixtures and the same measurement as voice.spec.ts.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './worker-env';
 import { Client } from 'pg';
 import {
   CHAT_ID,

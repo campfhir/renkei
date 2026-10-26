@@ -15,7 +15,7 @@
  * projects don't share a row.
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from './worker-env';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
 import { MODEL_ID, mockVendor, seedVoice, shot } from './voice-fixtures';

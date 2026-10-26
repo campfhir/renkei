@@ -28,19 +28,14 @@
 
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { test, expect, type Page, type TestInfo } from './worker-env';
 import ExcelJS from 'exceljs';
 import { Client } from 'pg';
 import { keyFor } from './keys';
 import { renderDocument } from '@renkei/document-render';
 import { sheetFromXlsx } from '../lib/chat/sheet-preview';
 import { deleteRowsOf } from './seed';
-import { lockOrganization, unlockOrganization } from './org-lock';
 
-// The organization's rows are shared by every spec in a run: this one holds the
-// lock for its whole file, so the rows are its own while it runs.
-test.beforeAll(lockOrganization);
-test.afterAll(unlockOrganization);
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 /** The first hit on a route compiles it (`next dev` builds lazily). */

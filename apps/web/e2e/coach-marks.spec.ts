@@ -14,7 +14,7 @@
 
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { test, expect, type Page, type TestInfo } from './worker-env';
 import { Client } from 'pg';
 import { enrollForE2E } from './keys';
 

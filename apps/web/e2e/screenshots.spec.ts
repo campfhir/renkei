@@ -7,7 +7,7 @@
  */
 
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { test, expect, type Page, type TestInfo } from './worker-env';
 import {
   E2E_SUBJECT,
   AGENT_RICH_ID,

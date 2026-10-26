@@ -7,7 +7,7 @@
  * eleven voices in seven languages and a sample is a silent WAV.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './worker-env';
 import { Client } from 'pg';
 import { CHAT_ID, CHAT_TITLE, mockVendor, seedVoice, shot } from './voice-fixtures';
 

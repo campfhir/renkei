@@ -15,7 +15,7 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
+import { test, expect } from './worker-env';
 import { Client } from 'pg';
 import {
   CHAT_ID,

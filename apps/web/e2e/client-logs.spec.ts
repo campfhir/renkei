@@ -4,7 +4,7 @@
  * never sees the report), and writes the record through the logger.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './worker-env';
 
 test.use({
   launchOptions: {

@@ -7,7 +7,7 @@
  * nothing is saved — on the pinned Chromium.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './worker-env';
 test.use({
   launchOptions: {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',

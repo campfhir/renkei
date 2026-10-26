@@ -5,7 +5,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { test, expect } from '@playwright/test';
+import { test, expect } from './worker-env';
 import { Client } from 'pg';
 import { E2E_SUBJECT } from './seed';
 test.use({
