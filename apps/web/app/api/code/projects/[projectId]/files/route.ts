@@ -67,8 +67,9 @@ import { projectWorkspace } from '@/lib/code/projects';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -156,7 +157,7 @@ export async function GET(
   });
 }
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -220,7 +221,7 @@ export async function PUT(
   });
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -291,7 +292,7 @@ export async function POST(
   return NextResponse.json({ path: written.val.path, created: true, kind: 'file' });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -330,7 +331,7 @@ export async function DELETE(
   return NextResponse.json({ path: path.path, deleted: true });
 }
 
-export async function PATCH(
+async function PATCHHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -375,3 +376,9 @@ export async function PATCH(
 function tooLarge(): string {
   return `Files are limited to ${Math.round(UPLOAD_MAX_BYTES / 1_048_576)} MB.`;
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);
+export const PATCH = routeLog(PATCHHandler);

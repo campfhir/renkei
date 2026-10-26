@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { WebexClient } from '@renkei/connector-webex';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveWebexUserAccess } from '@/lib/webex-user-access';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * How deep to look. WebEx sorts by last activity, so this is "the 400 most
@@ -40,9 +41,7 @@ export interface RoomOption {
   hint: string;
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -76,3 +75,5 @@ export async function GET(
 
   return NextResponse.json({ options });
 }
+
+export const GET = routeLog(GETHandler);

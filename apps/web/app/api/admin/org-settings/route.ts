@@ -24,6 +24,7 @@ import {
 } from '@renkei/settings';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+import { routeLog } from '@/lib/log-context';
 
 /** key → [min, max]; the UI states the same ranges. */
 const NUMERIC_BOUNDS = {
@@ -191,7 +192,7 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
   };
 }
 
-export async function GET(_request: NextRequest): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -203,7 +204,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
   return NextResponse.json({ settings: editable(settings.val) });
 }
 
-export async function PUT(request: NextRequest): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -330,3 +331,6 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     settings: after.ok ? editable(after.val) : { ...before, ...updates },
   });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

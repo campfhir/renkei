@@ -12,8 +12,9 @@ import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { resolveChatAccess } from '@/lib/chat/access';
 import { listMessages, toMessageView } from '@/lib/chat/messages';
 import { latestPrInTranscript } from '@/lib/code/chat-commits';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -27,3 +28,5 @@ export async function GET(
   const pullRequest = latestPrInTranscript(rows.map(toMessageView));
   return NextResponse.json({ pullRequest });
 }
+
+export const GET = routeLog(GETHandler);

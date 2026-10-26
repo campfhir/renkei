@@ -13,6 +13,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { deleteAgentNote, parseNotePayload, updateAgentNote } from '@/lib/agents/agent-notes';
+import { routeLog } from '@/lib/log-context';
 
 async function ownedContext(
   request: NextRequest,
@@ -60,7 +61,7 @@ function errorResponse(outcome: string): NextResponse {
   }
 }
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string; noteId: string }> }
 ): Promise<NextResponse> {
@@ -84,7 +85,7 @@ export async function PUT(
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string; noteId: string }> }
 ): Promise<NextResponse> {
@@ -100,3 +101,6 @@ export async function DELETE(
   if (outcome !== 'OK') return errorResponse(outcome);
   return NextResponse.json({ ok: true });
 }
+
+export const PUT = routeLog(PUTHandler);
+export const DELETE = routeLog(DELETEHandler);

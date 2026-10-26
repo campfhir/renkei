@@ -26,6 +26,7 @@ import { decrypt, loadKeyring } from '@renkei/crypto';
 import { listAvailableModels, type ListModelsError } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { SUPPORTED_PROVIDERS } from '@/lib/agents/llm-model-payload';
+import { routeLog } from '@/lib/log-context';
 
 /** The taxonomy, translated for the person watching the button spinner. */
 function messageFor(kind: ListModelsError): { message: string; status: number } {
@@ -51,9 +52,7 @@ function messageFor(kind: ListModelsError): { message: string; status: number } 
   }
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -131,3 +130,5 @@ export async function POST(
 
   return NextResponse.json({ models: result.val });
 }
+
+export const POST = routeLog(POSTHandler);

@@ -11,8 +11,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { consumeDraft } from '@/lib/agents/draft-store';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ draftId: string }> }
 ): Promise<NextResponse> {
@@ -28,3 +29,5 @@ export async function POST(
   await consumeDraft(dbResult.val, session.subject, draftId);
   return NextResponse.json({ ok: true });
 }
+
+export const POST = routeLog(POSTHandler);

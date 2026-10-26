@@ -16,6 +16,7 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { getChatForOwner } from '@/lib/chat/store';
 import { recordWidgetDecision } from '@/lib/chat/widget-tools';
 import type { WidgetDecisionState } from '@/lib/chat/views';
+import { routeLog } from '@/lib/log-context';
 
 const MAX_STATE_CHARS = 4_000;
 
@@ -41,7 +42,7 @@ function stateOf(value: unknown): WidgetDecisionState | null {
   };
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -54,9 +55,8 @@ export async function POST(
 
   const body = await readJsonBody(request);
   const stateKey = typeof body.stateKey === 'string' ? body.stateKey : '';
-  const decision = body.decision === 'confirmed' || body.decision === 'cancelled'
-    ? body.decision
-    : null;
+  const decision =
+    body.decision === 'confirmed' || body.decision === 'cancelled' ? body.decision : null;
   const state = JSON.stringify(body.state).length <= MAX_STATE_CHARS ? stateOf(body.state) : null;
   if (!stateKey || !decision || !state) {
     return jsonError(400, 'invalid', 'stateKey, decision and state are required.');
@@ -72,3 +72,5 @@ export async function POST(
   if (!recorded.ok) return jsonError(400, 'invalid', 'The decision could not be recorded.');
   return NextResponse.json({ ok: true });
 }
+
+export const POST = routeLog(POSTHandler);

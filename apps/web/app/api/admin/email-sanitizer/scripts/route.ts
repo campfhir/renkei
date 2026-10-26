@@ -19,10 +19,9 @@ import {
 } from '@renkei/email-sanitizer';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { describeKinds, parseContentKinds } from '@/lib/email-sanitizer/content-kinds';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -34,9 +33,7 @@ export async function GET(
   return NextResponse.json({ scripts: scripts.val });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -102,3 +99,6 @@ export async function POST(
   });
   return NextResponse.json({ script: saved.val });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

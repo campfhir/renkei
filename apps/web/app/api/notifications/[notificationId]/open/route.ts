@@ -25,8 +25,9 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { isUuid } from '@/lib/uuid';
 import { notificationTarget } from '@/lib/notifications/targets';
 import { getOrigin } from '@/lib/get-origin';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ notificationId: string }> }
 ): Promise<Response> {
@@ -124,3 +125,5 @@ function openerPage(target: string, fallback: string): string {
 </html>
 `;
 }
+
+export const GET = routeLog(GETHandler);

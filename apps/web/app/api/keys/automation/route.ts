@@ -9,10 +9,9 @@ import { NextResponse } from 'next/server';
 import { delegateClient } from '@renkei/delegate-client';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function DELETE(
-  request: NextRequest
-): Promise<Response> {
+async function DELETEHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
@@ -24,3 +23,5 @@ export async function DELETE(
   });
   return NextResponse.json({ revoked: revoked.val });
 }
+
+export const DELETE = routeLog(DELETEHandler);

@@ -25,6 +25,7 @@ import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { voiceForLocale } from '@/lib/voice/catalog';
 import { listVoicesCached, resolveVoiceProvider } from '@/lib/voice/config';
 import { encodedDurationMs, recordVoiceUsage } from '@/lib/voice/usage';
+import { routeLog } from '@/lib/log-context';
 
 /** A vendor ceiling is far higher; this keeps one request to one breath of audio. */
 export const SPEECH_MAX_CHARS = 3_000;
@@ -38,9 +39,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -143,3 +142,5 @@ export async function POST(
     },
   });
 }
+
+export const POST = routeLog(POSTHandler);

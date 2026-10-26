@@ -17,10 +17,9 @@ import {
   ATLASSIAN_CONFLUENCE_CONNECTOR,
   DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES,
 } from '@/lib/atlassian-app';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -31,10 +30,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(
-    ATLASSIAN_CONFLUENCE_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await getConnectorConfig(ATLASSIAN_CONFLUENCE_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
@@ -56,9 +52,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -88,10 +82,7 @@ export async function PUT(
   // Secrets survive settings-only saves: setConnectorConfig replaces secrets
   // wholesale, so a blank/omitted secret is merged with the stored one here.
   // A secret is required only when none is stored yet.
-  const existing = await getConnectorConfig(
-    ATLASSIAN_CONFLUENCE_CONNECTOR,
-    keyResult.val
-  );
+  const existing = await getConnectorConfig(ATLASSIAN_CONFLUENCE_CONNECTOR, keyResult.val);
   const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
   const mergedClientSecret =
     typeof clientSecret === 'string' && clientSecret.length > 0
@@ -123,3 +114,6 @@ export async function PUT(
     enabled,
   });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

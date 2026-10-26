@@ -22,8 +22,9 @@ import { githubAuthFor, listSource as listGitHubSource } from '@/lib/code/github
 import { resolveChatScope } from '@/lib/code/route-access';
 import { projectWorkspace } from '@/lib/code/projects';
 import { codeProjectTarget } from '@/lib/code/scope';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -86,3 +87,5 @@ export async function GET(
     branch: listed.ref,
   });
 }
+
+export const GET = routeLog(GETHandler);

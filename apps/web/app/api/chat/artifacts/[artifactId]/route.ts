@@ -6,6 +6,7 @@ import {
   renameArtifactRoute,
   replaceArtifactRoute,
 } from '@/lib/chat/artifact-routes';
+import { routeLog } from '@/lib/log-context';
 
 // chatRequestContext runs inside the shared artifact routes; named here so
 // the auth-coverage test sees the decision on this entry point too.
@@ -15,22 +16,27 @@ export const runtime = 'nodejs';
 
 type Params = { params: Promise<{ artifactId: string }> };
 
-export async function GET(request: NextRequest, { params }: Params): Promise<Response> {
+async function GETHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { artifactId } = await params;
   return artifactDetailRoute(request, artifactId);
 }
 
-export async function PATCH(request: NextRequest, { params }: Params): Promise<Response> {
+async function PATCHHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { artifactId } = await params;
   return renameArtifactRoute(request, artifactId);
 }
 
-export async function PUT(request: NextRequest, { params }: Params): Promise<Response> {
+async function PUTHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { artifactId } = await params;
   return replaceArtifactRoute(request, artifactId);
 }
 
-export async function DELETE(request: NextRequest, { params }: Params): Promise<Response> {
+async function DELETEHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { artifactId } = await params;
   return deleteArtifactRoute(request, artifactId);
 }
+
+export const GET = routeLog(GETHandler);
+export const PATCH = routeLog(PATCHHandler);
+export const PUT = routeLog(PUTHandler);
+export const DELETE = routeLog(DELETEHandler);

@@ -12,8 +12,9 @@ import { clientFailure, sandboxServicesEnabled, sbServicesTail } from '@renkei/s
 import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -39,3 +40,5 @@ export async function GET(
   }
   return NextResponse.json(tailed.val);
 }
+
+export const GET = routeLog(GETHandler);

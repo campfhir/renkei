@@ -26,6 +26,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { mirthClientFailure, mirthLogout, mirthTestConnection } from '@/lib/mirth/service-client';
 import { parseConnectPayload, parseExposurePayload } from '@/lib/mirth/parse';
+import { routeLog } from '@/lib/log-context';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -38,7 +39,7 @@ function carriesCredential(body: Record<string, unknown>): boolean {
   );
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
@@ -112,7 +113,9 @@ export async function POST(
       sealed.err.type === 'NEEDS_SESSION' ||
       sealed.err.type === 'NOT_ENROLLED'
       ? NextResponse.json(
-          { error: 'Your encryption key is not connected to this session. Sign in again and retry.' },
+          {
+            error: 'Your encryption key is not connected to this session. Sign in again and retry.',
+          },
           { status: 423 }
         )
       : NextResponse.json({ error: 'Encryption key unavailable' }, { status: 503 });
@@ -137,7 +140,7 @@ export async function POST(
   return NextResponse.json({ ok: true, version: tested.val.version });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
@@ -172,3 +175,6 @@ export async function DELETE(
   });
   return NextResponse.json({ ok: true });
 }
+
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

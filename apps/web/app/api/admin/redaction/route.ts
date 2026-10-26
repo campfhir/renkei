@@ -17,10 +17,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { knownDetectors, describeFormatProblem } from '@renkei/redaction';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -36,9 +35,7 @@ export async function GET(
   });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -103,3 +100,6 @@ export async function PUT(
   }
   return NextResponse.json({ ok: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

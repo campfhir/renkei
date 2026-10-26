@@ -7,12 +7,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
+import { routeLog } from '@/lib/log-context';
 
 const ALLOWED_DAYS = [7, 14, 30, 90];
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -21,9 +20,7 @@ export async function GET(
   return NextResponse.json({ agentRunRetentionDays: settings.val.agentRunRetentionDays });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -43,3 +40,6 @@ export async function PUT(
   if (!saved.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   return NextResponse.json({ agentRunRetentionDays: days });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

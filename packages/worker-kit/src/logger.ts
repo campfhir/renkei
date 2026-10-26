@@ -2,7 +2,7 @@ import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import { HttpAdapter, type E2ESigningKeysJwk } from '@campfhir/bored-logs/adapters/http';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { getDatabase } from '@renkei/db';
-import { registerLogSink } from '@renkei/logging';
+import { enhanceLogger, registerLogSink } from '@renkei/logging';
 import { requireLogCipher, type LogCipher } from './log-encryption';
 
 /**
@@ -50,6 +50,8 @@ export function createWorkerLogger(options: WorkerLoggerOptions) {
     },
   });
 
+  // Every record carries the request context and a call-site stack.
+  enhanceLogger(logger);
   // The packages this process loads write their warnings through this logger.
   registerLogSink(logger);
 
@@ -110,10 +112,13 @@ export function createWorkerLogger(options: WorkerLoggerOptions) {
   function attachHttpShipping(endpoint: string): void {
     const apiKey = process.env.LOG_SHIP_API_KEY;
     if (!apiKey) {
-      logger.error('LOG_SHIP_ENDPOINT is set but LOG_SHIP_API_KEY is not; logging to console only', {
-        component: `${component}/logging`,
-        endpoint,
-      });
+      logger.error(
+        'LOG_SHIP_ENDPOINT is set but LOG_SHIP_API_KEY is not; logging to console only',
+        {
+          component: `${component}/logging`,
+          endpoint,
+        }
+      );
       return;
     }
 

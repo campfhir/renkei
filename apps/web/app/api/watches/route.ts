@@ -29,6 +29,7 @@ import {
   resolveSharePointSite,
   sharePointGet,
 } from './sharepoint-access';
+import { routeLog } from '@/lib/log-context';
 
 type WatchProvider = 'jira' | 'confluence' | 'sharepoint';
 type AtlassianWatchProvider = 'jira' | 'confluence';
@@ -50,9 +51,7 @@ const SCOPE_TYPE: Record<WatchProvider, 'project' | 'space' | 'drive'> = {
 };
 
 /** GET — the caller's watches for one provider. */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -76,9 +75,7 @@ export async function GET(
  * proves the caller can actually see it, and supplies the display label so
  * the list never has to call out again to render.
  */
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -90,17 +87,10 @@ export async function POST(
   }
 
   if (provider === 'sharepoint') {
-    return watchLibrary(
-      { subject: session.subject },
-      str(rec(body).site).trim(),
-      scopeKey
-    );
+    return watchLibrary({ subject: session.subject }, str(rec(body).site).trim(), scopeKey);
   }
 
-  const access = await resolveAtlassianUserAccess(
-    session.subject,
-    grantProviderFor(provider)
-  );
+  const access = await resolveAtlassianUserAccess(session.subject, grantProviderFor(provider));
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
   const resolved = await resolveScope(provider, access, scopeKey);
@@ -118,9 +108,7 @@ export async function POST(
 }
 
 /** DELETE — stop watching. Disables rather than deletes, keeping the cursor. */
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
+async function DELETEHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -267,3 +255,7 @@ async function resolveScope(
   }
   return { ok: false, error: `No Confluence space "${scopeKey}" is visible to you.` };
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

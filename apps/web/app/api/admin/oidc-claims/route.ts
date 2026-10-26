@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getTenantOidcClaims, setTenantOidcClaims } from '@/lib/tenant-operations';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 const CLAIM_NAME = /^[A-Za-z0-9_.:/-]{1,128}$/;
 
@@ -25,9 +26,7 @@ function optionalString(value: unknown, name: string): string | null | { error: 
   return trimmed;
 }
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -36,9 +35,7 @@ export async function GET(
   return NextResponse.json({ configured: claims.val !== null, ...(claims.val ?? {}) });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -83,3 +80,6 @@ export async function PUT(
   });
   return NextResponse.json({ configured: true, ...claims });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

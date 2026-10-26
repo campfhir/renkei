@@ -18,12 +18,13 @@ import { chatRequestContext, jsonError, readBytesError } from '@/lib/chat/route-
 import { readAttachmentBytes } from '@/lib/chat/attachments';
 import { resolveArtifactAccess } from '@/lib/chat/artifact-access';
 import { deleteArtifact, detachFromProject } from '@/lib/chat/artifact-library';
+import { routeLog } from '@/lib/log-context';
 
 export const runtime = 'nodejs';
 
 const SAFE_INLINE = /^(image\/(png|jpeg|gif|webp)|application\/pdf|text\/plain)$/;
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ attachmentId: string }> }
 ): Promise<Response> {
@@ -49,7 +50,7 @@ export async function GET(
   });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ attachmentId: string }> }
 ): Promise<Response> {
@@ -83,3 +84,6 @@ export async function DELETE(
   }
   return NextResponse.json({ ok: true, detached: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const DELETE = routeLog(DELETEHandler);

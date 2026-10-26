@@ -13,10 +13,9 @@ import {
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
 import { GITHUB_CONNECTOR, DEFAULT_GITHUB_SCOPES } from '@/lib/github-app';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -51,9 +50,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -128,3 +125,6 @@ export async function PUT(
     enabled,
   });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

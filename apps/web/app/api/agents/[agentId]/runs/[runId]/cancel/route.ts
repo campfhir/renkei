@@ -18,8 +18,9 @@ import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { requestRunCancellation } from '@/lib/agents/run-cancellation';
 import { isUuid } from '@/lib/uuid';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string; runId: string }> }
 ): Promise<NextResponse> {
@@ -50,10 +51,14 @@ export async function POST(
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     case 'already-final':
       return NextResponse.json(
-        { error: `This run already ${result.status === 'canceled' ? 'was canceled' : result.status}.` },
+        {
+          error: `This run already ${result.status === 'canceled' ? 'was canceled' : result.status}.`,
+        },
         { status: 409 }
       );
     case 'canceling':
       return NextResponse.json({ ok: true });
   }
 }
+
+export const POST = routeLog(POSTHandler);

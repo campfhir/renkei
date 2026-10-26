@@ -15,8 +15,9 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { stopWatching } from '@/lib/mcp-servers/watch';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ serverId: string }> }
 ): Promise<NextResponse> {
@@ -59,3 +60,5 @@ export async function DELETE(
   invalidateToolCatalogCache(session.subject);
   return NextResponse.json({ message: 'Disconnected' });
 }
+
+export const DELETE = routeLog(DELETEHandler);

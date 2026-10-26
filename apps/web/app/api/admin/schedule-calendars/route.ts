@@ -12,10 +12,9 @@ import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseCalendarPayload } from '@/lib/agents/calendar-payload';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -39,9 +38,7 @@ export async function GET(
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -71,3 +68,6 @@ export async function POST(
   }
   return NextResponse.json({ id }, { status: 201 });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

@@ -11,10 +11,9 @@ import { loadKeyring } from '@renkei/crypto';
 import { getVapidKeys } from '@renkei/notifications';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -40,3 +39,5 @@ export async function GET(
     return NextResponse.json({ error: 'Push is not configured' }, { status: 500 });
   }
 }
+
+export const GET = routeLog(GETHandler);

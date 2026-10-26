@@ -33,7 +33,10 @@ type Level = keyof LogSink;
 export interface LogContext {
   user?: string;
   browserAgent?: string;
+  /** The page the person was on, as the browser sent it. */
   page?: string;
+  /** The path the request was made to, on the server. */
+  route?: string;
 }
 
 const anchor = globalThis as unknown as {
@@ -56,7 +59,7 @@ export function registerLogContext(provider: () => LogContext | undefined): void
  * the first frame is the code that logged. An Error passed in keeps its own
  * stack, which is where the failure really happened.
  */
-function callSiteStack(): string | undefined {
+export function callSiteStack(): string | undefined {
   // V8 keeps 10 frames by default, and this module's own frames use some of
   // them: widen the window for this one capture.
   const limit = Error.stackTraceLimit;
@@ -64,12 +67,17 @@ function callSiteStack(): string | undefined {
   const raw = new Error().stack;
   Error.stackTraceLimit = limit;
   if (!raw) return undefined;
+  // The frames from this logger (named after its functions, or its source
+  // file, which a bundle may not keep) come first; the caller starts at the
+  // first frame that is not one of them.
   const frames = raw.split('\n').slice(1);
-  const outside = frames.filter(
-    (frame) => !/packages\/logging\/src\/index\.(ts|js|mjs|cjs):\d/.test(frame)
-  );
-  return ['Error', ...outside.slice(0, 12)].join('\n');
+  let first = 0;
+  while (first < frames.length && LOGGER_FRAME.test(frames[first])) first += 1;
+  return ['Error', ...frames.slice(first, first + 12)].join('\n');
 }
+
+const LOGGER_FRAME =
+  /\b(callSiteStack|enrich|emit|enhanceLogger|logWithContext)\b|packages\/logging\/src\/index\.(ts|js|mjs|cjs):\d|@campfhir\/bored-logs|Object\.(debug|info|warn|error)\b/;
 
 /**
  * The record as it is written: the request's context under the call's own
@@ -77,7 +85,10 @@ function callSiteStack(): string | undefined {
  * every warning and error.
  */
 function enrich(level: Level, fields?: Record<string, unknown>): Record<string, unknown> {
-  const { error, ...rest } = fields ?? {};
+  const { error, ...given } = fields ?? {};
+  // A field the caller left undefined says nothing: it must not blank the
+  // request's context, nor count as a stack the logger should not add.
+  const rest = Object.fromEntries(Object.entries(given).filter(([, value]) => value !== undefined));
   const out: Record<string, unknown> = { ...(anchor.__renkeiLogContext?.() ?? {}), ...rest };
   if (error !== undefined) {
     if (error instanceof Error) {
@@ -115,3 +126,22 @@ export const log: LogSink = {
   warn: (message, fields) => emit('warn', message, fields),
   error: (message, fields) => emit('error', message, fields),
 };
+
+const LEVELS: Level[] = ['debug', 'info', 'warn', 'error'];
+
+/**
+ * Makes a process logger (bored-logs, or anything with the same four methods)
+ * write the request context and the call-site stack with every record, the
+ * same way `log` does. A call's own fields win over the context, and the
+ * logger is returned as it was passed in.
+ */
+export function enhanceLogger<T extends object>(target: T): T {
+  for (const level of LEVELS) {
+    const original: unknown = Reflect.get(target, level);
+    if (typeof original !== 'function') continue;
+    const logWithContext = (message: string, fields?: Record<string, unknown>) =>
+      original.call(target, message, enrich(level, fields));
+    Reflect.set(target, level, logWithContext);
+  }
+  return target;
+}

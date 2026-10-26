@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromRequest } from '@/lib/session';
 import { clientFailure, fsReadFile, fsWriteFile } from '@/lib/file-shares/service-client';
+import { routeLog } from '@/lib/log-context';
 
 async function maxTransferBytes(): Promise<number> {
   const settings = await getOrgSettings();
@@ -28,7 +29,7 @@ function dispositionName(path: string): string {
   return name.replace(/["\\\r\n]/g, '_');
 }
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
@@ -53,7 +54,7 @@ export async function GET(
   });
 }
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
@@ -86,3 +87,6 @@ export async function PUT(
   }
   return NextResponse.json({ ok: true, path: written.val.path });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

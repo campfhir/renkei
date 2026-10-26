@@ -10,10 +10,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { listTemplateHealth } from '@renkei/email-sanitizer';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -25,3 +24,5 @@ export async function GET(
   }
   return NextResponse.json({ templates: result.val });
 }
+
+export const GET = routeLog(GETHandler);

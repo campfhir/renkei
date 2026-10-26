@@ -12,10 +12,9 @@ import { chatRequestContext } from '@/lib/chat/route-support';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { CHAT_SEARCH_MIN_CHARS, normalizeQuery, searchChatMessages } from '@/lib/chat/search';
 import { chatCiphersFor } from '@/lib/chat/chat-keys';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -30,3 +29,5 @@ export async function GET(
   );
   return NextResponse.json({ query, hits });
 }
+
+export const GET = routeLog(GETHandler);

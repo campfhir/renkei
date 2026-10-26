@@ -10,10 +10,9 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { loadKeyring } from '@renkei/crypto';
 import { getConnectorConfig } from '@renkei/connector-config';
 import { VOICE_CONNECTOR, createVoiceProvider, parseVoiceConfig } from '@renkei/voice';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -45,3 +44,5 @@ export async function POST(
     defaultVoiceKnown: hasDefault,
   });
 }
+
+export const POST = routeLog(POSTHandler);

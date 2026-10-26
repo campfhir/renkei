@@ -11,8 +11,9 @@ import { timeZoneOf } from '@/lib/chat/time-zone';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { USER_MESSAGE_MAX_CHARS } from '@/lib/chat/start-turn';
 import { resendFromMessage } from '@/lib/chat/resend';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string; messageId: string }> }
 ): Promise<Response> {
@@ -76,3 +77,5 @@ export async function POST(
   }
   return NextResponse.json(resent.val, { status: 202 });
 }
+
+export const POST = routeLog(POSTHandler);

@@ -9,8 +9,9 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { resolveProjectAccess } from '@/lib/chat/access';
 import { appendProjectMemory, forgetProjectMemory, readProjectMemory } from '@/lib/chat/memory';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -35,7 +36,7 @@ export async function GET(
   });
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -62,7 +63,7 @@ export async function POST(
   return NextResponse.json({ id }, { status: 201 });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -85,3 +86,7 @@ export async function DELETE(
   );
   return NextResponse.json({ deleted });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { reportClientError } from '@/lib/client-logs';
+import { reportClientError, sendPageWithApiRequests } from '@/lib/client-logs';
 
 /**
  * Reports the errors a page does not handle itself: uncaught exceptions and
@@ -10,6 +10,7 @@ import { reportClientError } from '@/lib/client-logs';
  */
 export default function ClientErrorReporter() {
   useEffect(() => {
+    sendPageWithApiRequests();
     const onError = (event: ErrorEvent) => reportClientError(event.error ?? event.message);
     const onRejection = (event: PromiseRejectionEvent) => reportClientError(event.reason);
     window.addEventListener('error', onError);

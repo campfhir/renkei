@@ -10,10 +10,9 @@ import { NextResponse } from 'next/server';
 import { getVoicePrefs } from '@renkei/user-prefs';
 import { getSessionFromRequest } from '@/lib/session';
 import { listVoicesCached, resolveVoiceProvider } from '@/lib/voice/config';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -34,3 +33,5 @@ export async function GET(
     voicesError: voices.ok ? null : voices.error.message,
   });
 }
+
+export const GET = routeLog(GETHandler);

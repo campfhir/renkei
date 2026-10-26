@@ -14,10 +14,9 @@ import {
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
 import { ATLASSIAN_JSM_CONNECTOR, DEFAULT_ATLASSIAN_JSM_SCOPES } from '@/lib/atlassian-app';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -50,9 +49,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -108,3 +105,6 @@ export async function PUT(
   invalidateConnectorConfigCache(ATLASSIAN_JSM_CONNECTOR);
   return NextResponse.json({ connector: ATLASSIAN_JSM_CONNECTOR, configured: true, enabled });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

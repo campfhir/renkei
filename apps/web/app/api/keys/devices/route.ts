@@ -24,23 +24,20 @@ import { NextResponse } from 'next/server';
 import { deviceCodeOf } from '@renkei/crypto';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { pendingDevicesOf } from '@/lib/keys/status';
+import { routeLog } from '@/lib/log-context';
 
 const REQUEST_TTL_MS = 10 * 60_000;
 /** The most asks a person may make in one TTL window, answered or not. */
 const MAX_ASKS_PER_WINDOW = 3;
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   return NextResponse.json({ requests: await pendingDevicesOf(db, session.subject) });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -88,3 +85,6 @@ export async function POST(
     expiresAt: inserted.expires_at.toISOString(),
   });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

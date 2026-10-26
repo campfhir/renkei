@@ -12,8 +12,9 @@ import { getProjectRow } from '@/lib/chat/projects';
 import { getOrgSettings } from '@renkei/settings';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { createSizeRequest, validReason, validRequestedBytes } from '@/lib/code/size-requests';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -21,12 +22,7 @@ export async function POST(
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveResourceAccess(db, session.subject, 'chat_project', projectId);
   const project = access ? await getProjectRow(db, projectId) : null;
   if (!project || project.kind !== 'code') return jsonError(404, 'not-found', 'No such project');
 
@@ -58,3 +54,5 @@ export async function POST(
   });
   return NextResponse.json({ request: created }, { status: 201 });
 }
+
+export const POST = routeLog(POSTHandler);

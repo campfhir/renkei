@@ -8,12 +8,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/session';
 import { clientFailure, fsMakeFolder } from '@/lib/file-shares/service-client';
+import { routeLog } from '@/lib/log-context';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
@@ -34,3 +35,5 @@ export async function POST(
   }
   return NextResponse.json({ ok: true, path: made.val.path });
 }
+
+export const POST = routeLog(POSTHandler);

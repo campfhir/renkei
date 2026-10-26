@@ -19,8 +19,9 @@ import {
   latestOptimization,
 } from '@/lib/agents/optimization-store';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -77,7 +78,7 @@ export async function POST(
   return NextResponse.json({ optimizationId, status: 'queued' }, { status: 202 });
 }
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -93,3 +94,6 @@ export async function GET(
   const optimization = await latestOptimization(dbResult.val, session.subject, agentId);
   return NextResponse.json({ optimization });
 }
+
+export const POST = routeLog(POSTHandler);
+export const GET = routeLog(GETHandler);

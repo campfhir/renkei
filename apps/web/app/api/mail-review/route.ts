@@ -11,6 +11,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
 import { isEmailCategory } from '@/lib/email-sanitizer-guards';
 import { listForOwner, countByCategoryForOwner } from '@renkei/email-sanitizer';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * A spot check, not a browsable archive — with good classification there's
@@ -19,10 +20,7 @@ import { listForOwner, countByCategoryForOwner } from '@renkei/email-sanitizer';
  */
 const MAX_PAGE_SIZE = 5;
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
-
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -73,3 +71,5 @@ export async function GET(
     counts: countsResult.ok ? countsResult.val : { human: 0, system_notification: 0, marketing: 0 },
   });
 }
+
+export const GET = routeLog(GETHandler);

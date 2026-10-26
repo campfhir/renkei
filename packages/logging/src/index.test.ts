@@ -1,4 +1,4 @@
-import { log, registerLogContext, registerLogSink, type LogSink } from './index';
+import { enhanceLogger, log, registerLogContext, registerLogSink, type LogSink } from './index';
 
 type Captured = { level: string; message: string; fields: Record<string, unknown> };
 
@@ -54,4 +54,32 @@ test('the request context is added under the call’s own fields', () => {
     page: '/override',
     component: 'connectors/test',
   });
+});
+
+test('an undefined field does not blank the request context', () => {
+  const records = capture();
+  registerLogContext(() => ({ page: '/chat', browserAgent: 'Safari' }));
+  log.warn('thing failed', { component: 'connectors/test', page: undefined });
+  expect(records[0].fields).toMatchObject({ page: '/chat', browserAgent: 'Safari' });
+});
+
+test('an enhanced logger adds the context to every record, and a stack to warnings and errors only', () => {
+  const seen: Array<{ level: string; fields: Record<string, unknown> }> = [];
+  const target = {
+    debug: (_m: string, f?: Record<string, unknown>) =>
+      seen.push({ level: 'debug', fields: f ?? {} }),
+    info: (_m: string, f?: Record<string, unknown>) =>
+      seen.push({ level: 'info', fields: f ?? {} }),
+    warn: (_m: string, f?: Record<string, unknown>) =>
+      seen.push({ level: 'warn', fields: f ?? {} }),
+    error: (_m: string, f?: Record<string, unknown>) =>
+      seen.push({ level: 'error', fields: f ?? {} }),
+  };
+  registerLogContext(() => ({ user: 'person@example.com', page: '/chat' }));
+  const logger = enhanceLogger(target);
+  logger.info('started', { component: 'x' });
+  logger.warn('failed', { component: 'x' });
+  expect(seen[0].fields).toMatchObject({ user: 'person@example.com', page: '/chat' });
+  expect(seen[0].fields).not.toHaveProperty('stack');
+  expect(String(seen[1].fields.stack)).toContain('index.test.ts');
 });

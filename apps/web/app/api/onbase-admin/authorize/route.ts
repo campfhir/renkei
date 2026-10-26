@@ -28,10 +28,9 @@ import { bindConnectFlow } from '@/lib/connect-flow-binding';
 import { getOnBaseApp, onbaseAuthorizeScopes, ONBASE_ADMIN_CONNECTOR } from '@/lib/onbase-app';
 import { obDiscover, onbaseClientFailure } from '@/lib/onbase/service-client';
 import { getOrigin } from '@/lib/get-origin';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -108,3 +107,5 @@ export async function GET(
   // Bound to this browser: the callback requires the cookie this sets.
   return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
 }
+
+export const GET = routeLog(GETHandler);

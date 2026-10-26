@@ -1,5 +1,6 @@
 import { getLogShipping } from '@/lib/log-ingest';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Ingest endpoint for e2e-encrypted log shipping — the worker (and any future
@@ -8,7 +9,7 @@ import { logger } from '@/lib/logger';
  * LOG_SHIP_API_KEY bearer gate; the sibling /api/logs/register endpoint
  * completes the pipeline.
  */
-export async function POST(request: Request): Promise<Response> {
+async function POSTHandler(request: Request): Promise<Response> {
   const shipping = await getLogShipping();
   if (!shipping) return new Response(null, { status: 503 });
 
@@ -21,3 +22,5 @@ export async function POST(request: Request): Promise<Response> {
   }
   return response;
 }
+
+export const POST = routeLog(POSTHandler);

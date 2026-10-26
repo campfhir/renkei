@@ -2,5 +2,9 @@
 
 import { salesforceConnectorsRoute } from '@/lib/salesforce-connectors-admin';
 import { SALESFORCE_ADMIN_KIND } from '@/lib/salesforce-kinds';
+import { routeLog } from '@/lib/log-context';
 
-export const { GET, PUT, DELETE } = salesforceConnectorsRoute(SALESFORCE_ADMIN_KIND);
+const salesforceRoute = salesforceConnectorsRoute(SALESFORCE_ADMIN_KIND);
+export const GET = routeLog(salesforceRoute.GET);
+export const PUT = routeLog(salesforceRoute.PUT);
+export const DELETE = routeLog(salesforceRoute.DELETE);

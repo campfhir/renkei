@@ -19,10 +19,11 @@ import {
 import { readAttachmentBytes } from '@/lib/chat/attachments';
 import { resolveArtifactAccess } from '@/lib/chat/artifact-access';
 import { executeUpload } from '@/lib/upload-executors';
+import { routeLog } from '@/lib/log-context';
 
 export const runtime = 'nodejs';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ attachmentId: string }> }
 ): Promise<Response> {
@@ -60,3 +61,5 @@ export async function POST(
   );
   return NextResponse.json(outcome, { status: outcome.ok ? 200 : 502 });
 }
+
+export const POST = routeLog(POSTHandler);

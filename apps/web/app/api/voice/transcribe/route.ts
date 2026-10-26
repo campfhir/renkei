@@ -19,6 +19,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { resolveVoiceProvider } from '@/lib/voice/config';
 import { recordVoiceUsage, wavDurationMs } from '@/lib/voice/usage';
+import { routeLog } from '@/lib/log-context';
 
 /** 16 kHz × 16-bit × mono × 60 s, plus the header, rounded up. */
 export const TRANSCRIBE_MAX_BYTES = 2 * 1024 * 1024;
@@ -28,17 +29,11 @@ const LIMITS = {
   global: { limit: 1_000, windowMs: 60_000 },
 };
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const verdict = checkInboundLimit(
-    `voice/transcribe:${session.subject}`,
-    request,
-    LIMITS
-  );
+  const verdict = checkInboundLimit(`voice/transcribe:${session.subject}`, request, LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
       { error: 'Too many transcription requests; slow down a little.' },
@@ -98,3 +93,5 @@ export async function POST(
   }
   return NextResponse.json({ text: result.val.text, locale: result.val.locale });
 }
+
+export const POST = routeLog(POSTHandler);

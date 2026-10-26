@@ -19,8 +19,9 @@ import { deleteAgent, getAgent } from '@/lib/agents/store';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { saveAgent } from '@/lib/agents/save';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -36,7 +37,7 @@ export async function GET(
   return NextResponse.json({ agent: access.agent });
 }
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -82,7 +83,7 @@ export async function PUT(
   });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -106,3 +107,7 @@ export async function DELETE(
   });
   return NextResponse.json({ deleted: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);
+export const DELETE = routeLog(DELETEHandler);

@@ -14,8 +14,9 @@ import {
   updateLibrary,
   LIBRARY_NAME_MAX_CHARS,
 } from '@/lib/chat/prompts';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ libraryId: string }> }
 ): Promise<Response> {
@@ -23,12 +24,7 @@ export async function GET(
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'prompt_library',
-    libraryId
-  );
+  const access = await resolveResourceAccess(db, session.subject, 'prompt_library', libraryId);
   const library = access ? await getLibrary(db, libraryId) : null;
   if (!access || !library) return jsonError(404, 'not-found', 'No such library');
   const prompts = await listPrompts(db, libraryId);
@@ -49,7 +45,7 @@ export async function GET(
   });
 }
 
-export async function PATCH(
+async function PATCHHandler(
   request: NextRequest,
   { params }: { params: Promise<{ libraryId: string }> }
 ): Promise<Response> {
@@ -57,12 +53,7 @@ export async function PATCH(
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'prompt_library',
-    libraryId
-  );
+  const access = await resolveResourceAccess(db, session.subject, 'prompt_library', libraryId);
   if (!access) return jsonError(404, 'not-found', 'No such library');
   if (access.role === 'viewer')
     return jsonError(403, 'read-only', 'Only editors can change this library.');
@@ -80,7 +71,7 @@ export async function PATCH(
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ libraryId: string }> }
 ): Promise<Response> {
@@ -92,3 +83,7 @@ export async function DELETE(
   if (!deleted) return jsonError(404, 'not-found', 'No such library');
   return NextResponse.json({ ok: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const PATCH = routeLog(PATCHHandler);
+export const DELETE = routeLog(DELETEHandler);

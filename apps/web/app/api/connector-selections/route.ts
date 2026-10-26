@@ -17,6 +17,7 @@ import { getConnectorPrefs, setConnectorPrefs } from '@renkei/user-prefs';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveUserCatalog } from '@/lib/connectors/user-catalog';
 import { resolveAudienceAllows } from '@/lib/connectors/audience';
+import { routeLog } from '@/lib/log-context';
 
 async function connectorFrom(request: NextRequest): Promise<string | null> {
   const body: unknown = await request.json().catch(() => null);
@@ -55,16 +56,15 @@ async function change(
   return NextResponse.json({ added });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   return change(request, (added, connector) =>
     added.includes(connector) ? added : [...added, connector]
   );
 }
 
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
+async function DELETEHandler(request: NextRequest): Promise<NextResponse> {
   return change(request, (added, connector) => added.filter((key) => key !== connector));
 }
+
+export const PUT = routeLog(PUTHandler);
+export const DELETE = routeLog(DELETEHandler);

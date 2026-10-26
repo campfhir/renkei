@@ -7,6 +7,7 @@ import { getAtlassianBitbucketApp } from '@/lib/atlassian-app';
 import { BITBUCKET_REQUIRED_SCOPES } from '@/lib/atlassian-scopes';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Authorize against the fourth Atlassian app ("Renkei Bitbucket") — a
@@ -17,9 +18,7 @@ import { logger } from '@/lib/logger';
  * requested_scopes, which the tool gate intersects with what the token
  * carries) but never travels to Bitbucket.
  */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -104,3 +103,5 @@ export async function GET(
     return NextResponse.json({ error: 'Failed to initiate authorization' }, { status: 500 });
   }
 }
+
+export const GET = routeLog(GETHandler);

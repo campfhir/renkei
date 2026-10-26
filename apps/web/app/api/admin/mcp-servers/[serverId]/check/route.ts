@@ -13,8 +13,9 @@ import { getServer } from '@renkei/connector-mcp';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrigin } from '@/lib/get-origin';
 import { serverSummary } from '@/lib/mcp-servers/parse';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ serverId: string }> }
 ): Promise<NextResponse> {
@@ -48,3 +49,5 @@ export async function POST(
     server: serverSummary(server.val),
   });
 }
+
+export const POST = routeLog(POSTHandler);

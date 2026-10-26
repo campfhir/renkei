@@ -14,8 +14,9 @@ import { getProjectRow } from '@/lib/chat/projects';
 import { loadCodeProjectView } from '@/lib/code/project-view';
 import { deleteCodeProject } from '@/lib/code/projects';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -30,7 +31,7 @@ export async function GET(
   return NextResponse.json(view);
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -39,9 +40,7 @@ export async function DELETE(
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const project = await getProjectRow(db, projectId);
-  const deleted = project
-    ? await deleteCodeProject(db, session.subject, projectId)
-    : false;
+  const deleted = project ? await deleteCodeProject(db, session.subject, projectId) : false;
   if (!deleted || !project) return jsonError(404, 'not-found', 'No such project');
   recordAuditEvent({
     actorSubject: session.subject,
@@ -52,3 +51,6 @@ export async function DELETE(
   });
   return NextResponse.json({ ok: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const DELETE = routeLog(DELETEHandler);

@@ -22,6 +22,7 @@ import { resolveAtlassianUserAccess } from '@/lib/atlassian-user-access';
 import { jiraFetch } from '@/lib/mcp-tools/common';
 import { githubAuthOf } from '@/lib/code/github-browse';
 import { ghJson, rec, str } from '@/lib/mcp-tools/github/client';
+import { routeLog } from '@/lib/log-context';
 
 interface JiraCard {
   key: string;
@@ -84,7 +85,7 @@ async function lookupGitHubIssue(
   };
 }
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId: string }> }
 ): Promise<Response> {
@@ -119,3 +120,5 @@ export async function GET(
 
   return NextResponse.json({ jira, github });
 }
+
+export const GET = routeLog(GETHandler);

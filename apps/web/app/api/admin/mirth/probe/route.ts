@@ -9,14 +9,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { parseBaseUrl } from '@renkei/connector-mirth';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { mirthClientFailure, mirthProbe } from '@/lib/mirth/service-client';
+import { routeLog } from '@/lib/log-context';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -51,3 +50,5 @@ export async function POST(
   }
   return NextResponse.json(probed.val);
 }
+
+export const POST = routeLog(POSTHandler);

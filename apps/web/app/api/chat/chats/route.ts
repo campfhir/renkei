@@ -16,15 +16,16 @@ import { createChat } from '@/lib/chat/store';
 import { getProjectRow } from '@/lib/chat/projects';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { parseToolConfig } from '@/lib/chat/tool-config';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(request: NextRequest): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   return NextResponse.json(await loadChatSidebar(db, session.subject));
 }
 
-export async function POST(request: NextRequest): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -54,3 +55,6 @@ export async function POST(request: NextRequest): Promise<Response> {
   });
   return NextResponse.json({ chatId }, { status: 201 });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

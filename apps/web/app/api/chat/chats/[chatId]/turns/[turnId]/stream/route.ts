@@ -28,6 +28,7 @@ import { listTurnMessages, toMessageView } from '@/lib/chat/messages';
 import { getTurnChannel } from '@/lib/chat/turn-events';
 import type { ChatStreamEvent } from '@/lib/chat/stream-events';
 import { onShutdown } from '@/lib/shutdown';
+import { routeLog } from '@/lib/log-context';
 
 export const runtime = 'nodejs';
 
@@ -71,7 +72,7 @@ async function snapshotOf(
   };
 }
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string; turnId: string }> }
 ): Promise<Response> {
@@ -225,3 +226,5 @@ export async function GET(
     },
   });
 }
+
+export const GET = routeLog(GETHandler);

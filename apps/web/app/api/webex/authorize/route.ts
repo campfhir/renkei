@@ -13,10 +13,9 @@ import { bindConnectFlow } from '@/lib/connect-flow-binding';
 import { getWebexUserApp, WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 import { WEBEX_REQUIRED_SCOPES } from '@/lib/webex-scopes';
 import { getOrigin } from '@/lib/get-origin';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -91,3 +90,5 @@ export async function GET(
   // Bound to this browser: the callback requires the cookie this sets.
   return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
 }
+
+export const GET = routeLog(GETHandler);

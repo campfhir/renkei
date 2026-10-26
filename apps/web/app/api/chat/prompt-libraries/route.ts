@@ -7,10 +7,9 @@ import {
   readJsonBody,
 } from '@/lib/chat/route-support';
 import { createLibrary, listAccessibleLibraries, LIBRARY_NAME_MAX_CHARS } from '@/lib/chat/prompts';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -26,9 +25,7 @@ export async function GET(
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -43,3 +40,6 @@ export async function POST(
   });
   return NextResponse.json({ libraryId }, { status: 201 });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

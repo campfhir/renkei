@@ -17,10 +17,9 @@ import { getSessionFromRequest } from '@/lib/session';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { listAgents } from '@/lib/agents/store';
 import { saveAgent } from '@/lib/agents/save';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -31,9 +30,7 @@ export async function GET(
   return NextResponse.json({ agents });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -66,3 +63,6 @@ export async function POST(
     { status: 201 }
   );
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

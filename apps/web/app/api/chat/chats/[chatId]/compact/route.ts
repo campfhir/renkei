@@ -11,8 +11,9 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { startCompactionTurn } from '@/lib/chat/compaction';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -47,3 +48,5 @@ export async function POST(
   }
   return NextResponse.json(started.val, { status: 202 });
 }
+
+export const POST = routeLog(POSTHandler);

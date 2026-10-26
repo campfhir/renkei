@@ -13,13 +13,14 @@ import { getAttachment, getAttachmentText, readAttachmentBytes } from '@/lib/cha
 import { attachmentCipherFor } from '@/lib/chat/artifact-access';
 import { extensionOf, previewKind } from '@/lib/chat/preview-kind';
 import { sheetFromCsv, sheetFromXlsx } from '@/lib/chat/sheet-preview';
+import { routeLog } from '@/lib/log-context';
 
 export const runtime = 'nodejs';
 
 /** Enough of a long text to see what it is; the download has the rest. */
 const MAX_TEXT_CHARS = 20_000;
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ attachmentId: string }> }
 ): Promise<Response> {
@@ -65,3 +66,5 @@ export async function GET(
 
   return jsonError(415, 'no-preview', 'This file is shown from its own bytes, or not at all.');
 }
+
+export const GET = routeLog(GETHandler);

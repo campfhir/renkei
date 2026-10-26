@@ -16,6 +16,7 @@ import {
   sbSecretRevoke,
   sbSecretUnlock,
 } from '@/lib/sandbox/service-client';
+import { routeLog } from '@/lib/log-context';
 
 const HOUR_MS = 60 * 60_000;
 
@@ -23,14 +24,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ secretId: string }> }
 ): Promise<NextResponse> {
   const { secretId } = await params;
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxBrowserEnabled())) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled()))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body: unknown = await request.json().catch(() => null);
   if (!isRecord(body)) {
@@ -77,14 +79,15 @@ export async function POST(
   return NextResponse.json({ error: 'action must be "unlock" or "lock"' }, { status: 400 });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ secretId: string }> }
 ): Promise<NextResponse> {
   const { secretId } = await params;
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxBrowserEnabled())) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled()))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const revoked = await sbSecretRevoke({ subject: session.subject }, secretId);
   if (!revoked.ok) {
@@ -99,3 +102,6 @@ export async function DELETE(
   });
   return NextResponse.json({ ok: true });
 }
+
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

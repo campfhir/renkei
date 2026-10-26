@@ -23,10 +23,11 @@ import { getOrigin } from '@/lib/get-origin';
 import { getIdentityDisplay } from '@/lib/identity';
 import { commitAuthorFor, resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 const MAX_PATHS = 200;
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -109,3 +110,5 @@ export async function POST(
     subject: message.split('\n')[0] ?? message,
   });
 }
+
+export const POST = routeLog(POSTHandler);

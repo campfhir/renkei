@@ -9,8 +9,9 @@ import { isUuid } from '@/lib/uuid';
 import { timeZoneOf } from '@/lib/chat/time-zone';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { startChatTurn, USER_MESSAGE_MAX_CHARS } from '@/lib/chat/start-turn';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -71,3 +72,5 @@ export async function POST(
   }
   return NextResponse.json(started.val, { status: 202 });
 }
+
+export const POST = routeLog(POSTHandler);

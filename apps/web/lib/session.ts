@@ -16,6 +16,7 @@ import { DEFAULT_ORG_SETTINGS, getOrgSettings } from '@renkei/settings';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { logger } from '@/lib/logger';
+import { noteLogUser } from '@/lib/log-context';
 
 const COOKIE_NAME = 'renkei_session';
 
@@ -106,6 +107,12 @@ export async function createSession(
  * than left to accumulate.
  */
 export async function getSessionById(sessionId: string): Promise<Session | null> {
+  const session = await lookupSession(sessionId);
+  if (session) noteLogUser(session.subject);
+  return session;
+}
+
+async function lookupSession(sessionId: string): Promise<Session | null> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
   const db = dbResult.val;

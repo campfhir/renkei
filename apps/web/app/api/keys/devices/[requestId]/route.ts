@@ -24,6 +24,7 @@ import type { DB } from '@renkei/db';
 import { normalizeDeviceCode } from '@renkei/crypto';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 type Params = { params: Promise<{ requestId: string }> };
 
@@ -44,11 +45,7 @@ interface AskRow {
   expires_at: Date;
 }
 
-async function askFor(
-  db: Kysely<DB>,
-  subject: string,
-  requestId: string
-): Promise<AskRow | null> {
+async function askFor(db: Kysely<DB>, subject: string, requestId: string): Promise<AskRow | null> {
   const row = await db
     .selectFrom('device_key_requests')
     .select([
@@ -112,7 +109,7 @@ async function checkCode(
   );
 }
 
-export async function GET(request: NextRequest, { params }: Params): Promise<Response> {
+async function GETHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { requestId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
@@ -151,7 +148,7 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
   });
 }
 
-export async function POST(request: NextRequest, { params }: Params): Promise<Response> {
+async function POSTHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { requestId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
@@ -197,7 +194,7 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(request: NextRequest, { params }: Params): Promise<Response> {
+async function DELETEHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { requestId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
@@ -218,3 +215,7 @@ export async function DELETE(request: NextRequest, { params }: Params): Promise<
   }
   return NextResponse.json({ ok: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

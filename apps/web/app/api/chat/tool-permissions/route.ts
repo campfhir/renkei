@@ -13,10 +13,9 @@ import {
   parseChatToolPermissionPrefs,
   setChatToolPermissionPrefs,
 } from '@/lib/chat/permission-prefs';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const prefs = await getChatToolPermissionPrefs(ready.context.session.subject, {
@@ -25,9 +24,7 @@ export async function GET(
   return NextResponse.json(prefs);
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<Response> {
+async function PUTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const body = await readJsonBody(request);
@@ -46,3 +43,6 @@ export async function PUT(
   if (!written.ok) return jsonError(500, 'save-failed', 'Could not save');
   return NextResponse.json(prefs);
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

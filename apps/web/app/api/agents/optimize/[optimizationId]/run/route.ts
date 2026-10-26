@@ -18,8 +18,9 @@ import {
 } from '@/lib/agents/optimization-store';
 import { optimizeAgent } from '@/lib/agents/optimize';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ optimizationId: string }> }
 ): Promise<NextResponse> {
@@ -51,12 +52,7 @@ export async function POST(
       return NextResponse.json({ status: 'failed' });
     }
 
-    const outcome = await optimizeAgent(
-      db,
-      record.subject,
-      agent,
-      optimization.request.windowDays
-    );
+    const outcome = await optimizeAgent(db, record.subject, agent, optimization.request.windowDays);
     if ('error' in outcome) {
       await finishOptimization(db, optimizationId, {
         status: 'failed',
@@ -94,3 +90,5 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export const POST = routeLog(POSTHandler);

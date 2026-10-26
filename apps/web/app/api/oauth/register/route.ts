@@ -7,6 +7,7 @@ import { logger } from '@/lib/logger';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { readRegistration } from '@/lib/oauth-client-registration';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Open by specification (RFC 7591) and each call writes a row, so the
@@ -33,7 +34,7 @@ const LIMITS = {
  *     "grant_types": ["authorization_code", "refresh_token"]
  *   }
  */
-export async function POST(request: NextRequest): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const verdict = checkInboundLimit('oauth/register', request, LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
@@ -130,3 +131,5 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 }
+
+export const POST = routeLog(POSTHandler);

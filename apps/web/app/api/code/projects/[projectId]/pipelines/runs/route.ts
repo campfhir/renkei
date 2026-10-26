@@ -18,8 +18,9 @@ import {
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { missingScope, pipelinesProjectContext } from '@/lib/code/pipelines-access';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -50,3 +51,5 @@ export async function POST(
   });
   return NextResponse.json({ run: started.run });
 }
+
+export const POST = routeLog(POSTHandler);

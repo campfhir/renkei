@@ -24,6 +24,7 @@ import {
   type AtlassianUserProvider,
 } from '@/lib/atlassian-user-access';
 import { repairWatch } from '@/lib/mcp-tools/content-watches';
+import { routeLog } from '@/lib/log-context';
 
 type AtlassianWatchProvider = 'jira' | 'confluence';
 
@@ -40,9 +41,7 @@ const SCOPE_TYPE: Record<AtlassianWatchProvider, 'project' | 'space'> = {
   confluence: 'space',
 };
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -58,10 +57,7 @@ export async function POST(
 
   // The caller's grant is resolved right now — a repair that rebinds a
   // watch onto another dead grant would only move the failure, not fix it.
-  const access = await resolveAtlassianUserAccess(
-    session.subject,
-    grantProviderFor(provider)
-  );
+  const access = await resolveAtlassianUserAccess(session.subject, grantProviderFor(provider));
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
   const result = await repairWatch(
@@ -79,3 +75,5 @@ export async function POST(
   }
   return NextResponse.json({ repaired: result.repaired });
 }
+
+export const POST = routeLog(POSTHandler);

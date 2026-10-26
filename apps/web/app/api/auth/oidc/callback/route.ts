@@ -19,6 +19,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 import { safeFetch, assertPublicHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
 import { verifyIdTokenClaims } from '@/lib/oidc-id-token';
+import { routeLog } from '@/lib/log-context';
 
 interface OIDCTokenResponse {
   access_token: string;
@@ -57,7 +58,7 @@ function isOIDCTokenResponse(data: unknown): data is OIDCTokenResponse {
   );
 }
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -280,14 +281,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (identityClaims) {
       const recorded = await upsertIdentity(subject, identityClaims);
       if (!recorded.ok) {
-        console.warn(
-          `[OIDC] could not record identity for subject; gates will fail closed`
-        );
+        console.warn(`[OIDC] could not record identity for subject; gates will fail closed`);
       }
     } else {
-      console.warn(
-        `[OIDC] id_token carries no email claim; gates will fail closed for this user`
-      );
+      console.warn(`[OIDC] id_token carries no email claim; gates will fail closed for this user`);
       const forgotten = await clearIdpGroups(subject);
       if (!forgotten.ok) {
         logger.warn('could not clear recorded groups for a subject whose claims were unreadable', {
@@ -320,10 +317,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           console.error(
             `[OIDC] User has no authorized roles. IDP claim "${oidc.roleClaim}": ${JSON.stringify(idpClaim)}`
           );
-          return NextResponse.json(
-            { error: 'User role not authorized' },
-            { status: 403 }
-          );
+          return NextResponse.json({ error: 'User role not authorized' }, { status: 403 });
         }
       }
     }
@@ -342,11 +336,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // `expires_in` — that token is never used again after this exchange, and
     // tying our own session to its (often hour-long) lifetime made every
     // sign-in expire far sooner than anyone signing in expects.
-    const sessionResult = await createSession(
-      subject,
-      Array.from(userRoles),
-      SESSION_TTL_SECONDS
-    );
+    const sessionResult = await createSession(subject, Array.from(userRoles), SESSION_TTL_SECONDS);
     if (!sessionResult.ok) {
       return NextResponse.json({ error: 'Failed to establish session' }, { status: 500 });
     }
@@ -375,3 +365,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
   }
 }
+
+export const GET = routeLog(GETHandler);

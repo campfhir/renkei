@@ -27,6 +27,7 @@ import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { claimDraft, finishDraft, getDraft } from '@/lib/agents/draft-store';
 import { draftAgentFromProse, type TriggerVarInfo } from '@/lib/agents/draft-from-prose';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
 /** Accept {name, description} entries, tolerating the older bare-string form. */
 function parseTriggerVars(value: unknown): TriggerVarInfo[] {
@@ -58,7 +59,7 @@ function parseTriggerVars(value: unknown): TriggerVarInfo[] {
   return parsed;
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ draftId: string }> }
 ): Promise<NextResponse> {
@@ -137,3 +138,5 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export const POST = routeLog(POSTHandler);

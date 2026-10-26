@@ -12,8 +12,9 @@ import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { isUuid } from '@/lib/uuid';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -50,7 +51,7 @@ export async function POST(
       event_type: 'agent.disabled_by_admin',
       actor_id: access.subject,
       resource_id: agentId,
-      details: JSON.stringify({ }),
+      details: JSON.stringify({}),
     })
     .execute();
   recordAuditEvent({
@@ -63,3 +64,5 @@ export async function POST(
 
   return NextResponse.json({ disabled: true });
 }
+
+export const POST = routeLog(POSTHandler);

@@ -14,8 +14,9 @@ import { decrypt, encrypt, loadKeyring } from '@renkei/crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseModelPayload } from '@/lib/agents/llm-model-payload';
+import { routeLog } from '@/lib/log-context';
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ modelId: string }> }
 ): Promise<NextResponse> {
@@ -104,7 +105,7 @@ export async function PUT(
   return NextResponse.json({ id: modelId });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ modelId: string }> }
 ): Promise<NextResponse> {
@@ -127,3 +128,6 @@ export async function DELETE(
   invalidateLlmCache();
   return NextResponse.json({ deleted: true });
 }
+
+export const PUT = routeLog(PUTHandler);
+export const DELETE = routeLog(DELETEHandler);

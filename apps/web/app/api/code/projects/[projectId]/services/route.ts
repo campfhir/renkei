@@ -33,8 +33,9 @@ import {
   type ServicesView,
 } from '@/lib/code/services';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -60,7 +61,7 @@ export async function GET(
   return NextResponse.json(summary ? summarizeServices(view) : view);
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -95,3 +96,6 @@ export async function POST(
   });
   return NextResponse.json({ service: started.val }, { status: 201 });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

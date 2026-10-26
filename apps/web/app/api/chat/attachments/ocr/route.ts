@@ -14,13 +14,14 @@ import { resolveChatAccess } from '@/lib/chat/access';
 import { getAttachments, ocrChatAttachments } from '@/lib/chat/attachments';
 import { deferDigest } from '@/lib/chat/artifact-digest';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
+import { routeLog } from '@/lib/log-context';
 
 export const runtime = 'nodejs';
 
 /** One request OCRs at most this many files; the client sends the rest in the next. */
 const MAX_IDS_PER_REQUEST = 12;
 
-export async function POST(request: NextRequest): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -52,3 +53,5 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
   return NextResponse.json({ results });
 }
+
+export const POST = routeLog(POSTHandler);

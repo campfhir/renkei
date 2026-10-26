@@ -13,8 +13,9 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { getChatForOwner } from '@/lib/chat/store';
 import { recordWidgetModelContext } from '@/lib/chat/widget-tools';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -46,3 +47,5 @@ export async function POST(
     { status: recorded.turn ? 202 : 200 }
   );
 }
+
+export const POST = routeLog(POSTHandler);

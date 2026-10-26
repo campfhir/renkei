@@ -20,8 +20,9 @@ import { getSessionFromRequest } from '@/lib/session';
 import { bindConnectFlow } from '@/lib/connect-flow-binding';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ serverId: string }> }
 ): Promise<NextResponse> {
@@ -104,3 +105,5 @@ export async function GET(
   // Bound to this browser: the callback requires the cookie this sets.
   return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
 }
+
+export const GET = routeLog(GETHandler);

@@ -19,10 +19,9 @@ import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { ONBASE_ADMIN } from '@renkei/provider-grants';
 import { delegateGrants } from '@renkei/delegate-client';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
+async function DELETEHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -70,3 +69,5 @@ export async function DELETE(
   invalidateToolCatalogCache(session.subject);
   return NextResponse.json({ message: 'OnBase Administration disconnected' });
 }
+
+export const DELETE = routeLog(DELETEHandler);

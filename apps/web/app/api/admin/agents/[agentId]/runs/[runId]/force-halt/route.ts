@@ -9,8 +9,9 @@ import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { forceHaltRun } from '@/lib/agents/force-halt';
 import { isUuid } from '@/lib/uuid';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ agentId: string; runId: string }> }
 ): Promise<NextResponse> {
@@ -45,3 +46,5 @@ export async function POST(
       return NextResponse.json({ ok: true });
   }
 }
+
+export const POST = routeLog(POSTHandler);

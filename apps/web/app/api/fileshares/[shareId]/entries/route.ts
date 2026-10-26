@@ -19,12 +19,13 @@ import {
   fsRemoveEntry,
   fsRenameEntry,
 } from '@/lib/file-shares/service-client';
+import { routeLog } from '@/lib/log-context';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
@@ -41,7 +42,7 @@ export async function DELETE(
   return NextResponse.json({ ok: true });
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
@@ -70,3 +71,6 @@ export async function POST(
   }
   return NextResponse.json({ ok: true, path: moved.val.path });
 }
+
+export const DELETE = routeLog(DELETEHandler);
+export const POST = routeLog(POSTHandler);

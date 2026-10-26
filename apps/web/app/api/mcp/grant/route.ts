@@ -4,6 +4,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Disconnect the caller's own Jira account.
@@ -19,10 +20,7 @@ import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
  * answer "Jira grant revoked" on every tool call. Deleting them makes the next
  * request a plain 401 that sends the client back through authorization.
  */
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
-
+async function DELETEHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -59,15 +57,9 @@ export async function DELETE(
         .where('subject', '=', session.subject)
         .execute();
 
-      await trx
-        .deleteFrom('oauth_access_tokens')
-        .where('subject', '=', session.subject)
-        .execute();
+      await trx.deleteFrom('oauth_access_tokens').where('subject', '=', session.subject).execute();
 
-      await trx
-        .deleteFrom('oauth_refresh_tokens')
-        .where('subject', '=', session.subject)
-        .execute();
+      await trx.deleteFrom('oauth_refresh_tokens').where('subject', '=', session.subject).execute();
     });
 
     logger.info('Revoked by owner', {
@@ -102,3 +94,5 @@ export async function DELETE(
     return NextResponse.json({ error: 'Failed to disconnect' }, { status: 500 });
   }
 }
+
+export const DELETE = routeLog(DELETEHandler);

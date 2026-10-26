@@ -10,8 +10,9 @@ import { getSessionFromRequest } from '@/lib/session';
 import { getAgent } from '@/lib/agents/store';
 import { revokeAgentAccessGrant } from '@/lib/agents/access-grants';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string; grantId: string }> }
 ): Promise<NextResponse> {
@@ -38,3 +39,5 @@ export async function DELETE(
   });
   return NextResponse.json({ ok: true });
 }
+
+export const DELETE = routeLog(DELETEHandler);

@@ -6,8 +6,9 @@ import { getDatabase } from '@renkei/db';
 import { WORKSPACE_LIMIT_MAX_BYTES, WORKSPACE_LIMIT_MIN_BYTES } from '@renkei/connector-sandbox';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { decideSizeRequest } from '@/lib/code/size-requests';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
@@ -68,3 +69,5 @@ export async function POST(
   });
   return NextResponse.json({ request: outcome.request });
 }
+
+export const POST = routeLog(POSTHandler);

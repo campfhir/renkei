@@ -22,6 +22,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { extractAgentDefinition } from '@/lib/agents/import-markdown';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { saveAgent } from '@/lib/agents/save';
+import { routeLog } from '@/lib/log-context';
 
 /** The exported name, or the first "(imported)"-suffixed variant free. */
 async function availableName(db: Kysely<DB>, wanted: string): Promise<string> {
@@ -39,9 +40,7 @@ async function availableName(db: Kysely<DB>, wanted: string): Promise<string> {
   return `${base} (imported ${suffix})`;
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -80,7 +79,10 @@ export async function POST(
 
   const result = await saveAgent(db, session.subject, parsed, { defer: after });
   if (result.outcome === 'invalid') {
-    return NextResponse.json({ error: 'The definition does not validate.', issues: result.issues }, { status: 422 });
+    return NextResponse.json(
+      { error: 'The definition does not validate.', issues: result.issues },
+      { status: 422 }
+    );
   }
   if (result.outcome !== 'saved') {
     return NextResponse.json({ error: 'Could not import the agent.' }, { status: 500 });
@@ -90,3 +92,5 @@ export async function POST(
     { status: 201 }
   );
 }
+
+export const POST = routeLog(POSTHandler);

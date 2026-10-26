@@ -26,6 +26,7 @@ import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { getOwnerRunPageData, type OwnerRunPageData } from '@/lib/agents/run-page-data';
 import { isRunSettled } from '@/lib/agents/run-labels';
 import { isUuid } from '@/lib/uuid';
+import { routeLog } from '@/lib/log-context';
 
 export const runtime = 'nodejs';
 
@@ -34,7 +35,7 @@ export const runtime = 'nodejs';
 // a busy loop.
 const POLL_MS = 2_000;
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string; runId: string }> }
 ): Promise<Response> {
@@ -134,3 +135,5 @@ export async function GET(
     },
   });
 }
+
+export const GET = routeLog(GETHandler);

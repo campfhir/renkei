@@ -11,10 +11,11 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { getChatForOwner } from '@/lib/chat/store';
 import { confirmWidgetTool } from '@/lib/chat/widget-tools';
+import { routeLog } from '@/lib/log-context';
 
 const MAX_ARGS_CHARS = 20_000;
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -63,3 +64,5 @@ export async function POST(
   }
   return NextResponse.json({ result: outcome.result });
 }
+
+export const POST = routeLog(POSTHandler);

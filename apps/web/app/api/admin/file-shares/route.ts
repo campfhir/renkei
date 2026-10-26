@@ -10,10 +10,9 @@ import { createShare, listShares } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { parseSharePayload } from '@/lib/file-shares/parse';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -32,9 +31,7 @@ export async function GET(
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -62,3 +59,6 @@ export async function POST(
   });
   return NextResponse.json({ id: created.val }, { status: 201 });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

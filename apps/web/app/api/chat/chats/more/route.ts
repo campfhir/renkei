@@ -8,10 +8,9 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { loadMoreOwnedChats } from '@/lib/chat/sidebar';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -23,3 +22,5 @@ export async function GET(
   const page = await loadMoreOwnedChats(db, session.subject, before);
   return NextResponse.json(page);
 }
+
+export const GET = routeLog(GETHandler);

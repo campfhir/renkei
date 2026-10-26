@@ -20,8 +20,9 @@ import { decideToolPermission, getTurn, isToolPermissionDecision } from '@/lib/c
 import { getTurnChannel } from '@/lib/chat/turn-events';
 import { allowChatToolAlways } from '@/lib/chat/permission-prefs';
 import { markChatToolPermissionRead } from '@/lib/chat/permission-notification';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string; turnId: string }> }
 ): Promise<Response> {
@@ -70,3 +71,5 @@ export async function POST(
 
   return NextResponse.json({ ok: true, decision });
 }
+
+export const POST = routeLog(POSTHandler);

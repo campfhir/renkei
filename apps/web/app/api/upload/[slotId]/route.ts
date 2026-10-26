@@ -22,8 +22,9 @@ import { getDatabase } from '@renkei/db';
 import { hashUploadToken } from '@/lib/mcp-tools/upload-slots';
 import { completeUploadSlot } from '@/lib/upload-executors';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ slotId: string }> }
 ): Promise<Response> {
@@ -39,9 +40,7 @@ export async function GET(
 
   // The page renders regardless (a missing slot still explains itself) —
   // but only ever non-secret fields.
-  const heading = slot
-    ? `Upload “${slot.filename}”`
-    : 'Upload link not found';
+  const heading = slot ? `Upload “${slot.filename}”` : 'Upload link not found';
   const note = !slot
     ? 'This upload link does not exist. Request a new one.'
     : slot.status !== 'pending'
@@ -84,7 +83,7 @@ ${disabled ? '' : '<input type="file" id="file"><br><button id="go">Upload</butt
   return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ slotId: string }> }
 ): Promise<Response> {
@@ -127,7 +126,10 @@ export async function POST(
   if (!claimed) {
     // Wrong token, expired, already used, or no such slot — one answer.
     return NextResponse.json(
-      { ok: false, detail: 'This upload link is not valid (wrong token, expired, or already used).' },
+      {
+        ok: false,
+        detail: 'This upload link is not valid (wrong token, expired, or already used).',
+      },
       { status: 410 }
     );
   }
@@ -154,11 +156,7 @@ export async function POST(
     total += value.byteLength;
     if (total > claimed.max_bytes) {
       await reader.cancel().catch(() => undefined);
-      return finish(
-        false,
-        `The file exceeds this upload's ${claimed.max_bytes}-byte limit.`,
-        413
-      );
+      return finish(false, `The file exceeds this upload's ${claimed.max_bytes}-byte limit.`, 413);
     }
     chunks.push(value);
   }
@@ -173,5 +171,11 @@ export async function POST(
     status: outcome.ok ? 'completed' : 'failed',
     detail: outcome.detail,
   });
-  return NextResponse.json({ ok: outcome.ok, detail: outcome.detail }, { status: outcome.ok ? 200 : 502 });
+  return NextResponse.json(
+    { ok: outcome.ok, detail: outcome.detail },
+    { status: outcome.ok ? 200 : 502 }
+  );
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

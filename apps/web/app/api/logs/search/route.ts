@@ -4,6 +4,7 @@ import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { resolveLogCipher } from '@/lib/log-encryption';
 import { buildLogQueryOptions } from '@/lib/log-query';
 import { getSessionFromRequest } from '@/lib/session';
+import { routeLog } from '@/lib/log-context';
 
 /** encrypt/decrypt for secure()-stored attributes, when LOG_ENCRYPTION_KEY is set. */
 function logCipherOptions() {
@@ -13,9 +14,7 @@ function logCipherOptions() {
     : {};
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -129,3 +128,5 @@ export async function POST(
     );
   }
 }
+
+export const POST = routeLog(POSTHandler);

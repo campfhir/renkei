@@ -16,8 +16,9 @@ import {
   ONBASE_LABEL,
 } from '@/lib/mcp-tools/onbase/onbase-auth';
 import { getSessionFromRequest } from '@/lib/session';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ documentId: string }> }
 ): Promise<NextResponse> {
@@ -58,3 +59,5 @@ export async function GET(
     },
   });
 }
+
+export const GET = routeLog(GETHandler);

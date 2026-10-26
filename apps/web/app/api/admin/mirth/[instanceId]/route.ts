@@ -16,8 +16,9 @@ import {
   isProductionLabel,
 } from '@/lib/insecure-transport';
 import { parseInstancePayload } from '@/lib/mirth/parse';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
@@ -40,7 +41,7 @@ export async function GET(
   });
 }
 
-export async function PATCH(
+async function PATCHHandler(
   request: NextRequest,
   { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
@@ -97,7 +98,7 @@ export async function PATCH(
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
@@ -126,3 +127,7 @@ export async function DELETE(
   });
   return NextResponse.json({ ok: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const PATCH = routeLog(PATCHHandler);
+export const DELETE = routeLog(DELETEHandler);

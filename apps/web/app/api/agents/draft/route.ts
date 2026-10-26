@@ -22,10 +22,9 @@ import { getSessionFromRequest } from '@/lib/session';
 import { createDraft, latestReadyDraft } from '@/lib/agents/draft-store';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -116,9 +115,7 @@ export async function POST(
  * revision belongs to the agent it revises, and a draft with no agent is
  * for the next new one.
  */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -130,3 +127,6 @@ export async function GET(
   const draft = await latestReadyDraft(dbResult.val, session.subject, agentId);
   return NextResponse.json({ draft });
 }
+
+export const POST = routeLog(POSTHandler);
+export const GET = routeLog(GETHandler);

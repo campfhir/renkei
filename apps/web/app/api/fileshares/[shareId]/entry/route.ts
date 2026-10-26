@@ -8,8 +8,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/session';
 import { clientFailure, fsStatEntry } from '@/lib/file-shares/service-client';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
@@ -36,3 +37,5 @@ export async function GET(
     group: stats.val.group,
   });
 }
+
+export const GET = routeLog(GETHandler);

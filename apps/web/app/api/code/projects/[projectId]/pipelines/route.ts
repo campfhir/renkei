@@ -28,8 +28,9 @@ import {
   summarize,
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -52,7 +53,7 @@ export async function GET(
   return NextResponse.json({ ...setup, access });
 }
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -76,3 +77,6 @@ export async function PUT(
   });
   return NextResponse.json({ enabled: set.enabled });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

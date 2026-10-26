@@ -7,12 +7,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { isEmailCategory, isClassifierMatchType } from '@/lib/email-sanitizer-guards';
 import { upsertClassifierRule, deleteClassifierRule } from '@renkei/email-sanitizer';
+import { routeLog } from '@/lib/log-context';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
@@ -72,7 +73,7 @@ export async function PUT(
   return NextResponse.json({ id: result.val });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
@@ -88,3 +89,6 @@ export async function DELETE(
   }
   return NextResponse.json({ deleted: true });
 }
+
+export const PUT = routeLog(PUTHandler);
+export const DELETE = routeLog(DELETEHandler);

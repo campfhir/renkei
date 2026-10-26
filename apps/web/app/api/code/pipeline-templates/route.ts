@@ -9,13 +9,14 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { chatRequestContext } from '@/lib/chat/route-support';
 import { listPipelineTemplates } from '@/lib/code/pipeline-templates';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const provider = request.nextUrl.searchParams.get('provider') ?? undefined;
   const templates = await listPipelineTemplates(ready.context.db, provider);
   return NextResponse.json({ templates });
 }
+
+export const GET = routeLog(GETHandler);

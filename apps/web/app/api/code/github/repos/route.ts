@@ -10,12 +10,11 @@ import { getSessionFromRequest } from '@/lib/session';
 import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
 import { githubAuthFor, listRepositories, createRepository } from '@/lib/code/github-browse';
 import { optionalString, readJsonBody } from '@/lib/chat/route-support';
+import { routeLog } from '@/lib/log-context';
 
 export type { RepoChoice } from '@/lib/code/bitbucket-browse';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   if (!(await sandboxWorkspacesEnabled()))
@@ -29,9 +28,7 @@ export async function GET(
   return NextResponse.json({ repos: listed.repos });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   if (!(await sandboxWorkspacesEnabled()))
@@ -46,3 +43,6 @@ export async function POST(
   if (!created.ok) return NextResponse.json({ error: created.error }, { status: 409 });
   return NextResponse.json({ repo: created.repo });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

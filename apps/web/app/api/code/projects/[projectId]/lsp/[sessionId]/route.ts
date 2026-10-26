@@ -20,12 +20,13 @@ import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { isUuid } from '@/lib/uuid';
+import { routeLog } from '@/lib/log-context';
 
 export const runtime = 'nodejs';
 
 type Params = { params: Promise<{ projectId: string; sessionId: string }> };
 
-export async function POST(request: NextRequest, { params }: Params): Promise<Response> {
+async function POSTHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { projectId, sessionId } = await params;
   if (!isUuid(sessionId)) return jsonError(404, 'not-found', 'No such session.');
   const ready = await codeProjectContext(request, projectId);
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
   return new Response(null, { status: 202 });
 }
 
-export async function GET(request: NextRequest, { params }: Params): Promise<Response> {
+async function GETHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { projectId, sessionId } = await params;
   if (!isUuid(sessionId)) return jsonError(404, 'not-found', 'No such session.');
   const ready = await codeProjectContext(request, projectId);
@@ -83,7 +84,7 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
   });
 }
 
-export async function DELETE(request: NextRequest, { params }: Params): Promise<Response> {
+async function DELETEHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { projectId, sessionId } = await params;
   if (!isUuid(sessionId)) return jsonError(404, 'not-found', 'No such session.');
   const ready = await codeProjectContext(request, projectId);
@@ -91,3 +92,7 @@ export async function DELETE(request: NextRequest, { params }: Params): Promise<
   const closed = await sbLspClose(codeProjectTarget(projectId), { session: sessionId });
   return NextResponse.json({ closed: closed.ok && closed.val });
 }
+
+export const POST = routeLog(POSTHandler);
+export const GET = routeLog(GETHandler);
+export const DELETE = routeLog(DELETEHandler);

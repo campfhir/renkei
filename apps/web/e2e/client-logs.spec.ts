@@ -32,3 +32,22 @@ test('an uncaught browser error is reported with its page and browser', async ({
   expect(String(body.stack)).toContain('Error');
   expect((await answer).status()).toBe(204);
 });
+
+test('API requests from a page carry the page to the server, and the server logs it with the request', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForLoadState('networkidle');
+  const sent = page.waitForRequest((request) => request.url().endsWith('/api/client-logs'));
+  // A report whose body names no page or browser: those can only come from the request's headers.
+  await page.evaluate(() =>
+    fetch('/api/client-logs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ component: 'e2e/headers', message: 'header check' }),
+    })
+  );
+  const request = await sent;
+  expect(await request.headerValue('x-renkei-page')).toBe('/');
+  expect(String(await request.headerValue('user-agent'))).toContain('Chrome');
+});

@@ -16,10 +16,9 @@ import {
   readUserMemory,
 } from '@/lib/chat/user-memory';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -35,9 +34,7 @@ export async function GET(
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -55,9 +52,7 @@ export async function POST(
   return NextResponse.json({ id }, { status: 201 });
 }
 
-export async function PATCH(
-  request: NextRequest
-): Promise<Response> {
+async function PATCHHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -78,9 +73,7 @@ export async function PATCH(
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(
-  request: NextRequest
-): Promise<Response> {
+async function DELETEHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -95,3 +88,8 @@ export async function DELETE(
   );
   return NextResponse.json({ deleted });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);
+export const PATCH = routeLog(PATCHHandler);
+export const DELETE = routeLog(DELETEHandler);

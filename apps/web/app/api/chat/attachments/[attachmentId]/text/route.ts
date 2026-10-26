@@ -10,12 +10,13 @@ import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { getAttachmentText } from '@/lib/chat/attachments';
 import { resolveArtifactAccess } from '@/lib/chat/artifact-access';
+import { routeLog } from '@/lib/log-context';
 
 export const runtime = 'nodejs';
 
 type Params = { params: Promise<{ attachmentId: string }> };
 
-export async function GET(request: NextRequest, { params }: Params): Promise<Response> {
+async function GETHandler(request: NextRequest, { params }: Params): Promise<Response> {
   const { attachmentId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
@@ -36,3 +37,5 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
     },
   });
 }
+
+export const GET = routeLog(GETHandler);

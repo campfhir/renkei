@@ -14,8 +14,9 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { parseServerPayload, serverSummary, slugFor } from '@/lib/mcp-servers/parse';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(_request: NextRequest): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -26,7 +27,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
   return NextResponse.json({ servers: servers.val.map(serverSummary) });
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -82,3 +83,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   invalidateToolCatalogCache();
   return NextResponse.json({ server: serverSummary(created.val) }, { status: 201 });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

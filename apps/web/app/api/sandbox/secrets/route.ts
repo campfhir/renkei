@@ -22,6 +22,7 @@ import {
   sbSecretCreate,
   sbSecretsList,
 } from '@/lib/sandbox/service-client';
+import { routeLog } from '@/lib/log-context';
 
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -30,12 +31,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxBrowserEnabled())) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled()))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const listed = await sbSecretsList({ subject: session.subject });
   if (!listed.ok) {
@@ -45,12 +45,11 @@ export async function GET(
   return NextResponse.json({ secrets: listed.val });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxBrowserEnabled())) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled()))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body: unknown = await request.json().catch(() => null);
   if (!isRecord(body)) {
@@ -98,3 +97,6 @@ export async function POST(
   });
   return NextResponse.json({ secret: created.val.secret, passphrase: created.val.passphrase });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

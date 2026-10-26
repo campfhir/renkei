@@ -36,12 +36,11 @@ import { codeProjectAccess, codeProjectAccessMessage } from '@/lib/code/access';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 import { replaceProjectEnv } from '@/lib/code/projects';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 const DOTENV_MAX_CHARS = 200_000;
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -49,9 +48,7 @@ export async function GET(
   return NextResponse.json({ projects: sidebar.code.projects });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -139,3 +136,6 @@ export async function POST(
   });
   return NextResponse.json({ projectId, envProblems: problems }, { status: 201 });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

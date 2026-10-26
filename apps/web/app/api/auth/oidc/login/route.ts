@@ -9,6 +9,7 @@ import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 import { safeFetch } from '@/lib/safe-fetch';
 import { randomUUID } from 'crypto';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Every call writes a pending_oidc_signin row and fetches the IdP's
@@ -22,7 +23,7 @@ const LIMITS = {
   global: { limit: 600, windowMs: 60_000 },
 };
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   // Empty means "no preference": the callback then lands on the home page
   // rather than this route hardcoding a landing. Only a
@@ -162,3 +163,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Authentication setup failed' }, { status: 500 });
   }
 }
+
+export const GET = routeLog(GETHandler);

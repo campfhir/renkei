@@ -21,8 +21,9 @@ import {
   MAX_AGENT_NOTE_CHARS,
   MAX_AGENT_NOTE_TITLE_CHARS,
 } from '@/lib/agents/agent-notes';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -40,7 +41,7 @@ export async function GET(
   return NextResponse.json({ notes: await listAgentNotes(db, agentId) });
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -110,7 +111,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -147,3 +148,7 @@ export async function DELETE(
   });
   return NextResponse.json(result);
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

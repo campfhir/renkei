@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Whether the signed-in caller has connected Jira, for the setup page at
@@ -14,10 +15,7 @@ import { getSessionFromRequest } from '@/lib/session';
  * per-user it told the second user of a tenant they were connected as the
  * first, so the page hid the connect button from someone who had no grant.
  */
-export const GET = async (
-  request: NextRequest
-): Promise<NextResponse> => {
-
+const getHandler = async (request: NextRequest): Promise<NextResponse> => {
   // Before any lookup: a session proves both who is asking and that the tenant
   // exists, since a session row cannot reference a tenant that does not.
   const session = await getSessionFromRequest(request);
@@ -71,3 +69,5 @@ export const GET = async (
     );
   }
 };
+
+export const GET = routeLog(getHandler);

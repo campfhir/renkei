@@ -24,11 +24,12 @@ import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
 import { resolveChatScope } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
+import { routeLog } from '@/lib/log-context';
 
 /** A commit is asked for by its hash, or a prefix of it — never a ref. */
 const COMMIT_SHA = /^[0-9a-f]{4,40}$/i;
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -111,3 +112,5 @@ export async function GET(
   }
   return NextResponse.json({ ...result.val, available: true });
 }
+
+export const GET = routeLog(GETHandler);

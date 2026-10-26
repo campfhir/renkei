@@ -22,10 +22,11 @@ import {
   readWebhookBody,
   tooManyRequests,
 } from '@/lib/webhook-intake';
+import { routeLog } from '@/lib/log-context';
 
 const eventsQueue = webhookEventsQueue();
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ accountId: string }> }
 ): Promise<NextResponse> {
@@ -105,3 +106,5 @@ export async function POST(
 
   return NextResponse.json({ accepted: true });
 }
+
+export const POST = routeLog(POSTHandler);

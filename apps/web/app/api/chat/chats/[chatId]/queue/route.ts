@@ -9,8 +9,9 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { getChatForOwner } from '@/lib/chat/store';
 import { parseQueue, saveQueuedSends } from '@/lib/chat/queued-sends';
+import { routeLog } from '@/lib/log-context';
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -30,3 +31,5 @@ export async function PUT(
   }
   return NextResponse.json({ ok: true });
 }
+
+export const PUT = routeLog(PUTHandler);

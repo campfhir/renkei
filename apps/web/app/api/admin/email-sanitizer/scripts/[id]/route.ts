@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { deleteCleanerScript, listCleanerScripts } from '@renkei/email-sanitizer';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 /** Delete a cleaner script. Edits go through POST on the collection. */
-export async function DELETE(
+async function DELETEHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
@@ -29,3 +30,5 @@ export async function DELETE(
   });
   return NextResponse.json({ deleted: true });
 }
+
+export const DELETE = routeLog(DELETEHandler);

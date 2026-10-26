@@ -17,10 +17,9 @@ import {
   toolConfigJson,
 } from '@/lib/chat/tool-config';
 import { getDefaultChatTools, setDefaultChatTools } from '@/lib/chat/tool-prefs';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
@@ -39,9 +38,7 @@ export async function GET(
   });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<Response> {
+async function PUTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
@@ -62,3 +59,6 @@ export async function PUT(
   if (!written.ok) return jsonError(500, 'save-failed', 'Could not save');
   return NextResponse.json({ userDefault: null, kind });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

@@ -14,6 +14,7 @@ import {
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseImageRulePayload } from '@/lib/code/image-rules';
 import { isUuid } from '@/lib/uuid';
+import { routeLog } from '@/lib/log-context';
 
 async function operatorGate(): Promise<NextResponse | null> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
@@ -28,7 +29,7 @@ async function operatorGate(): Promise<NextResponse | null> {
   return null;
 }
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ ruleId: string }> }
 ): Promise<NextResponse> {
@@ -47,7 +48,7 @@ export async function PUT(
   return NextResponse.json({ rule: set.val.rule, dropped: set.val.dropped });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ ruleId: string }> }
 ): Promise<NextResponse> {
@@ -62,3 +63,6 @@ export async function DELETE(
   }
   return NextResponse.json({ ok: true });
 }
+
+export const PUT = routeLog(PUTHandler);
+export const DELETE = routeLog(DELETEHandler);

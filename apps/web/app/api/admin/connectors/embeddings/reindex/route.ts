@@ -34,6 +34,7 @@ import { isReindexKind, REINDEX_KINDS, resolveEmbeddingProvider } from '@renkei/
 import type { ReindexKind } from '@renkei/knowledge';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 /** Runs listed back, newest first — enough to show each kind's latest. */
 const RECENT_RUNS = 12;
@@ -97,9 +98,7 @@ async function listRuns(): Promise<ReindexRunView[]> {
   );
 }
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -120,9 +119,7 @@ async function unmetPrerequisite(kind: ReindexKind): Promise<string | null> {
   return null;
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -134,9 +131,11 @@ export async function POST(
       { status: 400 }
     );
   }
-  const rawAction = typeof body === 'object' && body !== null ? Reflect.get(body, 'action') : undefined;
+  const rawAction =
+    typeof body === 'object' && body !== null ? Reflect.get(body, 'action') : undefined;
   const action = rawAction === 'pause' || rawAction === 'resume' ? rawAction : 'start';
-  const rawRunId = typeof body === 'object' && body !== null ? Reflect.get(body, 'runId') : undefined;
+  const rawRunId =
+    typeof body === 'object' && body !== null ? Reflect.get(body, 'runId') : undefined;
   const runId = typeof rawRunId === 'string' ? rawRunId : '';
   if (action !== 'start' && !runId) {
     return NextResponse.json({ error: 'runId is required.' }, { status: 400 });
@@ -263,3 +262,6 @@ export async function POST(
 
   return NextResponse.json({ runs: await listRuns() });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

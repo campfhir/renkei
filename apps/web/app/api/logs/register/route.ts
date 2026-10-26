@@ -1,5 +1,6 @@
 import { getLogShipping } from '@/lib/log-ingest';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * E2E client registration for log shipping: a shipper POSTs its ECDSA public
@@ -10,7 +11,7 @@ import { logger } from '@/lib/logger';
  * as ingest — plus bored-logs' key pinning: a registered clientId can only
  * re-register with the key it already holds (409 otherwise).
  */
-export async function POST(request: Request): Promise<Response> {
+async function POSTHandler(request: Request): Promise<Response> {
   const shipping = await getLogShipping();
   if (!shipping) return new Response(null, { status: 503 });
 
@@ -23,3 +24,5 @@ export async function POST(request: Request): Promise<Response> {
   }
   return response;
 }
+
+export const POST = routeLog(POSTHandler);

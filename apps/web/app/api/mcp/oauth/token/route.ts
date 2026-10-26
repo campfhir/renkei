@@ -13,6 +13,7 @@ import {
 } from '@/lib/oauth-client-auth';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { isWellFormedVerifier, verifierMatchesChallenge } from '@/lib/oauth-pkce';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Unauthenticated until the client secret verifies, so throttled per
@@ -30,10 +31,7 @@ const LIMITS = {
  * OAuth 2.0 Token endpoint (RFC 6749)
  * Exchanges authorization codes for access tokens and refresh tokens.
  */
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const verdict = checkInboundLimit('oauth/token', request, LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
@@ -531,3 +529,5 @@ async function currentRolesFor(
     .executeTakeFirst();
   return live ? live.roles : fallback;
 }
+
+export const POST = routeLog(POSTHandler);

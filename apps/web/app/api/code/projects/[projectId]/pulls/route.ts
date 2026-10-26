@@ -12,8 +12,9 @@ import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { hostAdapterFor } from '@/lib/code/repo-host';
 import { getOrigin } from '@/lib/get-origin';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -26,7 +27,8 @@ export async function GET(
     subject: session.subject,
     origin: origin.ok ? origin.val : '',
   });
-  if (!adapter) return jsonError(409, 'unsupported-host', 'This repository’s host is not supported.');
+  if (!adapter)
+    return jsonError(409, 'unsupported-host', 'This repository’s host is not supported.');
   const listed = await adapter.listPullRequests(project.repo!.fullName, {
     state: 'open',
     max: 25,
@@ -41,3 +43,5 @@ export async function GET(
   }
   return NextResponse.json({ pullRequests: listed.pullRequests, hasMore: listed.hasMore });
 }
+
+export const GET = routeLog(GETHandler);

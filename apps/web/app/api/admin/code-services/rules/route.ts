@@ -15,6 +15,7 @@ import {
 } from '@renkei/sandbox-client';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseImageRulePayload } from '@/lib/code/image-rules';
+import { routeLog } from '@/lib/log-context';
 
 async function operatorGate(): Promise<NextResponse | null> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
@@ -29,9 +30,7 @@ async function operatorGate(): Promise<NextResponse | null> {
   return null;
 }
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   const denied = await operatorGate();
   if (denied) return denied;
   const listed = await sbImageRulesList();
@@ -42,9 +41,7 @@ export async function GET(
   return NextResponse.json({ rules: listed.val });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const denied = await operatorGate();
   if (denied) return denied;
   const body: unknown = await request.json().catch(() => null);
@@ -57,3 +54,6 @@ export async function POST(
   }
   return NextResponse.json({ rule: set.val.rule, dropped: set.val.dropped }, { status: 201 });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

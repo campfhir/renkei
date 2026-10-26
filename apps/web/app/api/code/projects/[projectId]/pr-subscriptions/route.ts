@@ -18,6 +18,7 @@ import { codeProjectContext } from '@/lib/code/route-access';
 import { listMessages, toMessageView } from '@/lib/chat/messages';
 import { chatCipherById } from '@/lib/chat/chat-keys';
 import { latestPrInTranscript } from '@/lib/code/chat-commits';
+import { routeLog } from '@/lib/log-context';
 
 interface EventView {
   conclusion: string;
@@ -87,7 +88,7 @@ function prNumberFrom(value: unknown): number | null {
   return Number.isInteger(number) && number > 0 ? number : null;
 }
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -119,7 +120,7 @@ export async function GET(
   return NextResponse.json({ subscription, lastEvent });
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -167,7 +168,7 @@ export async function POST(
   return NextResponse.json({ subscription });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -191,3 +192,7 @@ export async function DELETE(
 
   return NextResponse.json({ ok: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

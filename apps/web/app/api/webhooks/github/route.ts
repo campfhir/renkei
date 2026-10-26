@@ -37,6 +37,7 @@ import {
   readWebhookBody,
   tooManyRequests,
 } from '@/lib/webhook-intake';
+import { routeLog } from '@/lib/log-context';
 
 const eventsQueue = webhookEventsQueue();
 
@@ -44,10 +45,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   // Throttle, then the credential's shape, then a bounded body — all before
   // any config or database read (lib/webhook-intake.ts).
   const verdict = checkWebhookLimit('github', request);
@@ -136,3 +134,5 @@ export async function POST(
   logger.debug('Event accepted', { component: 'github/webhook', type: eventType });
   return NextResponse.json({ accepted: true });
 }
+
+export const POST = routeLog(POSTHandler);

@@ -27,8 +27,9 @@ import { jsonError } from '@/lib/chat/route-support';
 import { projectWorkspace } from '@/lib/code/projects';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -50,7 +51,7 @@ export async function GET(
   });
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -88,3 +89,6 @@ export async function POST(
   }
   return NextResponse.json({ session: opened.val });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

@@ -14,10 +14,9 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { parseCoachMarkRecord } from '@/lib/coach-marks/progress';
 import { listCoachMarkProgress, recordCoachMarkEvent } from '@/lib/coach-marks/store';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -28,9 +27,7 @@ export async function GET(
   return NextResponse.json({ progress });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -47,3 +44,6 @@ export async function POST(
   if (!written.ok) return NextResponse.json({ error: 'Could not record' }, { status: 500 });
   return NextResponse.json({ progress: written.val });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

@@ -21,6 +21,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
+import { routeLog } from '@/lib/log-context';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -47,9 +48,7 @@ export interface NotificationView {
   createdAt: string;
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -142,9 +141,7 @@ export async function GET(
  * `unread: true`, back to unread (the feed menu's "keep this one in my
  * face" action).
  */
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -187,9 +184,7 @@ export async function POST(
  * already deletes wholesale, so a tombstone would outlive its point. The
  * same structural scoping as the POST — a borrowed id deletes nothing.
  */
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
+async function DELETEHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -208,9 +203,7 @@ export async function DELETE(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  let del = dbResult.val
-    .deleteFrom('agent_notifications')
-    .where('subject', '=', session.subject);
+  let del = dbResult.val.deleteFrom('agent_notifications').where('subject', '=', session.subject);
   if (ids) {
     if (ids.length === 0) return NextResponse.json({ deleted: 0 });
     del = del.where('id', 'in', ids);
@@ -219,3 +212,7 @@ export async function DELETE(
   const result = await del.executeTakeFirst();
   return NextResponse.json({ deleted: Number(result.numDeletedRows ?? 0) });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

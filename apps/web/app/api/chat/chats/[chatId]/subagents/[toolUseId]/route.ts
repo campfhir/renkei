@@ -10,8 +10,9 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { resolveChatAccess } from '@/lib/chat/access';
 import { getSubagentRunByCall } from '@/lib/chat/subagent-runs';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string; toolUseId: string }> }
 ): Promise<Response> {
@@ -25,3 +26,5 @@ export async function GET(
   if (!run) return jsonError(404, 'not-found', 'No such sub-agent run');
   return NextResponse.json({ run });
 }
+
+export const GET = routeLog(GETHandler);

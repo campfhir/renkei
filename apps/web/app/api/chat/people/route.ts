@@ -8,10 +8,9 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { listIdentities } from '@/lib/identity';
 import { chatRequestContext } from '@/lib/chat/route-support';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const people = await listIdentities();
@@ -19,3 +18,5 @@ export async function GET(
     people: people.filter((person) => person.subject !== ready.context.session.subject),
   });
 }
+
+export const GET = routeLog(GETHandler);

@@ -27,6 +27,7 @@ import {
 } from '@renkei/voice';
 import { invalidateVoicesCache } from '@/lib/voice/config';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -37,9 +38,7 @@ function settingString(settings: Record<string, unknown> | undefined, key: strin
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -71,9 +70,7 @@ export async function GET(
   });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -172,3 +169,6 @@ export async function PUT(
   });
   return NextResponse.json({ connector: VOICE_CONNECTOR, configured: true, enabled });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

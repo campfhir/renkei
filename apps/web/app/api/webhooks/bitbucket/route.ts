@@ -38,6 +38,7 @@ import {
   readWebhookBody,
   tooManyRequests,
 } from '@/lib/webhook-intake';
+import { routeLog } from '@/lib/log-context';
 
 const eventsQueue = webhookEventsQueue();
 
@@ -45,10 +46,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   // Throttle, then the credential's presence, then a bounded body — all
   // before any config or database read (lib/webhook-intake.ts). Bitbucket's
   // credential is a shared secret, not an HMAC, so "shape" here is only
@@ -135,3 +133,5 @@ export async function POST(
   logger.debug('Event accepted', { component: 'bitbucket/webhook', type: eventKey });
   return NextResponse.json({ accepted: true });
 }
+
+export const POST = routeLog(POSTHandler);

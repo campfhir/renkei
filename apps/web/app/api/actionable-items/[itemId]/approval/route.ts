@@ -20,12 +20,13 @@ import { agentJobsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
 import { decideApproval } from '@/lib/agents/approvals';
 import { MAX_QUESTION_ANSWER_CHARS } from '@renkei/agents';
+import { routeLog } from '@/lib/log-context';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ itemId: string }> }
 ): Promise<NextResponse> {
@@ -47,12 +48,11 @@ export async function POST(
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
 
-  const result = await decideApproval(
-    dbResult.val,
-    agentJobsQueue().producer,
-    session.subject,
-    { cardId: itemId, decision: body.decision, comment }
-  );
+  const result = await decideApproval(dbResult.val, agentJobsQueue().producer, session.subject, {
+    cardId: itemId,
+    decision: body.decision,
+    comment,
+  });
 
   switch (result.outcome) {
     case 'comment-too-long':
@@ -91,3 +91,5 @@ export async function POST(
     }
   }
 }
+
+export const POST = routeLog(POSTHandler);

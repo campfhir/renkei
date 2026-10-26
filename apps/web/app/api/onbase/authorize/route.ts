@@ -26,10 +26,9 @@ import { bindConnectFlow } from '@/lib/connect-flow-binding';
 import { getOnBaseApp, onbaseAuthorizeScopes, ONBASE_CONNECTOR } from '@/lib/onbase-app';
 import { obDiscover, onbaseClientFailure } from '@/lib/onbase/service-client';
 import { getOrigin } from '@/lib/get-origin';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -60,7 +59,7 @@ export async function GET(
   // Live discovery through the worker — no cached endpoint in settings, so
   // a stale URL cannot outlive the IdP that issued it. The worker holds its
   // own short cache.
-  const discovered = await obDiscover({ });
+  const discovered = await obDiscover({});
   if (!discovered.ok) {
     const failure = onbaseClientFailure(discovered.err);
     return NextResponse.json(
@@ -103,3 +102,5 @@ export async function GET(
   // Bound to this browser: the callback requires the cookie this sets.
   return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
 }
+
+export const GET = routeLog(GETHandler);

@@ -9,8 +9,9 @@ import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getAgent } from '@/lib/agents/store';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -37,3 +38,5 @@ export async function GET(
   const count = result.rows[0]?.count ?? 0;
   return NextResponse.json({ count });
 }
+
+export const GET = routeLog(GETHandler);

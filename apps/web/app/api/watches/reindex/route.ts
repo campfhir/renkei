@@ -24,6 +24,7 @@ import { getDatabase } from '@renkei/db';
 import { deleteChunksByMetadata } from '@renkei/knowledge';
 import { embeddingJobsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
+import { routeLog } from '@/lib/log-context';
 
 /** Where each poller records the scope it pulled an item from. */
 const SCOPE_METADATA_KEY: Record<string, string> = {
@@ -50,9 +51,7 @@ const QUEUED_WORK: Record<string, { type: string; scopePath: string[] }> = {
   sharepoint: { type: 'ingest.document', scopePath: ['scopeKey'] },
 };
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -134,3 +133,5 @@ export async function POST(
     label: watch.scope_label ?? scopeKey,
   });
 }
+
+export const POST = routeLog(POSTHandler);

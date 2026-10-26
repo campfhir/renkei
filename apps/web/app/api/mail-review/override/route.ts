@@ -23,15 +23,13 @@ import { isEmailCategory, isMessageOverrideAction } from '@/lib/email-sanitizer-
 import { getOwnRow, setOverride } from '@renkei/email-sanitizer';
 import { MICROSOFT } from '@renkei/provider-grants';
 import { objectIdOfMicrosoftRefId } from '@renkei/connector-microsoft';
+import { routeLog } from '@/lib/log-context';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -112,3 +110,5 @@ export async function POST(
 
   return NextResponse.json({ ok: true });
 }
+
+export const POST = routeLog(POSTHandler);

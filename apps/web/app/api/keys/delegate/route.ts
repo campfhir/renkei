@@ -17,10 +17,9 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { resumeRunsNeedingSignIn } from '@/lib/agents/needs-sign-in';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { automationDaysOfBody, sealedDelegationsOf, setAutomationDays } from '@/lib/keys/status';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -68,3 +67,5 @@ export async function POST(
   await resumeRunsNeedingSignIn(db, agentJobsQueue().producer, session.subject);
   return NextResponse.json({ ok: true });
 }
+
+export const POST = routeLog(POSTHandler);

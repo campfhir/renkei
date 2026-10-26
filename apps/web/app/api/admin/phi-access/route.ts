@@ -15,12 +15,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { listPhiAccessEvents } from '@/lib/phi-access';
+import { routeLog } from '@/lib/log-context';
 
 const DEFAULT_LIMIT = 100;
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -41,3 +40,5 @@ export async function GET(
   const events = await listPhiAccessEvents(dbResult.val, { subject, limit, before });
   return NextResponse.json({ events });
 }
+
+export const GET = routeLog(GETHandler);

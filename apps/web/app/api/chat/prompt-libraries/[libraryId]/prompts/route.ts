@@ -8,8 +8,9 @@ import {
 } from '@/lib/chat/route-support';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { createPrompt, PROMPT_BODY_MAX_CHARS, PROMPT_TITLE_MAX_CHARS } from '@/lib/chat/prompts';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ libraryId: string }> }
 ): Promise<Response> {
@@ -17,12 +18,7 @@ export async function POST(
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'prompt_library',
-    libraryId
-  );
+  const access = await resolveResourceAccess(db, session.subject, 'prompt_library', libraryId);
   if (!access) return jsonError(404, 'not-found', 'No such library');
   if (access.role === 'viewer') return jsonError(403, 'read-only', 'Only editors can add prompts.');
   const body = await readJsonBody(request);
@@ -38,3 +34,5 @@ export async function POST(
   });
   return NextResponse.json({ promptId }, { status: 201 });
 }
+
+export const POST = routeLog(POSTHandler);

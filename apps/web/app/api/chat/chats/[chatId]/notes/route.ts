@@ -13,8 +13,9 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { getProjectRow } from '@/lib/chat/projects';
 import { getChatForOwner } from '@/lib/chat/store';
 import { appendChatNote, noteFromInput } from '@/lib/code/notes';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -38,3 +39,5 @@ export async function POST(
   }
   return NextResponse.json({ message: appended.message });
 }
+
+export const POST = routeLog(POSTHandler);

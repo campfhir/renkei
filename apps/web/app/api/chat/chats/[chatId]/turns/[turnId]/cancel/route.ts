@@ -10,8 +10,9 @@ import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { getChatForOwner } from '@/lib/chat/store';
 import { requestTurnCancel } from '@/lib/chat/turns';
 import { getTurnChannel } from '@/lib/chat/turn-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string; turnId: string }> }
 ): Promise<Response> {
@@ -25,3 +26,5 @@ export async function POST(
   getTurnChannel(turnId)?.requestCancel();
   return NextResponse.json({ ok: true, running: requested });
 }
+
+export const POST = routeLog(POSTHandler);

@@ -23,11 +23,12 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { jiraAdminGet } from '@/lib/mcp-tools/jira-admin/client';
 import { resolveAutomationAccess } from '@/lib/mcp-tools/jira-admin/automation-client';
+import { routeLog } from '@/lib/log-context';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const TOKEN_MAX = 1024;
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -114,7 +115,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   return NextResponse.json({ message: 'API token saved', note });
 }
 
-export async function DELETE(request: NextRequest): Promise<NextResponse> {
+async function DELETEHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -143,3 +144,6 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   invalidateToolCatalogCache(session.subject);
   return NextResponse.json({ message: 'API token removed' });
 }
+
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

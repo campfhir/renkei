@@ -13,8 +13,9 @@ import { getOrgSettings } from '@renkei/settings';
 import { chatRequestContext } from '@/lib/chat/route-support';
 import { listChatModels } from '@/lib/chat/models';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(request: NextRequest): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -31,3 +32,5 @@ export async function GET(request: NextRequest): Promise<Response> {
     voice,
   });
 }
+
+export const GET = routeLog(GETHandler);

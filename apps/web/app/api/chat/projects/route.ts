@@ -17,10 +17,9 @@ import {
 } from '@/lib/chat/projects';
 import { parseToolConfig } from '@/lib/chat/tool-config';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -28,9 +27,7 @@ export async function GET(
   return NextResponse.json({ projects: sidebar.projects });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -51,3 +48,6 @@ export async function POST(
     return jsonError(500, 'content-key', 'The content encryption key is not configured.');
   return NextResponse.json({ projectId }, { status: 201 });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

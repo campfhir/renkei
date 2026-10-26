@@ -14,12 +14,13 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getRunForAdmin, type RunDetail } from '@/lib/agents/runs-view';
 import { isRunSettled } from '@/lib/agents/run-labels';
 import { isUuid } from '@/lib/uuid';
+import { routeLog } from '@/lib/log-context';
 
 export const runtime = 'nodejs';
 
 const POLL_MS = 2_000;
 
-export async function GET(
+async function GETHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ agentId: string; runId: string }> }
 ): Promise<Response> {
@@ -95,3 +96,5 @@ export async function GET(
     },
   });
 }
+
+export const GET = routeLog(GETHandler);

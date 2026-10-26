@@ -29,6 +29,7 @@ import {
 } from '@/lib/jira-admin/change-requests';
 import { applyGate } from '@/lib/jira-admin/apply';
 import { resolveApplyAccess, runApplyJob } from '@/lib/jira-admin/apply-job';
+import { routeLog } from '@/lib/log-context';
 
 const NOT_PENDING: Record<string, string> = {
   queued: 'This change request is already approved and waiting to be applied.',
@@ -41,7 +42,7 @@ const NOT_PENDING: Record<string, string> = {
   interrupted: 'This change request was interrupted while applying; check Jira.',
 };
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ changeId: string }> }
 ): Promise<NextResponse> {
@@ -104,3 +105,5 @@ export async function POST(
 
   return NextResponse.json({ status: 'queued' }, { status: 202 });
 }
+
+export const POST = routeLog(POSTHandler);

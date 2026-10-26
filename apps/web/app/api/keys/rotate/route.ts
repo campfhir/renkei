@@ -10,10 +10,9 @@ import { delegateClient } from '@renkei/delegate-client';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { automationDaysOfBody, keyMaterialOf, sealedDelegationsOf } from '@/lib/keys/status';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
@@ -57,3 +56,5 @@ export async function POST(
   recordAuditEvent({ actorSubject: session.subject, action: 'encryption-key.rotated' });
   return NextResponse.json(rotated.val);
 }
+
+export const POST = routeLog(POSTHandler);

@@ -16,8 +16,9 @@ import { getAgent } from '@/lib/agents/store';
 import { grantAgentAccess, listAgentAccessGrants } from '@/lib/agents/access-grants';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { notifyAgentShared } from '@/lib/agents/share-notification';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -31,13 +32,11 @@ export async function GET(
   const grants = await listAgentAccessGrants(dbResult.val, session.subject, agentId);
   if (grants === null) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const people = (await listIdentities()).filter(
-    (person) => person.subject !== session.subject
-  );
+  const people = (await listIdentities()).filter((person) => person.subject !== session.subject);
   return NextResponse.json({ grants, people });
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -110,3 +109,6 @@ export async function POST(
   const grants = await listAgentAccessGrants(db, session.subject, agentId);
   return NextResponse.json({ grants: grants ?? [] });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

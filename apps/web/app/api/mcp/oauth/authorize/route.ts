@@ -11,6 +11,7 @@ import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { codeChallengeProblem } from '@/lib/oauth-pkce';
 import { describeRedirectTarget, redirectUriMatches } from '@/lib/oauth-redirect-uri';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Tenant-scoped OAuth 2.0 authorization endpoint (RFC 6749 section 3.1),
@@ -62,10 +63,7 @@ function redirectWithError(
   return NextResponse.redirect(url.toString(), 303);
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
-
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
@@ -142,10 +140,7 @@ export async function GET(
 
     // Abandoned consent pages leave rows behind; sweep them on the
     // way past rather than carrying a scheduled job for a few bytes.
-    await db
-      .deleteFrom('oauth_consent_requests')
-      .where('expires_at', '<', new Date())
-      .execute();
+    await db.deleteFrom('oauth_consent_requests').where('expires_at', '<', new Date()).execute();
 
     const requestId = randomUUID();
     await db
@@ -188,10 +183,7 @@ export function submittedFromThisOrigin(request: NextRequest, ourOrigin: string)
   return request.headers.get('sec-fetch-site') === 'same-origin';
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const verdict = checkInboundLimit('oauth/consent', request, POST_LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
@@ -338,3 +330,6 @@ async function mintAuthorizationCode(
     .execute();
   return code;
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

@@ -16,8 +16,9 @@ import { codeProjectTarget } from '@/lib/code/scope';
 import { getOrigin } from '@/lib/get-origin';
 import { resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -62,3 +63,5 @@ export async function POST(
   });
   return NextResponse.json(pushed.val);
 }
+
+export const POST = routeLog(POSTHandler);

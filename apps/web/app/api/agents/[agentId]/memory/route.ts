@@ -12,10 +12,11 @@ import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { unavailableMarker } from '@/lib/chat/content-crypto';
 import { unavailableReasonOf } from '@/lib/chat/chat-keys';
+import { routeLog } from '@/lib/log-context';
 
 const MAX_LISTED_ENTRIES = 100;
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -52,7 +53,7 @@ export async function GET(
   });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -73,3 +74,6 @@ export async function DELETE(
     .executeTakeFirst();
   return NextResponse.json({ cleared: Number(deleted.numDeletedRows ?? 0) });
 }
+
+export const GET = routeLog(GETHandler);
+export const DELETE = routeLog(DELETEHandler);

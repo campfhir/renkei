@@ -6,10 +6,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { clientFailure, sandboxServicesEnabled, sbImageRulesRestore } from '@renkei/sandbox-client';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -26,3 +25,5 @@ export async function POST(
   }
   return NextResponse.json({ added: restored.val.added, rules: restored.val.rules });
 }
+
+export const POST = routeLog(POSTHandler);

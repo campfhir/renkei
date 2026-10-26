@@ -21,8 +21,9 @@ import {
 } from '@/lib/chat/projects';
 import { parseToolConfig } from '@/lib/chat/tool-config';
 import { loadProjectView } from '@/lib/chat/project-view';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -37,7 +38,7 @@ export async function GET(
   return NextResponse.json(view);
 }
 
-export async function PATCH(
+async function PATCHHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -71,7 +72,7 @@ export async function PATCH(
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -83,3 +84,7 @@ export async function DELETE(
   if (!deleted) return jsonError(404, 'not-found', 'No such project');
   return NextResponse.json({ ok: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const PATCH = routeLog(PATCHHandler);
+export const DELETE = routeLog(DELETEHandler);

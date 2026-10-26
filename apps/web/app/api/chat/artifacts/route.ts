@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { chatRequestContext } from '@/lib/chat/route-support';
 import { listLibraryRoute } from '@/lib/chat/artifact-routes';
+import { routeLog } from '@/lib/log-context';
 
 // chatRequestContext runs inside the shared artifact routes; named here so
 // the auth-coverage test sees the decision on this entry point too.
@@ -8,6 +9,8 @@ void chatRequestContext;
 
 export const runtime = 'nodejs';
 
-export async function GET(request: NextRequest): Promise<Response> {
+async function GETHandler(request: NextRequest): Promise<Response> {
   return listLibraryRoute(request);
 }
+
+export const GET = routeLog(GETHandler);

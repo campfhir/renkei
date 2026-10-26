@@ -26,10 +26,9 @@ import { getOrigin } from '@/lib/get-origin';
 import { resolveWebexUserAccess } from '@/lib/webex-user-access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -107,3 +106,5 @@ export async function POST(
   });
   return NextResponse.json({ allSpaces: payload.enabled });
 }
+
+export const POST = routeLog(POSTHandler);

@@ -37,10 +37,9 @@ import {
   setVoicePrefs,
 } from '@renkei/user-prefs';
 import { getSessionFromRequest } from '@/lib/session';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -55,9 +54,7 @@ export async function GET(
   return NextResponse.json({ notifications, theme, voice, image, coachMarks, chatArchive });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -150,3 +147,6 @@ export async function PUT(
 
   return NextResponse.json({ notifications, theme, voice, image, coachMarks, chatArchive });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Where to find audit logs for this tenant, scoped to what the caller may see.
@@ -18,10 +19,7 @@ import { getSessionFromRequest } from '@/lib/session';
  * routes already use, rather than carrying a second auth scheme that never
  * worked.
  */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
-
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   // Roles come from the server-side session, never from a client-supplied
   // header or cookie.
   const session = await getSessionFromRequest(request);
@@ -92,3 +90,5 @@ export async function GET(
     return NextResponse.json({ error: 'Failed to fetch audit logs' }, { status: 500 });
   }
 }
+
+export const GET = routeLog(GETHandler);

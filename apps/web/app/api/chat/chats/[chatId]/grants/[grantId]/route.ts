@@ -3,8 +3,9 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { revokeResourceGrant } from '@/lib/chat/access';
 import { revokeKey } from '@/lib/chat/chat-keys';
+import { routeLog } from '@/lib/log-context';
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string; grantId: string }> }
 ): Promise<Response> {
@@ -18,3 +19,5 @@ export async function DELETE(
   await revokeKey(db, 'chat', chatId, revoked);
   return NextResponse.json({ ok: true });
 }
+
+export const DELETE = routeLog(DELETEHandler);

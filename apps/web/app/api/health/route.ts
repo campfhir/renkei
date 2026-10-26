@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 import { getMigrationStatus, MIGRATION_COMMAND } from '@renkei/db';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Liveness, and whether the schema matches this build.
@@ -11,7 +12,7 @@ import { getMigrationStatus, MIGRATION_COMMAND } from '@renkei/db';
  * previously answered ok unconditionally, so a build shipped ahead of its schema
  * looked healthy right up until an MCP client failed to register.
  */
-export async function GET(): Promise<NextResponse> {
+async function GETHandler(): Promise<NextResponse> {
   logger.debug('Ping', { component: 'web/health' });
 
   const status = await getMigrationStatus();
@@ -37,3 +38,5 @@ export async function GET(): Promise<NextResponse> {
 
   return NextResponse.json({ status: 'ok', migrationsApplied: status.applied });
 }
+
+export const GET = routeLog(GETHandler);

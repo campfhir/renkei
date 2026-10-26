@@ -49,6 +49,7 @@ import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { McpServer } from '@modelcontextprotocol/server';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Derived once per process from the deployment secret, so a given identifier
@@ -638,4 +639,6 @@ const handler = async (request: NextRequest): Promise<Response> => {
   }
 };
 
-export { handler as GET, handler as POST, handler as DELETE };
+export const GET = routeLog(handler);
+export const POST = routeLog(handler);
+export const DELETE = routeLog(handler);

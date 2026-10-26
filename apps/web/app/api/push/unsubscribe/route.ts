@@ -10,10 +10,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { deleteSubscription } from '@renkei/notifications';
 import { getSessionFromRequest } from '@/lib/session';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -33,3 +32,5 @@ export async function POST(
 
   return NextResponse.json({ ok: true });
 }
+
+export const POST = routeLog(POSTHandler);

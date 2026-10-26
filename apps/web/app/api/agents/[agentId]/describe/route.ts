@@ -18,6 +18,7 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { generateAgentDescription } from '@/lib/agents/describe';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * NextJS serverless function timeout.
@@ -27,7 +28,7 @@ import { generateAgentDescription } from '@/lib/agents/describe';
  */
 export const maxDuration = 300;
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -65,3 +66,5 @@ export async function POST(
 
   return NextResponse.json({ descriptionPending: true }, { status: 202 });
 }
+
+export const POST = routeLog(POSTHandler);

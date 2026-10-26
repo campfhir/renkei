@@ -28,6 +28,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { digestsMatch, getBearerToken } from '@/lib/mcp-token';
 import { hasActiveGrant } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
+import { routeLog } from '@/lib/log-context';
 
 const MAX_STATE_BYTES = 64 * 1024;
 /** Small in-memory burst brake; the daily cap in createAgentRun is the law. */
@@ -57,10 +58,7 @@ interface AgentRow {
   enabled: boolean;
 }
 
-async function agentById(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<AgentRow | null> {
+async function agentById(db: Kysely<DB>, agentId: string): Promise<AgentRow | null> {
   // Callers paste this id into external tools; a malformed one (glued-on
   // punctuation from an autolinker) is "no such agent", not a 22P02 → 500.
   if (!isUuid(agentId)) return null;
@@ -96,7 +94,7 @@ async function apiTriggerForKey(
   return null;
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -214,3 +212,5 @@ export async function POST(
 
   return NextResponse.json({ runId: result.val.runId }, { status: 202 });
 }
+
+export const POST = routeLog(POSTHandler);

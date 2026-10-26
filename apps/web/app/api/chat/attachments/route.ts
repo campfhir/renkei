@@ -31,6 +31,7 @@ import {
 import { attachToProject, createOwnedArtifact } from '@/lib/chat/artifact-library';
 import { deferDigest } from '@/lib/chat/artifact-digest';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
+import { routeLog } from '@/lib/log-context';
 
 export const runtime = 'nodejs';
 
@@ -49,7 +50,7 @@ function uploadError(error: AttachmentError): Response {
   }
 }
 
-export async function PUT(request: NextRequest): Promise<Response> {
+async function PUTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -172,3 +173,5 @@ export async function PUT(request: NextRequest): Promise<Response> {
     { status: 201 }
   );
 }
+
+export const PUT = routeLog(PUTHandler);

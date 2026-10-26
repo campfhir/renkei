@@ -18,8 +18,9 @@ import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { getActiveTurn } from '@/lib/chat/turns';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -56,3 +57,5 @@ export async function POST(
   });
   return NextResponse.json({ branch: discarded.val.branch });
 }
+
+export const POST = routeLog(POSTHandler);

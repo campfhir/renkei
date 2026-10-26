@@ -28,6 +28,7 @@ import {
   readWebhookBody,
   tooManyRequests,
 } from '@/lib/webhook-intake';
+import { routeLog } from '@/lib/log-context';
 
 const MICROSOFT_SOURCE = 'microsoft';
 const eventsQueue = webhookEventsQueue();
@@ -36,7 +37,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ accountId: string }> }
 ): Promise<NextResponse> {
@@ -166,3 +167,5 @@ export async function POST(
   });
   return NextResponse.json({ accepted }, { status: 202 });
 }
+
+export const POST = routeLog(POSTHandler);

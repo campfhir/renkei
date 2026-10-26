@@ -11,6 +11,7 @@ import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { executeCreateIssue, readCreateIssueAction } from '@/lib/actionable-items';
+import { routeLog } from '@/lib/log-context';
 
 const PROJECT_KEY_SHAPE = /^[A-Z][A-Z0-9_]*$/;
 
@@ -18,7 +19,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ itemId: string }> }
 ): Promise<NextResponse> {
@@ -153,3 +154,5 @@ export async function POST(
   }
   return NextResponse.json({ status: 'executed', issueKey: outcome.issueKey, url: outcome.url });
 }
+
+export const POST = routeLog(POSTHandler);

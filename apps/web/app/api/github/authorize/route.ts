@@ -7,6 +7,7 @@ import { getGitHubApp } from '@/lib/github-app';
 import { ALL_GITHUB_SCOPES } from '@/lib/github-scopes';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Authorize against Renkei's GitHub App. As with Bitbucket, a GitHub
@@ -19,9 +20,7 @@ import { logger } from '@/lib/logger';
  * prompts installing the App on an org/repos first when it is not
  * installed yet — one click either way.
  */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -106,3 +105,5 @@ export async function GET(
     return NextResponse.json({ error: 'Failed to initiate authorization' }, { status: 500 });
   }
 }
+
+export const GET = routeLog(GETHandler);

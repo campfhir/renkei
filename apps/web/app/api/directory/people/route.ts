@@ -21,6 +21,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { getOrigin } from '@/lib/get-origin';
 import { resolveGraphAccess, str } from '@/lib/mcp-tools/graph/client';
 import { addressOf, searchDirectoryUsers } from '@/lib/mcp-tools/graph/directory';
+import { routeLog } from '@/lib/log-context';
 
 const RESULT_MAX = 25;
 
@@ -31,9 +32,7 @@ export interface PersonOption {
   hint: string;
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -69,3 +68,5 @@ export async function GET(
 
   return NextResponse.json({ options });
 }
+
+export const GET = routeLog(GETHandler);

@@ -11,8 +11,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ itemId: string }> }
 ): Promise<NextResponse> {
@@ -66,7 +67,7 @@ export async function POST(
   return NextResponse.json({ status: 'archived' });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ itemId: string }> }
 ): Promise<NextResponse> {
@@ -98,3 +99,6 @@ export async function DELETE(
   }
   return NextResponse.json({ status: 'unarchived' });
 }
+
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

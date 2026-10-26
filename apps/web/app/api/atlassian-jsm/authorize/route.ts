@@ -7,6 +7,7 @@ import { getAtlassianJsmApp } from '@/lib/atlassian-app';
 import { ATLASSIAN_REQUIRED_SCOPES } from '@/lib/atlassian-scopes';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * Authorize against the second Atlassian app ("Renkei JSM": JSM + Ops
@@ -16,9 +17,7 @@ import { logger } from '@/lib/logger';
  * may narrow the org ceiling, never widen it, and the pending row records
  * provider + scopes for the shared callback.
  */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -106,3 +105,5 @@ export async function GET(
     return NextResponse.json({ error: 'Failed to initiate authorization' }, { status: 500 });
   }
 }
+
+export const GET = routeLog(GETHandler);

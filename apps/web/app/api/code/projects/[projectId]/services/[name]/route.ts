@@ -18,8 +18,9 @@ import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; name: string }> }
 ): Promise<Response> {
@@ -47,7 +48,7 @@ export async function GET(
   return NextResponse.json(got.val);
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; name: string }> }
 ): Promise<Response> {
@@ -77,3 +78,6 @@ export async function DELETE(
   });
   return NextResponse.json({ service: stopped.val });
 }
+
+export const GET = routeLog(GETHandler);
+export const DELETE = routeLog(DELETEHandler);

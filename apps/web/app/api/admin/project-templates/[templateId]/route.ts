@@ -12,8 +12,9 @@ import {
   parseTemplatePayload,
   updateCodeProjectTemplate,
 } from '@/lib/code/project-templates';
+import { routeLog } from '@/lib/log-context';
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ templateId: string }> }
 ): Promise<NextResponse> {
@@ -39,7 +40,7 @@ export async function PUT(
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ templateId: string }> }
 ): Promise<NextResponse> {
@@ -55,3 +56,6 @@ export async function DELETE(
   if (!deleted) return NextResponse.json({ error: 'Template not found' }, { status: 404 });
   return NextResponse.json({ ok: true });
 }
+
+export const PUT = routeLog(PUTHandler);
+export const DELETE = routeLog(DELETEHandler);

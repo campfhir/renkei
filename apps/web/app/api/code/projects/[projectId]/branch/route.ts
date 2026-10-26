@@ -29,8 +29,9 @@ import { getActiveTurn } from '@/lib/chat/turns';
 import { getOrigin } from '@/lib/get-origin';
 import { resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -50,7 +51,7 @@ export async function GET(
   return NextResponse.json({ branches: listed.branches });
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; chatId?: string }> }
 ): Promise<Response> {
@@ -120,3 +121,6 @@ export async function POST(
   });
   return NextResponse.json({ branch: pulled.val.branch });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

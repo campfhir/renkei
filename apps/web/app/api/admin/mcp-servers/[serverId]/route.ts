@@ -20,10 +20,11 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { parseServerPayload, serverSummary } from '@/lib/mcp-servers/parse';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+import { routeLog } from '@/lib/log-context';
 
 type Params = { params: Promise<{ serverId: string }> };
 
-export async function GET(_request: NextRequest, { params }: Params): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest, { params }: Params): Promise<NextResponse> {
   const { serverId } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -36,7 +37,7 @@ export async function GET(_request: NextRequest, { params }: Params): Promise<Ne
   return NextResponse.json({ server: serverSummary(server.val) });
 }
 
-export async function PATCH(request: NextRequest, { params }: Params): Promise<NextResponse> {
+async function PATCHHandler(request: NextRequest, { params }: Params): Promise<NextResponse> {
   const { serverId } = await params;
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -115,7 +116,7 @@ export async function PATCH(request: NextRequest, { params }: Params): Promise<N
   return NextResponse.json({ server: serverSummary(updated.val) });
 }
 
-export async function DELETE(_request: NextRequest, { params }: Params): Promise<NextResponse> {
+async function DELETEHandler(_request: NextRequest, { params }: Params): Promise<NextResponse> {
   const { serverId } = await params;
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -142,3 +143,7 @@ export async function DELETE(_request: NextRequest, { params }: Params): Promise
   invalidateToolCatalogCache();
   return NextResponse.json({ message: 'Deleted' });
 }
+
+export const GET = routeLog(GETHandler);
+export const PATCH = routeLog(PATCHHandler);
+export const DELETE = routeLog(DELETEHandler);

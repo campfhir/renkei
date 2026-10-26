@@ -8,10 +8,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { observedIdpGroups } from '@/lib/identity';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -22,3 +21,5 @@ export async function GET(
   const values = await observedIdpGroups(dbResult.val, query.slice(0, 200));
   return NextResponse.json({ groups: values.map((value) => ({ key: value, label: value })) });
 }
+
+export const GET = routeLog(GETHandler);

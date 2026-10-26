@@ -15,8 +15,9 @@ import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
 import { getChatForOwner, moveChatToProject } from '@/lib/chat/store';
 import { getActiveTurn } from '@/lib/chat/turns';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -33,12 +34,7 @@ export async function POST(
     if (typeof body.projectId !== 'string' || !isUuid(body.projectId)) {
       return jsonError(404, 'not-found', 'No such project');
     }
-    const access = await resolveResourceAccess(
-      db,
-      session.subject,
-      'chat_project',
-      body.projectId
-    );
+    const access = await resolveResourceAccess(db, session.subject, 'chat_project', body.projectId);
     if (!access) return jsonError(404, 'not-found', 'No such project');
     projectId = body.projectId;
   }
@@ -53,3 +49,5 @@ export async function POST(
   await moveChatToProject(db, session.subject, chat.id, projectId);
   return NextResponse.json({ ok: true, projectId });
 }
+
+export const POST = routeLog(POSTHandler);

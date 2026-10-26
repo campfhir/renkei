@@ -30,6 +30,7 @@ import {
 } from '@/lib/salesforce-admin/change-requests';
 import { accessForChange, applyGate } from '@/lib/salesforce-admin/apply';
 import { runApplyJob } from '@/lib/salesforce-admin/apply-job';
+import { routeLog } from '@/lib/log-context';
 
 const NOT_PENDING: Record<string, string> = {
   queued: 'This change request is already approved and waiting to be applied.',
@@ -43,7 +44,7 @@ const NOT_PENDING: Record<string, string> = {
     'This change request was interrupted before Salesforce started its deploy; nothing was deployed.',
 };
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ changeId: string }> }
 ): Promise<NextResponse> {
@@ -106,3 +107,5 @@ export async function POST(
 
   return NextResponse.json({ status: 'queued' }, { status: 202 });
 }
+
+export const POST = routeLog(POSTHandler);

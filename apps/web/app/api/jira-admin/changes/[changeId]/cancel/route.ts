@@ -15,8 +15,9 @@ import {
   getChangeRequestById,
   mayView,
 } from '@/lib/jira-admin/change-requests';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ changeId: string }> }
 ): Promise<NextResponse> {
@@ -66,3 +67,5 @@ export async function POST(
   }
   return NextResponse.json({ status: 'cancelled' });
 }
+
+export const POST = routeLog(POSTHandler);

@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { destroySession, getSessionFromRequest, sessionCookieName } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 /**
  * End the caller's session: the session row is destroyed and its cookie
  * expired. The session id comes from the cookie, never the body, so a caller
  * can only sign out the browser making the request.
  */
-export async function POST(request: NextRequest): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const response = NextResponse.json({ success: true });
   const cookieName = sessionCookieName();
   const sessionId = request.cookies.get(cookieName)?.value;
@@ -23,3 +24,5 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   response.cookies.delete(cookieName);
   return response;
 }
+
+export const POST = routeLog(POSTHandler);

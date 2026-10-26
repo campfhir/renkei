@@ -19,8 +19,9 @@ import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { createDraft } from '@/lib/agents/draft-store';
 import { getOptimization, markOptimizationApplied } from '@/lib/agents/optimization-store';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
@@ -102,3 +103,5 @@ export async function POST(
   await markOptimizationApplied(db, session.subject, optimizationId, draftId);
   return NextResponse.json({ draftId, status: 'queued' }, { status: 202 });
 }
+
+export const POST = routeLog(POSTHandler);

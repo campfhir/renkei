@@ -33,8 +33,9 @@ import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ agentId: string; runId: string }> }
 ): Promise<NextResponse> {
@@ -149,3 +150,5 @@ export async function POST(
   });
   return NextResponse.json({ runId: created.val.runId });
 }
+
+export const POST = routeLog(POSTHandler);

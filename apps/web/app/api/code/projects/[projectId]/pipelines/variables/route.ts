@@ -22,10 +22,11 @@ import {
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { missingScope, pipelinesProjectContext } from '@/lib/code/pipelines-access';
+import { routeLog } from '@/lib/log-context';
 
 const TEXT_MAX_CHARS = 200_000;
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -73,3 +74,5 @@ export async function PUT(
   }
   return NextResponse.json({ ...applied, problems: parsed.problems });
 }
+
+export const PUT = routeLog(PUTHandler);

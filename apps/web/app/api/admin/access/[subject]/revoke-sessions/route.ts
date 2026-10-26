@@ -12,8 +12,9 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getDatabase } from '@renkei/db';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ subject: string }> }
 ): Promise<NextResponse> {
@@ -66,3 +67,5 @@ export async function POST(
   void request;
   return NextResponse.json({ success: true, revoked: counts });
 }
+
+export const POST = routeLog(POSTHandler);

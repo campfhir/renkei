@@ -9,10 +9,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getDatabase } from '@renkei/db';
 import { suggestSanitizerRules } from '@/lib/email-sanitizer/suggest-rules';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -24,3 +23,5 @@ export async function POST(
   if ('error' in result) return NextResponse.json({ error: result.error }, { status: 422 });
   return NextResponse.json({ suggestions: result.suggestions });
 }
+
+export const POST = routeLog(POSTHandler);

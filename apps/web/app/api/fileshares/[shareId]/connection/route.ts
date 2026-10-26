@@ -26,6 +26,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { clientFailure, fsTestConnection } from '@/lib/file-shares/service-client';
 import { parseConnectPayload, parseExposurePayload } from '@/lib/file-shares/parse';
+import { routeLog } from '@/lib/log-context';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -38,7 +39,7 @@ function carriesCredential(body: Record<string, unknown>): boolean {
   );
 }
 
-export async function POST(
+async function POSTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
@@ -141,7 +142,7 @@ export async function POST(
   });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
@@ -172,3 +173,6 @@ export async function DELETE(
   });
   return NextResponse.json({ ok: true });
 }
+
+export const POST = routeLog(POSTHandler);
+export const DELETE = routeLog(DELETEHandler);

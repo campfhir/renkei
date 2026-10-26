@@ -95,6 +95,12 @@ const PUBLIC: Record<string, string> = {
   'api/mcp/oauth/register/route.ts': 'RFC 7591 dynamic client registration',
   'api/oauth/register/route.ts': 'RFC 7591 dynamic client registration',
   // Operational.
+  // A browser's error report. Anyone may send one (the page may be shown to
+  // someone signed out), the body is capped, and nothing is read back: the
+  // record is only written to the log, with the session's person from the
+  // request context when there is one.
+  'api/client-logs/route.ts':
+    'browser error reports: anyone may send one, the body is capped, and nothing is returned',
   'api/health/route.ts': 'liveness probe — content-free',
 };
 

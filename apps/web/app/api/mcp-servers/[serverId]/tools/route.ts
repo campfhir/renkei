@@ -10,10 +10,11 @@ import { getDatabase } from '@renkei/db';
 import { getServer, getToolLists } from '@renkei/connector-mcp';
 import { getSessionFromRequest } from '@/lib/session';
 import { refreshToolList } from '@/lib/mcp-servers/remote';
+import { routeLog } from '@/lib/log-context';
 
 type Params = { params: Promise<{ serverId: string }> };
 
-export async function GET(request: NextRequest, { params }: Params): Promise<NextResponse> {
+async function GETHandler(request: NextRequest, { params }: Params): Promise<NextResponse> {
   const { serverId } = await params;
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Nex
   });
 }
 
-export async function POST(request: NextRequest, { params }: Params): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest, { params }: Params): Promise<NextResponse> {
   const { serverId } = await params;
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -59,3 +60,6 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Ne
     fetchedAt: new Date().toISOString(),
   });
 }
+
+export const GET = routeLog(GETHandler);
+export const POST = routeLog(POSTHandler);

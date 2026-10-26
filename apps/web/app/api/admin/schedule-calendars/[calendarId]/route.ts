@@ -10,8 +10,9 @@ import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseCalendarPayload } from '@/lib/agents/calendar-payload';
+import { routeLog } from '@/lib/log-context';
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ calendarId: string }> }
 ): Promise<NextResponse> {
@@ -49,7 +50,7 @@ export async function PUT(
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ calendarId: string }> }
 ): Promise<NextResponse> {
@@ -70,3 +71,6 @@ export async function DELETE(
   }
   return NextResponse.json({ ok: true });
 }
+
+export const PUT = routeLog(PUTHandler);
+export const DELETE = routeLog(DELETEHandler);

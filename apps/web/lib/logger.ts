@@ -1,6 +1,6 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import packageJson from '../package.json';
-import { registerLogSink } from '@renkei/logging';
+import { enhanceLogger, registerLogSink } from '@renkei/logging';
 // Loaded for its effect: the request log context (lib/log-context.ts) registers itself.
 import '@/lib/log-context';
 
@@ -56,7 +56,7 @@ function buildLogger() {
   // instrumentation.ts's register() hook, not here: that hook runs once at
   // real server boot, whereas this module is imported by hundreds of unit
   // tests that never expect a background DB-polling timer to start.
-  return built;
+  return enhanceLogger(built);
 }
 
 type RenkeiLogger = ReturnType<typeof buildLogger>;

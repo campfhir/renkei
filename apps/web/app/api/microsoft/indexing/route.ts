@@ -22,6 +22,7 @@ import { webhookEventsQueue } from '@renkei/queue';
 import { MICROSOFT, outlookIndexingOf, OUTLOOK_INDEXING_CATEGORIES } from '@renkei/provider-grants';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { routeLog } from '@/lib/log-context';
 
 async function grantOf(subject: string) {
   const dbResult = getDatabase();
@@ -40,9 +41,7 @@ function metadataRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? { ...value } : {};
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -51,9 +50,7 @@ export async function GET(
   return NextResponse.json({ indexing: outlookIndexingOf(metadataRecord(grant.metadata)) });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -99,3 +96,6 @@ export async function PUT(
 
   return NextResponse.json({ indexing });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

@@ -19,10 +19,9 @@ import {
   ENTRA_DEVELOPER_CONNECTOR,
   DEFAULT_ENTRA_DEVELOPER_SCOPES,
 } from '@/lib/entra-developer-app';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -33,10 +32,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(
-    ENTRA_DEVELOPER_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await getConnectorConfig(ENTRA_DEVELOPER_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
@@ -60,9 +56,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -123,3 +117,6 @@ export async function PUT(
   invalidateConnectorConfigCache(ENTRA_DEVELOPER_CONNECTOR);
   return NextResponse.json({ connector: ENTRA_DEVELOPER_CONNECTOR, configured: true, enabled });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

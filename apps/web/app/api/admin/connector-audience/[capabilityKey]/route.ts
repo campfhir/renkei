@@ -19,6 +19,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { togglableConnectors } from '@/lib/connector-catalog';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 const MAX_VALUES = 50;
 const MAX_VALUE_CHARS = 255;
@@ -27,7 +28,7 @@ function knownKey(capabilityKey: string): boolean {
   return togglableConnectors().some((entry) => entry.capabilityKey === capabilityKey);
 }
 
-export async function GET(
+async function GETHandler(
   _request: NextRequest,
   { params }: { params: Promise<{ capabilityKey: string }> }
 ): Promise<NextResponse> {
@@ -45,7 +46,7 @@ export async function GET(
   return NextResponse.json({ claimValues: settings.val.connectorAudiences[capabilityKey] ?? [] });
 }
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ capabilityKey: string }> }
 ): Promise<NextResponse> {
@@ -105,3 +106,6 @@ export async function PUT(
   });
   return NextResponse.json({ claimValues });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

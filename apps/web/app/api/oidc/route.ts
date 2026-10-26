@@ -11,6 +11,7 @@ import {
   identityProviderConfigured,
   verifySetupSecret,
 } from '@/lib/setup-secret';
+import { routeLog } from '@/lib/log-context';
 
 /** Confirm the caller is an operator. */
 async function requireOperator(): Promise<NextResponse | null> {
@@ -42,9 +43,7 @@ function isOidcConfigRequest(data: unknown): data is OidcConfigRequest {
   );
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -248,8 +247,7 @@ export async function POST(
   }
 }
 
-export async function GET(): Promise<NextResponse> {
-
+async function GETHandler(): Promise<NextResponse> {
   // Operator-only, and checked before anything is read. This returns the
   // issuer, client id and the claim mapping that decides who becomes an
   // operator — which is the reconnaissance for an attack on POST, so it is
@@ -299,3 +297,6 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ error: 'Failed to fetch OIDC configuration' }, { status: 500 });
   }
 }
+
+export const POST = routeLog(POSTHandler);
+export const GET = routeLog(GETHandler);

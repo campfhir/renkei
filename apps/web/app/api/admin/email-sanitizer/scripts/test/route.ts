@@ -9,10 +9,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { runCleanerScript, compileCleanerScript, MAX_SCRIPT_CHARS } from '@renkei/email-sanitizer';
 import { isContentKind } from '@/lib/email-sanitizer/content-kinds';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -88,3 +87,5 @@ export async function POST(
   }
   return NextResponse.json({ output: result.val });
 }
+
+export const POST = routeLog(POSTHandler);

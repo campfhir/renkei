@@ -67,6 +67,7 @@ import { logger } from '@/lib/logger';
 import { cacheUserDisplayName } from '@/lib/mcp-tools/common';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 interface JiraUserInfo {
   accountId: string;
@@ -220,7 +221,7 @@ function logExchanged(label: string, outcome: ExchangeOutcome): void {
  * state has been recognised — success, refusal, or a provider handler's
  * own error — without threading the cookie through each provider branch.
  */
-export async function GET(request: NextRequest): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const flow = { stateKnown: false };
   const response = await handleCallback(request, flow);
   return flow.stateKnown ? clearConnectFlow(response) : response;
@@ -2005,3 +2006,5 @@ async function handleOnBaseCallback(
   invalidateToolCatalogCache(subject);
   return NextResponse.redirect(new URL(`/connectors`, originResult.val));
 }
+
+export const GET = routeLog(GETHandler);

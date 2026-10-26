@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
+import { routeLog } from '@/lib/log-context';
 
 export interface SyncProgressItem {
   label: string;
@@ -37,10 +38,7 @@ function iso(value: Date | string | null): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
-
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -82,3 +80,5 @@ export async function GET(
     confluence: byProvider('confluence'),
   });
 }
+
+export const GET = routeLog(GETHandler);

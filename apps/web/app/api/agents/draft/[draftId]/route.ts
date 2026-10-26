@@ -11,8 +11,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getDraft } from '@/lib/agents/draft-store';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ draftId: string }> }
 ): Promise<NextResponse> {
@@ -30,3 +31,5 @@ export async function GET(
 
   return NextResponse.json({ draft });
 }
+
+export const GET = routeLog(GETHandler);

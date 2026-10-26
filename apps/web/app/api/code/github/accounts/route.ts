@@ -3,13 +3,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/session';
 import { githubAuthFor, listAccounts } from '@/lib/code/github-browse';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   const listed = await listAccounts(await githubAuthFor(request, session.subject));
   if (!listed.ok) return NextResponse.json({ error: listed.error }, { status: 409 });
   return NextResponse.json({ accounts: listed.accounts });
 }
+
+export const GET = routeLog(GETHandler);

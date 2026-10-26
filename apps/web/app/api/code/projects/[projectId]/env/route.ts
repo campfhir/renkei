@@ -21,23 +21,15 @@ import { getProjectRow } from '@/lib/chat/projects';
 import { projectEnv, replaceProjectEnv } from '@/lib/code/projects';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
 const DOTENV_MAX_CHARS = 200_000;
 
-async function projectFor(
-  request: NextRequest,
-  projectId: string,
-  edit: boolean
-) {
+async function projectFor(request: NextRequest, projectId: string, edit: boolean) {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return { ok: false as const, response: ready.response };
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveResourceAccess(db, session.subject, 'chat_project', projectId);
   if (!access)
     return { ok: false as const, response: jsonError(404, 'not-found', 'No such project') };
   if (edit && access.role === 'viewer') {
@@ -53,7 +45,7 @@ async function projectFor(
   return { ok: true as const, project, session };
 }
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -63,7 +55,7 @@ export async function GET(
   return NextResponse.json({ variables: await projectEnv(found.project) });
 }
 
-export async function PUT(
+async function PUTHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -85,7 +77,7 @@ export async function PUT(
   return NextResponse.json({ variables: replaced.val.variables, problems: replaced.val.problems });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ): Promise<Response> {
@@ -112,3 +104,7 @@ export async function DELETE(
   });
   return NextResponse.json({ ok: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);
+export const DELETE = routeLog(DELETEHandler);

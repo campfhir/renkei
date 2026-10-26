@@ -19,10 +19,9 @@ import {
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
 import { ONBASE_CONNECTOR } from '@/lib/onbase-app';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -74,9 +73,7 @@ function validBaseUrl(value: unknown, allowInsecureHttp: boolean): value is stri
   return url.protocol === 'https:' || (allowInsecureHttp && url.protocol === 'http:');
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -171,3 +168,6 @@ export async function PUT(
     hasClientSecret: Boolean(secrets.clientSecret),
   });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

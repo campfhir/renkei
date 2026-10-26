@@ -23,10 +23,9 @@ import {
   sealedDelegationsOf,
   setAutomationDays,
 } from '@/lib/keys/status';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+async function POSTHandler(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -87,3 +86,5 @@ export async function POST(
   recordAuditEvent({ actorSubject: session.subject, action: 'encryption-key.enrolled' });
   return NextResponse.json({ version: enrolled.val.version, migrated: enrolled.val.migrated });
 }
+
+export const POST = routeLog(POSTHandler);

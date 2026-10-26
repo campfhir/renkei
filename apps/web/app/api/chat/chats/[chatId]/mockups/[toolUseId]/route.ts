@@ -19,6 +19,7 @@ import { listMessages, toMessageView } from '@/lib/chat/messages';
 import { chatRequestContext } from '@/lib/chat/route-support';
 import { MOCKUP_CSP, buildMockupDocument } from '@/lib/mockups/document';
 import { MOCKUP_TOOL, parseMockupRequest } from '@/lib/mockups/request';
+import { routeLog } from '@/lib/log-context';
 
 function page(status: number, html: string, extra: Record<string, string> = {}): NextResponse {
   return new NextResponse(html, {
@@ -41,7 +42,7 @@ function problem(status: number, message: string): NextResponse {
   );
 }
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string; toolUseId: string }> }
 ): Promise<Response> {
@@ -69,3 +70,5 @@ export async function GET(
   }
   return problem(404, 'No such mockup.');
 }
+
+export const GET = routeLog(GETHandler);

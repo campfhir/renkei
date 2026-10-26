@@ -16,10 +16,11 @@ import { loadChatView } from '@/lib/chat/chat-view';
 import { deleteChat, getChatForOwner, updateChat, type ChatPatch } from '@/lib/chat/store';
 import { deleteChatWorktree } from '@/lib/code/projects';
 import { parseToolConfig } from '@/lib/chat/tool-config';
+import { routeLog } from '@/lib/log-context';
 
 const TITLE_MAX_CHARS = 200;
 
-export async function GET(
+async function GETHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -32,7 +33,7 @@ export async function GET(
   return NextResponse.json(await loadChatView(db, access, session.subject));
 }
 
-export async function PATCH(
+async function PATCHHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -65,7 +66,7 @@ export async function PATCH(
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ chatId: string }> }
 ): Promise<Response> {
@@ -80,3 +81,7 @@ export async function DELETE(
   if (chat?.projectId) await deleteChatWorktree(chat.projectId, chat.workspaceId);
   return NextResponse.json({ ok: true });
 }
+
+export const GET = routeLog(GETHandler);
+export const PATCH = routeLog(PATCHHandler);
+export const DELETE = routeLog(DELETEHandler);

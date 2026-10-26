@@ -28,6 +28,7 @@ import {
   resolveSharePointSite,
   sharePointGet,
 } from '../sharepoint-access';
+import { routeLog } from '@/lib/log-context';
 
 export interface WatchOption {
   /** What gets stored as scope_key — a project key, a space id, or a driveId. */
@@ -37,9 +38,7 @@ export interface WatchOption {
   hint: string;
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -163,3 +162,5 @@ async function sharePointOptions(
   }));
   return NextResponse.json({ sites });
 }
+
+export const GET = routeLog(GETHandler);

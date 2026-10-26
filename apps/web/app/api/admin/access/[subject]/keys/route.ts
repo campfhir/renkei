@@ -15,8 +15,9 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getDatabase } from '@renkei/db';
 import { delegateClient } from '@renkei/delegate-client';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { routeLog } from '@/lib/log-context';
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   { params }: { params: Promise<{ subject: string }> }
 ): Promise<NextResponse> {
@@ -37,10 +38,7 @@ export async function DELETE(
   if (!shredded.ok) {
     return NextResponse.json({ error: 'The key service could not be reached.' }, { status: 503 });
   }
-  await dbResult.val
-    .deleteFrom('sessions')
-    .where('subject', '=', subject)
-    .execute();
+  await dbResult.val.deleteFrom('sessions').where('subject', '=', subject).execute();
   recordAuditEvent({
     actorSubject: access.subject,
     action: 'encryption-key.shredded',
@@ -50,3 +48,5 @@ export async function DELETE(
   void request;
   return NextResponse.json({ success: true, shredded: shredded.val });
 }
+
+export const DELETE = routeLog(DELETEHandler);

@@ -23,10 +23,9 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { togglableConnectors } from '@/lib/connector-catalog';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+import { routeLog } from '@/lib/log-context';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+async function GETHandler(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -38,9 +37,7 @@ export async function GET(
   return NextResponse.json({ disabledConnectors: settings.val.disabledConnectors });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+async function PUTHandler(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -73,3 +70,6 @@ export async function PUT(
   invalidateToolCatalogCache();
   return NextResponse.json({ disabledConnectors });
 }
+
+export const GET = routeLog(GETHandler);
+export const PUT = routeLog(PUTHandler);

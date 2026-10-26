@@ -10,10 +10,9 @@ import { getSessionFromRequest } from '@/lib/session';
 import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
 import { bitbucketAuthFor, createRepository } from '@/lib/code/bitbucket-browse';
 import { optionalString, readJsonBody } from '@/lib/chat/route-support';
+import { routeLog } from '@/lib/log-context';
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+async function POSTHandler(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   if (!(await sandboxWorkspacesEnabled()))
@@ -22,10 +21,13 @@ export async function POST(
   const workspace = optionalString(body.workspace, 200) ?? '';
   const project = optionalString(body.project, 200) ?? '';
   const name = optionalString(body.name, 200) ?? '';
-  const created = await createRepository(
-    await bitbucketAuthFor(request, session.subject),
-    { workspace, project, name }
-  );
+  const created = await createRepository(await bitbucketAuthFor(request, session.subject), {
+    workspace,
+    project,
+    name,
+  });
   if (!created.ok) return NextResponse.json({ error: created.error }, { status: 409 });
   return NextResponse.json({ repo: created.repo });
 }
+
+export const POST = routeLog(POSTHandler);
