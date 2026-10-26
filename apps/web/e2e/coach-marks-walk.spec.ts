@@ -26,11 +26,15 @@ import { createHash } from 'node:crypto';
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
 import { COACH_MARK_TOURS } from '../lib/coach-marks/tours';
-import { AGENT_RICH_ID, E2E_SLUG, E2E_SUBJECT } from './seed';
+import { AGENT_RICH_ID, E2E_SUBJECT, seed } from './seed';
+import { giveChatWorktree } from './worktree';
 
 /** A project and a prompt library of the seed's person, made for the walk and removed after. */
 const WALK_PROJECT_ID = '77777777-7777-4777-8777-77777777c0a1';
 const WALK_LIBRARY_ID = '77777777-7777-4777-8777-77777777c0a2';
+/** A code project with a real checkout, and a chat on it: the file tree exists only there. */
+const WALK_CODE_PROJECT_ID = '77777777-7777-4777-8777-77777777c0a3';
+const WALK_CODE_CHAT_ID = '77777777-7777-4777-8777-77777777c0a4';
 
 function sessionIdFor(project: string): string {
   const hex = createHash('sha1').update(`coach-marks-walk:${project}`).digest('hex');
@@ -88,6 +92,8 @@ const WALKS: Record<string, Walk> = {
   'agent-runs': { path: `/agents/${AGENT_RICH_ID}/runs`, spotlight: true },
   // The seed registers no file shares: the browser shows its empty note.
   files: { path: `/files`, spotlight: true },
+  // The file tree is in a code project's pane, which needs its checkout.
+  'code-tree': { path: `/chat/${WALK_CODE_CHAT_ID}`, spotlight: true, settle: THREAD },
   chat: { path: `/chat/new`, spotlight: true, settle: THREAD },
   'chat-composer-more': { path: `/chat/new`, spotlight: true, settle: THREAD },
   // A permission ask exists only while a turn waits on one; walked on a
@@ -116,6 +122,7 @@ const WALKS: Record<string, Walk> = {
   'connect-microsoft': { path: `/connectors`, spotlight: false },
   'connect-entra-developer': { path: `/connectors`, spotlight: false },
   'connect-salesforce': { path: `/connectors`, spotlight: false },
+  'connect-salesforce-admin': { path: `/connectors`, spotlight: false },
   'connect-webex': { path: `/connectors`, spotlight: false },
   'connect-zoom': { path: `/connectors`, spotlight: false },
   'connect-onbase': { path: `/connectors`, spotlight: false },
@@ -133,6 +140,8 @@ let client: Client;
 test.beforeAll(async ({}, testInfo) => {
   client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
+  // The rich agent and the rest of the seed: the agent tours walk its page.
+  await seed(client);
   await client.query(
     `INSERT INTO chat_projects (id, owner_subject, name, description, instructions)\n     VALUES ($1, $2, 'Tour project', 'A project the tour walk made.', 'Answer briefly.')\n     ON CONFLICT (id) DO NOTHING`,
     [WALK_PROJECT_ID, E2E_SUBJECT]
@@ -145,13 +154,75 @@ test.beforeAll(async ({}, testInfo) => {
     `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')\n     ON CONFLICT (id) DO NOTHING`,
     [sessionIdFor(testInfo.project.name), E2E_SUBJECT, ['renkei-user', 'renkei-operator']]
   );
+  await seedCodeProject();
 });
 
 test.afterAll(async () => {
+  await client.query('DELETE FROM chats WHERE id = $1', [WALK_CODE_CHAT_ID]);
+  await client.query('DELETE FROM chat_projects WHERE id = $1', [WALK_CODE_PROJECT_ID]);
   await client.query('DELETE FROM chat_projects WHERE id = $1', [WALK_PROJECT_ID]);
   await client.query('DELETE FROM prompt_libraries WHERE id = $1', [WALK_LIBRARY_ID]);
   await client.end();
 });
+
+/**
+ * The code project and its chat, with a real checkout on the stub worker the
+ * way code-file-management.spec.ts makes one: the file tree renders only once
+ * the workspace is ready.
+ */
+async function seedCodeProject(): Promise<void> {
+  await client.query('DELETE FROM chats WHERE id = $1', [WALK_CODE_CHAT_ID]);
+  await client.query('DELETE FROM chat_projects WHERE id = $1', [WALK_CODE_PROJECT_ID]);
+  await client.query(
+    `INSERT INTO chat_projects\n       (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n     VALUES ($1, $2, 'Tour code project', 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
+    [WALK_CODE_PROJECT_ID, E2E_SUBJECT]
+  );
+  await client.query(
+    `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n     VALUES ($1, $2, $3, 'Tour code chat', NOW())`,
+    [WALK_CODE_CHAT_ID, E2E_SUBJECT, WALK_CODE_PROJECT_ID]
+  );
+  const worker = process.env.SANDBOX_WORKER_URL ?? 'http://127.0.0.1:8092';
+  const headers = {
+    authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
+    'content-type': 'application/json',
+  };
+  const target = { subject: `code-project:${WALK_CODE_PROJECT_ID}` };
+  const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      ...target,
+      provider: 'atlassian-bitbucket',
+      repoFullName: 'acme/billing-service',
+      branch: 'main',
+      cloneUrl: 'https://bitbucket.org/acme/billing-service.git',
+      gitProxy: {
+        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+      },
+    }),
+  });
+  const { workspace }: { workspace: { id: string } } = await cloned.json();
+  for (let tries = 0; tries < 20; tries += 1) {
+    const got = await fetch(`${worker}/v1/workspaces/get`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...target, id: workspace.id }),
+    });
+    const state: { workspace: { status: string } } = await got.json();
+    if (state.workspace.status === 'ready') break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  await client.query('UPDATE chat_projects SET workspace_id = $1 WHERE id = $2', [
+    workspace.id,
+    WALK_CODE_PROJECT_ID,
+  ]);
+  await giveChatWorktree(client, {
+    projectId: WALK_CODE_PROJECT_ID,
+    baseId: workspace.id,
+    chatId: WALK_CODE_CHAT_ID,
+  });
+}
 
 async function shot(page: Page, project: string, name: string): Promise<void> {
   await page.waitForTimeout(350);
@@ -163,7 +234,7 @@ async function shot(page: Page, project: string, name: string): Promise<void> {
 
 for (const tour of COACH_MARK_TOURS) {
   test(`tour: ${tour.id} — ${tour.title}`, async ({ page }, testInfo) => {
-    const walk: Walk = WALKS[tour.id] ?? { path: `/${E2E_SLUG}${tour.startPath}`, spotlight: true };
+    const walk: Walk = WALKS[tour.id] ?? { path: tour.startPath, spotlight: true };
     // Land first, then ask: a start path that redirects ('/chat/new' makes
     // a thread and goes there) would drop the query on the way.
     await page.goto(walk.path);
