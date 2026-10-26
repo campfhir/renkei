@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import DownloadLink, { useDownloadReady } from '@/components/download-link';
 import { chatClient } from '@/lib/chat/client';
 import type { LibraryItem } from '@/lib/chat/artifact-library';
 import { MIN_SAMPLES } from '@/lib/chat/artifact-ocr-estimate';
@@ -16,6 +17,11 @@ import { isPicture } from './artifact-bits';
 /** A file OCR can read that has no text yet, and no read in flight. */
 export function canRunOcr(item: LibraryItem): boolean {
   return item.ocrSupported && item.ocr === null;
+}
+
+/** The text's name: the file's own, without its extension, as the text route names it. */
+function textFilename(filename: string): string {
+  return `${filename.replace(/\.[^.]+$/, '') || 'file'}.txt`;
 }
 
 /** OCR has read the file already: its text is there, and a read again replaces it. */
@@ -47,6 +53,10 @@ export default function OcrPanel({
   const [mountedAt] = useState(() => Date.now());
   const [now, setNow] = useState(mountedAt);
   const [busy, setBusy] = useState(false);
+  // The text's link waits here until its file is in hand for the share sheet.
+  const textHref = chatClient.attachmentTextUrl(item.id);
+  const textName = textFilename(item.filename);
+  const textReady = useDownloadReady(textHref, textName);
   const running = item.ocr;
 
   useEffect(() => {
@@ -129,13 +139,17 @@ export default function OcrPanel({
           </p>
         ) : null}
         {read ? (
-          <a
-            href={chatClient.attachmentTextUrl(item.id)}
-            download
-            className="mb-1 inline-block text-sm text-blue-600 hover:underline dark:text-blue-400"
-          >
-            Download the text
-          </a>
+          textReady === 'pending' ? (
+            <p className="mb-1 text-sm text-gray-500">Preparing the text…</p>
+          ) : (
+            <DownloadLink
+              href={textHref}
+              filename={textName}
+              className="mb-1 inline-block text-sm text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Download the text
+            </DownloadLink>
+          )
         ) : null}
         <p className="text-sm text-gray-700 dark:text-gray-300">
           {read
