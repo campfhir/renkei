@@ -1,6 +1,8 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import packageJson from '../package.json';
 import { registerLogSink } from '@renkei/logging';
+// Loaded for its effect: the request log context (lib/log-context.ts) registers itself.
+import '@/lib/log-context';
 
 /**
  * Anchored on globalThis, not the module cache. Next bundles
