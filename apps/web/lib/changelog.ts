@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-25',
     entries: [
       {
+        kind: 'fixed',
+        title: 'OCR text shares on the first tap in the iOS app',
+        detail:
+          'Download the text from a read file opens the share sheet straight away on an iPhone or iPad home-screen app, instead of needing a second tap.',
+      },
+      {
         kind: 'added',
         title: 'Documents in usage',
         detail:
