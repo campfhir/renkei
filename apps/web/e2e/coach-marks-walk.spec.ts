@@ -27,6 +27,7 @@ import { test, expect, type Page } from './worker-env';
 import { Client } from 'pg';
 import { COACH_MARK_TOURS } from '../lib/coach-marks/tours';
 import { AGENT_RICH_ID, E2E_SUBJECT, seed } from './seed';
+import { enrollForE2E } from './keys';
 import { giveChatWorktree } from './worktree';
 import { isolateFile } from './worker-env';
 
@@ -159,6 +160,8 @@ test.beforeAll(async ({}, testInfo) => {
     [sessionIdFor(testInfo.project.name), E2E_SUBJECT, ['renkei-user', 'renkei-operator']]
   );
   await seedCodeProject();
+  // The walk's own session is new since the seed: re-seal the keys for it, or the key prompt covers the pages.
+  await enrollForE2E(client, E2E_SUBJECT);
 });
 
 test.afterAll(async () => {

@@ -401,16 +401,16 @@ test('the operator report shows who viewed, finished and skipped', async ({ page
   await expect(page.getByTestId('tour-totals-welcome')).toBeVisible();
   await shot(page, testInfo, 'coach-admin-report');
 
-  // Five tours seen, four chips in the row: the fifth is behind "+1",
-  // which opens every tour as a table.
+  // Six tours seen (one completed, five skipped), four chips in the row: the
+  // other two are behind "+2", which opens every tour as a table.
   const more = row.getByTestId('person-tours-more');
-  await expect(more).toHaveText('+1');
+  await expect(more).toHaveText('+2');
   await more.click();
   const dialog = page.getByRole('dialog');
   // Rendered twice — a table for a desktop, a card list for a phone —
   // and one of the two is on screen.
   const rows = dialog.getByTestId('person-tour').filter({ visible: true });
-  await expect(rows).toHaveCount(5);
+  await expect(rows).toHaveCount(6);
   await expect(rows.filter({ hasText: 'Chat' })).toContainText('Completed');
   await shot(page, testInfo, 'coach-admin-report-person');
   await page.keyboard.press('Escape');

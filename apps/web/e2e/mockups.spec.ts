@@ -404,6 +404,8 @@ test('a mockup’s document can neither reach the network nor read cookies, and 
   page,
 }) => {
   await page.goto(`/chat/${ids.chatId}`);
+  // The inline mockup can be in the DOM twice while the thread settles: wait until it is one.
+  await expect(page.locator('figure iframe[title="Mockup: Mobile hero"]')).toHaveCount(1);
   await expect(inlineFrame(page, 'Mobile hero').getByRole('heading')).toBeVisible(COLD);
 
   const mockupFrame = page.frames().find((frame) => frame.url().includes('/mockups/'));

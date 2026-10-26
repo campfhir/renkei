@@ -147,12 +147,15 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 
 /** A card sits above a heading on the page (the "Needs setup" side of it). */
 async function expectAbove(card: Locator, heading: Locator): Promise<void> {
+  // A card can be briefly in the DOM twice while the page settles: wait until it is one.
+  await expect(card).toHaveCount(1);
   const [cardBox, headingBox] = [await card.boundingBox(), await heading.boundingBox()];
   expect(cardBox!.y).toBeLessThan(headingBox!.y);
 }
 
 /** A card sits below a heading on the page (the "Connected" side of it). */
 async function expectBelow(card: Locator, heading: Locator): Promise<void> {
+  await expect(card).toHaveCount(1);
   const [cardBox, headingBox] = [await card.boundingBox(), await heading.boundingBox()];
   expect(cardBox!.y).toBeGreaterThan(headingBox!.y);
 }
