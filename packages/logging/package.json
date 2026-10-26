@@ -1,0 +1,19 @@
+{
+  "name": "@renkei/logging",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.19.2",
+    "jest": "^30.5.2",
+    "ts-jest": "^29.4.15",
+    "typescript": "^5.9.3"
+  }
+}

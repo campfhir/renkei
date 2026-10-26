@@ -15,7 +15,8 @@
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",
     "@renkei/connector-config": "workspace:*",
-    "@renkei/crypto": "workspace:*"
+    "@renkei/crypto": "workspace:*",
+    "@renkei/logging": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

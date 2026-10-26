@@ -31,6 +31,7 @@
     "@renkei/fileshares-client": "workspace:*",
     "@renkei/gates": "workspace:*",
     "@renkei/knowledge": "workspace:*",
+    "@renkei/logging": "workspace:*",
     "@renkei/notifications": "workspace:*",
     "@renkei/provider-grants": "workspace:*",
     "@renkei/queue": "workspace:*",

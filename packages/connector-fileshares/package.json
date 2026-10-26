@@ -17,6 +17,7 @@
     "@campfhir/safe-functions": "^0.1.3",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/logging": "workspace:*",
     "@renkei/rate-limit": "workspace:*",
     "@renkei/user-keys": "workspace:*",
     "@tryjsky/v9u-smb2": "^1.1.0",

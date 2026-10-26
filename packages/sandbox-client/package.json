@@ -13,6 +13,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "@renkei/logging": "workspace:*",
     "@renkei/settings": "workspace:*"
   },
   "devDependencies": {

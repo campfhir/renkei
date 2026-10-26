@@ -1,5 +1,6 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import packageJson from '../package.json';
+import { registerLogSink } from '@renkei/logging';
 
 /**
  * Anchored on globalThis, not the module cache. Next bundles
@@ -61,5 +62,8 @@ type RenkeiLogger = ReturnType<typeof buildLogger>;
 const globalForLogger = globalThis as unknown as { __renkeiLogger?: RenkeiLogger };
 
 export const logger = (globalForLogger.__renkeiLogger ??= buildLogger());
+
+// The packages write their warnings and errors through this same logger.
+registerLogSink(logger);
 
 export { secure, redact } from '@campfhir/bored-logs';

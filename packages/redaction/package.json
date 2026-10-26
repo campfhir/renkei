@@ -10,7 +10,8 @@
     "test": "jest"
   },
   "dependencies": {
-    "@renkei/gates": "workspace:*"
+    "@renkei/gates": "workspace:*",
+    "@renkei/logging": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

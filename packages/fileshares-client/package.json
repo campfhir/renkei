@@ -13,7 +13,8 @@
     "test": "jest"
   },
   "dependencies": {
-    "@renkei/connector-fileshares": "workspace:*"
+    "@renkei/connector-fileshares": "workspace:*",
+    "@renkei/logging": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

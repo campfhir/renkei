@@ -15,6 +15,7 @@
     "@renkei/connector-fileshares": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/logging": "workspace:*",
     "@renkei/settings": "workspace:*",
     "@renkei/worker-kit": "workspace:*",
     "kysely": "^0.29.7",

@@ -15,6 +15,7 @@
     "@renkei/connector-sandbox": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/logging": "workspace:*",
     "@renkei/settings": "workspace:*",
     "kysely": "^0.29.7",
     "mermaid": "12.2.0",

@@ -4,6 +4,7 @@ import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { getDatabase } from '@renkei/db';
 import { requireLogCipher, type LogCipher } from './log-encryption';
 import packageJson from '../package.json';
+import { registerLogSink } from '@renkei/logging';
 
 /**
  * The sandbox worker's logger — the same stack and env contract as
@@ -24,6 +25,8 @@ export const logger = createLogger({
     commit: commit ?? 'dev',
   },
 });
+
+registerLogSink(logger);
 
 logger.addAdapter(
   new ConsoleAdapter({

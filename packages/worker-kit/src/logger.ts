@@ -2,6 +2,7 @@ import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import { HttpAdapter, type E2ESigningKeysJwk } from '@campfhir/bored-logs/adapters/http';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { getDatabase } from '@renkei/db';
+import { registerLogSink } from '@renkei/logging';
 import { requireLogCipher, type LogCipher } from './log-encryption';
 
 /**
@@ -48,6 +49,9 @@ export function createWorkerLogger(options: WorkerLoggerOptions) {
       commit: commit ?? 'dev',
     },
   });
+
+  // The packages this process loads write their warnings through this logger.
+  registerLogSink(logger);
 
   logger.addAdapter(
     new ConsoleAdapter({
