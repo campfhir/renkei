@@ -8,7 +8,7 @@
  * the provider it belongs to.
  */
 
-import { getDataStore } from '@renkei/db';
+import { getDataStore, memoryDataStoreRequested } from '@renkei/db';
 import { readConnectorConfigCached, type ConnectorConfig } from '@renkei/connector-config';
 import {
   getServer,
@@ -357,8 +357,14 @@ export function standInViolations(env: NodeJS.ProcessEnv = process.env): string[
   return [...new Set(Object.values(STAND_IN_ENV))].filter((name) => Boolean(env[name]?.trim()));
 }
 
+/**
+ * A stand-in's origin, honoured outside production — and on the in-memory
+ * data store, which is never a deployment (nothing is persisted): the
+ * memory UI suite runs a production build on it in CI, its delegate in
+ * the web app's own process (apps/web/lib/memory-delegate.ts).
+ */
 function standInOrigin(provider: string): string | null {
-  if (process.env.NODE_ENV === 'production') return null;
+  if (process.env.NODE_ENV === 'production' && !memoryDataStoreRequested()) return null;
   const name = Object.prototype.hasOwnProperty.call(STAND_IN_ENV, provider)
     ? STAND_IN_ENV[provider]
     : null;
@@ -405,14 +411,20 @@ export async function providerConfig(
 /**
  * Microsoft's token endpoint is per directory, Salesforce's per org;
  * everyone else's is fixed. `which` is the directory tenant id, or the
- * Salesforce org's key.
+ * Salesforce org's key. A provider with a stand-in (STAND_IN_ENV, never
+ * in production) exchanges its codes at the same path on the stand-in's
+ * origin, so the e2e stub can complete a connect flow end to end.
  */
 export function tokenEndpointFor(
   spec: ProviderSpec,
   config: ConnectorConfig | null,
-  which?: string
+  which?: string,
+  provider: string = spec.connector
 ): string | null {
-  if (spec.tokenEndpoint) return spec.tokenEndpoint;
+  if (spec.tokenEndpoint) {
+    const standIn = standInOrigin(provider);
+    return standIn ? `${standIn}${new URL(spec.tokenEndpoint).pathname}` : spec.tokenEndpoint;
+  }
   if (spec.tokenEndpointFrom) return spec.tokenEndpointFrom(config, which);
   const directoryTenantId = which;
   if (spec.hosts.some((host) => host === 'graph.microsoft.com')) {

@@ -55,6 +55,47 @@ describe('hostAllowed', () => {
       expect(hostAllowed(github, standIn, GITHUB)).toBe(false);
     });
   });
+
+  it('honors it in a production build on the in-memory store, which is never a deployment', () => {
+    const standIn = new URL('http://127.0.0.1:8092/github/api/user');
+    withEnv(
+      {
+        NODE_ENV: 'production',
+        RENKEI_DATA_STORE: 'memory',
+        GITHUB_API_BASE_URL: 'http://127.0.0.1:8092/github',
+      },
+      () => {
+        expect(hostAllowed(github, standIn, GITHUB)).toBe(true);
+      }
+    );
+  });
+});
+
+describe('tokenEndpointFor and a stand-in', () => {
+  const github = providerSpec(GITHUB);
+  if (!github) throw new Error('github spec missing');
+
+  it("exchanges codes at the real endpoint's path on the stand-in's origin", () => {
+    withEnv({ NODE_ENV: 'test', GITHUB_API_BASE_URL: 'http://127.0.0.1:8092/github' }, () => {
+      expect(tokenEndpointFor(github, null)).toBe('http://127.0.0.1:8092/login/oauth/access_token');
+    });
+  });
+
+  it('keeps the real endpoint without a stand-in, and in production', () => {
+    withEnv({ NODE_ENV: 'test', GITHUB_API_BASE_URL: undefined }, () => {
+      expect(tokenEndpointFor(github, null)).toBe('https://github.com/login/oauth/access_token');
+    });
+    withEnv(
+      {
+        NODE_ENV: 'production',
+        RENKEI_DATA_STORE: undefined,
+        GITHUB_API_BASE_URL: 'http://127.0.0.1:8092/github',
+      },
+      () => {
+        expect(tokenEndpointFor(github, null)).toBe('https://github.com/login/oauth/access_token');
+      }
+    );
+  });
 });
 
 describe('Salesforce: one host per org, from the app registration', () => {

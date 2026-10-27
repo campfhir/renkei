@@ -491,7 +491,8 @@ export class Grants {
       const endpoint = tokenEndpointFor(
         spec,
         config,
-        str(body.directoryTenantId) || org || undefined
+        str(body.directoryTenantId) || org || undefined,
+        provider
       );
       if (!clientId || !endpoint || (!clientSecret && spec.clientAuth !== 'none'))
         return fail('NOT_CONFIGURED');
