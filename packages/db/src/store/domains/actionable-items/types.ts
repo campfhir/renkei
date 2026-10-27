@@ -20,6 +20,22 @@ export interface ActionableItemRecord {
   archivedAt: Date | null;
 }
 
+/** A new card. `evidence` and `suggestedAction` are stored as JSON. */
+export interface NewActionableItem {
+  id: string;
+  source: string;
+  /** Defaults to the column's own default when absent. */
+  kind?: string;
+  title: string;
+  summary: string;
+  evidence: unknown;
+  suggestedAction: unknown;
+  /** Null: tenant-wide. */
+  ownerSubject: string | null;
+  createdBy: string | null;
+  createdByAgentId: string | null;
+}
+
 /**
  * The curated-card feed. "Visible to a subject" is one rule everywhere:
  * a card with no owner is tenant-wide, an owned card only its owner's.
@@ -32,8 +48,23 @@ export interface ActionableItemStore {
    */
   listVisible(
     subject: string,
-    options: { limit: number; offset?: number; includeArchived: boolean }
+    options: { limit: number; offset?: number; includeArchived: boolean; status?: string }
   ): Promise<ActionableItemRecord[]>;
+  /** Put a card on the feed (`suggested`). */
+  create(card: NewActionableItem): Promise<void>;
+  /**
+   * Change a card the subject owns, created over MCP (`created_by` set) and
+   * still `suggested`; returns how many rows changed (0: not theirs to change).
+   */
+  updateOwnCreated(
+    subject: string,
+    id: string,
+    patch: { title?: string; summary?: string; evidence?: unknown }
+  ): Promise<number>;
+  /** Dismiss (and archive) the subject's own still-`suggested` card; returns rows changed. */
+  dismissOwn(subject: string, id: string): Promise<number>;
+  /** Archive the subject's own already-decided, unarchived card; returns rows changed. */
+  archiveOwnDecided(subject: string, id: string): Promise<number>;
   /** One card, when the subject can see it. */
   findVisible(subject: string, id: string): Promise<ActionableItemRecord | null>;
   /** Archive a card (any status) as `by`, now. */

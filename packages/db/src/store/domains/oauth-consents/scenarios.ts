@@ -136,4 +136,120 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
       );
     },
   },
+  {
+    method: 'oauthConsents.getClientCredentials',
+    name: 'the digest by client id; unknown client is null',
+    fixture,
+    run: async (store) => [
+      await store.oauthConsents.getClientCredentials('cli-a'),
+      await store.oauthConsents.getClientCredentials('nope'),
+    ],
+  },
+  {
+    method: 'oauthConsents.registerClient',
+    name: 'readable after with the default timestamps left out; a taken id is refused',
+    fixture,
+    run: async (store) => {
+      const client = {
+        clientId: 'client_new',
+        secretHash: 'digest',
+        clientName: 'Fresh',
+        redirectUris: ['http://127.0.0.1:9/cb'],
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      };
+      await store.oauthConsents.registerClient(client);
+      const taken = await store.oauthConsents.registerClient(client).then(
+        () => 'accepted',
+        (error: { code?: string }) => error.code
+      );
+      const read = await store.oauthConsents.getClient('client_new');
+      return {
+        taken,
+        credentials: await store.oauthConsents.getClientCredentials('client_new'),
+        read: read ? { ...read, createdAt: undefined } : null,
+      };
+    },
+  },
+  {
+    method: 'oauthConsents.getAuthorizationCode',
+    name: 'by code, expired or not; unknown is null',
+    fixture: {
+      ...fixture,
+      oauth_authorization_codes: [
+        {
+          code: 'c1',
+          client_id: 'cli-a',
+          subject: 'ann',
+          scope: null,
+          redirect_uri: 'http://127.0.0.1:3000/cb',
+          code_challenge: null,
+          code_challenge_method: null,
+          roles: ['renkei-user'],
+          expires_at: at(5),
+        },
+      ],
+    },
+    run: async (store) => [
+      await store.oauthConsents.getAuthorizationCode('c1'),
+      await store.oauthConsents.getAuthorizationCode('c2'),
+    ],
+  },
+  {
+    method: 'oauthConsents.deleteAuthorizationCode',
+    name: 'once; gone after, other codes kept',
+    fixture: {
+      ...fixture,
+      oauth_authorization_codes: ['c1', 'c2'].map((code) => ({
+        code,
+        client_id: 'cli-a',
+        subject: 'ann',
+        scope: 'openid',
+        redirect_uri: 'http://127.0.0.1:3000/cb',
+        code_challenge: 'x',
+        code_challenge_method: 'S256',
+        expires_at: at(5),
+      })),
+    },
+    run: async (store) => [
+      await store.oauthConsents.deleteAuthorizationCode('c1'),
+      await store.oauthConsents.deleteAuthorizationCode('c1'),
+      await store.oauthConsents.getAuthorizationCode('c1'),
+      (await store.oauthConsents.getAuthorizationCode('c2'))?.code ?? null,
+    ],
+  },
+  {
+    method: 'oauthConsents.createPendingSignin',
+    name: 'stores once; a reused state is refused',
+    fixture,
+    run: async (store) => {
+      const signin = {
+        id: id(30),
+        state: 'state-x',
+        nonce: 'n',
+        subject: 'ann',
+        scopes: 'read:jira-work',
+        expiresAt: at(10),
+        createdAt: at(0),
+      };
+      await store.oauthConsents.createPendingSignin(signin);
+      const again = await store.oauthConsents.createPendingSignin({ ...signin, id: id(31) }).then(
+        () => 'accepted',
+        (error: { code?: string }) => error.code
+      );
+      const withProvider = await store.oauthConsents
+        .createPendingSignin({
+          ...signin,
+          id: id(32),
+          state: 'state-y',
+          provider: 'mcp:abc',
+          codeVerifier: 'v',
+        })
+        .then(
+          () => 'accepted',
+          (error: { code?: string }) => error.code
+        );
+      return { again, withProvider };
+    },
+  },
 ];

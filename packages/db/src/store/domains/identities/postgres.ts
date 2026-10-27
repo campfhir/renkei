@@ -20,6 +20,16 @@ function record(row: {
 
 export function postgresIdentities(db: () => Kysely<DB>): IdentityStore {
   return {
+    async subjectByEmail(email) {
+      const row = await db()
+        .selectFrom('identities')
+        .select('subject')
+        .where('email', '=', email)
+        .orderBy('subject')
+        .limit(1)
+        .executeTakeFirst();
+      return row?.subject ?? null;
+    },
     async get(subject) {
       const row = await db()
         .selectFrom('identities')

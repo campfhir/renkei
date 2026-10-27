@@ -47,5 +47,36 @@ export function postgresProviderGrants(db: () => Kysely<DB>): ProviderGrantStore
         .executeTakeFirst();
       return Number(result.numUpdatedRows ?? 0);
     },
+    async getByAccount(provider, accountId) {
+      const row = await db()
+        .selectFrom('provider_grants')
+        .select([
+          'provider',
+          'provider_account_id',
+          'subject',
+          'display_name',
+          'requested_scopes',
+          'granted_scopes',
+          'metadata',
+        ])
+        .where('provider', '=', provider)
+        .where('provider_account_id', '=', accountId)
+        .executeTakeFirst();
+      return row ? grantSummaryFromRow(row) : null;
+    },
+    async disconnectWithTokens(provider, subject) {
+      return db()
+        .transaction()
+        .execute(async (trx) => {
+          const result = await trx
+            .deleteFrom('provider_grants')
+            .where('provider', '=', provider)
+            .where('subject', '=', subject)
+            .executeTakeFirst();
+          await trx.deleteFrom('oauth_access_tokens').where('subject', '=', subject).execute();
+          await trx.deleteFrom('oauth_refresh_tokens').where('subject', '=', subject).execute();
+          return Number(result.numDeletedRows ?? 0);
+        });
+    },
   };
 }

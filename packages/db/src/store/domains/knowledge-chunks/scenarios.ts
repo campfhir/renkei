@@ -69,6 +69,31 @@ const rounded = (rows: ChunkCandidate[]) =>
 
 const search = { text: 'zzzz', overfetch: 10, rrfK: 60, lexicalConfig: 'english', efSearch: 200 };
 
+function note(n: number, refId: string, sourceAt: number | null, provider = 'notes') {
+  return {
+    id: id(n),
+    provider,
+    ref_id: refId,
+    content: `enc:${n}`,
+    embedding: '[1,0,0]',
+    metadata: JSON.stringify({ title: `t${n}`, kind: 'note' }),
+    keywords: ['a'],
+    source_at: sourceAt === null ? null : day(sourceAt),
+    search_text: 'old',
+  };
+}
+
+const notesFixture = {
+  knowledge_chunks: [
+    note(41, 'ann@x.test/n1', 3),
+    note(42, 'ann@x.test/n1#0002', 3),
+    note(43, 'ann@x.test/n10', 5),
+    note(44, 'ann@x.test/n2', null),
+    note(45, 'ann@x.test/n1', 3, 'jira'),
+    note(46, 'bob@x.test/n1', 9),
+  ],
+};
+
 export const knowledgeChunkScenarios: Scenario<DataStore>[] = [
   {
     method: 'knowledgeChunks.listRecent',
@@ -161,5 +186,52 @@ export const knowledgeChunkScenarios: Scenario<DataStore>[] = [
         await hybrid({ sources: [{ provider: 'nobody' }] }, [1, 0, 0]),
       ];
     },
+  },
+  {
+    method: 'knowledgeChunks.objectChunks',
+    name: 'the object and its #-suffixed chunks, never a longer id or another provider',
+    fixture: notesFixture,
+    run: async (store) => [
+      await store.knowledgeChunks.objectChunks('notes', 'ann@x.test/n1'),
+      (await store.knowledgeChunks.objectChunks('notes', 'ann@x.test/n_')).map((c) => c.refId),
+      await store.knowledgeChunks.objectChunks('jira', 'ann@x.test/n1'),
+    ],
+  },
+  {
+    method: 'knowledgeChunks.rewriteChunk',
+    name: 'title merged into metadata, keywords and search text replaced; untitled leaves metadata',
+    fixture: notesFixture,
+    run: async (store) => {
+      await store.knowledgeChunks.rewriteChunk(id(41), {
+        title: 'Renamed',
+        keywords: ['k'],
+        lexical: { config: 'english', title: 'Renamed', keywords: ['k'], text: 'zebra crossing' },
+      });
+      await store.knowledgeChunks.rewriteChunk(id(42), {
+        keywords: null,
+        lexical: { config: 'english', title: 't42', keywords: null, text: 'plain\u0000text' },
+      });
+      // The rebuilt lexical entry is searchable: only the rewritten chunk matches.
+      const hits = await store.knowledgeChunks.searchHybrid(
+        { ...none, sources: [{ provider: 'notes' }] },
+        { ...search, vector: [1, 0, 0], text: 'zebra' }
+      );
+      return {
+        chunks: await store.knowledgeChunks.objectChunks('notes', 'ann@x.test/n1'),
+        lexical: hits
+          .map((hit) => ({ refId: hit.refId, lexicalHit: hit.lexicalHit }))
+          .sort((a, b) => (a.refId < b.refId ? -1 : a.refId > b.refId ? 1 : 0)),
+      };
+    },
+  },
+  {
+    method: 'knowledgeChunks.listByRefPrefix',
+    name: 'newest first with undated first, by ref id; the prefix is literal',
+    fixture: notesFixture,
+    run: async (store) => [
+      (await store.knowledgeChunks.listByRefPrefix('notes', 'ann@x.test/')).map((c) => c.refId),
+      await store.knowledgeChunks.listByRefPrefix('notes', 'bob@x.test/'),
+      await store.knowledgeChunks.listByRefPrefix('notes', 'ann_x'),
+    ],
   },
 ];

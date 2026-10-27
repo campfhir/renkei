@@ -197,6 +197,11 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       const row = tables.first('agent_runs', (r) => r.id === id);
       return row ? { id: row.id, agentId: row.agent_id } : null;
     },
+    async findRunOrigin(wanted) {
+      const id = runId(wanted);
+      const row = tables.first('agent_runs', (r) => r.id === id);
+      return row ? { agentId: row.agent_id, triggerKind: row.trigger_kind } : null;
+    },
     async optimizationEvidence({ ownerSubject, agentId, days, maxFailures, maxTools }) {
       const agent = agentOf(agentId);
       const since = Date.now() - days * 86_400_000;

@@ -211,6 +211,42 @@ export const agentScenarios: Scenario<DataStore>[] = [
     ],
   },
   {
+    method: 'agents.listChainedAfter',
+    name: 'the owner’s enabled agent triggers naming the caller, by name',
+    fixture: {
+      ...fixture,
+      agent_triggers: [
+        ...[
+          [21, 3, id(1), true],
+          [22, 2, id(1), true],
+          [23, 2, id(1), true],
+          [24, 1, id(2), true],
+          [25, 3, id(1), false],
+          [26, 4, id(1), true],
+        ].map(([n, agentN, caller, enabled]) => ({
+          id: id(Number(n)),
+          agent_id: id(Number(agentN)),
+          kind: 'agent',
+          enabled: Boolean(enabled),
+          config: JSON.stringify({ callerAgentId: caller }),
+        })),
+        {
+          id: id(27),
+          agent_id: id(3),
+          kind: 'schedule',
+          config: JSON.stringify({ every: 'day', at: '08:00', callerAgentId: id(1) }),
+          next_run_at: at(100),
+        },
+      ],
+    },
+    run: async (store) => [
+      await store.agents.listChainedAfter(id(1), 'ann'),
+      await store.agents.listChainedAfter(id(2), 'ann'),
+      await store.agents.listChainedAfter(id(1), 'bob'),
+      await store.agents.listChainedAfter(id(5), 'carol'),
+    ],
+  },
+  {
     method: 'agents.listNames',
     name: 'by name (collation), own only',
     fixture,

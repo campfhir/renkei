@@ -38,4 +38,13 @@ export interface ProviderGrantStore {
     accountId: string,
     patch: Record<string, unknown>
   ): Promise<number>;
+  /** One grant by its provider account, whoever holds it, or null. */
+  getByAccount(provider: string, accountId: string): Promise<ProviderGrantSummaryRecord | null>;
+  /**
+   * A person disconnects a provider: their grants on it go, and with them
+   * every MCP access and refresh token issued to them — in one
+   * transaction, so a grant never outlives its tokens or the reverse.
+   * Returns how many grants went.
+   */
+  disconnectWithTokens(provider: string, subject: string): Promise<number>;
 }

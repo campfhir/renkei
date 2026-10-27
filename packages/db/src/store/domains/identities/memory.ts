@@ -13,6 +13,13 @@ function record(row: Row<'identities'>): IdentityRecord {
 
 export function memoryIdentities(tables: MemoryTables): IdentityStore {
   return {
+    async subjectByEmail(email) {
+      const [row] = orderBy(
+        tables.select('identities', (r) => r.email === email),
+        [(r) => r.subject]
+      );
+      return row?.subject ?? null;
+    },
     async get(subject) {
       const row = tables.first('identities', (r) => r.subject === subject);
       return row ? record(row) : null;

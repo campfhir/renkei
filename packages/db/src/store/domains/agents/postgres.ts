@@ -97,6 +97,20 @@ export function postgresAgents(db: () => Kysely<DB>): AgentStore {
         .orderBy('id')
         .execute();
     },
+    async listChainedAfter(callerAgentId, ownerSubject) {
+      return db()
+        .selectFrom('agent_triggers as t')
+        .innerJoin('agents as a', 'a.id', 't.agent_id')
+        .select(['a.id', 'a.name'])
+        .where('t.kind', '=', 'agent')
+        .where('t.enabled', '=', true)
+        .where(sql<string>`t.config->>'callerAgentId'`, '=', callerAgentId)
+        .where('a.owner_subject', '=', ownerSubject)
+        .orderBy('a.name')
+        .orderBy('a.id')
+        .orderBy('t.id')
+        .execute();
+    },
     async namesLike(prefix) {
       const rows = await db()
         .selectFrom('agents')

@@ -1,5 +1,13 @@
 import type { MemoryTables } from '../../memory/tables';
-import { clientFromRow, codeValues, requestFromRow, requestValues } from './record';
+import {
+  authorizationCodeFromRow,
+  clientFromRow,
+  clientValues,
+  codeValues,
+  pendingSigninValues,
+  requestFromRow,
+  requestValues,
+} from './record';
 import type { OAuthConsentStore } from './types';
 
 export function memoryOAuthConsents(tables: MemoryTables): OAuthConsentStore {
@@ -35,6 +43,23 @@ export function memoryOAuthConsents(tables: MemoryTables): OAuthConsentStore {
     },
     async insertAuthorizationCode(code) {
       tables.insert('oauth_authorization_codes', codeValues(code));
+    },
+    async getClientCredentials(clientId) {
+      const row = tables.first('oauth_clients', (r) => r.client_id === clientId);
+      return row ? { clientId: row.client_id, secretHash: row.client_secret_hash ?? null } : null;
+    },
+    async registerClient(client) {
+      tables.insert('oauth_clients', clientValues(client));
+    },
+    async getAuthorizationCode(code) {
+      const row = tables.first('oauth_authorization_codes', (r) => r.code === code);
+      return row ? authorizationCodeFromRow(row) : null;
+    },
+    async deleteAuthorizationCode(code) {
+      return tables.delete('oauth_authorization_codes', (r) => r.code === code).length;
+    },
+    async createPendingSignin(signin) {
+      tables.insert('pending_oidc_signin', pendingSigninValues(signin));
     },
   };
 }

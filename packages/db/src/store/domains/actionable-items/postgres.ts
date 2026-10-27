@@ -1,6 +1,6 @@
 import { sql, type ExpressionBuilder, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
-import { actionableItemFromRow } from './record';
+import { actionableItemFromRow, itemPatchValues, newItemValues } from './record';
 import type { ActionableItemStore } from './types';
 
 /** Tenant-wide (no owner) or the subject's own. */
@@ -21,7 +21,7 @@ export function postgresActionableItems(db: () => Kysely<DB>): ActionableItemSto
       .select('agents.name as agent_name');
 
   return {
-    async listVisible(subject, { limit, offset = 0, includeArchived }) {
+    async listVisible(subject, { limit, offset = 0, includeArchived, status }) {
       let query = withAgent()
         .where(visibleTo(subject))
         .orderBy('actionable_items.created_at', 'desc')
@@ -29,6 +29,7 @@ export function postgresActionableItems(db: () => Kysely<DB>): ActionableItemSto
         .limit(limit)
         .offset(offset);
       if (!includeArchived) query = query.where('actionable_items.archived_at', 'is', null);
+      if (status !== undefined) query = query.where('actionable_items.status', '=', status);
       const rows = await query.execute();
       return rows.map(({ agent_name, ...row }) => actionableItemFromRow(row, agent_name));
     },
@@ -79,6 +80,48 @@ export function postgresActionableItems(db: () => Kysely<DB>): ActionableItemSto
         )
         .where('id', '=', id)
         .where('status', '=', 'suggested')
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows ?? 0);
+    },
+    async create(card) {
+      await db().insertInto('actionable_items').values(newItemValues(card)).execute();
+    },
+    async updateOwnCreated(subject, id, patch) {
+      const result = await db()
+        .updateTable('actionable_items')
+        .set({ ...itemPatchValues(patch), updated_at: sql`NOW()` })
+        .where('id', '=', id)
+        .where('owner_subject', '=', subject)
+        .where('created_by', 'is not', null)
+        .where('status', '=', 'suggested')
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows ?? 0);
+    },
+    async dismissOwn(subject, id) {
+      const result = await db()
+        .updateTable('actionable_items')
+        .set({
+          status: 'dismissed',
+          decided_by: subject,
+          decided_at: sql`NOW()`,
+          archived_at: sql`NOW()`,
+          archived_by: subject,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', id)
+        .where('owner_subject', '=', subject)
+        .where('status', '=', 'suggested')
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows ?? 0);
+    },
+    async archiveOwnDecided(subject, id) {
+      const result = await db()
+        .updateTable('actionable_items')
+        .set({ archived_at: sql`NOW()`, archived_by: subject, updated_at: sql`NOW()` })
+        .where('id', '=', id)
+        .where('owner_subject', '=', subject)
+        .where('status', '!=', 'suggested')
+        .where('archived_at', 'is', null)
         .executeTakeFirst();
       return Number(result.numUpdatedRows ?? 0);
     },

@@ -141,4 +141,109 @@ export const actionableItemScenarios: Scenario<DataStore>[] = [
       return [card?.status, card?.result];
     },
   },
+  {
+    method: 'actionableItems.listVisible',
+    name: 'narrowed to one status',
+    fixture,
+    run: async (store) => [
+      ids(
+        await store.actionableItems.listVisible('ann', {
+          limit: 10,
+          includeArchived: true,
+          status: 'suggested',
+        })
+      ),
+      ids(
+        await store.actionableItems.listVisible('ann', {
+          limit: 10,
+          includeArchived: false,
+          status: 'executed',
+        })
+      ),
+    ],
+  },
+  {
+    method: 'actionableItems.create',
+    name: 'an owned info card and a tenant-wide suggestion, readable after',
+    fixture,
+    run: async (store) => {
+      await store.actionableItems.create({
+        id: id(20),
+        source: 'mcp',
+        kind: 'info',
+        title: 'Morning',
+        summary: 'All quiet',
+        evidence: {},
+        suggestedAction: null,
+        ownerSubject: 'ann',
+        createdBy: 'ann',
+        createdByAgentId: id(101),
+      });
+      await store.actionableItems.create({
+        id: id(21),
+        source: 'webex',
+        title: 'Captured',
+        summary: 'text',
+        evidence: { provider: 'webex' },
+        suggestedAction: { tool: 'jira_create_issue', args: { summary: 'x' } },
+        ownerSubject: null,
+        createdBy: null,
+        createdByAgentId: null,
+      });
+      const visible = async (subject: string, n: number) => {
+        const card = await store.actionableItems.findVisible(subject, id(n));
+        return card ? { ...card, createdAt: undefined } : null;
+      };
+      return [await visible('ann', 20), await visible('bob', 20), await visible('bob', 21)];
+    },
+  },
+  {
+    method: 'actionableItems.updateOwnCreated',
+    name: 'own MCP-created suggested cards only',
+    fixture: {
+      ...fixture,
+      actionable_items: [
+        ...fixture.actionable_items,
+        { ...item(7, 6, { owner: 'ann' }), created_by: 'ann' },
+        { ...item(8, 6, { owner: 'ann', status: 'dismissed' }), created_by: 'ann' },
+      ],
+    },
+    run: async (store) => [
+      await store.actionableItems.updateOwnCreated('ann', id(7), {
+        title: 'new',
+        evidence: { a: 1 },
+      }),
+      await store.actionableItems.updateOwnCreated('ann', id(2), { title: 'pipeline' }),
+      await store.actionableItems.updateOwnCreated('ann', id(8), { title: 'decided' }),
+      await store.actionableItems.updateOwnCreated('bob', id(7), { title: 'not mine' }),
+      (await store.actionableItems.findVisible('ann', id(7)))?.title,
+      (await store.actionableItems.findVisible('ann', id(7)))?.evidence,
+      (await store.actionableItems.findVisible('ann', id(7)))?.summary,
+    ],
+  },
+  {
+    method: 'actionableItems.dismissOwn',
+    name: 'own suggested cards once; tenant-wide and others’ refused',
+    fixture,
+    run: async (store) => [
+      await store.actionableItems.dismissOwn('ann', id(2)),
+      await store.actionableItems.dismissOwn('ann', id(2)),
+      await store.actionableItems.dismissOwn('ann', id(3)),
+      await store.actionableItems.dismissOwn('ann', id(4)),
+      ids(await store.actionableItems.listVisible('ann', { limit: 10, includeArchived: false })),
+      (await store.actionableItems.findVisible('ann', id(2)))?.status,
+    ],
+  },
+  {
+    method: 'actionableItems.archiveOwnDecided',
+    name: 'own decided unarchived cards only',
+    fixture,
+    run: async (store) => [
+      await store.actionableItems.archiveOwnDecided('ann', id(2)),
+      await store.actionableItems.archiveOwnDecided('ann', id(6)),
+      await store.actionableItems.archiveOwnDecided('ann', id(6)),
+      await store.actionableItems.archiveOwnDecided('ann', id(5)),
+      ids(await store.actionableItems.listVisible('ann', { limit: 10, includeArchived: false })),
+    ],
+  },
 ];

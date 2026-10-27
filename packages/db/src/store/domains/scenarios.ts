@@ -53,6 +53,13 @@ import { personalAccountScenarios } from './personal-account/scenarios';
 import { activityLogScenarios } from './activity-logs/scenarios';
 import { toolUsageScenarios } from './tool-usage/scenarios';
 import { knowledgeChunkScenarios } from './knowledge-chunks/scenarios';
+import { oauthTokenScenarios } from './oauth-tokens/scenarios';
+import { phiAccessScenarios } from './phi-access/scenarios';
+import { uploadSlotScenarios } from './upload-slots/scenarios';
+import { mailBulkJobScenarios } from './mail-bulk-jobs/scenarios';
+import { webexSentMessageScenarios } from './webex-sent-messages/scenarios';
+import { toolSurfaceScenarios } from './tool-surface/scenarios';
+import { contentWatchScenarios } from './content-watches/scenarios';
 
 export const SCENARIOS: Scenario<DataStore>[] = [
   ...sessionScenarios,
@@ -106,4 +113,11 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...activityLogScenarios,
   ...toolUsageScenarios,
   ...knowledgeChunkScenarios,
+  ...oauthTokenScenarios,
+  ...phiAccessScenarios,
+  ...uploadSlotScenarios,
+  ...mailBulkJobScenarios,
+  ...webexSentMessageScenarios,
+  ...toolSurfaceScenarios,
+  ...contentWatchScenarios,
 ];

@@ -140,6 +140,15 @@ export interface AgentStore {
   find(agentId: string, options?: { ownerSubject?: string }): Promise<AgentRecord | null>;
   /** One owner's agents as {id, name}, by name (ties by id). */
   listNames(ownerSubject: string): Promise<{ id: string; name: string }[]>;
+  /**
+   * The owner's agents chained AFTER `callerAgentId`: one entry per enabled
+   * `agent` trigger whose config names it as the caller, by agent name,
+   * then agent id, then trigger id.
+   */
+  listChainedAfter(
+    callerAgentId: string,
+    ownerSubject: string
+  ): Promise<{ id: string; name: string }[]>;
   /** Every agent name that matches `prefix%` as a LIKE pattern (wildcards in it act), by name. */
   namesLike(prefix: string): Promise<string[]>;
   /** Insert a definition (description stale, revision 1). A name in use is NAME_TAKEN. */

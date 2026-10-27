@@ -55,6 +55,13 @@ import { personalAccount } from './personal-account';
 import { activityLogs } from './activity-logs';
 import { toolUsage } from './tool-usage';
 import { knowledgeChunks } from './knowledge-chunks';
+import { oauthTokens } from './oauth-tokens';
+import { phiAccess } from './phi-access';
+import { uploadSlots } from './upload-slots';
+import { mailBulkJobs } from './mail-bulk-jobs';
+import { webexSentMessages } from './webex-sent-messages';
+import { toolSurface } from './tool-surface';
+import { contentWatches } from './content-watches';
 
 export const DOMAINS = {
   sessions,
@@ -108,4 +115,11 @@ export const DOMAINS = {
   activityLogs,
   toolUsage,
   knowledgeChunks,
+  oauthTokens,
+  phiAccess,
+  uploadSlots,
+  mailBulkJobs,
+  webexSentMessages,
+  toolSurface,
+  contentWatches,
 };

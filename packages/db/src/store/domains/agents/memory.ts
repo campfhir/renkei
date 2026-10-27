@@ -79,6 +79,26 @@ export function memoryAgents(tables: MemoryTables): AgentStore {
         [(r) => r.id]
       ).map((row) => ({ id: row.id, name: row.name }));
     },
+    async listChainedAfter(callerAgentId, ownerSubject) {
+      const chained = tables
+        .select(
+          'agent_triggers',
+          (t) =>
+            t.kind === 'agent' &&
+            t.enabled &&
+            jsonField(t.config, 'callerAgentId') === callerAgentId
+        )
+        .flatMap((t) => {
+          const owned = tables.first(
+            'agents',
+            (a) => a.id === t.agent_id && a.owner_subject === ownerSubject
+          );
+          return owned ? [{ id: owned.id, name: owned.name, triggerId: t.id }] : [];
+        });
+      return orderBy(chained, [(r) => r.name], [(r) => r.id], [(r) => r.triggerId]).map(
+        ({ id, name }) => ({ id, name })
+      );
+    },
     async namesLike(prefix) {
       return orderBy(
         tables.select('agents', (r) => like(r.name, `${prefix}%`, true)),

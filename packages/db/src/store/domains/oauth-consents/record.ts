@@ -1,6 +1,57 @@
 import type { Selectable } from 'kysely';
-import type { OauthClients, OauthConsentRequests } from '../../../db.types';
-import type { ConsentRequestRecord, OAuthClientRecord } from './types';
+import type {
+  OauthAuthorizationCodes,
+  OauthClients,
+  OauthConsentRequests,
+} from '../../../db.types';
+import type {
+  AuthorizationCodeRecord,
+  ConsentRequestRecord,
+  NewOAuthClient,
+  NewPendingSignin,
+  OAuthClientRecord,
+} from './types';
+
+export function authorizationCodeFromRow(
+  row: Selectable<OauthAuthorizationCodes>
+): AuthorizationCodeRecord {
+  return {
+    code: row.code,
+    clientId: row.client_id,
+    subject: row.subject,
+    scope: row.scope,
+    redirectUri: row.redirect_uri,
+    codeChallenge: row.code_challenge,
+    codeChallengeMethod: row.code_challenge_method,
+    roles: row.roles ?? [],
+    expiresAt: new Date(row.expires_at),
+  };
+}
+
+export function clientValues(client: NewOAuthClient) {
+  return {
+    client_id: client.clientId,
+    client_secret_hash: client.secretHash,
+    client_name: client.clientName,
+    redirect_uris: client.redirectUris,
+    response_types: client.responseTypes,
+    grant_types: client.grantTypes,
+  };
+}
+
+export function pendingSigninValues(signin: NewPendingSignin) {
+  return {
+    id: signin.id,
+    state: signin.state,
+    nonce: signin.nonce,
+    subject: signin.subject,
+    scopes: signin.scopes,
+    provider: signin.provider ?? null,
+    code_verifier: signin.codeVerifier ?? null,
+    expires_at: signin.expiresAt,
+    created_at: signin.createdAt,
+  };
+}
 
 export function clientFromRow(row: Selectable<OauthClients>): OAuthClientRecord {
   return {

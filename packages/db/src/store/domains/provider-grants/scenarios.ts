@@ -78,4 +78,68 @@ export const providerGrantScenarios: Scenario<DataStore>[] = [
       await store.providerGrants.listForSubject('ann', { provider: 'zoom' }),
     ],
   },
+  {
+    method: 'providerGrants.getByAccount',
+    name: 'by provider and account, whoever holds it',
+    fixture,
+    run: async (store) => [
+      await store.providerGrants.getByAccount('atlassian', 'a1'),
+      await store.providerGrants.getByAccount('microsoft', 'ms2'),
+      await store.providerGrants.getByAccount('zoom', 'a1'),
+    ],
+  },
+  {
+    method: 'providerGrants.disconnectWithTokens',
+    name: 'the subject’s grants on one provider and all their MCP tokens',
+    fixture: {
+      ...fixture,
+      oauth_clients: [
+        {
+          client_id: 'cli',
+          client_name: null,
+          client_secret_hash: 'h',
+          redirect_uris: [],
+          created_at: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      oauth_access_tokens: ['ann', 'bob'].map((subject) => ({
+        token_hash: `a-${subject}`,
+        client_id: 'cli',
+        subject,
+        expires_at: '2026-01-02T00:00:00.000Z',
+      })),
+      oauth_refresh_tokens: ['ann', 'bob'].map((subject, n) => ({
+        token_id: `00000000-0000-4000-8000-00000000000${n}`,
+        client_id: 'cli',
+        subject,
+        token_hash: `r-${subject}`,
+        expires_at: '2026-01-02T00:00:00.000Z',
+      })),
+    },
+    run: async (store) => [
+      await store.providerGrants.disconnectWithTokens('atlassian', 'ann'),
+      await store.providerGrants.disconnectWithTokens('atlassian', 'ann'),
+      (await store.providerGrants.listForSubject('ann')).map((g) => g.provider),
+      await store.oauthTokens.findAccessToken('a-ann', 'jira'),
+      (await store.oauthTokens.findAccessToken('a-bob', 'jira'))?.subject ?? null,
+      (
+        await store.oauthTokens.rotateRefreshToken({
+          presentedHash: 'r-bob',
+          clientId: 'cli',
+          now: new Date('2026-01-01T00:00:00.000Z'),
+          next: { tokenId: '00000000-0000-4000-8000-000000000009', tokenHash: 'r2' },
+          access: { tokenHash: 'a2', expiresAt: new Date('2026-01-01T01:00:00.000Z') },
+        })
+      ).outcome,
+      (
+        await store.oauthTokens.rotateRefreshToken({
+          presentedHash: 'r-ann',
+          clientId: 'cli',
+          now: new Date('2026-01-01T00:00:00.000Z'),
+          next: { tokenId: '00000000-0000-4000-8000-000000000008', tokenHash: 'r3' },
+          access: { tokenHash: 'a3', expiresAt: new Date('2026-01-01T01:00:00.000Z') },
+        })
+      ).outcome,
+    ],
+  },
 ];

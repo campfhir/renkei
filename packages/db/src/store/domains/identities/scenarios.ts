@@ -68,4 +68,20 @@ export const identityScenarios: Scenario<DataStore>[] = [
     fixture,
     run: (store) => store.identities.distinctGroups(),
   },
+  {
+    method: 'identities.subjectByEmail',
+    name: 'exact email, the first subject of several; case matters',
+    fixture: {
+      identities: [
+        ...fixture.identities,
+        { subject: 's-0', email: 'bea@example.test', display_name: null, idp_groups: [] },
+      ],
+    },
+    run: async (store) => [
+      await store.identities.subjectByEmail('bea@example.test'),
+      await store.identities.subjectByEmail('zed@example.test'),
+      await store.identities.subjectByEmail('ZED@example.test'),
+      await store.identities.subjectByEmail('nobody@example.test'),
+    ],
+  },
 ];

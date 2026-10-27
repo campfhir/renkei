@@ -31,5 +31,21 @@ export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
         })
       ).length;
     },
+    async getByAccount(provider, accountId) {
+      const row = tables.first(
+        'provider_grants',
+        (r) => r.provider === provider && r.provider_account_id === accountId
+      );
+      return row ? grantSummaryFromRow(row) : null;
+    },
+    async disconnectWithTokens(provider, subject) {
+      const gone = tables.delete(
+        'provider_grants',
+        (r) => r.provider === provider && r.subject === subject
+      ).length;
+      tables.delete('oauth_access_tokens', (r) => r.subject === subject);
+      tables.delete('oauth_refresh_tokens', (r) => r.subject === subject);
+      return gone;
+    },
   };
 }
