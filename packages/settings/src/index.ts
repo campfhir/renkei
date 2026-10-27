@@ -9,8 +9,8 @@
  * defaults and a short cache.
  */
 
-import { getDatabase } from '@renkei/db';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { getDatabase, getDataStore } from '@renkei/db';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
 /**
@@ -489,16 +489,10 @@ export function coerceStringListRecord(
 export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>> {
   if (orgCache && orgCache.expiresAt > Date.now()) return ok(orgCache.value);
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const rowsResult = await wrapAsync(
-    () => dbResult.val.selectFrom('settings').select(['key', 'value']).execute(),
-    'DB_ERROR' as const
-  );
+  const rowsResult = await wrapAsync(() => getDataStore().settings.all(), 'DB_ERROR' as const);
   if (!rowsResult.ok) return rowsResult;
 
-  const stored = new Map(rowsResult.val.map((row) => [row.key, row.value]));
+  const stored = rowsResult.val;
   const d = DEFAULT_ORG_SETTINGS;
   const settings: OrgSettings = {
     readOnly: Boolean(coerce(stored.get('read_only'), d.readOnly)),
@@ -639,14 +633,12 @@ let keyDomain: string | null = null;
 
 export async function getKeyDomain(): Promise<string> {
   if (keyDomain !== null) return keyDomain;
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return FRESH_KEY_DOMAIN;
-  const row = await dbResult.val
-    .selectFrom('settings')
-    .select('value')
-    .where('key', '=', 'legacy_key_domain')
-    .executeTakeFirst();
-  keyDomain = typeof row?.value === 'string' && row.value ? row.value : FRESH_KEY_DOMAIN;
+  const stored = await wrapAsync(
+    () => getDataStore().settings.get('legacy_key_domain'),
+    'DB_ERROR' as const
+  );
+  if (!stored.ok) return FRESH_KEY_DOMAIN;
+  keyDomain = typeof stored.val === 'string' && stored.val ? stored.val : FRESH_KEY_DOMAIN;
   return keyDomain;
 }
 
@@ -659,10 +651,6 @@ export function resetKeyDomain(): void {
 export async function setOrgSettings(
   updates: Partial<OrgSettings>
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-  const db = dbResult.val;
-
   const pairs: Array<
     [string, boolean | number | string | string[] | Record<string, string[]> | undefined]
   > = [
@@ -720,21 +708,7 @@ export async function setOrgSettings(
   for (const [key, value] of pairs) {
     if (value === undefined) continue;
     const result = await wrapAsync(
-      () =>
-        db
-          .insertInto('settings')
-          .values({
-            key,
-            value: JSON.stringify(value),
-            updated_at: new Date().toISOString(),
-          })
-          .onConflict((oc) =>
-            oc.columns(['key']).doUpdateSet({
-              value: JSON.stringify(value),
-              updated_at: new Date().toISOString(),
-            })
-          )
-          .execute(),
+      () => getDataStore().settings.set(key, value),
       'DB_ERROR' as const
     );
     if (!result.ok) return result;

@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { DB } from './db.types';
+import { memoryDataStoreRequested } from './store/selection';
 
 /**
  * Connection state anchored on globalThis, not the module cache. Next
@@ -23,6 +24,11 @@ const state: DbState = (globalForDb.__renkeiDbState ??= { db: null, pool: null }
 
 export function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
   if (state.pool) return ok(state.pool);
+
+  // A process on the in-memory data store (store/registry.ts) has no
+  // database by design: code that still queries directly sees it the way
+  // it sees an outage, never a real database the env happens to name.
+  if (memoryDataStoreRequested()) return err('DB_INIT_ERROR' as const);
 
   // Deliberately raw process.env, not a package-level config module: this
   // package is shared by web, worker and the migrate CLI, and DATABASE_URL is

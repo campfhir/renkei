@@ -53,6 +53,74 @@ jobs:
       - name: Test
         run: pnpm test
 
+  # The data-store contract (packages/db/src/store/contract.ts) against a
+  # real, migrated Postgres. `pnpm test` above runs the same cases against
+  # the in-memory store only; this is the half that proves the memory store
+  # answers what the database answers, so the UI suite below can trust it.
+  db-contract:
+    name: data store contract (postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+        env:
+          POSTGRES_USER: renkei
+          POSTGRES_PASSWORD: renkei
+          POSTGRES_DB: renkei
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U renkei -d renkei"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://renkei:renkei@localhost:5432/renkei
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Migrate
+        run: pnpm --filter @renkei/db migrate
+
+      - name: Contract
+        run: pnpm --filter @renkei/db test:contract
+
+  # The UI suite on the in-memory data store (apps/web/playwright.memory.config.ts):
+  # one production build of the web app with RENKEI_DATA_STORE=memory, no
+  # Postgres, no delegate, no stubs — layout and navigation checked without
+  # the IO of a full deployment. The full browser suite stays local-only.
+  e2e-memory:
+    name: e2e (memory store)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --filter renkei exec playwright install --with-deps chromium
+
+      - name: Memory-store UI suite
+        run: pnpm --filter renkei e2e:memory
+
   # Every change to the product (apps/, packages/, docker/) needs an entry in
   # apps/web/lib/changelog.ts in the same pull request, or a commit that says
   # `Changelog: none`. `pnpm changelog add` writes the entry with today's date.

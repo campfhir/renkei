@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "migrate": "tsx scripts/migrate.ts",
-    "db:types": "tsx scripts/generate-db-types.ts"
+    "db:types": "tsx scripts/generate-db-types.ts",
+    "test:contract": "jest src/store"
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",

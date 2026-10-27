@@ -65,6 +65,10 @@ const NON_SESSION_AUTH: Record<string, string> = {
   'api/oauth/callback/route.ts':
     'single-use OAuth state row bound to the pending authorization, to the starting ' +
     'browser (connect_state_ cookie) and to its session subject (lib/connect-flow-binding.ts)',
+  'api/test/data-store/route.ts':
+    '404 unless this process runs on the in-memory data store (RENKEI_DATA_STORE=memory) AND ' +
+    'the x-renkei-seed-token header matches RENKEI_MEMORY_SEED_TOKEN; on Postgres there is ' +
+    'no store for it to reach',
   'api/upload/[slotId]/route.ts': 'opaque per-slot bearer, single-use claim, expiring',
   'api/webhooks/microsoft/[accountId]/route.ts':
     'per-subscription clientState secret matched against webhook_subscriptions',

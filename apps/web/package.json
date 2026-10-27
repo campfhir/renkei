@@ -12,6 +12,7 @@
     "test:integration": "jest --config jest.integration.config.js",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
+    "e2e:memory": "playwright test --config playwright.memory.config.ts",
     "screens": "playwright test screenshots --reporter=list",
     "generate:log-ship-keys": "node scripts/generate-log-ship-keys.mjs",
     "build:widgets": "node lib/mcp-widgets/build.mjs"

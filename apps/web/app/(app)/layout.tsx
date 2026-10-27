@@ -80,10 +80,11 @@ export default async function TenantLayout({ children }: { children: ReactNode }
   // misbehaving database.
   // The menu carries the person's chats on every page, and the coach-mark
   // engine needs to know which tours this person has already settled.
+  // The chat list is not behind the data store yet (packages/db/src/store),
+  // so on the memory store — which has no database — the menu carries no
+  // chats, exactly as it does when the database is down.
   const dbResult = getDatabase();
-  const noDatabase: Promise<[null, Awaited<ReturnType<typeof listCoachMarkProgress>>]> =
-    Promise.resolve([null, []]);
-  const [identity, prefs, theme, coachMarks, orgSettings, [chats, coachMarkProgress]] =
+  const [identity, prefs, theme, coachMarks, orgSettings, chats, coachMarkProgress] =
     await Promise.all([
       getIdentityDisplay(session.subject),
       getNotificationPrefs(session.subject, { fresh: true }),
@@ -91,13 +92,9 @@ export default async function TenantLayout({ children }: { children: ReactNode }
       getCoachMarkPrefs(session.subject, { fresh: true }),
       getOrgSettings(),
       dbResult.ok
-        ? Promise.all([
-            loadChatSidebar(dbResult.val, session.subject, {
-              since: chatSidebarActiveSince(),
-            }),
-            listCoachMarkProgress(dbResult.val, session.subject),
-          ])
-        : noDatabase,
+        ? loadChatSidebar(dbResult.val, session.subject, { since: chatSidebarActiveSince() })
+        : null,
+      listCoachMarkProgress(session.subject),
     ]);
   const userName = identity?.displayName ?? identity?.email ?? session.subject;
   const coachMarksEnabled = orgSettings.ok ? orgSettings.val.coachMarksEnabled : true;

@@ -1,6 +1,5 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getCoachMarkPrefs } from '@renkei/user-prefs';
 import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromCookies } from '@/lib/session';
@@ -25,10 +24,9 @@ export default async function TutorialsPage(): Promise<React.ReactNode> {
   if (!session) redirect(signInUrl(`/tutorials`));
   const isOperator = session.roles.includes(ROLE_OPERATOR);
 
-  const dbResult = getDatabase();
   const [prefs, progress, orgSettings] = await Promise.all([
     getCoachMarkPrefs(session.subject, { fresh: true }),
-    dbResult.ok ? listCoachMarkProgress(dbResult.val, session.subject) : [],
+    listCoachMarkProgress(session.subject),
     getOrgSettings(),
   ]);
   // The org's switch is off: say so, and offer nothing — a Start button

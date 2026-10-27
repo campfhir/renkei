@@ -1,6 +1,5 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { COACH_MARK_TOURS } from '@/lib/coach-marks/tours';
 import { stateLabel } from '@/lib/coach-marks/select';
@@ -30,8 +29,8 @@ export default async function AdminTutorialsPage(): Promise<React.ReactNode> {
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  const people = await listCoachMarkReport();
+  if (!people) {
     return (
       <div>
         <h2 className="mb-2 text-lg font-semibold">Error</h2>
@@ -41,8 +40,6 @@ export default async function AdminTutorialsPage(): Promise<React.ReactNode> {
       </div>
     );
   }
-
-  const people = await listCoachMarkReport(dbResult.val);
 
   const totals = new Map<string, TourTotals>(
     COACH_MARK_TOURS.map((tour) => [

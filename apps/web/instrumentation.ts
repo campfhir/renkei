@@ -1,6 +1,11 @@
 import type { Instrumentation } from 'next';
 import { logger } from '@/lib/logger';
-import { getDatabase } from '@renkei/db';
+import {
+  createMemoryDataStore,
+  getDatabase,
+  memoryDataStoreRequested,
+  registerDataStore,
+} from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
 import { watchLogLevel } from '@renkei/settings';
 import type { LogCipher } from '@/lib/log-encryption';
@@ -28,6 +33,22 @@ export async function register() {
     if (delegateKeyRefusal) {
       console.error(`FATAL [web/instrumentation]: ${delegateKeyRefusal}`);
       process.exit(1);
+    }
+
+    // RENKEI_DATA_STORE=memory: the data store is plain JavaScript in this
+    // process (packages/db/src/store/memory.ts), for the UI suite that
+    // needs no database (playwright.memory.config.ts). Nothing here then
+    // has a database to reach — no log table, no schema to check, no turn
+    // or apply-job rows to recover — so boot stops after registering it.
+    // Fixtures arrive per spec through app/api/test/data-store.
+    if (memoryDataStoreRequested()) {
+      registerDataStore(createMemoryDataStore());
+      watchLogLevel(logger);
+      globalMarks.__renkeiPgLogAdapterAttached = true;
+      logger.warn('Running on the IN-MEMORY data store: nothing is persisted', {
+        component: 'web/instrumentation',
+      });
+      return;
     }
 
     // Every adapter starts at info, which holds only for the few seconds

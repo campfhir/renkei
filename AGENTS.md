@@ -70,3 +70,38 @@ viewport pass.
   `connector_configs`, `llm_model_configs`, `oauth_clients`) are shared by
   every spec in a run: a spec that writes one of them cannot assume an
   empty state and should keep its own writes distinctive.
+
+# The data store seam: new reads go through `getDataStore()`
+
+`@renkei/db` exposes a data store (`packages/db/src/store/`): domain-shaped
+repositories — sessions, identities, user preferences, org settings, coach
+marks, notifications so far — with a Postgres implementation and an
+in-memory JavaScript one, both held to one contract
+(`store/contract.ts`, run against memory by `pnpm test` and against a
+migrated Postgres by `pnpm --filter @renkei/db test:contract`).
+
+- **Pages and API routes for an area that is behind the store call
+  `getDataStore()`, never `getDatabase()`.** Code that still uses
+  `getDatabase()` directly gets a database error on the memory store (it
+  sees what it sees during an outage), so a page queried that way renders
+  empty in the memory UI suite.
+- **Moving an area behind the seam** is one change: a repository in
+  `store/types.ts`, both implementations, cases in `store/contract.ts`
+  that pin down anything a page can observe (order, bounds, JSON round
+  trips, who can see what), then the call sites. Business rules stay with
+  the caller; a store only keeps and returns.
+- **Unit tests** register a memory store (`registerDataStore(createMemoryDataStore())`,
+  `resetDataStore()` after) instead of hand-building Kysely chains — see
+  `packages/settings/src/index.test.ts` or `apps/web/lib/session.test.ts`.
+- **The memory UI suite** (`apps/web/playwright.memory.config.ts`,
+  specs in `apps/web/e2e/memory/`) runs the web app with
+  `RENKEI_DATA_STORE=memory` (instrumentation.ts registers the store) and
+  no Postgres or delegate: `pnpm --filter renkei e2e:memory`. Specs get a
+  signed-in person of their own from `e2e/memory/fixtures.ts` and add rows
+  with `person.seed({...})`, which posts to the test-only
+  `app/api/test/data-store` route (404 unless the memory store is active and
+  the seed token matches). It runs in CI. Prefer it for layout, navigation
+  and page-behavior checks of areas behind the store; keep the full suite
+  for what needs the real database, the delegate or the stubs. On a box
+  whose preinstalled Chromium doesn't match Playwright's, set
+  `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.

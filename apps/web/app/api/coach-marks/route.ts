@@ -10,27 +10,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { parseCoachMarkRecord } from '@/lib/coach-marks/progress';
 import { listCoachMarkProgress, recordCoachMarkEvent } from '@/lib/coach-marks/store';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
-
-  const progress = await listCoachMarkProgress(dbResult.val, session.subject);
+  const progress = await listCoachMarkProgress(session.subject);
   return NextResponse.json({ progress });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -40,10 +32,7 @@ export async function POST(
     return NextResponse.json({ error: 'Expected a tour, an event and a step' }, { status: 400 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 503 });
-
-  const written = await recordCoachMarkEvent(dbResult.val, session.subject, record);
+  const written = await recordCoachMarkEvent(session.subject, record);
   if (!written.ok) return NextResponse.json({ error: 'Could not record' }, { status: 500 });
   return NextResponse.json({ progress: written.val });
 }

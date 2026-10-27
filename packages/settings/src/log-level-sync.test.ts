@@ -5,55 +5,52 @@
  * adapter with a `level` property and leaves the rest alone.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { getEffectiveLogLevel, watchLogLevel } from './log-level-sync';
 import { invalidateSettingsCache } from './index';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+/** The one organization's settings, on a memory store, with this log level stored. */
+function stubStore(level?: string): void {
+  const store = createMemoryDataStore();
+  if (level !== undefined) void store.settings.set('log_level', level);
+  registerDataStore(store);
+}
 
-/** Stubs the `settings` table: the one organization's rows by key. */
-function stubDb(level?: string): void {
-  const settingsRows = level === undefined ? [] : [{ key: 'log_level', value: level }];
-
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      selectFrom: () => {
-        const chain = {
-          select: () => chain,
-          where: () => chain,
-          execute: async () => settingsRows,
-        };
-        return chain;
-      },
-    },
+/** A store whose every read fails, as an unreachable database does. */
+function unreachableStore(): void {
+  const store = createMemoryDataStore();
+  registerDataStore({
+    ...store,
+    settings: { ...store.settings, all: () => Promise.reject(new Error('DB_INIT_ERROR')) },
   });
 }
 
 beforeEach(() => {
-  mockGetDatabase.mockReset();
   invalidateSettingsCache();
+});
+
+afterAll(() => {
+  resetDataStore();
 });
 
 describe('getEffectiveLogLevel', () => {
   it('returns null when the database is unavailable', async () => {
-    mockGetDatabase.mockReturnValue({ ok: false, err: 'DB_INIT_ERROR' });
+    unreachableStore();
     expect(await getEffectiveLogLevel()).toBeNull();
   });
 
   it('defaults to info when no level has been configured', async () => {
-    stubDb();
+    stubStore();
     expect(await getEffectiveLogLevel()).toBe('info');
   });
 
   it('returns the configured level', async () => {
-    stubDb('debug');
+    stubStore('debug');
     expect(await getEffectiveLogLevel()).toBe('debug');
   });
 
   it('ignores a value that is not a level', async () => {
-    stubDb('loud');
+    stubStore('loud');
     expect(await getEffectiveLogLevel()).toBe('info');
   });
 });
@@ -68,7 +65,7 @@ describe('watchLogLevel', () => {
   });
 
   it('applies the effective level immediately to every adapter with a level property', async () => {
-    stubDb('debug');
+    stubStore('debug');
     const consoleAdapter = { level: 'info' };
     const noLevelAdapter = {};
     const logger = { adapters: [consoleAdapter, noLevelAdapter] };
@@ -81,7 +78,7 @@ describe('watchLogLevel', () => {
   });
 
   it('leaves the current level alone when the database is unavailable', async () => {
-    mockGetDatabase.mockReturnValue({ ok: false, err: 'DB_INIT_ERROR' });
+    unreachableStore();
     const adapter = { level: 'info' };
     const logger = { adapters: [adapter] };
 
@@ -93,7 +90,7 @@ describe('watchLogLevel', () => {
   });
 
   it('re-applies on every poll, picking up an adapter registered after the first tick', async () => {
-    stubDb('warn');
+    stubStore('warn');
     const logger: { adapters: unknown[] } = { adapters: [] };
 
     const stop = watchLogLevel(logger, 1_000);

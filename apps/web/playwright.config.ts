@@ -26,6 +26,9 @@ const BASE_URL = 'http://127.0.0.1:3000';
 
 export default defineConfig({
   testDir: './e2e',
+  // The in-memory store's specs run against their own server
+  // (playwright.memory.config.ts), never this one.
+  testIgnore: ['memory/**'],
   outputDir: 'test-results',
   reporter: [['html', { open: 'never' }]],
   globalSetup: './e2e/global-setup.ts',
