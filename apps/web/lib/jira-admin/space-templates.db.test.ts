@@ -4,8 +4,7 @@
  * an explicit overwrite; a name on another site is a different template.
  */
 
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore } from '@renkei/db';
 import {
   deleteSpaceTemplate,
   findSpaceTemplate,
@@ -37,8 +36,6 @@ const DOCUMENT: TemplateDocument = {
 };
 
 maybe('jira_admin_space_templates', () => {
-  let db: Kysely<DB>;
-
   const save = (overrides: Partial<Parameters<typeof saveSpaceTemplate>[0]> = {}) =>
     saveSpaceTemplate({
       cloudId: 'cloud-1',
@@ -52,20 +49,18 @@ maybe('jira_admin_space_templates', () => {
       ...overrides,
     });
 
-  beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-    await sql`DELETE FROM jira_admin_space_templates WHERE created_by = 'dana@example.com'`.execute(
-      db
-    );
-  });
+  /** Delete what this suite saves (and what an earlier run left), the way an operator would. */
+  const removeDanas = async () => {
+    for (const template of await listSpaceTemplates()) {
+      if (template.createdBy === 'dana@example.com') await deleteSpaceTemplate(template.id);
+    }
+  };
+
+  beforeAll(removeDanas);
 
   afterAll(async () => {
-    await sql`DELETE FROM jira_admin_space_templates WHERE created_by = 'dana@example.com'`.execute(
-      db
-    );
-    await closeDatabase();
+    await removeDanas();
+    await closeDataStore();
   });
 
   it('saves a template and reads it back by name, ignoring case, or by id', async () => {

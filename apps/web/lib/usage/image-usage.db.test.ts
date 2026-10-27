@@ -1,39 +1,61 @@
 /**
- * The image ledger against a real database (skipped without DATABASE_URL):
- * one row per picture is written content-free and attributed to a person;
+ * The image ledger, end to end from `recordImageUsage` to the readers: one
+ * row per picture is written content-free and attributed to a person;
  * totals read back org-wide or for one person within a span; the per-user
  * rows carry names for the leaderboard; and a row outside the span is not
  * counted.
+ *
+ * Against a fresh memory store, so the organization-wide totals are this
+ * suite's alone (the differential suite holds the store's aggregation to
+ * Postgres's). The picture from long ago is recorded the app's way, with
+ * the clock set back while it is written.
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { recordImageUsage } from '@/lib/image/usage';
 import { getImageTotals, getImageUsers } from './image-usage';
 import { getOrgDailySeries, getSurfaceTokenTotals } from './org-usage';
 
-const maybe = process.env.DATABASE_URL ? describe : describe.skip;
+/** Only `Date` is faked: promises, timers and the rest stay real. */
+const ONLY_DATE = [
+  'hrtime',
+  'nextTick',
+  'performance',
+  'queueMicrotask',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'requestIdleCallback',
+  'cancelIdleCallback',
+  'setImmediate',
+  'clearImmediate',
+  'setInterval',
+  'clearInterval',
+  'setTimeout',
+  'clearTimeout',
+] as const;
 
-maybe('image usage ledger', () => {
-  let db: Kysely<DB>;
+describe('image usage ledger', () => {
+  let store: MemoryDataStore;
   const runId = randomUUID();
   const ann = `ann-${runId.slice(0, 8)}`;
   const bo = `bo-${runId.slice(0, 8)}`;
   const span = { days: 7, endOffsetDays: 0 };
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-    await db
-      .insertInto('identities')
-      .values({
-        subject: ann,
-        display_name: 'Ann Example',
-        email: 'ann@example.test',
-      })
-      .execute();
+    store = createMemoryDataStore();
+    registerDataStore(store);
+    await store.identities.upsert({
+      subject: ann,
+      displayName: 'Ann Example',
+      email: 'ann@example.test',
+      idpGroups: [],
+    });
 
     const base = { surface: 'images', provider: 'openai', model: 'gpt-image-1' };
     await recordImageUsage({
@@ -63,36 +85,22 @@ maybe('image usage ledger', () => {
       width: 1024,
       height: 1024,
     });
-    // A picture from long ago is outside the span.
-    await sql`
-      INSERT INTO image_usage (subject, surface, images, image_bytes, created_at)
-      VALUES (${ann}, 'images', 1, 7000000, NOW() - interval '60 days')
-    `.execute(db);
+    // A picture from long ago (60 days back) is outside the span.
+    jest.useFakeTimers({ now: Date.now() - 60 * 86_400_000, doNotFake: [...ONLY_DATE] });
+    try {
+      await recordImageUsage({ ...base, subject: ann, imageBytes: 7_000_000 });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
-  afterAll(async () => {
-    await sql`DELETE FROM image_usage WHERE subject IN (${ann}, ${bo})`.execute(db);
-    await sql`DELETE FROM identities WHERE subject IN (${ann}, ${bo})`.execute(db);
-    await closeDatabase();
+  afterAll(() => {
+    resetDataStore();
   });
 
   it('stores one content-free row per picture', async () => {
-    const rows = await sql<Record<string, unknown>>`
-      SELECT * FROM image_usage WHERE subject = ${bo}
-    `.execute(db);
-    expect(rows.rows).toHaveLength(1);
-    expect(rows.rows[0]).toMatchObject({
-      surface: 'flux',
-      provider: 'openai',
-      model: 'FLUX.2-flex',
-      images: 1,
-      width: 1024,
-      height: 1024,
-      input_tokens: 0,
-      output_tokens: 0,
-    });
     // Nothing of the prompt or the picture is a column at all.
-    expect(Object.keys(rows.rows[0]!).sort()).toEqual(
+    expect(Object.keys(store.tables.columnsOf('image_usage')).sort()).toEqual(
       [
         'created_at',
         'height',
@@ -108,6 +116,13 @@ maybe('image usage ledger', () => {
         'width',
       ].sort()
     );
+    // Bo's one FLUX picture is one row: one image, its size, no tokens.
+    expect(await getImageTotals(span, 'UTC', bo)).toEqual({
+      images: 1,
+      bytes: 500_000,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
   });
 
   it('totals the org over the span, leaving out old pictures', async () => {
@@ -208,7 +223,10 @@ maybe('image usage ledger', () => {
   });
 
   it('never throws when a row cannot be written', async () => {
-    // A size the column cannot hold breaks the insert; the picture must still reach the person.
+    // A write the store refuses; the picture must still reach the person.
+    const refused = jest
+      .spyOn(store.usage, 'recordImage')
+      .mockRejectedValueOnce(new Error('value out of range'));
     await expect(
       recordImageUsage({
         surface: 'images',
@@ -218,5 +236,6 @@ maybe('image usage ledger', () => {
         imageBytes: Number.NaN,
       })
     ).resolves.toBeUndefined();
+    expect(refused).toHaveBeenCalledTimes(1);
   });
 });

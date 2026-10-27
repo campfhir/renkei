@@ -11,8 +11,7 @@
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { randomBytes } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { setKeyVault } from '@renkei/user-keys';
 import {
@@ -32,9 +31,8 @@ import {
 
 /**
  * Register the delegate for the describe block this is called in: started
- * in its beforeAll against the pool `getDatabase()` hands out THEN (a
- * sibling block's afterAll may have closed an earlier one), stopped in its
- * afterAll.
+ * in its beforeAll (the data store reconnects lazily, so a sibling block's
+ * afterAll closing the database is no obstacle), stopped in its afterAll.
  */
 export function useTestDelegate(): {
   enroll: (subject: string) => Promise<BrowserKeys>;
@@ -42,8 +40,7 @@ export function useTestDelegate(): {
   let started: TestDelegate | null = null;
   beforeAll(async () => {
     if (!process.env.DATABASE_URL) return;
-    const db = getDatabase();
-    if (db.ok) started = await startTestDelegate(db.val);
+    started = await startTestDelegate();
   });
   afterAll(async () => {
     await started?.stop();
@@ -67,7 +64,6 @@ export interface TestDelegate {
 }
 
 export async function startTestDelegate(
-  db: Kysely<DB>,
   options: { fetchImpl?: typeof fetch } = {}
 ): Promise<TestDelegate> {
   const tokenKey = parseEncryptionKey(
@@ -103,7 +99,7 @@ export async function startTestDelegate(
       setDelegateClient(null);
       setDelegateGrants(null);
       setKeyVault(null);
-      await db.deleteFrom('delegate_instances').where('id', '=', instance.id).execute();
+      await getDataStore().userKeys.deleteInstance(instance.id);
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };

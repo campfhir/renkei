@@ -2,40 +2,42 @@
  * The per-model and per-run token reads against a real database
  * (skipped without DATABASE_URL), end to end from `recordLlmCall` — the
  * grouped SQL with its conditional agent filter is the part a unit test
- * cannot see.
+ * cannot see. The models are named per run, so the organization-wide
+ * split is exact however many runs share the database; the ledger keeps
+ * its rows, as it does in production.
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { recordLlmCall } from '@renkei/agents/runs';
 import { getRunTokenUsage, getTokenUsageByModel, getTokenUsageByRun } from './agent-usage';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('token usage by model and by run', () => {
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const agentId = randomUUID();
   const stepId = randomUUID();
   const runId = randomUUID();
   const subject = `owner-${suiteId.slice(0, 8)}`;
+  const bigModel = `claude-big-${suiteId.slice(0, 8)}`;
+  const smallModel = `gpt-small-${suiteId.slice(0, 8)}`;
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-    await db
-      .insertInto('agents')
-      .values({
-        id: agentId,
-        owner_subject: subject,
-        name: 'Usage agent',
-        enabled: true,
-      })
-      .execute();
+    await getDataStore().agents.create({
+      id: agentId,
+      ownerSubject: subject,
+      name: 'Usage agent',
+      instructions: '',
+      tools: [],
+      llmModelId: null,
+      enabled: true,
+      guardrails: null,
+      canAskQuestions: false,
+      autoAcceptActions: false,
+    });
 
-    const big = { provider: 'anthropic', model: 'claude-big', llmModelId: null };
-    const small = { provider: 'openai', model: 'gpt-small', llmModelId: null };
+    const big = { provider: 'anthropic', model: bigModel, llmModelId: null };
+    const small = { provider: 'openai', model: smallModel, llmModelId: null };
     const base = { subject, agentId, runId, stepId };
     await recordLlmCall({
       ...base,
@@ -76,9 +78,8 @@ maybe('token usage by model and by run', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM llm_calls WHERE subject = ${subject}`.execute(db);
-    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
-    await closeDatabase();
+    await getDataStore().agents.delete(subject, agentId);
+    await closeDataStore();
   });
 
   it('splits the whole org by model, chat and optimizer spend included', async () => {
@@ -95,8 +96,8 @@ maybe('token usage by model and by run', () => {
     ]);
     expect(shaped).toEqual(
       expect.arrayContaining([
-        ['anthropic', 'claude-big', 6_200, 530, 900, 40],
-        ['openai', 'gpt-small', 1_000, 50, 0, 0],
+        ['anthropic', bigModel, 6_200, 530, 900, 40],
+        ['openai', smallModel, 1_000, 50, 0, 0],
       ])
     );
     const unrecorded = rows.find((row) => row.model === null);
@@ -107,8 +108,8 @@ maybe('token usage by model and by run', () => {
   it('narrows to one agent, leaving the chat out', async () => {
     const rows = await getTokenUsageByModel(agentId);
     expect(rows.map((row) => [row.model, row.input.allTime])).toEqual([
-      ['claude-big', 1_200],
-      ['gpt-small', 1_000],
+      [bigModel, 1_200],
+      [smallModel, 1_000],
       [null, 7],
     ]);
     expect(await getTokenUsageByModel([])).toEqual([]);
@@ -140,7 +141,7 @@ maybe('token usage by model and by run', () => {
         row.calls,
       ])
     ).toEqual([
-      ['claude-big', 1_200, 30, 900, 40, 2],
+      [bigModel, 1_200, 30, 900, 40, 2],
       [null, 7, 3, 0, 0, 1],
     ]);
     expect(await getRunTokenUsage(randomUUID())).toEqual([]);
