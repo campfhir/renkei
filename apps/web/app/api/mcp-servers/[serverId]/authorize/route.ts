@@ -13,7 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash, randomBytes, randomUUID } from 'crypto';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { delegateGrants } from '@renkei/delegate-client';
 import { getServer, mcpProvider } from '@renkei/connector-mcp';
 import { getSessionFromRequest } from '@/lib/session';
@@ -33,10 +33,6 @@ export async function GET(
       { status: 401 }
     );
   }
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  const db = dbResult.val;
-
   const server = await getServer(serverId);
   if (!server.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
   if (!server.val || !server.val.enabled) {
@@ -76,20 +72,17 @@ export async function GET(
   const codeVerifier = randomBytes(32).toString('base64url');
   const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
   const state = randomUUID();
-  await db
-    .insertInto('pending_oidc_signin')
-    .values({
-      id: randomUUID(),
-      state,
-      nonce: randomUUID(),
-      subject: session.subject,
-      provider: mcpProvider(serverId),
-      scopes: scope,
-      code_verifier: codeVerifier,
-      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      created_at: new Date().toISOString(),
-    })
-    .execute();
+  await getDataStore().oauthConsents.createPendingSignin({
+    id: randomUUID(),
+    state,
+    nonce: randomUUID(),
+    subject: session.subject,
+    provider: mcpProvider(serverId),
+    scopes: scope,
+    codeVerifier,
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    createdAt: new Date(),
+  });
 
   const authUrl = new URL(authorizationEndpoint);
   authUrl.searchParams.set('response_type', 'code');

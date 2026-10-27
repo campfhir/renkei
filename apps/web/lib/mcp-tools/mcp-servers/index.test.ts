@@ -9,7 +9,24 @@ jest.mock('@/lib/mcp-servers/remote', () => ({
   callRemoteTool: (...args: unknown[]) => callRemoteTool(...args),
   refreshInBackground: jest.fn(),
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
+// No reachable database: every data-store method rejects.
+jest.mock('@renkei/db', () => ({
+  getDataStore: () =>
+    new Proxy(
+      {},
+      {
+        get: () =>
+          new Proxy(
+            {},
+            {
+              get: () => async () => {
+                throw new Error('no data store in this suite');
+              },
+            }
+          ),
+      }
+    ),
+}));
 jest.mock('@/lib/logger', () => ({ logger: { warn: jest.fn(), info: jest.fn() } }));
 
 interface Registered {

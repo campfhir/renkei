@@ -68,8 +68,7 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase, type DB } from '@renkei/db';
-import type { Kysely } from 'kysely';
+import { getDatabase, getDataStore } from '@renkei/db';
 import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
   MAX_QUESTION_FIELDS,
@@ -93,7 +92,6 @@ import {
 } from '@renkei/agents';
 import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
 import { createAgentRun, findInProgressRun, resumeAgentRun } from '@renkei/agents/runs';
-import { sql } from 'kysely';
 import { keywordsFieldSchema, type MCPToolContext } from '../common';
 import { listAgents, type TriggerPayload } from '@/lib/agents/store';
 import {
@@ -230,7 +228,6 @@ const noteErrorText: Record<AgentNoteError, string> = {
  * null, which every caller here reports as not-found.
  */
 async function agentAccessFor(
-  db: Kysely<DB>,
   context: MCPToolContext,
   agentId: unknown
 ): Promise<AgentAccess | null> {
@@ -495,10 +492,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
-      const access = await agentAccessFor(db, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
@@ -555,24 +549,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
-      const access = await agentAccessFor(db, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
       // Agents chained AFTER this one — the same owner's, matching the
       // finalize query that actually fires them.
-      const chained = await db
-        .selectFrom('agent_triggers as t')
-        .innerJoin('agents as a', 'a.id', 't.agent_id')
-        .select(['a.id', 'a.name'])
-        .where('t.kind', '=', 'agent')
-        .where('t.enabled', '=', true)
-        .where(sql<string>`t.config->>'callerAgentId'`, '=', agent.id)
-        .where('a.owner_subject', '=', access.ownerSubject)
-        .execute();
+      const chained = await getDataStore().agents.listChainedAfter(agent.id, access.ownerSubject);
 
       const lines = [
         `${agent.name} — ${agent.enabled ? 'ON' : 'off'} (agentId: ${agent.id})`,
@@ -801,8 +784,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
 
       const approvals = await listPendingApprovals(context.subject, {
         agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
@@ -870,9 +851,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const decision =
         args.decision === 'approve' || args.decision === 'decline' ? args.decision : null;
       if (!decision) return errText('decision must be "approve" or "decline".');
-
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
 
       const result = await decideApproval(agentJobsQueue().producer, context.subject, {
         cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
@@ -944,8 +922,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
 
       const questions = await listPendingQuestions(context.subject, {
         agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
@@ -1004,9 +980,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             'prevent. A person answers this, in the Renkei feed or through their own MCP client.'
         );
       }
-
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
 
       const result = await answerQuestion(agentJobsQueue().producer, context.subject, {
         cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
@@ -1076,9 +1049,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
@@ -1155,22 +1126,15 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!context.subject) return errText(NO_SUBJECT);
       const runId = typeof args.runId === 'string' ? args.runId.trim() : '';
       if (!isUuid(runId)) return errText('No run of yours has that id.');
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
 
       // Resolve the agent from the run row FIRST (no owner filter — the
       // caller may be a grantee, not the owner), then check access to that
       // agentId the same way every other read here does. A run id whose
       // agent the caller cannot reach reads as not-found, same as a bad
       // runId — never "found but not yours".
-      const runRow = await db
-        .selectFrom('agent_runs')
-        .select(['agent_id'])
-        .where('id', '=', runId)
-        .executeTakeFirst();
+      const runRow = await getDataStore().agentRuns.findRunAgent(runId);
       if (!runRow) return errText('No run of yours has that id.');
-      const access = await resolveAgentAccess(context.subject, runRow.agent_id);
+      const access = await resolveAgentAccess(context.subject, runRow.agentId);
       if (!access) return errText('No run of yours has that id.');
       const agent = access.agent;
       const run = await getRunForOwner(access.ownerSubject, agent.id, runId);
@@ -1241,9 +1205,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
       const period = isUsagePeriod(args.period) ? args.period : 'month';
 
       const agentId = typeof args.agentId === 'string' ? args.agentId.trim() : '';
@@ -1277,7 +1238,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         );
       }
 
-      const access = await agentAccessFor(db, context, agentId);
+      const access = await agentAccessFor(context, agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
       const [tokens, byModel, tools] = await Promise.all([
@@ -1322,20 +1283,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       }
       const runId = typeof args.runId === 'string' ? args.runId.trim() : '';
       if (!isUuid(runId)) return errText('No run of yours has that id.');
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
 
       // Resolve the agent from the run row first (no owner filter — the
       // caller may be a grantee), then check access the same way every
       // other read here does.
-      const runRow = await db
-        .selectFrom('agent_runs')
-        .select(['agent_id'])
-        .where('id', '=', runId)
-        .executeTakeFirst();
+      const runRow = await getDataStore().agentRuns.findRunAgent(runId);
       if (!runRow) return errText('No run of yours has that id.');
-      const access = await resolveAgentAccess(context.subject, runRow.agent_id);
+      const access = await resolveAgentAccess(context.subject, runRow.agentId);
       if (!access) return errText('No run of yours has that id.');
 
       const result = await requestRunCancellation(agentJobsQueue().producer, {
@@ -1396,21 +1350,19 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       }
       const runId = typeof args.runId === 'string' ? args.runId.trim() : '';
       if (!isUuid(runId)) return errText('No run of yours has that id.');
+      // The run queue's own calls below (@renkei/agents/runs) still take the
+      // database handle; everything this tool reads itself goes through the store.
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
       const db = dbResult.val;
 
-      const runRow = await db
-        .selectFrom('agent_runs')
-        .select(['agent_id', 'trigger_kind'])
-        .where('id', '=', runId)
-        .executeTakeFirst();
+      const runRow = await getDataStore().agentRuns.findRunOrigin(runId);
       if (!runRow) return errText('No run of yours has that id.');
-      const access = await resolveAgentAccess(context.subject, runRow.agent_id);
+      const access = await resolveAgentAccess(context.subject, runRow.agentId);
       if (!access) return errText('No run of yours has that id.');
       const agent = access.agent;
 
-      if (runRow.trigger_kind !== 'event' && args.confirm !== true) {
+      if (runRow.triggerKind !== 'event' && args.confirm !== true) {
         const inProgress = await findInProgressRun(db, agent.id);
         if (inProgress) {
           return errText(
@@ -1504,7 +1456,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
       const db = dbResult.val;
-      const access = await agentAccessFor(db, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
@@ -1665,7 +1617,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!context.subject) return errText(NO_SUBJECT);
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
@@ -1765,7 +1717,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
       const db = dbResult.val;
-      const access = await agentAccessFor(db, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
@@ -1857,9 +1809,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
@@ -1915,9 +1865,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
       // Notes are keyed under the OWNER's email regardless of who writes
@@ -2000,9 +1948,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (title === undefined && content === undefined && keywords === undefined) {
         return errText('Nothing to update — pass a new title, content, and/or keywords.');
       }
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
       const ownerEmailResult = await getIdentityEmail(access.ownerSubject);
@@ -2045,9 +1991,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
       const ownerEmailResult = await getIdentityEmail(access.ownerSubject);
@@ -2322,8 +2266,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           'Enabling an agent is done in the builder after review — create it disabled first.'
         );
       }
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
       const parsed = parseDefinition(args, false);
       if ('error' in parsed) return errText(parsed.error);
 
@@ -2479,9 +2421,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             'disable, and keeps an already-enabled agent on unless keepEnabled:false.'
         );
       }
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
@@ -2657,9 +2597,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             'disable, and keeps an already-enabled agent on unless keepEnabled:false.'
         );
       }
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      const access = await agentAccessFor(context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 

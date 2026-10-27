@@ -34,25 +34,8 @@ jest.mock('@renkei/delegate-client', () => {
 });
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      insertInto: () => ({ values: () => ({ execute: async () => [] }) }),
-      selectFrom: () => ({
-        select: () => ({
-          where: () => ({
-            where: () => ({
-              where: () => ({
-                limit: () => ({
-                  executeTakeFirst: async () => ({ provider_account_id: 'acct-1' }),
-                }),
-              }),
-            }),
-          }),
-        }),
-      }),
-    },
-  }),
+  // The upload-slot write a *_request_*_upload tool makes.
+  getDataStore: () => ({ uploadSlots: { create: async () => undefined } }),
 }));
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },

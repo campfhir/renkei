@@ -7,7 +7,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import type { MCPToolContext } from '../common';
 import type { SalesforceOrg } from '@renkei/connector-salesforce';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
@@ -37,13 +36,6 @@ export function registerOrgTools(
     },
     async () => {
       if (!context.subject) return errText('No signed-in identity on this request.');
-      const db =
-        context.db ??
-        (() => {
-          const result = getDatabase();
-          return result.ok ? result.val : null;
-        })();
-      if (!db) return errText(`Could not read your ${kind.label} connections.`);
       const connectors = (await listSalesforceConnectors(kind)).filter((org) => org.enabled);
       const connections = await listSalesforceConnections(
         context.subject,

@@ -23,8 +23,6 @@
  * access through `readAccess`, which refuses — not of the HTTP method.
  */
 
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
 import { dataPath, type DataPolicy } from '@renkei/connector-salesforce';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { listSalesforceConnections } from '@/lib/salesforce-grants';
@@ -63,7 +61,6 @@ export interface SalesforceAccess {
 /** What the request wrapper needs of its caller — an MCPToolContext satisfies it. */
 export interface SalesforceCallContext {
   subject?: string;
-  db?: Kysely<DB>;
 }
 
 /**
@@ -78,13 +75,6 @@ export async function resolveSalesforceAccess(
   scopeFor: (tool: string) => string[] = salesforceScopeFor
 ): Promise<SalesforceAccess | string> {
   if (!context.subject) return 'No signed-in identity on this request.';
-  const db =
-    context.db ??
-    (() => {
-      const result = getDatabase();
-      return result.ok ? result.val : null;
-    })();
-  if (!db) return 'Could not read your Salesforce connections.';
   const call = orgCall.getStore();
   const connectors = await listSalesforceConnectors(kind);
   const connections = await listSalesforceConnections(context.subject, connectors, kind.provider);

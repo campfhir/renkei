@@ -23,6 +23,22 @@
 // graph parseable, same as every other no-sandbox suite in this codebase.
 jest.mock('@renkei/db', () => ({
   getDatabase: () => ({ ok: false, error: 'no db in this suite' }),
+  // Every data-store method rejects, as an unreachable database does.
+  getDataStore: () =>
+    new Proxy(
+      {},
+      {
+        get: () =>
+          new Proxy(
+            {},
+            {
+              get: () => async () => {
+                throw new Error('no data store in this suite');
+              },
+            }
+          ),
+      }
+    ),
 }));
 jest.mock('@renkei/connector-microsoft', () => ({
   ...jest.requireActual('@renkei/connector-microsoft/src/fetch'),

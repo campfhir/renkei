@@ -8,61 +8,57 @@
  * someone with no grant that they are connected.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 
 import { NextRequest } from 'next/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { GET } from './route';
 
-// Fetched through requireMock rather than the typed import: these stubs stand
-// in for a Kysely instance, which cannot be satisfied structurally, and the
-// codebase bans type assertions.
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
 }>('@/lib/session');
 
-
-interface Recorded {
-  table: string;
-  columns: string[];
-  filters: Array<[string, string, unknown]>;
+function grant(
+  provider: string,
+  account: string,
+  subject: string,
+  metadata: Record<string, unknown>
+) {
+  return {
+    provider,
+    provider_account_id: account,
+    client_id: 'client',
+    display_name: account === 'acc-a' ? 'User A' : `holder of ${account}`,
+    subject,
+    encrypted_access_token: 'sealed-access',
+    encrypted_refresh_token: 'sealed-refresh',
+    expires_at: new Date(Date.now() + 60_000),
+    metadata: JSON.stringify(metadata),
+  };
 }
 
-/**
- * Minimal stand-in for the Kysely chain this route uses, which also records
- * the query so the subject filter can be asserted rather than assumed.
- */
-function stubDb(row: Record<string, unknown> | undefined) {
-  const recorded: Recorded = { table: '', columns: [], filters: [] };
-  const chain = {
-    select(columns: string[]) {
-      recorded.columns = columns;
-      return chain;
+/** A memory store holding these grants; returns how often grants were listed. */
+async function withGrants(rows: ReturnType<typeof grant>[]) {
+  const store = createMemoryDataStore();
+  await store.seed({ provider_grants: rows });
+  const lookups: { subject: string; provider?: string }[] = [];
+  registerDataStore({
+    ...store,
+    providerGrants: {
+      ...store.providerGrants,
+      listForSubject: (subject, options) => {
+        lookups.push({ subject, provider: options?.provider });
+        return store.providerGrants.listForSubject(subject, options);
+      },
     },
-    where(column: string, op: string, value: unknown) {
-      recorded.filters.push([column, op, value]);
-      return chain;
-    },
-    async executeTakeFirst() {
-      return row;
-    },
-  };
-  const db = {
-    selectFrom(table: string) {
-      recorded.table = table;
-      return chain;
-    },
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: db });
-  return recorded;
+  });
+  return lookups;
 }
 
 /** The route reads nothing off the request; the session lookup is mocked. */
 function request(): NextRequest {
   return new NextRequest('http://localhost/api/mcp/status');
 }
-
 
 function session(subject: string) {
   return {
@@ -73,57 +69,43 @@ function session(subject: string) {
   };
 }
 
+const siteA = { siteUrl: 'https://example.atlassian.net', cloudId: 'cloud-1' };
+
 describe('GET /api/mcp/status', () => {
   beforeEach(() => {
-    mockGetDatabase.mockReset();
     mockGetSession.mockReset();
   });
+  afterAll(() => {
+    resetDataStore();
+  });
 
-  it('rejects a caller with no session', async () => {
+  it('rejects a caller with no session, before any lookup', async () => {
     mockGetSession.mockResolvedValue(null);
-    const recorded = stubDb(undefined);
+    const lookups = await withGrants([grant('atlassian', 'acc-a', 'user-a@example.com', siteA)]);
 
     const response = await GET(request());
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' });
     // Nothing is disclosed, not even whether a grant exists.
-    expect(recorded.table).toBe('');
-  });
-
-  it('does not touch the database before authenticating', async () => {
-    mockGetSession.mockResolvedValue(null);
-    stubDb(undefined);
-
-    await GET(request());
-
-    expect(mockGetDatabase).not.toHaveBeenCalled();
+    expect(lookups).toEqual([]);
   });
 
   it('scopes the lookup to the caller and the provider', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com'));
-    const recorded = stubDb({
-      provider_account_id: 'acc-a',
-      display_name: 'User A',
-      metadata: { siteUrl: 'https://example.atlassian.net' },
-    });
+    const lookups = await withGrants([grant('atlassian', 'acc-a', 'user-a@example.com', siteA)]);
 
     await GET(request());
 
-    expect(recorded.table).toBe('provider_grants');
-    expect(recorded.filters).toEqual([
-      ['provider', '=', 'atlassian'],
-      ['subject', '=', 'user-a@example.com'],
-    ]);
+    expect(lookups).toEqual([{ subject: 'user-a@example.com', provider: 'atlassian' }]);
   });
 
   it('reports the caller as connected when they hold the grant', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com'));
-    stubDb({
-      provider_account_id: 'acc-a',
-      display_name: 'User A',
-      metadata: { siteUrl: 'https://example.atlassian.net' },
-    });
+    await withGrants([
+      grant('atlassian', 'acc-a', 'user-a@example.com', siteA),
+      grant('atlassian-jsm', 'acc-j', 'user-a@example.com', {}),
+    ]);
 
     const response = await GET(request());
 
@@ -137,10 +119,8 @@ describe('GET /api/mcp/status', () => {
   });
 
   it('reports not connected when only another user has a grant', async () => {
-    // The subject filter means the query returns nothing for user B even though
-    // user A's grant exists.
     mockGetSession.mockResolvedValue(session('user-b@example.com'));
-    stubDb(undefined);
+    await withGrants([grant('atlassian', 'acc-a', 'user-a@example.com', siteA)]);
 
     const response = await GET(request());
 
@@ -153,22 +133,17 @@ describe('GET /api/mcp/status', () => {
 
   it('never returns encrypted token material', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com'));
-    const recorded = stubDb({
-      provider_account_id: 'acc-a',
-      display_name: 'User A',
-      metadata: { siteUrl: 'https://example.atlassian.net', cloudId: 'cloud-1' },
-    });
+    await withGrants([grant('atlassian', 'acc-a', 'user-a@example.com', siteA)]);
 
     const body = await (await GET(request())).json();
 
-    expect(recorded.columns).not.toContain('encrypted_access_token');
-    expect(recorded.columns).not.toContain('encrypted_refresh_token');
+    expect(JSON.stringify(body)).not.toMatch(/sealed/);
     expect(Object.keys(body).sort()).toEqual(['accountId', 'connected', 'displayName', 'siteUrl']);
   });
 
   it('tolerates a grant whose metadata carries no site url', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com'));
-    stubDb({ provider_account_id: 'acc-a', display_name: 'User A', metadata: {} });
+    await withGrants([grant('atlassian', 'acc-a', 'user-a@example.com', {})]);
 
     const body = await (await GET(request())).json();
 

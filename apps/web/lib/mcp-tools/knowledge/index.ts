@@ -37,7 +37,7 @@ import {
   MICROSOFT,
 } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { AccessVerifier } from '@renkei/gates';
 import { withheldNote } from '@renkei/gates';
 import type { KnowledgeHit, SourceFilter } from '@renkei/knowledge';
@@ -67,8 +67,7 @@ export const KNOWLEDGE_CONNECTOR = 'knowledge';
  * self-service search page — wires the exact same ACL gate. Two verifier
  * sets built separately would drift the moment a connector is added.
  */
-export async function buildKnowledgeVerifiers(
-): Promise<ReadonlyMap<string, AccessVerifier>> {
+export async function buildKnowledgeVerifiers(): Promise<ReadonlyMap<string, AccessVerifier>> {
   const verifiers = new Map<string, AccessVerifier>();
 
   // WebEx verifies with the CALLING user's own grant — there is no bot.
@@ -130,15 +129,7 @@ export async function buildKnowledgeVerifiers(
  * every credential lookup below hops identities → the delegate's grant.
  */
 async function subjectOf(userEmail: string): Promise<string | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const row = await dbResult.val
-    .selectFrom('identities')
-    .select('subject')
-    .where('email', '=', userEmail)
-    .limit(1)
-    .executeTakeFirst();
-  return row?.subject ?? null;
+  return getDataStore().identities.subjectByEmail(userEmail);
 }
 
 /**
@@ -176,9 +167,7 @@ async function atlassianCredentialFor(
  * Files.Read.All denies immediately, which is cheaper than 20 sub-request
  * 403s and gives one place to see why a user's SharePoint results are empty.
  */
-async function microsoftCredentialFor(
-  userEmail: string
-): Promise<{ auth: AuthedFetch } | null> {
+async function microsoftCredentialFor(userEmail: string): Promise<{ auth: AuthedFetch } | null> {
   const subject = await subjectOf(userEmail);
   if (!subject) return null;
 

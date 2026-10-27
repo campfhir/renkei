@@ -28,7 +28,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { describeActor, getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { friendlyToolName } from '@renkei/agents';
 import { logger } from '@/lib/logger';
 import { connectorKeyForTool } from './tool-connector';
@@ -93,35 +93,34 @@ function record(
   endedAt: Date,
   errorSummary: string | null
 ): void {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return;
-
-  void dbResult.val
-    .insertInto('tool_calls')
-    .values({
+  let pending: Promise<void>;
+  try {
+    pending = getDataStore().toolUsage.recordCall({
       id: randomUUID(),
       subject: context.subject,
-      agent_id: context.agentId ?? null,
+      agentId: context.agentId ?? null,
       tool,
       connector: connectorKeyForTool(tool),
       status,
-      started_at: startedAt,
-      ended_at: endedAt,
-      duration_ms: Math.max(0, endedAt.getTime() - startedAt.getTime()),
+      startedAt,
+      endedAt,
+      durationMs: Math.max(0, endedAt.getTime() - startedAt.getTime()),
       // Belt and braces with errorSummaryOf's own guard: a success row
       // writes NULL here no matter what the extractor returned.
-      error_summary: status === 'error' ? errorSummary : null,
-    })
-    .execute()
-    .catch((error: unknown) => {
-      // Debug, not warn: a busy server that cannot write telemetry would
-      // otherwise flood the log with a problem nobody can act on per-call.
-      logger.debug('tool usage not recorded: {error}', {
-        component: 'mcp/usage',
-        tool,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      errorSummary: status === 'error' ? errorSummary : null,
     });
+  } catch (error) {
+    pending = Promise.reject(error);
+  }
+  void pending.catch((error: unknown) => {
+    // Debug, not warn: a busy server that cannot write telemetry would
+    // otherwise flood the log with a problem nobody can act on per-call.
+    logger.debug('tool usage not recorded: {error}', {
+      component: 'mcp/usage',
+      tool,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 /**
@@ -138,18 +137,30 @@ function record(
  * along in the metadata, so grepping for either still works.
  */
 async function actorFor(context: UsageContext): Promise<{ subject: string; displayName: string }> {
-  const fallback = {
-    subject: context.subject ?? '(none)',
-    displayName: context.subject ?? '(none)',
-  };
+  const subject = context.subject;
+  if (!subject) return { subject: '(none)', displayName: '(none)' };
+  const now = Date.now();
+  const hit = actorCache.get(subject);
+  if (hit && hit.expiresAt > now) return { subject, displayName: hit.displayName };
+
+  let displayName = subject;
   try {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return fallback;
-    return await describeActor(dbResult.val, context.subject);
+    const identity = await getDataStore().identities.get(subject);
+    displayName = identity?.displayName || identity?.email || subject;
   } catch {
-    return fallback;
+    // A log line is never worth failing the work it describes; nor is it
+    // cached, so the next call tries again.
+    return { subject, displayName };
   }
+  if (actorCache.size >= ACTOR_CACHE_MAX) actorCache.clear();
+  actorCache.set(subject, { displayName, expiresAt: now + ACTOR_CACHE_TTL_MS });
+  return { subject, displayName };
 }
+
+/** Names change rarely and a log line tolerates a stale one: five minutes, bounded. */
+const ACTOR_CACHE_TTL_MS = 5 * 60_000;
+const ACTOR_CACHE_MAX = 2_000;
+const actorCache = new Map<string, { displayName: string; expiresAt: number }>();
 
 async function logToolCall(
   context: UsageContext,

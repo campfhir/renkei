@@ -6,8 +6,7 @@
  * knowledge operations report per-entry results.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
+jest.mock('@renkei/db', () => ({ getDatabase: jest.fn(), getDataStore: jest.fn() }));
 jest.mock('@/lib/agents/store', () => ({ listAgents: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({
   resolveAgentAccess: jest.fn(),
@@ -103,7 +102,10 @@ import { registerAgentTools } from './index';
 import type { MCPToolContext } from '../common';
 import { INSTRUCTION_SECTIONS } from '@renkei/agents';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const { getDatabase: mockGetDatabase, getDataStore: mockGetDataStore } = jest.requireMock<{
+  getDatabase: jest.Mock;
+  getDataStore: jest.Mock;
+}>('@renkei/db');
 const storeMock = jest.requireMock<{ listAgents: jest.Mock }>('@/lib/agents/store');
 const accessGrantsMock = jest.requireMock<{
   resolveAgentAccess: jest.Mock;
@@ -184,17 +186,27 @@ function registerAll(context: Partial<MCPToolContext>): Map<string, Handler> {
   return handlers;
 }
 
-/** A db whose select chains resolve to the given rows/row. */
-function stubDb(options: { rows?: unknown[]; row?: unknown } = {}): void {
-  const chain = {
-    selectFrom: () => chain,
-    innerJoin: () => chain,
-    select: () => chain,
-    where: () => chain,
-    execute: async () => options.rows ?? [],
-    executeTakeFirst: async () => options.row,
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: chain });
+/**
+ * The data store the tools read through: `rows` are the agents chained
+ * after the one asked about, `row` the run a run id resolves to. The
+ * database handle itself only feeds the (mocked) @renkei/agents calls.
+ */
+function stubDb(
+  options: {
+    rows?: { id: string; name: string }[];
+    row?: { agent_id: string; trigger_kind?: string };
+  } = {}
+): void {
+  const { row } = options;
+  mockGetDataStore.mockReturnValue({
+    agents: { listChainedAfter: async () => options.rows ?? [] },
+    agentRuns: {
+      findRunAgent: async (runId: string) => (row ? { id: runId, agentId: row.agent_id } : null),
+      findRunOrigin: async () =>
+        row ? { agentId: row.agent_id, triggerKind: row.trigger_kind ?? 'manual' } : null,
+    },
+  });
+  mockGetDatabase.mockReturnValue({ ok: true, val: {} });
 }
 
 const AGENT = {
@@ -882,7 +894,7 @@ describe('a waiting run says what it is waiting on', () => {
   it('annotates the waiting run in agent_runs_list', async () => {
     // "waiting" alone reads as stuck. The answer is a decision the caller
     // reading this line can make.
-    stubDb({ row: { id: 'agent-1' } });
+    stubDb();
     accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
     runsMock.listRunsForOwner.mockResolvedValue([
       {
@@ -907,7 +919,7 @@ describe('a waiting run says what it is waiting on', () => {
   });
 
   it('spends no query on approvals when nothing is waiting', async () => {
-    stubDb({ row: { id: 'agent-1' } });
+    stubDb();
     accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
     runsMock.listRunsForOwner.mockResolvedValue([
       {
@@ -931,7 +943,7 @@ describe('a waiting run says what it is waiting on', () => {
 
 describe('agent_memory_forget', () => {
   beforeEach(() => {
-    stubDb({ row: { id: 'agent-1' } });
+    stubDb();
     accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
   });
 

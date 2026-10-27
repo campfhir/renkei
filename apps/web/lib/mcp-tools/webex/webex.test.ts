@@ -27,15 +27,16 @@ jest.mock('@/lib/webex-bot', () => ({
   webexBotClient: jest.fn(async () => mockBot),
 }));
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      insertInto: () => ({
-        values: (row: unknown) => {
-          insertedRows.push(row);
-          return { execute: async () => undefined };
-        },
-      }),
+  getDataStore: () => ({
+    webexSentMessages: {
+      record: async (messageId: string, accountId: string | null) => {
+        insertedRows.push({ message_id: messageId, account_id: accountId });
+      },
+    },
+    actionableItems: {
+      create: async (card: unknown) => {
+        insertedRows.push(card);
+      },
     },
   }),
 }));
@@ -750,9 +751,7 @@ describe('webex_note_to_self', () => {
     expect(mockCall).not.toHaveBeenCalled();
     // The ledger knows the bot's message too: it returns through the
     // user's own webhook like any other post Renkei made.
-    expect(insertedRows).toEqual([
-      { message_id: 'msg-dm', account_id: undefined },
-    ]);
+    expect(insertedRows).toEqual([{ message_id: 'msg-dm', account_id: undefined }]);
   });
 
   it('falls back to the solo space when the bot cannot deliver', async () => {
@@ -1020,8 +1019,11 @@ describe('webex_capture_message', () => {
     await tools.get('webex_capture_message')!({ messageId: 'msg-1' });
 
     expect(insertedRows).toHaveLength(1);
-    const evidence = JSON.parse((insertedRows[0] as { evidence: string }).evidence);
-    expect(evidence.capturedBy).toBe('alice@example.com');
+    expect(insertedRows[0]).toMatchObject({
+      source: 'webex',
+      ownerSubject: null,
+      evidence: { capturedBy: 'alice@example.com' },
+    });
   });
 
   it('refuses to capture a message with no text', async () => {

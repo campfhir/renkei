@@ -5,8 +5,6 @@
  */
 
 import { z } from 'zod';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { delegateRefusal, type AuthedFetch } from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
 import { grantRefusalText } from '@/lib/grant-refusals';
@@ -165,7 +163,6 @@ export interface MCPToolContext {
    * issued before this migration or for an 'agent' token.
    */
   roles?: string[];
-  db?: Kysely<DB>;
 }
 
 /**
