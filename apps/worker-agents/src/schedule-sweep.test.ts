@@ -5,8 +5,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore, type AgentTriggerRecord } from '@renkei/db';
 import { InMemoryQueue } from '@renkei/queue';
 import type { AgentDefinition } from '@renkei/agents';
 import { createScheduleSweep } from './schedule-sweep';
@@ -16,30 +15,15 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 maybe('schedule sweep', () => {
   jest.setTimeout(20_000);
 
-  // Acquired in beforeAll, not at describe-collection time: describe.skip still
-  // runs its callback to register tests, so acquiring the database here (when
-  // this suite is skipped for lack of DATABASE_URL) would throw at collection
-  // and fail the whole file instead of skipping it.
-  let db: Kysely<DB>;
-
+  // Every suite run seeds under its own subject and ids, so nothing needs
+  // deleting afterwards and a shared database never collides.
   const suiteId = randomUUID();
   const subject = `sched-subject-${suiteId.slice(0, 8)}`;
 
   const definition: AgentDefinition = { instructions: '## Goal\n\nReact to the email.', tools: [] };
 
-  beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('database unavailable');
-    db = result.val;
-  });
-
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs WHERE owner_subject = ${subject}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${subject})`.execute(
-      db
-    );
-    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
-    await closeDatabase();
+    await closeDataStore();
   });
 
   async function seedSchedule(
@@ -47,31 +31,53 @@ maybe('schedule sweep', () => {
     // sweep must keep firing pre-042 rows during a rolling deploy.
     config: Record<string, unknown> = { recurrence: { every: 'hour' }, timezone: 'UTC' }
   ): Promise<{ agentId: string; triggerId: string }> {
+    const store = getDataStore().agents;
     const agentId = randomUUID();
-    await db
-      .insertInto('agents')
-      .values({
-        id: agentId,
-        owner_subject: subject,
-        name: `sched-agent-${agentId.slice(0, 8)}`,
-        instructions: definition.instructions,
-        tools: JSON.stringify(definition.tools),
-        enabled: true,
-      })
-      .execute();
+    await store.create({
+      id: agentId,
+      ownerSubject: subject,
+      name: `sched-agent-${agentId.slice(0, 8)}`,
+      instructions: definition.instructions,
+      tools: definition.tools,
+      llmModelId: null,
+      enabled: true,
+      guardrails: null,
+      canAskQuestions: false,
+      autoAcceptActions: false,
+    });
     const triggerId = randomUUID();
-    await db
-      .insertInto('agent_triggers')
-      .values({
-        id: triggerId,
-        agent_id: agentId,
-        kind: 'schedule',
-        config: JSON.stringify(config),
-        enabled: true,
-        next_run_at: new Date(Date.now() - 60_000),
-      })
-      .execute();
+    await store.applyTriggerChanges(agentId, {
+      update: [],
+      insert: [
+        {
+          id: triggerId,
+          kind: 'schedule',
+          eventSource: null,
+          eventType: null,
+          config: JSON.stringify(config),
+          enabled: true,
+          nextRunAt: new Date(Date.now() - 60_000),
+        },
+      ],
+      remove: [],
+    });
     return { agentId, triggerId };
+  }
+
+  const runsOf = (agentId: string) =>
+    getDataStore().agentRuns.list({
+      agentId,
+      ownerSubject: subject,
+      audience: 'owner',
+      limit: 100,
+    });
+
+  async function triggerOf(agentId: string, triggerId: string): Promise<AgentTriggerRecord> {
+    const trigger = (await getDataStore().agents.listTriggers(agentId)).find(
+      (row) => row.id === triggerId
+    );
+    if (!trigger) throw new Error(`no trigger ${triggerId}`);
+    return trigger;
   }
 
   it('fires a due trigger once, advances it, and enqueues the run', async () => {
@@ -79,22 +85,14 @@ maybe('schedule sweep', () => {
     const queue = new InMemoryQueue();
     await createScheduleSweep(queue.producer)();
 
-    const runs = await db
-      .selectFrom('agent_runs')
-      .select(['id', 'trigger_kind', 'initial_state'])
-      .where('agent_id', '=', agentId)
-      .execute();
+    const runs = await runsOf(agentId);
     expect(runs).toHaveLength(1);
-    expect(runs[0].trigger_kind).toBe('schedule');
+    expect(runs[0].triggerKind).toBe('schedule');
 
-    const trigger = await db
-      .selectFrom('agent_triggers')
-      .select(['next_run_at', 'last_fired_at', 'last_error'])
-      .where('id', '=', triggerId)
-      .executeTakeFirstOrThrow();
-    expect(trigger.next_run_at && trigger.next_run_at.getTime()).toBeGreaterThan(Date.now());
-    expect(trigger.last_fired_at).not.toBeNull();
-    expect(trigger.last_error).toBeNull();
+    const trigger = await triggerOf(agentId, triggerId);
+    expect(trigger.nextRunAt && trigger.nextRunAt.getTime()).toBeGreaterThan(Date.now());
+    expect(trigger.lastFiredAt).not.toBeNull();
+    expect(trigger.lastError).toBeNull();
   });
 
   it('two racing sweeps fire exactly one run', async () => {
@@ -107,24 +105,16 @@ maybe('schedule sweep', () => {
       createScheduleSweep(queue.producer)(),
     ]);
 
-    const runs = await db
-      .selectFrom('agent_runs')
-      .select('id')
-      .where('agent_id', '=', agentId)
-      .execute();
-    expect(runs).toHaveLength(1);
+    expect(await runsOf(agentId)).toHaveLength(1);
   });
 
   it('fires a multi-rule schedule with an org calendar and advances to the union min', async () => {
     const calendarId = randomUUID();
-    await db
-      .insertInto('schedule_calendars')
-      .values({
-        id: calendarId,
-        name: `holidays-${calendarId.slice(0, 8)}`,
-        dates: JSON.stringify([{ annual: '12-25', label: 'Christmas' }]),
-      })
-      .execute();
+    await getDataStore().scheduleCalendars.create({
+      id: calendarId,
+      name: `holidays-${calendarId.slice(0, 8)}`,
+      dates: [{ annual: '12-25', label: 'Christmas' }],
+    });
     const { agentId, triggerId } = await seedSchedule({
       recurrences: [{ every: 'hour' }, { every: 'day', at: '09:00' }],
       timezone: 'UTC',
@@ -134,41 +124,40 @@ maybe('schedule sweep', () => {
     const queue = new InMemoryQueue();
     await createScheduleSweep(queue.producer)();
 
-    const runs = await db
-      .selectFrom('agent_runs')
-      .select('id')
-      .where('agent_id', '=', agentId)
-      .execute();
-    expect(runs).toHaveLength(1);
+    expect(await runsOf(agentId)).toHaveLength(1);
 
-    const trigger = await db
-      .selectFrom('agent_triggers')
-      .select(['next_run_at', 'enabled'])
-      .where('id', '=', triggerId)
-      .executeTakeFirstOrThrow();
+    const trigger = await triggerOf(agentId, triggerId);
     expect(trigger.enabled).toBe(true);
-    const next = trigger.next_run_at?.getTime() ?? 0;
+    const next = trigger.nextRunAt?.getTime() ?? 0;
     expect(next).toBeGreaterThan(Date.now());
     // The hourly rule wins the union: at most an hour out.
     expect(next).toBeLessThanOrEqual(Date.now() + 61 * 60_000);
   });
 
   it('turns off a malformed schedule instead of erroring forever', async () => {
-    const { triggerId } = await seedSchedule();
-    await db
-      .updateTable('agent_triggers')
-      .set({ config: JSON.stringify({ recurrence: { every: 'never' } }) })
-      .where('id', '=', triggerId)
-      .execute();
+    const { agentId, triggerId } = await seedSchedule();
+    const seeded = await triggerOf(agentId, triggerId);
+    // A stored recurrence this build cannot read (say, a newer deploy's
+    // shape), still due.
+    await getDataStore().agents.applyTriggerChanges(agentId, {
+      update: [
+        {
+          id: triggerId,
+          eventSource: null,
+          eventType: null,
+          config: JSON.stringify({ recurrence: { every: 'never' } }),
+          enabled: true,
+          nextRunAt: seeded.nextRunAt,
+        },
+      ],
+      insert: [],
+      remove: [],
+    });
     const queue = new InMemoryQueue();
     await createScheduleSweep(queue.producer)();
 
-    const trigger = await db
-      .selectFrom('agent_triggers')
-      .select(['enabled', 'last_error'])
-      .where('id', '=', triggerId)
-      .executeTakeFirstOrThrow();
+    const trigger = await triggerOf(agentId, triggerId);
     expect(trigger.enabled).toBe(false);
-    expect(trigger.last_error).toContain('malformed');
+    expect(trigger.lastError).toContain('malformed');
   });
 });

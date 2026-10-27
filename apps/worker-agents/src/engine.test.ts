@@ -17,8 +17,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB, type Json } from '@renkei/db';
+import { closeDataStore, getDataStore, type Json } from '@renkei/db';
 import { ok } from '@campfhir/safe-functions/helpers';
 import {
   messagesChars,
@@ -185,18 +184,21 @@ class CapturingProducer implements QueueProducer {
 maybe('agent run engine', () => {
   jest.setTimeout(30_000);
 
-  let db: Kysely<DB>;
+  // Every suite run works under its own subject and ids, so nothing needs
+  // deleting afterwards and a shared database never collides.
   const suiteId = randomUUID();
   const subject = `engine-subject-${suiteId.slice(0, 8)}`;
+  /** Each seeded run's agent, for the owner-scoped reads. */
+  const agentOfRun = new Map<string, string>();
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('database unavailable');
-    db = result.val;
-    await db
-      .insertInto('identities')
-      .values({ subject, email: 'owner@example.com', display_name: 'Test Owner' })
-      .execute();
+    // As sign-in records the owner.
+    await getDataStore().identities.upsert({
+      subject,
+      email: 'owner@example.com',
+      displayName: 'Test Owner',
+      idpGroups: [],
+    });
     await setOrgSettings({
       agentRunTimeoutMinutes: 30,
       agentRunToolCallBudget: 150,
@@ -205,22 +207,12 @@ maybe('agent run engine', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM actionable_items WHERE owner_subject = ${subject}`.execute(db);
-    await sql`DELETE FROM agent_notifications WHERE subject = ${subject}`.execute(db);
-    await sql`DELETE FROM agent_runs WHERE owner_subject = ${subject}`.execute(db);
-    await sql`DELETE FROM agent_run_log WHERE owner_subject = ${subject}`.execute(db);
-    await sql`DELETE FROM llm_calls WHERE subject = ${subject}`.execute(db);
-    await sql`DELETE FROM agent_memories WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${subject})`.execute(
-      db
-    );
-    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
-    await sql`DELETE FROM identities WHERE subject = ${subject}`.execute(db);
     await setOrgSettings({
       agentRunTimeoutMinutes: 30,
       agentRunToolCallBudget: 150,
       agentActStepsRequireApproval: 'externally_triggered',
     });
-    await closeDatabase();
+    await closeDataStore();
   });
 
   async function seedRun(
@@ -235,34 +227,35 @@ maybe('agent run engine', () => {
       instructions: '## Goal\n\nKeep PROJ tickets triaged.',
       tools: options.tools ?? [...READS, 'jira_add_comment'],
     };
+    const store = getDataStore();
     const agentId = randomUUID();
-    await db
-      .insertInto('agents')
-      .values({
-        id: agentId,
-        owner_subject: subject,
-        name: `agent-${agentId.slice(0, 8)}`,
-        instructions: definition.instructions,
-        tools: JSON.stringify(definition.tools),
-        auto_accept_actions: options.autoAccept === true,
-        can_ask_questions: options.canAsk === true,
-        enabled: true,
-      })
-      .execute();
+    await store.agents.create({
+      id: agentId,
+      ownerSubject: subject,
+      name: `agent-${agentId.slice(0, 8)}`,
+      instructions: definition.instructions,
+      tools: definition.tools,
+      llmModelId: null,
+      enabled: true,
+      guardrails: null,
+      canAskQuestions: options.canAsk === true,
+      autoAcceptActions: options.autoAccept === true,
+    });
     const runId = randomUUID();
-    await db
-      .insertInto('agent_runs')
-      .values({
-        id: runId,
-        agent_id: agentId,
-        owner_subject: subject,
-        trigger_kind: options.triggerKind ?? 'manual',
-        definition_snapshot: JSON.stringify(definition),
-        lineage: JSON.stringify([]),
-        initial_state: JSON.stringify({ subject: 'PROJ-42 is broken' }),
-        status: 'queued',
-      })
-      .execute();
+    await store.agentRuns.createQueued({
+      id: runId,
+      agentId,
+      ownerSubject: subject,
+      triggerId: null,
+      triggerKind: options.triggerKind ?? 'manual',
+      triggeredBySubject: null,
+      parentRunId: null,
+      lineage: [],
+      definitionSnapshot: definition,
+      llmModelId: null,
+      initialState: { subject: 'PROJ-42 is broken' },
+    });
+    agentOfRun.set(runId, agentId);
     return { runId, agentId };
   }
 
@@ -323,19 +316,49 @@ maybe('agent run engine', () => {
     return { handler, executor, producer, calls, minted, finalized, clock };
   }
 
-  const runOf = (runId: string) =>
-    db
-      .selectFrom('agent_runs')
-      .select(['status', 'error_kind', 'error', 'active_ms', 'waiting_until'])
-      .where('id', '=', runId)
-      .executeTakeFirstOrThrow();
-  const turnsOf = (runId: string) =>
-    db
-      .selectFrom('agent_run_steps')
-      .select(['step_id', 'attempt', 'status', 'tool_call_count', 'detail', 'outcome'])
-      .where('run_id', '=', runId)
-      .orderBy('attempt')
-      .execute();
+  const runOf = async (runId: string) => {
+    const run = await getDataStore().agentRuns.findForExecution(runId);
+    if (!run) throw new Error(`no run ${runId}`);
+    return run;
+  };
+  /** The run as its owner's run page reads it: its turns and batches. */
+  const detailOf = async (runId: string) => {
+    const detail = await getDataStore().agentRuns.findDetail({
+      agentId: agentOfRun.get(runId) ?? '',
+      runId,
+      ownerSubject: subject,
+      audience: 'owner',
+    });
+    if (!detail) throw new Error(`no run ${runId}`);
+    return detail;
+  };
+  const turnsOf = async (runId: string) => (await detailOf(runId)).steps;
+  const batchOf = async (runId: string) => {
+    const [batch] = (await detailOf(runId)).batches;
+    if (!batch) throw new Error(`no batch on run ${runId}`);
+    return batch;
+  };
+  /** The run's undecided card, as the owner's inbox finds it. */
+  const pendingCardOf = (runId: string) => getDataStore().agentRuns.findPauseCard(runId, subject);
+  /**
+   * Decide the run's undecided card the way the owner's approval and
+   * question pages do (apps/web/lib/agents/approvals.ts): claim it with the
+   * decision and who made it.
+   */
+  const decideCard = async (
+    runId: string,
+    status: 'approved' | 'declined' | 'answered',
+    result: { [key: string]: Json } = {}
+  ) => {
+    const card = await pendingCardOf(runId);
+    if (!card) throw new Error(`no undecided card on run ${runId}`);
+    const claimed = await getDataStore().agentRuns.claimCard(card.id, {
+      status,
+      result: { ...result, decidedBy: subject },
+      decidedBy: subject,
+    });
+    expect(claimed).toBe(true);
+  };
 
   it('reads, retries after a failed call, and finishes — every turn a sealed row', async () => {
     const { runId } = await seedRun();
@@ -354,12 +377,12 @@ maybe('agent run engine', () => {
     expect((await runOf(runId)).status).toBe('succeeded');
     expect(h.calls.map((entry) => entry.name)).toEqual(['jira_get_issue', 'jira_search_issues']);
     const turns = await turnsOf(runId);
-    expect(turns.map((turn) => [turn.step_id, turn.attempt, turn.status])).toEqual([
+    expect(turns.map((turn) => [turn.stepId, turn.attempt, turn.status])).toEqual([
       [TURN_STEP_ID, 1, 'succeeded'],
       [TURN_STEP_ID, 2, 'succeeded'],
       [TURN_STEP_ID, 3, 'succeeded'],
     ]);
-    expect(turns.map((turn) => turn.tool_call_count)).toEqual([1, 1, 0]);
+    expect(turns.map((turn) => turn.toolCallCount)).toEqual([1, 1, 0]);
     // Content is sealed; the clear half shows structure only.
     expect(JSON.stringify(turns[0].detail)).not.toContain('PROJ-999');
     expect(unsealed(turns[0].detail).opening).toContain('PROJ-42 is broken');
@@ -442,31 +465,26 @@ maybe('agent run engine', () => {
     await h.handler({ payload: { runId } });
     let run = await runOf(runId);
     expect(run.status).toBe('waiting');
-    const card = await db
-      .selectFrom('actionable_items')
-      .select(['id', 'kind', 'suggested_action', 'step_id', 'attempt'])
-      .where('run_id', '=', runId)
-      .executeTakeFirstOrThrow();
-    expect(card.kind).toBe('approval');
-    expect(card.step_id).toBe(TURN_STEP_ID);
-    const proposal = isRecord(card.suggested_action) ? card.suggested_action : {};
+    const card = await pendingCardOf(runId);
+    expect(card?.kind).toBe('approval');
+    // Raised for the staging turn — the first attempt of the turn step.
+    expect((await getDataStore().agentRuns.findTurnCard(runId, TURN_STEP_ID, 1))?.id).toBe(
+      card?.id
+    );
+    const proposal = isRecord(card?.suggestedAction) ? card.suggestedAction : {};
     const proposed = Array.isArray(proposal.actions) ? proposal.actions : [];
     expect(proposed.map((action) => (isRecord(action) ? action.tool : null))).toEqual([
       'jira_create_issue',
       'jira_add_comment',
     ]);
     // Both actions are billed once, on the staging turn.
-    expect((await turnsOf(runId))[0].tool_call_count).toBe(2);
+    expect((await turnsOf(runId))[0].toolCallCount).toBe(2);
     expect(h.calls).toEqual([]);
 
     // A long wait for the owner — none of it counts.
-    const activeBefore = Number(run.active_ms);
+    const activeBefore = Number(run.activeMs);
     h.clock.now += 6 * 3_600_000;
-    await db
-      .updateTable('actionable_items')
-      .set({ status: 'approved', decided_at: sql`NOW()`, decided_by: subject })
-      .where('id', '=', card.id)
-      .execute();
+    await decideCard(runId, 'approved');
     await h.handler({ payload: { runId } });
     run = await runOf(runId);
     expect(run.status).toBe('waiting'); // now on the executor
@@ -476,19 +494,15 @@ maybe('agent run engine', () => {
 
     await h.executor({ payload: batchJobs[0].payload });
     expect(h.calls.map((entry) => entry.name)).toEqual(['jira_create_issue', 'jira_add_comment']);
-    const batch = await db
-      .selectFrom('agent_action_batches')
-      .select(['status', 'accepted_by', 'results'])
-      .where('run_id', '=', runId)
-      .executeTakeFirstOrThrow();
+    const batch = await batchOf(runId);
     expect(batch.status).toBe('completed');
-    expect(batch.accepted_by).toBe('person');
+    expect(batch.acceptedBy).toBe('person');
     expect(h.producer.take('run')).toHaveLength(1);
 
     await h.handler({ payload: { runId } });
     run = await runOf(runId);
     expect(run.status).toBe('succeeded');
-    expect(Number(run.active_ms)).toBeLessThan(activeBefore + 60_000);
+    expect(Number(run.activeMs)).toBeLessThan(activeBefore + 60_000);
   });
 
   it('auto-accepts where the org allows it, but a high-risk tool still waits for a person', async () => {
@@ -503,9 +517,9 @@ maybe('agent run engine', () => {
     );
     const h = harness(llm);
     await h.handler({ payload: { runId } });
-    expect(
-      await db.selectFrom('actionable_items').select('id').where('run_id', '=', runId).execute()
-    ).toEqual([]);
+    // No card was raised: nothing waits, and the staging turn holds none.
+    expect(await pendingCardOf(runId)).toBeNull();
+    expect(await getDataStore().agentRuns.findTurnCard(runId, TURN_STEP_ID, 1)).toBeNull();
     const jobs = h.producer.take('actions');
     expect(jobs).toHaveLength(1);
     await h.executor({ payload: jobs[0].payload });
@@ -522,12 +536,11 @@ maybe('agent run engine', () => {
       })
     );
     await harness(riskyLlm).handler({ payload: { runId: risky.runId } });
-    const batch = await db
-      .selectFrom('agent_action_batches')
-      .select(['status', 'review_reason'])
-      .where('run_id', '=', risky.runId)
-      .executeTakeFirstOrThrow();
-    expect(batch).toEqual({ status: 'proposed', review_reason: 'high-risk' });
+    const batch = await batchOf(risky.runId);
+    expect({ status: batch.status, reviewReason: batch.reviewReason }).toEqual({
+      status: 'proposed',
+      reviewReason: 'high-risk',
+    });
 
     // An event-started run ignores auto-accept under the default policy.
     const external = await seedRun({ autoAccept: true, triggerKind: 'event' });
@@ -538,15 +551,7 @@ maybe('agent run engine', () => {
       })
     );
     await harness(externalLlm).handler({ payload: { runId: external.runId } });
-    expect(
-      (
-        await db
-          .selectFrom('agent_action_batches')
-          .select('review_reason')
-          .where('run_id', '=', external.runId)
-          .executeTakeFirstOrThrow()
-      ).review_reason
-    ).toBe('policy');
+    expect((await batchOf(external.runId)).reviewReason).toBe('policy');
   });
 
   it('reports a declined batch, and a batch that stopped at its first failure', async () => {
@@ -575,23 +580,10 @@ maybe('agent run engine', () => {
       name === 'jira_create_issue' ? text('Project not found', true) : text('ok')
     );
     await h.handler({ payload: { runId } });
-    await db
-      .updateTable('actionable_items')
-      .set({
-        status: 'declined',
-        decided_at: sql`NOW()`,
-        result: JSON.stringify({ comment: 'Not now' }),
-      })
-      .where('run_id', '=', runId)
-      .execute();
+    await decideCard(runId, 'declined', { comment: 'Not now' });
     await h.handler({ payload: { runId } });
     // Staged again on turn 2; accept it this time.
-    await db
-      .updateTable('actionable_items')
-      .set({ status: 'approved', decided_at: sql`NOW()` })
-      .where('run_id', '=', runId)
-      .where('status', '=', 'suggested')
-      .execute();
+    await decideCard(runId, 'approved');
     await h.handler({ payload: { runId } });
     await h.executor({ payload: h.producer.take('actions')[0].payload });
     expect(h.calls.map((entry) => entry.name)).toEqual(['jira_create_issue']);
@@ -619,22 +611,14 @@ maybe('agent run engine', () => {
     const h = harness(llm, async (name) => {
       // The owner presses Cancel while the first change is going out.
       if (name === 'jira_create_issue') {
-        await db
-          .updateTable('agent_runs')
-          .set({ cancel_requested_at: sql`NOW()` })
-          .where('id', '=', runId)
-          .execute();
+        expect(await getDataStore().agentRuns.requestCancel(runId, subject)).toBe(true);
       }
       return text('ok');
     });
     await h.handler({ payload: { runId } });
     await h.executor({ payload: h.producer.take('actions')[0].payload });
     expect(h.calls.map((entry) => entry.name)).toEqual(['jira_create_issue']);
-    const batch = await db
-      .selectFrom('agent_action_batches')
-      .select(['status', 'results'])
-      .where('run_id', '=', runId)
-      .executeTakeFirstOrThrow();
+    const batch = await batchOf(runId);
     expect(batch.status).toBe('completed');
     expect(JSON.stringify(batch.results)).toContain('Not made: the run was canceled.');
     // The woken run ends canceled, quietly.
@@ -694,7 +678,7 @@ maybe('agent run engine', () => {
     expect(report).toContain('counted against your budget');
     // The sub-agent's read is billed to the parent's turn, so the budget sees it.
     const turns = await turnsOf(runId);
-    expect(turns[0].tool_call_count).toBe(1);
+    expect(turns[0].toolCallCount).toBe(1);
   });
 
   it('runs sub-agents in parallel, three at a time, and no more than ten in a run', async () => {
@@ -803,7 +787,7 @@ maybe('agent run engine', () => {
       await slow.handler({ payload: { runId } });
       const run = await runOf(runId);
       expect(run.status).toBe('failed');
-      expect(run.error_kind).toBe('timeout');
+      expect(run.errorKind).toBe('timeout');
       expect(slow.calls.length).toBeLessThanOrEqual(3);
     } finally {
       await setOrgSettings({ agentRunTimeoutMinutes: 30 });
@@ -820,25 +804,30 @@ maybe('agent run engine', () => {
       results: [],
       inFlight: 'tu_crashed',
     };
-    await db
-      .insertInto('agent_run_steps')
-      .values({
-        id: randomUUID(),
-        run_id: runId,
-        step_id: TURN_STEP_ID,
-        step_index: 1,
-        attempt: 1,
-        iteration: 0,
-        status: 'running',
-        tool_call_count: 1,
-        detail: JSON.stringify({ sealed: fakeSeal(JSON.stringify(detail)) }),
-      })
-      .execute();
-    await db
-      .updateTable('agent_runs')
-      .set({ status: 'running', started_at: sql`NOW()` })
-      .where('id', '=', runId)
-      .execute();
+    // Written the way the executor writes it: the run started, its turn
+    // opened, then the turn rewritten as the call went out.
+    const runs = getDataStore().agentRuns;
+    await runs.updateExecution(runId, { status: 'running', startedAt: new Date() });
+    const turnId = randomUUID();
+    const sealedDetail = JSON.stringify({ sealed: fakeSeal(JSON.stringify(detail)) });
+    await runs.openTurn({
+      id: turnId,
+      runId,
+      stepId: TURN_STEP_ID,
+      attempt: 1,
+      detail: sealedDetail,
+    });
+    await runs.writeTurn(turnId, {
+      status: 'running',
+      toolCallCount: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadInputTokens: null,
+      cacheWriteInputTokens: null,
+      outcome: null,
+      detail: sealedDetail,
+      finished: false,
+    });
 
     const llm = stubLlm(() => finish('done'));
     const h = harness(llm);
@@ -886,15 +875,7 @@ maybe('agent run engine', () => {
     const h = harness(llm);
     await h.handler({ payload: { runId } });
     expect((await runOf(runId)).status).toBe('waiting');
-    await db
-      .updateTable('actionable_items')
-      .set({
-        status: 'answered',
-        decided_at: sql`NOW()`,
-        result: JSON.stringify({ answers: { project: 'OPS' } }),
-      })
-      .where('run_id', '=', runId)
-      .execute();
+    await decideCard(runId, 'answered', { answers: { project: 'OPS' } });
     await h.handler({ payload: { runId } });
     expect((await runOf(runId)).status).toBe('succeeded');
   });
@@ -930,27 +911,15 @@ maybe('agent run engine', () => {
     });
     const h = harness(llm);
     await h.handler({ payload: { runId } });
-    const card = await db
-      .selectFrom('actionable_items')
-      .select(['suggested_action', 'summary'])
-      .where('run_id', '=', runId)
-      .executeTakeFirstOrThrow();
-    expect(card.summary).toBe('ATLAS went live on Azure 10/17–10/19; two things need a home.');
-    const fields = JSON.stringify(card.suggested_action);
+    const card = await pendingCardOf(runId);
+    expect(card?.summary).toBe('ATLAS went live on Azure 10/17–10/19; two things need a home.');
+    const fields = JSON.stringify(card?.suggestedAction);
     expect(fields).toContain('"name":"q1"');
     expect(fields).toContain('"options":["Yes","No"]');
     expect(fields).toContain('"name":"anything_else"');
-    await db
-      .updateTable('actionable_items')
-      .set({
-        status: 'answered',
-        decided_at: sql`NOW()`,
-        result: JSON.stringify({
-          answers: { q1: 'CIO-25', anything_else: 'Kelvin owns the SFTP piece.' },
-        }),
-      })
-      .where('run_id', '=', runId)
-      .execute();
+    await decideCard(runId, 'answered', {
+      answers: { q1: 'CIO-25', anything_else: 'Kelvin owns the SFTP piece.' },
+    });
     await h.handler({ payload: { runId } });
     expect((await runOf(runId)).status).toBe('succeeded');
   });
@@ -1036,6 +1005,6 @@ maybe('agent run engine', () => {
     }
     const run = await runOf(runId);
     expect(run.status).toBe('waiting');
-    expect(run.error_kind).toBe('needs-sign-in');
+    expect(run.errorKind).toBe('needs-sign-in');
   });
 });

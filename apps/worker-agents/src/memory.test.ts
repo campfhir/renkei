@@ -29,8 +29,7 @@ jest.mock('@renkei/delegate-client', () => ({
 }));
 
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import {
   appendAgentMemory,
   countAgentMemory,
@@ -53,44 +52,35 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 maybe('agent memory', () => {
   jest.setTimeout(20_000);
 
-  // Acquired in beforeAll, not at describe-collection time: describe.skip still
-  // runs its callback to register tests, so acquiring the database here (when
-  // this suite is skipped for lack of DATABASE_URL) would throw at collection
-  // and fail the whole file instead of skipping it.
-  let db: Kysely<DB>;
+  // Every test seeds a fresh agent under this run's own owner, so nothing
+  // needs deleting afterwards and a shared database never collides.
   let agentId: string;
   const owner = `mem-owner-${randomUUID().slice(0, 8)}`;
 
-  beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('database unavailable');
-    db = result.val;
-  });
+  async function seedAgent(): Promise<string> {
+    const id = randomUUID();
+    await getDataStore().agents.create({
+      id,
+      ownerSubject: owner,
+      name: `mem-agent-${id.slice(0, 8)}`,
+      instructions: '',
+      tools: [],
+      llmModelId: null,
+      enabled: true,
+      guardrails: null,
+      canAskQuestions: false,
+      autoAcceptActions: false,
+    });
+    return id;
+  }
 
   beforeEach(async () => {
-    agentId = randomUUID();
-    await db
-      .insertInto('agents')
-      .values({
-        id: agentId,
-        owner_subject: owner,
-        name: `mem-agent-${agentId.slice(0, 8)}`,
-        enabled: true,
-      })
-      .execute();
+    agentId = await seedAgent();
     jest.clearAllMocks();
   });
 
   afterAll(async () => {
-    await db
-      .deleteFrom('agent_memories')
-      .where(
-        'agent_id',
-        'in',
-        db.selectFrom('agents').select('id').where('owner_subject', '=', owner)
-      )
-      .execute();
-    await db.deleteFrom('agents').where('owner_subject', '=', owner).execute();
+    await closeDataStore();
   });
 
   it('writes an identical entry once — a fact remembered every run is one line', async () => {
@@ -124,41 +114,35 @@ maybe('agent memory', () => {
   it('keeps exactly one summary row per agent across rewrites', async () => {
     await writeAgentMemorySummary(agentId, 'first');
     await writeAgentMemorySummary(agentId, 'second');
-    const rows = await db
-      .selectFrom('agent_memories')
-      .select(['content'])
-      .where('agent_id', '=', agentId)
-      .where('kind', '=', 'summary')
-      .execute();
-    expect(rows).toHaveLength(1);
+    // The rewrite replaced the one summary rather than adding a second row.
+    expect(await getDataStore().agents.countMemory(agentId)).toEqual({
+      entries: 0,
+      hasSummary: true,
+    });
+    const { summary } = await getDataStore().agents.memorySlice(agentId, 10);
     // Sealed at rest: the row is an envelope, not the text.
-    expect(rows[0].content).toMatch(/^uenc1:/);
-    expect(rows[0].content).not.toContain('second');
+    expect(summary?.content).toMatch(/^uenc1:/);
+    expect(summary?.content).not.toContain('second');
     expect((await readAgentMemory(agentId)).summary).toBe('second');
   });
 
   it('writes no entry in plaintext, and still reads a plaintext row from before the sweep', async () => {
     await appendAgentMemory({ agentId, content: 'patient 123 was discharged' });
-    const stored = await db
-      .selectFrom('agent_memories')
-      .select(['content'])
-      .where('agent_id', '=', agentId)
-      .execute();
+    const stored = (await getDataStore().agents.memorySlice(agentId, 10)).entries;
     expect(stored).toHaveLength(1);
     expect(stored[0].content).toMatch(/^uenc1:/);
     expect(stored[0].content).not.toContain('discharged');
 
     // A row the rekey sweep has not reached yet reads as it is — nothing
     // goes dark on deploy — and the duplicate check sees it too.
-    await db
-      .insertInto('agent_memories')
-      .values({
-        id: randomUUID(),
-        agent_id: agentId,
-        kind: 'entry',
-        content: 'legacy plaintext note',
-      })
-      .execute();
+    // (The store writes content as given; before sealing, the app gave it
+    // plaintext.)
+    await getDataStore().agents.addMemoryEntry({
+      id: randomUUID(),
+      agentId,
+      content: 'legacy plaintext note',
+      runId: null,
+    });
     const memory = await readAgentMemory(agentId);
     expect(memory.unavailable).toBeNull();
     expect(memory.entries.map((entry) => entry.content).sort()).toEqual([
@@ -204,16 +188,7 @@ maybe('agent memory', () => {
   });
 
   it("will not delete another agent's entry, even with its real id", async () => {
-    const otherId = randomUUID();
-    await db
-      .insertInto('agents')
-      .values({
-        id: otherId,
-        owner_subject: owner,
-        name: `mem-agent-${otherId.slice(0, 8)}`,
-        enabled: true,
-      })
-      .execute();
+    const otherId = await seedAgent();
     await appendAgentMemory({ agentId: otherId, content: 'theirs' });
     const theirs = (await readAgentMemory(otherId)).entries[0];
 
@@ -287,14 +262,9 @@ maybe('agent memory', () => {
     const memory = await readAgentMemory(agentId);
     expect(memory.summary).toContain('merged');
     // The newest window stays verbatim; the folded tail is gone.
-    const remaining = await db
-      .selectFrom('agent_memories')
-      .select(['id'])
-      .where('agent_id', '=', agentId)
-      .where('kind', '=', 'entry')
-      .execute();
-    expect(remaining.length).toBeLessThan(total);
-    expect(remaining.length).toBeGreaterThanOrEqual(MEMORY_KEEP_RECENT);
+    const remaining = (await getDataStore().agents.countMemory(agentId)).entries;
+    expect(remaining).toBeLessThan(total);
+    expect(remaining).toBeGreaterThanOrEqual(MEMORY_KEEP_RECENT);
     expect(memory.entries[0]?.content).toBe(`did thing ${total - 1}`);
   });
 
@@ -307,12 +277,6 @@ maybe('agent memory', () => {
 
     await createMemoryCompactionSweep()();
 
-    const remaining = await db
-      .selectFrom('agent_memories')
-      .select(['id'])
-      .where('agent_id', '=', agentId)
-      .where('kind', '=', 'entry')
-      .execute();
-    expect(remaining).toHaveLength(total);
+    expect((await getDataStore().agents.countMemory(agentId)).entries).toBe(total);
   });
 });

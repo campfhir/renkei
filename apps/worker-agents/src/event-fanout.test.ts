@@ -8,42 +8,32 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore, type Json } from '@renkei/db';
 import { InMemoryQueue } from '@renkei/queue';
 import type { AgentDefinition } from '@renkei/agents';
 import { fanOutAgentEvents } from '@renkei/agents/event-fanout';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
+function stateOf(initialState: Json | null | undefined): Record<string, unknown> {
+  return typeof initialState === 'object' && initialState !== null && !Array.isArray(initialState)
+    ? initialState
+    : {};
+}
+
 maybe('agent event fan-out', () => {
   jest.setTimeout(20_000);
 
-  // Acquired in beforeAll, not at describe-collection time: describe.skip still
-  // runs its callback to register tests, so acquiring the database here (when
-  // this suite is skipped for lack of DATABASE_URL) would throw at collection
-  // and fail the whole file instead of skipping it.
-  let db: Kysely<DB>;
-
+  // Every suite run seeds under its own owners and ids, so nothing needs
+  // deleting afterwards and a shared database never collides.
   const suiteId = randomUUID();
   const owner = `owner-${suiteId.slice(0, 8)}`;
   const stranger = `stranger-${suiteId.slice(0, 8)}`;
 
   const definition: AgentDefinition = { instructions: '## Goal\n\nReact to the email.', tools: [] };
 
-  beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('database unavailable');
-    db = result.val;
-  });
-
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs WHERE owner_subject = ${owner}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${owner})`.execute(
-      db
-    );
-    await sql`DELETE FROM agents WHERE owner_subject = ${owner}`.execute(db);
-    await closeDatabase();
+    await closeDataStore();
   });
 
   async function seedEventAgent(
@@ -55,32 +45,43 @@ maybe('agent event fan-out', () => {
       eventType?: string;
     } = {}
   ): Promise<string> {
+    const store = getDataStore().agents;
     const agentId = randomUUID();
-    await db
-      .insertInto('agents')
-      .values({
-        id: agentId,
-        owner_subject: ownerSubject,
-        name: `fanout-agent-${agentId.slice(0, 8)}`,
-        instructions: definition.instructions,
-        tools: JSON.stringify(definition.tools),
-        enabled: options.enabled ?? true,
-      })
-      .execute();
-    await db
-      .insertInto('agent_triggers')
-      .values({
-        id: randomUUID(),
-        agent_id: agentId,
-        kind: 'event',
-        event_source: options.eventSource ?? 'microsoft',
-        event_type: options.eventType ?? 'mail.received',
-        config: JSON.stringify({ match: options.match ?? {} }),
-        enabled: true,
-      })
-      .execute();
+    await store.create({
+      id: agentId,
+      ownerSubject,
+      name: `fanout-agent-${agentId.slice(0, 8)}`,
+      instructions: definition.instructions,
+      tools: definition.tools,
+      llmModelId: null,
+      enabled: options.enabled ?? true,
+      guardrails: null,
+      canAskQuestions: false,
+      autoAcceptActions: false,
+    });
+    await store.applyTriggerChanges(agentId, {
+      update: [],
+      insert: [
+        {
+          id: randomUUID(),
+          kind: 'event',
+          eventSource: options.eventSource ?? 'microsoft',
+          eventType: options.eventType ?? 'mail.received',
+          config: JSON.stringify({ match: options.match ?? {} }),
+          enabled: true,
+          nextRunAt: null,
+        },
+      ],
+      remove: [],
+    });
     return agentId;
   }
+
+  const runOf = async (runId: string) => {
+    const run = await getDataStore().agentRuns.findForExecution(runId);
+    if (!run) throw new Error(`no run ${runId}`);
+    return run;
+  };
 
   const mailEvent = (ownerSubject: string, overrides: Record<string, unknown> = {}) => ({
     source: 'microsoft',
@@ -104,36 +105,10 @@ maybe('agent event fan-out', () => {
     const { started } = await fanOutAgentEvents(queue.producer, mailEvent(owner));
     expect(started).toHaveLength(1);
 
-    const run = await db
-      .selectFrom('agent_runs')
-      .select(['agent_id', 'trigger_kind', 'initial_state'])
-      .where('id', '=', started[0])
-      .executeTakeFirstOrThrow();
-    expect(run.agent_id).toBe(ownersAgent);
-    expect(run.trigger_kind).toBe('event');
-    const state: { subject?: unknown } =
-      typeof run.initial_state === 'object' &&
-      run.initial_state !== null &&
-      !Array.isArray(run.initial_state)
-        ? run.initial_state
-        : {};
-    expect(state.subject).toBe('PROJ-42 is broken');
-  });
-
-  it('applies match filters', async () => {
-    const filtered = await seedEventAgent(owner, { match: { fromDomain: 'customer.example' } });
-    const other = await seedEventAgent(owner, { match: { fromDomain: 'elsewhere.example' } });
-
-    const queue = new InMemoryQueue();
-    const { started } = await fanOutAgentEvents(queue.producer, mailEvent(owner));
-    const runs = await db
-      .selectFrom('agent_runs')
-      .select('agent_id')
-      .where('id', 'in', started.length > 0 ? started : ['00000000-0000-0000-0000-000000000000'])
-      .execute();
-    const firedAgents = runs.map((run) => run.agent_id);
-    expect(firedAgents).toContain(filtered);
-    expect(firedAgents).not.toContain(other);
+    const run = await runOf(started[0]);
+    expect(run.agentId).toBe(ownersAgent);
+    expect(run.triggerKind).toBe('event');
+    expect(stateOf(run.initialState).subject).toBe('PROJ-42 is broken');
   });
 
   /**
@@ -146,14 +121,18 @@ maybe('agent event fan-out', () => {
   async function firedAgentsFor(event: Parameters<typeof fanOutAgentEvents>[1]): Promise<string[]> {
     const queue = new InMemoryQueue();
     const { started } = await fanOutAgentEvents(queue.producer, event);
-    if (started.length === 0) return [];
-    const runs = await db
-      .selectFrom('agent_runs')
-      .select('agent_id')
-      .where('id', 'in', started)
-      .execute();
-    return runs.map((run) => run.agent_id);
+    const runs = await Promise.all(started.map(runOf));
+    return runs.map((run) => run.agentId);
   }
+
+  it('applies match filters', async () => {
+    const filtered = await seedEventAgent(owner, { match: { fromDomain: 'customer.example' } });
+    const other = await seedEventAgent(owner, { match: { fromDomain: 'elsewhere.example' } });
+
+    const firedAgents = await firedAgentsFor(mailEvent(owner));
+    expect(firedAgents).toContain(filtered);
+    expect(firedAgents).not.toContain(other);
+  });
 
   it('narrows mail to exact senders, and refuses the rest', async () => {
     const scoped = await seedEventAgent(owner, {
@@ -208,7 +187,7 @@ maybe('agent event fan-out', () => {
   it('fires a source event at most once per trigger, however often it is delivered', async () => {
     // A fresh owner so earlier tests' lingering agents cannot muddy counts.
     const soloOwner = `solo-${randomUUID().slice(0, 8)}`;
-    await seedEventAgent(soloOwner);
+    const agentId = await seedEventAgent(soloOwner);
     const queue = new InMemoryQueue();
     const messageId = `dup-${randomUUID()}`;
     const event = mailEvent(soloOwner, { messageId });
@@ -229,12 +208,9 @@ maybe('agent event fan-out', () => {
     expect(second.filtered).toBe(0);
 
     // The winner's run is recorded on the firing row.
-    const firing = await db
-      .selectFrom('agent_trigger_firings')
-      .select('run_id')
-      .where('dedupe_key', '=', `msg:${messageId}`)
-      .executeTakeFirstOrThrow();
-    expect(firing.run_id).toBe(first.started[0]);
+    const [trigger] = await getDataStore().agents.listTriggers(agentId);
+    const firing = await getDataStore().agentTriggerFirings.find(trigger.id, `msg:${messageId}`);
+    expect(firing?.runId).toBe(first.started[0]);
   });
 
   it('falls back to the delivery id, and without one does not lock at all', async () => {
@@ -278,18 +254,8 @@ maybe('agent event fan-out', () => {
     });
     expect(started).toHaveLength(1);
 
-    const run = await db
-      .selectFrom('agent_runs')
-      .select(['agent_id', 'initial_state'])
-      .where('id', '=', started[0])
-      .executeTakeFirstOrThrow();
-    expect(run.agent_id).toBe(zoomAgent);
-    const state: { meetingUuid?: unknown } =
-      typeof run.initial_state === 'object' &&
-      run.initial_state !== null &&
-      !Array.isArray(run.initial_state)
-        ? run.initial_state
-        : {};
-    expect(state.meetingUuid).toBe('uuid-1==');
+    const run = await runOf(started[0]);
+    expect(run.agentId).toBe(zoomAgent);
+    expect(stateOf(run.initialState).meetingUuid).toBe('uuid-1==');
   });
 });
