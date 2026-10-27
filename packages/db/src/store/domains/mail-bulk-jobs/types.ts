@@ -37,4 +37,17 @@ export interface MailBulkJobStore {
   markFailed(id: string, error: string): Promise<void>;
   /** The subject's own job, or null — someone else's id reads as missing. */
   getOwned(id: string, subject: string): Promise<MailBulkJobRecord | null>;
+  /** One job by id, whoever owns it (the runner's read), or null. */
+  get(id: string): Promise<MailBulkJobRecord | null>;
+  /** The job starts: `running`, started now. */
+  markRunning(id: string): Promise<void>;
+  /** How many messages the selection expanded to. */
+  setTotal(id: string, total: number): Promise<void>;
+  /** The running counts and the kept per-message failures, as chunks settle. */
+  recordProgress(
+    id: string,
+    progress: { succeeded: number; failed: number; failures: unknown[] }
+  ): Promise<void>;
+  /** The job ends in `status`, finished now; `lastError` is written when given. */
+  finish(id: string, outcome: { status: string; lastError?: string }): Promise<void>;
 }

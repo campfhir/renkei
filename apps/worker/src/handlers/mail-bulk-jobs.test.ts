@@ -6,8 +6,6 @@
  * handler never throws once the job is marked running.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: Object.assign(() => 'sql-fragment', { raw: () => '' }) }));
 jest.mock('@renkei/connector-microsoft', () => ({
   GRAPH_BASE_URL: 'https://graph.microsoft.com/v1.0',
   graphBatch: jest.fn(),
@@ -28,6 +26,12 @@ jest.mock('../logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { createMailBulkJobHandler, MAX_JOB_MESSAGES } from './mail-bulk-jobs';
 import type { ClaimedEvent } from '../queue';
 import { authedFetch } from '@renkei/delegate-client';
@@ -35,7 +39,6 @@ import { authedFetch } from '@renkei/delegate-client';
 /** A grant fetcher stand-in: the code under test only passes it through. */
 const auth = authedFetch(async () => new Response(), 'microsoft:tenant-1:acct-1');
 
-const { getDatabase: getDatabaseMock } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { graphBatch: graphBatchMock, graphRequest: graphRequestMock } = jest.requireMock<{
   graphBatch: jest.Mock;
   graphRequest: jest.Mock;
@@ -44,24 +47,37 @@ const { resolveMicrosoftAccess: resolveAccessMock } = jest.requireMock<{
   resolveMicrosoftAccess: jest.Mock;
 }>('./microsoft-access');
 
-/** The job row served to the handler; updates are recorded, not applied. */
-let jobRow: Record<string, unknown> | undefined;
-let updates: Record<string, unknown>[] = [];
+const JOB_ID = '00000000-0000-4000-8000-000000000001';
 
-function fakeDb() {
-  return {
-    selectFrom: () => ({
-      selectAll: () => ({
-        where: () => ({ executeTakeFirst: async () => jobRow }),
-      }),
-    }),
-    updateTable: () => ({
-      set: (values: Record<string, unknown>) => {
-        updates.push(values);
-        return { where: () => ({ execute: async () => undefined }) };
+/** The memory store the handler reads and writes the job row through. */
+let store: MemoryDataStore;
+
+/** Seed the one job the event points at. */
+async function seedJob(row: Record<string, unknown>): Promise<void> {
+  await store.seed({
+    mail_bulk_jobs: [
+      {
+        id: JOB_ID,
+        subject: 'user-1',
+        account_id: 'acct-1',
+        action: 'markRead',
+        params: JSON.stringify(row.params ?? {}),
+        selection: JSON.stringify(row.selection ?? {}),
+        status: String(row.status ?? 'queued'),
+        total: typeof row.total === 'number' ? row.total : null,
+        succeeded: typeof row.succeeded === 'number' ? row.succeeded : 0,
+        failed: 0,
+        failures: JSON.stringify([]),
+        ...(typeof row.action === 'string' ? { action: row.action } : {}),
       },
-    }),
-  };
+    ],
+  });
+}
+
+async function jobRow() {
+  const row = await store.mailBulkJobs.get(JOB_ID);
+  if (!row) throw new Error('the job row is gone');
+  return row;
 }
 
 function claimedEvent(): ClaimedEvent {
@@ -69,16 +85,13 @@ function claimedEvent(): ClaimedEvent {
     id: 'evt-1',
     source: 'mailjobs',
     type: 'bulk-action',
-    payload: { jobId: 'job-1' },
+    payload: { jobId: JOB_ID },
     attempts: 1,
   };
 }
 
 function job(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    id: 'job-1',
-    subject: 'user-1',
-    account_id: 'acct-1',
     action: 'markRead',
     params: {},
     selection: { messageIds: ['m1', 'm2', 'm3'] },
@@ -94,11 +107,14 @@ function job(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 const ok = (id: string) => ({ id, ok: true, body: {} });
 const bad = (id: string, error: string) => ({ id, ok: false, body: null, error });
 
+afterEach(() => {
+  resetDataStore();
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
-  updates = [];
-  jobRow = undefined;
-  getDatabaseMock.mockReturnValue({ ok: true, val: fakeDb() });
+  store = createMemoryDataStore();
+  registerDataStore(store);
   resolveAccessMock.mockResolvedValue({
     auth,
     accountId: 'acct-1',
@@ -120,7 +136,7 @@ beforeEach(() => {
 
 describe('createMailBulkJobHandler', () => {
   it('runs an explicit-ids markRead job to succeeded with counts on the row', async () => {
-    jobRow = job();
+    await seedJob(job());
     await createMailBulkJobHandler()(claimedEvent());
 
     expect(graphBatchMock).toHaveBeenCalledTimes(1);
@@ -131,16 +147,20 @@ describe('createMailBulkJobHandler', () => {
       url: '/me/messages/m1',
       body: { isRead: true },
     });
-    const final = updates[updates.length - 1];
+    const final = await jobRow();
     expect(final.status).toBe('succeeded');
-    const progress = updates.find((update) => 'succeeded' in update && !('status' in update));
-    expect(progress?.succeeded).toBe(3);
+    expect(final.succeeded).toBe(3);
+    expect(final.total).toBe(3);
+    expect(final.startedAt).not.toBeNull();
+    expect(final.finishedAt).not.toBeNull();
   });
 
   it('expands a filter selection with one paged search, subjectContains client-side', async () => {
-    jobRow = job({
-      selection: { filters: { isRead: false, subjectContains: 'invoice' }, maxMessages: 10 },
-    });
+    await seedJob(
+      job({
+        selection: { filters: { isRead: false, subjectContains: 'invoice' }, maxMessages: 10 },
+      })
+    );
     graphRequestMock.mockResolvedValue({
       ok: true,
       val: {
@@ -160,7 +180,7 @@ describe('createMailBulkJobHandler', () => {
     expect(path).not.toContain('invoice');
     const [, requests] = graphBatchMock.mock.calls[0];
     expect(requests.map((request: { id: string }) => request.id)).toEqual(['a', 'c']);
-    expect(updates.some((update) => update.total === 2)).toBe(true);
+    expect((await jobRow()).total).toBe(2);
   });
 
   it('expands a to filter client-side, and asks Graph for the field to match on', async () => {
@@ -168,9 +188,11 @@ describe('createMailBulkJobHandler', () => {
     // a filter the job still runs — over the wrong messages — and then
     // deletes or moves them. So this asserts the SELECTED ids, not just
     // that a call went out.
-    jobRow = job({
-      selection: { filters: { isRead: false, to: 'dana@example.com' }, maxMessages: 10 },
-    });
+    await seedJob(
+      job({
+        selection: { filters: { isRead: false, to: 'dana@example.com' }, maxMessages: 10 },
+      })
+    );
     const addressed = (id: string, address: string) => ({
       id,
       subject: id,
@@ -199,7 +221,7 @@ describe('createMailBulkJobHandler', () => {
   });
 
   it('marks archive jobs read first and never moves a mark-failure', async () => {
-    jobRow = job({ action: 'archive', params: {}, selection: { messageIds: ['m1', 'm2'] } });
+    await seedJob(job({ action: 'archive', params: {}, selection: { messageIds: ['m1', 'm2'] } }));
     graphBatchMock
       .mockImplementationOnce(async () => ({ results: [ok('m1'), bad('m2', 'gone')] }))
       .mockImplementationOnce(
@@ -224,42 +246,53 @@ describe('createMailBulkJobHandler', () => {
       url: '/me/messages/m1/move',
       body: { destinationId: 'archive' },
     });
-    expect(updates[updates.length - 1].status).toBe('partial');
+    const final = await jobRow();
+    expect(final.status).toBe('partial');
+    expect(final.succeeded).toBe(1);
+    expect(final.failed).toBe(1);
+    expect(final.failures).toEqual([{ id: 'm2', error: 'gone' }]);
   });
 
   it('finalizes a redelivered running job WITHOUT touching Graph', async () => {
-    jobRow = job({ status: 'running', succeeded: 5, total: 10 });
+    await seedJob(job({ status: 'running', succeeded: 5, total: 10 }));
     await createMailBulkJobHandler()(claimedEvent());
 
     expect(graphBatchMock).not.toHaveBeenCalled();
     expect(graphRequestMock).not.toHaveBeenCalled();
     expect(resolveAccessMock).not.toHaveBeenCalled();
-    expect(updates).toHaveLength(1);
-    expect(updates[0].status).toBe('partial');
-    expect(String(updates[0].last_error)).toContain('worker restarted mid-job');
+    const final = await jobRow();
+    expect(final.status).toBe('partial');
+    expect(final.lastError).toContain('worker restarted mid-job; 5 of 10');
+    expect(final.finishedAt).not.toBeNull();
+    expect(final.startedAt).toBeNull();
   });
 
   it('is an idempotent no-op on a terminal job', async () => {
-    jobRow = job({ status: 'succeeded' });
+    await seedJob(job({ status: 'succeeded' }));
     await createMailBulkJobHandler()(claimedEvent());
-    expect(updates).toHaveLength(0);
+    const final = await jobRow();
+    expect(final.status).toBe('succeeded');
+    expect(final.finishedAt).toBeNull();
+    expect(final.startedAt).toBeNull();
     expect(graphBatchMock).not.toHaveBeenCalled();
   });
 
   it('never throws after marking running — access failures land on the row', async () => {
-    jobRow = job();
+    await seedJob(job());
     resolveAccessMock.mockRejectedValue(new Error('no microsoft grant for account acct-1'));
 
     await expect(createMailBulkJobHandler()(claimedEvent())).resolves.toBeUndefined();
-    const final = updates[updates.length - 1];
+    const final = await jobRow();
     expect(final.status).toBe('failed');
-    expect(String(final.last_error)).toContain('no microsoft grant');
+    expect(final.lastError).toContain('no microsoft grant');
   });
 
   it('caps explicit selections at the job ceiling', async () => {
-    jobRow = job({
-      selection: { messageIds: Array.from({ length: 1500 }, (_u, index) => `m${index}`) },
-    });
+    await seedJob(
+      job({
+        selection: { messageIds: Array.from({ length: 1500 }, (_u, index) => `m${index}`) },
+      })
+    );
     await createMailBulkJobHandler()(claimedEvent());
     const [, requests] = graphBatchMock.mock.calls[0];
     expect(requests).toHaveLength(MAX_JOB_MESSAGES);

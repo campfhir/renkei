@@ -17,7 +17,7 @@
  * behind it attaches the credential and refreshes it when due.
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import {
   delegateGrants,
   grantFetch,
@@ -33,15 +33,8 @@ import { logger } from '../logger';
  * event's retry budget applies); "no row" is the ordinary unregistered case.
  */
 export async function hasLinkedIdentity(email: string): Promise<boolean> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-
-  const row = await dbResult.val
-    .selectFrom('identities')
-    .select('subject')
-    .where('email', '=', email.toLowerCase())
-    .executeTakeFirst();
-  return Boolean(row);
+  const identity = await getDataStore().identities.findByEmail(email.toLowerCase());
+  return identity !== null;
 }
 
 export interface LinkedWebexUserAccess {
@@ -57,28 +50,18 @@ export interface LinkedWebexUserAccess {
 export async function resolveLinkedWebexUserAccess(
   email: string
 ): Promise<LinkedWebexUserAccess | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  // Same identities → provider_grants hop the knowledge gate uses for
+  // Atlassian (apps/web/lib/mcp-tools/knowledge/index.ts): the gates verify
+  // by email, grants are keyed by subject, identities is the bridge.
+  let row: { accountId: string } | null;
+  try {
+    row = await getDataStore().providerGrants.findByHolderEmail(WEBEX_USER, email.toLowerCase());
+  } catch {
     logger.warn('database unavailable; skipping cross-space search', {
       component: 'webex/forward-context',
     });
     return null;
   }
-
-  // Same identities → provider_grants hop the knowledge gate uses for
-  // Atlassian (apps/web/lib/mcp-tools/knowledge/index.ts): the gates verify
-  // by email, grants are keyed by subject, identities is the bridge.
-  const row = await dbResult.val
-    .selectFrom('identities')
-    .innerJoin('provider_grants', (join) =>
-      join
-        .onRef('provider_grants.subject', '=', 'identities.subject')
-    )
-    .select('provider_grants.provider_account_id')
-    .where('identities.email', '=', email.toLowerCase())
-    .where('provider_grants.provider', '=', WEBEX_USER)
-    .limit(1)
-    .executeTakeFirst();
   if (!row) {
     logger.debug('no webex-user grant on file for {email}; skipping cross-space search', {
       component: 'webex/forward-context',
@@ -87,7 +70,7 @@ export async function resolveLinkedWebexUserAccess(
     return null;
   }
 
-  const grant: GrantRef = { provider: WEBEX_USER, accountId: row.provider_account_id };
+  const grant: GrantRef = { provider: WEBEX_USER, accountId: row.accountId };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) {
     logger.warn('webex-user grant row exists but could not be read: {error}', {

@@ -184,4 +184,48 @@ export const contentWatchScenarios: Scenario<DataStore>[] = [
       await store.contentWatches.objectCounts('jira', 'project'),
     ],
   },
+  {
+    method: 'contentWatches.getSyncState',
+    name: 'cursor and tallies by id; unknown ids miss',
+    fixture,
+    run: async (store) => [
+      await store.contentWatches.getSyncState(id(1)),
+      await store.contentWatches.getSyncState(id(2)),
+      await store.contentWatches.getSyncState(id(99)),
+    ],
+  },
+  {
+    method: 'contentWatches.recordRound',
+    name: 'cursor, run count added to the total, status, failure cleared; others untouched',
+    fixture,
+    run: async (store) => {
+      await store.contentWatches.recordRound(id(1), {
+        cursor: '2026-01-02T00:00:00Z',
+        items: 3,
+        syncStatus: 'idle',
+      });
+      await store.contentWatches.recordRound(id(2), {
+        cursor: 'next-page',
+        items: 0,
+        syncStatus: 'syncing',
+      });
+      const view = async (n: number) => {
+        const state = await store.contentWatches.getSyncState(id(n));
+        return state ? { ...state, lastSyncedAt: state.lastSyncedAt !== null } : null;
+      };
+      return [await view(1), await view(2), await view(5)];
+    },
+  },
+  {
+    method: 'contentWatches.restartCursor',
+    name: 'cursor dropped and syncing, tallies kept, that watch only',
+    fixture,
+    run: async (store) => {
+      await store.contentWatches.restartCursor(id(1));
+      return [
+        await store.contentWatches.getSyncState(id(1)),
+        await store.contentWatches.getSyncState(id(5)),
+      ];
+    },
+  },
 ];

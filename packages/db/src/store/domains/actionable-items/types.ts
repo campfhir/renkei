@@ -79,4 +79,10 @@ export interface ActionableItemStore {
   decide(id: string, by: string, decision: 'dismissed' | 'approved'): Promise<number>;
   /** After an approved card ran: its final status and outcome. */
   recordOutcome(id: string, status: string, result: unknown): Promise<void>;
+  /**
+   * Lay the related-items enrichment into a still-`suggested` card's
+   * evidence object — `related` and `relatedElided` set, every other key
+   * kept. Returns how many rows changed (0: decided meanwhile, or gone).
+   */
+  setRelatedEvidence(id: string, related: unknown[], relatedElided: unknown): Promise<number>;
 }

@@ -1,4 +1,4 @@
-import type { Kysely, Selectable } from 'kysely';
+import { sql, type Kysely, type Selectable } from 'kysely';
 import type { DB, MailBulkJobs } from '../../../db.types';
 import type { MailBulkJobRecord, MailBulkJobStore, NewMailBulkJob } from './types';
 
@@ -52,6 +52,52 @@ export function postgresMailBulkJobs(db: () => Kysely<DB>): MailBulkJobStore {
         .where('subject', '=', subject)
         .executeTakeFirst();
       return row ? mailBulkJobFromRow(row) : null;
+    },
+    async get(id) {
+      const row = await db()
+        .selectFrom('mail_bulk_jobs')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirst();
+      return row ? mailBulkJobFromRow(row) : null;
+    },
+    async markRunning(id) {
+      await db()
+        .updateTable('mail_bulk_jobs')
+        .set({ status: 'running', started_at: sql`NOW()`, updated_at: sql`NOW()` })
+        .where('id', '=', id)
+        .execute();
+    },
+    async setTotal(id, total) {
+      await db()
+        .updateTable('mail_bulk_jobs')
+        .set({ total, updated_at: sql`NOW()` })
+        .where('id', '=', id)
+        .execute();
+    },
+    async recordProgress(id, progress) {
+      await db()
+        .updateTable('mail_bulk_jobs')
+        .set({
+          succeeded: progress.succeeded,
+          failed: progress.failed,
+          failures: JSON.stringify(progress.failures),
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', id)
+        .execute();
+    },
+    async finish(id, outcome) {
+      await db()
+        .updateTable('mail_bulk_jobs')
+        .set({
+          status: outcome.status,
+          ...(outcome.lastError !== undefined ? { last_error: outcome.lastError } : {}),
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', id)
+        .execute();
     },
   };
 }

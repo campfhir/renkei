@@ -67,6 +67,7 @@ import { oauthTokens } from './oauth-tokens';
 import { phiAccess } from './phi-access';
 import { mailBulkJobs } from './mail-bulk-jobs';
 import { webexSentMessages } from './webex-sent-messages';
+import { webexDirtyWindows } from './webex-dirty-windows';
 import { toolSurface } from './tool-surface';
 import { contentWatches } from './content-watches';
 import { sandboxFiles } from './sandbox-files';
@@ -150,4 +151,5 @@ export const DOMAINS = {
   codeServiceImageRules,
   sandboxEnvSecrets,
   sandboxCrawls,
+  webexDirtyWindows,
 };

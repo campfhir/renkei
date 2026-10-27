@@ -362,4 +362,41 @@ export const knowledgeChunkScenarios: Scenario<DataStore>[] = [
       await store.knowledgeChunks.listByRefPrefix('notes', 'ann_x'),
     ],
   },
+  {
+    method: 'knowledgeChunks.deleteSourcedBetween',
+    name: "the window's dated rows under the prefix, the excepted prefix and other days kept",
+    fixture: {
+      knowledge_chunks: [
+        chunk(1, 'webex', 'room-a/msg-1', [1, 0, 0], { sourceAt: 5 }),
+        chunk(2, 'webex', 'room-a/msg-2#0001', [1, 0, 0], { sourceAt: 5 }),
+        chunk(3, 'webex', 'room-a/day/2026-01-05', [1, 0, 0], { sourceAt: 5 }),
+        chunk(4, 'webex', 'room-a/msg-3', [1, 0, 0], { sourceAt: 6 }),
+        chunk(5, 'webex', 'room-a/msg-4', [1, 0, 0], { sourceAt: 4 }),
+        chunk(6, 'webex', 'room-a/msg-5', [1, 0, 0], { sourceAt: null }),
+        chunk(7, 'webex', 'room-ab/msg-6', [1, 0, 0], { sourceAt: 5 }),
+        chunk(8, 'webex', 'room_a/msg-7', [1, 0, 0], { sourceAt: 5 }),
+        chunk(9, 'zoom', 'room-a/msg-8', [1, 0, 0], { sourceAt: 5 }),
+      ],
+    },
+    run: async (store) => {
+      const removed = await store.knowledgeChunks.deleteSourcedBetween('webex', {
+        refIdPrefix: 'room-a/',
+        exceptRefIdPrefix: 'room-a/day/',
+        from: day(5),
+        to: day(6),
+      });
+      const none = await store.knowledgeChunks.deleteSourcedBetween('webex', {
+        refIdPrefix: 'room-z/',
+        exceptRefIdPrefix: 'room-z/day/',
+        from: day(1),
+        to: day(9),
+      });
+      return {
+        removed,
+        none,
+        webex: (await store.knowledgeChunks.listByRefPrefix('webex', 'room')).map((c) => c.refId),
+        zoom: (await store.knowledgeChunks.listByRefPrefix('zoom', 'room')).map((c) => c.refId),
+      };
+    },
+  },
 ];

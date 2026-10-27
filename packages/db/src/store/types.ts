@@ -114,3 +114,4 @@ export type * from './domains/sandbox-services';
 export type * from './domains/code-service-image-rules';
 export type * from './domains/sandbox-env-secrets';
 export type * from './domains/sandbox-crawls';
+export type * from './domains/webex-dirty-windows';

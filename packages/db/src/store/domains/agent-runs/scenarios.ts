@@ -1552,4 +1552,18 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
       };
     },
   },
+  {
+    method: 'agentRuns.findRunError',
+    name: 'the error of a failed run, null on a clean one, missing runs null; a malformed id is refused',
+    fixture,
+    run: async (store) => [
+      await store.agentRuns.findRunError(id(12)),
+      await store.agentRuns.findRunError(id(11)),
+      await store.agentRuns.findRunError(id(99)),
+      await store.agentRuns.findRunError('nope').then(
+        () => 'accepted',
+        (error: { code?: string }) => error.code
+      ),
+    ],
+  },
 ];

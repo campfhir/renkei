@@ -23,7 +23,7 @@
  * the chat next.
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore, type PrPipelineSubscriptionRecord } from '@renkei/db';
 import type { EventHandler } from '../handlers';
 import type { ClaimedEvent } from '../queue';
 import { logger } from '../logger';
@@ -55,74 +55,35 @@ function arr(value: unknown): unknown[] {
 
 type ActionTaken = 'merged' | 'merge_failed' | 'fix_started' | 'fix_failed' | null;
 
-interface SubscriptionRow {
-  id: string;
-  chat_id: string | null;
-  subscriber_subject: string;
-  auto_fix: boolean;
-  auto_merge: boolean;
-  repo_full_name: string;
-  pr_number: number;
-}
+type SubscriptionRow = PrPipelineSubscriptionRecord;
 
-async function activeSubscriptions(
+function activeSubscriptions(
   provider: string,
   repoFullName: string,
   prNumber?: number
 ): Promise<SubscriptionRow[]> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  let query = dbResult.val
-    .selectFrom('pr_subscriptions')
-    .select([
-      'id',
-      'chat_id',
-      'subscriber_subject',
-      'auto_fix',
-      'auto_merge',
-      'repo_full_name',
-      'pr_number',
-    ])
-    .where('provider', '=', provider)
-    .where('repo_full_name', '=', repoFullName)
-    .where('status', '=', 'active')
-    .where('watch_pipelines', '=', true);
-  if (prNumber !== undefined) query = query.where('pr_number', '=', prNumber);
-  return query.execute();
+  return getDataStore().codeProjects.listPipelineSubscriptions(provider, repoFullName, prNumber);
 }
 
 /** A redelivery (both GitHub and Bitbucket retry) is a no-op, not a second action. */
-async function alreadyRecorded(subscriptionId: string, providerRunId: string): Promise<boolean> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  const row = await dbResult.val
-    .selectFrom('pr_pipeline_events')
-    .select('id')
-    .where('subscription_id', '=', subscriptionId)
-    .where('provider_run_id', '=', providerRunId)
-    .executeTakeFirst();
-  return Boolean(row);
+function alreadyRecorded(subscriptionId: string, providerRunId: string): Promise<boolean> {
+  return getDataStore().codeProjects.hasPrPipelineEvent(subscriptionId, providerRunId);
 }
 
-async function recordEvent(
+function recordEvent(
   subscriptionId: string,
   providerRunId: string,
   conclusion: PipelineConclusion,
   rawPayload: unknown,
   actionTaken: ActionTaken
 ): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  await dbResult.val
-    .insertInto('pr_pipeline_events')
-    .values({
-      subscription_id: subscriptionId,
-      provider_run_id: providerRunId,
-      conclusion,
-      raw_payload: JSON.stringify(rawPayload),
-      action_taken: actionTaken,
-    })
-    .execute();
+  return getDataStore().codeProjects.recordPrPipelineEvent({
+    subscriptionId,
+    providerRunId,
+    conclusion,
+    rawPayload,
+    actionTaken,
+  });
 }
 
 function fixNote(repoFullName: string, prNumber: number): string {
@@ -152,46 +113,46 @@ async function actOnSubscription(
   }
 
   let actionTaken: ActionTaken = null;
-  const target = { fullName: subscription.repo_full_name };
+  const target = { fullName: subscription.repoFullName };
 
-  if (conclusion === 'success' && subscription.auto_merge) {
+  if (conclusion === 'success' && subscription.autoMerge) {
     const access =
       provider === GITHUB
-        ? await resolveGitHubSubjectAccess(subscription.subscriber_subject)
-        : await resolveBitbucketSubjectAccess(subscription.subscriber_subject);
+        ? await resolveGitHubSubjectAccess(subscription.subscriberSubject)
+        : await resolveBitbucketSubjectAccess(subscription.subscriberSubject);
     const merged = access
       ? provider === GITHUB
-        ? await mergeGitHubPullRequest(access.auth, target, subscription.pr_number)
-        : await mergeBitbucketPullRequest(access.auth, target, subscription.pr_number)
+        ? await mergeGitHubPullRequest(access.auth, target, subscription.prNumber)
+        : await mergeBitbucketPullRequest(access.auth, target, subscription.prNumber)
       : { ok: false as const, error: 'The subscriber has no live grant for this host.' };
     if (merged.ok) {
       actionTaken = 'merged';
       logger.info('merged pull request #{pr} on {repo} after a green subscribed pipeline', {
         component: COMPONENT,
-        pr: subscription.pr_number,
-        repo: subscription.repo_full_name,
+        pr: subscription.prNumber,
+        repo: subscription.repoFullName,
       });
     } else {
       actionTaken = 'merge_failed';
       logger.warn('could not merge pull request #{pr} on {repo}: {error}', {
         component: COMPONENT,
-        pr: subscription.pr_number,
-        repo: subscription.repo_full_name,
+        pr: subscription.prNumber,
+        repo: subscription.repoFullName,
         error: merged.error,
       });
     }
-  } else if (conclusion === 'failure' && subscription.auto_fix && subscription.chat_id) {
+  } else if (conclusion === 'failure' && subscription.autoFix && subscription.chatId) {
     try {
       await insertChatNote(
-        subscription.chat_id,
-        fixNote(subscription.repo_full_name, subscription.pr_number)
+        subscription.chatId,
+        fixNote(subscription.repoFullName, subscription.prNumber)
       );
       actionTaken = 'fix_started';
     } catch (error) {
       actionTaken = 'fix_failed';
       logger.warn('could not post the pipeline-failure note into chat {chatId}: {error}', {
         component: COMPONENT,
-        chatId: subscription.chat_id,
+        chatId: subscription.chatId,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -222,15 +183,13 @@ export function createGitHubPrPipelineHandler(): EventHandler {
 
     const candidates = (
       await Promise.all(
-        parsed.prNumbers.map((number) =>
-          activeSubscriptions(GITHUB, parsed.repoFullName, number)
-        )
+        parsed.prNumbers.map((number) => activeSubscriptions(GITHUB, parsed.repoFullName, number))
       )
     ).flat();
     if (candidates.length === 0) return 'skipped';
 
     for (const subscription of candidates) {
-      const access = await resolveGitHubSubjectAccess(subscription.subscriber_subject);
+      const access = await resolveGitHubSubjectAccess(subscription.subscriberSubject);
       if (!access) continue;
       const conclusion = await getGitHubWorkflowRunConclusion(
         access.auth,
@@ -238,13 +197,7 @@ export function createGitHubPrPipelineHandler(): EventHandler {
         parsed.runId
       );
       if (!conclusion) continue;
-      await actOnSubscription(
-        GITHUB,
-        subscription,
-        parsed.runId,
-        conclusion,
-        event.payload
-      );
+      await actOnSubscription(GITHUB, subscription, parsed.runId, conclusion, event.payload);
     }
   };
 }
@@ -279,9 +232,9 @@ export function createBitbucketPrPipelineHandler(): EventHandler {
     if (candidates.length === 0) return 'skipped';
 
     for (const subscription of candidates) {
-      const access = await resolveBitbucketSubjectAccess(subscription.subscriber_subject);
+      const access = await resolveBitbucketSubjectAccess(subscription.subscriberSubject);
       if (!access) continue;
-      const head = await bitbucketPrHead(access.auth, repoFullName, subscription.pr_number);
+      const head = await bitbucketPrHead(access.auth, repoFullName, subscription.prNumber);
       if (!head) continue;
       const conclusion = await getBitbucketCommitStatusConclusion(
         access.auth,
@@ -292,13 +245,7 @@ export function createBitbucketPrPipelineHandler(): EventHandler {
       // The PR's current head commit stands in for a "run id": a later
       // commit on the same PR is treated as a new run, since Bitbucket
       // gives this path no single pipeline-run identifier to key off.
-      await actOnSubscription(
-        ATLASSIAN_BITBUCKET,
-        subscription,
-        head,
-        conclusion,
-        event.payload
-      );
+      await actOnSubscription(ATLASSIAN_BITBUCKET, subscription, head, conclusion, event.payload);
     }
   };
 }

@@ -221,7 +221,7 @@ describe('announceBatchFinished', () => {
     await announceBatchFinished(db, batch());
     expect(inserts).toHaveLength(0);
     expect(deliverToOwnerChannels).toHaveBeenCalledTimes(1);
-    expect(deliverToOwnerChannels.mock.calls[0][1]).toMatchObject({
+    expect(deliverToOwnerChannels.mock.calls[0][0]).toMatchObject({
       ownerSubject: 'auth0|alice',
       email: true,
       webex: true,

@@ -10,8 +10,6 @@
  * not even import them.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
 jest.mock('@renkei/connector-microsoft', () => ({
   createGraphSubscription: jest.fn(),
   renewGraphSubscription: jest.fn(),
@@ -27,12 +25,17 @@ jest.mock('../domain-events', () => ({
 }));
 
 import { ok } from '@campfhir/safe-functions/helpers';
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { runSubscriptionSync } from './microsoft-sync';
 import { authedFetch } from '@renkei/delegate-client';
 import type { MicrosoftAccess } from './microsoft-access';
 import type { SubscriptionRow } from './microsoft-sync';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { runDeltaRound: mockRunDeltaRound } = jest.requireMock<{ runDeltaRound: jest.Mock }>(
   '@renkei/connector-microsoft'
 );
@@ -46,15 +49,40 @@ const {
   isRecentMail: jest.Mock;
 }>('../domain-events');
 
-function stubDb(): jest.Mock {
-  // Returns the `set` spy so cursor-persistence tests can assert what the
-  // round actually wrote back to webhook_subscriptions.
-  const set = jest.fn(() => ({ where: () => ({ execute: async () => [] }) }));
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: { updateTable: () => ({ set }) },
+const ROW_ID = '00000000-0000-4000-8000-000000000001';
+const TODO_ROW_ID = '00000000-0000-4000-8000-000000000002';
+
+/** The memory store holding the subscription rows a round writes its cursor to. */
+let store: MemoryDataStore;
+
+async function seedRows(): Promise<void> {
+  await store.seed({
+    webhook_subscriptions: [
+      {
+        id: ROW_ID,
+        provider: 'microsoft',
+        account_id: 'acct-1',
+        resource: "me/mailFolders('inbox')/messages",
+        subscription_id: 'graph-sub-1',
+        client_state: 'state',
+        delta_link: 'delta-1',
+        total_items: 4,
+      },
+      {
+        id: TODO_ROW_ID,
+        provider: 'microsoft',
+        account_id: 'acct-1',
+        resource: 'me/todo/lists/list-1/tasks',
+        subscription_id: 'graph-sub-2',
+        client_state: 'state-2',
+        delta_link: 'delta-t',
+      },
+    ],
   });
-  return set;
+}
+
+function storedRows() {
+  return store.webhookSubscriptions.listSyncStates('microsoft', 'acct-1');
 }
 
 function access(): MicrosoftAccess {
@@ -69,7 +97,7 @@ function access(): MicrosoftAccess {
 
 function inboxRow(): SubscriptionRow {
   return {
-    id: 'sub-row-1',
+    id: ROW_ID,
     resource: "me/mailFolders('inbox')/messages",
     subscription_id: 'graph-sub-1',
     client_state: 'state',
@@ -90,9 +118,15 @@ function messageEntry(over: Record<string, unknown> = {}): Record<string, unknow
   };
 }
 
-beforeEach(() => {
+afterEach(() => {
+  resetDataStore();
+});
+
+beforeEach(async () => {
   jest.resetAllMocks();
-  stubDb();
+  store = createMemoryDataStore();
+  registerDataStore(store);
+  await seedRows();
   mockPublishDomainEvent.mockResolvedValue(undefined);
   mockSubjectForMicrosoftAccount.mockResolvedValue('subject-alice');
   mockIsRecentMail.mockReturnValue(true);
@@ -165,20 +199,45 @@ describe('runSubscriptionSync — the inbox is a trigger feed, not an index', ()
   });
 
   it('still persists the cursor so the feed resumes where it stopped', async () => {
-    const set = stubDb();
     mockRunDeltaRound.mockResolvedValue(ok({ items: [], deltaLink: 'delta-2', nextLink: null }));
 
     await runSubscriptionSync(access(), inboxRow());
 
-    expect(set).toHaveBeenCalledWith(
-      expect.objectContaining({ delta_link: 'delta-2', sync_status: 'idle' })
+    const [inbox] = await storedRows();
+    expect(inbox).toMatchObject({
+      id: ROW_ID,
+      deltaLink: 'delta-2',
+      syncStatus: 'idle',
+      lastRunItems: 0,
+      totalItems: 4,
+    });
+    expect(inbox.lastSyncedAt).not.toBeNull();
+  });
+
+  it('keeps a capped round on its nextLink, still syncing, and adds to the total', async () => {
+    mockRunDeltaRound.mockResolvedValue(
+      ok({
+        items: [messageEntry(), messageEntry({ id: 'msg-2' })],
+        deltaLink: null,
+        nextLink: 'next-1',
+      })
     );
+
+    await runSubscriptionSync(access(), inboxRow());
+
+    const [inbox] = await storedRows();
+    expect(inbox).toMatchObject({
+      deltaLink: 'next-1',
+      syncStatus: 'syncing',
+      lastRunItems: 2,
+      totalItems: 6,
+    });
   });
 });
 
 describe('runSubscriptionSync — a retired calendar row', () => {
   it('never polls me/events and writes nothing', async () => {
-    const set = stubDb();
+    const before = await storedRows();
 
     const result = await runSubscriptionSync(access(), {
       ...inboxRow(),
@@ -188,23 +247,23 @@ describe('runSubscriptionSync — a retired calendar row', () => {
     expect(result).toEqual({ changed: 0, removed: 0 });
     expect(mockRunDeltaRound).not.toHaveBeenCalled();
     expect(mockPublishDomainEvent).not.toHaveBeenCalled();
-    expect(set).not.toHaveBeenCalled();
+    expect(await storedRows()).toEqual(before);
   });
 });
 
 describe('runSubscriptionSync — a retired To Do row', () => {
   it('never polls a To Do list and writes nothing', async () => {
-    const set = stubDb();
+    const before = await storedRows();
 
     const result = await runSubscriptionSync(access(), {
       ...inboxRow(),
-      id: 'sub-row-2',
+      id: TODO_ROW_ID,
       resource: 'me/todo/lists/list-1/tasks',
     });
 
     expect(result).toEqual({ changed: 0, removed: 0 });
     expect(mockRunDeltaRound).not.toHaveBeenCalled();
     expect(mockPublishDomainEvent).not.toHaveBeenCalled();
-    expect(set).not.toHaveBeenCalled();
+    expect(await storedRows()).toEqual(before);
   });
 });

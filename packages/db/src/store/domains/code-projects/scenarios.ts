@@ -375,4 +375,60 @@ export const codeProjectScenarios: Scenario<DataStore>[] = [
       ];
     },
   },
+  {
+    method: 'codeProjects.listPipelineSubscriptions',
+    name: 'active pipeline watchers of a repository, one pull request when named',
+    fixture: {
+      ...prFixture,
+      pr_subscriptions: [
+        ...prFixture.pr_subscriptions,
+        subscription(uid(1204), { pr_number: 3, subscriber_subject: BOB }),
+        subscription(uid(1205), {
+          pr_number: 7,
+          subscriber_subject: 'carol',
+          watch_pipelines: false,
+        }),
+        subscription(uid(1206), { repo_full_name: 'acme/gamma', subscriber_subject: 'dan' }),
+        subscription(uid(1207), { provider: 'atlassian-bitbucket', subscriber_subject: 'erin' }),
+      ],
+    },
+    run: async (store) => [
+      await store.codeProjects.listPipelineSubscriptions('github', 'acme/beta'),
+      await store.codeProjects.listPipelineSubscriptions('github', 'acme/beta', 7),
+      await store.codeProjects.listPipelineSubscriptions('github', 'acme/beta', 8),
+      await store.codeProjects.listPipelineSubscriptions('atlassian-bitbucket', 'acme/beta'),
+      await store.codeProjects.listPipelineSubscriptions('github', 'acme/none'),
+    ],
+  },
+  {
+    method: 'codeProjects.hasPrPipelineEvent',
+    name: "that subscription's run only",
+    fixture: prFixture,
+    run: async (store) => [
+      await store.codeProjects.hasPrPipelineEvent(PR.ann, 'r1'),
+      await store.codeProjects.hasPrPipelineEvent(PR.ann, 'r9'),
+      await store.codeProjects.hasPrPipelineEvent(PR.bob, 'r1'),
+      await store.codeProjects.hasPrPipelineEvent(uid(999), 'r1'),
+    ],
+  },
+  {
+    method: 'codeProjects.recordPrPipelineEvent',
+    name: 'recorded for that subscription; readable as seen and as its latest',
+    fixture: prFixture,
+    run: async (store) => {
+      await store.codeProjects.recordPrPipelineEvent({
+        subscriptionId: PR.bob,
+        providerRunId: 'run-77',
+        conclusion: 'pending',
+        rawPayload: { workflow_run: { id: 77 } },
+        actionTaken: null,
+      });
+      const latest = await store.codeProjects.latestPrPipelineEvent(PR.bob);
+      return {
+        seen: await store.codeProjects.hasPrPipelineEvent(PR.bob, 'run-77'),
+        elsewhere: await store.codeProjects.hasPrPipelineEvent(PR.ann, 'run-77'),
+        latest: latest && { conclusion: latest.conclusion, actionTaken: latest.actionTaken },
+      };
+    },
+  },
 ];

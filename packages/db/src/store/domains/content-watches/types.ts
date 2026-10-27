@@ -72,6 +72,28 @@ export interface ContentWatchStore {
     provider: string,
     metadataKey: string
   ): Promise<{ indexed: ContentWatchScopeCount[]; queued: ContentWatchScopeCount[] }>;
+  /** One watch's poller state — its cursor and tallies — by id, or null. */
+  getSyncState(id: string): Promise<ContentWatchSyncState | null>;
+  /**
+   * A poll round finished: the new cursor, `items` as this run's count and
+   * added to the running total, the status, any failure cleared, synced now.
+   */
+  recordRound(
+    id: string,
+    round: { cursor: string | null; items: number; syncStatus: string }
+  ): Promise<void>;
+  /** Drop the cursor so the next round enumerates from scratch; status 'syncing'. */
+  restartCursor(id: string): Promise<void>;
+}
+
+/** A watch's poller state, as the pollers keep it. */
+export interface ContentWatchSyncState {
+  cursor: string | null;
+  syncStatus: string;
+  lastSyncedAt: Date | null;
+  lastRunItems: number;
+  totalItems: number;
+  lastError: string | null;
 }
 
 /** A watch's owner: the subject, and the provider account whose grant the worker polls with. */

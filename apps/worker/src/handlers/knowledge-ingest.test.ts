@@ -6,8 +6,6 @@
  * two enrichment keys and only while the item is still 'suggested'.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: jest.fn(() => 'sql-fragment') }));
 jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: jest.fn(),
   ingestObjectChunks: jest.fn(),
@@ -21,6 +19,12 @@ jest.mock('@renkei/connector-webex', () => ({
 }));
 jest.mock('./webex-linked-user', () => ({ resolveLinkedWebexUserAccess: jest.fn() }));
 
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { randomBytes } from 'node:crypto';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { encryptContent } from '@renkei/crypto';
@@ -44,7 +48,6 @@ const suiteKey = randomBytes(32);
 process.env.CONTENT_ENCRYPTION_KEY = suiteKey.toString('base64');
 const enc = (text: string): string => encryptContent(text, suiteKey);
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const {
   resolveEmbeddingProvider: mockResolveEmbeddingProvider,
   ingestObjectChunks: mockIngestObjectChunks,
@@ -74,29 +77,6 @@ function event(type: string, payload: Record<string, unknown>): ClaimedEvent {
   };
 }
 
-/** The narrow update chain enrich.item runs; records where-clauses and set values. */
-function stubUpdateDb(capture: { wheres: unknown[][]; sets: Record<string, unknown>[] }): void {
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      updateTable: () => ({
-        set: (values: Record<string, unknown>) => {
-          capture.sets.push(values);
-          return {
-            where: function where(...args: unknown[]) {
-              capture.wheres.push(args);
-              return {
-                where,
-                executeTakeFirst: async () => ({ numUpdatedRows: BigInt(1) }),
-              };
-            },
-          };
-        },
-      }),
-    },
-  });
-}
-
 beforeEach(() => {
   jest.clearAllMocks();
   mockResolveEmbeddingProvider.mockResolvedValue({ embed: jest.fn() });
@@ -117,7 +97,8 @@ describe('ingest.object', () => {
 
   it('decrypts the payload content and ingests with the payload chunking options', async () => {
     await createKnowledgeIngestObjectHandler()(event('ingest.object', payload));
-    expect(mockIngestObjectChunks).toHaveBeenCalledWith(expect.anything(),
+    expect(mockIngestObjectChunks).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({ provider: 'zoom', content: objectContent }),
       { maxChars: 4000, overlap: 400 }
     );
@@ -192,7 +173,8 @@ describe('ingest.email', () => {
         embedder: expect.anything(),
       })
     );
-    expect(mockIngestObjectChunks).toHaveBeenCalledWith(expect.anything(),
+    expect(mockIngestObjectChunks).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         content: 'Subject: Hello\n\nJust checking in.',
         metadata: expect.objectContaining({ senderKey: 'jira', templateVersion: 3 }),
@@ -219,9 +201,7 @@ describe('ingest.email', () => {
     await createKnowledgeIngestEmailHandler()(event('ingest.email', payload));
 
     expect(mockIngestObjectChunks).not.toHaveBeenCalled();
-    expect(mockDeleteObjectChunks).toHaveBeenCalledWith('microsoft',
-      'alice@example.com/msg/msg-1'
-    );
+    expect(mockDeleteObjectChunks).toHaveBeenCalledWith('microsoft', 'alice@example.com/msg/msg-1');
   });
 
   it('withholds the embedder from the sanitizer when an override rides along', async () => {
@@ -298,15 +278,33 @@ describe('delete.object / purge.prefix', () => {
 });
 
 describe('enrich.item', () => {
+  const ITEM = '00000000-0000-4000-8000-000000000001';
+  const DECIDED = '00000000-0000-4000-8000-000000000002';
+  let store: MemoryDataStore;
   const payload = {
-    itemId: 'item-1',
+    itemId: ITEM,
     provider: 'webex',
     refId: 'room-1:msg-1',
     query: enc('the message text'),
     accessSubject: 'alice@example.com',
   };
 
-  beforeEach(() => {
+  afterEach(() => resetDataStore());
+
+  beforeEach(async () => {
+    store = createMemoryDataStore();
+    registerDataStore(store);
+    const card = (id: string, status: string) => ({
+      id,
+      source: 'webex',
+      kind: 'suggestion',
+      status,
+      title: 'card',
+      summary: 'summary',
+      evidence: JSON.stringify({ quote: 'the message text' }),
+      owner_subject: 'alice',
+    });
+    await store.seed({ actionable_items: [card(ITEM, 'suggested'), card(DECIDED, 'approved')] });
     mockResolveLinkedWebexUserAccess.mockResolvedValue({ auth });
     mockSearchKnowledge.mockResolvedValue(
       ok({
@@ -326,12 +324,6 @@ describe('enrich.item', () => {
   });
 
   it('searches as the acting identity, excluding the message itself', async () => {
-    const capture: { wheres: unknown[][]; sets: Record<string, unknown>[] } = {
-      wheres: [],
-      sets: [],
-    };
-    stubUpdateDb(capture);
-
     await createKnowledgeEnrichItemHandler()(event('enrich.item', payload));
 
     expect(mockSearchKnowledge).toHaveBeenCalledWith(
@@ -342,13 +334,27 @@ describe('enrich.item', () => {
         excludeRef: { provider: 'webex', refId: 'room-1:msg-1' },
       })
     );
-    // The guard: id + status='suggested' — never a blanket update.
-    expect(capture.wheres).toEqual([
-      ['id', '=', 'item-1'],
-      ['status', '=', 'suggested'],
-    ]);
-    // Only evidence (via jsonb_set) and updated_at are written.
-    expect(Object.keys(capture.sets[0] ?? {}).sort()).toEqual(['evidence', 'updated_at']);
+    // The related hits land beside the evidence already on the card.
+    const card = await store.actionableItems.findVisible('alice', ITEM);
+    expect(card?.evidence).toEqual({
+      quote: 'the message text',
+      related: [
+        {
+          provider: 'webex',
+          refId: 'room-1:msg-0',
+          excerpt: 'earlier related message',
+          distance: 0.2,
+        },
+      ],
+      relatedElided: 1,
+    });
+    expect(card?.status).toBe('suggested');
+  });
+
+  it('leaves a card decided meanwhile alone — the guard is status suggested', async () => {
+    await createKnowledgeEnrichItemHandler()(event('enrich.item', { ...payload, itemId: DECIDED }));
+    const card = await store.actionableItems.findVisible('alice', DECIDED);
+    expect(card?.evidence).toEqual({ quote: 'the message text' });
   });
 
   it('throws when the search fails so the back-fill retries', async () => {

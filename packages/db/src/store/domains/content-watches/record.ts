@@ -1,6 +1,6 @@
 import type { Selectable } from 'kysely';
 import type { ContentWatches } from '../../../db.types';
-import type { ContentWatchRecord } from './types';
+import type { ContentWatchRecord, ContentWatchSyncState } from './types';
 
 export function contentWatchFromRow(row: Selectable<ContentWatches>): ContentWatchRecord {
   return {
@@ -31,3 +31,21 @@ export const REBUILD_RESET = {
   // waiting out a full interval.
   last_synced_at: null,
 };
+
+export function contentWatchSyncStateFromRow(row: {
+  cursor: string | null;
+  sync_status: string;
+  last_synced_at: Date | null;
+  last_run_items: number;
+  total_items: number;
+  last_error: string | null;
+}): ContentWatchSyncState {
+  return {
+    cursor: row.cursor,
+    syncStatus: row.sync_status,
+    lastSyncedAt: row.last_synced_at ? new Date(row.last_synced_at) : null,
+    lastRunItems: row.last_run_items,
+    totalItems: row.total_items,
+    lastError: row.last_error,
+  };
+}

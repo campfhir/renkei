@@ -20,8 +20,7 @@
  * event carries.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { WebexClient, webexRefId } from '@renkei/connector-webex';
 import type { WebexMessage, WebexRoom } from '@renkei/connector-webex';
 import type { AuthedFetch } from '@renkei/delegate-client';
@@ -29,7 +28,6 @@ import {
   resolveEmbeddingProvider,
   ingestObjectChunks,
   deleteObjectChunks,
-  escapeLike,
 } from '@renkei/knowledge';
 import type { EventHandler } from '../handlers';
 import { resolveWebexUserAccessBySubject } from './webex-linked-user';
@@ -75,19 +73,9 @@ export async function markWebexWindowDirty(
   day: string,
   subject: string | null
 ): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable to mark a WebEx window dirty');
-  await dbResult.val
-    .insertInto('webex_dirty_windows')
-    .values({ room_id: roomId, day, subject, marked_at: sql`NOW()` })
-    .onConflict((oc) =>
-      oc.columns(['room_id', 'day']).doUpdateSet({
-        marked_at: sql`NOW()`,
-        // A watcher that is still around beats one that may have opted out.
-        subject: sql`COALESCE(EXCLUDED.subject, webex_dirty_windows.subject)`,
-      })
-    )
-    .execute();
+  // A watcher that is still around beats one that may have opted out: a
+  // mark without one keeps the stored watcher.
+  await getDataStore().webexDirtyWindows.markDirty(roomId, day, subject);
 }
 
 function timeOf(iso: string | null): string {
@@ -173,22 +161,14 @@ export async function fetchWindowMessages(
  * window is written, so search never has a gap; scoped to the day so a
  * room's other days keep their rows until their own window lands.
  */
-export async function deleteLegacyMessageRows(
-  roomId: string,
-  day: string
-): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
+export async function deleteLegacyMessageRows(roomId: string, day: string): Promise<void> {
   const { start, end } = dayBounds(day);
-  const prefix = escapeLike(roomId);
-  await dbResult.val
-    .deleteFrom('knowledge_chunks')
-    .where('provider', '=', 'webex')
-    .where('ref_id', 'like', `${prefix}/%`)
-    .where('ref_id', 'not like', `${prefix}/day/%`)
-    .where('source_at', '>=', start)
-    .where('source_at', '<', end)
-    .execute();
+  await getDataStore().knowledgeChunks.deleteSourcedBetween('webex', {
+    refIdPrefix: `${roomId}/`,
+    exceptRefIdPrefix: `${roomId}/day/`,
+    from: start,
+    to: end,
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

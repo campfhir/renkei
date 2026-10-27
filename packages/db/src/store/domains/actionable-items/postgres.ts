@@ -132,5 +132,20 @@ export function postgresActionableItems(db: () => Kysely<DB>): ActionableItemSto
         .where('id', '=', id)
         .execute();
     },
+    async setRelatedEvidence(id, related, relatedElided) {
+      const updated = await db()
+        .updateTable('actionable_items')
+        .set({
+          evidence: sql`jsonb_set(
+          jsonb_set(evidence, '{related}', ${JSON.stringify(related)}::jsonb),
+          '{relatedElided}', ${JSON.stringify(relatedElided)}::jsonb
+        )`,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', id)
+        .where('status', '=', 'suggested')
+        .executeTakeFirst();
+      return Number(updated.numUpdatedRows ?? 0);
+    },
   };
 }

@@ -16,18 +16,22 @@
  * now; subscriptionRemoved clears the row so ensure recreates it.
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import { renewGraphSubscription, graphRequest } from '@renkei/connector-microsoft';
 import { MICROSOFT } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import type { MessageOverride } from '@renkei/email-sanitizer';
-import { sql } from 'kysely';
 import { enqueueKnowledgeEvent } from '../enqueue';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveMicrosoftAccess } from './microsoft-access';
-import { ensureMicrosoftSubscriptions, runSubscriptionSync, rawEmailOf } from './microsoft-sync';
+import {
+  ensureMicrosoftSubscriptions,
+  runSubscriptionSync,
+  rawEmailOf,
+  type SubscriptionRow,
+} from './microsoft-sync';
 import { logger } from '../logger';
 
 const COMPONENT = 'microsoft/events';
@@ -112,16 +116,12 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
     const accountId = requireString(payload, 'accountId');
     const subscriptionId = requireString(payload, 'subscriptionId');
 
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
-    const row = await dbResult.val
-      .selectFrom('webhook_subscriptions')
-      .select(['id', 'resource', 'subscription_id', 'client_state', 'expires_at', 'delta_link'])
-      .where('provider', '=', MICROSOFT)
-      .where('account_id', '=', accountId)
-      .where('subscription_id', '=', subscriptionId)
-      .executeTakeFirst();
-    if (!row) {
+    const found = await getDataStore().webhookSubscriptions.findSyncStateBySubscriptionId(
+      MICROSOFT,
+      accountId,
+      subscriptionId
+    );
+    if (!found) {
       // Disconnected between delivery and processing — nothing to sync.
       logger.info('notification for a subscription that no longer exists; dropping', {
         component: COMPONENT,
@@ -130,6 +130,14 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
       return 'skipped';
     }
 
+    const row: SubscriptionRow = {
+      id: found.id,
+      resource: found.resource,
+      subscription_id: found.subscriptionId,
+      client_state: found.clientState,
+      expires_at: found.expiresAt,
+      delta_link: found.deltaLink,
+    };
     const access = await resolveMicrosoftAccess(accountId);
     const synced = await runSubscriptionSync(access, row);
     logger.debug('delta round for {resource}: {changed} changed, {removed} removed', {
@@ -148,20 +156,15 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
     const subscriptionId = requireString(payload, 'subscriptionId');
     const lifecycleEvent = typeof payload.lifecycleEvent === 'string' ? payload.lifecycleEvent : '';
 
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
-    const db = dbResult.val;
+    const subscriptions = getDataStore().webhookSubscriptions;
 
     if (lifecycleEvent === 'reauthorizationRequired') {
       const access = await resolveMicrosoftAccess(accountId);
       const renewed = await renewGraphSubscription(access.auth, subscriptionId);
       if (renewed.ok) {
-        await db
-          .updateTable('webhook_subscriptions')
-          .set({ expires_at: renewed.val.expiresAt, updated_at: sql`NOW()` })
-          .where('provider', '=', MICROSOFT)
-          .where('subscription_id', '=', subscriptionId)
-          .execute();
+        await subscriptions.setProviderSubscriptionBySubscriptionId(MICROSOFT, subscriptionId, {
+          expiresAt: renewed.val.expiresAt,
+        });
         return;
       }
       // Renewal refused — fall through to the removed path so the sweep
@@ -175,12 +178,10 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
     // subscriptionRemoved / missed / failed renewal: clear the provider-side
     // identity so the next ensure pass (sweep, or the next connect) creates
     // a fresh subscription. The delta cursor survives — no re-backfill.
-    await db
-      .updateTable('webhook_subscriptions')
-      .set({ subscription_id: null, expires_at: null, updated_at: sql`NOW()` })
-      .where('provider', '=', MICROSOFT)
-      .where('subscription_id', '=', subscriptionId)
-      .execute();
+    await subscriptions.setProviderSubscriptionBySubscriptionId(MICROSOFT, subscriptionId, {
+      subscriptionId: null,
+      expiresAt: null,
+    });
     logger.warn('lifecycle {lifecycleEvent}: subscription cleared for recreate', {
       component: COMPONENT,
       lifecycleEvent: lifecycleEvent || '(unknown)',
@@ -216,11 +217,7 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
       // Through the embedding queue, not inline: if an ingest of this same
       // message is still queued there, the shared ordering key puts this
       // delete after it — an inline delete could run first and lose the race.
-      await enqueueKnowledgeEvent(
-        'delete.object',
-        { provider: MICROSOFT, refId },
-        orderingKey
-      );
+      await enqueueKnowledgeEvent('delete.object', { provider: MICROSOFT, refId }, orderingKey);
       return;
     }
 

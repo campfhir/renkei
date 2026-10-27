@@ -1,3 +1,4 @@
+import { metadataText } from '../knowledge-chunks/metadata-filter';
 import { like, orderBy } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
 import {
@@ -135,6 +136,25 @@ export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
     async findByAccount(accountId) {
       const rows = tables.select('provider_grants', (r) => r.provider_account_id === accountId);
       const [row] = orderBy(rows, [(r) => r.provider]);
+      return row ? grantSummaryFromRow(row) : null;
+    },
+    async findByMetadataText(provider, key, value) {
+      const rows = tables.select(
+        'provider_grants',
+        (r) => r.provider === provider && metadataText(r.metadata, key) === value
+      );
+      const [row] = orderBy(rows, [(r) => r.provider_account_id]);
+      return row ? grantSummaryFromRow(row) : null;
+    },
+    async findByHolderEmail(provider, email) {
+      const holders = new Set(
+        tables.select('identities', (r) => r.email === email).map((r) => r.subject)
+      );
+      const rows = tables.select(
+        'provider_grants',
+        (r) => r.provider === provider && r.subject !== null && holders.has(r.subject)
+      );
+      const [row] = orderBy(rows, [(r) => r.provider_account_id]);
       return row ? grantSummaryFromRow(row) : null;
     },
   };

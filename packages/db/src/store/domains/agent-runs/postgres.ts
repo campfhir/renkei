@@ -322,6 +322,14 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
         .executeTakeFirst();
       return row ? { agentId: row.agent_id, triggerKind: row.trigger_kind } : null;
     },
+    async findRunError(runId) {
+      const row = await db()
+        .selectFrom('agent_runs')
+        .select(['error'])
+        .where('id', '=', runId)
+        .executeTakeFirst();
+      return row ? { error: row.error } : null;
+    },
     async optimizationEvidence({ ownerSubject, agentId, days, maxFailures, maxTools }) {
       const since = sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`;
       const [failureRows, statRow, toolRows] = await Promise.all([

@@ -121,5 +121,28 @@ export function memoryActionableItems(tables: MemoryTables): ActionableItemStore
         updated_at: new Date(),
       });
     },
+    async setRelatedEvidence(id, related, relatedElided) {
+      const key = idOf(id);
+      // jsonb_set over an object; the card's evidence is always one.
+      const copy = (value: unknown): unknown => JSON.parse(JSON.stringify(value ?? null));
+      return tables.update(
+        'actionable_items',
+        (r) => r.id === key && r.status === 'suggested',
+        (r) => {
+          const evidence =
+            typeof r.evidence === 'object' && r.evidence !== null && !Array.isArray(r.evidence)
+              ? r.evidence
+              : {};
+          return {
+            evidence: JSON.stringify({
+              ...evidence,
+              related: copy(related),
+              relatedElided: copy(relatedElided),
+            }),
+            updated_at: new Date(),
+          };
+        }
+      ).length;
+    },
   };
 }

@@ -252,5 +252,54 @@ export function postgresCodeProjects(db: () => Kysely<DB>): CodeProjectStore {
         .where('subscriber_subject', '=', key.subscriberSubject)
         .execute();
     },
+    async listPipelineSubscriptions(provider, repoFullName, prNumber) {
+      let query = db()
+        .selectFrom('pr_subscriptions')
+        .select([
+          'id',
+          'chat_id',
+          'subscriber_subject',
+          'auto_fix',
+          'auto_merge',
+          'repo_full_name',
+          'pr_number',
+        ])
+        .where('provider', '=', provider)
+        .where('repo_full_name', '=', repoFullName)
+        .where('status', '=', 'active')
+        .where('watch_pipelines', '=', true);
+      if (prNumber !== undefined) query = query.where('pr_number', '=', prNumber);
+      const rows = await query.orderBy('pr_number').orderBy('id').execute();
+      return rows.map((row) => ({
+        id: row.id,
+        chatId: row.chat_id,
+        subscriberSubject: row.subscriber_subject,
+        autoFix: row.auto_fix,
+        autoMerge: row.auto_merge,
+        repoFullName: row.repo_full_name,
+        prNumber: row.pr_number,
+      }));
+    },
+    async hasPrPipelineEvent(subscriptionId, providerRunId) {
+      const row = await db()
+        .selectFrom('pr_pipeline_events')
+        .select('id')
+        .where('subscription_id', '=', subscriptionId)
+        .where('provider_run_id', '=', providerRunId)
+        .executeTakeFirst();
+      return Boolean(row);
+    },
+    async recordPrPipelineEvent(event) {
+      await db()
+        .insertInto('pr_pipeline_events')
+        .values({
+          subscription_id: event.subscriptionId,
+          provider_run_id: event.providerRunId,
+          conclusion: event.conclusion,
+          raw_payload: JSON.stringify(event.rawPayload),
+          action_taken: event.actionTaken,
+        })
+        .execute();
+    },
   };
 }

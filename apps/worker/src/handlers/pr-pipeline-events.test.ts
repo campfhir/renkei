@@ -5,7 +5,6 @@
  * agent-run-failed.test.ts's stubDb pattern.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('./repo-access', () => ({
   resolveGitHubSubjectAccess: jest.fn(),
   resolveBitbucketSubjectAccess: jest.fn(),
@@ -22,6 +21,12 @@ jest.mock('../logger', () => ({
 }));
 
 import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
+import {
   createGitHubPrPipelineHandler,
   isTerminal,
   parseGitHubWorkflowRun,
@@ -33,7 +38,6 @@ import { authedFetch } from '@renkei/delegate-client';
 /** A grant fetcher stand-in: the code under test only passes it through. */
 const auth = authedFetch(async () => new Response(), 'github:tenant-1:alice');
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { resolveGitHubSubjectAccess: mockResolveGitHub } = jest.requireMock<{
   resolveGitHubSubjectAccess: jest.Mock;
 }>('./repo-access');
@@ -111,92 +115,83 @@ function workflowRunEvent(prNumbers: number[]): ClaimedEvent {
   };
 }
 
-interface FakeDb {
-  subscriptions: unknown[];
-  pipelineEvents: unknown[];
-  inserted: Record<string, unknown>[];
-  updated: Record<string, unknown>[];
+const PROJECT = '00000000-0000-4000-8000-000000000100';
+const CHAT = '00000000-0000-4000-8000-000000000200';
+const SUB = '00000000-0000-4000-8000-000000000001';
+
+/** The memory store holding the subscriptions and the recorded outcomes. */
+let store: MemoryDataStore;
+
+interface Subscription {
+  chat_id: string | null;
+  subscriber_subject: string;
+  auto_fix: boolean;
+  auto_merge: boolean;
+  pr_number: number;
+  status?: string;
 }
 
-function stubDb(fake: FakeDb): void {
-  const selectBuilder = (table: string): unknown => ({
-    select: () => selectBuilder(table),
-    where: () => selectBuilder(table),
-    execute: async () => (table === 'pr_subscriptions' ? fake.subscriptions : []),
-    executeTakeFirst: async () =>
-      table === 'pr_pipeline_events' ? fake.pipelineEvents[0] : undefined,
-  });
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      selectFrom: (table: string) => selectBuilder(table),
-      insertInto: (table: string) => ({
-        values: (values: Record<string, unknown>) => {
-          fake.inserted.push({ table, ...values });
-          return { execute: async () => undefined };
-        },
-      }),
-      updateTable: (table: string) => ({
-        set: (values: Record<string, unknown>) => ({
-          where: () => ({
-            where: () => ({
-              where: () => ({
-                where: () => ({
-                  execute: async () => {
-                    fake.updated.push({ table, ...values });
-                  },
-                }),
-              }),
-            }),
-          }),
-          execute: async () => {
-            fake.updated.push({ table, ...values });
-          },
-        }),
-      }),
-    },
+async function seedSubscription(subscription: Subscription): Promise<void> {
+  await store.seed({
+    chat_projects: [{ id: PROJECT, name: 'site', owner_subject: subscription.subscriber_subject }],
+    chats: [{ id: CHAT, owner_subject: subscription.subscriber_subject }],
+    pr_subscriptions: [
+      {
+        id: SUB,
+        project_id: PROJECT,
+        provider: 'github',
+        repo_full_name: 'acme/site',
+        watch_pipelines: true,
+        ...subscription,
+      },
+    ],
   });
 }
+
+/** What the handler recorded for the run, or null. */
+async function recorded() {
+  return store.codeProjects.latestPrPipelineEvent(SUB);
+}
+
+afterEach(() => {
+  resetDataStore();
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
+  store = createMemoryDataStore();
+  registerDataStore(store);
 });
 
 describe('createGitHubPrPipelineHandler', () => {
   it('skips a run with no attached pull requests', async () => {
-    const fake: FakeDb = { subscriptions: [], pipelineEvents: [], inserted: [], updated: [] };
-    stubDb(fake);
     const resolution = await createGitHubPrPipelineHandler()(workflowRunEvent([]));
     expect(resolution).toBe('skipped');
     expect(mockConclusion).not.toHaveBeenCalled();
   });
 
   it('skips when no active subscription matches the PR', async () => {
-    const fake: FakeDb = { subscriptions: [], pipelineEvents: [], inserted: [], updated: [] };
-    stubDb(fake);
+    // A subscription on another pull request only.
+    await seedSubscription({
+      chat_id: null,
+      subscriber_subject: 'alice@example.com',
+      auto_fix: false,
+      auto_merge: true,
+      pr_number: 41,
+    });
     const resolution = await createGitHubPrPipelineHandler()(workflowRunEvent([42]));
     expect(resolution).toBe('skipped');
     expect(mockResolveGitHub).not.toHaveBeenCalled();
   });
 
   it('merges the PR when the subscribed pipeline is green and auto_merge is on', async () => {
-    const fake: FakeDb = {
-      subscriptions: [
-        {
-          id: 'sub-1',
-          chat_id: null,
-          subscriber_subject: 'alice@example.com',
-          auto_fix: false,
-          auto_merge: true,
-          repo_full_name: 'acme/site',
-          pr_number: 42,
-        },
-      ],
-      pipelineEvents: [],
-      inserted: [],
-      updated: [],
-    };
-    stubDb(fake);
+    await seedSubscription({
+      chat_id: null,
+      subscriber_subject: 'alice@example.com',
+      auto_fix: false,
+      auto_merge: true,
+      pr_number: 42,
+    });
     mockResolveGitHub.mockResolvedValue({ auth, login: 'alice' });
     mockConclusion.mockResolvedValue('success');
     mockMerge.mockResolvedValue({ ok: true, url: 'https://github.com/acme/site/pull/42' });
@@ -204,65 +199,62 @@ describe('createGitHubPrPipelineHandler', () => {
     await createGitHubPrPipelineHandler()(workflowRunEvent([42]));
 
     expect(mockMerge).toHaveBeenCalledWith(auth, { fullName: 'acme/site' }, 42);
-    const recorded = fake.inserted.find((row) => row.table === 'pr_pipeline_events');
-    expect(recorded).toMatchObject({
-      subscription_id: 'sub-1',
-      provider_run_id: '999',
-      conclusion: 'success',
-      action_taken: 'merged',
+    expect(await recorded()).toMatchObject({ conclusion: 'success', actionTaken: 'merged' });
+    expect(await store.codeProjects.hasPrPipelineEvent(SUB, '999')).toBe(true);
+  });
+
+  it('is a no-op on a redelivered run already recorded', async () => {
+    await seedSubscription({
+      chat_id: null,
+      subscriber_subject: 'alice@example.com',
+      auto_fix: false,
+      auto_merge: true,
+      pr_number: 42,
     });
+    await store.seed({
+      pr_pipeline_events: [
+        {
+          subscription_id: SUB,
+          provider_run_id: '999',
+          conclusion: 'success',
+          action_taken: 'merged',
+        },
+      ],
+    });
+    mockResolveGitHub.mockResolvedValue({ auth, login: 'alice' });
+    mockConclusion.mockResolvedValue('success');
+
+    await createGitHubPrPipelineHandler()(workflowRunEvent([42]));
+
+    expect(mockMerge).not.toHaveBeenCalled();
   });
 
   it('posts a chat note, not a merge, when the subscribed pipeline fails and auto_fix is on', async () => {
-    const fake: FakeDb = {
-      subscriptions: [
-        {
-          id: 'sub-2',
-          chat_id: 'chat-1',
-          subscriber_subject: 'bob@example.com',
-          auto_fix: true,
-          auto_merge: false,
-          repo_full_name: 'acme/site',
-          pr_number: 42,
-        },
-      ],
-      pipelineEvents: [],
-      inserted: [],
-      updated: [],
-    };
-    stubDb(fake);
+    await seedSubscription({
+      chat_id: CHAT,
+      subscriber_subject: 'bob@example.com',
+      auto_fix: true,
+      auto_merge: false,
+      pr_number: 42,
+    });
     mockResolveGitHub.mockResolvedValue({ auth, login: 'bob' });
     mockConclusion.mockResolvedValue('failure');
 
     await createGitHubPrPipelineHandler()(workflowRunEvent([42]));
 
-    expect(mockInsertChatNote).toHaveBeenCalledWith(
-      'chat-1',
-      expect.stringContaining('#42')
-    );
+    expect(mockInsertChatNote).toHaveBeenCalledWith(CHAT, expect.stringContaining('#42'));
     expect(mockMerge).not.toHaveBeenCalled();
-    const recorded = fake.inserted.find((row) => row.table === 'pr_pipeline_events');
-    expect(recorded).toMatchObject({ conclusion: 'failure', action_taken: 'fix_started' });
+    expect(await recorded()).toMatchObject({ conclusion: 'failure', actionTaken: 'fix_started' });
   });
 
   it('does nothing beyond recording when the pipeline is still running', async () => {
-    const fake: FakeDb = {
-      subscriptions: [
-        {
-          id: 'sub-3',
-          chat_id: 'chat-1',
-          subscriber_subject: 'carol@example.com',
-          auto_fix: true,
-          auto_merge: true,
-          repo_full_name: 'acme/site',
-          pr_number: 42,
-        },
-      ],
-      pipelineEvents: [],
-      inserted: [],
-      updated: [],
-    };
-    stubDb(fake);
+    await seedSubscription({
+      chat_id: CHAT,
+      subscriber_subject: 'carol@example.com',
+      auto_fix: true,
+      auto_merge: true,
+      pr_number: 42,
+    });
     mockResolveGitHub.mockResolvedValue({ auth, login: 'carol' });
     mockConclusion.mockResolvedValue('running');
 
@@ -270,7 +262,6 @@ describe('createGitHubPrPipelineHandler', () => {
 
     expect(mockMerge).not.toHaveBeenCalled();
     expect(mockInsertChatNote).not.toHaveBeenCalled();
-    const recorded = fake.inserted.find((row) => row.table === 'pr_pipeline_events');
-    expect(recorded).toMatchObject({ conclusion: 'running', action_taken: null });
+    expect(await recorded()).toMatchObject({ conclusion: 'running', actionTaken: null });
   });
 });

@@ -264,5 +264,19 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
         objectChunkFromRow
       );
     },
+    async deleteSourcedBetween(provider, scope) {
+      const from = scope.from.getTime();
+      const to = scope.to.getTime();
+      return tables.delete(
+        'knowledge_chunks',
+        (r) =>
+          r.provider === provider &&
+          r.ref_id.startsWith(scope.refIdPrefix) &&
+          !r.ref_id.startsWith(scope.exceptRefIdPrefix) &&
+          r.source_at !== null &&
+          new Date(r.source_at).getTime() >= from &&
+          new Date(r.source_at).getTime() < to
+      ).length;
+    },
   };
 }

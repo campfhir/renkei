@@ -236,6 +236,8 @@ export interface AgentRunStore {
   findRunAgent(runId: string): Promise<{ id: string; agentId: string } | null>;
   /** The run's agent and what started it (`trigger_kind`), whoever owns it, or null. */
   findRunOrigin(runId: string): Promise<{ agentId: string; triggerKind: string } | null>;
+  /** The run's recorded error text (null when it has none), whoever owns it; null when no such run. */
+  findRunError(runId: string): Promise<{ error: string | null } | null>;
   /**
    * What an optimization pass reads about one owner's agent over the last
    * `days`: its failed runs from the durable log (newest first, ties by

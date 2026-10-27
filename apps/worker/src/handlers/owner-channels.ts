@@ -17,8 +17,7 @@
  * your own address — see sendNoteToPerson.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { graphRequest } from '@renkei/connector-microsoft';
 import { WebexClient, sendNoteToPerson } from '@renkei/connector-webex';
 import { resolveMicrosoftAccess } from './microsoft-access';
@@ -39,30 +38,21 @@ export interface OwnerChannelMessage {
   log: { component: string } & Record<string, unknown>;
 }
 
-export async function deliverToOwnerChannels(
-  db: Kysely<DB>,
-  message: OwnerChannelMessage
-): Promise<void> {
+export async function deliverToOwnerChannels(message: OwnerChannelMessage): Promise<void> {
   if (!message.email && !message.webex) return;
   const { ownerSubject } = message;
 
   // Channel 1: email from the owner's own Outlook grant, to themselves.
   if (message.email) {
     try {
-      const identity = await db
-        .selectFrom('identities')
-        .select(['email'])
-        .where('subject', '=', ownerSubject)
-        .executeTakeFirst();
+      const store = getDataStore();
+      const identity = await store.identities.get(ownerSubject);
       if (identity?.email) {
-        const grant = await db
-          .selectFrom('provider_grants')
-          .select('provider_account_id')
-          .where('provider', '=', 'microsoft')
-          .where('subject', '=', ownerSubject)
-          .executeTakeFirst();
+        const [grant] = await store.providerGrants.listForSubject(ownerSubject, {
+          provider: 'microsoft',
+        });
         if (grant) {
-          const access = await resolveMicrosoftAccess(grant.provider_account_id);
+          const access = await resolveMicrosoftAccess(grant.accountId);
           const sent = await graphRequest(access.auth, '/me/sendMail', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

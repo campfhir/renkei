@@ -246,4 +246,24 @@ export const actionableItemScenarios: Scenario<DataStore>[] = [
       ids(await store.actionableItems.listVisible('ann', { limit: 10, includeArchived: false })),
     ],
   },
+  {
+    method: 'actionableItems.setRelatedEvidence',
+    name: 'merged into a suggested card, other keys kept; a decided card is left alone',
+    fixture,
+    run: async (store) => {
+      const related = [{ provider: 'jira', refId: 'ENG-9', excerpt: 'x', distance: 0.25 }];
+      const suggested = await store.actionableItems.setRelatedEvidence(id(2), related, 3);
+      const again = await store.actionableItems.setRelatedEvidence(id(2), [], 0);
+      const decided = await store.actionableItems.setRelatedEvidence(id(6), related, 1);
+      const missing = await store.actionableItems.setRelatedEvidence(id(99), related, 1);
+      return {
+        suggested,
+        again,
+        decided,
+        missing,
+        two: (await store.actionableItems.findVisible('ann', id(2)))?.evidence,
+        six: (await store.actionableItems.findVisible('ann', id(6)))?.evidence,
+      };
+    },
+  },
 ];

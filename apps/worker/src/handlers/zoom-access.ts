@@ -11,8 +11,7 @@
  * and deletes a revoked grant itself — so "revoked" reads as NO_GRANT here.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { ZOOM } from '@renkei/provider-grants';
 import { logger } from '../logger';
@@ -44,15 +43,12 @@ export async function resolveZoomHostAccess(
   // deliveries that carry only host_email (or whose host_id has no grant).
   let described = hostId ? await describeHost(hostId) : null;
   if ((!described || (!described.ok && described.err.type === 'NO_GRANT')) && hostEmail) {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
-    const row = await dbResult.val
-      .selectFrom('provider_grants')
-      .select('provider_account_id')
-      .where('provider', '=', ZOOM)
-      .where(sql<string>`metadata->>'email'`, '=', hostEmail.toLowerCase())
-      .executeTakeFirst();
-    if (row) described = await describeHost(row.provider_account_id);
+    const row = await getDataStore().providerGrants.findByMetadataText(
+      ZOOM,
+      'email',
+      hostEmail.toLowerCase()
+    );
+    if (row) described = await describeHost(row.accountId);
   }
   if (!described) return null;
   if (!described.ok) {

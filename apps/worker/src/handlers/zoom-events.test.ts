@@ -6,8 +6,6 @@
  * compared directly so the promise stays executable, not conventional.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
 jest.mock('@renkei/provider-grants', () => ({ ZOOM: 'zoom' }));
 jest.mock('../domain-events', () => ({
   publishDomainEvent: jest.fn(),

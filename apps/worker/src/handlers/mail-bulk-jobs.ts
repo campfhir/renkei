@@ -14,8 +14,7 @@
  * tool's description says so).
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import {
   graphBatch,
   buildMailQueryPath,
@@ -178,17 +177,9 @@ export function createMailBulkJobHandler(): EventHandler {
   return async (event) => {
     const payload: unknown = event.payload;
     const jobId = isRecord(payload) ? str(payload.jobId) : '';
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable for mail bulk job');
-    const db = dbResult.val;
+    const jobs = getDataStore().mailBulkJobs;
 
-    const job = jobId
-      ? await db
-          .selectFrom('mail_bulk_jobs')
-          .selectAll()
-          .where('id', '=', jobId)
-          .executeTakeFirst()
-      : undefined;
+    const job = jobId ? await jobs.get(jobId) : null;
     if (!job) {
       logger.warn('mail bulk job {jobId} not found; dropping', {
         component: COMPONENT,
@@ -202,45 +193,29 @@ export function createMailBulkJobHandler(): EventHandler {
         // A previous delivery died mid-job. Do NOT re-execute — /move
         // returns new ids, a re-run double-acts. Finalize and stop.
         const succeeded = Number(job.succeeded ?? 0);
-        await db
-          .updateTable('mail_bulk_jobs')
-          .set({
-            status: succeeded > 0 ? 'partial' : 'failed',
-            last_error: `worker restarted mid-job; ${succeeded} of ${job.total ?? '?'} had completed`,
-            finished_at: sql`NOW()`,
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', job.id)
-          .execute();
+        await jobs.finish(job.id, {
+          status: succeeded > 0 ? 'partial' : 'failed',
+          lastError: `worker restarted mid-job; ${succeeded} of ${job.total ?? '?'} had completed`,
+        });
       }
       // Terminal (or just finalized): a redelivery is an idempotent no-op.
       return;
     }
 
-    await db
-      .updateTable('mail_bulk_jobs')
-      .set({ status: 'running', started_at: sql`NOW()`, updated_at: sql`NOW()` })
-      .where('id', '=', job.id)
-      .execute();
+    await jobs.markRunning(job.id);
 
     // From here nothing may throw: a throw would redeliver into the
     // running-guard above (harmless but noisy). Every failure lands on the
     // row instead.
     const fail = async (message: string, counts?: { succeeded: number; total: number | null }) => {
-      await db
-        .updateTable('mail_bulk_jobs')
-        .set({
-          status: counts && counts.succeeded > 0 ? 'partial' : 'failed',
-          last_error: message,
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', job.id)
-        .execute();
+      await jobs.finish(job.id, {
+        status: counts && counts.succeeded > 0 ? 'partial' : 'failed',
+        lastError: message,
+      });
     };
 
     try {
-      const access = await resolveMicrosoftAccess(job.account_id);
+      const access = await resolveMicrosoftAccess(job.accountId);
 
       const selection = isRecord(job.selection) ? job.selection : {};
       const expanded = await expandSelection(access.auth, selection);
@@ -252,17 +227,9 @@ export function createMailBulkJobHandler(): EventHandler {
       const params = isRecord(job.params) ? job.params : {};
       const action = job.action;
 
-      await db
-        .updateTable('mail_bulk_jobs')
-        .set({ total: ids.length, updated_at: sql`NOW()` })
-        .where('id', '=', job.id)
-        .execute();
+      await jobs.setTotal(job.id, ids.length);
       if (ids.length === 0) {
-        await db
-          .updateTable('mail_bulk_jobs')
-          .set({ status: 'succeeded', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
-          .where('id', '=', job.id)
-          .execute();
+        await jobs.finish(job.id, { status: 'succeeded' });
         return;
       }
 
@@ -279,16 +246,7 @@ export function createMailBulkJobHandler(): EventHandler {
             }
           }
         }
-        await db
-          .updateTable('mail_bulk_jobs')
-          .set({
-            succeeded,
-            failed,
-            failures: JSON.stringify(failures),
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', job.id)
-          .execute();
+        await jobs.recordProgress(job.id, { succeeded, failed, failures });
       };
 
       if (action === 'categorize') {
@@ -353,15 +311,9 @@ export function createMailBulkJobHandler(): EventHandler {
         await graphBatch(access.auth, requests, { lane: 'background', onChunk: record });
       }
 
-      await db
-        .updateTable('mail_bulk_jobs')
-        .set({
-          status: failed === 0 ? 'succeeded' : succeeded > 0 ? 'partial' : 'failed',
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', job.id)
-        .execute();
+      await jobs.finish(job.id, {
+        status: failed === 0 ? 'succeeded' : succeeded > 0 ? 'partial' : 'failed',
+      });
       logger.info('mail bulk job {jobId} finished: {succeeded} ok, {failed} failed', {
         component: COMPONENT,
         jobId: job.id,
