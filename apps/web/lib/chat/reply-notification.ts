@@ -28,7 +28,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import { getOrgSettings } from '@renkei/settings';
 import { loadKeyring } from '@renkei/crypto';
@@ -47,9 +47,6 @@ export function notifyChatReplyDesktop(input: {
     const prefs = await getNotificationPrefs(input.ownerSubject, { fresh: true });
     if (!prefs.chatReplyDesktop) return;
 
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return;
-
     const settingsResult = await getOrgSettings();
     const presenceWindowSeconds = settingsResult.ok
       ? settingsResult.val.chatReplyPresenceWindowSeconds
@@ -67,16 +64,21 @@ export function notifyChatReplyDesktop(input: {
     const headline = `“${title}” has a new reply`;
     const refUrl = `/chat/${input.chatId}`;
     const id = randomUUID();
-    await dbResult.val
-      .insertInto('agent_notifications')
-      .values({
-        id,
-        subject: input.ownerSubject,
-        kind: 'chat_reply',
-        headline,
-        ref_url: refUrl,
-      })
-      .execute();
+    await getDataStore().notifications.insert({
+      id,
+      subject: input.ownerSubject,
+      kind: 'chat_reply',
+      category: null,
+      connector: null,
+      tool: null,
+      entity: null,
+      headline,
+      refUrl,
+      agentId: null,
+      agentName: null,
+      runId: null,
+      meta: null,
+    });
 
     // Fire-and-forget, same as every other write in this app: a push
     // service's own latency must never add to the turn it describes.

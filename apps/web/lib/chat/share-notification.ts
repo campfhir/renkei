@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
@@ -38,38 +38,40 @@ export function notifyChatShared(input: {
     const headline = `${sharerName} shared "${title}" with you`;
 
     if (wanted.app) {
-      const dbResult = getDatabase();
-      if (dbResult.ok) {
-        const refUrl = `/chat/${input.chatId}`;
-        const id = randomUUID();
-        await dbResult.val
-          .insertInto('agent_notifications')
-          .values({
-            id,
-            subject: input.granteeSubject,
-            kind: 'chat_shared',
-            headline,
-            ref_url: refUrl,
-          })
-          .execute();
+      const refUrl = `/chat/${input.chatId}`;
+      const id = randomUUID();
+      await getDataStore().notifications.insert({
+        id,
+        subject: input.granteeSubject,
+        kind: 'chat_shared',
+        category: null,
+        connector: null,
+        tool: null,
+        entity: null,
+        headline,
+        refUrl,
+        agentId: null,
+        agentName: null,
+        runId: null,
+        meta: null,
+      });
 
-        // Fire-and-forget, same as edit-notification.ts's row.
-        const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
-        if (keyResult.ok) {
-          void sendPush(
-            input.granteeSubject,
-            keyResult.val,
-            {
-              title: headline,
-              body: title,
-              tag: id,
-              refUrl,
-              notificationId: id,
-              ...(refUrl ? { appPath: refUrl } : {}),
-            },
-            { log: (message, meta) => logger.warn(message, meta) }
-          );
-        }
+      // Fire-and-forget, same as edit-notification.ts's row.
+      const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
+      if (keyResult.ok) {
+        void sendPush(
+          input.granteeSubject,
+          keyResult.val,
+          {
+            title: headline,
+            body: title,
+            tag: id,
+            refUrl,
+            notificationId: id,
+            ...(refUrl ? { appPath: refUrl } : {}),
+          },
+          { log: (message, meta) => logger.warn(message, meta) }
+        );
       }
     }
 

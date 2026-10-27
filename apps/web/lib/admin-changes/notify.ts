@@ -22,7 +22,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDataStore, getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { ROLE_OPERATOR } from '@/lib/access';
@@ -70,10 +70,6 @@ async function notify(input: {
   });
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return;
-  // The push goes through @renkei/notifications, which still reads the
-  // person's devices from the database itself.
-  const db = getDatabase();
-  if (!db.ok) return;
   void sendPush(
     input.subject,
     keyResult.val,

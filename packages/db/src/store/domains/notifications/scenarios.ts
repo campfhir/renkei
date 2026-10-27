@@ -163,6 +163,42 @@ export const notificationScenarios: Scenario<DataStore>[] = [
     },
   },
   {
+    method: 'notifications.markReadByRef',
+    name: 'own unread rows of the kind and ref only; a repeat changes nothing',
+    run: async (store) => {
+      const ask = (n: number, subject: string, kind: string, refId: string | null) =>
+        store.notifications.insert({
+          id: id(30 + n),
+          subject,
+          kind,
+          category: null,
+          connector: null,
+          tool: 'search',
+          entity: null,
+          headline: `ask ${n}`,
+          refUrl: '/chat/x',
+          refId,
+          agentId: null,
+          agentName: null,
+          runId: null,
+          meta: null,
+          createdAt: new Date(at(n)),
+        });
+      await ask(1, 'ann', 'chat_permission', 'toolu_1');
+      await ask(2, 'ann', 'chat_permission', 'toolu_2');
+      await ask(3, 'ann', 'other', 'toolu_1');
+      await ask(4, 'bob', 'chat_permission', 'toolu_1');
+      await ask(5, 'ann', 'chat_permission', null);
+      const first = await store.notifications.markReadByRef('ann', 'chat_permission', 'toolu_1');
+      const again = await store.notifications.markReadByRef('ann', 'chat_permission', 'toolu_1');
+      const unread = async (subject: string) =>
+        (await store.notifications.list(subject, { limit: 10, unreadOnly: true })).map(
+          (n) => n.headline
+        );
+      return { first, again, ann: await unread('ann'), bob: await unread('bob') };
+    },
+  },
+  {
     method: 'notifications.find',
     name: 'own row only; another person or an unknown id reads null',
     fixture,

@@ -15,7 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { friendlyToolName } from '@renkei/agents';
@@ -32,9 +32,6 @@ export function notifyChatToolPermission(input: {
   toolName: string;
 }): void {
   void (async () => {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return;
-
     const title = input.chatTitle || 'New chat';
     const headline = `“${title}” is waiting for your permission to ${friendlyToolName(
       input.toolName,
@@ -42,18 +39,22 @@ export function notifyChatToolPermission(input: {
     ).toLowerCase()}`;
     const refUrl = `/chat/${input.chatId}`;
     const id = randomUUID();
-    await dbResult.val
-      .insertInto('agent_notifications')
-      .values({
-        id,
-        subject: input.ownerSubject,
-        kind: CHAT_PERMISSION_NOTIFICATION_KIND,
-        tool: input.toolName,
-        headline,
-        ref_id: input.toolUseId,
-        ref_url: refUrl,
-      })
-      .execute();
+    await getDataStore().notifications.insert({
+      id,
+      subject: input.ownerSubject,
+      kind: CHAT_PERMISSION_NOTIFICATION_KIND,
+      category: null,
+      connector: null,
+      tool: input.toolName,
+      entity: null,
+      headline,
+      refUrl,
+      refId: input.toolUseId,
+      agentId: null,
+      agentName: null,
+      runId: null,
+      meta: null,
+    });
 
     // Fire-and-forget: a push service's latency never adds to the wait.
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
@@ -93,17 +94,12 @@ export async function markChatToolPermissionRead(
   subject: string,
   toolUseId: string
 ): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return;
   try {
-    await dbResult.val
-      .updateTable('agent_notifications')
-      .set({ read_at: new Date() })
-      .where('subject', '=', subject)
-      .where('kind', '=', CHAT_PERMISSION_NOTIFICATION_KIND)
-      .where('ref_id', '=', toolUseId)
-      .where('read_at', 'is', null)
-      .execute();
+    await getDataStore().notifications.markReadByRef(
+      subject,
+      CHAT_PERMISSION_NOTIFICATION_KIND,
+      toolUseId
+    );
   } catch (error) {
     logger.warn('chat permission notification not marked read', {
       component: 'chat/permission-notification',

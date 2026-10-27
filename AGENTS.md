@@ -86,7 +86,10 @@ cascades behave as they do in the database.
   `getDatabase()` fails and records its caller; the crawl spec
   (`apps/web/e2e/memory/crawl.spec.ts`) loads every page and fails when one
   reached the database directly. A new page gets a `CrawlPage` entry in
-  `e2e/memory/crawl/<area>.ts`.
+  `e2e/memory/crawl/<area>.ts`. Statically, `apps/web/lib/data-store-seam.test.ts`
+  fails any non-test module under `app/`, `lib/` or `components/` that
+  calls `getDatabase()`/`getPool()`, imports `kysely`, or builds a query;
+  a file that truly needs the pg handle is listed there with its reason.
 - **A new or changed repository method** changes `types.ts`, `postgres.ts`
   and `memory.ts` together and gets at least one differential scenario in
   `scenarios.ts`: fixture rows plus a call, run against a freshly

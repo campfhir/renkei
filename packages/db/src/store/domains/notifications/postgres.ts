@@ -51,6 +51,17 @@ export function postgresNotifications(db: () => Kysely<DB>): NotificationStore {
         .values(notificationValues(notification))
         .execute();
     },
+    async markReadByRef(subject, kind, refId) {
+      const result = await db()
+        .updateTable('agent_notifications')
+        .set({ read_at: new Date() })
+        .where('subject', '=', subject)
+        .where('kind', '=', kind)
+        .where('ref_id', '=', refId)
+        .where('read_at', 'is', null)
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows);
+    },
     async find(subject, id) {
       const row = await db()
         .selectFrom('agent_notifications')

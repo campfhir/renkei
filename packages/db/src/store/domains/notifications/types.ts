@@ -46,16 +46,19 @@ export interface NotificationStore {
   /** Delete the target; returns how many went. Ids that are not this person's delete nothing. */
   delete(subject: string, target: NotificationTarget): Promise<number>;
   /**
-   * Add one. `createdAt` defaults to now, `readAt` to unread. The writers
-   * that produce notifications (agents, batch jobs, chat events) still use
-   * the table directly; this is what fixtures and the contract use.
+   * Add one. `createdAt` defaults to now, `readAt` to unread. `refId`
+   * keys a row to what it is about (a chat permission ask's tool call) so
+   * `markReadByRef` can find it again.
    */
   insert(
     notification: Omit<NotificationRecord, 'createdAt' | 'readAt'> & {
       createdAt?: Date;
       readAt?: Date | null;
+      refId?: string | null;
     }
   ): Promise<void>;
+  /** Mark this person's unread rows of `kind` keyed to `refId` read; returns how many changed. */
+  markReadByRef(subject: string, kind: string, refId: string): Promise<number>;
   /** One of this person's notifications; null when it is not theirs or does not exist. */
   find(subject: string, id: string): Promise<NotificationRecord | null>;
 

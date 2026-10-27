@@ -7,7 +7,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getBearerToken, resolveAccessToken } from '@/lib/mcp-token';
 import { recordLlmCall } from '@renkei/agents/runs';
 import { getAgent } from '@/lib/agents/store';
@@ -29,9 +28,6 @@ export async function POST(
   if (!token) return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
   const record = await resolveAccessToken(token, 'agent');
   if (!record) return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   const optimization = await getOptimization(record.subject, optimizationId);
   if (!optimization) return NextResponse.json({ error: 'No such optimization' }, { status: 404 });

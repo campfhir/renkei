@@ -48,6 +48,13 @@ export function memoryNotifications(tables: MemoryTables): NotificationStore {
     async insert(notification) {
       tables.insert('agent_notifications', notificationValues(notification));
     },
+    async markReadByRef(subject, kind, refId) {
+      return tables.update(
+        'agent_notifications',
+        (r) => r.subject === subject && r.kind === kind && r.ref_id === refId && r.read_at === null,
+        { read_at: new Date() }
+      ).length;
+    },
     async find(subject, id) {
       const wanted = tables.param('agent_notifications', 'id', id);
       const row = tables.first(

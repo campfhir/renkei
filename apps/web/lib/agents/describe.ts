@@ -9,7 +9,6 @@
  * being reachable at that moment.
  */
 
-import { getDatabase } from '@renkei/db';
 import { describeSchedule, type TriggerDraft } from '@renkei/agents';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import { logger } from '@/lib/logger';
@@ -127,9 +126,6 @@ export async function generateAgentDescription(agent: {
     return { description: null, reviewNotes: [] };
   };
 
-  // The model roster is the agent-llm package's to read, from the database.
-  const db = getDatabase();
-  if (!db.ok) return failed('database unavailable');
   const llmResult = await resolveAgentLlm(agent.llmModelId);
   if (!llmResult.ok) return failed(llmResult.err.type);
   const llm = llmResult.val;

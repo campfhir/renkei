@@ -18,7 +18,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase, getDataStore } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { effectiveDelivery, getNotificationPrefs } from '@renkei/user-prefs';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
@@ -65,11 +65,9 @@ export function notifyAgentEdited(input: {
         meta: null,
       });
 
-      // Fire-and-forget, same as the row above it. Push delivery belongs to
-      // the notifications package, which reads the device rows itself.
-      const dbResult = getDatabase();
+      // Fire-and-forget, same as the row above it.
       const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
-      if (dbResult.ok && keyResult.ok) {
+      if (keyResult.ok) {
         void sendPush(
           input.ownerSubject,
           keyResult.val,

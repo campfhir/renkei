@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDataStore, getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { getNotificationPrefs } from '@renkei/user-prefs';
@@ -64,10 +64,8 @@ export function notifyArtifactEvent(input: {
       runId: null,
       meta: null,
     });
-    // The push still takes the database handle (@renkei/notifications).
-    const dbResult = getDatabase();
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
-    if (dbResult.ok && keyResult.ok) {
+    if (keyResult.ok) {
       void sendPush(
         input.recipientSubject,
         keyResult.val,

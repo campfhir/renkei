@@ -24,7 +24,7 @@
  * exactly where they are.
  */
 
-import { getDatabase, getDataStore } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { DEFAULT_ORG_SETTINGS, getOrgSettings } from '@renkei/settings';
 import { resolveAgentLlm, type LlmUsage } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
@@ -325,9 +325,6 @@ export async function optimizeAgent(
   agent: StoredAgent,
   windowDays: number
 ): Promise<OptimizeOutcome> {
-  // The model roster is the agent-llm package's to read, from the database.
-  const db = getDatabase();
-  if (!db.ok) return { error: 'The database is unavailable.' };
   const llmResult = await resolveAgentLlm(agent.llmModelId);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization yet.' };

@@ -1,24 +1,15 @@
 /**
  * The lines every chat route starts with, once: the session and a JSON
  * error shape the client helpers understand. Routes read through the data
- * store (`getDataStore()`); `db` is only for the routes whose queries are
- * not behind it yet, and connects on first use — a route that never
- * touches it never reaches for the database.
+ * store (`getDataStore()`).
  */
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getSessionFromRequest, type Session } from '@/lib/session';
 import type { ReadBytesError } from './attachments';
-import { databaseForUnconvertedCode } from './unconverted-db';
-
-export { databaseForUnconvertedCode } from './unconverted-db';
 
 export interface ChatRequestContext {
-  /** The database, for code not yet behind the data store; throws when it is unavailable. */
-  readonly db: Kysely<DB>;
   session: Session;
 }
 
@@ -33,12 +24,7 @@ export async function chatRequestContext(
   if (!session) return { ok: false, response: jsonError(401, 'unauthenticated', 'Not signed in') };
   return {
     ok: true,
-    context: {
-      session,
-      get db() {
-        return databaseForUnconvertedCode();
-      },
-    },
+    context: { session },
   };
 }
 

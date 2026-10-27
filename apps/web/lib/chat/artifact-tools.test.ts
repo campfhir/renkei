@@ -15,7 +15,6 @@ jest.mock('./attachments', () => ({
 }));
 jest.mock('./artifact-access', () => ({ resolveArtifactAccess: jest.fn() }));
 // The library calls below still take a database handle; the mocks never touch it.
-jest.mock('./unconverted-db', () => ({ databaseForUnconvertedCode: () => null }));
 jest.mock('./artifact-library', () => ({
   artifactImpact: jest.fn(),
   attachToProject: jest.fn(),

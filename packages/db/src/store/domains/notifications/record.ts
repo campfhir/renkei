@@ -35,6 +35,7 @@ export function notificationValues(
     entity: notification.entity,
     headline: notification.headline,
     ref_url: notification.refUrl,
+    ...(notification.refId !== undefined ? { ref_id: notification.refId } : {}),
     agent_id: notification.agentId,
     agent_name: notification.agentName,
     run_id: notification.runId,
