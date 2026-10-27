@@ -290,7 +290,7 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
 
   await page.goto(projectUrl);
   await expect(limitText).toHaveText('Checkout limit 20 GB.');
-  await expect(page.getByTestId('size-request-last')).toContainText(
+  await expect(page.getByRole('main').getByTestId('size-request-last')).toContainText(
     'Your request for 20 GB was approved.'
   );
   await shot(page, testInfo, '06-project-approved');
@@ -309,7 +309,7 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
 
   await page.goto(projectUrl);
   await expect(limitText).toHaveText('Checkout limit 20 GB.');
-  await expect(page.getByTestId('size-request-last')).toContainText(
+  await expect(page.getByRole('main').getByTestId('size-request-last')).toContainText(
     'Your last request was denied: Prune build output first'
   );
   await shot(page, testInfo, '07-project-denied');
@@ -318,7 +318,7 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   // Saved and stored at once; the pages read it through the org settings'
   // 60-second cache, which this spec deliberately does not wait out.
   await page.goto(settingsUrl);
-  const orgLimit = page.getByLabel('sandboxWorkspaceMaxGb');
+  const orgLimit = page.getByRole('main').getByLabel('sandboxWorkspaceMaxGb');
   await expect(orgLimit).toHaveValue('8');
   await orgLimit.fill('12');
   await page.getByRole('button', { name: 'Save settings' }).click();
@@ -347,7 +347,7 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   await expectNoHorizontalOverflow(page);
   await shot(page, testInfo, '09-project-mobile');
   await page.goto(settingsUrl);
-  await expect(page.getByLabel('sandboxWorkspaceMaxGb')).toBeVisible();
+  await expect(page.getByRole('main').getByLabel('sandboxWorkspaceMaxGb')).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await shot(page, testInfo, '10-settings-mobile');
 }

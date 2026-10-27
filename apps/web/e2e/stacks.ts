@@ -109,34 +109,56 @@ export function start(
   return spawn(command, args, { cwd: WEB_ROOT, env, stdio: ['ignore', out, out], detached: true });
 }
 
+/**
+ * Stops a child and everything it started. The group is what has to go: the
+ * `pnpm` wrapper can exit while the server it ran is still holding the port,
+ * so the wait is on the group being empty, not on the wrapper's exit.
+ */
 export async function stop(child: ChildProcess): Promise<void> {
-  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  if (child.pid === undefined) return;
   const group = -child.pid;
+  const alive = (): boolean => {
+    try {
+      process.kill(group, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!alive()) return;
   try {
     process.kill(group, 'SIGTERM');
   } catch {
     return;
   }
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => {
-      try {
-        process.kill(group, 'SIGKILL');
-      } catch {
-        // Already gone.
-      }
-      resolve();
-    }, 10_000);
-    child.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
+  const deadline = Date.now() + 10_000;
+  while (alive() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+  if (alive()) {
+    try {
+      process.kill(group, 'SIGKILL');
+    } catch {
+      // Gone between the check and the kill.
+    }
+    while (alive()) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
-/** Polls until a URL answers, or fails after the deadline. */
-export async function waitForHttp(url: string, deadlineMs: number, label: string): Promise<void> {
+/**
+ * Polls until a URL answers, or fails after the deadline. With the child that
+ * should answer it, a child that exits first fails the wait: an answer from
+ * something else on the port is not that child's.
+ */
+export async function waitForHttp(
+  url: string,
+  deadlineMs: number,
+  label: string,
+  child?: ChildProcess
+): Promise<void> {
   const deadline = Date.now() + deadlineMs;
   for (;;) {
+    if (child && child.exitCode !== null) {
+      throw new Error(`${label} exited (code ${child.exitCode}) before answering at ${url}`);
+    }
     try {
       await fetch(url, { signal: AbortSignal.timeout(5_000) });
       return;

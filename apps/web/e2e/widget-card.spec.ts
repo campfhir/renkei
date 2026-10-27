@@ -366,7 +366,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
 
     // The card, not a folded raw-JSON block: the widget iframe with its own
     // rendered title, subtitle and fields inside.
-    const frame = page.frameLocator('iframe[title="Preview card"]');
+    const frame = page.frameLocator('iframe[title="Preview card"]:visible');
     await expect(frame.locator('.card-title')).toHaveText('Create Jira issue', COLD);
     await expect(frame.locator('.card-subtitle').first()).toHaveText('OPS · Task');
     await expect(frame.getByText('Project')).toBeVisible();
@@ -445,7 +445,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
       const freshPage = await freshContext.newPage();
       await freshPage.goto(`/chat/${ids.chatId}`);
       await expect(freshPage.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
-      const freshFrame = freshPage.frameLocator('iframe[title="Preview card"]');
+      const freshFrame = freshPage.frameLocator('iframe[title="Preview card"]:visible');
       await expect(freshFrame.locator('.done-headline')).toHaveText('Created issue OPS-99.', COLD);
       await expect(freshFrame.getByRole('button', { name: 'Create' })).toHaveCount(0);
     } finally {
@@ -474,7 +474,7 @@ test('cancelling the card is a decision too: the model replies to it', async ({
 
     await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
-    const frame = page.frameLocator('iframe[title="Preview card"]');
+    const frame = page.frameLocator('iframe[title="Preview card"]:visible');
     const cancelButton = frame.getByRole('button', { name: 'Cancel' });
     await expect(cancelButton).toBeVisible(COLD);
 
@@ -526,7 +526,7 @@ test('a stale card refuses to re-run a confirm tool another device already decid
 
     await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
-    const frame = page.frameLocator('iframe[title="Preview card"]');
+    const frame = page.frameLocator('iframe[title="Preview card"]:visible');
     const confirmButton = frame.getByRole('button', { name: 'Create' });
     await expect(confirmButton).toBeVisible(COLD);
 
@@ -570,7 +570,7 @@ test('the card still renders at phone width', async ({ page }, testInfo) => {
     await page.goto(`/chat/${ids.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
-    const frame = page.frameLocator('iframe[title="Preview card"]');
+    const frame = page.frameLocator('iframe[title="Preview card"]:visible');
     await expect(frame.locator('.card-title')).toHaveText('Create Jira issue', COLD);
     // No horizontal scroll: the card's iframe wrapper is capped, not fixed-width.
     const bodyWidth = await page.evaluate(() => document.documentElement.scrollWidth);

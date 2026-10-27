@@ -60,24 +60,46 @@ async function stopChildren(index: number): Promise<void> {
   rmSync(pidFile(index), { force: true });
 }
 
-/** A fresh stack for one test file: database cloned and seeded, delegate and server started. */
+/** Whether this file's server has been started yet. */
+let serverUp = false;
+
+/**
+ * A fresh stack for one test file: database cloned and seeded, delegate started.
+ * The server is not started here: it reads org settings as it boots, and a read
+ * keeps the value for a minute, so it starts only once the file's own setup has
+ * written its rows (see ensureServer).
+ */
 async function prepare(stack: Stack): Promise<void> {
+  serverUp = false;
   await stopChildren(stack.index);
   await cloneTemplate(stack);
   process.env.DATABASE_URL = stack.databaseUrl;
 
   const delegate = startDelegate(stack);
   children.push(delegate);
-  await waitForHttp(`${stack.delegateUrl}/health`, 60_000, 'The delegate');
+  await waitForHttp(`${stack.delegateUrl}/health`, 60_000, 'The delegate', delegate);
   await waitForLiveDelegate(stack.databaseUrl, 60_000);
   await seedDatabase(stack.databaseUrl);
+  recordChildren(stack);
+}
 
-  const server = startServer(stack);
-  children.push(server);
-  await waitForHttp(`${stack.baseURL}/`, 120_000, 'The server');
-
+function recordChildren(stack: Stack): void {
   mkdirSync(WORKERS_DIR, { recursive: true });
   writeFileSync(pidFile(stack.index), JSON.stringify(children.map((child) => child.pid)));
+}
+
+/**
+ * Starts the file's server, once, on the first test's base URL. Every test
+ * fixture runs after the file's beforeAll hooks, so the rows those hooks write
+ * are in place before the server reads the org settings.
+ */
+async function ensureServer(stack: Stack): Promise<void> {
+  if (serverUp) return;
+  serverUp = true;
+  const server = startServer(stack);
+  children.push(server);
+  await waitForHttp(`${stack.baseURL}/`, 120_000, 'The server', server);
+  recordChildren(stack);
 }
 
 /**
@@ -89,7 +111,10 @@ export async function isolateFile({ stack }: { stack: Stack }): Promise<void> {
   await prepare(stack);
 }
 
-export const test = base.extend<{ baseURL: string }, { stack: Stack }>({
+export const test = base.extend<
+  { baseURL: string; page: import('@playwright/test').Page },
+  { stack: Stack }
+>({
   stack: [
     async ({}, use, workerInfo) => {
       const stack = readStack(workerInfo.parallelIndex);
@@ -103,5 +128,11 @@ export const test = base.extend<{ baseURL: string }, { stack: Stack }>({
   ],
   baseURL: async ({ stack }, use) => {
     await use(stack.baseURL);
+  },
+  // A page is the first thing that needs the server, and no page is opened in a
+  // hook: so the server starts after every beforeAll that writes the database.
+  page: async ({ page, stack }, use) => {
+    await ensureServer(stack);
+    await use(page);
   },
 });
