@@ -244,7 +244,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
     // a caller with no Jira but a Microsoft grant gets their real (Jira-less)
     // tool set below, same relaxation the tool catalog applies. Shared with
     // the tools page so the list it shows is the list this route registers.
-    const availability = await resolveConnectorAvailability(db, subject);
+    const availability = await resolveConnectorAvailability(subject);
     const anyOtherConnector =
       availability.knowledgeAvailable ||
       availability.webexAvailable ||

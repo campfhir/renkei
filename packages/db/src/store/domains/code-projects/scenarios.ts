@@ -120,6 +120,23 @@ export const codeProjectScenarios: Scenario<DataStore>[] = [
     ],
   },
   {
+    method: 'codeProjects.approvedSizes',
+    name: 'approved only, smallest first, one subject',
+    fixture: {
+      ...fixture,
+      sandbox_size_requests: [
+        request(7, `${PREFIX}${uid(77)}`, 1, 'approved'),
+        request(3, `${PREFIX}${uid(77)}`, 2, 'approved'),
+        request(9, `${PREFIX}${uid(77)}`, 3, 'denied'),
+        request(5, `${PREFIX}${uid(78)}`, 4, 'approved'),
+      ],
+    },
+    run: async (store) => [
+      await store.codeProjects.approvedSizes(`${PREFIX}${uid(77)}`),
+      await store.codeProjects.approvedSizes('none'),
+    ],
+  },
+  {
     method: 'codeProjects.createSizeRequest',
     name: 'one pending per subject',
     fixture,

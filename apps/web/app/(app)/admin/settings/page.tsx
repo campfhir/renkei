@@ -2,7 +2,6 @@ import React from 'react';
 import Link from 'next/link';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { SizeRequests } from './size-requests';
 import { listSizeRequests } from '@/lib/code/size-requests';
@@ -22,18 +21,6 @@ import CoachTarget from '@/components/coach-marks/anchor';
 export default async function SettingsPage(): Promise<React.ReactNode> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
-  }
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return (
-      <div>
-        <h2 className="mb-2 text-lg font-semibold">Error</h2>
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          Unable to connect to the database. Please try again later.
-        </p>
-      </div>
-    );
   }
 
   const [settingsResult, oidcResult, observedGroups, sizeRequests] = await Promise.all([

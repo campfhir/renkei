@@ -12,7 +12,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { actMeta } from '@renkei/tool-outcomes';
-import { getDatabase } from '@renkei/db';
 import type { MCPToolContext } from '../common';
 import { CHANGE_REQUEST_TTL_HOURS, createRequest } from '@/lib/jira-admin/change-requests';
 import { reviewPrefix } from '../jira-admin/review-link';
@@ -64,8 +63,6 @@ export function registerRequestAdminChangeTool(server: McpServer, context: MCPTo
       if (!context.jiraAuth || !cloudId) {
         return textError('Jira is not connected. Connect it on the Connectors page.');
       }
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return textError('Database unavailable; nothing was requested.');
       const request = await createRequest({
         subject: context.subject,
         agentId: context.agent?.agentId,

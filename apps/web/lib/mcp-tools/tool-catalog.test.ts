@@ -55,6 +55,25 @@ jest.mock('@renkei/db', () => ({
   // provider_grants — availability is the exposure aggregate the data
   // store answers.
   getDataStore: () => ({
+    // The caller's grants, as the data store answers them: one per provider.
+    providerGrants: {
+      listForSubject: async (subject: string, options: { provider?: string } = {}) => {
+        const row = grants[options.provider ?? ''];
+        return row
+          ? [
+              {
+                provider: options.provider ?? '',
+                accountId: 'acct-1',
+                subject,
+                displayName: 'acct-1',
+                requestedScopes: row.requested_scopes,
+                grantedScopes: row.granted_scopes,
+                metadata: {},
+              },
+            ]
+          : [];
+      },
+    },
     fileShares: {
       connectionExposures: async () =>
         fileshareConnections.map((row) => ({
@@ -63,6 +82,7 @@ jest.mock('@renkei/db', () => ({
         })),
     },
   }),
+  memoryDataStoreRequested: () => false,
   getDatabase: () => ({
     ok: true,
     val: {

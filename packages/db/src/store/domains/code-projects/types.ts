@@ -29,6 +29,8 @@ export interface CodeProjectStore {
   ): Promise<{ chatId: string; inputTokens: number; outputTokens: number }[]>;
   /** The newest request for one checkout subject (ties by id), whatever its state. */
   latestSizeRequest(subject: string): Promise<SizeRequestRecord | null>;
+  /** The sizes, in bytes, of every approved request for one checkout subject, smallest first. */
+  approvedSizes(subject: string): Promise<number[]>;
   /** File a pending request; null when one is already pending for the subject. */
   createSizeRequest(request: {
     subject: string;

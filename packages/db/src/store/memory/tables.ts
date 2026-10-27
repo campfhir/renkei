@@ -441,8 +441,13 @@ export class MemoryTables {
     }
   }
 
-  /** Load fixtures, parents before children (foreign-key order). */
-  seed(fixtures: TableRows): void {
+  /**
+   * Load fixtures, parents before children (foreign-key order). With
+   * `replace`, a row whose primary key is already stored replaces it (the
+   * old row is deleted first, cascades and all) — for fixtures of
+   * org-wide rows that a long-lived test server already holds.
+   */
+  seed(fixtures: TableRows, options: { replace?: boolean } = {}): void {
     for (const table of this.insertionOrder(Object.keys(fixtures))) {
       const rows: unknown = Reflect.get(fixtures, table);
       if (!Array.isArray(rows)) continue;
@@ -452,6 +457,10 @@ export class MemoryTables {
         }
         const def = this.def(table);
         const built = this.build(table, { ...row }, new Date());
+        if (options.replace && def.primaryKey.length > 0) {
+          const existing = this.conflict(table, built, def.primaryKey);
+          if (existing) this.deleteRows(table, new Set([existing]));
+        }
         this.checkKeys(table, def, built);
         this.checkReferences(table, def, built);
         this.rows(table).push(built);

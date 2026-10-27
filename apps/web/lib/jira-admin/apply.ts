@@ -10,7 +10,6 @@
  * pending proposals from being applied, not only new ones from being made.
  */
 
-import { NO_DATABASE_REASON, legacyDatabase } from '@/lib/admin-changes/legacy-database';
 import { getOrgSettings } from '@renkei/settings';
 import { ATLASSIAN_ADMIN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
 import { resolveAudience } from '@/lib/connectors/audience';
@@ -108,10 +107,8 @@ export async function applyGate(
     return { ok: false, reason: 'Jira Administration is switched off for your organization.' };
   }
 
-  const db = legacyDatabase();
-  if (!db) return { ok: false, reason: NO_DATABASE_REASON };
   const [availability, audience] = await Promise.all([
-    resolveConnectorAvailability(db, subject),
+    resolveConnectorAvailability(subject),
     resolveAudience(subject),
   ]);
   if (
@@ -150,7 +147,7 @@ export async function applyGate(
   if (change.kind === REQUEST_TYPE_KIND) {
     // The one kind that writes on another grant: the JSM grant, with the
     // picker's "Set up request types" box.
-    const jsmScopes = await jsmGrantScopes(db, subject);
+    const jsmScopes = await jsmGrantScopes(subject);
     if (jsmScopes === null) {
       return {
         ok: false,
@@ -173,7 +170,7 @@ export async function applyGate(
 
   if (isAutomationKind(change.kind)) {
     // The kinds that run on the person's own Atlassian API token.
-    if (!(await hasAutomationToken(db, subject))) return { ok: false, reason: NO_TOKEN };
+    if (!(await hasAutomationToken(subject))) return { ok: false, reason: NO_TOKEN };
   }
 
   // The questions above give a person the reason; the projection is the
@@ -204,10 +201,8 @@ export async function viewGate(subject: string): Promise<Gate> {
   if (settingsResult.val.disabledConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR)) {
     return { ok: false, reason: 'Jira Administration is switched off for your organization.' };
   }
-  const db = legacyDatabase();
-  if (!db) return { ok: false, reason: NO_DATABASE_REASON };
   const [availability, audience] = await Promise.all([
-    resolveConnectorAvailability(db, subject),
+    resolveConnectorAvailability(subject),
     resolveAudience(subject),
   ]);
   if (

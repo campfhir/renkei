@@ -4,7 +4,9 @@
  *
  *   POST   { <table>: [row, …], … }  add rows, shaped as the table's columns
  *                                    (the memory tables fill defaults and
- *                                    refuse what Postgres would refuse)
+ *                                    refuse what Postgres would refuse);
+ *                                    `?replace=1` overwrites rows whose
+ *                                    primary key is already there
  *   GET                              direct database calls made since the
  *                                    last reset: code that bypassed the
  *                                    data store (e2e/memory/crawl.spec.ts)
@@ -66,7 +68,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Expected { table: [row, …] }' }, { status: 400 });
   }
 
-  const seeded = await wrapAsync(() => store.seed(body), 'SEED_ERROR' as const);
+  const replace = request.nextUrl.searchParams.get('replace') === '1';
+  const seeded = await wrapAsync(() => store.seed(body, { replace }), 'SEED_ERROR' as const);
   if (!seeded.ok) {
     const cause = seeded.err.cause;
     return NextResponse.json(

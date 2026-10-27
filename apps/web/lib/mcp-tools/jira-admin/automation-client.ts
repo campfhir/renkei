@@ -17,12 +17,11 @@
  * the browser suite does, and the delegate honors the same variable.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { ATLASSIAN_ADMIN_TOKEN, readAtlassianTokenMetadata } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch } from '@renkei/delegate-client';
 import { grantRefusalText } from '@/lib/grant-refusals';
 import type { MCPToolContext } from '../common';
+import { grantRow } from '../grant-row';
 import type { JiraAdminAccess } from './client';
 
 const JIRA_AUTOMATION_API_BASE =
@@ -80,15 +79,8 @@ export async function resolveAutomationAccess(
 }
 
 /** Whether a token is saved — the grant row alone, for the apply gate and the review page. */
-export async function hasAutomationToken(db: Kysely<DB>, subject: string): Promise<boolean> {
-  const row = await db
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('provider', '=', ATLASSIAN_ADMIN_TOKEN)
-    .where('subject', '=', subject)
-    .limit(1)
-    .executeTakeFirst();
-  return row !== undefined;
+export async function hasAutomationToken(subject: string): Promise<boolean> {
+  return (await grantRow(ATLASSIAN_ADMIN_TOKEN, subject)) !== undefined;
 }
 
 // ---- ARIs ------------------------------------------------------------------

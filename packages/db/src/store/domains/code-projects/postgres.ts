@@ -60,6 +60,15 @@ export function postgresCodeProjects(db: () => Kysely<DB>): CodeProjectStore {
         .executeTakeFirst();
       return row ? sizeRequestFromRow(row) : null;
     },
+    async approvedSizes(subject) {
+      const rows = await db()
+        .selectFrom('sandbox_size_requests')
+        .select('requested_bytes')
+        .where('subject', '=', subject)
+        .where('status', '=', 'approved')
+        .execute();
+      return rows.map((row) => Number(row.requested_bytes)).sort((a, b) => a - b);
+    },
     async createSizeRequest(request) {
       const row = await db()
         .insertInto('sandbox_size_requests')

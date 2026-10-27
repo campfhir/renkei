@@ -15,13 +15,12 @@
  * passes, as withScopeGate lets one pass.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { ATLASSIAN_JSM, readAtlassianMetadata } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch } from '@renkei/delegate-client';
 import { grantRefusalText } from '@/lib/grant-refusals';
 import { REQUEST_TYPE_JSM_SCOPES } from '@/lib/jira-admin/request-type';
 import type { MCPToolContext } from '../common';
+import { grantRow } from '../grant-row';
 import type { JiraAdminAccess } from './client';
 
 export const JSM_LABEL = 'Jira Service Management';
@@ -91,14 +90,8 @@ export async function resolveJsmAccess(subject: string): Promise<JiraAdminAccess
  * The JSM grant row's scopes, or null without a grant — read straight from
  * the row, the tool catalog's way, so a page can ask without a token.
  */
-export async function jsmGrantScopes(db: Kysely<DB>, subject: string): Promise<string[] | null> {
-  const row = await db
-    .selectFrom('provider_grants')
-    .select(['requested_scopes', 'granted_scopes'])
-    .where('provider', '=', ATLASSIAN_JSM)
-    .where('subject', '=', subject)
-    .limit(1)
-    .executeTakeFirst();
+export async function jsmGrantScopes(subject: string): Promise<string[] | null> {
+  const row = await grantRow(ATLASSIAN_JSM, subject);
   if (!row) return null;
   return row.granted_scopes ?? row.requested_scopes;
 }

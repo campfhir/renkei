@@ -10,8 +10,11 @@ import { MemoryTables, type TableRows } from './tables';
 export interface MemoryDataStore extends DataStore {
   readonly kind: 'memory';
   readonly tables: MemoryTables;
-  /** Add fixture rows, by table (parents before children is handled). */
-  seed(fixtures: TableRows): Promise<void>;
+  /**
+   * Add fixture rows, by table (parents before children is handled);
+   * `replace` overwrites rows whose primary key is already stored.
+   */
+  seed(fixtures: TableRows, options?: { replace?: boolean }): Promise<void>;
   /**
    * Forget everything, or only what one subject owns: rows of every table
    * whose `subject` or `owner_subject` is theirs, and what cascades from
@@ -33,8 +36,8 @@ export function createMemoryDataStore(tables: MemoryTables = new MemoryTables())
     ...repositories,
     kind: 'memory' as const,
     tables,
-    async seed(fixtures: TableRows) {
-      tables.seed(fixtures);
+    async seed(fixtures: TableRows, options: { replace?: boolean } = {}) {
+      tables.seed(fixtures, options);
     },
     reset(subject?: string) {
       if (subject === undefined) {

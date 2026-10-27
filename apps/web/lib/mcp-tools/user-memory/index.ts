@@ -15,7 +15,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import type { MCPToolContext } from '../common';
 import { readUserMemory } from '@/lib/chat/user-memory';
 
@@ -47,8 +46,6 @@ export function registerUserMemoryTools(server: McpServer, context: MCPToolConte
     },
     async () => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
       const memory = await readUserMemory(context.subject, {
         maxEntries: 100,
       });

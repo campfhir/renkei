@@ -15,7 +15,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
 import type { JiraAdminAuth } from './jira-admin-auth';
@@ -402,8 +401,6 @@ export async function registerChangeTools(
         operations: plan.operations,
       };
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable; nothing was proposed.');
       const reason = text(args.reason);
       const change = await createChangeRequest({
         subject: context.subject,

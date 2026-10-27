@@ -10,7 +10,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import type { MCPToolContext } from '../common';
 import type { JiraAdminAuth } from './jira-admin-auth';
 import { errText, textResult } from './client';
@@ -118,8 +117,6 @@ export async function registerTemplateTools(
         );
       }
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable; nothing was saved.');
       const document = documentFromSpace(space);
       const saved = await saveSpaceTemplate({
         cloudId: access.cloudId,
@@ -186,8 +183,6 @@ export async function registerTemplateTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
 
       const reference = typeof args.template === 'string' ? args.template.trim() : '';
       if (reference) {
@@ -239,8 +234,6 @@ export async function registerTemplateTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
       const reference = typeof args.template === 'string' ? args.template.trim() : '';
       const template = await findSpaceTemplate(access.cloudId, reference);
       if (!template) return errText(`No template is named “${reference}”.`);
@@ -268,8 +261,6 @@ export async function registerTemplateTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
       const reference = typeof args.template === 'string' ? args.template.trim() : '';
       const template = await findSpaceTemplate(access.cloudId, reference);
       if (!template) return errText(`No template is named “${reference}”.`);

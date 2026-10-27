@@ -36,10 +36,6 @@ jest.mock('@/lib/mcp-tools/jira-admin/jsm-access', () => {
   return { ...actual, jsmGrantScopes: jest.fn() };
 });
 
-jest.mock('@/lib/admin-changes/legacy-database', () => ({
-  legacyDatabase: () => ({}),
-  NO_DATABASE_REASON: 'no database',
-}));
 import { getOrgSettings } from '@renkei/settings';
 import { resolveAudience } from '@/lib/connectors/audience';
 import { resolveConnectorAvailability } from '@/lib/mcp-tools/registry';

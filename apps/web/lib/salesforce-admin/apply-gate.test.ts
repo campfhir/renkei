@@ -16,10 +16,6 @@ jest.mock('@/lib/mcp-tools/registry', () => ({ resolveConnectorAvailability: jes
 jest.mock('@/lib/mcp-tools/projection', () => ({ buildProjection: jest.fn() }));
 jest.mock('@/lib/salesforce-app', () => ({ listSalesforceConnectors: jest.fn() }));
 
-jest.mock('@/lib/admin-changes/legacy-database', () => ({
-  legacyDatabase: () => ({}),
-  NO_DATABASE_REASON: 'no database',
-}));
 import { getOrgSettings } from '@renkei/settings';
 import { EMPTY_POLICY, type SalesforceOrg } from '@renkei/connector-salesforce';
 import { resolveAudience } from '@/lib/connectors/audience';

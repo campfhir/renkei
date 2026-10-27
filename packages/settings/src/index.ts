@@ -9,7 +9,7 @@
  * defaults and a short cache.
  */
 
-import { getDatabase, getDataStore } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -729,20 +729,12 @@ export async function setOrgSettings(
 export async function getWorkspaceLimitBytes(subject: string): Promise<Result<number, 'DB_ERROR'>> {
   const org = await getOrgSettings();
   if (!org.ok) return org;
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return ok(org.val.sandboxWorkspaceMaxBytes);
   const rows = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('sandbox_size_requests')
-        .select('requested_bytes')
-        .where('subject', '=', subject)
-        .where('status', '=', 'approved')
-        .execute(),
+    () => getDataStore().codeProjects.approvedSizes(subject),
     'DB_ERROR' as const
   );
   if (!rows.ok) return ok(org.val.sandboxWorkspaceMaxBytes);
-  const approved = rows.val.map((row) => Number(row.requested_bytes));
+  const approved = rows.val;
   return ok(Math.max(org.val.sandboxWorkspaceMaxBytes, ...approved));
 }
 

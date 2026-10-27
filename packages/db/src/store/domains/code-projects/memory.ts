@@ -45,6 +45,12 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
       const [row] = requestsOf(subject);
       return row ? sizeRequestFromRow(row) : null;
     },
+    async approvedSizes(subject) {
+      return tables
+        .select('sandbox_size_requests', (r) => r.subject === subject && r.status === 'approved')
+        .map((row) => Number(row.requested_bytes))
+        .sort((a, b) => a - b);
+    },
     async createSizeRequest(request) {
       // The partial unique index (subject) WHERE status = 'pending'.
       if (

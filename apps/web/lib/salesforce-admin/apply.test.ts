@@ -21,10 +21,6 @@ jest.mock('./change-requests', () => ({
   setValidation: jest.fn(),
 }));
 
-jest.mock('@/lib/admin-changes/legacy-database', () => ({
-  legacyDatabase: () => ({}),
-  NO_DATABASE_REASON: 'no database',
-}));
 import { authedFetch } from '@renkei/delegate-client';
 import { EMPTY_POLICY } from '@renkei/connector-salesforce';
 import type { SalesforceAccess } from '@/lib/mcp-tools/salesforce/client';

@@ -18,12 +18,19 @@ const HEADERS = { 'x-renkei-seed-token': MEMORY_SEED_TOKEN };
 
 // An operator sees every page, the console included.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
-// One call log for the whole server: pages take turns.
-test.describe.configure({ mode: 'serial' });
+// One call log for the whole server: the pages take turns, in one worker,
+// and a failing page doesn't stop the rest (every offender is reported).
+test.describe.configure({ mode: 'default' });
+// Which code reaches the database doesn't depend on the colour scheme.
+// eslint-disable-next-line no-empty-pattern
+test.beforeEach(({}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-light', 'one project is enough');
+});
 
 for (const crawl of CRAWL_PAGES) {
   test(`${crawl.path} renders from the data store alone`, async ({ page, person, request }) => {
-    if (crawl.seed) await person.seed(crawl.seed(person.subject));
+    // Replace: a reused server may still hold an earlier run's org-wide rows.
+    if (crawl.seed) await person.seed(crawl.seed(person.subject), { replace: true });
     await request.delete(SEED_URL, { headers: HEADERS, data: { calls: true } });
 
     const response = await page.goto(crawl.path);

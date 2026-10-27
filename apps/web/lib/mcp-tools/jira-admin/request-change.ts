@@ -12,7 +12,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { actMeta } from '@renkei/tool-outcomes';
-import { getDatabase } from '@renkei/db';
 import type { MCPToolContext } from '../common';
 import type { JiraAdminAuth } from './jira-admin-auth';
 import { errText } from './client';
@@ -57,8 +56,6 @@ export function registerRequestTools(
       if (!context.subject) return errText('No signed-in subject on this MCP session.');
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable; nothing was requested.');
       const request = await createRequest({
         subject: context.subject,
         agentId: context.agent?.agentId,

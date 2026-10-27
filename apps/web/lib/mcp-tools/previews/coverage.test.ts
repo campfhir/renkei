@@ -49,7 +49,22 @@ jest.mock('@renkei/db', () => ({
     fileShares: {
       connectionExposures: async () => [{ toolAccess: 'read_write', allowDelete: true }],
     },
+    // Every provider connected, with the grant's scopes.
+    providerGrants: {
+      listForSubject: async (subject: string, options: { provider?: string } = {}) => [
+        {
+          provider: options.provider ?? '',
+          accountId: 'acct-1',
+          subject,
+          displayName: 'acct-1',
+          requestedScopes: GRANT.requested_scopes,
+          grantedScopes: GRANT.granted_scopes,
+          metadata: {},
+        },
+      ],
+    },
   }),
+  memoryDataStoreRequested: () => false,
   getDatabase: () => ({
     ok: true,
     val: {

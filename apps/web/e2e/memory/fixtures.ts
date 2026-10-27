@@ -26,15 +26,24 @@ export interface MemoryPerson {
   sessionId: string;
   displayName: string;
   email: string;
-  /** Add table rows to the store; ids and subjects are the caller's to choose. */
-  seed(fixtures: MemorySeed): Promise<void>;
+  /**
+   * Add table rows to the store; ids and subjects are the caller's to
+   * choose. `replace` overwrites rows whose primary key is already stored
+   * (org-wide fixtures a reused server may already hold).
+   */
+  seed(fixtures: MemorySeed, options?: { replace?: boolean }): Promise<void>;
 }
 
 const SEED_URL = `${MEMORY_BASE_URL}/api/test/data-store`;
 const SEED_HEADERS = { 'x-renkei-seed-token': MEMORY_SEED_TOKEN };
 
-async function seedStore(request: APIRequestContext, fixtures: MemorySeed): Promise<void> {
-  const response = await request.post(SEED_URL, { headers: SEED_HEADERS, data: fixtures });
+async function seedStore(
+  request: APIRequestContext,
+  fixtures: MemorySeed,
+  options: { replace?: boolean } = {}
+): Promise<void> {
+  const url = options.replace ? `${SEED_URL}?replace=1` : SEED_URL;
+  const response = await request.post(url, { headers: SEED_HEADERS, data: fixtures });
   expect(response.status(), await response.text()).toBe(200);
 }
 
@@ -104,7 +113,7 @@ export const test = base.extend<{ person: MemoryPerson; roles: string[] }>({
       sessionId,
       displayName,
       email: subject,
-      seed: (fixtures) => seedStore(request, fixtures),
+      seed: (fixtures, options) => seedStore(request, fixtures, options),
     });
 
     await request.delete(SEED_URL, { headers: SEED_HEADERS, data: { subject } });

@@ -19,7 +19,6 @@
  * finished by `refreshApplying` the next time anyone looks.
  */
 
-import { NO_DATABASE_REASON, legacyDatabase } from '@/lib/admin-changes/legacy-database';
 import { getOrgSettings } from '@renkei/settings';
 import { takesChanges, type DeployOutcome } from '@renkei/connector-salesforce';
 import { resolveAudience } from '@/lib/connectors/audience';
@@ -123,10 +122,8 @@ export async function applyGate(
   if (settings.disabledConnectors.includes(CONNECTOR)) {
     return { ok: false, reason: 'Salesforce Admin is switched off for your organization.' };
   }
-  const db = legacyDatabase();
-  if (!db) return { ok: false, reason: NO_DATABASE_REASON };
   const [availability, audience] = await Promise.all([
-    resolveConnectorAvailability(db, subject),
+    resolveConnectorAvailability(subject),
     resolveAudience(subject),
   ]);
   if (
