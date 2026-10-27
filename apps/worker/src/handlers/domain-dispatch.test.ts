@@ -81,7 +81,6 @@ test('webex message: its room-day is marked dirty first, then agents fan out', a
   // transcript by the window sweep, for the WATCHER the event names.
   expect(mockMarkDirty).toHaveBeenCalledWith('room-1', '2026-08-16', 'auth0|watcher');
   expect(mockFanOut).toHaveBeenCalledWith(
-    { fake: 'db' },
     expect.anything(),
     expect.objectContaining({
       source: 'webex',
@@ -100,7 +99,6 @@ test('mail: no knowledge subscriber, agents still fan out', async () => {
   await createDomainDispatchHandler()(mailEvent());
   expect(mockMarkDirty).not.toHaveBeenCalled();
   expect(mockFanOut).toHaveBeenCalledWith(
-    expect.anything(),
     expect.anything(),
     expect.objectContaining({ source: 'microsoft', type: 'mail.received' })
   );

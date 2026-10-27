@@ -233,4 +233,33 @@ export const activityLogScenarios: Scenario<DataStore>[] = [
       return { first, replaced, gone: await registrations.get('worker-1') };
     },
   },
+  {
+    method: 'activityLogs.purgeBefore',
+    name: 'records at or before the cutoff go with their attributes; later ones stay',
+    fixture: {
+      ...fixture,
+      log_attr_blob: [
+        {
+          log_id: '2',
+          logged_timestamp: at(2),
+          val_name: 'big',
+          val: Buffer.from('bytes'),
+        },
+      ],
+    },
+    run: async (store) => {
+      const span = {
+        start: at(0).toISOString(),
+        end: at(60 * 24 * 4).toISOString(),
+      };
+      const ids = async () =>
+        (await store.activityLogs.search(span)).map((row) => row.message).sort();
+      const none = await store.activityLogs.purgeBefore(at(0), 10);
+      const purged = await store.activityLogs.purgeBefore(at(3), 10);
+      const afterwards = await ids();
+      const capped = await store.activityLogs.purgeBefore(at(60 * 24 * 4), 1);
+      const rest = await store.activityLogs.purgeBefore(at(60 * 24 * 4), 10);
+      return { none, purged, afterwards, capped, rest, empty: await ids() };
+    },
+  },
 ];

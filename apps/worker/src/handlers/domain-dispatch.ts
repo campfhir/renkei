@@ -29,7 +29,6 @@
  * handlers/webex-windows.ts.
  */
 
-import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { fanOutAgentEvents } from '@renkei/agents/event-fanout';
 import { markWebexWindowDirty, windowDayOf } from './webex-windows';
@@ -83,11 +82,7 @@ const KNOWLEDGE_SUBSCRIBERS: Record<string, KnowledgeSubscriber> = {
       return;
     }
     if (!roomId || !messageId || !text) return;
-    await markWebexWindowDirty(
-      roomId,
-      windowDayOf(payload.occurredAt),
-      payload.ownerSubject
-    );
+    await markWebexWindowDirty(roomId, windowDayOf(payload.occurredAt), payload.ownerSubject);
   },
 };
 
@@ -99,9 +94,7 @@ export function createDomainDispatchHandler(): EventHandler {
     const knowledge = KNOWLEDGE_SUBSCRIBERS[`${payload.provider}/${event.type}`];
     if (knowledge) await knowledge(payload);
 
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable for domain dispatch');
-    const { started, filtered } = await fanOutAgentEvents(dbResult.val, queue.producer, {
+    const { started, filtered } = await fanOutAgentEvents(queue.producer, {
       source: payload.provider,
       type: event.type,
       ownerSubject: payload.ownerSubject,

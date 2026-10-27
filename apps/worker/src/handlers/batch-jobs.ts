@@ -83,7 +83,7 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
 
     let discovered: Awaited<ReturnType<typeof kind.discover>>;
     try {
-      discovered = await kind.discover(db, claimed);
+      discovered = await kind.discover(claimed);
     } catch (error) {
       await finalize(
         db,
@@ -191,7 +191,7 @@ export function createBatchItemHandler(): EventHandler {
 
     let outcome: store.ItemOutcome;
     try {
-      outcome = await kind.runItem(db, batch, claimed);
+      outcome = await kind.runItem(batch, claimed);
     } catch (error) {
       outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
     }

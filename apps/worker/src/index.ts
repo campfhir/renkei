@@ -186,25 +186,25 @@ async function main(): Promise<void> {
               'mail bulk jobs',
               'mailjobs/sweep',
               MAIL_JOBS_SWEEP_INTERVAL_MS,
-              createMailJobsSweep(dbResult.val)
+              createMailJobsSweep()
             ),
             schedulePeriodicSweep(
               'upload slots',
               'uploadslots/sweep',
               UPLOAD_SLOTS_SWEEP_INTERVAL_MS,
-              createUploadSlotsSweep(dbResult.val)
+              createUploadSlotsSweep()
             ),
             schedulePeriodicSweep(
               'agent trigger firings',
               'agentfirings/sweep',
               AGENT_FIRINGS_SWEEP_INTERVAL_MS,
-              createAgentFiringsSweep(dbResult.val)
+              createAgentFiringsSweep()
             ),
             schedulePeriodicSweep(
               'sent WebEx messages',
               'webexsent/sweep',
               WEBEX_SENT_SWEEP_INTERVAL_MS,
-              createWebexSentSweep(dbResult.val)
+              createWebexSentSweep()
             ),
           ]
         : [];

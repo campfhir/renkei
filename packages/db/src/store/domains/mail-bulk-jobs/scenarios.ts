@@ -30,6 +30,33 @@ const fixture = {
   ],
 };
 
+const OLD = new Date(Date.UTC(2020, 0, 1));
+const LATER = new Date(Date.UTC(2099, 0, 1));
+
+function job(n: number, subject: string, extra: Record<string, unknown>) {
+  return {
+    id: id(n),
+    subject,
+    account_id: `acct-${subject}`,
+    action: 'markRead',
+    selection: JSON.stringify({ messageIds: ['m1'] }),
+    created_at: OLD,
+    updated_at: OLD,
+    ...extra,
+  };
+}
+
+/** Stalled, live and finished jobs, old and new, for the hourly sweep. */
+const housekeeping = {
+  mail_bulk_jobs: [
+    job(31, 'ann', { status: 'running' }),
+    job(32, 'ann', { status: 'running', updated_at: LATER }),
+    job(33, 'bob', { status: 'succeeded', created_at: new Date(Date.UTC(2021, 0, 1)) }),
+    job(34, 'bob', { status: 'partial' }),
+    job(35, 'bob', { status: 'failed', created_at: LATER }),
+  ],
+};
+
 export const mailBulkJobScenarios: Scenario<DataStore>[] = [
   {
     method: 'mailBulkJobs.getOwned',
@@ -77,6 +104,56 @@ export const mailBulkJobScenarios: Scenario<DataStore>[] = [
         await store.mailBulkJobs.getOwned(id(2), 'bob'),
         (await store.mailBulkJobs.getOwned(id(1), 'ann'))?.status ?? null,
       ];
+    },
+  },
+  {
+    method: 'mailBulkJobs.failStalled',
+    name: 'silent running jobs fail with the reason; recent and other statuses untouched',
+    fixture: housekeeping,
+    run: async (store) => {
+      const count = await store.mailBulkJobs.failStalled(60, 'job stalled');
+      const jobs = [];
+      for (const [n, subject] of [
+        [31, 'ann'],
+        [32, 'ann'],
+        [33, 'bob'],
+        [34, 'bob'],
+      ] as const) {
+        const job = await store.mailBulkJobs.getOwned(id(n), subject);
+        jobs.push(
+          job && {
+            id: job.id,
+            status: job.status,
+            lastError: job.lastError,
+            finished: !!job.finishedAt,
+          }
+        );
+      }
+      return { count, jobs };
+    },
+  },
+  {
+    method: 'mailBulkJobs.pruneFinished',
+    name: 'old finished jobs go oldest first up to the limit; running and recent stay',
+    fixture: housekeeping,
+    run: async (store) => {
+      const present = async () => {
+        const out: string[] = [];
+        for (const [n, subject] of [
+          [31, 'ann'],
+          [32, 'ann'],
+          [33, 'bob'],
+          [34, 'bob'],
+          [35, 'bob'],
+        ] as const) {
+          if (await store.mailBulkJobs.getOwned(id(n), subject)) out.push(id(n));
+        }
+        return out;
+      };
+      const first = await store.mailBulkJobs.pruneFinished(30, 1);
+      const afterFirst = await present();
+      const rest = await store.mailBulkJobs.pruneFinished(30, 10);
+      return { first, afterFirst, rest, afterAll: await present() };
     },
   },
 ];

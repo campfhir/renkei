@@ -11,7 +11,7 @@
  * serializing the huge batch's own items against each other.
  */
 
-import { closeDatabase, getDatabase } from '@renkei/db';
+import { closeDatabase } from '@renkei/db';
 import { schedulePeriodicSweep } from '@renkei/worker-loop';
 import { batchJobQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
@@ -45,9 +45,6 @@ async function main(): Promise<void> {
   await attachPersistentLogging();
   registerBatchJobHandlers();
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('Database unavailable at boot');
-
   // The schedule sweep runs on its own timer, independent of the queue
   // consumption loop below — a quiet queue never delays a due schedule.
   const stopSweep = schedulePeriodicSweep(
@@ -55,7 +52,7 @@ async function main(): Promise<void> {
     'batch job schedules',
     'worker/batch-jobs-schedule',
     SCHEDULE_SWEEP_MS,
-    createBatchScheduleSweep(dbResult.val, batchJobQueue.producer)
+    createBatchScheduleSweep(batchJobQueue.producer)
   );
 
   logger.info('started {application} {version} (batch-job queue)', {

@@ -276,4 +276,29 @@ export interface AgentStore {
     agentId: string,
     options: { provider: string; scope: string; limit: number }
   ): Promise<AgentNoteChunkRecord[]>;
+  /**
+   * The enabled event triggers of `ownerSubject`'s enabled agents that
+   * listen for this source and type, with what a run needs from the agent
+   * (ties by trigger id). The event fan-out reads them on every event.
+   */
+  listEventTriggers(event: {
+    source: string;
+    type: string;
+    ownerSubject: string;
+  }): Promise<AgentEventTriggerRecord[]>;
+  /** Record why a trigger's run could not be started (its last fire stays as it was). */
+  markTriggerFailed(triggerId: string, error: string): Promise<void>;
+}
+
+/** An event trigger that matched, with its agent's run definition. */
+export interface AgentEventTriggerRecord {
+  triggerId: string;
+  agentId: string;
+  /** As stored (jsonb). */
+  config: unknown;
+  ownerSubject: string;
+  instructions: string;
+  /** As stored (jsonb). */
+  tools: unknown;
+  llmModelId: string | null;
 }

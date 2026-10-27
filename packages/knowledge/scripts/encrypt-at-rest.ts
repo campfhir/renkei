@@ -14,7 +14,7 @@
  *   DATABASE_URL=postgres://… pnpm encrypt-at-rest
  */
 
-import { getDatabase, closeDatabase } from '@renkei/db';
+import { closeDatabase, getDataStore } from '@renkei/db';
 import { contentEncryptionKey, encryptContent, CONTENT_ENVELOPE_PREFIX } from '@renkei/crypto';
 
 const BATCH = 500;
@@ -27,29 +27,19 @@ async function main(): Promise<void> {
   }
   const key = keyResult.val;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  if (!process.env.DATABASE_URL) {
     console.error('Database unavailable — set DATABASE_URL.');
     process.exit(1);
   }
-  const db = dbResult.val;
+  const chunks = getDataStore().knowledgeChunks;
 
   let total = 0;
   for (;;) {
-    const rows = await db
-      .selectFrom('knowledge_chunks')
-      .select(['id', 'content'])
-      .where('content', 'not like', `${CONTENT_ENVELOPE_PREFIX}%`)
-      .limit(BATCH)
-      .execute();
+    const rows = await chunks.listContentWithoutPrefix(CONTENT_ENVELOPE_PREFIX, BATCH);
     if (rows.length === 0) break;
 
     for (const row of rows) {
-      await db
-        .updateTable('knowledge_chunks')
-        .set({ content: encryptContent(row.content, key) })
-        .where('id', '=', row.id)
-        .execute();
+      await chunks.setContent(row.id, encryptContent(row.content, key));
     }
     total += rows.length;
     console.log(`encrypted ${total} chunk(s)…`);

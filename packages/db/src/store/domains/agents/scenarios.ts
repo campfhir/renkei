@@ -187,6 +187,66 @@ const memories = {
   ],
 };
 
+/** Event triggers for the fan-out read: who listens to what, enabled or not. */
+const eventTriggers = {
+  agents: [
+    { ...agent(51, 'ann', 'Mail filer', 1), enabled: true, llm_model_id: null },
+    { ...agent(52, 'ann', 'Paused filer', 1), enabled: false },
+    { ...agent(53, 'bob', 'Bob filer', 1), enabled: true },
+  ],
+  agent_triggers: [
+    {
+      id: id(63),
+      agent_id: id(51),
+      kind: 'event',
+      event_source: 'microsoft',
+      event_type: 'mail.received',
+      config: JSON.stringify({ match: { from: 'x' } }),
+      last_fired_at: at(7),
+      created_at: at(2),
+    },
+    {
+      id: id(61),
+      agent_id: id(51),
+      kind: 'event',
+      event_source: 'microsoft',
+      event_type: 'mail.received',
+      created_at: at(3),
+    },
+    {
+      id: id(62),
+      agent_id: id(51),
+      kind: 'event',
+      event_source: 'microsoft',
+      event_type: 'mail.received',
+      enabled: false,
+      created_at: at(4),
+    },
+    {
+      id: id(64),
+      agent_id: id(51),
+      kind: 'schedule',
+      event_source: 'microsoft',
+      event_type: 'mail.received',
+      created_at: at(5),
+    },
+    {
+      id: id(65),
+      agent_id: id(52),
+      kind: 'event',
+      event_source: 'microsoft',
+      event_type: 'mail.received',
+    },
+    {
+      id: id(66),
+      agent_id: id(53),
+      kind: 'event',
+      event_source: 'microsoft',
+      event_type: 'mail.received',
+    },
+  ],
+};
+
 export const agentScenarios: Scenario<DataStore>[] = [
   {
     method: 'agents.list',
@@ -740,5 +800,41 @@ export const agentScenarios: Scenario<DataStore>[] = [
       (await store.agents.recentNoteChunks(id(1), { ...noteScope, limit: 2 })).map((c) => c.refId),
       await store.agents.recentNoteChunks(id(3), { ...noteScope, limit: 10 }),
     ],
+  },
+  {
+    method: 'agents.listEventTriggers',
+    name: "enabled event triggers of the owner's enabled agents for this source/type, by id",
+    fixture: eventTriggers,
+    run: async (store) => [
+      await store.agents.listEventTriggers({
+        source: 'microsoft',
+        type: 'mail.received',
+        ownerSubject: 'ann',
+      }),
+      await store.agents.listEventTriggers({
+        source: 'microsoft',
+        type: 'mail.received',
+        ownerSubject: 'bob',
+      }),
+      await store.agents.listEventTriggers({
+        source: 'microsoft',
+        type: 'mail.sent',
+        ownerSubject: 'ann',
+      }),
+    ],
+  },
+  {
+    method: 'agents.markTriggerFailed',
+    name: 'the error recorded, the last fire kept; others untouched',
+    fixture: eventTriggers,
+    run: async (store) => {
+      await store.agents.markTriggerFailed(id(63), 'cap reached');
+      await store.agents.markTriggerFailed(id(98), 'nobody');
+      return (await store.agents.listTriggers(id(51))).map((trigger) => ({
+        id: trigger.id,
+        lastError: trigger.lastError,
+        lastFiredAt: trigger.lastFiredAt,
+      }));
+    },
   },
 ];

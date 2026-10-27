@@ -14,9 +14,10 @@ export interface LogCipher {
 }
 
 /**
- * The activity log, read-only. The rows (`logs`, `log_attr`, …) are written
+ * The activity log. The rows (`logs`, `log_attr`, …) are written
  * by the logging adapter (@campfhir/bored-logs), never by the app; this is
- * exactly what the activity page and the log search route read back.
+ * exactly what the activity page and the log search route read back —
+ * and what the retention sweep purges.
  */
 export interface ActivityLogStore {
   /**
@@ -60,4 +61,13 @@ export interface ActivityLogStore {
    * store does.
    */
   shippingRegistrations(): E2ERegistrationStore;
+  /**
+   * Retention: delete up to `limit` log records logged at or before
+   * `until`, with their attributes and blobs, in one atomic step; returns
+   * how many records went. Which records a partial batch takes is
+   * Postgres's choice (no ORDER BY, so the purge stays an index walk);
+   * memory takes the lowest log ids. Callers loop until a batch comes back
+   * short.
+   */
+  purgeBefore(until: Date, limit: number): Promise<number>;
 }

@@ -184,4 +184,36 @@ export const contentWatchScenarios: Scenario<DataStore>[] = [
       await store.contentWatches.objectCounts('jira', 'project'),
     ],
   },
+  {
+    method: 'contentWatches.listDue',
+    name: 'enabled, never synced first then stalest, anyone’s; limited; none due',
+    fixture: {
+      content_watches: [
+        ...fixture.content_watches,
+        watch(6, 'bob', 'sharepoint', 'drive-1', { last_synced_at: at(10), cursor: 'delta-1' }),
+        watch(7, 'cy', 'jira', 'NEW', { scope_label: 'New' }),
+        watch(8, 'cy', 'jira', 'LATE', { last_synced_at: at(50) }),
+      ],
+    },
+    run: async (store) => [
+      await store.contentWatches.listDue(new Date(at(40)), 10),
+      await store.contentWatches.listDue(new Date(at(40)), 3),
+      (await store.contentWatches.listDue(new Date(at(0)), 10)).map((w) => w.id),
+    ],
+  },
+  {
+    method: 'contentWatches.recordSyncFailure',
+    name: 'error status and message, synced now; other watches untouched',
+    fixture,
+    run: async (store) => {
+      await store.contentWatches.recordSyncFailure(id(3), 'token revoked');
+      await store.contentWatches.recordSyncFailure(id(99), 'nobody');
+      return (await store.contentWatches.listForSubject('ann')).map((w) => ({
+        id: w.id,
+        syncStatus: w.syncStatus,
+        lastError: w.lastError,
+        synced: w.lastSyncedAt === null ? null : w.lastSyncedAt.getTime() > Date.UTC(2026, 1, 1),
+      }));
+    },
+  },
 ];

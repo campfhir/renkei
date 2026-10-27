@@ -69,6 +69,9 @@ import { mailBulkJobs } from './mail-bulk-jobs';
 import { webexSentMessages } from './webex-sent-messages';
 import { toolSurface } from './tool-surface';
 import { contentWatches } from './content-watches';
+import { advisoryLocks } from './advisory-locks';
+import { agentTriggerFirings } from './agent-trigger-firings';
+import { webexDirtyWindows } from './webex-dirty-windows';
 
 export const DOMAINS = {
   sessions,
@@ -136,4 +139,7 @@ export const DOMAINS = {
   webexSentMessages,
   toolSurface,
   contentWatches,
+  advisoryLocks,
+  agentTriggerFirings,
+  webexDirtyWindows,
 };

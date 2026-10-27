@@ -14,8 +14,7 @@
  * with the owner's own grant, which also re-checks access at use time.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import { agentDefinitionOf } from './definition';
 import { createAgentRun } from './runs';
@@ -74,29 +73,15 @@ export interface FanOutResult {
 
 /** Fire every enabled trigger matching this event. */
 export async function fanOutAgentEvents(
-  db: Kysely<DB>,
   producer: QueueProducer,
   event: AgentEventInput
 ): Promise<FanOutResult> {
-  const triggers = await db
-    .selectFrom('agent_triggers as t')
-    .innerJoin('agents as a', 'a.id', 't.agent_id')
-    .select([
-      't.id as trigger_id',
-      't.agent_id',
-      't.config',
-      'a.owner_subject',
-      'a.instructions',
-      'a.tools',
-      'a.llm_model_id',
-    ])
-    .where('t.kind', '=', 'event')
-    .where('t.enabled', '=', true)
-    .where('t.event_source', '=', event.source)
-    .where('t.event_type', '=', event.type)
-    .where('a.enabled', '=', true)
-    .where('a.owner_subject', '=', event.ownerSubject)
-    .execute();
+  const store = getDataStore();
+  const triggers = await store.agents.listEventTriggers({
+    source: event.source,
+    type: event.type,
+    ownerSubject: event.ownerSubject,
+  });
 
   const dedupeKey = dedupeKeyFor(event);
   const eventId = `${event.source}/${event.type}`;
@@ -126,64 +111,38 @@ export async function fanOutAgentEvents(
     // conflict means another process (or a replay of this delivery, or a
     // duplicate webhook registration's second delivery) already did.
     if (dedupeKey) {
-      const claimed = await db
-        .insertInto('agent_trigger_firings')
-        .values({
-          trigger_id: trigger.trigger_id,
-          dedupe_key: dedupeKey,
-          run_id: null,
-        })
-        .onConflict((oc) => oc.columns(['trigger_id', 'dedupe_key']).doNothing())
-        .returning('trigger_id')
-        .executeTakeFirst();
+      const claimed = await store.agentTriggerFirings.claim(trigger.triggerId, dedupeKey);
       if (!claimed) continue;
     }
 
     const result = await createAgentRun(producer, {
-      agentId: trigger.agent_id,
-      ownerSubject: trigger.owner_subject,
-      definition: agentDefinitionOf(trigger),
-      llmModelId: trigger.llm_model_id,
-      triggerId: trigger.trigger_id,
+      agentId: trigger.agentId,
+      ownerSubject: trigger.ownerSubject,
+      definition: agentDefinitionOf({ instructions: trigger.instructions, tools: trigger.tools }),
+      llmModelId: trigger.llmModelId,
+      triggerId: trigger.triggerId,
       triggerKind: 'event',
       initialState: event.payload,
     });
     if (result.ok) {
       started.push(result.val.runId);
       if (dedupeKey) {
-        await db
-          .updateTable('agent_trigger_firings')
-          .set({ run_id: result.val.runId })
-          .where('trigger_id', '=', trigger.trigger_id)
-          .where('dedupe_key', '=', dedupeKey)
-          .execute();
+        await store.agentTriggerFirings.setRun(trigger.triggerId, dedupeKey, result.val.runId);
       }
-      await db
-        .updateTable('agent_triggers')
-        .set({ last_fired_at: sql`NOW()`, last_error: null, updated_at: sql`NOW()` })
-        .where('id', '=', trigger.trigger_id)
-        .execute();
+      await store.agents.markTriggerFired(trigger.triggerId);
     } else {
       // Release the claim so a redelivery may retry what a cap or outage
       // refused — mirrors createAgentRun's own "better no trace than a
       // phantom" cleanup.
       if (dedupeKey) {
-        await db
-          .deleteFrom('agent_trigger_firings')
-          .where('trigger_id', '=', trigger.trigger_id)
-          .where('dedupe_key', '=', dedupeKey)
-          .execute();
+        await store.agentTriggerFirings.release(trigger.triggerId, dedupeKey);
       }
       // A refused run (cap, cycle) is the trigger's news to carry, never
       // the pipeline's to fail on.
-      await db
-        .updateTable('agent_triggers')
-        .set({
-          last_error: result.err.message ?? `The run could not be started (${result.err.type}).`,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', trigger.trigger_id)
-        .execute();
+      await store.agents.markTriggerFailed(
+        trigger.triggerId,
+        result.err.message ?? `The run could not be started (${result.err.type}).`
+      );
     }
   }
   return { started, filtered };

@@ -179,6 +179,35 @@ export interface KnowledgeChunkStore {
    * nulls), then by ref id and id.
    */
   listByRefPrefix(provider: string, prefix: string): Promise<KnowledgeObjectChunk[]>;
+  /** Chunks with no lexical entry yet (`search_text` NULL), by id, at most `limit`. */
+  listUnsearchable(limit: number): Promise<KnowledgeObjectChunk[]>;
+  /**
+   * Rebuild one chunk's lexical entry from PLAINTEXT parts (the shape
+   * `upsert` takes as `search`) — or, null, give it an empty one so a
+   * backfill stops re-selecting a chunk it cannot read.
+   */
+  setSearchText(id: string, search: KnowledgeChunkUpsert['search'] | null): Promise<void>;
+  /**
+   * Chunks of multi-chunk objects (`metadata.chunkCount` above 1, read as
+   * an integer — a non-integer count is refused, 22P02, as Postgres's cast
+   * does), id after `after` when given, by id, at most `limit`.
+   */
+  listMultiChunk(after: string | null, limit: number): Promise<KnowledgeObjectChunk[]>;
+  /** Replace one chunk's embedding. */
+  setEmbedding(id: string, embedding: readonly number[]): Promise<void>;
+  /**
+   * The objects (provider, and ref id without its `#0001` chunk suffix)
+   * that have a chunk with no keywords, by provider then object ref, at
+   * most `limit`.
+   */
+  listObjectsWithoutKeywords(limit: number): Promise<{ provider: string; objectRef: string }[]>;
+  /** Chunks whose stored content does not start with `prefix` (case sensitive), by id, at most `limit`. */
+  listContentWithoutPrefix(
+    prefix: string,
+    limit: number
+  ): Promise<{ id: string; content: string }[]>;
+  /** Replace one chunk's stored content (already sealed by the caller). */
+  setContent(id: string, content: string): Promise<void>;
 }
 
 /** One stored chunk of an object (a note, an issue), still ciphertext. */

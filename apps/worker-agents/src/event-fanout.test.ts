@@ -101,7 +101,7 @@ maybe('agent event fan-out', () => {
     await seedEventAgent(owner, { enabled: false }); // switched off — must not fire
 
     const queue = new InMemoryQueue();
-    const { started } = await fanOutAgentEvents(db, queue.producer, mailEvent(owner));
+    const { started } = await fanOutAgentEvents(queue.producer, mailEvent(owner));
     expect(started).toHaveLength(1);
 
     const run = await db
@@ -125,7 +125,7 @@ maybe('agent event fan-out', () => {
     const other = await seedEventAgent(owner, { match: { fromDomain: 'elsewhere.example' } });
 
     const queue = new InMemoryQueue();
-    const { started } = await fanOutAgentEvents(db, queue.producer, mailEvent(owner));
+    const { started } = await fanOutAgentEvents(queue.producer, mailEvent(owner));
     const runs = await db
       .selectFrom('agent_runs')
       .select('agent_id')
@@ -143,9 +143,9 @@ maybe('agent event fan-out', () => {
    * agree — a filter that fails to narrow here looks exactly like no filter,
    * and the run row is the only place that shows the difference.
    */
-  async function firedAgentsFor(event: Parameters<typeof fanOutAgentEvents>[2]): Promise<string[]> {
+  async function firedAgentsFor(event: Parameters<typeof fanOutAgentEvents>[1]): Promise<string[]> {
     const queue = new InMemoryQueue();
-    const { started } = await fanOutAgentEvents(db, queue.producer, event);
+    const { started } = await fanOutAgentEvents(queue.producer, event);
     if (started.length === 0) return [];
     const runs = await db
       .selectFrom('agent_runs')
@@ -213,11 +213,10 @@ maybe('agent event fan-out', () => {
     const messageId = `dup-${randomUUID()}`;
     const event = mailEvent(soloOwner, { messageId });
 
-    const first = await fanOutAgentEvents(db, queue.producer, event);
+    const first = await fanOutAgentEvents(queue.producer, event);
     // The duplicate-webhook / replay case: same message, second delivery.
-    const second = await fanOutAgentEvents(db, queue.producer, event);
+    const second = await fanOutAgentEvents(queue.producer, event);
     const fresh = await fanOutAgentEvents(
-      db,
       queue.producer,
       mailEvent(soloOwner, { messageId: `fresh-${randomUUID()}` })
     );
@@ -249,12 +248,12 @@ maybe('agent event fan-out', () => {
     });
 
     const deliveryId = randomUUID();
-    expect((await fanOutAgentEvents(db, queue.producer, bare(deliveryId))).started).toHaveLength(1);
-    expect((await fanOutAgentEvents(db, queue.producer, bare(deliveryId))).started).toHaveLength(0);
+    expect((await fanOutAgentEvents(queue.producer, bare(deliveryId))).started).toHaveLength(1);
+    expect((await fanOutAgentEvents(queue.producer, bare(deliveryId))).started).toHaveLength(0);
 
     // No key derivable anywhere → pre-lock behavior (fires every time).
-    expect((await fanOutAgentEvents(db, queue.producer, bare(undefined))).started).toHaveLength(1);
-    expect((await fanOutAgentEvents(db, queue.producer, bare(undefined))).started).toHaveLength(1);
+    expect((await fanOutAgentEvents(queue.producer, bare(undefined))).started).toHaveLength(1);
+    expect((await fanOutAgentEvents(queue.producer, bare(undefined))).started).toHaveLength(1);
   });
 
   it('fires zoom transcript-completed triggers with the payload as state', async () => {
@@ -264,7 +263,7 @@ maybe('agent event fan-out', () => {
     });
 
     const queue = new InMemoryQueue();
-    const { started } = await fanOutAgentEvents(db, queue.producer, {
+    const { started } = await fanOutAgentEvents(queue.producer, {
       source: 'zoom',
       type: 'recording.transcript_completed',
       ownerSubject: owner,

@@ -161,5 +161,51 @@ export function postgresContentWatches(db: () => Kysely<DB>): ContentWatchStore 
         rows.map((row) => ({ scope: row.scope, objects: Number(row.objects) }));
       return { indexed: counts(indexed), queued: counts(queued) };
     },
+    async listDue(dueBefore, limit) {
+      const rows = await db()
+        .selectFrom('content_watches')
+        .select([
+          'id',
+          'provider',
+          'account_id',
+          'scope_type',
+          'scope_key',
+          'scope_label',
+          'cursor',
+          'last_synced_at',
+        ])
+        .where('enabled', '=', true)
+        // Never-synced rows (NULL) come first — a watch just created should
+        // start indexing without waiting out a full interval.
+        .where((eb) =>
+          eb.or([eb('last_synced_at', 'is', null), eb('last_synced_at', '<', dueBefore)])
+        )
+        .orderBy('last_synced_at', (ob) => ob.asc().nullsFirst())
+        .orderBy('id')
+        .limit(limit)
+        .execute();
+      return rows.map((row) => ({
+        id: row.id,
+        provider: row.provider,
+        accountId: row.account_id,
+        scopeType: row.scope_type,
+        scopeKey: row.scope_key,
+        scopeLabel: row.scope_label,
+        cursor: row.cursor,
+        lastSyncedAt: row.last_synced_at ? new Date(row.last_synced_at) : null,
+      }));
+    },
+    async recordSyncFailure(id, message) {
+      await db()
+        .updateTable('content_watches')
+        .set({
+          sync_status: 'error',
+          last_error: message,
+          last_synced_at: sql<Date>`NOW()`,
+          updated_at: sql<Date>`NOW()`,
+        })
+        .where('id', '=', id)
+        .execute();
+    },
   };
 }

@@ -95,4 +95,58 @@ export const knowledgeReindexRunScenarios: Scenario<DataStore>[] = [
       return statuses(store);
     },
   },
+  {
+    method: 'knowledgeReindexRuns.get',
+    name: 'by id alone, any kind; missing',
+    fixture,
+    run: async (store) => [
+      await store.knowledgeReindexRuns.get(id(2)),
+      await store.knowledgeReindexRuns.get(id(3)),
+      await store.knowledgeReindexRuns.get(id(99)),
+    ],
+  },
+  {
+    method: 'knowledgeReindexRuns.markRunning',
+    name: 'running and started; others untouched',
+    fixture,
+    run: async (store) => {
+      await store.knowledgeReindexRuns.markRunning(id(5));
+      const read = await store.knowledgeReindexRuns.get(id(5));
+      return [read?.status, read?.startedAt !== null, await statuses(store)];
+    },
+  },
+  {
+    method: 'knowledgeReindexRuns.failRun',
+    name: 'failed with the error and finished; others untouched',
+    fixture,
+    run: async (store) => {
+      await store.knowledgeReindexRuns.failRun(id(1), 'endpoint returned 502');
+      const read = await store.knowledgeReindexRuns.get(id(1));
+      return [read?.finishedAt !== null, await statuses(store)];
+    },
+  },
+  {
+    method: 'knowledgeReindexRuns.recordProgress',
+    name: 'tallies added and cursor replaced; done finishes the run',
+    fixture,
+    run: async (store) => {
+      await store.knowledgeReindexRuns.recordProgress(id(1), {
+        processed: 10,
+        skipped: 2,
+        failed: 1,
+        cursor: 'c-50',
+        done: false,
+      });
+      const midway = await store.knowledgeReindexRuns.get(id(1));
+      await store.knowledgeReindexRuns.recordProgress(id(2), {
+        processed: 3,
+        skipped: 0,
+        failed: 0,
+        cursor: null,
+        done: true,
+      });
+      const finished = await store.knowledgeReindexRuns.get(id(2));
+      return [midway, { ...finished, finishedAt: finished?.finishedAt !== null }];
+    },
+  },
 ];

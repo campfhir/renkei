@@ -57,5 +57,39 @@ export function memoryKnowledgeReindexRuns(tables: MemoryTables): KnowledgeReind
         last_error: error,
       });
     },
+    async get(id) {
+      const wanted = key(id);
+      const row = tables.first('knowledge_reindex_runs', (r) => r.id === wanted);
+      return row ? reindexRunFromRow(row) : null;
+    },
+    async markRunning(id) {
+      const wanted = key(id);
+      tables.update('knowledge_reindex_runs', (r) => r.id === wanted, {
+        status: 'running',
+        started_at: new Date(),
+      });
+    },
+    async failRun(id, error) {
+      const wanted = key(id);
+      tables.update('knowledge_reindex_runs', (r) => r.id === wanted, {
+        status: 'failed',
+        last_error: error,
+        finished_at: new Date(),
+      });
+    },
+    async recordProgress(id, progress) {
+      const wanted = key(id);
+      tables.update(
+        'knowledge_reindex_runs',
+        (r) => r.id === wanted,
+        (r) => ({
+          processed: r.processed + progress.processed,
+          skipped: r.skipped + progress.skipped,
+          failed: r.failed + progress.failed,
+          cursor: progress.cursor,
+          ...(progress.done ? { status: 'done', finished_at: new Date() } : {}),
+        })
+      );
+    },
   };
 }

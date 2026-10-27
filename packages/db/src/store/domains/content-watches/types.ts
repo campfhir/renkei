@@ -72,6 +72,30 @@ export interface ContentWatchStore {
     provider: string,
     metadataKey: string
   ): Promise<{ indexed: ContentWatchScopeCount[]; queued: ContentWatchScopeCount[] }>;
+  /**
+   * Enabled watches, whoever owns them, never synced or last synced before
+   * `dueBefore`: never-synced first, then the stalest (ties by id), at
+   * most `limit` — the poll sweep's candidates.
+   */
+  listDue(dueBefore: Date, limit: number): Promise<ContentWatchDueRecord[]>;
+  /**
+   * A poll failed: status `error` with the message as given, and synced
+   * now all the same, so a broken watch is retried on the
+   * normal cadence rather than every pass.
+   */
+  recordSyncFailure(id: string, message: string): Promise<void>;
+}
+
+/** A watch as the poller needs it: its scope, owner account and cursor. */
+export interface ContentWatchDueRecord {
+  id: string;
+  provider: string;
+  accountId: string;
+  scopeType: string;
+  scopeKey: string;
+  scopeLabel: string | null;
+  cursor: string | null;
+  lastSyncedAt: Date | null;
 }
 
 /** A watch's owner: the subject, and the provider account whose grant the worker polls with. */

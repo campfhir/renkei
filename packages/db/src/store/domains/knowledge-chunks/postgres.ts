@@ -360,5 +360,72 @@ export function postgresKnowledgeChunks(db: () => Kysely<DB>): KnowledgeChunkSto
         .execute();
       return rows.map(objectChunkFromRow);
     },
+    async listUnsearchable(limit) {
+      const rows = await db()
+        .selectFrom('knowledge_chunks')
+        .select(OBJECT_CHUNK_COLUMNS)
+        .where('search_text', 'is', null)
+        .orderBy('id')
+        .limit(limit)
+        .execute();
+      return rows.map(objectChunkFromRow);
+    },
+    async setSearchText(id, search) {
+      const tsvector = (config: string, text: string) =>
+        sql<string>`to_tsvector(${config}::regconfig, ${text})`;
+      await db()
+        .updateTable('knowledge_chunks')
+        .set({
+          search_text: search
+            ? sql<string>`setweight(${tsvector(search.config, search.title)}, 'A') || setweight(${tsvector(search.config, search.keywords)}, 'B') || setweight(${tsvector(search.config, search.content)}, 'C')`
+            : sql<string>`to_tsvector('')`,
+        })
+        .where('id', '=', id)
+        .execute();
+    },
+    async listMultiChunk(after, limit) {
+      let query = db()
+        .selectFrom('knowledge_chunks')
+        .select(OBJECT_CHUNK_COLUMNS)
+        // Only multi-chunk rows carry a header; ingest stamps `chunkCount`
+        // on exactly those.
+        .where(sql<boolean>`(metadata ->> 'chunkCount')::int > 1`);
+      if (after) query = query.where('id', '>', after);
+      const rows = await query.orderBy('id').limit(limit).execute();
+      return rows.map(objectChunkFromRow);
+    },
+    async setEmbedding(id, embedding) {
+      await db()
+        .updateTable('knowledge_chunks')
+        .set({ embedding: sql`${`[${embedding.join(',')}]`}::vector` })
+        .where('id', '=', id)
+        .execute();
+    },
+    async listObjectsWithoutKeywords(limit) {
+      /** The logical object a chunk row belongs to: its ref before the `#0001` suffix. */
+      const objectRef = sql<string>`regexp_replace(ref_id, '#[0-9]{4}$', '')`;
+      const rows = await db()
+        .selectFrom('knowledge_chunks')
+        .select(['provider', objectRef.as('object_ref')])
+        .where('keywords', 'is', null)
+        .groupBy(['provider', objectRef])
+        .orderBy('provider')
+        .orderBy(objectRef)
+        .limit(limit)
+        .execute();
+      return rows.map((row) => ({ provider: row.provider, objectRef: row.object_ref }));
+    },
+    async listContentWithoutPrefix(prefix, limit) {
+      return db()
+        .selectFrom('knowledge_chunks')
+        .select(['id', 'content'])
+        .where('content', 'not like', `${escapeLike(prefix)}%`)
+        .orderBy('id')
+        .limit(limit)
+        .execute();
+    },
+    async setContent(id, content) {
+      await db().updateTable('knowledge_chunks').set({ content }).where('id', '=', id).execute();
+    },
   };
 }

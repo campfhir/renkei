@@ -48,14 +48,14 @@ export function postgresProviderGrants(db: () => Kysely<DB>): ProviderGrantStore
         .executeTakeFirst();
       return Number(result.numDeletedRows ?? 0);
     },
-    async mergeMetadata(provider, accountId, patch) {
+    async mergeMetadata(provider, accountId, patch, { touch = true } = {}) {
       const result = await db()
         .updateTable('provider_grants')
         .set({
           // A jsonb merge, not a read-modify-write: concurrent metadata
           // writers (token refresh re-deriving scopes) must not lose to it.
           metadata: sql`metadata || ${JSON.stringify(patch)}::jsonb`,
-          updated_at: sql`NOW()`,
+          ...(touch ? { updated_at: sql`NOW()` } : {}),
         })
         .where('provider', '=', provider)
         .where('provider_account_id', '=', accountId)
@@ -198,6 +198,44 @@ export function postgresProviderGrants(db: () => Kysely<DB>): ProviderGrantStore
         .where('provider', '=', provider)
         .where('account_id', '=', accountId)
         .execute();
+    },
+    async listWithMetadata(provider, filter = {}, options = {}) {
+      let query = db()
+        .selectFrom('provider_grants')
+        .select(SUMMARY_COLUMNS)
+        .where('provider', '=', provider);
+      for (const [key, value] of Object.entries(filter.equals ?? {})) {
+        query = query.where(sql<boolean>`metadata->>${key} = ${value}`);
+      }
+      for (const key of filter.missing ?? []) {
+        query = query.where(sql<boolean>`metadata->>${key} IS NULL`);
+      }
+      query = options.newestFirst
+        ? query.orderBy('updated_at', 'desc').orderBy('provider_account_id')
+        : query.orderBy('provider_account_id');
+      if (options.limit !== undefined) query = query.limit(options.limit);
+      const rows = await query.execute();
+      return rows.map(grantSummaryFromRow);
+    },
+    async listStaleExpired(days, limit) {
+      const rows = await db()
+        .selectFrom('provider_grants')
+        .select(['provider', 'provider_account_id'])
+        .where('expires_at', '<', sql<Date>`NOW() - make_interval(days => ${days})`)
+        .orderBy('provider')
+        .orderBy('provider_account_id')
+        .limit(limit)
+        .execute();
+      return rows.map((row) => ({ provider: row.provider, accountId: row.provider_account_id }));
+    },
+    async deleteIfStale(provider, accountId, days) {
+      const result = await db()
+        .deleteFrom('provider_grants')
+        .where('provider', '=', provider)
+        .where('provider_account_id', '=', accountId)
+        .where('expires_at', '<', sql<Date>`NOW() - make_interval(days => ${days})`)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
     },
   };
 }

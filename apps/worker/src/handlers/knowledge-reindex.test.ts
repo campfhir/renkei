@@ -5,8 +5,6 @@
  * marks the run FAILED with its reason instead of throwing into retry.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: jest.fn(() => 'sql-fragment') }));
 jest.mock('@renkei/crypto', () => ({
   contentEncryptionKey: jest.fn(() => ({ ok: true, val: Buffer.alloc(32) })),
 }));
@@ -24,10 +22,16 @@ jest.mock('../logger', () => ({
 }));
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type KnowledgeReindexRunRecord,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { createKnowledgeReindexBatchHandler } from './knowledge-reindex';
 import type { ClaimedEvent } from '../queue';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const {
   resolveEmbeddingProvider: mockResolveEmbedder,
   resolveKeywordExtractor: mockResolveExtractor,
@@ -42,41 +46,30 @@ const {
   extractKeywordsBatch: jest.Mock;
 }>('@renkei/knowledge');
 
+const RUN = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
+let store: MemoryDataStore;
+
 /**
- * A run row and a db stub that records every update applied to it. Tracks
- * status across calls (not just the initial value) — the handler now reads
- * it back a second time, right before enqueuing the next link, to notice a
- * pause that landed mid-batch. `setStatus` lets a test simulate exactly
- * that: an admin's pause landing between this link's own start-of-handler
- * check and its end-of-handler recheck.
+ * A run row in a memory store, of any kind, with this status (none at all
+ * for null). `run()` reads it back as the admin would; `pause()` lands an
+ * admin's pause the way the route does — used to simulate one arriving
+ * between this link's start-of-handler check and its end-of-handler
+ * recheck.
  */
-function stubDb(status: string | null) {
-  const updates: Record<string, unknown>[] = [];
-  let current = status;
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      selectFrom: () => ({
-        select: () => ({
-          where: function where() {
-            return { where, executeTakeFirst: async () => (current ? { status: current } : undefined) };
-          },
-        }),
-      }),
-      updateTable: () => ({
-        set: (values: Record<string, unknown>) => {
-          updates.push(values);
-          if (typeof values.status === 'string') current = values.status;
-          return {
-            where: function where() {
-              return { where, execute: async () => [] };
-            },
-          };
-        },
-      }),
+function seedRun(runId: string, status: string | null) {
+  if (status) {
+    void store.seed({
+      knowledge_reindex_runs: [{ id: runId, kind: 'lexical', status, requested_by: 'op' }],
+    });
+  }
+  return {
+    run: async (): Promise<KnowledgeReindexRunRecord | null> =>
+      store.knowledgeReindexRuns.get(runId),
+    pause: async () => {
+      await store.knowledgeReindexRuns.pause(runId, 'lexical');
     },
-  });
-  return { updates, setStatus: (next: string) => (current = next) };
+  };
 }
 
 const event = (payload: Record<string, unknown>): ClaimedEvent => ({
@@ -99,94 +92,104 @@ const outcome = (over: Partial<Record<string, unknown>> = {}) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  store = createMemoryDataStore();
+  registerDataStore(store);
+});
+
+afterEach(() => {
+  resetDataStore();
 });
 
 describe('reindex.batch', () => {
   it('records progress and enqueues the next link on the run ordering key', async () => {
-    const { updates } = stubDb('queued');
+    const { run } = seedRun(RUN(1), 'queued');
     mockLexical.mockResolvedValue(ok(outcome()));
     const enqueue = jest.fn(async () => undefined);
 
     await createKnowledgeReindexBatchHandler({ enqueue })(
-      event({ runId: 'run-1', kind: 'lexical' })
+      event({ runId: RUN(1), kind: 'lexical' })
     );
 
     // queued → running, then the tallies.
-    expect(updates[0]).toMatchObject({ status: 'running' });
-    expect(updates[1]).not.toHaveProperty('status');
-    expect(enqueue).toHaveBeenCalledWith('reindex.batch',
-      { provider: 'reindex', runId: 'run-1', kind: 'lexical' },
-      'reindex/run-1',
+    expect(await run()).toMatchObject({ status: 'running', processed: 10, finishedAt: null });
+    expect((await run())?.startedAt).not.toBeNull();
+    expect(enqueue).toHaveBeenCalledWith(
+      'reindex.batch',
+      { provider: 'reindex', runId: RUN(1), kind: 'lexical' },
+      `reindex/${RUN(1)}`,
       { strict: true }
     );
   });
 
   it('stops the chain without enqueuing when a pause lands mid-batch', async () => {
-    const { updates, setStatus } = stubDb('running');
+    const { run, pause } = seedRun(RUN(2), 'running');
     mockLexical.mockImplementation(async () => {
       // Simulate an admin's POST { action: 'pause' } landing while this
       // batch is in flight — the handler's status recheck runs AFTER this.
-      setStatus('paused');
+      await pause();
       return ok(outcome());
     });
     const enqueue = jest.fn(async () => undefined);
 
     await createKnowledgeReindexBatchHandler({ enqueue })(
-      event({ runId: 'run-1b', kind: 'lexical' })
+      event({ runId: RUN(2), kind: 'lexical' })
     );
 
-    // The batch's own progress still landed...
-    expect(updates[updates.length - 1]).toHaveProperty('processed');
-    // ...but nothing marks the run failed or done, and the chain stops.
-    expect(updates.every((update) => update.status === undefined)).toBe(true);
+    // The batch's own progress still landed, nothing marked the run failed
+    // or done, and the chain stops.
+    expect(await run()).toMatchObject({ status: 'paused', processed: 10, finishedAt: null });
     expect(enqueue).not.toHaveBeenCalled();
   });
 
   it('carries the cursor forward for embed and marks the run done at the end', async () => {
-    const { updates } = stubDb('running');
+    const { run } = seedRun(RUN(3), 'running');
     mockResolveEmbedder.mockResolvedValue({ embed: jest.fn() });
     mockEmbed.mockResolvedValue(ok(outcome({ done: true, cursor: 'row-99' })));
     const enqueue = jest.fn(async () => undefined);
 
     await createKnowledgeReindexBatchHandler({ enqueue })(
-      event({ runId: 'run-2', kind: 'embed', cursor: 'row-50' })
+      event({ runId: RUN(3), kind: 'embed', cursor: 'row-50' })
     );
 
-    expect(mockEmbed).toHaveBeenCalledWith(expect.anything(),
+    expect(mockEmbed).toHaveBeenCalledWith(
+      expect.anything(),
       expect.anything(),
       'row-50',
       expect.any(Number)
     );
-    expect(updates[updates.length - 1]).toMatchObject({ status: 'done', cursor: 'row-99' });
+    expect(await run()).toMatchObject({ status: 'done', cursor: 'row-99' });
+    expect((await run())?.finishedAt).not.toBeNull();
     expect(enqueue).not.toHaveBeenCalled();
   });
 
   it('carries the keyword skip list between links', async () => {
-    stubDb('running');
+    seedRun(RUN(4), 'running');
     mockResolveExtractor.mockResolvedValue({ extract: jest.fn() });
     mockKeywords.mockResolvedValue(ok(outcome({ processed: 3, failed: 1, skip: ['jira X-1'] })));
     const enqueue = jest.fn(async () => undefined);
 
     await createKnowledgeReindexBatchHandler({ enqueue })(
-      event({ runId: 'run-3', kind: 'keywords', skip: ['jira X-0'] })
+      event({ runId: RUN(4), kind: 'keywords', skip: ['jira X-0'] })
     );
 
     // The handler hands its own skip set to the batch and grows it after,
     // so what the batch saw is asserted through the next link's payload.
-    expect(mockKeywords).toHaveBeenCalledWith(expect.anything(),
+    expect(mockKeywords).toHaveBeenCalledWith(
+      expect.anything(),
       expect.anything(),
       expect.any(Number),
       expect.any(Set)
     );
-    expect(enqueue).toHaveBeenCalledWith('reindex.batch',
+    expect(enqueue).toHaveBeenCalledWith(
+      'reindex.batch',
       expect.objectContaining({ skip: ['jira X-0', 'jira X-1'] }),
-      'reindex/run-3',
+      `reindex/${RUN(4)}`,
       { strict: true }
     );
   });
 
   it('marks the run failed with the reason instead of throwing', async () => {
-    const { updates } = stubDb('running');
+    const { run } = seedRun(RUN(5), 'running');
     mockResolveEmbedder.mockResolvedValue({ embed: jest.fn() });
     mockEmbed.mockResolvedValue(
       err('EMBEDDING_FAILED' as const, { message: 'endpoint returned 502' })
@@ -194,17 +197,18 @@ describe('reindex.batch', () => {
     const enqueue = jest.fn(async () => undefined);
 
     await expect(
-      createKnowledgeReindexBatchHandler({ enqueue })(event({ runId: 'run-4', kind: 'embed' }))
+      createKnowledgeReindexBatchHandler({ enqueue })(event({ runId: RUN(5), kind: 'embed' }))
     ).resolves.toBeUndefined();
-    expect(updates[updates.length - 1]).toMatchObject({
+    expect(await run()).toMatchObject({
       status: 'failed',
-      last_error: expect.stringContaining('502'),
+      lastError: expect.stringContaining('502'),
     });
+    expect((await run())?.finishedAt).not.toBeNull();
     expect(enqueue).not.toHaveBeenCalled();
   });
 
   it('throws on a 429 instead of failing the run, so the queue retries the same link', async () => {
-    const { updates } = stubDb('running');
+    const { run } = seedRun(RUN(6), 'running');
     mockResolveEmbedder.mockResolvedValue({ embed: jest.fn() });
     mockEmbed.mockResolvedValue(
       err('EMBEDDING_FAILED' as const, { message: 'endpoint returned 429', cause: 429 })
@@ -212,46 +216,45 @@ describe('reindex.batch', () => {
     const enqueue = jest.fn(async () => undefined);
 
     await expect(
-      createKnowledgeReindexBatchHandler({ enqueue })(event({ runId: 'run-4b', kind: 'embed' }))
+      createKnowledgeReindexBatchHandler({ enqueue })(event({ runId: RUN(6), kind: 'embed' }))
     ).rejects.toThrow('429');
-    // Only the queued→running transition landed — no failure recorded, no
-    // progress overwritten, no next link enqueued. The thrown error is what
-    // gets this link redelivered with backoff.
-    expect(updates.every((update) => update.status !== 'failed')).toBe(true);
+    // No failure recorded, no progress written, no next link enqueued. The
+    // thrown error is what gets this link redelivered with backoff.
+    expect(await run()).toMatchObject({ status: 'running', processed: 0, lastError: null });
     expect(enqueue).not.toHaveBeenCalled();
   });
 
   it('fails plainly when the org has no embedder or enrichment is off', async () => {
-    let { updates } = stubDb('queued');
+    const embedRun = seedRun(RUN(7), 'queued');
     mockResolveEmbedder.mockResolvedValue(null);
     await createKnowledgeReindexBatchHandler({ enqueue: jest.fn() })(
-      event({ runId: 'run-5', kind: 'embed' })
+      event({ runId: RUN(7), kind: 'embed' })
     );
-    expect(updates[updates.length - 1]).toMatchObject({ status: 'failed' });
+    expect(await embedRun.run()).toMatchObject({ status: 'failed' });
 
-    ({ updates } = stubDb('queued'));
+    const keywordRun = seedRun(RUN(8), 'queued');
     mockResolveExtractor.mockResolvedValue(null);
     await createKnowledgeReindexBatchHandler({ enqueue: jest.fn() })(
-      event({ runId: 'run-6', kind: 'keywords' })
+      event({ runId: RUN(8), kind: 'keywords' })
     );
-    expect(updates[updates.length - 1]).toMatchObject({
+    expect(await keywordRun.run()).toMatchObject({
       status: 'failed',
-      last_error: expect.stringContaining('enrichment is off'),
+      lastError: expect.stringContaining('enrichment is off'),
     });
   });
 
   it('skips a link whose run no longer exists or already ended', async () => {
-    stubDb(null);
+    seedRun(RUN(9), null);
     const enqueue = jest.fn();
     expect(
       await createKnowledgeReindexBatchHandler({ enqueue })(
-        event({ runId: 'gone', kind: 'lexical' })
+        event({ runId: RUN(9), kind: 'lexical' })
       )
     ).toBe('skipped');
-    stubDb('failed');
+    seedRun(RUN(10), 'failed');
     expect(
       await createKnowledgeReindexBatchHandler({ enqueue })(
-        event({ runId: 'old', kind: 'lexical' })
+        event({ runId: RUN(10), kind: 'lexical' })
       )
     ).toBe('skipped');
     expect(mockLexical).not.toHaveBeenCalled();

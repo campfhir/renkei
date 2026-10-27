@@ -54,4 +54,12 @@ export interface UploadSlotStore {
   finish(slotId: string, outcome: { ok: boolean; detail: string }): Promise<void>;
   /** Replaces the destination (OnBase's staging reference rides it). */
   setDestination(slotId: string, destination: Record<string, unknown>): Promise<void>;
+  /** Mark every pending slot past its expiry `expired` (by the database's clock); returns how many. */
+  expireStale(): Promise<number>;
+  /**
+   * Delete up to `limit` terminal slots (completed, failed, expired)
+   * created more than `days` days ago, oldest first (ties by id); returns
+   * how many went.
+   */
+  pruneSettled(days: number, limit: number): Promise<number>;
 }

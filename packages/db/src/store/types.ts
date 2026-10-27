@@ -107,3 +107,6 @@ export type * from './domains/mail-bulk-jobs';
 export type * from './domains/webex-sent-messages';
 export type * from './domains/tool-surface';
 export type * from './domains/content-watches';
+export type * from './domains/advisory-locks';
+export type * from './domains/agent-trigger-firings';
+export type * from './domains/webex-dirty-windows';

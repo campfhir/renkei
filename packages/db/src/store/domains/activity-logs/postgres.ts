@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import {
   PostgresAdapter,
   PsqlE2ERegistrationStore,
@@ -45,6 +45,29 @@ export function postgresActivityLogs(db: () => Kysely<DB>): ActivityLogStore {
         providerAccountId: row.provider_account_id,
         displayName: row.display_name,
       }));
+    },
+    async purgeBefore(until, limit) {
+      // The `batch` CTE captures the ids once; the three DELETEs share its
+      // snapshot (a WITH clause's siblings do), so every delete targets
+      // exactly those rows and nothing is half-deleted across the tables.
+      const result = await sql<{ deleted: string }>`
+        WITH batch AS (
+          SELECT log_id FROM logs
+          WHERE logged_timestamp <= ${until}
+          LIMIT ${limit}
+        ),
+        del_blob AS (
+          DELETE FROM log_attr_blob WHERE log_id IN (SELECT log_id FROM batch)
+        ),
+        del_attr AS (
+          DELETE FROM log_attr WHERE log_id IN (SELECT log_id FROM batch)
+        ),
+        del_logs AS (
+          DELETE FROM logs WHERE log_id IN (SELECT log_id FROM batch)
+        )
+        SELECT count(*)::text AS deleted FROM batch
+      `.execute(db());
+      return Number(result.rows[0]?.deleted ?? 0);
     },
   };
 }

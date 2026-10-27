@@ -161,4 +161,44 @@ export const uploadSlotScenarios: Scenario<DataStore>[] = [
       return { again, read: read ? { ...read, createdAt: null } : null };
     },
   },
+  {
+    method: 'uploadSlots.expireStale',
+    name: 'pending past expiry turn expired; live, settled and others untouched',
+    fixture,
+    run: async (store) => {
+      const count = await store.uploadSlots.expireStale();
+      const again = await store.uploadSlots.expireStale();
+      const statuses = [];
+      for (const slotId of [SLOT.open, SLOT.expired, SLOT.done, SLOT.bobs]) {
+        statuses.push((await store.uploadSlots.get(slotId))?.status);
+      }
+      return { count, again, statuses };
+    },
+  },
+  {
+    method: 'uploadSlots.pruneSettled',
+    name: 'old terminal slots go, oldest first up to the limit; pending and recent stay',
+    fixture: {
+      upload_slots: [
+        slot(uid(11), 'ann', { status: 'completed', created_at: PAST }),
+        slot(uid(12), 'ann', { status: 'failed', created_at: PAST }),
+        slot(uid(13), 'bob', { status: 'expired', created_at: new Date(Date.UTC(2002, 0, 1)) }),
+        slot(uid(14), 'bob', { status: 'pending', created_at: PAST }),
+        slot(uid(15), 'bob', { status: 'completed', created_at: FUTURE }),
+      ],
+    },
+    run: async (store) => {
+      const first = await store.uploadSlots.pruneSettled(1, 1);
+      const present = async () => {
+        const out: string[] = [];
+        for (const n of [11, 12, 13, 14, 15]) {
+          if (await store.uploadSlots.get(uid(n))) out.push(uid(n));
+        }
+        return out;
+      };
+      const afterFirst = await present();
+      const rest = await store.uploadSlots.pruneSettled(1, 10);
+      return { first, afterFirst, rest, afterAll: await present() };
+    },
+  },
 ];

@@ -41,8 +41,8 @@ export interface BatchJobSchedulePatch {
  * batch_job_schedules, plus the one read of schedule_calendars a
  * schedule's next run needs. Names are unique across the organization: a
  * clashing create or rename rejects with code 23505 and constraint
- * `batch_job_schedules_name`. (The worker's due-row sweep keeps its own
- * queries.)
+ * `batch_job_schedules_name`. The worker's firing sweep reads and advances
+ * due rows through listDue and advance.
  */
 export interface BatchJobScheduleStore {
   create(schedule: NewBatchJobSchedule): Promise<BatchJobScheduleRecord>;
@@ -58,4 +58,20 @@ export interface BatchJobScheduleStore {
   delete(scheduleId: string): Promise<boolean>;
   /** A schedule calendar's `dates` as stored, or undefined when there is no such calendar. */
   calendarDates(calendarId: string): Promise<unknown>;
+  /**
+   * Enabled schedules whose next run is due (by the database's clock),
+   * soonest first (ties by id), at most `limit` — the firing sweep's
+   * candidates, whoever owns them.
+   */
+  listDue(limit: number): Promise<BatchJobScheduleRecord[]>;
+  /**
+   * The optimistic lock of a firing: move `nextRunAt` to `next` and stamp
+   * it fired now, only while it is still `observed`. True for the one
+   * sweep replica that advanced it.
+   */
+  advance(scheduleId: string, observed: Date, next: Date): Promise<boolean>;
+  /** A firing went through: the last error cleared. */
+  clearError(scheduleId: string): Promise<void>;
+  /** A firing failed: record why, and with `disable`, turn the schedule off. */
+  recordError(scheduleId: string, message: string, options?: { disable?: boolean }): Promise<void>;
 }

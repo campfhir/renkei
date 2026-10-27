@@ -340,5 +340,22 @@ export function memoryActivityLogs(tables: MemoryTables): ActivityLogStore {
         displayName: row.display_name,
       }));
     },
+    async purgeBefore(until, limit) {
+      const cutoff = until.getTime();
+      const batch = new Set(
+        page(
+          orderBy(
+            tables.select('logs', (r) => r.logged_timestamp.getTime() <= cutoff),
+            [(r) => Number(r.log_id)]
+          ),
+          limit
+        ).map((r) => r.log_id)
+      );
+      // Children first: their foreign keys to logs refuse an orphan.
+      tables.delete('log_attr_blob', (r) => batch.has(r.log_id));
+      tables.delete('log_attr', (r) => batch.has(r.log_id));
+      tables.delete('logs', (r) => batch.has(r.log_id));
+      return batch.size;
+    },
   };
 }

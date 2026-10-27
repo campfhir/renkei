@@ -535,5 +535,43 @@ export function postgresAgents(db: () => Kysely<DB>): AgentStore {
         sourceAt: row.source_at,
       }));
     },
+    async listEventTriggers(event) {
+      const rows = await db()
+        .selectFrom('agent_triggers as t')
+        .innerJoin('agents as a', 'a.id', 't.agent_id')
+        .select([
+          't.id as trigger_id',
+          't.agent_id',
+          't.config',
+          'a.owner_subject',
+          'a.instructions',
+          'a.tools',
+          'a.llm_model_id',
+        ])
+        .where('t.kind', '=', 'event')
+        .where('t.enabled', '=', true)
+        .where('t.event_source', '=', event.source)
+        .where('t.event_type', '=', event.type)
+        .where('a.enabled', '=', true)
+        .where('a.owner_subject', '=', event.ownerSubject)
+        .orderBy('t.id')
+        .execute();
+      return rows.map((row) => ({
+        triggerId: row.trigger_id,
+        agentId: row.agent_id,
+        config: row.config,
+        ownerSubject: row.owner_subject,
+        instructions: row.instructions,
+        tools: row.tools,
+        llmModelId: row.llm_model_id,
+      }));
+    },
+    async markTriggerFailed(triggerId, error) {
+      await db()
+        .updateTable('agent_triggers')
+        .set({ last_error: error, updated_at: sql`NOW()` })
+        .where('id', '=', triggerId)
+        .execute();
+    },
   };
 }

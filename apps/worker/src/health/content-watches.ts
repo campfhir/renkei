@@ -20,8 +20,7 @@
  * or one bad project key must not stall polling for every other watch.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDatabase, getDataStore } from '@renkei/db';
 import { actorForAccount } from '../log-actor';
 import { summariseTitles } from '../log-titles';
 import { getOrgSettings } from '@renkei/settings';
@@ -60,32 +59,26 @@ export async function sweepContentWatches(): Promise<void> {
     return;
   }
   const db = dbResult.val;
+  const store = getDataStore();
 
   const now = Date.now();
   const dueBefore = new Date(now - MIN_WATCH_DUE_MS);
   let candidates: (WatchRow & { last_synced_at: Date | null })[];
   try {
-    candidates = await db
-      .selectFrom('content_watches')
-      .select([
-        'id',
-        'provider',
-        'account_id',
-        'scope_type',
-        'scope_key',
-        'scope_label',
-        'cursor',
-        'last_synced_at',
-      ])
-      .where('enabled', '=', true)
-      // Never-synced rows (NULL) come first — a watch just created should
-      // start indexing without waiting out a full interval.
-      .where((eb) =>
-        eb.or([eb('last_synced_at', 'is', null), eb('last_synced_at', '<', dueBefore)])
-      )
-      .orderBy('last_synced_at', (ob) => ob.asc().nullsFirst())
-      .limit(MAX_WATCHES_PER_PASS)
-      .execute();
+    // Never-synced watches come first — a watch just created should start
+    // indexing without waiting out a full interval.
+    candidates = (await store.contentWatches.listDue(dueBefore, MAX_WATCHES_PER_PASS)).map(
+      (watch) => ({
+        id: watch.id,
+        provider: watch.provider,
+        account_id: watch.accountId,
+        scope_type: watch.scopeType,
+        scope_key: watch.scopeKey,
+        scope_label: watch.scopeLabel,
+        cursor: watch.cursor,
+        last_synced_at: watch.lastSyncedAt,
+      })
+    );
   } catch (error) {
     logger.error('could not list due watches: {error}', {
       component: COMPONENT,
@@ -179,16 +172,7 @@ export async function sweepContentWatches(): Promise<void> {
       // last_synced_at advances even on failure, so one persistently broken
       // watch is retried on the normal cadence instead of every pass.
       try {
-        await db
-          .updateTable('content_watches')
-          .set({
-            sync_status: 'error',
-            last_error: message.slice(0, 500),
-            last_synced_at: sql<Date>`NOW()`,
-            updated_at: sql<Date>`NOW()`,
-          })
-          .where('id', '=', watch.id)
-          .execute();
+        await store.contentWatches.recordSyncFailure(watch.id, message.slice(0, 500));
       } catch {
         // The row update failing is not worth failing the sweep over.
       }

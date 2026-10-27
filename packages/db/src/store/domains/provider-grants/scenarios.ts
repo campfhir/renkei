@@ -81,6 +81,18 @@ const disconnectFixture = {
   ],
 };
 
+/** Grants long past expiry (abandoned) beside one that expired an hour ago (alive). */
+const staleFixture = {
+  provider_grants: [
+    grant('atlassian', 'old-2', 'ann', { expires_at: '2020-01-01T00:00:00.000Z' }),
+    grant('atlassian', 'old-1', 'bob', { expires_at: '2021-01-01T00:00:00.000Z' }),
+    grant('microsoft', 'old-3', null, { expires_at: '2020-06-01T00:00:00.000Z' }),
+    grant('atlassian', 'fresh', 'ann', {
+      expires_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+    }),
+  ],
+};
+
 export const providerGrantScenarios: Scenario<DataStore>[] = [
   {
     method: 'providerGrants.listForSubject',
@@ -293,5 +305,93 @@ export const providerGrantScenarios: Scenario<DataStore>[] = [
         ),
       ];
     },
+  },
+  {
+    method: 'providerGrants.mergeMetadata',
+    name: 'touch: false merges the keys but leaves updated_at (latestOf order unchanged)',
+    fixture: latestFixture,
+    run: async (store) => {
+      const changed = await store.providerGrants.mergeMetadata(
+        'atlassian',
+        'a-old',
+        { checkedAt: 'x' },
+        { touch: false }
+      );
+      return [
+        changed,
+        await store.providerGrants.find('atlassian', 'a-old'),
+        (await store.providerGrants.latestOf(['atlassian']))?.accountId,
+      ];
+    },
+  },
+  {
+    method: 'providerGrants.listWithMetadata',
+    name: 'one provider, metadata equal/missing, by account or newest first; limited; none',
+    fixture: {
+      provider_grants: [
+        grant('webex', 'w-b', 'ann', {
+          updated_at: at(1),
+          metadata: JSON.stringify({ allSpaces: 'true', windowsBackfilledAt: 'x' }),
+        }),
+        grant('webex', 'w-a', 'bob', {
+          updated_at: at(5),
+          metadata: JSON.stringify({ allSpaces: true }),
+        }),
+        grant('webex', 'w-c', 'carol', {
+          updated_at: at(5),
+          metadata: JSON.stringify({ allSpaces: 'true', windowsBackfilledAt: null }),
+        }),
+        grant('webex', 'w-d', 'dan', { metadata: JSON.stringify({ allSpaces: false }) }),
+        grant('webex', 'w-e', null, { metadata: JSON.stringify({ other: 1 }) }),
+        grant('zoom', 'z1', 'ann', { metadata: JSON.stringify({ allSpaces: true }) }),
+      ],
+    },
+    run: async (store) => {
+      const accounts = (rows: { accountId: string }[]) => rows.map((r) => r.accountId);
+      const allSpaces = { equals: { allSpaces: 'true' } };
+      return [
+        await store.providerGrants.listWithMetadata('webex'),
+        accounts(await store.providerGrants.listWithMetadata('webex', allSpaces)),
+        accounts(
+          await store.providerGrants.listWithMetadata('webex', {
+            ...allSpaces,
+            missing: ['windowsBackfilledAt'],
+          })
+        ),
+        accounts(
+          await store.providerGrants.listWithMetadata('webex', allSpaces, { newestFirst: true })
+        ),
+        accounts(
+          await store.providerGrants.listWithMetadata('webex', allSpaces, {
+            newestFirst: true,
+            limit: 1,
+          })
+        ),
+        accounts(await store.providerGrants.listWithMetadata('webex', {}, { limit: 2 })),
+        accounts(await store.providerGrants.listWithMetadata('nobody', allSpaces)),
+      ];
+    },
+  },
+  {
+    method: 'providerGrants.listStaleExpired',
+    name: 'expired past the horizon, any provider, by provider then account; limited',
+    fixture: staleFixture,
+    run: async (store) => [
+      await store.providerGrants.listStaleExpired(90, 10),
+      await store.providerGrants.listStaleExpired(90, 1),
+      await store.providerGrants.listStaleExpired(100_000, 10),
+    ],
+  },
+  {
+    method: 'providerGrants.deleteIfStale',
+    name: 'only a still-stale grant goes; a fresh one and an unknown one stay',
+    fixture: staleFixture,
+    run: async (store) => [
+      await store.providerGrants.deleteIfStale('atlassian', 'old-1', 90),
+      await store.providerGrants.deleteIfStale('atlassian', 'fresh', 90),
+      await store.providerGrants.deleteIfStale('atlassian', 'missing', 90),
+      await store.providerGrants.listStaleExpired(90, 10),
+      (await store.providerGrants.find('atlassian', 'fresh'))?.accountId,
+    ],
   },
 ];

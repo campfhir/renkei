@@ -135,5 +135,40 @@ export function memoryContentWatches(tables: MemoryTables): ContentWatchStore {
       }
       return { indexed: sortedCounts(indexed), queued: sortedCounts(queued) };
     },
+    async listDue(dueBefore, limit) {
+      const cutoff = dueBefore.getTime();
+      const due = tables.select(
+        'content_watches',
+        (r) => r.enabled && (r.last_synced_at === null || r.last_synced_at.getTime() < cutoff)
+      );
+      return orderBy(
+        due,
+        // NULLS FIRST: a never-synced watch sorts before every synced one.
+        [(r) => (r.last_synced_at === null ? 0 : 1)],
+        [(r) => r.last_synced_at],
+        [(r) => r.id]
+      )
+        .slice(0, limit)
+        .map((row) => ({
+          id: row.id,
+          provider: row.provider,
+          accountId: row.account_id,
+          scopeType: row.scope_type,
+          scopeKey: row.scope_key,
+          scopeLabel: row.scope_label,
+          cursor: row.cursor,
+          lastSyncedAt: row.last_synced_at ? new Date(row.last_synced_at) : null,
+        }));
+    },
+    async recordSyncFailure(id, message) {
+      const key = tables.param('content_watches', 'id', id);
+      const now = new Date();
+      tables.update('content_watches', (r) => r.id === key, {
+        sync_status: 'error',
+        last_error: message,
+        last_synced_at: now,
+        updated_at: now,
+      });
+    },
   };
 }

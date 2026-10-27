@@ -37,4 +37,16 @@ export interface MailBulkJobStore {
   markFailed(id: string, error: string): Promise<void>;
   /** The subject's own job, or null — someone else's id reads as missing. */
   getOwned(id: string, subject: string): Promise<MailBulkJobRecord | null>;
+  /**
+   * Fail every `running` job whose row has not moved for `minutes`
+   * minutes (by the database's clock) with `error`, finished now; returns
+   * how many.
+   */
+  failStalled(minutes: number, error: string): Promise<number>;
+  /**
+   * Delete up to `limit` finished jobs (succeeded, partial, failed)
+   * created more than `days` days ago, oldest first (ties by id); returns
+   * how many went.
+   */
+  pruneFinished(days: number, limit: number): Promise<number>;
 }

@@ -66,6 +66,9 @@ import { mailBulkJobScenarios } from './mail-bulk-jobs/scenarios';
 import { webexSentMessageScenarios } from './webex-sent-messages/scenarios';
 import { toolSurfaceScenarios } from './tool-surface/scenarios';
 import { contentWatchScenarios } from './content-watches/scenarios';
+import { advisoryLockScenarios } from './advisory-locks/scenarios';
+import { agentTriggerFiringScenarios } from './agent-trigger-firings/scenarios';
+import { webexDirtyWindowScenarios } from './webex-dirty-windows/scenarios';
 
 import { pendingSigninScenarios } from './pending-signins/scenarios';
 import { webhookSubscriptionScenarios } from './webhook-subscriptions/scenarios';
@@ -136,4 +139,7 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...webexSentMessageScenarios,
   ...toolSurfaceScenarios,
   ...contentWatchScenarios,
+  ...advisoryLockScenarios,
+  ...agentTriggerFiringScenarios,
+  ...webexDirtyWindowScenarios,
 ];

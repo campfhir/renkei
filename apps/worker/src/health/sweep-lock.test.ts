@@ -1,88 +1,73 @@
 /**
  * The single-runner election. What must hold: an acquired lock runs the
- * sweep and always unlocks (even when the sweep throws), a lost lock skips
- * the sweep entirely, and everything happens on the ONE pinned connection —
- * an advisory lock released through a different pool connection would not
- * release anything.
+ * sweep and always releases (even when the sweep throws), a held lock
+ * skips the sweep entirely, and a lock that cannot be taken at all skips
+ * the pass rather than failing it. Runs on the memory store, whose
+ * advisory lock is an in-process set; the Postgres lock's own behaviour is
+ * the differential suite's (packages/db advisory-locks scenarios).
  */
 
-const executeMock = jest.fn();
-jest.mock('kysely', () => ({
-  sql: jest.fn(() => ({ execute: executeMock })),
-}));
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('../logger', () => ({
-  logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-}));
-
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { withSweepLock } from './sweep-lock';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
-
-/** A db whose connection() pins one recorded connection object. */
-function stubDb(): { connection: unknown } {
-  const conn = { pinned: true };
-  const db = {
-    connection: () => ({
-      execute: (callback: (c: unknown) => Promise<void>) => callback(conn),
-    }),
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: db });
-  return { connection: conn };
-}
-
 beforeEach(() => {
-  executeMock.mockReset();
-  mockGetDatabase.mockReset();
+  registerDataStore(createMemoryDataStore());
 });
 
-it('runs the sweep and unlocks when the lock is acquired', async () => {
-  const { connection } = stubDb();
-  executeMock
-    .mockResolvedValueOnce({ rows: [{ locked: true }] }) // pg_try_advisory_lock
-    .mockResolvedValueOnce({ rows: [] }); // pg_advisory_unlock
+afterEach(() => {
+  resetDataStore();
+});
+
+it('runs the sweep, and releases the lock for the next pass', async () => {
   const sweep = jest.fn(async () => undefined);
+  const locked = withSweepLock('webex-webhooks', sweep);
 
-  await withSweepLock('webex-webhooks', sweep)();
+  await locked();
+  await locked();
 
-  expect(sweep).toHaveBeenCalledTimes(1);
-  expect(executeMock).toHaveBeenCalledTimes(2);
-  // Both the lock and the unlock ran on the same pinned connection.
-  expect(executeMock).toHaveBeenNthCalledWith(1, connection);
-  expect(executeMock).toHaveBeenNthCalledWith(2, connection);
+  expect(sweep).toHaveBeenCalledTimes(2);
 });
 
-it('unlocks even when the sweep throws', async () => {
-  stubDb();
-  executeMock
-    .mockResolvedValueOnce({ rows: [{ locked: true }] })
-    .mockResolvedValueOnce({ rows: [] });
-  const sweep = jest.fn(async () => {
-    throw new Error('provider exploded');
+it('releases even when the sweep throws, and passes the throw on', async () => {
+  const sweep = jest
+    .fn<Promise<void>, []>()
+    .mockRejectedValueOnce(new Error('provider exploded'))
+    .mockResolvedValueOnce(undefined);
+  const locked = withSweepLock('webex-webhooks', sweep);
+
+  await expect(locked()).rejects.toThrow('provider exploded');
+  await locked();
+
+  expect(sweep).toHaveBeenCalledTimes(2); // the second pass got the lock back
+});
+
+it('skips the sweep entirely while another runner holds the lock', async () => {
+  const inner = jest.fn(async () => undefined);
+  const other = jest.fn(async () => undefined);
+  const outer = withSweepLock('webex-webhooks', async () => {
+    await withSweepLock('webex-webhooks', inner)();
+    await withSweepLock('content-watches', other)();
   });
 
-  await expect(withSweepLock('webex-webhooks', sweep)()).rejects.toThrow('provider exploded');
+  await outer();
 
-  expect(executeMock).toHaveBeenCalledTimes(2); // lock + unlock, despite the throw
+  expect(inner).not.toHaveBeenCalled();
+  expect(other).toHaveBeenCalledTimes(1); // a different sweep is its own lock
 });
 
-it('skips the sweep entirely when another worker holds the lock', async () => {
-  stubDb();
-  executeMock.mockResolvedValueOnce({ rows: [{ locked: false }] });
+it('skips when the lock cannot be taken at all', async () => {
+  const store = createMemoryDataStore();
+  registerDataStore({
+    ...store,
+    advisoryLocks: {
+      withTryLock: async () => {
+        throw new Error('database unavailable');
+      },
+    },
+  });
   const sweep = jest.fn(async () => undefined);
 
-  await withSweepLock('webex-webhooks', sweep)();
+  await expect(withSweepLock('webex-webhooks', sweep)()).resolves.toBeUndefined();
 
   expect(sweep).not.toHaveBeenCalled();
-  expect(executeMock).toHaveBeenCalledTimes(1); // no unlock for a lock never held
-});
-
-it('skips when the database is unavailable', async () => {
-  mockGetDatabase.mockReturnValue({ ok: false, err: 'down' });
-  const sweep = jest.fn(async () => undefined);
-
-  await withSweepLock('webex-webhooks', sweep)();
-
-  expect(sweep).not.toHaveBeenCalled();
-  expect(executeMock).not.toHaveBeenCalled();
 });

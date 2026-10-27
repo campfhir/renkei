@@ -6,8 +6,6 @@
  * needs no change to the queue handler, the store, or the schema.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { BatchJobItemRow, BatchJobRow } from './store';
 
 export interface DiscoverOutcome {
@@ -33,9 +31,9 @@ export interface RunItemOutcome {
 
 export interface BatchJobKindHandler {
   /** List/group the batch's source into items — called once per batch. */
-  discover(db: Kysely<DB>, batch: BatchJobRow): Promise<DiscoverOutcome>;
+  discover(batch: BatchJobRow): Promise<DiscoverOutcome>;
   /** Do the work for one item — called once per item, fanned out across the queue. */
-  runItem(db: Kysely<DB>, batch: BatchJobRow, item: BatchJobItemRow): Promise<RunItemOutcome>;
+  runItem(batch: BatchJobRow, item: BatchJobItemRow): Promise<RunItemOutcome>;
 }
 
 const registry = new Map<string, BatchJobKindHandler>();

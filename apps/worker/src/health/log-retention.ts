@@ -3,17 +3,17 @@
  * dial.
  *
  * Batched the same way bored-logs' own purge does: one short atomic
- * statement per batch. The `batch` CTE captures up to BATCH_SIZE matching
- * log ids once; the three DELETEs that follow all read that same captured
- * set (a WITH clause's siblings share one snapshot in Postgres), so every
- * delete targets exactly those rows and nothing can be half-deleted or
- * double-counted across the blob/attribute/log tables. Capped per pass so
+ * statement per batch (`activityLogs.purgeBefore`). Its `batch` CTE
+ * captures up to BATCH_SIZE matching log ids once; the three DELETEs that
+ * follow all read that same captured set (a WITH clause's siblings share
+ * one snapshot in Postgres), so every delete targets exactly those rows and
+ * nothing can be half-deleted or double-counted across the
+ * blob/attribute/log tables. Capped per pass so
  * a huge backlog cannot hold the sweep open indefinitely — the remainder
  * is picked up on the next pass, LOG_RETENTION_SWEEP_INTERVAL_MS later.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { logger } from '../logger';
 
@@ -31,41 +31,15 @@ const BATCH_SIZE = 2_000;
 const MAX_BATCHES_PER_PASS = 50;
 
 export async function sweepLogRetention(): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return;
-  const db = dbResult.val;
-
   /**
-   * Delete one batch of log rows logged at or before `until`. Returns the
-   * number of `logs` rows removed — fewer than BATCH_SIZE means there is
-   * nothing left to purge.
+   * Purge rows past `until`, in batches, up to the per-pass cap. A batch
+   * returns the number of `logs` rows removed — fewer than BATCH_SIZE means
+   * there is nothing left to purge.
    */
-  async function purgeBatch(until: Date): Promise<number> {
-    const result = await sql<{ deleted: string }>`
-      WITH batch AS (
-        SELECT log_id FROM logs
-        WHERE logged_timestamp <= ${until}
-        LIMIT ${BATCH_SIZE}
-      ),
-      del_blob AS (
-        DELETE FROM log_attr_blob WHERE log_id IN (SELECT log_id FROM batch)
-      ),
-      del_attr AS (
-        DELETE FROM log_attr WHERE log_id IN (SELECT log_id FROM batch)
-      ),
-      del_logs AS (
-        DELETE FROM logs WHERE log_id IN (SELECT log_id FROM batch)
-      )
-      SELECT count(*)::text AS deleted FROM batch
-    `.execute(db);
-    return Number(result.rows[0]?.deleted ?? 0);
-  }
-
-  /** Purge rows past `until`, in batches, up to the per-pass cap. */
   async function purge(until: Date): Promise<number> {
     let total = 0;
     for (let i = 0; i < MAX_BATCHES_PER_PASS; i++) {
-      const deleted = await purgeBatch(until);
+      const deleted = await getDataStore().activityLogs.purgeBefore(until, BATCH_SIZE);
       total += deleted;
       if (deleted < BATCH_SIZE) break;
     }

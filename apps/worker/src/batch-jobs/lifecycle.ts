@@ -37,7 +37,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type DB } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { batchEventForStatus, getNotificationPrefs, type BatchEvent } from '@renkei/user-prefs';
@@ -165,6 +165,10 @@ async function publish(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
   }
 }
 
+/**
+ * `db` rides along only for deliverToOwnerChannels (handlers/owner-channels),
+ * which still takes it; the feed row goes through the data store.
+ */
 async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase): Promise<void> {
   const prefs = await getNotificationPrefs(batch.subject);
   const key: BatchEvent = phase === 'started' ? 'batchStarted' : batchEventForStatus(batch.status);
@@ -180,19 +184,22 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
   if (wanted.app) {
     const id = randomUUID();
     try {
-      await db
-        .insertInto('agent_notifications')
-        .values({
-          id,
-          subject: batch.subject,
-          kind: notificationKindFor(batch, phase),
-          connector: BATCH_JOBS_CONNECTOR,
-          entity: 'batch',
-          headline,
-          ref_id: batch.name,
-          meta: JSON.stringify(batchNotificationMeta(batch)),
-        })
-        .execute();
+      await getDataStore().notifications.insert({
+        id,
+        subject: batch.subject,
+        kind: notificationKindFor(batch, phase),
+        category: null,
+        connector: BATCH_JOBS_CONNECTOR,
+        tool: null,
+        entity: 'batch',
+        headline,
+        refUrl: null,
+        refId: batch.name,
+        agentId: null,
+        agentName: null,
+        runId: null,
+        meta: batchNotificationMeta(batch),
+      });
 
       // Fire-and-forget push notification — respects app preference
       const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
