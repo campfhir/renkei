@@ -1,17 +1,16 @@
 import React from 'react';
-import { redirect, notFound } from 'next/navigation';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { redirect } from 'next/navigation';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { listAgentsForAdmin } from '@/lib/agents/runs-view';
 import {
+  getRunTallies,
   getTenantTokenUsage,
   getTokenUsageByAgent,
   getTokenUsageByModel,
 } from '@/lib/agents/agent-usage';
 import { RetentionForm } from './retention-form';
-import OversightCards, { type RunBuckets } from './oversight-cards';
+import OversightCards from './oversight-cards';
 
 /**
  * Agent oversight: every agent in the org, owner-attributed, with run,
@@ -28,103 +27,31 @@ import OversightCards, { type RunBuckets } from './oversight-cards';
  * org card and every agent card together.
  */
 
-interface BucketRow {
-  today: string;
-  yesterday: string;
-  week: string;
-  month: string;
-  quarter: string;
-  year: string;
-  all_time: string;
-  failed_today: string;
-  failed_yesterday: string;
-  failed_week: string;
-  failed_month: string;
-  failed_quarter: string;
-  failed_year: string;
-  failed_all_time: string;
-}
-
-function toBuckets(row: BucketRow | undefined): RunBuckets {
-  return {
-    today: Number(row?.today ?? 0),
-    yesterday: Number(row?.yesterday ?? 0),
-    week: Number(row?.week ?? 0),
-    month: Number(row?.month ?? 0),
-    quarter: Number(row?.quarter ?? 0),
-    year: Number(row?.year ?? 0),
-    allTime: Number(row?.all_time ?? 0),
-  };
-}
-
-function toFailureBuckets(row: BucketRow | undefined): RunBuckets {
-  return {
-    today: Number(row?.failed_today ?? 0),
-    yesterday: Number(row?.failed_yesterday ?? 0),
-    week: Number(row?.failed_week ?? 0),
-    month: Number(row?.failed_month ?? 0),
-    quarter: Number(row?.failed_quarter ?? 0),
-    year: Number(row?.failed_year ?? 0),
-    allTime: Number(row?.failed_all_time ?? 0),
-  };
-}
-
-/**
- * Run and failure buckets over the durable run log (migration 083), cut on
- * the database session's calendar the way the per-day counters they
- * replace were — the numbers exist to be read against the per-day cap.
- */
-const BUCKET_COLUMNS = sql`
-  COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) AS today,
-  COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE - 1) AS yesterday,
-  COUNT(*) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)) AS week,
-  COUNT(*) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)) AS month,
-  COUNT(*) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)) AS quarter,
-  COUNT(*) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)) AS year,
-  COUNT(*) AS all_time,
-  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date = CURRENT_DATE) AS failed_today,
-  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date = CURRENT_DATE - 1) AS failed_yesterday,
-  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date >= date_trunc('week', CURRENT_DATE)) AS failed_week,
-  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date >= date_trunc('month', CURRENT_DATE)) AS failed_month,
-  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date >= date_trunc('quarter', CURRENT_DATE)) AS failed_quarter,
-  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date >= date_trunc('year', CURRENT_DATE)) AS failed_year,
-  COUNT(*) FILTER (WHERE status = 'failed') AS failed_all_time
-`;
-
 export default async function AdminAgentsPage(): Promise<React.ReactNode> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const db = dbResult.val;
-  const agents = await listAgentsForAdmin(db);
+  const agents = await listAgentsForAdmin();
   const settingsResult = await getOrgSettings();
 
-  const [totalsResult, perAgentResult, tokenTotals, tokensByAgent, tokensByModel] =
-    await Promise.all([
-      sql<BucketRow>`
-        SELECT ${BUCKET_COLUMNS}
-        FROM agent_run_log
-      `.execute(db),
-      sql<BucketRow & { agent_id: string }>`
-        SELECT agent_id, ${BUCKET_COLUMNS}
-        FROM agent_run_log
-        GROUP BY agent_id
-      `.execute(db),
-      getTenantTokenUsage(db),
-      getTokenUsageByAgent(db),
-      getTokenUsageByModel(db, null),
-    ]);
-  const totals = toBuckets(totalsResult.rows[0]);
-  const failureTotals = toFailureBuckets(totalsResult.rows[0]);
+  // Run and failure buckets over the durable run log (migration 083), cut
+  // on the database session's calendar — the numbers exist to be read
+  // against the per-day cap.
+  const [tallies, tokenTotals, tokensByAgent, tokensByModel] = await Promise.all([
+    getRunTallies(),
+    getTenantTokenUsage(),
+    getTokenUsageByAgent(),
+    getTokenUsageByModel(null),
+  ]);
+  const totals = tallies.totals.runs;
+  const failureTotals = tallies.totals.failures;
   const dailyCap = settingsResult.ok ? settingsResult.val.agentMaxRunsPerDay : null;
   const runsByAgent = Object.fromEntries(
-    perAgentResult.rows.map((row) => [row.agent_id, toBuckets(row)])
+    Object.entries(tallies.byAgent).map(([agentId, row]) => [agentId, row.runs])
   );
   const failuresByAgent = Object.fromEntries(
-    perAgentResult.rows.map((row) => [row.agent_id, toFailureBuckets(row)])
+    Object.entries(tallies.byAgent).map(([agentId, row]) => [agentId, row.failures])
   );
 
   const retentionDays = settingsResult.ok

@@ -7,6 +7,11 @@
 import { batchJobSchedules } from './batch-job-schedules';
 import { batchJobs } from './batch-jobs';
 import { auditEvents } from './audit-events';
+import { agentDrafts } from './agent-drafts';
+import { agentOptimizations } from './agent-optimizations';
+import { agentRuns } from './agent-runs';
+import { agentUsage } from './agent-usage';
+import { agents } from './agents';
 import { coachMarks } from './coach-marks';
 import { eventLog } from './event-log';
 import { identities } from './identities';
@@ -46,4 +51,9 @@ export const DOMAINS = {
   scheduleCalendars,
   orgAccess,
   usage,
+  agents,
+  agentRuns,
+  agentUsage,
+  agentOptimizations,
+  agentDrafts,
 };

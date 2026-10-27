@@ -57,10 +57,7 @@ interface AgentRow {
   enabled: boolean;
 }
 
-async function agentById(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<AgentRow | null> {
+async function agentById(db: Kysely<DB>, agentId: string): Promise<AgentRow | null> {
   // Callers paste this id into external tools; a malformed one (glued-on
   // punctuation from an autolinker) is "no such agent", not a 22P02 → 500.
   if (!isUuid(agentId)) return null;
@@ -118,7 +115,7 @@ export async function POST(
     if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     if (
       agent.owner_subject !== session.subject &&
-      !(await hasActiveGrant(db, agentId, session.subject))
+      !(await hasActiveGrant(agentId, session.subject))
     ) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }

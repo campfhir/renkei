@@ -62,3 +62,8 @@ export type * from './domains/llm-models';
 export type * from './domains/schedule-calendars';
 export type * from './domains/org-access';
 export type * from './domains/usage';
+export type * from './domains/agents';
+export type * from './domains/agent-runs';
+export type * from './domains/agent-usage';
+export type * from './domains/agent-optimizations';
+export type * from './domains/agent-drafts';

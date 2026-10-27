@@ -17,32 +17,23 @@
  * than silently re-parked.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 
 export const NEEDS_SIGN_IN = 'needs-sign-in';
 
 /** Puts the owner's parked runs back on the queue; returns how many. */
 export async function resumeRunsNeedingSignIn(
-  db: Kysely<DB>,
   producer: QueueProducer,
   ownerSubject: string
 ): Promise<number> {
-  const rows = await db
-    .updateTable('agent_runs')
-    .set({ status: 'queued', error: null, error_kind: null, updated_at: sql`NOW()` })
-    .where('owner_subject', '=', ownerSubject)
-    .where('status', '=', 'waiting')
-    .where('error_kind', '=', NEEDS_SIGN_IN)
-    .returning(['id', 'agent_id'])
-    .execute();
+  const rows = await getDataStore().agentRuns.requeueWaiting(ownerSubject, NEEDS_SIGN_IN);
   for (const row of rows) {
     await producer.enqueue({
-      source: `agents:${row.agent_id}`,
+      source: `agents:${row.agentId}`,
       type: 'run',
       payload: { runId: row.id },
-      orderingKey: `agent:${row.agent_id}`,
+      orderingKey: `agent:${row.agentId}`,
     });
   }
   return rows.length;

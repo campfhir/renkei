@@ -9,7 +9,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getIdentityDisplay, listIdentities } from '@/lib/identity';
 import { getAgent } from '@/lib/agents/store';
@@ -25,15 +24,10 @@ export async function GET(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const grants = await listAgentAccessGrants(dbResult.val, session.subject, agentId);
+  const grants = await listAgentAccessGrants(session.subject, agentId);
   if (grants === null) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const people = (await listIdentities()).filter(
-    (person) => person.subject !== session.subject
-  );
+  const people = (await listIdentities()).filter((person) => person.subject !== session.subject);
   return NextResponse.json({ grants, people });
 }
 
@@ -44,10 +38,6 @@ export async function POST(
   const { agentId } = await params;
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
 
   const body: unknown = await request.json().catch(() => null);
   const granteeSubject =
@@ -79,10 +69,10 @@ export async function POST(
   const grantee = await getIdentityDisplay(granteeSubject);
   if (!grantee) return NextResponse.json({ error: 'No such person in this org' }, { status: 400 });
 
-  const agent = await getAgent(db, session.subject, agentId);
+  const agent = await getAgent(session.subject, agentId);
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const outcome = await grantAgentAccess(db, session.subject, agentId, {
+  const outcome = await grantAgentAccess(session.subject, agentId, {
     granteeSubject,
     expiresAt,
   });
@@ -107,6 +97,6 @@ export async function POST(
     agentId,
     agentName: agent.name,
   });
-  const grants = await listAgentAccessGrants(db, session.subject, agentId);
+  const grants = await listAgentAccessGrants(session.subject, agentId);
   return NextResponse.json({ grants: grants ?? [] });
 }

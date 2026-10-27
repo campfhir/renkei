@@ -8,7 +8,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -17,17 +16,11 @@ import { deleteAgentNote, parseNotePayload, updateAgentNote } from '@/lib/agents
 async function ownedContext(
   request: NextRequest,
   agentId: string
-): Promise<
-  { db: NonNullable<ReturnType<typeof getDatabase>['val']>; ownerEmail: string } | NextResponse
-> {
+): Promise<{ ownerEmail: string } | NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const emailResult = await getIdentityEmail(access.ownerSubject);
@@ -38,7 +31,7 @@ async function ownedContext(
       { status: 409 }
     );
   }
-  return { db, ownerEmail };
+  return { ownerEmail };
 }
 
 function errorResponse(outcome: string): NextResponse {
@@ -73,7 +66,7 @@ export async function PUT(
     return NextResponse.json({ error: 'A title and content are required' }, { status: 400 });
   }
 
-  const outcome = await updateAgentNote(context.db, {
+  const outcome = await updateAgentNote({
     agentId,
     ownerEmail: context.ownerEmail,
     noteId,
@@ -92,7 +85,7 @@ export async function DELETE(
   const context = await ownedContext(request, agentId);
   if (context instanceof NextResponse) return context;
 
-  const outcome = await deleteAgentNote(context.db, {
+  const outcome = await deleteAgentNote({
     agentId,
     ownerEmail: context.ownerEmail,
     noteId,

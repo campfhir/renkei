@@ -10,7 +10,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
 import { answerQuestion } from '@/lib/agents/approvals';
@@ -35,17 +34,10 @@ export async function POST(
   // against the card's own form in answerQuestion, the only place that has it.
   const answers = isRecord(body) && isRecord(body.answers) ? body.answers : {};
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-
-  const result = await answerQuestion(
-    dbResult.val,
-    agentJobsQueue().producer,
-    session.subject,
-    { cardId: itemId, answers }
-  );
+  const result = await answerQuestion(agentJobsQueue().producer, session.subject, {
+    cardId: itemId,
+    answers,
+  });
 
   switch (result.outcome) {
     case 'invalid-answers':

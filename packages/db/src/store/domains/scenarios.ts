@@ -5,6 +5,11 @@ import type { DataStore } from '../types';
 import { batchJobScheduleScenarios } from './batch-job-schedules/scenarios';
 import { batchJobScenarios } from './batch-jobs/scenarios';
 import { auditEventScenarios } from './audit-events/scenarios';
+import { agentDraftScenarios } from './agent-drafts/scenarios';
+import { agentOptimizationScenarios } from './agent-optimizations/scenarios';
+import { agentRunScenarios } from './agent-runs/scenarios';
+import { agentUsageScenarios } from './agent-usage/scenarios';
+import { agentScenarios } from './agents/scenarios';
 import { coachMarkScenarios } from './coach-marks/scenarios';
 import { eventLogScenarios } from './event-log/scenarios';
 import { identityScenarios } from './identities/scenarios';
@@ -44,4 +49,9 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...scheduleCalendarScenarios,
   ...orgAccessScenarios,
   ...usageScenarios,
+  ...agentScenarios,
+  ...agentRunScenarios,
+  ...agentUsageScenarios,
+  ...agentOptimizationScenarios,
+  ...agentDraftScenarios,
 ];

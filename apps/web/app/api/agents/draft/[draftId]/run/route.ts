@@ -25,6 +25,7 @@ import { parseAgentDefinition } from '@renkei/agents';
 import { getBearerToken, resolveAccessToken } from '@/lib/mcp-token';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { claimDraft, finishDraft, getDraft } from '@/lib/agents/draft-store';
+import { listAgentNames } from '@/lib/agents/store';
 import { draftAgentFromProse, type TriggerVarInfo } from '@/lib/agents/draft-from-prose';
 import { logger } from '@/lib/logger';
 
@@ -75,13 +76,13 @@ export async function POST(
 
   // Owner-scoped by the TOKEN's subject: this is what stops a token minted
   // for one person from drafting with another person's tool catalog.
-  const draft = await getDraft(db, record.subject, draftId);
+  const draft = await getDraft(record.subject, draftId);
   if (!draft) return NextResponse.json({ error: 'No such draft' }, { status: 404 });
 
   // The claim is the idempotency guard. A redelivered queue row — or a
   // second replica racing the first — finds the row already running and
   // stops, rather than spending a second model call on the same answer.
-  if (!(await claimDraft(db, draftId))) {
+  if (!(await claimDraft(draftId))) {
     return NextResponse.json({ status: draft.status, alreadyClaimed: true });
   }
 
@@ -92,14 +93,7 @@ export async function POST(
     // Agent-finished trigger targets come from the database, not the stored
     // request: a drafted callerAgentId ends up saved on a trigger, so the
     // name→id mapping must only ever cover agents this caller owns NOW.
-    const otherAgents = suggestTriggers
-      ? await db
-          .selectFrom('agents')
-          .select(['id', 'name'])
-          .where('owner_subject', '=', record.subject)
-          .orderBy('name')
-          .execute()
-      : [];
+    const otherAgents = suggestTriggers ? await listAgentNames(record.subject) : [];
 
     const tools = await listAvailableTools(record.subject);
     const drafted = await draftAgentFromProse(db, draft.request.text, tools, {
@@ -111,7 +105,7 @@ export async function POST(
     });
 
     if ('error' in drafted) {
-      await finishDraft(db, draftId, {
+      await finishDraft(draftId, {
         status: 'failed',
         error: drafted.error,
         detail: drafted.detail ?? null,
@@ -119,7 +113,7 @@ export async function POST(
       return NextResponse.json({ status: 'failed' });
     }
 
-    await finishDraft(db, draftId, { status: 'succeeded', result: drafted });
+    await finishDraft(draftId, { status: 'succeeded', result: drafted });
     return NextResponse.json({ status: 'succeeded' });
   } catch (error) {
     // The row must not be left claimed: a draft stuck in `running` can never
@@ -131,7 +125,7 @@ export async function POST(
       draftId,
       error: message,
     });
-    await finishDraft(db, draftId, { status: 'failed', error: message });
+    await finishDraft(draftId, { status: 'failed', error: message });
     // 500 so the queue records a failure too — the row is already terminal,
     // so the retry finds it claimed and stops. The job's error is the trail.
     return NextResponse.json({ error: message }, { status: 500 });

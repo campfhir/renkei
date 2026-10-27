@@ -26,8 +26,8 @@
  *    shortly", never "it did not happen".
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type PendingCardRecord } from '@renkei/db';
+import { isUuid } from '@/lib/uuid';
 import type { QueueProducer } from '@renkei/queue';
 import {
   MAX_QUESTION_ANSWER_CHARS,
@@ -76,35 +76,10 @@ export function batchProposalOf(suggestedAction: unknown): StagedAction[] {
  * decidable through `decideApproval` either.
  */
 export async function listPendingApprovals(
-  db: Kysely<DB>,
   subject: string,
   options: { agentId?: string | undefined; limit?: number | undefined } = {}
 ): Promise<PendingApproval[]> {
-  let query = db
-    .selectFrom('actionable_items as c')
-    .innerJoin('agents as a', 'a.id', 'c.created_by_agent_id')
-    .leftJoin('agent_runs as r', 'r.id', 'c.run_id')
-    .select([
-      'c.id as cardId',
-      'c.run_id as runId',
-      'c.title as title',
-      'c.summary as summary',
-      'c.suggested_action as suggestedAction',
-      'c.created_at as createdAt',
-      'a.id as agentId',
-      'a.name as agentName',
-      'r.waiting_until as waitingUntil',
-    ])
-    .where('c.owner_subject', '=', subject)
-    .where('c.kind', '=', 'approval')
-    // 'suggested' is the only undecided state; the sweep expires the rest.
-    .where('c.status', '=', 'suggested')
-    .where('c.archived_at', 'is', null)
-    .orderBy('c.created_at', 'asc')
-    .limit(Math.min(Math.max(options.limit ?? 20, 1), 50));
-  if (options.agentId) query = query.where('a.id', '=', options.agentId);
-
-  const rows = await query.execute();
+  const rows = await pendingCards(subject, 'approval', options);
   return rows.flatMap((row) => {
     if (!row.runId) return [];
     return [
@@ -116,11 +91,38 @@ export async function listPendingApprovals(
         title: row.title,
         summary: row.summary ?? '',
         actions: batchProposalOf(row.suggestedAction),
-        raisedAt: new Date(row.createdAt).toISOString(),
-        waitingUntil: row.waitingUntil ? new Date(row.waitingUntil).toISOString() : null,
+        raisedAt: row.createdAt.toISOString(),
+        waitingUntil: row.waitingUntil ? row.waitingUntil.toISOString() : null,
       },
     ];
   });
+}
+
+/** The undecided cards of one kind waiting on this person ('suggested' is the only undecided state). */
+async function pendingCards(
+  subject: string,
+  kind: 'approval' | 'question',
+  options: { agentId?: string | undefined; limit?: number | undefined }
+): Promise<PendingCardRecord[]> {
+  if (options.agentId && !isUuid(options.agentId)) return [];
+  return getDataStore().agentRuns.listPendingCards(subject, {
+    kind,
+    ...(options.agentId ? { agentId: options.agentId } : {}),
+    limit: Math.min(Math.max(options.limit ?? 20, 1), 50),
+  });
+}
+
+/** Wake the run a decision unblocked, on the agent's ordering key. */
+async function wakeRun(producer: QueueProducer, runId: string): Promise<boolean> {
+  const run = await getDataStore().agentRuns.findRunAgent(runId);
+  if (!run) return false;
+  const enqueue = await producer.enqueue({
+    source: `agents:${run.agentId}`,
+    type: 'run',
+    payload: { runId: run.id },
+    orderingKey: `agent:${run.agentId}`,
+  });
+  return Boolean(enqueue?.ok);
 }
 
 export type ApprovalDecision = 'approve' | 'decline';
@@ -144,7 +146,6 @@ export type DecideApprovalResult =
  * uses.
  */
 export async function decideApproval(
-  db: Kysely<DB>,
   producer: QueueProducer,
   subject: string,
   input: {
@@ -161,60 +162,27 @@ export async function decideApproval(
 
   // Owner-scoped: someone else's card reads as not-found, never as
   // forbidden — the same rule every agents read follows.
-  const item = await db
-    .selectFrom('actionable_items')
-    .select(['id', 'kind', 'status', 'run_id'])
-    .where('id', '=', input.cardId)
-    .where('owner_subject', '=', subject)
-    .executeTakeFirst();
+  const store = getDataStore().agentRuns;
+  const item = isUuid(input.cardId) ? await store.findCard(input.cardId, subject) : null;
   if (!item) return { outcome: 'not-found' };
-  if (item.kind !== 'approval' || !item.run_id) return { outcome: 'not-approval' };
+  if (item.kind !== 'approval' || !item.runId) return { outcome: 'not-approval' };
   if (item.status !== 'suggested') return { outcome: 'already-decided', status: item.status };
 
   // The optimistic claim: exactly one decider wins; decided beats expired.
-  const claimed = await db
-    .updateTable('actionable_items')
-    .set({
-      status: input.decision === 'approve' ? 'approved' : 'declined',
-      result: JSON.stringify({
-        ...(comment ? { comment } : {}),
-        decidedBy: subject,
-      }),
-      decided_by: subject,
-      decided_at: sql`NOW()`,
-      archived_at: sql`NOW()`,
-      archived_by: subject,
-      updated_at: sql`NOW()`,
-    })
-    .where('id', '=', input.cardId)
-    .where('status', '=', 'suggested')
-    .executeTakeFirst();
-  if (Number(claimed.numUpdatedRows ?? 0) === 0) {
+  const claimed = await store.claimCard(input.cardId, {
+    status: input.decision === 'approve' ? 'approved' : 'declined',
+    result: { ...(comment ? { comment } : {}), decidedBy: subject },
+    decidedBy: subject,
+  });
+  if (!claimed) {
     return { outcome: 'already-decided', status: 'decided' };
   }
 
   // Wake the run. The ordering key serializes with the agent's other jobs —
   // the same key every enqueue of this run uses.
-  const run = await db
-    .selectFrom('agent_runs')
-    .select(['id', 'agent_id'])
-    .where('id', '=', item.run_id)
-    .executeTakeFirst();
-  const enqueue = run
-    ? await producer.enqueue({
-        source: `agents:${run.agent_id}`,
-        type: 'run',
-        payload: { runId: run.id },
-        orderingKey: `agent:${run.agent_id}`,
-      })
-    : null;
+  const resumed = await wakeRun(producer, item.runId);
 
-  return {
-    outcome: 'decided',
-    decision: input.decision,
-    runId: item.run_id,
-    resumed: Boolean(enqueue?.ok),
-  };
+  return { outcome: 'decided', decision: input.decision, runId: item.runId, resumed };
 }
 
 export interface PendingQuestion {
@@ -245,33 +213,10 @@ function questionOf(suggestedAction: unknown): { message: string; form: FormNode
 
 /** The questions waiting on this person, oldest first. */
 export async function listPendingQuestions(
-  db: Kysely<DB>,
   subject: string,
   options: { agentId?: string | undefined; limit?: number | undefined } = {}
 ): Promise<PendingQuestion[]> {
-  let query = db
-    .selectFrom('actionable_items as c')
-    .innerJoin('agents as a', 'a.id', 'c.created_by_agent_id')
-    .leftJoin('agent_runs as r', 'r.id', 'c.run_id')
-    .select([
-      'c.id as cardId',
-      'c.run_id as runId',
-      'c.title as title',
-      'c.suggested_action as suggestedAction',
-      'c.created_at as createdAt',
-      'a.id as agentId',
-      'a.name as agentName',
-      'r.waiting_until as waitingUntil',
-    ])
-    .where('c.owner_subject', '=', subject)
-    .where('c.kind', '=', 'question')
-    .where('c.status', '=', 'suggested')
-    .where('c.archived_at', 'is', null)
-    .orderBy('c.created_at', 'asc')
-    .limit(Math.min(Math.max(options.limit ?? 20, 1), 50));
-  if (options.agentId) query = query.where('a.id', '=', options.agentId);
-
-  const rows = await query.execute();
+  const rows = await pendingCards(subject, 'question', options);
   return rows.flatMap((row) => {
     if (!row.runId) return [];
     const { message, form } = questionOf(row.suggestedAction);
@@ -284,8 +229,8 @@ export async function listPendingQuestions(
         title: row.title,
         message,
         form,
-        raisedAt: new Date(row.createdAt).toISOString(),
-        waitingUntil: row.waitingUntil ? new Date(row.waitingUntil).toISOString() : null,
+        raisedAt: row.createdAt.toISOString(),
+        waitingUntil: row.waitingUntil ? row.waitingUntil.toISOString() : null,
       },
     ];
   });
@@ -306,56 +251,29 @@ export type AnswerQuestionResult =
  * hand.
  */
 export async function answerQuestion(
-  db: Kysely<DB>,
   producer: QueueProducer,
   subject: string,
   input: { cardId: string; answers: unknown }
 ): Promise<AnswerQuestionResult> {
-  const item = await db
-    .selectFrom('actionable_items')
-    .select(['id', 'kind', 'status', 'run_id', 'suggested_action'])
-    .where('id', '=', input.cardId)
-    .where('owner_subject', '=', subject)
-    .executeTakeFirst();
+  const store = getDataStore().agentRuns;
+  const item = isUuid(input.cardId) ? await store.findCard(input.cardId, subject) : null;
   if (!item) return { outcome: 'not-found' };
-  if (item.kind !== 'question' || !item.run_id) return { outcome: 'not-question' };
+  if (item.kind !== 'question' || !item.runId) return { outcome: 'not-question' };
   if (item.status !== 'suggested') return { outcome: 'already-decided', status: item.status };
 
-  const { form } = questionOf(item.suggested_action);
+  const { form } = questionOf(item.suggestedAction);
   const checked = checkQuestionAnswers(flattenFormFields(form), input.answers);
   if (!checked.ok) return { outcome: 'invalid-answers', issues: checked.issues };
 
-  const claimed = await db
-    .updateTable('actionable_items')
-    .set({
-      status: 'answered',
-      result: JSON.stringify({ answers: checked.values, decidedBy: subject }),
-      decided_by: subject,
-      decided_at: sql`NOW()`,
-      archived_at: sql`NOW()`,
-      archived_by: subject,
-      updated_at: sql`NOW()`,
-    })
-    .where('id', '=', input.cardId)
-    .where('status', '=', 'suggested')
-    .executeTakeFirst();
-  if (Number(claimed.numUpdatedRows ?? 0) === 0) {
+  const claimed = await store.claimCard(input.cardId, {
+    status: 'answered',
+    result: { answers: checked.values, decidedBy: subject },
+    decidedBy: subject,
+  });
+  if (!claimed) {
     return { outcome: 'already-decided', status: 'decided' };
   }
 
-  const run = await db
-    .selectFrom('agent_runs')
-    .select(['id', 'agent_id'])
-    .where('id', '=', item.run_id)
-    .executeTakeFirst();
-  const enqueue = run
-    ? await producer.enqueue({
-        source: `agents:${run.agent_id}`,
-        type: 'run',
-        payload: { runId: run.id },
-        orderingKey: `agent:${run.agent_id}`,
-      })
-    : null;
-
-  return { outcome: 'answered', runId: item.run_id, resumed: Boolean(enqueue?.ok) };
+  const resumed = await wakeRun(producer, item.runId);
+  return { outcome: 'answered', runId: item.runId, resumed };
 }

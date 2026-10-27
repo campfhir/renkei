@@ -1,8 +1,7 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getRunForAdmin } from '@/lib/agents/runs-view';
+import { getAgentForAdmin, getRunForAdmin } from '@/lib/agents/runs-view';
 import AdminRunLive from './run-live';
 
 /**
@@ -23,15 +22,11 @@ export default async function AdminRunDetailPage({
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const run = await getRunForAdmin(dbResult.val, agentId, runId);
+  const [run, agentRow] = await Promise.all([
+    getRunForAdmin(agentId, runId),
+    getAgentForAdmin(agentId),
+  ]);
   if (!run) notFound();
-  const agentRow = await dbResult.val
-    .selectFrom('agents')
-    .select('name')
-    .where('id', '=', agentId)
-    .executeTakeFirst();
 
   return (
     <div className="mx-auto max-w-3xl">

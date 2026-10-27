@@ -18,7 +18,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
+import { getDatabase, getDataStore } from '@renkei/db';
 import { effectiveDelivery, getNotificationPrefs } from '@renkei/user-prefs';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
@@ -48,33 +48,35 @@ export function notifyAgentEdited(input: {
     const headline = `${editorName} edited your agent "${input.agentName}"`;
 
     if (wanted.app) {
-      const dbResult = getDatabase();
-      if (dbResult.ok) {
-        const id = randomUUID();
-        await dbResult.val
-          .insertInto('agent_notifications')
-          .values({
-            id,
-            subject: input.ownerSubject,
-            kind: 'agent_edited',
-            headline,
-            agent_id: input.agentId,
-            agent_name: input.agentName,
-          })
-          .execute();
+      const id = randomUUID();
+      await getDataStore().notifications.insert({
+        id,
+        subject: input.ownerSubject,
+        kind: 'agent_edited',
+        category: null,
+        connector: null,
+        tool: null,
+        entity: null,
+        headline,
+        refUrl: null,
+        agentId: input.agentId,
+        agentName: input.agentName,
+        runId: null,
+        meta: null,
+      });
 
-        // Fire-and-forget, same as the row above it: see notifications.ts's
-        // write() (the worker's twin of this function) for why.
-        const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
-        if (keyResult.ok) {
-          void sendPush(
-            dbResult.val,
-            input.ownerSubject,
-            keyResult.val,
-            { title: headline, body: input.agentName, tag: id, refUrl: null, notificationId: id },
-            { log: (message, meta) => logger.warn(message, meta) }
-          );
-        }
+      // Fire-and-forget, same as the row above it. Push delivery belongs to
+      // the notifications package, which reads the device rows itself.
+      const dbResult = getDatabase();
+      const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
+      if (dbResult.ok && keyResult.ok) {
+        void sendPush(
+          dbResult.val,
+          input.ownerSubject,
+          keyResult.val,
+          { title: headline, body: input.agentName, tag: id, refUrl: null, notificationId: id },
+          { log: (message, meta) => logger.warn(message, meta) }
+        );
       }
     }
 

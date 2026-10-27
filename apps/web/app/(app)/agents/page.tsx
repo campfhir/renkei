@@ -2,7 +2,6 @@ import React from 'react';
 import ImportAgentButton from './import-agent-button';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listAgents } from '@/lib/agents/store';
@@ -22,13 +21,10 @@ export default async function AgentsPage(): Promise<React.ReactNode> {
     redirect(signInUrl(`/agents`));
   }
 
-  const dbResult = getDatabase();
-  const [agents, shared] = dbResult.ok
-    ? await Promise.all([
-        listAgents(dbResult.val, session.subject),
-        listAgentsSharedWith(dbResult.val, session.subject),
-      ])
-    : [[], []];
+  const [agents, shared] = await Promise.all([
+    listAgents(session.subject),
+    listAgentsSharedWith(session.subject),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl">

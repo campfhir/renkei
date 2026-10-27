@@ -5,7 +5,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getAgent } from '@/lib/agents/store';
 import { revokeAgentAccessGrant } from '@/lib/agents/access-grants';
@@ -19,14 +18,10 @@ export async function DELETE(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const agent = await getAgent(db, session.subject, agentId);
+  const agent = await getAgent(session.subject, agentId);
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const revoked = await revokeAgentAccessGrant(db, session.subject, agentId, grantId);
+  const revoked = await revokeAgentAccessGrant(session.subject, agentId, grantId);
   if (!revoked) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   recordAuditEvent({

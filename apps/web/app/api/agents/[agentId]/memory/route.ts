@@ -6,8 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
-import { readAgentMemory } from '@renkei/agents/memory';
+import { clearAgentMemory, readAgentMemoryView } from '@/lib/agents/memory-view';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { unavailableMarker } from '@/lib/chat/content-crypto';
@@ -23,19 +22,15 @@ export async function GET(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
   // Access check via the same resolver every agent item route uses.
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // Rows are sealed under the owner's automation key; readAgentMemory
   // opens them through the delegate. When that key is not available the
   // answer says so (the chat's marker for a locked row) rather than
   // showing envelopes or nothing.
-  const memory = await readAgentMemory(db, agentId, { maxEntries: MAX_LISTED_ENTRIES });
+  const memory = await readAgentMemoryView(agentId, MAX_LISTED_ENTRIES);
   return NextResponse.json({
     summary:
       memory.summary !== null
@@ -60,16 +55,8 @@ export async function DELETE(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const deleted = await db
-    .deleteFrom('agent_memories')
-    .where('agent_id', '=', agentId)
-    .executeTakeFirst();
-  return NextResponse.json({ cleared: Number(deleted.numDeletedRows ?? 0) });
+  return NextResponse.json({ cleared: await clearAgentMemory(agentId) });
 }

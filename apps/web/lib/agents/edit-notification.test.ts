@@ -27,29 +27,20 @@ jest.mock('@/lib/mcp-tools/graph/client', () => ({
 jest.mock('@/lib/webex-user-access', () => ({ resolveWebexUserAccess: jest.fn() }));
 jest.mock('@/lib/identity', () => ({ getIdentityDisplay: jest.fn() }));
 
-const inserted: Record<string, unknown>[] = [];
-let dbAvailable = true;
-
+// The App row goes to the data store (a memory one here); push delivery
+// needs the database, which these tests do not have.
 jest.mock('@renkei/db', () => ({
-  getDatabase: () =>
-    dbAvailable
-      ? {
-          ok: true,
-          val: {
-            insertInto: () => ({
-              values: (row: Record<string, unknown>) => {
-                inserted.push(row);
-                return { execute: async () => [] };
-              },
-            }),
-          },
-        }
-      : { ok: false },
+  ...jest.requireActual<object>('@renkei/db'),
+  getDatabase: () => ({ ok: false }),
 }));
 
 import { notifyAgentEdited } from './edit-notification';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '@renkei/user-prefs';
 import { authedFetch } from '@renkei/delegate-client';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
+
+const store = createMemoryDataStore();
+const inserted = () => store.tables.select('agent_notifications');
 
 /** The owner's grants as the delegate hands them out: fetchers, never tokens. */
 const graphAuth = authedFetch(
@@ -80,7 +71,7 @@ const { WebexClient: MockWebexClient } = jest.requireMock<{ WebexClient: jest.Mo
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const OWNER_SUBJECT = 'owner-1';
-const AGENT_ID = 'agent-1';
+const AGENT_ID = '00000000-0000-4000-8000-0000000000a1';
 
 function prefs(
   agentEditedByOthers: Partial<NotificationPrefs['agentEditedByOthers']>,
@@ -107,8 +98,11 @@ function edit(): void {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  inserted.length = 0;
-  dbAvailable = true;
+  store.reset();
+  registerDataStore(store);
+  store.tables.seed({
+    agents: [{ id: AGENT_ID, owner_subject: OWNER_SUBJECT, name: 'Sunday Sweep' }],
+  });
   mockGetIdentityDisplay.mockImplementation(async (subject: string) =>
     subject === OWNER_SUBJECT
       ? { email: 'owner@example.com', displayName: 'Owner' }
@@ -134,7 +128,7 @@ describe('notifyAgentEdited', () => {
     edit();
     await flush();
 
-    expect(inserted).toHaveLength(0);
+    expect(inserted()).toHaveLength(0);
     expect(mockGraphPost).not.toHaveBeenCalled();
     expect(MockWebexClient).not.toHaveBeenCalled();
   });
@@ -145,9 +139,9 @@ describe('notifyAgentEdited', () => {
     edit();
     await flush();
 
-    expect(inserted).toHaveLength(1);
-    expect(inserted[0]).toMatchObject({ kind: 'agent_edited', agent_id: AGENT_ID });
-    expect(String(inserted[0]?.headline)).toContain('Sunday Sweep');
+    expect(inserted()).toHaveLength(1);
+    expect(inserted()[0]).toMatchObject({ kind: 'agent_edited', agent_id: AGENT_ID });
+    expect(String(inserted()[0]?.headline)).toContain('Sunday Sweep');
     expect(mockGraphPost).not.toHaveBeenCalled();
     expect(MockWebexClient).not.toHaveBeenCalled();
   });
@@ -158,7 +152,7 @@ describe('notifyAgentEdited', () => {
     edit();
     await flush();
 
-    expect(inserted).toHaveLength(0);
+    expect(inserted()).toHaveLength(0);
     expect(mockGraphPost).toHaveBeenCalledTimes(1);
     expect(mockGraphPost.mock.calls[0][2]).toBe('/me/sendMail');
     expect(MockWebexClient).not.toHaveBeenCalled();
@@ -174,7 +168,7 @@ describe('notifyAgentEdited', () => {
     edit();
     await flush();
 
-    expect(inserted).toHaveLength(0);
+    expect(inserted()).toHaveLength(0);
     expect(mockGraphPost).not.toHaveBeenCalled();
     expect(MockWebexClient).toHaveBeenCalledWith(webexAuth);
     expect(sendNoteToSelf).toHaveBeenCalledTimes(1);
@@ -192,7 +186,7 @@ describe('notifyAgentEdited', () => {
     edit();
     await flush();
 
-    expect(inserted).toHaveLength(0);
+    expect(inserted()).toHaveLength(0);
     expect(mockGraphPost).toHaveBeenCalledTimes(1);
     expect(MockWebexClient).not.toHaveBeenCalled();
   });
@@ -206,4 +200,8 @@ describe('notifyAgentEdited', () => {
     expect(() => edit()).not.toThrow();
     await flush();
   });
+});
+
+afterAll(() => {
+  resetDataStore();
 });

@@ -112,7 +112,7 @@ maybe('run detail with sealed attempt content', () => {
     expect(JSON.stringify(stored)).not.toContain('Jane Doe');
 
     const { agentId, runId } = await seedRun(owner, 'succeeded', stored);
-    const run = await getRunForOwner(db, owner, agentId, runId);
+    const run = await getRunForOwner(owner, agentId, runId);
     expect(run?.attempts[0]?.detail).toEqual(detail);
     expect(run?.definition).toEqual(definition);
   });
@@ -137,13 +137,13 @@ maybe('run detail with sealed attempt content', () => {
         })
         .execute();
     }
-    const quiet = await getRunForAdmin(db, working.agentId, working.runId);
+    const quiet = await getRunForAdmin(working.agentId, working.runId);
     expect(quiet?.attempts[0]?.redacted).toBe(true);
     expect(quiet?.batches[0]).toMatchObject({ actionCount: 1, status: 'completed' });
     expect(quiet?.batches[0]).not.toHaveProperty('actions');
     expect(JSON.stringify(quiet)).not.toContain('PROJ-42');
 
-    const broken = await getRunForAdmin(db, failed.agentId, failed.runId);
+    const broken = await getRunForAdmin(failed.agentId, failed.runId);
     expect(broken?.batches[0]?.actions?.[0]?.tool).toBe('jira_add_comment');
   });
 
@@ -154,7 +154,7 @@ maybe('run detail with sealed attempt content', () => {
       ...clear,
       sealed: 'uenc1:not-openable',
     });
-    const run = await getRunForAdmin(db, agentId, runId);
+    const run = await getRunForAdmin(agentId, runId);
     const shown = run?.attempts[0]?.detail;
     expect(shown).toMatchObject({
       finish: 'done',
@@ -169,7 +169,7 @@ maybe('run detail with sealed attempt content', () => {
 
   it('passes a pre-sealing plaintext row through as it is', async () => {
     const { agentId, runId } = await seedRun(owner, 'succeeded', detail);
-    const run = await getRunForOwner(db, owner, agentId, runId);
+    const run = await getRunForOwner(owner, agentId, runId);
     expect(run?.attempts[0]?.detail).toEqual(detail);
   });
 });

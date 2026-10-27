@@ -5,10 +5,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getAgent } from '@/lib/agents/store';
+import { countActiveAgentGrants } from '@/lib/agents/access-grants';
 
 export async function GET(
   request: NextRequest,
@@ -18,22 +17,11 @@ export async function GET(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
   // Verify owner
-  const agent = await getAgent(db, session.subject, agentId);
+  const agent = await getAgent(session.subject, agentId);
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // Count unexpired grants only
-  const result = await sql<{ count: number }>`
-    SELECT COUNT(*) AS count
-    FROM agent_access_grants
-    WHERE agent_id = ${agentId}
-      AND (expires_at IS NULL OR expires_at > NOW())
-  `.execute(db);
-
-  const count = result.rows[0]?.count ?? 0;
+  const count = await countActiveAgentGrants(agentId);
   return NextResponse.json({ count });
 }

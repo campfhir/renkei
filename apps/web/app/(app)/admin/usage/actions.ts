@@ -9,7 +9,6 @@
  * server action is reachable on its own.
  */
 
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { safeTimeZone } from '../../usage/window';
@@ -172,14 +171,6 @@ export async function getOrgUsageReport(
     return { ...empty, error: 'Operator access required', forbidden: true };
   }
 
-  // The agents area still reads a person's agents straight from the
-  // database (lib/agents/runs-view.ts); only the per-person view needs them.
-  const agentsOf = (owner: string) => {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return Promise.reject(new Error('Database unavailable'));
-    return listAgentsForOwner(dbResult.val, owner);
-  };
-
   try {
     const [
       tokens,
@@ -209,7 +200,7 @@ export async function getOrgUsageReport(
       getTopToolsOrg(period, timeZone, subject),
       getTokensByModel(period, timeZone, subject),
       listPeople(),
-      subject === null ? Promise.resolve(null) : getPersonProfile(subject, agentsOf),
+      subject === null ? Promise.resolve(null) : getPersonProfile(subject, listAgentsForOwner),
       getVoiceTotals(period, timeZone, subject),
       getVoiceUsers(period, timeZone),
       getImageTotals(period, timeZone, subject),

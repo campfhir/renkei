@@ -236,7 +236,7 @@ async function agentAccessFor(
 ): Promise<AgentAccess | null> {
   const id = typeof agentId === 'string' ? agentId.trim() : '';
   if (!id || !context.subject) return null;
-  return resolveAgentAccess(db, context.subject, id);
+  return resolveAgentAccess(context.subject, id);
 }
 
 /** The instructions, verbatim, or a note that there are none yet. */
@@ -429,13 +429,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async () => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
 
       const [agents, shared] = await Promise.all([
-        listAgents(db, context.subject),
-        listAgentsSharedWith(db, context.subject),
+        listAgents(context.subject),
+        listAgentsSharedWith(context.subject),
       ]);
       if (agents.length === 0 && shared.length === 0) {
         return textResult('You have no agents yet, and none have been shared with you.');
@@ -807,7 +804,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
-      const approvals = await listPendingApprovals(dbResult.val, context.subject, {
+      const approvals = await listPendingApprovals(context.subject, {
         agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
         limit: typeof args.limit === 'number' ? args.limit : undefined,
       });
@@ -877,16 +874,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
-      const result = await decideApproval(
-        dbResult.val,
-        agentJobsQueue().producer,
-        context.subject,
-        {
-          cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
-          decision,
-          comment: typeof args.comment === 'string' ? args.comment : undefined,
-        }
-      );
+      const result = await decideApproval(agentJobsQueue().producer, context.subject, {
+        cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
+        decision,
+        comment: typeof args.comment === 'string' ? args.comment : undefined,
+      });
 
       switch (result.outcome) {
         case 'comment-too-long':
@@ -955,7 +947,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
-      const questions = await listPendingQuestions(dbResult.val, context.subject, {
+      const questions = await listPendingQuestions(context.subject, {
         agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
         limit: typeof args.limit === 'number' ? args.limit : undefined,
       });
@@ -1016,15 +1008,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
-      const result = await answerQuestion(
-        dbResult.val,
-        agentJobsQueue().producer,
-        context.subject,
-        {
-          cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
-          answers: typeof args.answers === 'object' && args.answers !== null ? args.answers : {},
-        }
-      );
+      const result = await answerQuestion(agentJobsQueue().producer, context.subject, {
+        cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
+        answers: typeof args.answers === 'object' && args.answers !== null ? args.answers : {},
+      });
 
       switch (result.outcome) {
         case 'invalid-answers':
@@ -1107,7 +1094,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         args.status === 'canceled'
           ? args.status
           : undefined;
-      const runs = await listRunsForOwner(dbResult.val, access.ownerSubject, agent.id, {
+      const runs = await listRunsForOwner(access.ownerSubject, agent.id, {
         status,
         limit,
       });
@@ -1116,7 +1103,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // "waiting" on its own says a run is stuck without saying on WHAT, and
       // the answer is a decision this caller can make right here.
       const waiting = runs.some((run) => run.status === 'waiting')
-        ? await listPendingApprovals(dbResult.val, context.subject, {
+        ? await listPendingApprovals(context.subject, {
             agentId: agent.id,
             limit: 50,
           })
@@ -1125,10 +1112,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // What each run cost, from the token ledger — the figure the usage
       // dashboards show per agent, here per run. A run with no ledger rows
       // (queued, never reached the model) simply has no tokens line.
-      const tokensByRun = await getTokenUsageByRun(
-        dbResult.val,
-        runs.map((run) => run.id)
-      );
+      const tokensByRun = await getTokenUsageByRun(runs.map((run) => run.id));
       const now = Date.now();
 
       const lines = [`${runs.length} run(s) of "${agent.name}", newest first:`];
@@ -1186,10 +1170,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .where('id', '=', runId)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
-      const access = await resolveAgentAccess(db, context.subject, runRow.agent_id);
+      const access = await resolveAgentAccess(context.subject, runRow.agent_id);
       if (!access) return errText('No run of yours has that id.');
       const agent = access.agent;
-      const run = await getRunForOwner(db, access.ownerSubject, agent.id, runId);
+      const run = await getRunForOwner(access.ownerSubject, agent.id, runId);
       if (!run) return errText('No run of yours has that id.');
 
       // A parked run's timeline ends mid-air without this: the last thing it
@@ -1200,7 +1184,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const approval =
         access.viewerIsOwner && run.status === 'waiting'
           ? (
-              await listPendingApprovals(db, access.ownerSubject, {
+              await listPendingApprovals(access.ownerSubject, {
                 agentId: agent.id,
                 limit: 50,
               })
@@ -1208,7 +1192,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           : undefined;
 
       // The run's own tokens from the ledger, by model.
-      const usageRows = await getRunTokenUsage(db, runId);
+      const usageRows = await getRunTokenUsage(runId);
 
       return textResult(
         [
@@ -1269,9 +1253,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         // to those ids. The caller's reach decides what is listed; the
         // ledger only ever fills in numbers for ids already resolved.
         const [own, shared, byAgent] = await Promise.all([
-          listAgents(db, context.subject),
-          listAgentsSharedWith(db, context.subject),
-          getTokenUsageByAgent(db),
+          listAgents(context.subject),
+          listAgentsSharedWith(context.subject),
+          getTokenUsageByAgent(),
         ]);
         if (own.length === 0 && shared.length === 0) {
           return textResult('You have no agents yet, and none have been shared with you.');
@@ -1297,9 +1281,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
       const [tokens, byModel, tools] = await Promise.all([
-        getAgentTokenUsage(db, agent.id),
-        getTokenUsageByModel(db, agent.id),
-        getAgentToolUsage(db, agent.id, TOOL_USAGE_WINDOW_DAYS),
+        getAgentTokenUsage(agent.id),
+        getTokenUsageByModel(agent.id),
+        getAgentToolUsage(agent.id, TOOL_USAGE_WINDOW_DAYS),
       ]);
       return textResult(
         renderAgentUsageText({
@@ -1351,10 +1335,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .where('id', '=', runId)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
-      const access = await resolveAgentAccess(db, context.subject, runRow.agent_id);
+      const access = await resolveAgentAccess(context.subject, runRow.agent_id);
       if (!access) return errText('No run of yours has that id.');
 
-      const result = await requestRunCancellation(db, agentJobsQueue().producer, {
+      const result = await requestRunCancellation(agentJobsQueue().producer, {
         agentId: access.agent.id,
         runId,
         ownerSubject: access.ownerSubject,
@@ -1422,7 +1406,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .where('id', '=', runId)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
-      const access = await resolveAgentAccess(db, context.subject, runRow.agent_id);
+      const access = await resolveAgentAccess(context.subject, runRow.agent_id);
       if (!access) return errText('No run of yours has that id.');
       const agent = access.agent;
 
@@ -1879,7 +1863,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
-      const notes = await listAgentNotes(dbResult.val, agent.id);
+      const notes = await listAgentNotes(agent.id);
       if (notes.length === 0) return textResult(`"${agent.name}" has no knowledge notes.`);
       const lines = [`${notes.length} note(s) on "${agent.name}":`];
       for (const note of notes) {
@@ -1966,7 +1950,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           lines.push(`- "${title || '(untitled)'}": rejected — bad title or content length.`);
           continue;
         }
-        const result = await createAgentNote(dbResult.val, {
+        const result = await createAgentNote({
           agentId: agent.id,
           ownerEmail,
           title,
@@ -2029,12 +2013,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       // Full-replacement semantics underneath (same as the web panel): an
       // omitted half is carried over from the stored note.
-      const current = (await listAgentNotes(dbResult.val, agent.id)).find(
-        (note) => note.noteId === noteId
-      );
+      const current = (await listAgentNotes(agent.id)).find((note) => note.noteId === noteId);
       if (!current) return errText(noteErrorText.NOT_FOUND);
 
-      const result = await updateAgentNote(dbResult.val, {
+      const result = await updateAgentNote({
         agentId: agent.id,
         ownerEmail,
         noteId,
@@ -2081,7 +2063,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const lines: string[] = [];
       let failures = 0;
       for (const noteId of noteIds) {
-        const result = await deleteAgentNote(dbResult.val, {
+        const result = await deleteAgentNote({
           agentId: agent.id,
           ownerEmail,
           noteId,
@@ -2346,7 +2328,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if ('error' in parsed) return errText(parsed.error);
 
       const dryRun = args.confirm !== true;
-      const result = await saveAgent(dbResult.val, context.subject, parsed, {
+      const result = await saveAgent(context.subject, parsed, {
         dryRun,
       });
       if (result.outcome === 'not-found') return errText(NOT_FOUND);
@@ -2590,7 +2572,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       ].join(', ');
 
       const dryRun = args.confirm !== true;
-      const result = await saveAgent(dbResult.val, context.subject, parsed, {
+      const result = await saveAgent(context.subject, parsed, {
         agentId: agent.id,
         dryRun,
         ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),
@@ -2688,7 +2670,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if ('error' in parsed) return errText(parsed.error);
 
       const dryRun = args.confirm !== true;
-      const result = await saveAgent(dbResult.val, context.subject, parsed, {
+      const result = await saveAgent(context.subject, parsed, {
         agentId: agent.id,
         dryRun,
         ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),

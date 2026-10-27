@@ -1,6 +1,5 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -20,18 +19,16 @@ export default async function EditAgentPage({
     redirect(signInUrl(`/agents/${agentId}/edit`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
   // Access-scoped lookup (owner or unexpired grant): anyone else's agent
   // is a 404, never a hint.
-  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) notFound();
   const agent = access.agent;
 
   // Builder data resolves against the OWNER: the agent runs on the owner's
   // grants, so the tool palette, and the "call another agent" list, must
   // describe the owner's world even when a grantee is doing the editing.
-  const data = await loadBuilderData(dbResult.val, access.ownerSubject, agentId);
+  const data = await loadBuilderData(access.ownerSubject, agentId);
 
   // No width cap here: the builder manages its own two-column layout.
   return (
@@ -54,7 +51,8 @@ export default async function EditAgentPage({
           )}
         </div>
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Changes apply to future runs — anything already running keeps the instructions it started with.
+          Changes apply to future runs — anything already running keeps the instructions it started
+          with.
         </p>
       </div>
       <AgentBuilder

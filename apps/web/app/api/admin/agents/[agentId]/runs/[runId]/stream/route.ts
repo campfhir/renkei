@@ -9,7 +9,6 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getRunForAdmin, type RunDetail } from '@/lib/agents/runs-view';
 import { isRunSettled } from '@/lib/agents/run-labels';
@@ -32,11 +31,7 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const initial = await getRunForAdmin(db, agentId, runId);
+  const initial = await getRunForAdmin(agentId, runId);
   if (!initial) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const encoder = new TextEncoder();
@@ -74,7 +69,7 @@ export async function GET(
 
       timer = setInterval(() => {
         if (closed) return;
-        void getRunForAdmin(db, agentId, runId).then((run) => {
+        void getRunForAdmin(agentId, runId).then((run) => {
           if (run) send(run);
         });
       }, POLL_MS);
