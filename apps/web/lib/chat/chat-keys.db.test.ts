@@ -9,8 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { isResourceEncrypted } from '@renkei/crypto';
 import { listResourceKeyHolders, openResourceKey } from '@renkei/user-keys';
 import {
@@ -36,7 +35,6 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('chat and project keys through the chat', () => {
   const delegate = useTestDelegate();
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const owner = `owner-${suiteId.slice(0, 8)}`;
   const friend = `friend-${suiteId.slice(0, 8)}`;
@@ -47,22 +45,13 @@ maybe('chat and project keys through the chat', () => {
     kind,
     resourceId: id,
   });
+  /** The chat's rows as stored, sealed, in order. */
   const rawContent = async (id: string) =>
-    (
-      await db
-        .selectFrom('chat_messages')
-        .select('content')
-        .where('chat_id', '=', id)
-        .orderBy('seq', 'asc')
-        .execute()
-    ).map((row) => row.content);
+    (await getDataStore().chatThreads.listMessages(id)).map((row) => row.content);
   const texts = (rows: Awaited<ReturnType<typeof listMessages>>) =>
     rows.map((row) => row.blocks.map((b) => (b.type === 'text' ? b.text : `[${b.type}]`)).join(''));
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
     // The owner and the friend hold keys, as their browsers would have
     // enrolled them; the stranger never enrolled and holds nothing.
     await delegate.enroll(owner);
@@ -147,12 +136,11 @@ maybe('chat and project keys through the chat', () => {
   });
 
   it('revoking the share forgets the wrapping; the owner is untouched', async () => {
-    const grant = await db
-      .selectFrom('resource_access_grants')
-      .select('id')
-      .where('resource_id', '=', chatId)
-      .where('grantee_subject', '=', friend)
-      .executeTakeFirstOrThrow();
+    // The grant as the owner's "who has access" list shows it.
+    const grant = (await getDataStore().resourceGrants.listForOwner(owner, 'chat', chatId)).find(
+      (row) => row.granteeSubject === friend
+    );
+    if (!grant) throw new Error('no grant for the friend');
     const revoked = await revokeResourceGrant(owner, 'chat', chatId, grant.id);
     expect(revoked).toBe(friend);
     await revokeKey('chat', chatId, friend);
@@ -163,8 +151,14 @@ maybe('chat and project keys through the chat', () => {
 
   it('a chat without a key reads as "no key" to a viewer until its owner mints one', async () => {
     // A chat inserted outside the app (the sweep's starting point).
-    const bareId = randomUUID();
-    await db.insertInto('chats').values({ id: bareId, owner_subject: owner }).execute();
+    const bareId = await getDataStore().chats.create({
+      ownerSubject: owner,
+      projectId: null,
+      llmModelId: null,
+      toolConfig: null,
+      thinkingEnabled: false,
+      autoMode: false,
+    });
     await grantResourceAccess(owner, 'chat', bareId, {
       granteeSubject: friend,
       role: 'viewer',
@@ -212,12 +206,8 @@ maybe('chat and project keys through the chat', () => {
     });
     if (!projectId) throw new Error('no project');
     expect((await openResourceKey(ref(projectId, 'chat_project'), owner)).ok).toBe(true);
-    const raw = await db
-      .selectFrom('chat_projects')
-      .select('instructions')
-      .where('id', '=', projectId)
-      .executeTakeFirstOrThrow();
-    expect(raw.instructions && isResourceEncrypted(raw.instructions)).toBe(true);
+    const raw = await getDataStore().chatProjects.get(projectId);
+    expect(raw?.instructions && isResourceEncrypted(raw.instructions)).toBe(true);
 
     const asOwner = await resolveProjectAccess(owner, projectId);
     if (!asOwner) throw new Error('owner');
@@ -261,13 +251,9 @@ maybe('chat and project keys through the chat', () => {
       content: 'prefers tables',
       chatId: null,
     });
-    const stored = await db
-      .selectFrom('chat_user_memories')
-      .select('content')
-      .where('owner_subject', '=', owner)
-      .executeTakeFirstOrThrow();
+    const stored = await getDataStore().userMemory.list(owner, 10);
     // Under the person's user key alone (`upriv1:`), never the automation key.
-    expect(stored.content.startsWith('upriv1:')).toBe(true);
+    expect(stored.map((row) => row.content.startsWith('upriv1:'))).toEqual([true]);
     expect((await readUserMemory(owner)).entries.map((e) => e.content)).toEqual(['prefers tables']);
     expect((await readUserMemory(friend)).entries).toEqual([]);
   });

@@ -6,8 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext } from './local-tools';
 import { insertMessage } from './messages';
@@ -28,22 +27,21 @@ function textOf(result: McpToolResult): string {
 
 maybe('chat_recall_chats', () => {
   const delegate = useTestDelegate();
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const me = `me-${suiteId.slice(0, 8)}`;
   const colleague = `colleague-${suiteId.slice(0, 8)}`;
-  const projectId = randomUUID();
-  const otherProjectId = randomUUID();
+  let projectId = '';
+  let otherProjectId = '';
   /** This conversation, in the project. */
-  const thisChat = randomUUID();
+  let thisChat = '';
   /** A colleague's earlier chat in the same project. */
-  const siblingChat = randomUUID();
+  let siblingChat = '';
   /** My own chat outside any project. */
-  const myOtherChat = randomUUID();
+  let myOtherChat = '';
   /** My own chat in another project. */
-  const elsewhereChat = randomUUID();
+  let elsewhereChat = '';
   /** A chat in the project nothing was ever said in. */
-  const emptyChat = randomUUID();
+  let emptyChat = '';
 
   const tool = recallTools()[0]!;
   const contextFor = (chatId: string, inProject: string | null): LocalToolContext => ({
@@ -58,34 +56,40 @@ maybe('chat_recall_chats', () => {
     tool.execute(input, context);
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
+    const store = getDataStore();
     await delegate.enroll(me);
     await delegate.enroll(colleague);
-    await db
-      .insertInto('chat_projects')
-      .values([
-        { id: projectId, owner_subject: me, name: 'Ledger', kind: 'code' },
-        { id: otherProjectId, owner_subject: me, name: 'Billing' },
-      ])
-      .execute();
-    const chat = (id: string, owner: string, project: string | null, title: string) => ({
-      id,
-      owner_subject: owner,
-      project_id: project,
-      title,
+    // A code project (a repository on it) and a plain chat project.
+    projectId = await store.chatProjects.create({
+      ownerSubject: me,
+      name: 'Ledger',
+      description: null,
+      toolConfig: null,
+      repo: { provider: 'github', fullName: 'acme/ledger', branch: null },
     });
-    await db
-      .insertInto('chats')
-      .values([
-        chat(thisChat, me, projectId, 'Month-end close'),
-        chat(siblingChat, colleague, projectId, 'Refund postings'),
-        chat(myOtherChat, me, null, 'Refund policy email'),
-        chat(elsewhereChat, me, otherProjectId, 'Refund invoices'),
-        chat(emptyChat, me, projectId, 'Nothing here'),
-      ])
-      .execute();
+    otherProjectId = await store.chatProjects.create({
+      ownerSubject: me,
+      name: 'Billing',
+      description: null,
+      toolConfig: null,
+    });
+    const chat = async (owner: string, project: string | null, title: string) => {
+      const id = await store.chats.create({
+        ownerSubject: owner,
+        projectId: project,
+        llmModelId: null,
+        toolConfig: null,
+        thinkingEnabled: false,
+        autoMode: false,
+      });
+      await store.chats.update(owner, id, { title });
+      return id;
+    };
+    thisChat = await chat(me, projectId, 'Month-end close');
+    siblingChat = await chat(colleague, projectId, 'Refund postings');
+    myOtherChat = await chat(me, null, 'Refund policy email');
+    elsewhereChat = await chat(me, otherProjectId, 'Refund invoices');
+    emptyChat = await chat(me, projectId, 'Nothing here');
     const say = async (chatId: string, text: string) => {
       const row = await insertMessage({
         chatId,
@@ -97,19 +101,14 @@ maybe('chat_recall_chats', () => {
         blocks: [{ type: 'text', text }],
       });
       if (!row) throw new Error('message not sealed — is TOKEN_ENCRYPTION_KEY set?');
-      await db
-        .updateTable('chats')
-        .set({ last_message_at: new Date() })
-        .where('id', '=', chatId)
-        .execute();
+      // The send's touch: the chat now has a last message.
+      await store.chats.touch(chatId, {});
     };
     await say(thisChat, 'Close the books for March.');
     await say(siblingChat, 'Refunds post to the clearing account, not revenue.');
     await say(myOtherChat, 'Draft the refund policy email to customers.');
     await say(elsewhereChat, 'Refund the duplicate invoices from April.');
   });
-
-  afterAll(async () => {});
 
   it('in a project, lists only the project’s other started chats', async () => {
     const result = await call(contextFor(thisChat, projectId), {});

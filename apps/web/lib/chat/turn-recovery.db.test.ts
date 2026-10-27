@@ -7,47 +7,34 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { claimResumableTurns, interruptExhaustedTurns, suspendTurn, getTurn } from './turns';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('turn recovery claims', () => {
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const subject = `owner-${suiteId.slice(0, 8)}`;
-
-  beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-  });
+  const chats: string[] = [];
 
   afterAll(async () => {
-    await db
-      .deleteFrom('chat_messages')
-      .where(
-        'chat_id',
-        'in',
-        db.selectFrom('chats').select('id').where('owner_subject', '=', subject)
-      )
-      .execute();
-    await db
-      .deleteFrom('chat_turns')
-      .where(
-        'chat_id',
-        'in',
-        db.selectFrom('chats').select('id').where('owner_subject', '=', subject)
-      )
-      .execute();
-    await db.deleteFrom('chats').where('owner_subject', '=', subject).execute();
-    await closeDatabase();
+    // A chat's turns and messages go with it.
+    const store = getDataStore();
+    for (const chatId of chats) await store.chats.delete(subject, chatId);
+    await closeDataStore();
   });
 
   async function chat(): Promise<string> {
-    const id = randomUUID();
-    await db.insertInto('chats').values({ id, owner_subject: subject }).execute();
+    const id = await getDataStore().chats.create({
+      ownerSubject: subject,
+      projectId: null,
+      llmModelId: null,
+      toolConfig: null,
+      thinkingEnabled: false,
+      autoMode: false,
+    });
+    chats.push(id);
     return id;
   }
 
@@ -55,24 +42,19 @@ maybe('turn recovery claims', () => {
    *  suites' (and earlier runs') turns are filtered out of every answer. */
   const options = { staleSeconds: 60, maxResumes: 3, limit: 100 };
   const mine = new Set<string>();
-  const claim = async () => (await claimResumableTurns(options)).filter((row) => mine.has(row.id));
+  const claim = async (staleSeconds = options.staleSeconds) =>
+    (await claimResumableTurns({ ...options, staleSeconds })).filter((row) => mine.has(row.id));
 
-  async function turn(chatId: string, over: { resume_count?: number } = {}): Promise<string> {
-    const inserted = await db
-      .insertInto('chat_turns')
-      .values({
-        chat_id: chatId,
-        status: 'running',
-        kind: 'reply',
-        llm_model_id: null,
-        thinking_budget: null,
-        runner: JSON.stringify({ roles: ['member'], voice: false }),
-        ...over,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    mine.add(inserted.id);
-    return inserted.id;
+  async function turn(chatId: string, kind = 'reply'): Promise<string> {
+    const id = await getDataStore().chatThreads.createTurn({
+      chatId,
+      kind,
+      llmModelId: null,
+      thinkingBudget: null,
+      runner: { roles: ['member'], voice: false },
+    });
+    mine.add(id);
+    return id;
   }
 
   it('claims a suspended turn once, clearing the mark and counting the resume', async () => {
@@ -93,69 +75,60 @@ maybe('turn recovery claims', () => {
   });
 
   it('treats a stale heartbeat as a dead process, and a live one as running', async () => {
-    const turnId = await turn(await chat());
-    await db
-      .updateTable('chat_turns')
-      .set({ updated_at: sql`NOW() - INTERVAL '2 minutes'` })
-      .where('id', '=', turnId)
-      .execute();
-    const claimed = await claim();
+    const chatId = await chat();
+    const turnId = await turn(chatId);
+    // A live heartbeat: left alone.
+    expect((await claim()).map((row) => row.id)).not.toContain(turnId);
+    // Its heartbeat older than the sweep's threshold (a second, here,
+    // rather than a minute): taken as a dead process's turn.
+    await sleep(1_200);
+    const claimed = (await claim(1)).filter((row) => row.id === turnId);
     expect(claimed.map((row) => row.id)).toEqual([turnId]);
     expect(claimed[0]?.resumeCount).toBe(1);
+    expect((await getTurn(chatId, turnId))?.resumeCount).toBe(1);
   });
 
   it('never claims a compaction turn or a settled one', async () => {
-    const chatId = await chat();
-    const compaction = await db
-      .insertInto('chat_turns')
-      .values({
-        chat_id: chatId,
-        status: 'running',
-        kind: 'compaction',
-        llm_model_id: null,
-        thinking_budget: null,
-        suspended_at: sql`NOW()`,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
+    const compaction = await turn(await chat(), 'compaction');
+    await suspendTurn(compaction, 0);
     const done = await turn(await chat());
-    await db
-      .updateTable('chat_turns')
-      .set({ status: 'completed', suspended_at: sql`NOW()` })
-      .where('id', '=', done)
-      .execute();
+    await suspendTurn(done, 1);
+    await getDataStore().chatThreads.finishTurn(done, {
+      status: 'completed',
+      error: null,
+      iterations: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
     const ids = (await claim()).map((row) => row.id);
-    expect(ids).not.toContain(compaction.id);
+    expect(ids).not.toContain(compaction);
     expect(ids).not.toContain(done);
   });
 
   it('ends a turn past its resume budget as interrupted, with its streaming rows', async () => {
     const chatId = await chat();
-    const turnId = await turn(chatId, { resume_count: 3 });
-    const message = await db
-      .insertInto('chat_messages')
-      .values({
-        chat_id: chatId,
-        turn_id: turnId,
-        seq: 1,
-        role: 'assistant',
-        kind: 'assistant',
-        status: 'streaming',
-        content: '',
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
+    const turnId = await turn(chatId);
+    const message = await getDataStore().chatThreads.insertMessage({
+      chatId,
+      turnId,
+      role: 'assistant',
+      kind: 'assistant',
+      status: 'streaming',
+      content: '',
+    });
+    // Resumed as many times as the budget allows: lost and claimed back three times.
+    for (let resumes = 1; resumes <= options.maxResumes; resumes += 1) {
+      await suspendTurn(turnId, resumes);
+      const claimed = (await claim()).filter((row) => row.id === turnId);
+      expect(claimed.map((row) => row.resumeCount)).toEqual([resumes]);
+    }
     await suspendTurn(turnId, 9);
     expect((await claim()).map((row) => row.id)).not.toContain(turnId);
     const ended = await interruptExhaustedTurns({ ...options, error: 'too many' });
     expect(ended).toContain(turnId);
     const after = await getTurn(chatId, turnId);
     expect(after).toMatchObject({ status: 'interrupted', error: 'too many', suspendedAt: null });
-    const row = await db
-      .selectFrom('chat_messages')
-      .select('status')
-      .where('id', '=', message.id)
-      .executeTakeFirstOrThrow();
-    expect(row.status).toBe('interrupted');
+    const row = await getDataStore().chatThreads.getMessage(chatId, message.id);
+    expect(row?.status).toBe('interrupted');
   });
 });

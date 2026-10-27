@@ -53,7 +53,12 @@ export function memoryChatThreads(tables: MemoryTables): ChatThreadStore {
       return orderBy(
         tables.select('chat_widget_decisions', (r) => r.chat_id === id),
         [(r) => r.state_key]
-      ).map((r) => ({ stateKey: r.state_key, state: r.state }));
+      ).map((r) => ({
+        stateKey: r.state_key,
+        state: r.state,
+        decision: r.decision,
+        decidedBy: r.decided_by,
+      }));
     },
     async getWidgetDecision(stateKey) {
       return tables.first('chat_widget_decisions', (r) => r.state_key === stateKey)?.state ?? null;

@@ -60,11 +60,16 @@ export function postgresChatThreads(db: () => Kysely<DB>): ChatThreadStore {
     async listWidgetDecisions(chatId) {
       const rows = await db()
         .selectFrom('chat_widget_decisions')
-        .select(['state_key', 'state'])
+        .select(['state_key', 'state', 'decision', 'decided_by'])
         .where('chat_id', '=', chatId)
         .orderBy('state_key')
         .execute();
-      return rows.map((row) => ({ stateKey: row.state_key, state: row.state }));
+      return rows.map((row) => ({
+        stateKey: row.state_key,
+        state: row.state,
+        decision: row.decision,
+        decidedBy: row.decided_by,
+      }));
     },
     async getWidgetDecision(stateKey) {
       const row = await db()
