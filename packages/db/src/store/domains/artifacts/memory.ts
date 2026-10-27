@@ -460,5 +460,13 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
         ).length > 0
       );
     },
+    async listBlobsInChats(chatIds) {
+      if (chatIds.length === 0) return [];
+      const ids = new Set(chatIds.map((id) => tables.param('artifacts', 'chat_id', id)));
+      return orderBy(
+        tables.select('artifacts', (r) => r.chat_id !== null && ids.has(r.chat_id)),
+        [(r) => r.id]
+      ).map((row) => ({ id: row.id, chatId: row.chat_id, blobKey: row.blob_key }));
+    },
   };
 }

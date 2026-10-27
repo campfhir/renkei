@@ -299,4 +299,60 @@ export const notificationScenarios: Scenario<DataStore>[] = [
       await store.notifications.wasWatchingChat('bob', chat(2), new Date(at(0))),
     ],
   },
+  {
+    method: 'notifications.insert',
+    name: 'with the step that acted',
+    run: async (store) => {
+      await store.notifications.insert({
+        id: id(41),
+        subject: 'ann',
+        kind: 'act',
+        category: 'mail',
+        connector: 'outlook',
+        tool: 'outlook_send_mail',
+        entity: null,
+        headline: 'sent',
+        refUrl: null,
+        refId: 'msg-1',
+        stepId: 'step-a',
+        agentId: null,
+        agentName: 'Bot',
+        runId: null,
+        meta: null,
+        createdAt: new Date(at(3)),
+      });
+      return store.notifications.list('ann', { limit: 5 });
+    },
+  },
+  {
+    method: 'notifications.setHeadline',
+    name: 'one row re-headlined, still unread; others and unknown ids untouched',
+    fixture,
+    run: async (store) => {
+      await store.notifications.setHeadline(id(2), 'at 3 ×4');
+      await store.notifications.setHeadline(id(99), 'nobody');
+      return [
+        await store.notifications.list('ann', { limit: 10 }),
+        await store.notifications.list('bob', { limit: 10 }),
+      ];
+    },
+  },
+  {
+    method: 'notifications.pruneBefore',
+    name: 'oldest first across people, bounded, ties by id; read or not',
+    fixture,
+    run: async (store) => {
+      const first = await store.notifications.pruneBefore(new Date(at(5)), 4);
+      const after = (await store.notifications.list('ann', { limit: 10 })).map((n) => n.id);
+      const second = await store.notifications.pruneBefore(new Date(at(5)), 10);
+      return [
+        first,
+        after,
+        second,
+        (await store.notifications.list('ann', { limit: 10 })).map((n) => n.id),
+        (await store.notifications.list('bob', { limit: 10 })).map((n) => n.id),
+        await store.notifications.pruneBefore(new Date(at(0)), 10),
+      ];
+    },
+  },
 ];

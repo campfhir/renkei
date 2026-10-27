@@ -143,6 +143,20 @@ export const queueScenarios: Scenario<DataStore>[] = [
     ],
   },
   ...consumerScenarios(),
+  {
+    method: 'queues.hasLiveAgentRunJob',
+    name: 'pending or processing rows of the run only',
+    fixture: {
+      agent_jobs: [
+        message(41, 'run', { runId: 'r1' }, { source: 'agents:a', status: 'done' }),
+        message(42, 'run', { runId: 'r2' }, { source: 'agents:a', status: 'processing' }),
+        message(43, 'run', { runId: 'r3' }, { source: 'agents:a' }),
+        message(44, 'run', { other: 'r4' }, { source: 'agents:a' }),
+      ],
+    },
+    run: async (store) =>
+      Promise.all(['r1', 'r2', 'r3', 'r4', 'none'].map((r) => store.queues.hasLiveAgentRunJob(r))),
+  },
 ];
 
 /** A live row with every consumer-side column named. */

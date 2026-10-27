@@ -249,4 +249,13 @@ export interface ArtifactStore {
   }): Promise<boolean>;
   /** Detaches; false when the project did not hold it. */
   removeReference(input: { artifactId: string; projectId: string }): Promise<boolean>;
+  /** The stored objects of every attachment in these chats, by id; an empty list reads none. */
+  listBlobsInChats(chatIds: readonly string[]): Promise<ArtifactBlobRecord[]>;
+}
+
+/** Where one chat attachment's bytes live. */
+export interface ArtifactBlobRecord {
+  id: string;
+  chatId: string | null;
+  blobKey: string;
 }

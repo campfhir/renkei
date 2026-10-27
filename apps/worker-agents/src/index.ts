@@ -15,7 +15,7 @@
  * on (its MCP endpoint is how tools are executed, as the run owner).
  */
 
-import { checkDataStore, closeDataStore, getDatabase } from '@renkei/db';
+import { checkDataStore, closeDataStore } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
 import { agentJobsQueue, webhookEventsQueue } from '@renkei/queue';
 import { createEventLoop, schedulePeriodicSweep } from '@renkei/worker-loop';
@@ -81,14 +81,8 @@ async function main(): Promise<void> {
   watchLogLevel(logger);
 
   if (!checkDataStore().ok) throw new Error('Database unavailable at boot');
-  // Transitional: the handlers and sweeps below still take a handle until
-  // they read through the data store; this goes with the last of them.
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('Database unavailable at boot');
-
-  const db = dbResult.val;
-  const handleDraft = createDraftHandler({ db, webBaseUrl: webBaseUrl() });
-  const handleOptimize = createOptimizeHandler({ db, webBaseUrl: webBaseUrl() });
+  const handleDraft = createDraftHandler({ webBaseUrl: webBaseUrl() });
+  const handleOptimize = createOptimizeHandler({ webBaseUrl: webBaseUrl() });
   // Set by the signal handler below and read by the engine at every
   // checkpoint: a run in flight is handed back to the queue at the next
   // one (step, model call, tool call) rather than run to its end — or
@@ -96,7 +90,6 @@ async function main(): Promise<void> {
   // its job `processing` until the 30-minute lease expired.
   let stopRequested = false;
   const handleRun = createAgentRunHandler({
-    db,
     webBaseUrl: webBaseUrl(),
     // Accepted batches go onto our own queue, for the action executor.
     actionsProducer: queue.producer,
@@ -108,7 +101,6 @@ async function main(): Promise<void> {
   // The only path an agent's changes are made by: accepted batches, under
   // a token of their own, the run handed back when they are done.
   const handleActions = createActionsHandler({
-    db,
     webBaseUrl: webBaseUrl(),
     runProducer: queue.producer,
   });
@@ -121,7 +113,7 @@ async function main(): Promise<void> {
       'agent schedules',
       'worker-agents/schedule',
       SCHEDULE_SWEEP_MS,
-      createScheduleSweep(db, queue.producer)
+      createScheduleSweep(queue.producer)
     ),
     // Approval timeouts + heals: card claims are optimistically locked and
     // duplicate resume enqueues replay harmlessly.
@@ -130,14 +122,14 @@ async function main(): Promise<void> {
       'approval waits',
       'worker-agents/approval-sweep',
       APPROVAL_SWEEP_MS,
-      createApprovalSweep(db, queue.producer)
+      createApprovalSweep(queue.producer)
     ),
     schedulePeriodicSweep(
       logger,
       'agent run retention',
       'worker-agents/retention',
       RETENTION_SWEEP_MS,
-      createRetentionSweep(db)
+      createRetentionSweep()
     ),
     // Chat turns whose runner died, and the org's chat retention (bytes
     // before rows). Both idempotent.
@@ -146,21 +138,21 @@ async function main(): Promise<void> {
       'chat turn janitor',
       'worker-agents/chat-janitor',
       CHAT_JANITOR_INTERVAL_MS,
-      createChatTurnJanitor(db)
+      createChatTurnJanitor()
     ),
     schedulePeriodicSweep(
       logger,
       'chat retention',
       'worker-agents/chat-retention',
       CHAT_RETENTION_INTERVAL_MS,
-      createChatRetentionSweep(db)
+      createChatRetentionSweep()
     ),
     schedulePeriodicSweep(
       logger,
       'agent notification retention',
       'worker-agents/notification-retention',
       RETENTION_SWEEP_MS,
-      createNotificationRetentionSweep(db)
+      createNotificationRetentionSweep()
     ),
     // The run log and token ledger outlive their runs by design (a year);
     // this is the bound on that. Idempotent like the run sweep.
@@ -169,14 +161,14 @@ async function main(): Promise<void> {
       'agent usage retention',
       'worker-agents/usage-retention',
       RETENTION_SWEEP_MS,
-      createUsageRetentionSweep(db)
+      createUsageRetentionSweep()
     ),
     schedulePeriodicSweep(
       logger,
       'stuck runs',
       'worker-agents/janitor',
       JANITOR_SWEEP_MS,
-      createStuckRunJanitor(db)
+      createStuckRunJanitor()
     ),
     // Hygiene on the turn stream's own heartbeat table — fixed age, no
     // per-tenant policy to read. Idempotent bounded delete like the sweeps
@@ -186,7 +178,7 @@ async function main(): Promise<void> {
       'chat presence',
       'worker-agents/chat-presence-sweep',
       JANITOR_SWEEP_MS,
-      createChatPresenceSweep(db)
+      createChatPresenceSweep()
     ),
     // Rescues drafts stranded by a process that died mid-flight, then
     // prunes old ones. Both halves are idempotent.
@@ -195,7 +187,7 @@ async function main(): Promise<void> {
       'agent drafts',
       'worker-agents/draft-sweep',
       DRAFT_SWEEP_INTERVAL_MS,
-      createDraftSweep(db)
+      createDraftSweep()
     ),
     // The optimization twin of the draft sweep — same two halves.
     schedulePeriodicSweep(
@@ -203,7 +195,7 @@ async function main(): Promise<void> {
       'agent optimizations',
       'worker-agents/optimization-sweep',
       OPTIMIZATION_SWEEP_INTERVAL_MS,
-      createOptimizationSweep(db)
+      createOptimizationSweep()
     ),
     // Replica-safe by construction (equivalent summaries, idempotent
     // deletes) — see memory-compaction.ts.
@@ -212,7 +204,7 @@ async function main(): Promise<void> {
       'memory compaction',
       'worker-agents/memory-compaction',
       MEMORY_COMPACTION_SWEEP_MS,
-      createMemoryCompactionSweep(db)
+      createMemoryCompactionSweep()
     ),
   ];
 

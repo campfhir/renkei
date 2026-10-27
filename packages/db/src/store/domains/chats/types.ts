@@ -90,4 +90,20 @@ export interface ChatStore {
   setRequestOverhead(chatId: string, tokens: number): Promise<void>;
   /** Record the chat's worktree on the sandbox worker. */
   setWorkspace(chatId: string, workspaceId: string | null): Promise<void>;
+
+  /**
+   * Delete everyone's chats never written in (no last message) and created
+   * before `createdBefore` that hold no message and no attachment; returns
+   * their ids, sorted.
+   */
+  deleteAbandoned(createdBefore: Date): Promise<string[]>;
+  /**
+   * Archive the owner's unarchived chats last updated before
+   * `updatedBefore` that have no running turn; returns their ids, sorted.
+   */
+  archiveIdle(ownerSubject: string, updatedBefore: Date): Promise<string[]>;
+  /** Up to `limit` chats (anyone's) last updated before `before`, oldest first (ties by id). */
+  listIdsUpdatedBefore(before: Date, limit: number): Promise<string[]>;
+  /** Delete these chats (anyone's; what they hold cascades); returns how many went. */
+  deleteMany(chatIds: readonly string[]): Promise<number>;
 }

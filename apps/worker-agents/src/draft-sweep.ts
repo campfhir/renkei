@@ -17,8 +17,7 @@
  * an agent.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { logger } from './logger';
 
 export const DRAFT_SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -36,39 +35,31 @@ const STUCK_MINUTES = 25;
 const RETENTION_DAYS = 14;
 const RETENTION_BATCH = 500;
 
-export function createDraftSweep(db: Kysely<DB>) {
+export function createDraftSweep() {
   return async function sweep(): Promise<void> {
-    const rescued = await sql<{ id: string }>`
-      UPDATE agent_drafts
-         SET status = 'failed',
-             error = 'Drafting stopped unexpectedly and did not finish. Try again.',
-             finished_at = NOW(),
-             updated_at = NOW()
-       WHERE status = 'running'
-         AND updated_at < NOW() - make_interval(mins => ${STUCK_MINUTES})
-      RETURNING id
-    `.execute(db);
-    if (rescued.rows.length > 0) {
+    const store = getDataStore().agentDrafts;
+    const now = Date.now();
+    const rescued = await store.failStuck(
+      new Date(now - STUCK_MINUTES * 60_000),
+      'Drafting stopped unexpectedly and did not finish. Try again.'
+    );
+    if (rescued > 0) {
       // At warn: a draft dying mid-flight means a process died mid-flight,
       // which is worth someone's attention even though the user is told.
       logger.warn('failed {count} draft(s) stuck mid-flight', {
         component: 'worker-agents/draft-sweep',
-        count: rescued.rows.length,
+        count: rescued,
       });
     }
 
-    const pruned = await sql<{ id: string }>`
-      DELETE FROM agent_drafts WHERE id IN (
-        SELECT id FROM agent_drafts
-         WHERE created_at < NOW() - make_interval(days => ${RETENTION_DAYS})
-         ORDER BY created_at
-         LIMIT ${RETENTION_BATCH}
-      ) RETURNING id
-    `.execute(db);
-    if (pruned.rows.length > 0) {
+    const pruned = await store.pruneBefore(
+      new Date(now - RETENTION_DAYS * 86_400_000),
+      RETENTION_BATCH
+    );
+    if (pruned > 0) {
       logger.info('retention pruned {count} draft(s)', {
         component: 'worker-agents/draft-sweep',
-        count: pruned.rows.length,
+        count: pruned,
       });
     }
   };

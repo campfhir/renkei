@@ -101,6 +101,8 @@ export interface QueueStore {
   requeueDeadLetters(table: QueueTable, ids: readonly string[]): Promise<number>;
   /** Drop dead letters for good; returns how many went. */
   purgeDeadLetters(table: QueueTable, ids: readonly string[]): Promise<number>;
+  /** Whether a pending or processing agent_jobs row carries this run (`payload->>'runId'`). */
+  hasLiveAgentRunJob(runId: string): Promise<boolean>;
 }
 
 /** Every live queue table's dead-letter twin (`<table>_dead_letters`). */

@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
 import { postgresChatTurnEngine } from './engine-postgres';
 import { messageFromRow, summaryFromRow, turnFromRow } from './record';
@@ -114,6 +114,50 @@ export function postgresChatThreads(db: () => Kysely<DB>): ChatThreadStore {
     },
     async deleteQueue(chatId) {
       await db().deleteFrom('chat_queued_sends').where('chat_id', '=', chatId).execute();
+    },
+    async interruptStaleTurns(staleBefore, error) {
+      // stale_since/stage are read from the pre-update row (the CTE), not
+      // the NOW() this same statement writes over it with.
+      const stale = await sql<{
+        id: string;
+        chat_id: string;
+        stage: string | null;
+        stale_since: Date;
+      }>`
+        WITH targets AS (
+          SELECT id, chat_id, stage, updated_at
+            FROM chat_turns
+           WHERE status = 'running'
+             AND updated_at < ${staleBefore}
+        )
+        UPDATE chat_turns t
+           SET status = 'interrupted',
+               error = ${error},
+               finished_at = NOW(),
+               updated_at = NOW()
+          FROM targets
+         WHERE t.id = targets.id
+        RETURNING t.id, targets.chat_id, targets.stage, targets.updated_at AS stale_since
+      `.execute(db());
+      if (stale.rows.length === 0) return [];
+      await db()
+        .updateTable('chat_messages')
+        .set({ status: 'interrupted', updated_at: sql<Date>`NOW()` })
+        .where(
+          'turn_id',
+          'in',
+          stale.rows.map((row) => row.id)
+        )
+        .where('status', '=', 'streaming')
+        .execute();
+      return stale.rows
+        .map((row) => ({
+          id: row.id,
+          chatId: row.chat_id,
+          stage: row.stage,
+          staleSince: new Date(row.stale_since),
+        }))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     },
   };
 }

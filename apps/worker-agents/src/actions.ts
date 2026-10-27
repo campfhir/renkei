@@ -46,11 +46,6 @@ const TOKEN_TTL_SECONDS = 30 * 60;
 const ABANDONED_AFTER_MS = 2 * 60_000;
 
 export interface ActionsDeps {
-  /**
-   * Only for the notifier (./notifications.ts), which still takes a
-   * handle; the executor's own reads and writes go through getDataStore().
-   */
-  db: Parameters<typeof notifierFor>[0];
   webBaseUrl: string;
   /** Where the run goes back to once the batch has an outcome. */
   runProducer: QueueProducer;
@@ -74,7 +69,6 @@ function clip(text: string, max: number): string {
 }
 
 export function createActionsHandler(deps: ActionsDeps) {
-  const { db } = deps;
   const store = () => getDataStore();
   const createClient =
     deps.createMcpClient ??
@@ -180,7 +174,7 @@ export function createActionsHandler(deps: ActionsDeps) {
         const mcp = createClient(token, deps.webBaseUrl, batch.runId);
         await mcp.initialize();
         const toolsByName = new Map((await mcp.listTools()).map((tool) => [tool.name, tool]));
-        const notifier = await notifierFor(db, {
+        const notifier = await notifierFor({
           subject: batch.ownerSubject,
           agentId: batch.agentId,
           agentName: batch.agentName,

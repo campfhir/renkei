@@ -31,5 +31,12 @@ export function memoryScheduleCalendars(tables: MemoryTables): ScheduleCalendarS
       const key = tables.param('schedule_calendars', 'id', id);
       return tables.delete('schedule_calendars', (r) => r.id === key).length > 0;
     },
+    async find(id) {
+      const key = tables.param('schedule_calendars', 'id', id);
+      const row = tables.first('schedule_calendars', (r) => r.id === key);
+      return row
+        ? { id: row.id, name: row.name, dates: row.dates, updatedAt: row.updated_at }
+        : null;
+    },
   };
 }

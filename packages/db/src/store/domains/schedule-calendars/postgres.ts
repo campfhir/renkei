@@ -59,5 +59,15 @@ export function postgresScheduleCalendars(db: () => Kysely<DB>): ScheduleCalenda
         .executeTakeFirst();
       return Number(deleted.numDeletedRows ?? 0) > 0;
     },
+    async find(id) {
+      const row = await db()
+        .selectFrom('schedule_calendars')
+        .select(['id', 'name', 'dates', 'updated_at'])
+        .where('id', '=', id)
+        .executeTakeFirst();
+      return row
+        ? { id: row.id, name: row.name, dates: row.dates, updatedAt: new Date(row.updated_at) }
+        : null;
+    },
   };
 }

@@ -1,4 +1,4 @@
-import { compareAsc, groupBy, orderBy } from '../../memory/order';
+import { compareAsc, groupBy, orderBy, page } from '../../memory/order';
 import type { MemoryTables, Row } from '../../memory/tables';
 import { bucketSums, isToday, ZERO_TOKEN_BUCKETS } from './calendar';
 import type {
@@ -234,6 +234,31 @@ export function memoryAgentUsage(tables: MemoryTables): AgentUsageStore {
           [([agentId]) => agentId]
         ).map(([agentId, group]) => ({ agentId, buckets: runLogOf(group, now) })),
       };
+    },
+    async pruneLedgersBefore(before, limit) {
+      /** The `limit` oldest of `rows` created before the cutoff, as a set of keys. */
+      const oldest = <R extends { created_at: Date }>(rows: R[], key: (row: R) => string) =>
+        new Set(
+          page(
+            orderBy(
+              rows.filter((row) => row.created_at.getTime() < before.getTime()),
+              [(row) => row.created_at],
+              [key]
+            ),
+            limit
+          ).map(key)
+        );
+      const runs = oldest(tables.select('agent_run_log'), (r) => r.run_id);
+      const runLog = tables.delete('agent_run_log', (r) => runs.has(r.run_id)).length;
+      const calls = oldest(tables.select('llm_calls'), (r) => r.id);
+      const llmCalls = tables.delete('llm_calls', (r) => calls.has(r.id)).length;
+      const voiceIds = oldest(tables.select('voice_usage'), (r) => r.id);
+      const voice = tables.delete('voice_usage', (r) => voiceIds.has(r.id)).length;
+      const imageIds = oldest(tables.select('image_usage'), (r) => r.id);
+      const images = tables.delete('image_usage', (r) => imageIds.has(r.id)).length;
+      const documentIds = oldest(tables.select('document_usage'), (r) => r.id);
+      const documents = tables.delete('document_usage', (r) => documentIds.has(r.id)).length;
+      return { runLog, llmCalls, voice, images, documents };
     },
   };
 }

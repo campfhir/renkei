@@ -137,5 +137,53 @@ export function memoryChats(tables: MemoryTables): ChatStore {
       const wanted = chatId(id);
       tables.update('chats', (r) => r.id === wanted, { workspace_id: workspaceId });
     },
+    async deleteAbandoned(createdBefore) {
+      const holding = new Set([
+        ...tables.select('chat_messages').map((m) => m.chat_id),
+        ...tables.select('artifacts').flatMap((a) => (a.chat_id === null ? [] : [a.chat_id])),
+      ]);
+      return tables
+        .delete(
+          'chats',
+          (r) =>
+            r.last_message_at === null &&
+            r.created_at.getTime() < createdBefore.getTime() &&
+            !holding.has(r.id)
+        )
+        .map((row) => row.id)
+        .sort();
+    },
+    async archiveIdle(ownerSubject, updatedBefore) {
+      const running = new Set(
+        tables.select('chat_turns', (t) => t.status === 'running').map((t) => t.chat_id)
+      );
+      return tables
+        .update(
+          'chats',
+          (r) =>
+            r.owner_subject === ownerSubject &&
+            r.archived_at === null &&
+            r.updated_at.getTime() < updatedBefore.getTime() &&
+            !running.has(r.id),
+          { archived_at: new Date() }
+        )
+        .map((row) => row.id)
+        .sort();
+    },
+    async listIdsUpdatedBefore(before, limit) {
+      return page(
+        orderBy(
+          tables.select('chats', (r) => r.updated_at.getTime() < before.getTime()),
+          [(r) => r.updated_at],
+          [(r) => r.id]
+        ),
+        limit
+      ).map((row) => row.id);
+    },
+    async deleteMany(chatIds) {
+      if (chatIds.length === 0) return 0;
+      const ids = new Set(chatIds.map(chatId));
+      return tables.delete('chats', (r) => ids.has(r.id)).length;
+    },
   };
 }

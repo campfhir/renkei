@@ -277,5 +277,15 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
       const keys = new Set(ids.map((id) => tables.param(table, 'id', id)));
       return tables.delete(DEAD_LETTERS[table], (r) => keys.has(r.id)).length;
     },
+    async hasLiveAgentRunJob(runId) {
+      return (
+        tables.first(
+          'agent_jobs',
+          (r) =>
+            (r.status === 'pending' || r.status === 'processing') &&
+            textAt(r.payload, ['runId']) === runId
+        ) !== undefined
+      );
+    },
   };
 }

@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
 import { agentFromRow, definitionColumns, escapeLike, isNameTaken, triggerFromRow } from './record';
+import { postgresAgentSweeps } from './sweep-postgres';
 import type { AgentAdminRecord, AgentStore, AgentTriggerRecord } from './types';
 
 const active = sql<Date>`NOW()`;
@@ -67,6 +68,7 @@ export function postgresAgents(db: () => Kysely<DB>): AgentStore {
   }
 
   return {
+    ...postgresAgentSweeps(db),
     async list(ownerSubject) {
       const rows = await db()
         .selectFrom('agents')

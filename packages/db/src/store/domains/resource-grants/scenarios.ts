@@ -1,6 +1,6 @@
 import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
-import { ANN, BOB, CAT, CHAT, FUTURE, PAST, PROJECT, chatWorld, uid } from '../chats/fixtures';
+import { ANN, BOB, CAT, CHAT, FUTURE, PAST, PROJECT, at, chatWorld, uid } from '../chats/fixtures';
 
 const fixture = chatWorld();
 
@@ -139,6 +139,86 @@ export const resourceGrantScenarios: Scenario<DataStore>[] = [
       ]),
       await store.resourceGrants.countActive('chat', [CHAT.catPrivate]),
       await store.resourceGrants.countActive('chat', []),
+    ],
+  },
+  {
+    method: 'resourceGrants.deleteForResources',
+    name: 'every grant on the listed resources of that kind; an empty list deletes nothing',
+    fixture,
+    run: async (store) => [
+      await store.resourceGrants.deleteForResources('chat_project', [
+        PROJECT.annChat,
+        PROJECT.bobChat,
+        uid(999),
+      ]),
+      await store.resourceGrants.deleteForResources('chat', []),
+      await store.resourceGrants.deleteForResources('artifact', [CHAT.bobShared]),
+      await store.resourceGrants.listForGrantee(ANN, 'chat_project'),
+      await store.resourceGrants.listForGrantee(ANN, 'chat'),
+    ],
+  },
+  {
+    method: 'resourceGrants.pruneOrphans',
+    name: 'grants naming a missing resource go, per kind',
+    fixture: {
+      ...fixture,
+      prompt_libraries: [{ id: uid(401), owner_subject: CAT, name: 'L' }],
+      resource_access_grants: [
+        ...(fixture.resource_access_grants ?? []),
+        {
+          id: uid(311),
+          resource_kind: 'chat',
+          resource_id: uid(990),
+          owner_subject: ANN,
+          grantee_subject: BOB,
+          role: 'viewer',
+          created_at: at(1),
+        },
+        {
+          id: uid(312),
+          resource_kind: 'chat_project',
+          resource_id: CHAT.annA,
+          owner_subject: ANN,
+          grantee_subject: BOB,
+          role: 'viewer',
+          created_at: at(1),
+        },
+        {
+          id: uid(313),
+          resource_kind: 'prompt_library',
+          resource_id: uid(401),
+          owner_subject: CAT,
+          grantee_subject: BOB,
+          role: 'viewer',
+          created_at: at(1),
+        },
+        {
+          id: uid(314),
+          resource_kind: 'prompt_library',
+          resource_id: uid(402),
+          owner_subject: CAT,
+          grantee_subject: BOB,
+          role: 'viewer',
+          created_at: at(1),
+        },
+        {
+          id: uid(315),
+          resource_kind: 'artifact',
+          resource_id: uid(403),
+          owner_subject: CAT,
+          grantee_subject: BOB,
+          role: 'viewer',
+          created_at: at(1),
+        },
+      ],
+    },
+    run: async (store) => [
+      await store.resourceGrants.pruneOrphans(),
+      await store.resourceGrants.pruneOrphans(),
+      await store.resourceGrants.listForGrantee(BOB, 'chat'),
+      await store.resourceGrants.listForGrantee(BOB, 'chat_project'),
+      await store.resourceGrants.listForGrantee(BOB, 'prompt_library'),
+      await store.resourceGrants.listForGrantee(BOB, 'artifact'),
     ],
   },
 ];

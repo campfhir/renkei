@@ -23,4 +23,6 @@ export interface ScheduleCalendarStore {
   ): Promise<'updated' | 'not-found' | 'duplicate'>;
   /** False when there was no such calendar. */
   delete(id: string): Promise<boolean>;
+  /** One calendar by id, or null. */
+  find(id: string): Promise<ScheduleCalendarRecord | null>;
 }

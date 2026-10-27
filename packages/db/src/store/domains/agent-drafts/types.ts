@@ -39,4 +39,16 @@ export interface AgentDraftStore {
   finish(draftId: string, outcome: DraftOutcome): Promise<void>;
   /** Remove a draft (one whose job could not be queued). */
   delete(draftId: string): Promise<void>;
+  /** Who a draft belongs to, whoever asks; null when it is gone. */
+  ownerOf(draftId: string): Promise<{ ownerSubject: string; agentId: string | null } | null>;
+  /**
+   * Fail every `running` draft last updated before `updatedBefore` with
+   * `error`, finished now; returns how many.
+   */
+  failStuck(updatedBefore: Date, error: string): Promise<number>;
+  /**
+   * Retention: delete up to `limit` drafts created before `before`, oldest
+   * first (ties by id), whatever their status; returns how many went.
+   */
+  pruneBefore(before: Date, limit: number): Promise<number>;
 }

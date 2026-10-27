@@ -298,7 +298,6 @@ maybe('agent run engine', () => {
     };
     const createMcpClient = (token: string) => stubMcp(tokens.get(token) ?? [], callTool, calls);
     const handler = createAgentRunHandler({
-      db,
       webBaseUrl: 'http://unused.example',
       actionsProducer: producer,
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the stub honors the slice the engine uses
@@ -313,7 +312,6 @@ maybe('agent run engine', () => {
       ...extra,
     });
     const executor = createActionsHandler({
-      db,
       webBaseUrl: 'http://unused.example',
       runProducer: producer,
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- as above

@@ -129,5 +129,24 @@ export function postgresResourceGrants(db: () => Kysely<DB>): ResourceGrantStore
         .execute();
       return rows.map((row) => ({ resourceId: row.resource_id, count: Number(row.count) }));
     },
+    async deleteForResources(kind, resourceIds) {
+      if (resourceIds.length === 0) return 0;
+      const result = await db()
+        .deleteFrom('resource_access_grants')
+        .where('resource_kind', '=', kind)
+        .where('resource_id', 'in', [...resourceIds])
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
+    async pruneOrphans() {
+      const result = await sql`
+        DELETE FROM resource_access_grants g
+         WHERE (g.resource_kind = 'chat' AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = g.resource_id))
+            OR (g.resource_kind = 'chat_project' AND NOT EXISTS (SELECT 1 FROM chat_projects p WHERE p.id = g.resource_id))
+            OR (g.resource_kind = 'prompt_library' AND NOT EXISTS (SELECT 1 FROM prompt_libraries l WHERE l.id = g.resource_id))
+            OR (g.resource_kind = 'artifact' AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.id = g.resource_id))
+      `.execute(db());
+      return Number(result.numAffectedRows ?? 0);
+    },
   };
 }

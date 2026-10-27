@@ -282,7 +282,7 @@ maybe('agent memory', () => {
       },
     });
 
-    await createMemoryCompactionSweep(db)();
+    await createMemoryCompactionSweep()();
 
     const memory = await readAgentMemory(agentId);
     expect(memory.summary).toContain('merged');
@@ -305,7 +305,7 @@ maybe('agent memory', () => {
     }
     mockResolveLlm.mockResolvedValue({ ok: false, err: { type: 'NO_MODEL' } });
 
-    await createMemoryCompactionSweep(db)();
+    await createMemoryCompactionSweep()();
 
     const remaining = await db
       .selectFrom('agent_memories')

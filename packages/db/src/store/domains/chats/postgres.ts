@@ -171,5 +171,49 @@ export function postgresChats(db: () => Kysely<DB>): ChatStore {
         .where('id', '=', chatId)
         .execute();
     },
+    async deleteAbandoned(createdBefore) {
+      const deleted = await sql<{ id: string }>`
+        DELETE FROM chats c
+         WHERE c.last_message_at IS NULL
+           AND c.created_at < ${createdBefore}
+           AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.chat_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.chat_id = c.id)
+        RETURNING c.id
+      `.execute(db());
+      return deleted.rows.map((row) => row.id).sort();
+    },
+    async archiveIdle(ownerSubject, updatedBefore) {
+      const archived = await sql<{ id: string }>`
+        UPDATE chats c
+           SET archived_at = NOW()
+         WHERE c.owner_subject = ${ownerSubject}
+           AND c.archived_at IS NULL
+           AND c.updated_at < ${updatedBefore}
+           AND NOT EXISTS (
+             SELECT 1 FROM chat_turns t WHERE t.chat_id = c.id AND t.status = 'running'
+           )
+         RETURNING c.id
+      `.execute(db());
+      return archived.rows.map((row) => row.id).sort();
+    },
+    async listIdsUpdatedBefore(before, limit) {
+      const rows = await db()
+        .selectFrom('chats')
+        .select('id')
+        .where('updated_at', '<', before)
+        .orderBy('updated_at')
+        .orderBy('id')
+        .limit(limit)
+        .execute();
+      return rows.map((row) => row.id);
+    },
+    async deleteMany(chatIds) {
+      if (chatIds.length === 0) return 0;
+      const result = await db()
+        .deleteFrom('chats')
+        .where('id', 'in', [...chatIds])
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
   };
 }

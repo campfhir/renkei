@@ -79,4 +79,12 @@ export interface ResourceGrantStore {
     kind: string,
     resourceIds: string[]
   ): Promise<{ resourceId: string; count: number }[]>;
+  /** Every grant on any of these resources of `kind`; returns how many went. */
+  deleteForResources(kind: string, resourceIds: readonly string[]): Promise<number>;
+  /**
+   * Drop grants whose chat, project, prompt library or artifact no longer
+   * exists (grants have no foreign key to what they name); returns how
+   * many went. Grants of any other kind are left alone.
+   */
+  pruneOrphans(): Promise<number>;
 }

@@ -43,4 +43,16 @@ export interface AgentOptimizationStore {
   markApplied(ownerSubject: string, optimizationId: string, draftId: string): Promise<void>;
   /** Remove a pass (one whose job could not be queued). */
   delete(optimizationId: string): Promise<void>;
+  /** Who a pass belongs to, whoever asks; null when it is gone. */
+  ownerOf(optimizationId: string): Promise<{ ownerSubject: string; agentId: string } | null>;
+  /**
+   * Fail every `running` pass last updated before `updatedBefore` with
+   * `error`, finished now; returns how many.
+   */
+  failStuck(updatedBefore: Date, error: string): Promise<number>;
+  /**
+   * Retention: delete up to `limit` passs created before `before`, oldest
+   * first (ties by id), whatever their status; returns how many went.
+   */
+  pruneBefore(before: Date, limit: number): Promise<number>;
 }

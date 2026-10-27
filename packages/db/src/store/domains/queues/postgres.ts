@@ -309,5 +309,14 @@ export function postgresQueues(db: () => Kysely<DB>): QueueStore {
       `.execute(db());
       return Number(result.numAffectedRows ?? 0);
     },
+    async hasLiveAgentRunJob(runId) {
+      const live = await db()
+        .selectFrom('agent_jobs')
+        .select('id')
+        .where('status', 'in', ['pending', 'processing'])
+        .where(sql<string>`payload->>'runId'`, '=', runId)
+        .executeTakeFirst();
+      return live !== undefined;
+    },
   };
 }

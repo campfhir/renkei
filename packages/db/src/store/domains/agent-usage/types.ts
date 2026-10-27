@@ -112,4 +112,20 @@ export interface AgentUsageStore {
     totals: RunLogBucketsRecord;
     byAgent: { agentId: string; buckets: RunLogBucketsRecord }[];
   }>;
+  /**
+   * Retention over the usage ledgers: from each of the run log, the token
+   * ledger and the voice, image and document ledgers, delete up to `limit`
+   * rows created before `before`, oldest first (ties by key); returns how
+   * many went from each.
+   */
+  pruneLedgersBefore(before: Date, limit: number): Promise<AgentUsagePrunedRecord>;
+}
+
+/** How many rows a ledger retention pass removed, per ledger. */
+export interface AgentUsagePrunedRecord {
+  runLog: number;
+  llmCalls: number;
+  voice: number;
+  images: number;
+  documents: number;
 }

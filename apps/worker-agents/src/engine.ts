@@ -183,11 +183,6 @@ export interface FinalizedRun {
 }
 
 export interface EngineDeps {
-  /**
-   * Only for the notifier (./notifications.ts), which still takes a
-   * handle; the engine's own reads and writes go through getDataStore().
-   */
-  db: Parameters<typeof notifierFor>[0];
   /** Base URL the worker reaches the web app on (RENKEI_WEB_INTERNAL_URL). */
   webBaseUrl: string;
   /** Where accepted batches go for the action executor (actions.ts). */
@@ -607,7 +602,6 @@ function toolUsesOf(blocks: LlmContentBlock[] | undefined): ToolUseBlock[] {
 }
 
 export function createAgentRunHandler(deps: EngineDeps) {
-  const { db } = deps;
   const store = () => getDataStore();
   const createClient =
     deps.createMcpClient ??
@@ -791,7 +785,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       );
 
       const vars = await baseVariables(run);
-      const notifier = await notifierFor(db, {
+      const notifier = await notifierFor({
         subject: run.ownerSubject,
         agentId: run.agentId,
         agentName: agentRow.name,
@@ -2112,7 +2106,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (!raised) return; // a racing executor raised it already
       const heading = `Agent “${agentName}” wants your go-ahead`;
       await writeNotificationRow(
-        db,
         {
           subject: this.runRow.ownerSubject,
           agentId: this.runRow.agentId,
@@ -2198,7 +2191,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (!raised) return;
       const heading = `Agent “${agentName}” has a question`;
       await writeNotificationRow(
-        db,
         {
           subject: this.runRow.ownerSubject,
           agentId: this.runRow.agentId,
@@ -2521,7 +2513,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       errorKind: errorKind ?? undefined,
     };
     if (status === 'succeeded' || status === 'failed') {
-      const notifier = await notifierFor(db, {
+      const notifier = await notifierFor({
         subject: run.ownerSubject,
         agentId: run.agentId,
         agentName,

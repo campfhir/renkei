@@ -91,4 +91,20 @@ export interface ChatThreadStore extends ChatTurnEngineStore {
   /** Insert or replace the queue (JSON-serializable). */
   saveQueue(chatId: string, queue: unknown): Promise<void>;
   deleteQueue(chatId: string): Promise<void>;
+  /**
+   * The janitor: every `running` turn (anyone's) last updated before
+   * `staleBefore` is marked interrupted with `error`, finished now, and its
+   * still-streaming messages interrupted with it. Returns those turns by
+   * id, with their chat, stage and `staleSince` (the update time they had
+   * before this wrote over it).
+   */
+  interruptStaleTurns(staleBefore: Date, error: string): Promise<ChatStaleTurnRecord[]>;
+}
+
+/** A turn the janitor interrupted, as it was just before. */
+export interface ChatStaleTurnRecord {
+  id: string;
+  chatId: string;
+  stage: string | null;
+  staleSince: Date;
 }

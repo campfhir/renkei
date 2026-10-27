@@ -276,4 +276,82 @@ export const chatScenarios: Scenario<DataStore>[] = [
       ids(await store.chats.listOwnedInProject(CAT, PROJECT.annChat, 10)),
     ],
   },
+  {
+    method: 'chats.deleteAbandoned',
+    name: 'never written in, old enough, holding nothing; ids sorted',
+    fixture: {
+      ...fixture,
+      chats: [
+        ...(fixture.chats ?? []),
+        { id: uid(251), owner_subject: BOB, created_at: at(2), updated_at: at(2) },
+        { id: uid(252), owner_subject: ANN, created_at: at(1), updated_at: at(1) },
+        { id: uid(253), owner_subject: ANN, created_at: at(1), updated_at: at(1) },
+        { id: uid(254), owner_subject: ANN, created_at: at(1), updated_at: at(1) },
+        { id: uid(255), owner_subject: ANN, created_at: at(50), updated_at: at(50) },
+      ],
+      chat_messages: [
+        { id: uid(261), chat_id: uid(253), role: 'user', kind: 'text', content: 'hi', seq: 1 },
+      ],
+      artifacts: [
+        {
+          id: uid(262),
+          owner_subject: ANN,
+          chat_id: uid(254),
+          blob_key: 'b/262',
+          filename: 'f.txt',
+          content_type: 'text/plain',
+          size_bytes: '1',
+        },
+      ],
+    },
+    run: async (store) => [
+      await store.chats.deleteAbandoned(at(40)),
+      await store.chats.deleteAbandoned(at(40)),
+      ids(await store.chats.listOwned(ANN, { limit: 50, includeArchived: true })),
+    ],
+  },
+  {
+    method: 'chats.archiveIdle',
+    name: "the owner's idle unarchived chats without a running turn",
+    fixture: {
+      ...fixture,
+      chat_turns: [
+        { id: uid(271), chat_id: CHAT.annCode, status: 'running' },
+        { id: uid(272), chat_id: CHAT.annB, status: 'completed' },
+      ],
+    },
+    run: async (store) => {
+      const archived = await store.chats.archiveIdle(ANN, at(25));
+      const again = await store.chats.archiveIdle(ANN, at(25));
+      const none = await store.chats.archiveIdle(CAT, at(10));
+      const state = await Promise.all(
+        [CHAT.annA, CHAT.annB, CHAT.annCode, CHAT.annEmpty, CHAT.bobShared].map(async (id) => {
+          const chat = await store.chats.get(id);
+          return chat && [id, chat.archivedAt !== null];
+        })
+      );
+      return [archived, again, none, state];
+    },
+  },
+  {
+    method: 'chats.listIdsUpdatedBefore',
+    name: 'anyone’s, oldest first, ties by id, bounded',
+    fixture,
+    run: async (store) => [
+      await store.chats.listIdsUpdatedBefore(at(20), 3),
+      await store.chats.listIdsUpdatedBefore(at(21), 50),
+      await store.chats.listIdsUpdatedBefore(at(0), 50),
+    ],
+  },
+  {
+    method: 'chats.deleteMany',
+    name: 'the listed chats, whoever owns them; unknown ids and an empty list delete nothing',
+    fixture,
+    run: async (store) => [
+      await store.chats.deleteMany([CHAT.annA, CHAT.bobShared, uid(999)]),
+      await store.chats.deleteMany([]),
+      ids(await store.chats.listOwned(ANN, { limit: 50, includeArchived: true })),
+      ids(await store.chats.listOwned(BOB, { limit: 50, includeArchived: true })),
+    ],
+  },
 ];
