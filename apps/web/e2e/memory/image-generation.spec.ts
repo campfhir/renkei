@@ -149,7 +149,7 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   await page.goto(`/chat/${chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Polar bear' })).toBeVisible();
 
-  const cards = page.getByTestId('image-card');
+  const cards = page.getByTestId('image-card').filter({ visible: true });
   await expect(cards).toHaveCount(2, COLD);
   const drawn = cards.nth(0);
   await expect(drawn).toHaveAttribute('data-state', 'done');
@@ -249,7 +249,7 @@ test('installed to the iOS home screen, Download opens the file over the app ins
 
   const chatUrl = `/chat/${chatId}`;
   await page.goto(chatUrl);
-  const drawn = page.getByTestId('image-card').nth(0);
+  const drawn = page.getByTestId('image-card').filter({ visible: true }).nth(0);
   await expect(drawn).toHaveAttribute('data-state', 'done', COLD);
   await drawn.getByRole('button', { name: 'Preview image' }).click();
   const preview = page.getByTestId('image-preview');
@@ -305,7 +305,7 @@ test('installed to the iOS home screen with file sharing, Download opens the sha
 
   const chatUrl = `/chat/${chatId}`;
   await page.goto(chatUrl);
-  const drawn = page.getByTestId('image-card').nth(0);
+  const drawn = page.getByTestId('image-card').filter({ visible: true }).nth(0);
   await expect(drawn).toHaveAttribute('data-state', 'done', COLD);
   await drawn.getByRole('button', { name: 'Preview image' }).click();
   const preview = page.getByTestId('image-preview');
@@ -391,7 +391,7 @@ test('a call waiting on permission shows no outline; once approved it is an outl
   const square = { filename: 'bear.png' };
   const landscape = { filename: 'bear.png', size: '1536x1024' };
   const chatModel = await models(page.request, waitingScript([portrait, wide, square, landscape]));
-  const card = page.getByTestId('image-card');
+  const card = page.getByTestId('image-card').filter({ visible: true });
 
   // Parked on the permission ask: nothing is being drawn, so no outline — only the caption.
   const parked = await waitingChat(page.request, chatModel, portrait, { parked: true });
@@ -468,7 +468,7 @@ test('an animated GIF is worded as an animation while it is made, and plays inli
   // Being made: an animation, in the 16:9 shape asked for.
   const waiting = await waitingChat(page.request, chatModel, slowGif, { parked: false });
   await page.goto(`/chat/${waiting.chatId}`);
-  const pending = page.getByTestId('image-card');
+  const pending = page.getByTestId('image-card').filter({ visible: true });
   await expect(pending).toHaveAttribute('data-state', 'pending', COLD);
   await expect(pending).toHaveAttribute('data-kind', 'animation');
   await expect(pending).toContainText('Generating animation');
@@ -481,7 +481,7 @@ test('an animated GIF is worded as an animation while it is made, and plays inli
   await send(page.request, chatId, GIF_PROMPT, chatModel, { allow: true });
   await page.goto(`/chat/${chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Bouncing ball' })).toBeVisible(COLD);
-  const card = page.getByTestId('image-card');
+  const card = page.getByTestId('image-card').filter({ visible: true });
   await expect(card).toHaveAttribute('data-state', 'done', COLD);
   await expect(card).toHaveAttribute('data-kind', 'animation');
   await expect(card).toContainText('Generated animation');

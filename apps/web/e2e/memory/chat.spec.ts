@@ -476,7 +476,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({
     await expect(page.locator(`a[href="/chat/${newChatId}"]`)).toHaveCount(0);
     // The archived chat's turn ran on the plain stub reply.
     await page.goto(`/chat/${archivedId}`);
-    await expect(page.getByText(LLM_STUB_REPLY)).toBeVisible();
+    await expect(page.getByText(LLM_STUB_REPLY).filter({ visible: true })).toBeVisible();
   } finally {
     await removeModel(page.request, modelId);
   }

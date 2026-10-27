@@ -10,7 +10,14 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixtures';
 import { removeModel } from '../support/stub-model';
-import { CHAT_TITLE, mockVendor, shot, stageVoice, type VoiceChat } from '../support/voice';
+import {
+  CHAT_TITLE,
+  mockVendor,
+  shot,
+  stageVoice,
+  untilVoiceOffered,
+  type VoiceChat,
+} from '../support/voice';
 
 test.use({
   // The speech service and the chat's model are an operator's to stage.
@@ -25,7 +32,10 @@ test.use({
 let voice: VoiceChat;
 
 test.beforeEach(async ({ page, person: _person }, testInfo) => {
+  // A built app may take a while to offer a speech service just switched on.
+  test.slow();
   voice = await stageVoice(page.request, `${testInfo.project.name}-${randomUUID().slice(0, 6)}`);
+  await untilVoiceOffered(page, voice.chatId);
 });
 
 test.afterEach(async ({ page }) => {

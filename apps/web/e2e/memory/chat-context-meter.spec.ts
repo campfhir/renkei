@@ -77,7 +77,7 @@ test.describe('chat context meter', () => {
 
       await page.goto(`/chat/${limitedChat}`);
       await expect(page.getByRole('heading', { level: 1, name: limitedTitle })).toBeVisible();
-      const meter = page.getByTestId('context-meter');
+      const meter = page.getByTestId('context-meter').filter({ visible: true });
       await expect(meter).toHaveAttribute('aria-valuenow', '21');
       await expect(meter).toHaveAttribute('title', 'Context: 42k of 200k tokens (21%)');
       await shot(page, testInfo, 'chat-context-meter-limited');
@@ -90,12 +90,15 @@ test.describe('chat context meter', () => {
       // No recorded window: nothing to measure against, so nothing shown.
       await page.goto(`/chat/${openChat}`);
       await expect(page.getByRole('heading', { level: 1, name: openTitle })).toBeVisible();
-      await expect(page.getByTestId('context-meter')).toHaveCount(0);
+      await expect(page.getByTestId('context-meter').filter({ visible: true })).toHaveCount(0);
 
       // Before the compaction the last reply's usage is the measure.
       await page.goto(`/chat/${foldedChat}`);
       await expect(page.getByRole('heading', { level: 1, name: foldedTitle })).toBeVisible();
-      await expect(page.getByTestId('context-meter')).toHaveAttribute('aria-valuenow', '21');
+      await expect(page.getByTestId('context-meter').filter({ visible: true })).toHaveAttribute(
+        'aria-valuenow',
+        '21'
+      );
 
       // A compaction newer than the last reply: its usage no longer describes
       // the history, so the ring falls to the estimate — the chat's prompt
@@ -106,7 +109,7 @@ test.describe('chat context meter', () => {
       await settled(page.request, foldedChat);
       await page.reload();
       await expect(page.getByRole('heading', { level: 1, name: foldedTitle })).toBeVisible();
-      const reset = page.getByTestId('context-meter');
+      const reset = page.getByTestId('context-meter').filter({ visible: true });
       await expect(reset).toBeVisible();
       const resetPercent = Number(await reset.getAttribute('aria-valuenow'));
       expect(resetPercent).toBeGreaterThanOrEqual(0);

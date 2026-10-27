@@ -122,6 +122,18 @@ export async function enableVoiceService(request: APIRequestContext): Promise<vo
     },
   });
   expect(saved.ok(), await saved.text()).toBe(true);
+  // The org's connector settings are read through a short cache (a built
+  // app holds them for a while): wait until the service is offered, as
+  // the page's own voice route reads it.
+  await expect
+    .poll(
+      async () => {
+        const offered = await request.get('/api/voice');
+        return offered.ok() ? Boolean((await offered.json()).configured) : false;
+      },
+      { timeout: 90_000, intervals: [1_000, 2_000, 5_000] }
+    )
+    .toBe(true);
 }
 
 /**
@@ -140,6 +152,24 @@ export async function stageVoice(request: APIRequestContext, tag: string): Promi
   const chatId = await createChat(request, { llmModelId: modelId, title: CHAT_TITLE });
   await send(request, chatId, QUESTION, modelId);
   return { chatId, modelId };
+}
+
+/**
+ * Wait until the chat and Preferences pages offer voice. Each server
+ * bundle keeps its own minute-long cache of the org's connector settings
+ * (@renkei/connector-config), so a page rendered just before the service
+ * was switched on can go on leaving voice out for up to that minute.
+ */
+export async function untilVoiceOffered(page: Page, chatId: string): Promise<void> {
+  for (const [url, offered] of [
+    [`/chat/${chatId}`, () => page.getByRole('button', { name: 'Voice', exact: true })],
+    ['/preferences', () => page.getByRole('region', { name: 'Voice' })],
+  ] as const) {
+    await expect(async () => {
+      await page.goto(url);
+      await expect(offered()).toBeVisible({ timeout: 5_000 });
+    }).toPass({ timeout: 90_000, intervals: [2_000, 5_000] });
+  }
 }
 
 export const VOICES = [

@@ -65,6 +65,8 @@ let modelId = '';
 
 test.beforeEach(async ({ page, person: _person }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
+  // Each test stages a real turn first, and the documents compile on first sight.
+  test.slow();
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   modelId = await addStubModel(page.request, tag, {
     script: [
@@ -152,7 +154,7 @@ test('an svg mockup saves from its card and from the fullscreen viewer', async (
   page,
 }, testInfo) => {
   await page.goto(`/chat/${ids.chatId}`);
-  const card = page.locator('figure', { hasText: 'Renkei logo' });
+  const card = page.locator('figure:visible', { hasText: 'Renkei logo' });
   await expect(card).toBeVisible(COLD);
 
   const fromCard = page.waitForEvent('download');
@@ -176,7 +178,7 @@ test('an svg mockup saves from its card and from the fullscreen viewer', async (
 test('the save buttons fit at phone width', async ({ page }, testInfo) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`/chat/${ids.chatId}`);
-  const card = page.locator('figure', { hasText: 'Renkei logo' });
+  const card = page.locator('figure:visible', { hasText: 'Renkei logo' });
   await expect(card).toBeVisible(COLD);
   await expect(
     page.locator('.chat-code').first().getByRole('button', { name: 'Save as PNG' })

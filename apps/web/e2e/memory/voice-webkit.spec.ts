@@ -19,6 +19,7 @@ import {
   expectComposerStillWhileReading,
   mockVendor,
   stageVoice,
+  untilVoiceOffered,
   type VoiceChat,
 } from '../support/voice';
 
@@ -33,7 +34,10 @@ test.skip(!process.env.PLAYWRIGHT_WEBKIT, 'WebKit is not installed for this suit
 let voice: VoiceChat;
 
 test.beforeEach(async ({ page, person: _person }, testInfo) => {
+  // A built app may take a while to offer a speech service just switched on.
+  test.slow();
   voice = await stageVoice(page.request, `${testInfo.project.name}-${randomUUID().slice(0, 6)}`);
+  await untilVoiceOffered(page, voice.chatId);
 });
 
 test.afterEach(async ({ page }) => {

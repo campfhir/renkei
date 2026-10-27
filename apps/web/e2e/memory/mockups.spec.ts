@@ -101,6 +101,8 @@ let modelId = '';
 
 test.beforeEach(async ({ page, person: _person }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
+  // Each test stages a real turn first, and the documents compile on first sight.
+  test.slow();
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   modelId = await addStubModel(page.request, tag, {
     script: [
@@ -148,7 +150,7 @@ test.afterEach(async ({ page }, testInfo) => {
 });
 
 function inlineFrame(page: Page, title: string) {
-  return page.frameLocator(`figure iframe[title="Mockup: ${title}"]`);
+  return page.frameLocator(`figure iframe[title="Mockup: ${title}"]:visible`);
 }
 
 const zoomLabel = (page: Page) => page.getByTestId('mockup-zoom');
@@ -162,8 +164,8 @@ test('a reply’s mockups are drawn inline, each in its format, and a refused ca
   await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
   // Three cards — the call the tool refused stays in the fold, no card for it.
-  await expect(page.locator('figure')).toHaveCount(3, COLD);
-  await expect(page.locator('figure', { hasText: 'Broken try' })).toHaveCount(0);
+  await expect(page.locator('figure:visible')).toHaveCount(3, COLD);
+  await expect(page.locator('figure:visible', { hasText: 'Broken try' })).toHaveCount(0);
 
   // React + Tailwind: the component mounted and Tailwind styled it.
   const settings = inlineFrame(page, 'Settings page');
@@ -183,20 +185,22 @@ test('a reply’s mockups are drawn inline, each in its format, and a refused ca
   );
 
   // The header says what each one is and how wide it was designed.
-  await expect(page.locator('figure', { hasText: 'Settings page' })).toContainText(
+  await expect(page.locator('figure:visible', { hasText: 'Settings page' })).toContainText(
     'react · 1024px'
   );
-  await expect(page.locator('figure', { hasText: 'Mobile hero' })).toContainText('html · 390px');
+  await expect(page.locator('figure:visible', { hasText: 'Mobile hero' })).toContainText(
+    'html · 390px'
+  );
 
   // A card fits its frame to the document: the 320×80 logo is far
   // shorter than the 400px a frame starts at.
   const logoHeight = await page
-    .locator('figure iframe[title="Mockup: Logo"]')
+    .locator('figure iframe[title="Mockup: Logo"]:visible')
     .evaluate((frame) => Number.parseInt(getComputedStyle(frame).height));
   expect(logoHeight).toBeLessThan(200);
 
   // The inline frame is for looking: pointer events go to the card.
-  await expect(page.locator('figure iframe[title="Mockup: Settings page"]')).toHaveCSS(
+  await expect(page.locator('figure iframe[title="Mockup: Settings page"]:visible')).toHaveCSS(
     'pointer-events',
     'none'
   );
@@ -351,18 +355,19 @@ test('at a phone’s width the cards fit the screen and the viewer stays reachab
 }, testInfo) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`/chat/${ids.chatId}`);
-  await expect(page.locator('figure')).toHaveCount(3, COLD);
+  await expect(page.locator('figure:visible')).toHaveCount(3, COLD);
 
   // Frames load lazily, as they scroll near: bring each into view and wait for its design.
-  for (const figure of await page.locator('figure').all()) await figure.scrollIntoViewIfNeeded();
+  for (const figure of await page.locator('figure:visible').all())
+    await figure.scrollIntoViewIfNeeded();
   await inlineFrame(page, 'Settings page')
     .getByRole('heading', { name: 'Notification settings' })
     .waitFor(COLD);
   await inlineFrame(page, 'Mobile hero').getByRole('heading', { name: 'Ship it Friday' }).waitFor();
   await inlineFrame(page, 'Logo').getByRole('img', { name: 'Renkei logo' }).waitFor();
-  await page.locator('figure').first().scrollIntoViewIfNeeded();
+  await page.locator('figure:visible').first().scrollIntoViewIfNeeded();
 
-  for (const figure of await page.locator('figure').all()) {
+  for (const figure of await page.locator('figure:visible').all()) {
     const box = await figure.boundingBox();
     expect(box?.width ?? 0).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   }
@@ -371,7 +376,7 @@ test('at a phone’s width the cards fit the screen and the viewer stays reachab
   );
   // The desktop-width design is scaled down to fit, not cropped or scrolled sideways.
   const settingsFrame = await page
-    .locator('figure iframe[title="Mockup: Settings page"]')
+    .locator('figure iframe[title="Mockup: Settings page"]:visible')
     .boundingBox();
   expect(settingsFrame?.width ?? 0).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   await shot(page, testInfo, 'mockups-inline-mobile.png');

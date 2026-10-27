@@ -54,7 +54,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 
 async function openChat(page: Page): Promise<void> {
   await page.goto(`/chat/${chatId}`);
-  await expect(page.getByLabel('Message')).toBeVisible();
+  await expect(page.getByLabel('Message').filter({ visible: true })).toBeVisible();
   await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
 }
 
@@ -65,7 +65,7 @@ test('an unsent message is saved after a pause and comes back on reload', async 
   page,
 }, testInfo) => {
   await openChat(page);
-  await expect(page.getByLabel('Message')).toHaveValue('');
+  await expect(page.getByLabel('Message').filter({ visible: true })).toHaveValue('');
 
   const saves: string[] = [];
   page.on('request', (request) => {
@@ -75,14 +75,17 @@ test('an unsent message is saved after a pause and comes back on reload', async 
     (response) => isDraftSave(response.url(), response.request().method()) && response.ok()
   );
   // Keystroke by keystroke, well inside the debounce window.
-  await page.getByLabel('Message').pressSequentially(DRAFT, { delay: 15 });
+  await page
+    .getByLabel('Message')
+    .filter({ visible: true })
+    .pressSequentially(DRAFT, { delay: 15 });
   await saved;
   expect(saves).toHaveLength(1);
   expect(JSON.parse(saves[0])).toEqual({ text: DRAFT });
   expect((await readChat(page.request, chatId)).chat.draft).toBe(DRAFT);
 
   await page.reload();
-  await expect(page.getByLabel('Message')).toHaveValue(DRAFT);
+  await expect(page.getByLabel('Message').filter({ visible: true })).toHaveValue(DRAFT);
   await shot(page, testInfo, 'chat-draft-restored');
 });
 
@@ -94,7 +97,7 @@ test('another device sees the draft, and clearing the box removes it', async ({
   const saved = page.waitForResponse(
     (response) => isDraftSave(response.url(), response.request().method()) && response.ok()
   );
-  await page.getByLabel('Message').fill(DRAFT);
+  await page.getByLabel('Message').filter({ visible: true }).fill(DRAFT);
   await saved;
 
   // A second browser context with the same sign-in, at phone width.
@@ -103,15 +106,15 @@ test('another device sees the draft, and clearing the box removes it', async ({
   try {
     const other = await phone.newPage();
     await other.goto(`/chat/${chatId}`);
-    await expect(other.getByLabel('Message')).toBeVisible();
-    await expect(other.getByLabel('Message')).toHaveValue(DRAFT);
+    await expect(other.getByLabel('Message').filter({ visible: true })).toBeVisible();
+    await expect(other.getByLabel('Message').filter({ visible: true })).toHaveValue(DRAFT);
     await shot(other, testInfo, 'chat-draft-phone');
 
     // Clearing is saved at once and drops the draft.
     const cleared = other.waitForResponse(
       (response) => isDraftSave(response.url(), response.request().method()) && response.ok()
     );
-    await other.getByLabel('Message').fill('');
+    await other.getByLabel('Message').filter({ visible: true }).fill('');
     await cleared;
   } finally {
     await phone.close();
@@ -119,5 +122,5 @@ test('another device sees the draft, and clearing the box removes it', async ({
   expect((await readChat(page.request, chatId)).chat.draft).toBe('');
 
   await page.reload();
-  await expect(page.getByLabel('Message')).toHaveValue('');
+  await expect(page.getByLabel('Message').filter({ visible: true })).toHaveValue('');
 });
