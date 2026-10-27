@@ -1,6 +1,6 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
-import { getDatabase, getDataStore } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import {
   CHAT_ARCHIVE_MAX_DAYS,
@@ -40,7 +40,6 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/preferences`));
 
-  const dbResult = getDatabase();
   const [
     notifications,
     theme,
@@ -76,7 +75,7 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     listChatActToolGroups(session.subject, session.roles),
     getImagePrefs(session.subject, { fresh: true }),
     // Empty when the org has no image generation model; the section is then left out.
-    dbResult.ok ? listImageModels() : [],
+    listImageModels().catch(() => []),
     // Managed until they say otherwise; a missing row reads as managed too.
     // The delegate answers; unreachable, and the section is left out.
     keyStatusView(session),
