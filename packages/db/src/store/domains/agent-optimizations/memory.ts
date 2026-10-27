@@ -1,4 +1,4 @@
-import { orderBy } from '../../memory/order';
+import { orderBy, page } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
 import { jsonbConcat, optimizationFromRow, outcomeColumns } from './record';
 import type { AgentOptimizationStore } from './types';
@@ -77,6 +77,32 @@ export function memoryAgentOptimizations(tables: MemoryTables): AgentOptimizatio
     async delete(optimizationId) {
       const id = idOf(optimizationId);
       tables.delete('agent_optimizations', (r) => r.id === id);
+    },
+    async ownerOf(optimizationId) {
+      const id = idOf(optimizationId);
+      const row = tables.first('agent_optimizations', (r) => r.id === id);
+      return row ? { ownerSubject: row.owner_subject, agentId: row.agent_id } : null;
+    },
+    async failStuck(updatedBefore, error) {
+      const now = new Date();
+      return tables.update(
+        'agent_optimizations',
+        (r) => r.status === 'running' && r.updated_at.getTime() < updatedBefore.getTime(),
+        { status: 'failed', error, finished_at: now, updated_at: now }
+      ).length;
+    },
+    async pruneBefore(before, limit) {
+      const doomed = new Set(
+        page(
+          orderBy(
+            tables.select('agent_optimizations', (r) => r.created_at.getTime() < before.getTime()),
+            [(r) => r.created_at],
+            [(r) => r.id]
+          ),
+          limit
+        ).map((r) => r.id)
+      );
+      return tables.delete('agent_optimizations', (r) => doomed.has(r.id)).length;
     },
   };
 }

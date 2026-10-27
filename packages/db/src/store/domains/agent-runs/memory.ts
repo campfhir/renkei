@@ -10,6 +10,7 @@ import {
   stepFromRow,
   summaryFromRow,
 } from './record';
+import { memoryAgentRunSweeps } from './sweep-memory';
 import type { AgentRunStore } from './types';
 
 const LIVE: readonly string[] = LIVE_STATUSES;
@@ -20,6 +21,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
   const agentOf = (value: string) => tables.param('agent_runs', 'agent_id', value);
 
   return {
+    ...memoryAgentRunSweeps(tables),
     async list({ agentId, ownerSubject, audience, status, q, matchId, limit }) {
       const agent = agentOf(agentId);
       const id = matchId ? runId(matchId) : undefined;

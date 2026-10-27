@@ -36,6 +36,7 @@ export function notificationValues(
     headline: notification.headline,
     ref_url: notification.refUrl,
     ...(notification.refId !== undefined ? { ref_id: notification.refId } : {}),
+    ...(notification.stepId !== undefined ? { step_id: notification.stepId } : {}),
     agent_id: notification.agentId,
     agent_name: notification.agentName,
     run_id: notification.runId,

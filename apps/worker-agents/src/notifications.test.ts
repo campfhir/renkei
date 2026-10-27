@@ -88,7 +88,7 @@ maybe('agent notifications', () => {
   });
 
   const notifier = (prefs: Partial<NotificationPrefs> = {}) =>
-    createNotifier(db, {
+    createNotifier({
       subject,
       agentId,
       // Denormalized: the row keeps the name even after the agent is gone.
@@ -167,7 +167,7 @@ maybe('agent notifications', () => {
 
   it('emails a batch act once per run, not once per call', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -220,7 +220,7 @@ maybe('agent notifications', () => {
 
   it('fires email/WebEx for a category wanted on those channels, independent of App', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -246,7 +246,7 @@ maybe('agent notifications', () => {
 
   it('skips email silently when the tool is not connected, and does not throw', async () => {
     const { mcp, toolsByName, calls } = fakeMcp([]); // Neither tool registered.
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -268,7 +268,7 @@ maybe('agent notifications', () => {
 
   it('never calls outlook_send_mail or webex_note_to_self when email/WebEx are off, even though both tools are connected and ready', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -309,7 +309,7 @@ maybe('agent notifications', () => {
 
   it('fires email/WebEx for a run starting and a successful finish, independent of App', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -339,7 +339,7 @@ maybe('agent notifications', () => {
 
   it('never sends email/WebEx for a failed run from here — that goes through the run.failed queue handler', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -361,7 +361,7 @@ maybe('agent notifications', () => {
 
   it('lets an agent override reach email/WebEx even when the general preference is off', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -388,7 +388,7 @@ maybe('agent notifications', () => {
     // A tenant that does not exist violates the FK. The act already
     // happened, so this must be a warning and not an exception climbing
     // back into the run loop.
-    const orphan = createNotifier(db, {
+    const orphan = createNotifier({
       subject,
       agentId,
       agentName: 'Ghost',

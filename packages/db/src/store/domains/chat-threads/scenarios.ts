@@ -248,4 +248,48 @@ export const chatThreadScenarios: Scenario<DataStore>[] = [
       return store.chatThreads.getQueue(CHAT.annA);
     },
   },
+  {
+    method: 'chatThreads.interruptStaleTurns',
+    name: 'running turns past the cutoff, with their streaming messages; as they were',
+    fixture: {
+      ...fixture,
+      chat_turns: [
+        ...fixture.chat_turns,
+        {
+          id: uid(511),
+          chat_id: CHAT.annB,
+          status: 'running',
+          stage: 'tool:search',
+          started_at: at(1),
+          updated_at: at(2),
+        },
+      ],
+      chat_messages: [
+        ...fixture.chat_messages.map((m) =>
+          m.turn_id === TURN.running ? { ...m, status: 'streaming' } : m
+        ),
+        { ...message(5, CHAT.annB, 2, uid(511)), status: 'streaming' },
+        { ...message(6, CHAT.annB, 3, uid(511)), status: 'complete' },
+      ],
+    },
+    run: async (store) => {
+      const none = await store.chatThreads.interruptStaleTurns(at(2), 'stopped');
+      const hit = await store.chatThreads.interruptStaleTurns(at(10), 'stopped');
+      const again = await store.chatThreads.interruptStaleTurns(at(10), 'stopped');
+      const turn = async (chatId: string, id: string) => {
+        const row = await store.chatThreads.getTurn(chatId, id);
+        return row && [row.status, row.error, row.finishedAt !== null];
+      };
+      return [
+        none,
+        hit,
+        again,
+        await turn(CHAT.annA, TURN.running),
+        await turn(CHAT.annB, uid(511)),
+        await turn(CHAT.annA, TURN.done),
+        (await store.chatThreads.listTurnMessages(uid(511))).map((m) => m.status),
+        (await store.chatThreads.listTurnMessages(TURN.running)).map((m) => m.status),
+      ];
+    },
+  },
 ];

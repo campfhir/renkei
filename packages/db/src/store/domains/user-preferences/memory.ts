@@ -1,3 +1,4 @@
+import { orderBy } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
 import type { UserPreferenceStore } from './types';
 
@@ -15,6 +16,12 @@ export function memoryUserPreferences(tables: MemoryTables): UserPreferenceStore
     },
     async delete(subject, key) {
       tables.delete('user_preferences', (r) => r.subject === subject && r.key === key);
+    },
+    async listByKey(key) {
+      return orderBy(
+        tables.select('user_preferences', (r) => r.key === key),
+        [(r) => r.subject]
+      ).map((row) => ({ subject: row.subject, value: row.value }));
     },
   };
 }

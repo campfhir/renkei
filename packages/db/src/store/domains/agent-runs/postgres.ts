@@ -9,6 +9,7 @@ import {
   stepFromRow,
   summaryFromRow,
 } from './record';
+import { postgresAgentRunSweeps } from './sweep-postgres';
 import type { AgentRunStore } from './types';
 
 const RUN_COLUMNS = [
@@ -75,6 +76,7 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
   }
 
   return {
+    ...postgresAgentRunSweeps(db),
     async list({ agentId, ownerSubject, audience, status, q, matchId, limit }) {
       let query = db().selectFrom('agent_runs').select(RUN_COLUMNS).where('agent_id', '=', agentId);
       if (ownerSubject !== null) query = query.where('owner_subject', '=', ownerSubject);

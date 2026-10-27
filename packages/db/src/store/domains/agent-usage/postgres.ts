@@ -317,5 +317,54 @@ export function postgresAgentUsage(db: () => Kysely<DB>): AgentUsageStore {
         byAgent: perAgent.rows.map((row) => ({ agentId: row.agent_id, buckets: runLogOf(row) })),
       };
     },
+    async pruneLedgersBefore(before, limit) {
+      const runs = await sql<{ run_id: string }>`
+        DELETE FROM agent_run_log WHERE run_id IN (
+          SELECT run_id FROM agent_run_log
+          WHERE created_at < ${before}
+          ORDER BY created_at, run_id
+          LIMIT ${limit}
+        ) RETURNING run_id
+      `.execute(db());
+      const calls = await sql<{ id: string }>`
+        DELETE FROM llm_calls WHERE id IN (
+          SELECT id FROM llm_calls
+          WHERE created_at < ${before}
+          ORDER BY created_at, id
+          LIMIT ${limit}
+        ) RETURNING id
+      `.execute(db());
+      const voice = await sql<{ id: string }>`
+        DELETE FROM voice_usage WHERE id IN (
+          SELECT id FROM voice_usage
+          WHERE created_at < ${before}
+          ORDER BY created_at, id
+          LIMIT ${limit}
+        ) RETURNING id
+      `.execute(db());
+      const images = await sql<{ id: string }>`
+        DELETE FROM image_usage WHERE id IN (
+          SELECT id FROM image_usage
+          WHERE created_at < ${before}
+          ORDER BY created_at, id
+          LIMIT ${limit}
+        ) RETURNING id
+      `.execute(db());
+      const documents = await sql<{ id: string }>`
+        DELETE FROM document_usage WHERE id IN (
+          SELECT id FROM document_usage
+          WHERE created_at < ${before}
+          ORDER BY created_at, id
+          LIMIT ${limit}
+        ) RETURNING id
+      `.execute(db());
+      return {
+        runLog: runs.rows.length,
+        llmCalls: calls.rows.length,
+        voice: voice.rows.length,
+        images: images.rows.length,
+        documents: documents.rows.length,
+      };
+    },
   };
 }

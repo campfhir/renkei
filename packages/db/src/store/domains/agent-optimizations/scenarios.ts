@@ -158,4 +158,74 @@ export const agentOptimizationScenarios: Scenario<DataStore>[] = [
       ];
     },
   },
+  {
+    method: 'agentOptimizations.ownerOf',
+    name: 'whoever asks; a missing id is null',
+    fixture,
+    run: async (store) => [
+      await store.agentOptimizations.ownerOf(id(11)),
+      await store.agentOptimizations.ownerOf(id(14)),
+      await store.agentOptimizations.ownerOf(id(99)),
+    ],
+  },
+  {
+    method: 'agentOptimizations.failStuck',
+    name: 'only running rows updated before the cutoff; finished, with the error',
+    fixture: {
+      agents,
+      agent_optimizations: [
+        pass(21, 1, 'ann', 1, { status: 'running', updated_at: at(10) }),
+        pass(22, 1, 'ann', 1, { status: 'running', updated_at: at(30) }),
+        pass(23, 1, 'ann', 1, { status: 'queued', updated_at: at(10) }),
+        pass(24, 2, 'bob', 1, { status: 'running', updated_at: at(5) }),
+        pass(25, 1, 'ann', 1, { status: 'succeeded', updated_at: at(5) }),
+      ],
+    },
+    run: async (store) => {
+      const count = await store.agentOptimizations.failStuck(
+        new Date(at(20)),
+        'stopped unexpectedly'
+      );
+      const again = await store.agentOptimizations.failStuck(
+        new Date(at(20)),
+        'stopped unexpectedly'
+      );
+      const read = async (owner: string, n: number) => {
+        const row = await store.agentOptimizations.find(owner, id(n));
+        return row && [row.status, row.error, row.finishedAt ? 'set' : null];
+      };
+      return [
+        count,
+        again,
+        await read('ann', 21),
+        await read('ann', 22),
+        await read('ann', 23),
+        await read('bob', 24),
+        await read('ann', 25),
+      ];
+    },
+  },
+  {
+    method: 'agentOptimizations.pruneBefore',
+    name: 'oldest first, bounded, ties by id, any status and owner',
+    fixture,
+    run: async (store) => {
+      const exists = async () =>
+        Promise.all(
+          [11, 12, 13, 14, 15, 16, 17].map(async (n) =>
+            (await store.agentOptimizations.ownerOf(id(n))) ? n : null
+          )
+        );
+      const first = await store.agentOptimizations.pruneBefore(new Date(at(4)), 3);
+      const afterFirst = await exists();
+      const second = await store.agentOptimizations.pruneBefore(new Date(at(4)), 10);
+      return [
+        first,
+        afterFirst,
+        second,
+        await exists(),
+        await store.agentOptimizations.pruneBefore(new Date(at(0)), 5),
+      ];
+    },
+  },
 ];

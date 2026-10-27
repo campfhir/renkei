@@ -1,7 +1,7 @@
 import { orderBy } from '../../memory/order';
 import type { MemoryTables, Row } from '../../memory/tables';
 import { grantFromRow, tableOfKind } from './record';
-import type { ResourceGrantStore } from './types';
+import type { GrantResourceKind, ResourceGrantStore } from './types';
 
 type Grant = Row<'resource_access_grants'>;
 
@@ -137,6 +137,29 @@ export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
         resourceId,
         count,
       }));
+    },
+    async deleteForResources(kind, resourceIds) {
+      if (resourceIds.length === 0) return 0;
+      const ids = new Set(resourceIds.map(resource));
+      return tables.delete(
+        'resource_access_grants',
+        (r) => r.resource_kind === kind && ids.has(r.resource_id)
+      ).length;
+    },
+    async pruneOrphans() {
+      const KINDS: readonly GrantResourceKind[] = [
+        'chat',
+        'chat_project',
+        'prompt_library',
+        'artifact',
+      ];
+      const existing = new Map<string, Set<string>>(
+        KINDS.map((kind) => [kind, new Set(tables.select(tableOfKind(kind)).map((row) => row.id))])
+      );
+      return tables.delete('resource_access_grants', (r) => {
+        const ids = existing.get(r.resource_kind);
+        return ids !== undefined && !ids.has(r.resource_id);
+      }).length;
     },
   };
 }

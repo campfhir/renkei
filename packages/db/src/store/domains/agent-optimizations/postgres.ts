@@ -85,5 +85,37 @@ export function postgresAgentOptimizations(db: () => Kysely<DB>): AgentOptimizat
     async delete(optimizationId) {
       await db().deleteFrom('agent_optimizations').where('id', '=', optimizationId).execute();
     },
+    async ownerOf(optimizationId) {
+      const row = await db()
+        .selectFrom('agent_optimizations')
+        .select(['owner_subject', 'agent_id'])
+        .where('id', '=', optimizationId)
+        .executeTakeFirst();
+      return row ? { ownerSubject: row.owner_subject, agentId: row.agent_id } : null;
+    },
+    async failStuck(updatedBefore, error) {
+      const rescued = await sql<{ id: string }>`
+        UPDATE agent_optimizations
+           SET status = 'failed',
+               error = ${error},
+               finished_at = NOW(),
+               updated_at = NOW()
+         WHERE status = 'running'
+           AND updated_at < ${updatedBefore}
+        RETURNING id
+      `.execute(db());
+      return rescued.rows.length;
+    },
+    async pruneBefore(before, limit) {
+      const pruned = await sql<{ id: string }>`
+        DELETE FROM agent_optimizations WHERE id IN (
+          SELECT id FROM agent_optimizations
+           WHERE created_at < ${before}
+           ORDER BY created_at, id
+           LIMIT ${limit}
+        ) RETURNING id
+      `.execute(db());
+      return pruned.rows.length;
+    },
   };
 }

@@ -556,5 +556,15 @@ export function postgresArtifacts(db: () => Kysely<DB>): ArtifactStore {
         .executeTakeFirst();
       return Number(result.numDeletedRows) > 0;
     },
+    async listBlobsInChats(chatIds) {
+      if (chatIds.length === 0) return [];
+      const rows = await db()
+        .selectFrom('artifacts')
+        .select(['id', 'chat_id', 'blob_key'])
+        .where('chat_id', 'in', [...chatIds])
+        .orderBy('id')
+        .execute();
+      return rows.map((row) => ({ id: row.id, chatId: row.chat_id, blobKey: row.blob_key }));
+    },
   };
 }

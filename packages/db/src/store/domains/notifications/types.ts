@@ -48,13 +48,15 @@ export interface NotificationStore {
   /**
    * Add one. `createdAt` defaults to now, `readAt` to unread. `refId`
    * keys a row to what it is about (a chat permission ask's tool call) so
-   * `markReadByRef` can find it again.
+   * `markReadByRef` can find it again; `stepId` names the run step that
+   * acted.
    */
   insert(
     notification: Omit<NotificationRecord, 'createdAt' | 'readAt'> & {
       createdAt?: Date;
       readAt?: Date | null;
       refId?: string | null;
+      stepId?: string | null;
     }
   ): Promise<void>;
   /** Mark this person's unread rows of `kind` keyed to `refId` read; returns how many changed. */
@@ -86,4 +88,12 @@ export interface NotificationStore {
   wasWatchingChat(subject: string, chatId: string, since: Date): Promise<boolean>;
   /** Drop presence rows last pinged before `before`; returns how many went. */
   deleteChatPresenceBefore(before: Date): Promise<number>;
+
+  /** Re-headline one notification (a run's tally growing); read state is left alone. */
+  setHeadline(id: string, headline: string): Promise<void>;
+  /**
+   * Retention: delete up to `limit` notifications, anyone's, read or not,
+   * created before `before`, oldest first (ties by id); returns how many went.
+   */
+  pruneBefore(before: Date, limit: number): Promise<number>;
 }

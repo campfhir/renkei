@@ -71,5 +71,15 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
       const deadLetters = tables.delete('agent_jobs_dead_letters', (r) => ofRun(r.payload)).length;
       return { skipped, deadLetters };
     },
+    async hasLiveAgentRunJob(runId) {
+      return (
+        tables.first(
+          'agent_jobs',
+          (r) =>
+            (r.status === 'pending' || r.status === 'processing') &&
+            textAt(r.payload, ['runId']) === runId
+        ) !== undefined
+      );
+    },
   };
 }

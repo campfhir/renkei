@@ -1,4 +1,5 @@
 import type { Json } from '../../../db.types';
+import type { AgentSweepStore } from './sweep-types';
 
 /** One trigger row of an agent, as stored (config is the jsonb the builder wrote). */
 export interface AgentTriggerRecord {
@@ -129,7 +130,9 @@ export interface AgentMemorySliceRecord {
   entries: { id: string; content: string; createdAt: Date }[];
 }
 
-export interface AgentStore {
+export type * from './sweep-types';
+
+export interface AgentStore extends AgentSweepStore {
   /** One owner's agents, newest first (ties by id). */
   list(ownerSubject: string): Promise<AgentRecord[]>;
   /**

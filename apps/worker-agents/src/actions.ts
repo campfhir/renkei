@@ -209,7 +209,7 @@ export function createActionsHandler(deps: ActionsDeps) {
         const mcp = createClient(token, deps.webBaseUrl, batch.run_id);
         await mcp.initialize();
         const toolsByName = new Map((await mcp.listTools()).map((tool) => [tool.name, tool]));
-        const notifier = await notifierFor(db, {
+        const notifier = await notifierFor({
           subject: batch.owner_subject,
           agentId: batch.agent_id,
           agentName: batch.agent_name,

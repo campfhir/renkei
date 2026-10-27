@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
 import { draftFromRow, outcomeColumns } from './record';
 import type { AgentDraftStore } from './types';
@@ -75,6 +75,38 @@ export function postgresAgentDrafts(db: () => Kysely<DB>): AgentDraftStore {
     },
     async delete(draftId) {
       await db().deleteFrom('agent_drafts').where('id', '=', draftId).execute();
+    },
+    async ownerOf(draftId) {
+      const row = await db()
+        .selectFrom('agent_drafts')
+        .select(['owner_subject', 'agent_id'])
+        .where('id', '=', draftId)
+        .executeTakeFirst();
+      return row ? { ownerSubject: row.owner_subject, agentId: row.agent_id } : null;
+    },
+    async failStuck(updatedBefore, error) {
+      const rescued = await sql<{ id: string }>`
+        UPDATE agent_drafts
+           SET status = 'failed',
+               error = ${error},
+               finished_at = NOW(),
+               updated_at = NOW()
+         WHERE status = 'running'
+           AND updated_at < ${updatedBefore}
+        RETURNING id
+      `.execute(db());
+      return rescued.rows.length;
+    },
+    async pruneBefore(before, limit) {
+      const pruned = await sql<{ id: string }>`
+        DELETE FROM agent_drafts WHERE id IN (
+          SELECT id FROM agent_drafts
+           WHERE created_at < ${before}
+           ORDER BY created_at, id
+           LIMIT ${limit}
+        ) RETURNING id
+      `.execute(db());
+      return pruned.rows.length;
     },
   };
 }

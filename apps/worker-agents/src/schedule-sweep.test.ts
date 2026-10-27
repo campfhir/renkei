@@ -77,7 +77,7 @@ maybe('schedule sweep', () => {
   it('fires a due trigger once, advances it, and enqueues the run', async () => {
     const { agentId, triggerId } = await seedSchedule();
     const queue = new InMemoryQueue();
-    await createScheduleSweep(db, queue.producer)();
+    await createScheduleSweep(queue.producer)();
 
     const runs = await db
       .selectFrom('agent_runs')
@@ -103,8 +103,8 @@ maybe('schedule sweep', () => {
     // Both sweeps read the same due row before either advances it — the
     // worst-case interleaving two replicas can produce.
     await Promise.all([
-      createScheduleSweep(db, queue.producer)(),
-      createScheduleSweep(db, queue.producer)(),
+      createScheduleSweep(queue.producer)(),
+      createScheduleSweep(queue.producer)(),
     ]);
 
     const runs = await db
@@ -132,7 +132,7 @@ maybe('schedule sweep', () => {
       blackoutPolicy: 'after',
     });
     const queue = new InMemoryQueue();
-    await createScheduleSweep(db, queue.producer)();
+    await createScheduleSweep(queue.producer)();
 
     const runs = await db
       .selectFrom('agent_runs')
@@ -161,7 +161,7 @@ maybe('schedule sweep', () => {
       .where('id', '=', triggerId)
       .execute();
     const queue = new InMemoryQueue();
-    await createScheduleSweep(db, queue.producer)();
+    await createScheduleSweep(queue.producer)();
 
     const trigger = await db
       .selectFrom('agent_triggers')

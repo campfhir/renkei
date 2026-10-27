@@ -841,7 +841,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       );
 
       const vars = await baseVariables(run);
-      const notifier = await notifierFor(db, {
+      const notifier = await notifierFor({
         subject: run.owner_subject,
         agentId: run.agent_id,
         agentName: agentRow.name,
@@ -2210,7 +2210,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
       const heading = `Agent “${agentName}” wants your go-ahead`;
       await writeNotificationRow(
-        db,
         {
           subject: this.runRow.owner_subject,
           agentId: this.runRow.agent_id,
@@ -2311,7 +2310,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
       const heading = `Agent “${agentName}” has a question`;
       await writeNotificationRow(
-        db,
         {
           subject: this.runRow.owner_subject,
           agentId: this.runRow.agent_id,
@@ -2751,7 +2749,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       errorKind: errorKind ?? undefined,
     };
     if (status === 'succeeded' || status === 'failed') {
-      const notifier = await notifierFor(db, {
+      const notifier = await notifierFor({
         subject: run.owner_subject,
         agentId: run.agent_id,
         agentName,

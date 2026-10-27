@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
 import { isEmptyTarget, notificationFromRow, notificationValues } from './record';
 import type { NotificationStore } from './types';
@@ -138,6 +138,24 @@ export function postgresNotifications(db: () => Kysely<DB>): NotificationStore {
         .where('updated_at', '<', before)
         .executeTakeFirst();
       return Number(result.numDeletedRows ?? 0);
+    },
+    async setHeadline(id, headline) {
+      await db()
+        .updateTable('agent_notifications')
+        .set({ headline })
+        .where('id', '=', id)
+        .execute();
+    },
+    async pruneBefore(before, limit) {
+      const deleted = await sql<{ id: string }>`
+        DELETE FROM agent_notifications WHERE id IN (
+          SELECT id FROM agent_notifications
+          WHERE created_at < ${before}
+          ORDER BY created_at, id
+          LIMIT ${limit}
+        ) RETURNING id
+      `.execute(db());
+      return deleted.rows.length;
     },
   };
 }

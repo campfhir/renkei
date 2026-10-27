@@ -675,4 +675,14 @@ export const artifactScenarios: Scenario<DataStore>[] = [
       (await store.artifacts.get(A.annLibrary))?.id,
     ],
   },
+  {
+    method: 'artifacts.listBlobsInChats',
+    name: 'attachments of the listed chats only, by id; none for an empty list',
+    fixture,
+    run: async (store) => [
+      await store.artifacts.listBlobsInChats([CHAT.annA, CHAT.bobShared]),
+      await store.artifacts.listBlobsInChats([CHAT.catPrivate]),
+      await store.artifacts.listBlobsInChats([]),
+    ],
+  },
 ];

@@ -8,6 +8,7 @@
  * no longer exists must be dropped rather than retried forever.
  */
 
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { createDraftHandler } from './draft';
 
 jest.mock('./token', () => ({
@@ -20,29 +21,37 @@ const { mintRunToken, revokeRunToken } = jest.requireMock<{
   revokeRunToken: jest.Mock;
 }>('./token');
 
-/** A Kysely stand-in returning one agent_drafts row, or none. */
-function stubDb(row: { owner_subject: string; agent_id: string | null } | undefined) {
-  const chain = {
-    select: () => chain,
-    where: () => chain,
-    executeTakeFirst: async () => row,
-  };
-  // The handler touches exactly one query shape; anything else is a bug in
-  // the handler rather than a gap in this stub.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return { selectFrom: () => chain } as unknown as Parameters<typeof createDraftHandler>[0]['db'];
+const DRAFT = '00000000-0000-4000-8000-0000000000d1';
+const AGENT = '00000000-0000-4000-8000-0000000000a1';
+const GONE = '00000000-0000-4000-8000-0000000000d9';
+
+/** A memory store holding one draft of `owner`'s. */
+async function seedDraft(owner: string): Promise<void> {
+  const store = createMemoryDataStore();
+  registerDataStore(store);
+  await store.seed({
+    agents: [{ id: AGENT, owner_subject: owner, name: 'Agent' }],
+    agent_drafts: [
+      { id: DRAFT, owner_subject: owner, agent_id: null, request: JSON.stringify({}) },
+    ],
+  });
 }
 
 describe('the draft job', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     mintRunToken.mockClear();
     revokeRunToken.mockClear();
+    await seedDraft('owner@example.com');
+  });
+
+  afterEach(() => {
+    resetDataStore();
   });
 
   it('mints a token for the draft OWNER, not for anything in the payload', async () => {
+    await seedDraft('real-owner@example.com');
     const calls: { url: string; init: { method: string; body: string } }[] = [];
     const handler = createDraftHandler({
-      db: stubDb({ owner_subject: 'real-owner@example.com', agent_id: null }),
       webBaseUrl: 'http://web:3000',
       fetchImpl: async (url, init) => {
         calls.push({ url, init });
@@ -52,7 +61,7 @@ describe('the draft job', () => {
 
     await handler({
       // A payload naming somebody else must change nothing.
-      payload: { draftId: 'draft-1', ownerSubject: 'attacker@example.com' },
+      payload: { draftId: DRAFT, ownerSubject: 'attacker@example.com' },
     });
 
     expect(mintRunToken).toHaveBeenCalledTimes(1);
@@ -61,38 +70,35 @@ describe('the draft job', () => {
       // Drafting acts as the person; there is usually no agent yet.
       agentId: null,
     });
-    expect(calls[0].url).toBe('http://web:3000/api/agents/draft/draft-1/run');
+    expect(calls[0].url).toBe(`http://web:3000/api/agents/draft/${DRAFT}/run`);
   });
 
   it('revokes the token even when the call fails', async () => {
     const handler = createDraftHandler({
-      db: stubDb({ owner_subject: 'owner@example.com', agent_id: null }),
       webBaseUrl: 'http://web:3000',
       fetchImpl: async () => ({ ok: false, status: 500 }),
     });
 
     // Thrown so the queue retries — a token left valid for twenty minutes
     // after a failure is a credential nobody is tracking.
-    await expect(handler({ payload: { draftId: 'd' } })).rejects.toThrow('HTTP 500');
+    await expect(handler({ payload: { draftId: DRAFT } })).rejects.toThrow('HTTP 500');
     expect(revokeRunToken).toHaveBeenCalledTimes(1);
   });
 
   it('drops the job when the draft is gone', async () => {
     const handler = createDraftHandler({
-      db: stubDb(undefined),
       webBaseUrl: 'http://web:3000',
       fetchImpl: async () => {
         throw new Error('should not be called');
       },
     });
 
-    expect(await handler({ payload: { draftId: 'gone' } })).toBe('skipped');
+    expect(await handler({ payload: { draftId: GONE } })).toBe('skipped');
     expect(mintRunToken).not.toHaveBeenCalled();
   });
 
   it('refuses a payload with no draft id', async () => {
     const handler = createDraftHandler({
-      db: stubDb({ owner_subject: 'owner@example.com', agent_id: null }),
       webBaseUrl: 'http://web:3000',
     });
 

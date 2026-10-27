@@ -74,4 +74,14 @@ export const scheduleCalendarScenarios: Scenario<DataStore>[] = [
       await names(store),
     ],
   },
+  {
+    method: 'scheduleCalendars.find',
+    name: 'one by id, dates as stored; a missing id is null',
+    fixture: seeded,
+    run: async (store) => [
+      await store.scheduleCalendars.find(id(1)),
+      await store.scheduleCalendars.find(id(3)).then((c) => c && { ...c, updatedAt: undefined }),
+      await store.scheduleCalendars.find(id(9)),
+    ],
+  },
 ];

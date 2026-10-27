@@ -69,6 +69,8 @@ import { contentWatchScenarios } from './content-watches/scenarios';
 
 import { pendingSigninScenarios } from './pending-signins/scenarios';
 import { webhookSubscriptionScenarios } from './webhook-subscriptions/scenarios';
+import { agentSweepScenarios } from './agents/sweep-scenarios';
+import { agentRunSweepScenarios } from './agent-runs/sweep-scenarios';
 export const SCENARIOS: Scenario<DataStore>[] = [
   ...sessionScenarios,
   ...identityScenarios,
@@ -136,4 +138,6 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...webexSentMessageScenarios,
   ...toolSurfaceScenarios,
   ...contentWatchScenarios,
+  ...agentSweepScenarios,
+  ...agentRunSweepScenarios,
 ];

@@ -17,9 +17,8 @@
  * Auto-archive: a person's chat_archive preference archives their chats
  * once they have sat untouched for that long. It runs ahead of retention
  * in the same sweep, and its window is capped at the org's retention, so
- * a chat is archived before it can be pruned, never after. An archived
- * code project chat releases its project's active slot, as archiving by
- * hand does. Skipped while the chat has a reply running.
+ * a chat is archived before it can be pruned, never after. Skipped while
+ * the chat has a reply running.
  *
  * Retention: the org's chatRetentionDays (0 = keep). Bytes go before rows
  * — an attachment whose object could not be deleted keeps its row so a
@@ -33,8 +32,7 @@
  * deleted with the chat, pruned here when that did not land.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { resolveTenantBlobStore, type BlobStore } from '@renkei/blob-store';
 import { getOrgSettings } from '@renkei/settings';
 import { delegateClient } from '@renkei/delegate-client';
@@ -50,107 +48,67 @@ const RETENTION_BATCH = 500;
 /** Long enough for anyone to come back to a chat they opened and left. */
 const ABANDONED_CHAT_HOURS = 24;
 
-export function createChatTurnJanitor(db: Kysely<DB>) {
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+export function createChatTurnJanitor() {
   return async function sweep(): Promise<void> {
-    // stale_since/stage are read from the pre-update row (the CTE) so the
-    // log below says how long it had actually been stuck and doing what,
-    // not the NOW() this same statement just wrote over it with.
-    const stale = await sql<{
-      id: string;
-      chat_id: string;
-      stage: string | null;
-      stale_since: Date;
-    }>`
-      WITH targets AS (
-        SELECT id, chat_id, stage, updated_at
-          FROM chat_turns
-         WHERE status = 'running'
-           AND updated_at < NOW() - make_interval(mins => ${STALE_MINUTES})
-      )
-      UPDATE chat_turns t
-         SET status = 'interrupted',
-             error = 'The reply stopped unexpectedly and did not finish.',
-             finished_at = NOW(),
-             updated_at = NOW()
-        FROM targets
-       WHERE t.id = targets.id
-      RETURNING t.id, targets.chat_id, targets.stage, targets.updated_at AS stale_since
-    `.execute(db);
-    if (stale.rows.length === 0) return;
-    await db
-      .updateTable('chat_messages')
-      .set({ status: 'interrupted', updated_at: sql<Date>`NOW()` })
-      .where(
-        'turn_id',
-        'in',
-        stale.rows.map((row) => row.id)
-      )
-      .where('status', '=', 'streaming')
-      .execute();
-    for (const row of stale.rows) {
+    // staleSince/stage are the turn as it was before the store wrote over
+    // it, so the log says how long it had actually been stuck, doing what.
+    const stale = await getDataStore().chatThreads.interruptStaleTurns(
+      new Date(Date.now() - STALE_MINUTES * MINUTE_MS),
+      'The reply stopped unexpectedly and did not finish.'
+    );
+    for (const row of stale) {
       logger.warn('interrupted a chat turn whose runner went silent', {
         component: 'worker-agents/chat-janitor',
         turnId: row.id,
-        chatId: row.chat_id,
+        chatId: row.chatId,
         stage: row.stage ?? '(between rounds)',
-        staleSinceMinutes: Math.round((Date.now() - row.stale_since.getTime()) / 60_000),
+        staleSinceMinutes: Math.round((Date.now() - row.staleSince.getTime()) / MINUTE_MS),
       });
     }
   };
 }
 
-export function createChatRetentionSweep(
-  db: Kysely<DB>,
-  store: () => Promise<BlobStore | null> = blobStore
-) {
+export function createChatRetentionSweep(store: () => Promise<BlobStore | null> = blobStore) {
   return async function sweep(): Promise<void> {
-    await deleteAbandonedChats(db);
+    await deleteAbandonedChats();
     const settings = await getOrgSettings();
     // Archiving runs ahead of pruning: a chat a person has set to archive
     // is archived before retention can delete it.
-    await archiveIdleChats(db, settings.ok ? settings.val.chatRetentionDays : 0);
+    await archiveIdleChats(settings.ok ? settings.val.chatRetentionDays : 0);
     if (settings.ok && settings.val.chatRetentionDays > 0) {
       const days = settings.val.chatRetentionDays;
-      const expired = await db
-        .selectFrom('chats')
-        .select('id')
-        .where('updated_at', '<', sql<Date>`NOW() - make_interval(days => ${days})`)
-        .limit(RETENTION_BATCH)
-        .execute();
-      const chatIds = expired.map((row) => row.id);
+      const chatIds = await getDataStore().chats.listIdsUpdatedBefore(
+        new Date(Date.now() - days * DAY_MS),
+        RETENTION_BATCH
+      );
       const deletable =
-        chatIds.length > 0 ? await deleteAttachmentBlobs(db, chatIds, await store()) : [];
+        chatIds.length > 0 ? await deleteAttachmentBlobs(chatIds, await store()) : [];
       if (deletable.length > 0) {
-        await db.deleteFrom('chats').where('id', 'in', deletable).execute();
-        await db
-          .deleteFrom('resource_access_grants')
-          .where('resource_kind', '=', 'chat')
-          .where('resource_id', 'in', deletable)
-          .execute();
+        await getDataStore().chats.deleteMany(deletable);
+        await getDataStore().resourceGrants.deleteForResources('chat', deletable);
         logger.info('chat retention removed {count} chat(s)', {
           component: 'worker-agents/chat-retention',
           count: deletable.length,
         });
       }
     }
-    await pruneOrphanGrants(db);
+    await pruneOrphanGrants();
   };
 }
 
 /** Empty chats past the grace period; their grants go with the orphan prune. */
-async function deleteAbandonedChats(db: Kysely<DB>): Promise<void> {
-  const deleted = await sql<{ id: string }>`
-    DELETE FROM chats c
-     WHERE c.last_message_at IS NULL
-       AND c.created_at < NOW() - make_interval(hours => ${ABANDONED_CHAT_HOURS})
-       AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.chat_id = c.id)
-       AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.chat_id = c.id)
-    RETURNING c.id
-  `.execute(db);
-  if (deleted.rows.length === 0) return;
+async function deleteAbandonedChats(): Promise<void> {
+  const deleted = await getDataStore().chats.deleteAbandoned(
+    new Date(Date.now() - ABANDONED_CHAT_HOURS * HOUR_MS)
+  );
+  if (deleted.length === 0) return;
   logger.info('removed {count} abandoned empty chat(s)', {
     component: 'worker-agents/chat-retention',
-    count: deleted.rows.length,
+    count: deleted.length,
   });
 }
 
@@ -160,63 +118,41 @@ async function deleteAbandonedChats(db: Kysely<DB>): Promise<void> {
  * `updated_at` — so the two never disagree about what "idle" means. A chat
  * with a reply running is left alone.
  */
-async function archiveIdleChats(db: Kysely<DB>, orgRetentionDays: number): Promise<void> {
-  const rows = await db
-    .selectFrom('user_preferences')
-    .select(['subject', 'value'])
-    .where('key', '=', CHAT_ARCHIVE_KEY)
-    .execute();
+async function archiveIdleChats(orgRetentionDays: number): Promise<void> {
+  const rows = await getDataStore().userPreferences.listByKey(CHAT_ARCHIVE_KEY);
   for (const row of rows) {
     const days = effectiveArchiveDays(parseChatArchivePrefs(row.value), orgRetentionDays);
     if (days === null) continue;
-    const archived = await sql<{ id: string }>`
-      UPDATE chats c
-         SET archived_at = NOW()
-       WHERE c.owner_subject = ${row.subject}
-         AND c.archived_at IS NULL
-         AND c.updated_at < NOW() - make_interval(days => ${days})
-         AND NOT EXISTS (
-           SELECT 1 FROM chat_turns t WHERE t.chat_id = c.id AND t.status = 'running'
-         )
-       RETURNING c.id
-    `.execute(db);
-    if (archived.rows.length === 0) continue;
-    const chatIds = archived.rows.map((chat) => chat.id);
-    await sql`
-      UPDATE chat_projects
-         SET active_chat_id = NULL
-       WHERE active_chat_id = ANY(${chatIds}::uuid[])
-    `.execute(db);
+    const archived = await getDataStore().chats.archiveIdle(
+      row.subject,
+      new Date(Date.now() - days * DAY_MS)
+    );
+    if (archived.length === 0) continue;
     logger.info('auto-archived {count} idle chat(s)', {
       component: 'worker-agents/chat-retention',
-      count: chatIds.length,
+      count: archived.length,
     });
   }
 }
 
 /** Chats whose attachment bytes are gone (or never existed); the rest wait. */
 async function deleteAttachmentBlobs(
-  db: Kysely<DB>,
   chatIds: string[],
   store: BlobStore | null
 ): Promise<string[]> {
-  const attachments = await db
-    .selectFrom('artifacts')
-    .select(['id', 'chat_id', 'blob_key'])
-    .where('chat_id', 'in', chatIds)
-    .execute();
+  const attachments = await getDataStore().artifacts.listBlobsInChats(chatIds);
   const blocked = new Set<string>();
   for (const attachment of attachments) {
-    if (!attachment.chat_id) continue;
+    if (!attachment.chatId) continue;
     if (!store) {
-      blocked.add(attachment.chat_id);
+      blocked.add(attachment.chatId);
       continue;
     }
-    const deleted = await store.deleteObject(attachment.blob_key);
+    const deleted = await store.deleteObject(attachment.blobKey);
     if (deleted.ok || deleted.err.type === 'NOT_FOUND') {
-      await db.deleteFrom('artifacts').where('id', '=', attachment.id).execute();
+      await getDataStore().artifacts.delete(attachment.id);
     } else {
-      blocked.add(attachment.chat_id);
+      blocked.add(attachment.chatId);
       logger.warn('chat retention could not delete a blob: {error}', {
         component: 'worker-agents/chat-retention',
         error: deleted.err.message ?? deleted.err.type,
@@ -226,14 +162,8 @@ async function deleteAttachmentBlobs(
   return chatIds.filter((id) => !blocked.has(id));
 }
 
-async function pruneOrphanGrants(db: Kysely<DB>): Promise<void> {
-  await sql`
-    DELETE FROM resource_access_grants g
-     WHERE (g.resource_kind = 'chat' AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = g.resource_id))
-        OR (g.resource_kind = 'chat_project' AND NOT EXISTS (SELECT 1 FROM chat_projects p WHERE p.id = g.resource_id))
-        OR (g.resource_kind = 'prompt_library' AND NOT EXISTS (SELECT 1 FROM prompt_libraries l WHERE l.id = g.resource_id))
-        OR (g.resource_kind = 'artifact' AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.id = g.resource_id))
-  `.execute(db);
+async function pruneOrphanGrants(): Promise<void> {
+  await getDataStore().resourceGrants.pruneOrphans();
   await delegateClient().pruneOrphanResourceKeys();
 }
 

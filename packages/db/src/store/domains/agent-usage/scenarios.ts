@@ -231,4 +231,62 @@ export const agentUsageScenarios: Scenario<DataStore>[] = [
     name: 'an empty log is all zeros',
     run: async (store) => store.agentUsage.runLogBuckets(),
   },
+  {
+    method: 'agentUsage.pruneLedgersBefore',
+    name: 'each ledger bounded on its own, oldest first, ties by key; newer rows kept',
+    fixture: {
+      agents,
+      agent_run_log: [
+        {
+          run_id: id(301),
+          agent_id: id(1),
+          owner_subject: 'ann',
+          trigger_kind: 'manual',
+          created_at: '2025-01-03T00:00:00.000Z',
+        },
+        {
+          run_id: id(302),
+          agent_id: id(1),
+          owner_subject: 'ann',
+          trigger_kind: 'manual',
+          created_at: '2025-01-01T00:00:00.000Z',
+        },
+        {
+          run_id: id(303),
+          agent_id: id(3),
+          owner_subject: 'bob',
+          trigger_kind: 'manual',
+          created_at: '2025-01-01T00:00:00.000Z',
+        },
+        {
+          run_id: id(304),
+          agent_id: id(1),
+          owner_subject: 'ann',
+          trigger_kind: 'manual',
+          created_at: '2025-06-01T00:00:00.000Z',
+        },
+      ],
+      llm_calls: [
+        { id: id(311), subject: 'ann', purpose: 'chat', created_at: '2025-01-02T00:00:00.000Z' },
+        { id: id(312), subject: 'bob', purpose: 'chat', created_at: '2025-07-02T00:00:00.000Z' },
+      ],
+      voice_usage: [
+        { id: id(321), subject: 'ann', kind: 'transcribe', created_at: '2025-01-02T00:00:00.000Z' },
+        { id: id(322), subject: 'ann', kind: 'transcribe', created_at: '2025-01-01T00:00:00.000Z' },
+        { id: id(323), subject: 'ann', kind: 'transcribe', created_at: '2025-01-05T00:00:00.000Z' },
+      ],
+      image_usage: [
+        { id: id(331), subject: 'ann', surface: 'chat', created_at: '2025-01-02T00:00:00.000Z' },
+      ],
+      document_usage: [],
+    },
+    run: async (store) => {
+      const cutoff = new Date('2025-03-01T00:00:00.000Z');
+      const first = await store.agentUsage.pruneLedgersBefore(cutoff, 1);
+      const runsLeft = (await store.agentUsage.runLogBuckets()).byAgent.map((a) => a.agentId);
+      const second = await store.agentUsage.pruneLedgersBefore(cutoff, 2);
+      const third = await store.agentUsage.pruneLedgersBefore(cutoff, 2);
+      return [first, runsLeft, second, third];
+    },
+  },
 ];

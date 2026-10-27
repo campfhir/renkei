@@ -56,4 +56,20 @@ export const userPreferenceScenarios: Scenario<DataStore>[] = [
       ];
     },
   },
+  {
+    method: 'userPreferences.listByKey',
+    name: "everyone's value of one key, by subject; other keys left out",
+    fixture: {
+      user_preferences: [
+        { subject: 'cat', key: 'chatArchive', value: JSON.stringify({ days: 7 }) },
+        { subject: 'Ann', key: 'chatArchive', value: JSON.stringify({ days: 30 }) },
+        { subject: 'bob', key: 'chatArchive', value: JSON.stringify(false) },
+        { subject: 'ann', key: 'theme', value: JSON.stringify({ mode: 'dark' }) },
+      ],
+    },
+    run: async (store) => [
+      await store.userPreferences.listByKey('chatArchive'),
+      await store.userPreferences.listByKey('never'),
+    ],
+  },
 ];

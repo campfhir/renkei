@@ -118,5 +118,22 @@ export function memoryNotifications(tables: MemoryTables): NotificationStore {
       return tables.delete('chat_presence', (r) => r.updated_at.getTime() < before.getTime())
         .length;
     },
+    async setHeadline(id, headline) {
+      const wanted = tables.param('agent_notifications', 'id', id);
+      tables.update('agent_notifications', (r) => r.id === wanted, { headline });
+    },
+    async pruneBefore(before, limit) {
+      const doomed = new Set(
+        page(
+          orderBy(
+            tables.select('agent_notifications', (r) => r.created_at.getTime() < before.getTime()),
+            [(r) => r.created_at],
+            [(r) => r.id]
+          ),
+          limit
+        ).map((r) => r.id)
+      );
+      return tables.delete('agent_notifications', (r) => doomed.has(r.id)).length;
+    },
   };
 }

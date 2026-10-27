@@ -88,5 +88,34 @@ export function memoryChatThreads(tables: MemoryTables): ChatThreadStore {
       const id = chat(chatId);
       tables.delete('chat_queued_sends', (r) => r.chat_id === id);
     },
+    async interruptStaleTurns(staleBefore, error) {
+      const now = new Date();
+      const before = orderBy(
+        tables.select(
+          'chat_turns',
+          (r) => r.status === 'running' && r.updated_at.getTime() < staleBefore.getTime()
+        ),
+        [(r) => r.id]
+      );
+      if (before.length === 0) return [];
+      const ids = new Set(before.map((row) => row.id));
+      tables.update('chat_turns', (r) => ids.has(r.id), {
+        status: 'interrupted',
+        error,
+        finished_at: now,
+        updated_at: now,
+      });
+      tables.update(
+        'chat_messages',
+        (r) => r.turn_id !== null && ids.has(r.turn_id) && r.status === 'streaming',
+        { status: 'interrupted', updated_at: now }
+      );
+      return before.map((row) => ({
+        id: row.id,
+        chatId: row.chat_id,
+        stage: row.stage,
+        staleSince: row.updated_at,
+      }));
+    },
   };
 }

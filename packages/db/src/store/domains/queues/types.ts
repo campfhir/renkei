@@ -52,4 +52,6 @@ export interface QueueStore {
    * each.
    */
   discardAgentRunJobs(runId: string): Promise<{ skipped: number; deadLetters: number }>;
+  /** Whether a pending or processing agent_jobs row carries this run (`payload->>'runId'`). */
+  hasLiveAgentRunJob(runId: string): Promise<boolean>;
 }

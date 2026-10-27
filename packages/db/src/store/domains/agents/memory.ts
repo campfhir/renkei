@@ -2,6 +2,7 @@ import { like, orderBy, page } from '../../memory/order';
 import { MemoryStoreError, type MemoryTables, type Row } from '../../memory/tables';
 import { jsonField } from './json';
 import { agentFromRow, definitionColumns, escapeLike, isNameTaken, triggerFromRow } from './record';
+import { memoryAgentSweeps } from './sweep-memory';
 import type { AgentAdminRecord, AgentStore } from './types';
 
 /** `expires_at IS NULL OR expires_at > NOW()`. */
@@ -54,6 +55,7 @@ export function memoryAgents(tables: MemoryTables): AgentStore {
   }
 
   return {
+    ...memoryAgentSweeps(tables),
     async list(ownerSubject) {
       const rows = orderBy(
         tables.select('agents', (r) => r.owner_subject === ownerSubject),

@@ -1,4 +1,5 @@
 import type { Json } from '../../../db.types';
+import type { AgentRunSweepStore } from './sweep-types';
 
 /** Who is reading runs: the owner sees content; an operator sees it only on failed runs. */
 export type RunAudience = 'owner' | 'admin';
@@ -135,7 +136,9 @@ export interface AgentRunOutcomeInput {
   failed: boolean;
 }
 
-export interface AgentRunStore {
+export type * from './sweep-types';
+
+export interface AgentRunStore extends AgentRunSweepStore {
   /**
    * One agent's retained runs, newest first (ties by id), at most `limit`.
    * `ownerSubject` narrows to the owner's runs (the owner's pages); null
