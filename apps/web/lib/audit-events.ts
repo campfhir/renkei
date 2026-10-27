@@ -15,7 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
 
 export type AuditAction =
@@ -155,20 +155,19 @@ export interface AuditEventInput {
 }
 
 export function recordAuditEvent(event: AuditEventInput): void {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return;
-
-  void dbResult.val
-    .insertInto('audit_events')
-    .values({
-      id: randomUUID(),
-      actor_subject: event.actorSubject,
-      action: event.action,
-      target_kind: event.targetKind ?? null,
-      target_label: event.targetLabel?.slice(0, 200) ?? null,
-      details: event.details ? JSON.stringify(event.details) : null,
-    })
-    .execute()
+  // Resolving the store or starting the write can throw synchronously (no
+  // database configured); either way it is the same logged shrug.
+  void Promise.resolve()
+    .then(() =>
+      getDataStore().auditEvents.record({
+        id: randomUUID(),
+        actorSubject: event.actorSubject,
+        action: event.action,
+        targetKind: event.targetKind ?? null,
+        targetLabel: event.targetLabel?.slice(0, 200) ?? null,
+        details: event.details ?? null,
+      })
+    )
     .catch((error: unknown) => {
       logger.warn('audit event not recorded: {action}', {
         component: 'audit',

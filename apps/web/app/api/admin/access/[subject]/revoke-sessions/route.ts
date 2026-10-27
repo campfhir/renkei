@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
 
@@ -27,29 +27,7 @@ export async function POST(
       { status: 400 }
     );
   }
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  const db = dbResult.val;
-
-  const counts = await db.transaction().execute(async (trx) => {
-    const sessions = await trx
-      .deleteFrom('sessions')
-      .where('subject', '=', subject)
-      .executeTakeFirst();
-    const accessTokens = await trx
-      .deleteFrom('oauth_access_tokens')
-      .where('subject', '=', subject)
-      .executeTakeFirst();
-    const refreshTokens = await trx
-      .deleteFrom('oauth_refresh_tokens')
-      .where('subject', '=', subject)
-      .executeTakeFirst();
-    return {
-      sessions: Number(sessions.numDeletedRows),
-      accessTokens: Number(accessTokens.numDeletedRows),
-      refreshTokens: Number(refreshTokens.numDeletedRows),
-    };
-  });
+  const counts = await getDataStore().sessions.revokeAll(subject);
 
   recordAuditEvent({
     actorSubject: access.subject,

@@ -10,9 +10,7 @@
  * answers null only when none of them knows the subject.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
-import { listAgentsForOwner } from '@/lib/agents/runs-view';
+import { getDataStore } from '@renkei/db';
 
 export interface PersonAgent {
   id: string;
@@ -32,42 +30,33 @@ export interface PersonProfile {
   agents: PersonAgent[];
 }
 
+/**
+ * `agentsOf` lists the agents a subject owns — the agents area's own read
+ * (lib/agents/runs-view.ts's listAgentsForOwner), handed in so this module
+ * reads only what it owns.
+ */
 export async function getPersonProfile(
-  db: Kysely<DB>,
-  subject: string
+  subject: string,
+  agentsOf: (subject: string) => Promise<PersonAgent[]>
 ): Promise<PersonProfile | null> {
-  const [identity, grantName, agents, lastActiveRow] = await Promise.all([
-    db
-      .selectFrom('identities')
-      .select(['subject', 'display_name', 'email', 'idp_groups'])
-      .where('subject', '=', subject)
-      .executeTakeFirst(),
+  const store = getDataStore();
+  const [identity, grant, agents, lastActive] = await Promise.all([
+    store.identities.get(subject),
     // A grant's display name is the fallback name for someone who never
     // signed in — and proof they exist at all.
-    db
-      .selectFrom('provider_grants')
-      .select('display_name')
-      .where('subject', '=', subject)
-      .orderBy('provider')
-      .executeTakeFirst(),
-    listAgentsForOwner(db, subject),
-    db
-      .selectFrom('sessions')
-      .select(sql<Date | null>`max(last_used_at)`.as('last_used_at'))
-      .where('subject', '=', subject)
-      .executeTakeFirst(),
+    store.orgAccess.firstGrantOf(subject),
+    agentsOf(subject),
+    store.sessions.lastUsedOf(subject),
   ]);
 
-  if (!identity && !grantName && agents.length === 0) return null;
+  if (!identity && !grant && agents.length === 0) return null;
 
   return {
     subject,
-    name: identity?.display_name || identity?.email || grantName?.display_name || subject,
+    name: identity?.displayName || identity?.email || grant?.displayName || subject,
     email: identity?.email ?? null,
-    lastActiveAt: lastActiveRow?.last_used_at
-      ? new Date(lastActiveRow.last_used_at).toISOString()
-      : null,
-    idpGroups: identity?.idp_groups ?? [],
+    lastActiveAt: lastActive ? lastActive.toISOString() : null,
+    idpGroups: identity?.idpGroups ?? [],
     agents: agents.map((agent) => ({
       id: agent.id,
       name: agent.name,

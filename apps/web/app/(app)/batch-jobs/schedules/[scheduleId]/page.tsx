@@ -55,7 +55,7 @@ export default async function EditBatchJobSchedulePage({
   const schedule = await getSchedule(dbResult.val, scheduleId);
   if (!schedule || schedule.subject !== session.subject) notFound();
 
-  const calendars = await loadCalendarOptions(dbResult.val);
+  const calendars = await loadCalendarOptions();
   const fallbackScheduleConfig: ScheduleConfig = {
     recurrences: [{ every: 'day', at: '09:00' }],
     timezone: 'UTC',

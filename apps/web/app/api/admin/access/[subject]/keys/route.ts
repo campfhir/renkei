@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { delegateClient } from '@renkei/delegate-client';
 import { recordAuditEvent } from '@/lib/audit-events';
 
@@ -30,17 +30,11 @@ export async function DELETE(
       { status: 400 }
     );
   }
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-
   const shredded = await delegateClient().shredUserKey(subject);
   if (!shredded.ok) {
     return NextResponse.json({ error: 'The key service could not be reached.' }, { status: 503 });
   }
-  await dbResult.val
-    .deleteFrom('sessions')
-    .where('subject', '=', subject)
-    .execute();
+  await getDataStore().sessions.deleteForSubject(subject);
   recordAuditEvent({
     actorSubject: access.subject,
     action: 'encryption-key.shredded',

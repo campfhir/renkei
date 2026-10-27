@@ -1,7 +1,6 @@
 import React from 'react';
 import BackLink from '@/components/back-link';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { loadCalendarOptions } from '@/lib/schedule-calendars';
@@ -13,8 +12,7 @@ export default async function NewBatchJobSchedulePage(): Promise<React.ReactNode
     redirect(signInUrl(`/batch-jobs/schedules/new`));
   }
 
-  const dbResult = getDatabase();
-  const calendars = dbResult.ok ? await loadCalendarOptions(dbResult.val) : [];
+  const calendars = await loadCalendarOptions().catch(() => []);
 
   return (
     <div className="mx-auto max-w-3xl">

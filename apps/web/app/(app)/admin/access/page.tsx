@@ -1,8 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
-import { sql } from 'kysely';
+import { getDataStore } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { grantProviderLabel } from '@/lib/provider-labels';
 import ConnectorIcon from '@/components/connector-icon';
@@ -60,8 +59,16 @@ export default async function AccessPage(): Promise<React.ReactNode> {
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  const store = getDataStore();
+  const loaded = await Promise.all([
+    store.identities.list(),
+    store.orgAccess.listGrants(),
+    store.sessions.lastUsedBySubject(),
+    // Who holds an encryption key (docs/delegate-key-design.md): the one
+    // thing an operator may remove for a person who is gone for good.
+    store.orgAccess.listKeyHolders(),
+  ]).catch(() => null);
+  if (!loaded) {
     return (
       <div>
         <h2 className="mb-2 text-lg font-semibold">Error</h2>
@@ -71,30 +78,7 @@ export default async function AccessPage(): Promise<React.ReactNode> {
       </div>
     );
   }
-  const db = dbResult.val;
-
-  const [identities, grants, activity, keyRows] = await Promise.all([
-    db
-      .selectFrom('identities')
-      .select(['subject', 'display_name', 'email'])
-      .execute(),
-    db
-      .selectFrom('provider_grants')
-      .select(['subject', 'provider', 'provider_account_id', 'display_name', 'expires_at'])
-      .orderBy('provider')
-      .execute(),
-    db
-      .selectFrom('sessions')
-      .select(['subject', sql<Date>`max(last_used_at)`.as('last_used_at')])
-      .groupBy('subject')
-      .execute(),
-    // Who holds an encryption key (docs/delegate-key-design.md): the one
-    // thing an operator may remove for a person who is gone for good.
-    db
-      .selectFrom('user_encryption_keys')
-      .select(['subject', 'mode'])
-      .execute(),
-  ]);
+  const [identities, grants, activity, keyRows] = loaded;
   const keyModeBySubject = new Map(keyRows.map((row) => [row.subject, row.mode]));
 
   const people = new Map<string, Person>();
@@ -108,7 +92,7 @@ export default async function AccessPage(): Promise<React.ReactNode> {
   };
   for (const identity of identities) {
     const person = personFor(identity.subject);
-    person.name = identity.display_name || identity.email;
+    person.name = identity.displayName || identity.email;
     person.email = identity.email;
   }
   const grantsBySubject = new Map<string, GrantRow[]>();
@@ -117,13 +101,13 @@ export default async function AccessPage(): Promise<React.ReactNode> {
     if (!grant.subject) continue;
     const person = personFor(grant.subject);
     // A grant's display name beats a bare subject when no identity exists.
-    if (person.name === person.subject && grant.display_name) person.name = grant.display_name;
-    const expiresAt = new Date(grant.expires_at);
+    if (person.name === person.subject && grant.displayName) person.name = grant.displayName;
+    const expiresAt = grant.expiresAt;
     const rows = grantsBySubject.get(grant.subject) ?? [];
     rows.push({
       provider: grant.provider,
-      accountId: grant.provider_account_id,
-      displayName: grant.display_name,
+      accountId: grant.accountId,
+      displayName: grant.displayName,
       expiresAt,
       expired: expiresAt.getTime() < now,
     });
@@ -131,7 +115,7 @@ export default async function AccessPage(): Promise<React.ReactNode> {
   }
   for (const row of activity) {
     const person = people.get(row.subject);
-    if (person) person.lastActive = row.last_used_at;
+    if (person) person.lastActive = row.lastUsedAt;
   }
 
   const sorted = [...people.values()].sort((a, b) => a.name.localeCompare(b.name));
@@ -147,10 +131,7 @@ export default async function AccessPage(): Promise<React.ReactNode> {
         they hold — they sign in again and nothing of theirs is lost. Removing a person&apos;s
         encryption key is final: it is for someone who is gone and whose key is lost. A
         person&apos;s usage, groups and agents are on{' '}
-        <Link
-          href={`/admin/usage`}
-          className="text-blue-600 hover:underline dark:text-blue-400"
-        >
+        <Link href={`/admin/usage`} className="text-blue-600 hover:underline dark:text-blue-400">
           Organization usage
         </Link>
         .
@@ -200,10 +181,7 @@ export default async function AccessPage(): Promise<React.ReactNode> {
                             displayName={person.name}
                           />
                           {keyModeBySubject.has(person.subject) ? (
-                            <ShredKeyButton
-                              subject={person.subject}
-                              displayName={person.name}
-                            />
+                            <ShredKeyButton subject={person.subject} displayName={person.name} />
                           ) : null}
                         </span>
                       ) : null}

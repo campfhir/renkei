@@ -370,7 +370,7 @@ async function ocrAttempt(
     return NEEDS_OCR;
   }
   // The pages were read and billed whether or not any text came back.
-  await recordDocumentUsage(db, {
+  await recordDocumentUsage({
     subject: row.ownerSubject,
     artifactId: row.id,
     kind: 'ocr',
