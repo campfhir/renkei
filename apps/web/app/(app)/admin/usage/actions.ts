@@ -193,23 +193,23 @@ export async function getOrgUsageReport(
       imageUsers,
       document,
     ] = await Promise.all([
-      getSurfaceTokenTotals(db, period, timeZone, subject),
-      getOrgActivityTotals(db, period, timeZone, subject),
-      getOrgDailySeries(db, period, timeZone, subject, seriesGranularity(period.days)),
+      getSurfaceTokenTotals(period, timeZone, subject),
+      getOrgActivityTotals(period, timeZone, subject),
+      getOrgDailySeries(period, timeZone, subject, seriesGranularity(period.days)),
       // Every spender, ranked: the top few are shown, and the selected
       // person's own rank is read off the same list.
-      getTopUsers(db, period, timeZone, includeAgentsInTopUsers),
-      getTopAgentsByTokens(db, period, timeZone, subject),
-      getMostEfficientAgents(db, period, timeZone, 10, 3, subject),
-      getTopToolsOrg(db, period, timeZone, subject),
-      getTokensByModel(db, period, timeZone, subject),
-      listPeople(db),
+      getTopUsers(period, timeZone, includeAgentsInTopUsers),
+      getTopAgentsByTokens(period, timeZone, subject),
+      getMostEfficientAgents(period, timeZone, 10, 3, subject),
+      getTopToolsOrg(period, timeZone, subject),
+      getTokensByModel(period, timeZone, subject),
+      listPeople(),
       subject === null ? Promise.resolve(null) : getPersonProfile(db, subject),
-      getVoiceTotals(db, period, timeZone, subject),
-      getVoiceUsers(db, period, timeZone),
-      getImageTotals(db, period, timeZone, subject),
-      getImageUsers(db, period, timeZone),
-      getDocumentTotals(db, period, timeZone, subject),
+      getVoiceTotals(period, timeZone, subject),
+      getVoiceUsers(period, timeZone),
+      getImageTotals(period, timeZone, subject),
+      getImageUsers(period, timeZone),
+      getDocumentTotals(period, timeZone, subject),
     ]);
     const now = new Date();
     const ranked = rankUsers(allUsers, subject, TOP_USERS);

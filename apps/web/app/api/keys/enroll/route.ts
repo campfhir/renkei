@@ -24,9 +24,7 @@ import {
   setAutomationDays,
 } from '@/lib/keys/status';
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
@@ -82,7 +80,7 @@ export async function POST(
         return jsonError(503, 'delegate', 'The key service could not be reached.');
     }
   }
-  await setAutomationDays(db, session.subject, days);
+  await setAutomationDays(session.subject, days);
   await resumeRunsNeedingSignIn(db, agentJobsQueue().producer, session.subject);
   recordAuditEvent({ actorSubject: session.subject, action: 'encryption-key.enrolled' });
   return NextResponse.json({ version: enrolled.val.version, migrated: enrolled.val.migrated });

@@ -122,9 +122,8 @@ export async function getUtilizationReport(
     return { ...empty, error: 'Your account has no role in this tenant' };
   }
 
+  // Only the image model list still reads the database directly.
   const dbResult = getDatabase();
-  if (!dbResult.ok) return { ...empty, error: 'Database unavailable' };
-  const db = dbResult.val;
   const subject = session.subject;
   const span = { days: period.days, endOffsetDays: period.endOffsetDays };
 
@@ -142,17 +141,17 @@ export async function getUtilizationReport(
       imageModels,
       document,
     ] = await Promise.all([
-      getUtilizationTotals(db, subject, span, timeZone),
-      getUtilizationSeries(db, subject, span, timeZone, seriesGranularity(period.days)),
-      getAgentUtilization(db, subject, span, timeZone),
-      getFailureSignatures(db, subject, span, timeZone),
-      getSurfaceTokenTotals(db, span, timeZone, subject),
-      getMostEfficientAgents(db, span, timeZone, 10, 3, subject),
-      getVoiceTotals(db, span, timeZone, subject),
+      getUtilizationTotals(subject, span, timeZone),
+      getUtilizationSeries(subject, span, timeZone, seriesGranularity(period.days)),
+      getAgentUtilization(subject, span, timeZone),
+      getFailureSignatures(subject, span, timeZone),
+      getSurfaceTokenTotals(span, timeZone, subject),
+      getMostEfficientAgents(span, timeZone, 10, 3, subject),
+      getVoiceTotals(span, timeZone, subject),
       resolveVoiceProvider(),
-      getImageTotals(db, span, timeZone, subject),
-      listImageModels(db),
-      getDocumentTotals(db, span, timeZone, subject),
+      getImageTotals(span, timeZone, subject),
+      dbResult.ok ? listImageModels(dbResult.val) : Promise.resolve([]),
+      getDocumentTotals(span, timeZone, subject),
     ]);
     return {
       periodKey: period.key,

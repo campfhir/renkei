@@ -23,7 +23,7 @@ test.describe.configure({ mode: 'serial' });
 
 for (const crawl of CRAWL_PAGES) {
   test(`${crawl.path} renders from the data store alone`, async ({ page, person, request }) => {
-    if (crawl.seed) await person.seed(crawl.seed(person.subject));
+    if (crawl.seed) await person.seed(crawl.seed(person.subject, person.sessionId));
     await request.delete(SEED_URL, { headers: HEADERS, data: { calls: true } });
 
     const response = await page.goto(crawl.path);

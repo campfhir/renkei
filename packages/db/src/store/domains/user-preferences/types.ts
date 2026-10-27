@@ -7,4 +7,6 @@ export interface UserPreferenceStore {
   /** Undefined when the person has never saved this key. */
   get(subject: string, key: string): Promise<unknown>;
   set(subject: string, key: string, value: unknown): Promise<void>;
+  /** Forget a saved key, so it reads as never set; a key never saved is left alone. */
+  delete(subject: string, key: string): Promise<void>;
 }

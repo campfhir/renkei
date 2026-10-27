@@ -24,9 +24,8 @@
  * grouping differs.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
-import { inSpan, localBucketOf, type UsageSpan } from './user-utilization';
+import { getDataStore, type ChatSurface } from '@renkei/db';
+import { spanWindow, type UsageSpan } from './user-utilization';
 
 export type { UsageSpan };
 
@@ -95,99 +94,51 @@ export interface OrgDay {
 
 const EMPTY_SURFACE: SurfaceTokens = { input: 0, output: 0 };
 
-interface ChatBucketRow {
-  bucket: string;
-  input_tokens: string;
-  output_tokens: string;
-}
-
 /**
  * The chat surface split: a chat with no project is `'chat'`, a project's
  * chat is `'chat_project'` unless the project is a code project (`kind =
- * 'code'`), in which case it's `'code'`. Grouped in SQL so a row never has
- * to be re-labeled on the way out.
+ * 'code'`), in which case it's `'code'`. The store groups by it, so a row
+ * never has to be re-labeled on the way out.
  */
-const CHAT_BUCKET_CASE = sql`
-  CASE
-    WHEN c.project_id IS NULL THEN 'chat'
-    WHEN cp.kind = 'code' THEN 'code'
-    ELSE 'chat_project'
-  END
-`;
-
-function surfaceOf(rows: readonly ChatBucketRow[], bucket: string): SurfaceTokens {
-  const row = rows.find((candidate) => candidate.bucket === bucket);
-  return row
-    ? { input: Number(row.input_tokens ?? 0), output: Number(row.output_tokens ?? 0) }
-    : EMPTY_SURFACE;
+function surfaceOf(
+  rows: readonly { surface: ChatSurface; inputTokens: number; outputTokens: number }[],
+  surface: ChatSurface
+): SurfaceTokens {
+  const row = rows.find((candidate) => candidate.surface === surface);
+  return row ? { input: row.inputTokens, output: row.outputTokens } : EMPTY_SURFACE;
 }
 
-/** `AND <column> = <subject>` when scoped, nothing when org-wide. */
-function ownedBy(column: string, ownerSubject: string | null) {
-  return ownerSubject === null ? sql`` : sql`AND ${sql.ref(column)} = ${ownerSubject}`;
-}
+const tokens = (row: { inputTokens: number; outputTokens: number }): SurfaceTokens => ({
+  input: row.inputTokens,
+  output: row.outputTokens,
+});
 
 /**
  * Token totals by surface — org-wide when `ownerSubject` is null, or
  * narrowed to one person's own chats, projects and agents when it isn't.
  */
 export async function getSurfaceTokenTotals(
-  db: Kysely<DB>,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null
 ): Promise<OrgTokenTotals> {
-  const [chatResult, agentRow, imageRow, documentRow] = await Promise.all([
-    sql<ChatBucketRow>`
-      SELECT
-        ${CHAT_BUCKET_CASE} AS bucket,
-        COALESCE(SUM(ct.input_tokens), 0) AS input_tokens,
-        COALESCE(SUM(ct.output_tokens), 0) AS output_tokens
-      FROM chat_turns ct
-      JOIN chats c ON c.id = ct.chat_id
-      LEFT JOIN chat_projects cp ON cp.id = c.project_id
-      WHERE ${inSpan('ct.started_at', span, timeZone)}
-        ${ownedBy('c.owner_subject', ownerSubject)}
-      GROUP BY bucket
-    `.execute(db),
-    sql<{ input_tokens: string; output_tokens: string }>`
-      SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens
-      FROM llm_calls
-      WHERE agent_id IS NOT NULL
-        AND ${inSpan('created_at', span, timeZone)}
-        ${ownedBy('subject', ownerSubject)}
-    `.execute(db),
-    sql<{ input_tokens: string; output_tokens: string }>`
-      SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens
-      FROM image_usage
-      WHERE ${inSpan('created_at', span, timeZone)}
-        ${ownedBy('subject', ownerSubject)}
-    `.execute(db),
-    sql<{ input_tokens: string; output_tokens: string }>`
-      SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens
-      FROM document_usage
-      WHERE ${inSpan('created_at', span, timeZone)}
-        ${ownedBy('subject', ownerSubject)}
-    `.execute(db),
+  const filter = { window: spanWindow(span, timeZone), subject: ownerSubject };
+  const ledgers = getDataStore().usageLedgers;
+  const [chatRows, agentTotals, imageTotals, documentRows] = await Promise.all([
+    ledgers.chatTokensBySurface(filter),
+    ledgers.llmTotals({ ...filter, agentsOnly: true }),
+    ledgers.imageTotals(filter),
+    ledgers.documentByKind(filter),
   ]);
   return {
-    chat: surfaceOf(chatResult.rows, 'chat'),
-    chatProjects: surfaceOf(chatResult.rows, 'chat_project'),
-    codeProjects: surfaceOf(chatResult.rows, 'code'),
-    agents: {
-      input: Number(agentRow.rows[0]?.input_tokens ?? 0),
-      output: Number(agentRow.rows[0]?.output_tokens ?? 0),
-    },
-    images: {
-      input: Number(imageRow.rows[0]?.input_tokens ?? 0),
-      output: Number(imageRow.rows[0]?.output_tokens ?? 0),
-    },
+    chat: surfaceOf(chatRows, 'chat'),
+    chatProjects: surfaceOf(chatRows, 'chat_project'),
+    codeProjects: surfaceOf(chatRows, 'code'),
+    agents: tokens(agentTotals),
+    images: tokens(imageTotals),
     documents: {
-      input: Number(documentRow.rows[0]?.input_tokens ?? 0),
-      output: Number(documentRow.rows[0]?.output_tokens ?? 0),
+      input: documentRows.reduce((total, row) => total + row.inputTokens, 0),
+      output: documentRows.reduce((total, row) => total + row.outputTokens, 0),
     },
   };
 }
@@ -199,52 +150,26 @@ export async function getSurfaceTokenTotals(
  * page shows that person's active days instead.
  */
 export async function getOrgActivityTotals(
-  db: Kysely<DB>,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null
 ): Promise<OrgActivityTotals> {
-  let runsQuery = db
-    .selectFrom('agent_run_log')
-    .select([
-      sql<string>`count(*)`.as('runs'),
-      sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
-    ])
-    .where(inSpan('created_at', span, timeZone));
-  if (ownerSubject !== null) runsQuery = runsQuery.where('owner_subject', '=', ownerSubject);
-  let callsQuery = db
-    .selectFrom('tool_calls')
-    .select([
-      sql<string>`count(*)`.as('calls'),
-      sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-    ])
-    .where(inSpan('started_at', span, timeZone));
-  if (ownerSubject !== null) callsQuery = callsQuery.where('subject', '=', ownerSubject);
-
+  const window = spanWindow(span, timeZone);
+  const filter = { window, subject: ownerSubject };
+  const store = getDataStore();
   const [runs, calls, active, total] = await Promise.all([
-    runsQuery.executeTakeFirst(),
-    callsQuery.executeTakeFirst(),
-    ownerSubject === null
-      ? db
-          .selectFrom('llm_calls')
-          .select(sql<string>`count(DISTINCT subject)`.as('n'))
-          .where(inSpan('created_at', span, timeZone))
-          .executeTakeFirst()
-      : Promise.resolve(undefined),
-    ownerSubject === null
-      ? db
-          .selectFrom('identities')
-          .select(sql<string>`count(DISTINCT subject)`.as('n'))
-          .executeTakeFirst()
-      : Promise.resolve(undefined),
+    store.usageLedgers.runTotals(filter),
+    store.toolUsage.totals(filter, { latency: false }),
+    ownerSubject === null ? store.usageLedgers.countActiveSubjects(window) : Promise.resolve(0),
+    ownerSubject === null ? store.usageLedgers.countPeople() : Promise.resolve(0),
   ]);
   return {
-    runs: Number(runs?.runs ?? 0),
-    failures: Number(runs?.failures ?? 0),
-    toolCalls: Number(calls?.calls ?? 0),
-    toolErrors: Number(calls?.errors ?? 0),
-    activeUsers: Number(active?.n ?? 0),
-    totalUsers: Number(total?.n ?? 0),
+    runs: runs.runs,
+    failures: runs.failures,
+    toolCalls: calls.calls,
+    toolErrors: calls.errors,
+    activeUsers: active,
+    totalUsers: total,
   };
 }
 
@@ -259,86 +184,22 @@ export async function getOrgActivityTotals(
  * `getOrgActivityTotals` instead, computed once over the whole window.
  */
 export async function getOrgDailySeries(
-  db: Kysely<DB>,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
   granularity: 'day' | 'hour' = 'day'
 ): Promise<OrgDay[]> {
-  const pattern = granularity === 'hour' ? 'YYYY-MM-DD"T"HH24' : 'YYYY-MM-DD';
-  let runsQuery = db
-    .selectFrom('agent_run_log')
-    .select([
-      localBucketOf('created_at', timeZone, granularity).as('day'),
-      sql<string>`count(*)`.as('runs'),
-      sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
-    ])
-    .where(inSpan('created_at', span, timeZone))
-    .groupBy(sql`day`);
-  if (ownerSubject !== null) runsQuery = runsQuery.where('owner_subject', '=', ownerSubject);
-  let callsQuery = db
-    .selectFrom('tool_calls')
-    .select([
-      localBucketOf('started_at', timeZone, granularity).as('day'),
-      sql<string>`count(*)`.as('calls'),
-      sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-    ])
-    .where(inSpan('started_at', span, timeZone))
-    .groupBy(sql`day`);
-  if (ownerSubject !== null) callsQuery = callsQuery.where('subject', '=', ownerSubject);
-
+  const filter = { window: spanWindow(span, timeZone), subject: ownerSubject };
+  const bucketing = { timeZone, granularity };
+  const store = getDataStore();
+  const ledgers = store.usageLedgers;
   const [chatRows, agentRows, runRows, callRows, imageRows, documentRows] = await Promise.all([
-    sql<ChatBucketRow & { day: string }>`
-      SELECT
-        to_char(ct.started_at AT TIME ZONE ${timeZone}, ${pattern}) AS day,
-        ${CHAT_BUCKET_CASE} AS bucket,
-        COALESCE(SUM(ct.input_tokens), 0) AS input_tokens,
-        COALESCE(SUM(ct.output_tokens), 0) AS output_tokens
-      FROM chat_turns ct
-      JOIN chats c ON c.id = ct.chat_id
-      LEFT JOIN chat_projects cp ON cp.id = c.project_id
-      WHERE ${inSpan('ct.started_at', span, timeZone)}
-        ${ownedBy('c.owner_subject', ownerSubject)}
-      GROUP BY day, bucket
-    `.execute(db),
-    sql<{ day: string; input_tokens: string; output_tokens: string }>`
-      SELECT to_char(created_at AT TIME ZONE ${timeZone}, ${pattern}) AS day,
-             COALESCE(SUM(input_tokens), 0) AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens
-      FROM llm_calls
-      WHERE agent_id IS NOT NULL
-        AND ${inSpan('created_at', span, timeZone)}
-        ${ownedBy('subject', ownerSubject)}
-      GROUP BY day
-    `.execute(db),
-    runsQuery.execute(),
-    callsQuery.execute(),
-    sql<{
-      day: string;
-      images: string;
-      bytes: string;
-      input_tokens: string;
-      output_tokens: string;
-    }>`
-      SELECT to_char(created_at AT TIME ZONE ${timeZone}, ${pattern}) AS day,
-             COALESCE(SUM(images), 0) AS images,
-             COALESCE(SUM(image_bytes), 0) AS bytes,
-             COALESCE(SUM(input_tokens), 0) AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens
-      FROM image_usage
-      WHERE ${inSpan('created_at', span, timeZone)}
-        ${ownedBy('subject', ownerSubject)}
-      GROUP BY day
-    `.execute(db),
-    sql<{ day: string; input_tokens: string; output_tokens: string }>`
-      SELECT to_char(created_at AT TIME ZONE ${timeZone}, ${pattern}) AS day,
-             COALESCE(SUM(input_tokens), 0) AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens
-      FROM document_usage
-      WHERE ${inSpan('created_at', span, timeZone)}
-        ${ownedBy('subject', ownerSubject)}
-      GROUP BY day
-    `.execute(db),
+    ledgers.chatSeriesBySurface(filter, bucketing),
+    ledgers.llmSeries({ ...filter, agentsOnly: true }, bucketing),
+    ledgers.runSeries(filter, bucketing),
+    store.toolUsage.series(filter, bucketing),
+    ledgers.imageSeries(filter, bucketing),
+    ledgers.documentSeries(filter, bucketing),
   ]);
 
   const byDay = new Map<string, OrgDay>();
@@ -369,47 +230,45 @@ export async function getOrgDailySeries(
     byDay.set(day, fresh);
     return fresh;
   };
-  for (const row of chatRows.rows) {
-    const point = dayOf(row.day);
-    const input = Number(row.input_tokens ?? 0);
-    const output = Number(row.output_tokens ?? 0);
-    if (row.bucket === 'chat') {
-      point.chatInputTokens += input;
-      point.chatOutputTokens += output;
-    } else if (row.bucket === 'chat_project') {
-      point.chatProjectInputTokens += input;
-      point.chatProjectOutputTokens += output;
+  for (const row of chatRows) {
+    const point = dayOf(row.bucket);
+    if (row.surface === 'chat') {
+      point.chatInputTokens += row.inputTokens;
+      point.chatOutputTokens += row.outputTokens;
+    } else if (row.surface === 'chat_project') {
+      point.chatProjectInputTokens += row.inputTokens;
+      point.chatProjectOutputTokens += row.outputTokens;
     } else {
-      point.codeProjectInputTokens += input;
-      point.codeProjectOutputTokens += output;
+      point.codeProjectInputTokens += row.inputTokens;
+      point.codeProjectOutputTokens += row.outputTokens;
     }
   }
-  for (const row of agentRows.rows) {
-    const point = dayOf(row.day);
-    point.agentInputTokens += Number(row.input_tokens ?? 0);
-    point.agentOutputTokens += Number(row.output_tokens ?? 0);
+  for (const row of agentRows) {
+    const point = dayOf(row.bucket);
+    point.agentInputTokens += row.inputTokens;
+    point.agentOutputTokens += row.outputTokens;
   }
-  for (const row of imageRows.rows) {
-    const point = dayOf(row.day);
-    point.imageInputTokens += Number(row.input_tokens ?? 0);
-    point.imageOutputTokens += Number(row.output_tokens ?? 0);
-    point.images += Number(row.images ?? 0);
-    point.imageBytes += Number(row.bytes ?? 0);
+  for (const row of imageRows) {
+    const point = dayOf(row.bucket);
+    point.imageInputTokens += row.inputTokens;
+    point.imageOutputTokens += row.outputTokens;
+    point.images += row.images;
+    point.imageBytes += row.bytes;
   }
-  for (const row of documentRows.rows) {
-    const point = dayOf(row.day);
-    point.documentInputTokens += Number(row.input_tokens ?? 0);
-    point.documentOutputTokens += Number(row.output_tokens ?? 0);
+  for (const row of documentRows) {
+    const point = dayOf(row.bucket);
+    point.documentInputTokens += row.inputTokens;
+    point.documentOutputTokens += row.outputTokens;
   }
   for (const row of runRows) {
-    const point = dayOf(row.day);
-    point.runs += Number(row.runs ?? 0);
-    point.failures += Number(row.failures ?? 0);
+    const point = dayOf(row.bucket);
+    point.runs += row.runs;
+    point.failures += row.failures;
   }
   for (const row of callRows) {
-    const point = dayOf(row.day);
-    point.toolCalls += Number(row.calls ?? 0);
-    point.toolErrors += Number(row.errors ?? 0);
+    const point = dayOf(row.bucket);
+    point.toolCalls += row.calls;
+    point.toolErrors += row.errors;
   }
   return [...byDay.values()].sort((left, right) => left.day.localeCompare(right.day));
 }
@@ -434,49 +293,33 @@ export interface TopUserRow {
  * one person stands without a second query.
  */
 export async function getTopUsers(
-  db: Kysely<DB>,
   span: UsageSpan,
   timeZone: string,
   includeAgents: boolean,
   limit?: number
 ): Promise<TopUserRow[]> {
+  const filter = { window: spanWindow(span, timeZone) };
+  const store = getDataStore();
   const [chatRows, agentRows, identityRows] = await Promise.all([
-    db
-      .selectFrom('chat_turns')
-      .innerJoin('chats', 'chats.id', 'chat_turns.chat_id')
-      .select(({ fn }) => [
-        'chats.owner_subject as subject',
-        fn.sum<string>('chat_turns.input_tokens').as('input_tokens'),
-        fn.sum<string>('chat_turns.output_tokens').as('output_tokens'),
-      ])
-      .where(inSpan('chat_turns.started_at', span, timeZone))
-      .groupBy('chats.owner_subject')
-      .execute(),
-    sql<{ subject: string; input_tokens: string; output_tokens: string }>`
-      SELECT subject, COALESCE(SUM(input_tokens), 0) AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens
-      FROM llm_calls
-      WHERE agent_id IS NOT NULL
-        AND ${inSpan('created_at', span, timeZone)}
-      GROUP BY subject
-    `.execute(db),
-    db.selectFrom('identities').select(['subject', 'display_name', 'email']).execute(),
+    store.usageLedgers.chatTokensBySubject(filter),
+    store.usageLedgers.agentLlmBySubject(filter),
+    store.identities.list(),
   ]);
 
   const identityBySubject = new Map(identityRows.map((row) => [row.subject, row]));
   const chatBySubject = new Map(chatRows.map((row) => [row.subject, row]));
-  const agentBySubject = new Map(agentRows.rows.map((row) => [row.subject, row]));
+  const agentBySubject = new Map(agentRows.map((row) => [row.subject, row]));
   const subjects = new Set<string>([...chatBySubject.keys(), ...agentBySubject.keys()]);
 
   const rows: TopUserRow[] = [...subjects].map((subject) => {
     const chat = chatBySubject.get(subject);
     const agent = agentBySubject.get(subject);
-    const chatTokens = Number(chat?.input_tokens ?? 0) + Number(chat?.output_tokens ?? 0);
-    const agentTokens = Number(agent?.input_tokens ?? 0) + Number(agent?.output_tokens ?? 0);
+    const chatTokens = (chat?.inputTokens ?? 0) + (chat?.outputTokens ?? 0);
+    const agentTokens = (agent?.inputTokens ?? 0) + (agent?.outputTokens ?? 0);
     const identity = identityBySubject.get(subject);
     return {
       subject,
-      label: identity?.display_name || identity?.email || subject,
+      label: identity?.displayName || identity?.email || subject,
       chatTokens,
       agentTokens,
       totalTokens: chatTokens + (includeAgents ? agentTokens : 0),
@@ -495,13 +338,10 @@ export interface PersonOption {
 }
 
 /** Everyone who has signed in, for the person picker — names only. */
-export async function listPeople(db: Kysely<DB>): Promise<PersonOption[]> {
-  const rows = await db
-    .selectFrom('identities')
-    .select(['subject', 'display_name', 'email'])
-    .execute();
+export async function listPeople(): Promise<PersonOption[]> {
+  const rows = await getDataStore().identities.list();
   return rows
-    .map((row) => ({ subject: row.subject, label: row.display_name || row.email || row.subject }))
+    .map((row) => ({ subject: row.subject, label: row.displayName || row.email || row.subject }))
     .sort((left, right) => left.label.localeCompare(right.label));
 }
 
@@ -520,50 +360,29 @@ export interface TopAgentRow {
  * owner, so an agent shows under whoever pays for it).
  */
 export async function getTopAgentsByTokens(
-  db: Kysely<DB>,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
   limit = 10
 ): Promise<TopAgentRow[]> {
-  const rows = await sql<{
-    agent_id: string;
-    name: string;
-    enabled: boolean;
-    input_tokens: string;
-    output_tokens: string;
-  }>`
-    SELECT a.id AS agent_id, a.name, a.enabled,
-           SUM(l.input_tokens) AS input_tokens, SUM(l.output_tokens) AS output_tokens
-    FROM llm_calls l
-    JOIN agents a ON a.id = l.agent_id
-    WHERE l.agent_id IS NOT NULL
-      AND ${inSpan('l.created_at', span, timeZone)}
-      ${ownedBy('l.subject', ownerSubject)}
-    GROUP BY a.id, a.name, a.enabled
-    ORDER BY SUM(l.input_tokens) + SUM(l.output_tokens) DESC
-    LIMIT ${limit}
-  `.execute(db);
-  if (rows.rows.length === 0) return [];
+  const filter = { window: spanWindow(span, timeZone), subject: ownerSubject };
+  const ledgers = getDataStore().usageLedgers;
+  const rows = await ledgers.topAgentsByTokens(filter, limit);
+  if (rows.length === 0) return [];
 
-  const ids = rows.rows.map((row) => row.agent_id);
-  let runsQuery = db
-    .selectFrom('agent_run_log')
-    .select(['agent_id', sql<string>`count(*)`.as('runs')])
-    .where('agent_id', 'in', ids)
-    .where(inSpan('created_at', span, timeZone))
-    .groupBy('agent_id');
-  if (ownerSubject !== null) runsQuery = runsQuery.where('owner_subject', '=', ownerSubject);
-  const runRows = await runsQuery.execute();
-  const runsByAgent = new Map(runRows.map((row) => [row.agent_id, Number(row.runs)]));
+  const runRows = await ledgers.runsByAgent({
+    ...filter,
+    agentIds: rows.map((row) => row.agentId),
+  });
+  const runsByAgent = new Map(runRows.map((row) => [row.agentId, row.runs]));
 
-  return rows.rows.map((row) => ({
-    agentId: row.agent_id,
+  return rows.map((row) => ({
+    agentId: row.agentId,
     name: row.name,
     enabled: row.enabled,
-    inputTokens: Number(row.input_tokens ?? 0),
-    outputTokens: Number(row.output_tokens ?? 0),
-    runs: runsByAgent.get(row.agent_id) ?? 0,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    runs: runsByAgent.get(row.agentId) ?? 0,
   }));
 }
 
@@ -596,39 +415,23 @@ export interface EfficientAgentRow {
  * agent in the tenant.
  */
 export async function getMostEfficientAgents(
-  db: Kysely<DB>,
   span: UsageSpan,
   timeZone: string,
   limit = 10,
   minSucceededRuns = 3,
   ownerSubject: string | null = null
 ): Promise<EfficientAgentRow[]> {
-  const rows = await sql<{
-    agent_id: string;
-    name: string;
-    succeeded_runs: string;
-    input_tokens: string;
-    output_tokens: string;
-    tool_calls: string;
-  }>`
-    SELECT a.id AS agent_id, a.name, COUNT(*) AS succeeded_runs,
-           SUM(f.input_tokens) AS input_tokens, SUM(f.output_tokens) AS output_tokens,
-           SUM(f.tool_calls) AS tool_calls
-    FROM agent_run_log f
-    JOIN agents a ON a.id = f.agent_id
-    WHERE f.status = 'succeeded'
-      AND ${inSpan('f.created_at', span, timeZone)}
-      ${ownedBy('f.owner_subject', ownerSubject)}
-    GROUP BY a.id, a.name
-    HAVING COUNT(*) >= ${minSucceededRuns}
-  `.execute(db);
+  const rows = await getDataStore().usageLedgers.succeededRunStats(
+    { window: spanWindow(span, timeZone), subject: ownerSubject },
+    minSucceededRuns
+  );
 
-  const scored: EfficientAgentRow[] = rows.rows.map((row) => {
-    const succeededRuns = Number(row.succeeded_runs);
-    const tokens = Number(row.input_tokens ?? 0) + Number(row.output_tokens ?? 0);
-    const toolCalls = Number(row.tool_calls ?? 0);
+  const scored: EfficientAgentRow[] = rows.map((row) => {
+    const succeededRuns = row.runs;
+    const tokens = row.inputTokens + row.outputTokens;
+    const toolCalls = row.toolCalls;
     return {
-      agentId: row.agent_id,
+      agentId: row.agentId,
       name: row.name,
       succeededRuns,
       tokens,
@@ -656,31 +459,20 @@ export interface OrgToolRow {
  * which run under a token bound to the owner.
  */
 export async function getTopToolsOrg(
-  db: Kysely<DB>,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
   limit = 10
 ): Promise<OrgToolRow[]> {
-  let query = db
-    .selectFrom('tool_calls')
-    .select([
-      'tool',
-      'connector',
-      sql<string>`count(*)`.as('calls'),
-      sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-    ])
-    .where(inSpan('started_at', span, timeZone))
-    .groupBy(['tool', 'connector'])
-    .orderBy(sql`count(*)`, 'desc')
-    .limit(limit);
-  if (ownerSubject !== null) query = query.where('subject', '=', ownerSubject);
-  const rows = await query.execute();
+  const rows = await getDataStore().toolUsage.byTool(
+    { window: spanWindow(span, timeZone), subject: ownerSubject },
+    { latency: false, limit }
+  );
   return rows.map((row) => ({
     tool: row.tool,
     connector: row.connector,
-    calls: Number(row.calls),
-    errors: Number(row.errors),
+    calls: row.calls,
+    errors: row.errors,
   }));
 }
 
@@ -706,38 +498,13 @@ export interface ModelTokenRow {
  * before the model was recorded surface as one null-model row.
  */
 export async function getTokensByModel(
-  db: Kysely<DB>,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null,
   limit = 10
 ): Promise<ModelTokenRow[]> {
-  const rows = await sql<{
-    provider: string | null;
-    model: string | null;
-    input_tokens: string;
-    output_tokens: string;
-    cached_input_tokens: string;
-    calls: string;
-  }>`
-    SELECT provider, model,
-           COALESCE(SUM(input_tokens), 0) AS input_tokens,
-           COALESCE(SUM(output_tokens), 0) AS output_tokens,
-           COALESCE(SUM(cache_read_input_tokens), 0) AS cached_input_tokens,
-           COUNT(*) AS calls
-    FROM llm_calls
-    WHERE ${inSpan('created_at', span, timeZone)}
-      ${ownedBy('subject', ownerSubject)}
-    GROUP BY provider, model
-    ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
-    LIMIT ${limit}
-  `.execute(db);
-  return rows.rows.map((row) => ({
-    provider: row.provider,
-    model: row.model,
-    inputTokens: Number(row.input_tokens ?? 0),
-    outputTokens: Number(row.output_tokens ?? 0),
-    cachedInputTokens: Number(row.cached_input_tokens ?? 0),
-    calls: Number(row.calls ?? 0),
-  }));
+  return getDataStore().usageLedgers.tokensByModel(
+    { window: spanWindow(span, timeZone), subject: ownerSubject },
+    limit
+  );
 }

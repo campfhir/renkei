@@ -27,8 +27,7 @@
  * exist. All three tables are content-free by construction.
  */
 
-import { sql, type Kysely, type RawBuilder } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type UsageWindow } from '@renkei/db';
 
 export interface UtilizationTotals {
   inputTokens: number;
@@ -98,112 +97,73 @@ export interface UsageSpan {
   endOffsetDays: number;
 }
 
-/** The span's first instant: local midnight of its oldest day. */
-export function spanStart(span: UsageSpan, timeZone: string): RawBuilder<Date> {
+/** The instant's wall-clock reading in `timeZone`, as if that reading were UTC. */
+function wallClockMs(instant: number, timeZone: string): number {
+  const parts: Record<string, number> = {};
+  const format = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+  for (const part of format.formatToParts(new Date(instant))) {
+    if (part.type !== 'literal') parts[part.type] = Number(part.value);
+  }
+  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+}
+
+/**
+ * Local midnight `daysBack` calendar days before `now`'s local day, as an
+ * instant — `(date_trunc('day', NOW() AT TIME ZONE tz) - days) AT TIME ZONE tz`.
+ */
+function localMidnight(now: Date, daysBack: number, timeZone: string): Date {
+  const today = new Date(wallClockMs(now.getTime(), timeZone));
+  const wall = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - daysBack);
+  // The zone's offset at that wall time, found from a first guess and
+  // corrected once for a change of offset between the two.
+  let instant = wall - (wallClockMs(wall, timeZone) - wall);
+  instant = wall - (wallClockMs(instant, timeZone) - instant);
+  return new Date(instant);
+}
+
+/**
+ * The span as instants: from local midnight of its oldest day, up to local
+ * midnight of the day after its newest — open-ended when the span runs up
+ * to today, so a row written a second from now still counts.
+ */
+export function spanWindow(span: UsageSpan, timeZone: string, now = new Date()): UsageWindow {
   const back = Math.max(0, span.endOffsetDays + span.days - 1);
-  return sql<Date>`((date_trunc('day', NOW() AT TIME ZONE ${timeZone}) - MAKE_INTERVAL(days => ${back})) AT TIME ZONE ${timeZone})`;
-}
-
-/**
- * The span's exclusive end: local midnight of the day after its newest
- * day. Null when the span runs up to today — an open end, so a row
- * written a second from now still counts and the query stays a single
- * range scan.
- */
-export function spanEnd(span: UsageSpan, timeZone: string): RawBuilder<Date> | null {
-  if (span.endOffsetDays <= 0) return null;
-  const back = span.endOffsetDays - 1;
-  return sql<Date>`((date_trunc('day', NOW() AT TIME ZONE ${timeZone}) - MAKE_INTERVAL(days => ${back})) AT TIME ZONE ${timeZone})`;
-}
-
-/**
- * `column` falls inside the span — the one predicate every window query
- * shares, usable both as a Kysely `where(...)` expression and inside a
- * raw template.
- */
-export function inSpan(column: string, span: UsageSpan, timeZone: string): RawBuilder<boolean> {
-  const end = spanEnd(span, timeZone);
-  const ref = sql.ref(column);
-  return end === null
-    ? sql<boolean>`${ref} >= ${spanStart(span, timeZone)}`
-    : sql<boolean>`(${ref} >= ${spanStart(span, timeZone)} AND ${ref} < ${end})`;
-}
-
-/**
- * A timestamp's calendar day in the viewer's zone. Every query that groups
- * by this MUST group by the alias `day`, never by a repeat of the
- * expression: each `${timeZone}` is its own bound parameter, so a repeat
- * is a different expression to Postgres and the query is rejected.
- */
-export function localDayOf(column: string, timeZone: string): RawBuilder<string> {
-  return sql<string>`to_char(${sql.ref(column)} AT TIME ZONE ${timeZone}, 'YYYY-MM-DD')`;
-}
-
-/**
- * A timestamp's bucket key in the viewer's zone: the calendar day
- * (`YYYY-MM-DD`), or the hour of it (`YYYY-MM-DDTHH`) for a window too
- * short to draw by day. Same grouping rule as `localDayOf`.
- */
-export function localBucketOf(
-  column: string,
-  timeZone: string,
-  granularity: 'day' | 'hour'
-): RawBuilder<string> {
-  return granularity === 'hour'
-    ? sql<string>`to_char(${sql.ref(column)} AT TIME ZONE ${timeZone}, 'YYYY-MM-DD"T"HH24')`
-    : localDayOf(column, timeZone);
+  return {
+    since: localMidnight(now, back, timeZone),
+    until: span.endOffsetDays <= 0 ? null : localMidnight(now, span.endOffsetDays - 1, timeZone),
+  };
 }
 
 export async function getUtilizationTotals(
-  db: Kysely<DB>,
   subject: string,
   span: UsageSpan,
   timeZone: string
 ): Promise<UtilizationTotals> {
+  const filter = { window: spanWindow(span, timeZone), subject };
+  const store = getDataStore();
   const [tokens, runs, calls] = await Promise.all([
-    db
-      .selectFrom('llm_calls')
-      .select(({ fn }) => [
-        fn.sum<string>('input_tokens').as('input_tokens'),
-        fn.sum<string>('output_tokens').as('output_tokens'),
-        sql<string>`COALESCE(SUM(input_tokens) FILTER (WHERE purpose = 'chat'), 0)`.as(
-          'chat_input_tokens'
-        ),
-        sql<string>`COALESCE(SUM(output_tokens) FILTER (WHERE purpose = 'chat'), 0)`.as(
-          'chat_output_tokens'
-        ),
-      ])
-      .where('subject', '=', subject)
-      .where(inSpan('created_at', span, timeZone))
-      .executeTakeFirst(),
-    db
-      .selectFrom('agent_run_log')
-      .select([
-        sql<string>`count(*)`.as('runs'),
-        sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
-      ])
-      .where('owner_subject', '=', subject)
-      .where(inSpan('created_at', span, timeZone))
-      .executeTakeFirst(),
-    db
-      .selectFrom('tool_calls')
-      .select([
-        sql<string>`count(*)`.as('calls'),
-        sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-      ])
-      .where('subject', '=', subject)
-      .where(inSpan('started_at', span, timeZone))
-      .executeTakeFirst(),
+    store.usageLedgers.llmTotals(filter),
+    store.usageLedgers.runTotals(filter),
+    store.toolUsage.totals(filter, { latency: false }),
   ]);
   return {
-    inputTokens: Number(tokens?.input_tokens ?? 0),
-    outputTokens: Number(tokens?.output_tokens ?? 0),
-    chatInputTokens: Number(tokens?.chat_input_tokens ?? 0),
-    chatOutputTokens: Number(tokens?.chat_output_tokens ?? 0),
-    runs: Number(runs?.runs ?? 0),
-    failures: Number(runs?.failures ?? 0),
-    toolCalls: Number(calls?.calls ?? 0),
-    toolErrors: Number(calls?.errors ?? 0),
+    inputTokens: tokens.inputTokens,
+    outputTokens: tokens.outputTokens,
+    chatInputTokens: tokens.chatInputTokens,
+    chatOutputTokens: tokens.chatOutputTokens,
+    runs: runs.runs,
+    failures: runs.failures,
+    toolCalls: calls.calls,
+    toolErrors: calls.errors,
   };
 }
 
@@ -213,46 +173,18 @@ export async function getUtilizationTotals(
  * and buckets.
  */
 export async function getUtilizationSeries(
-  db: Kysely<DB>,
   subject: string,
   span: UsageSpan,
   timeZone: string,
   granularity: 'day' | 'hour' = 'day'
 ): Promise<UtilizationDay[]> {
+  const filter = { window: spanWindow(span, timeZone), subject };
+  const bucketing = { timeZone, granularity };
+  const store = getDataStore();
   const [tokenRows, runRows, callRows] = await Promise.all([
-    db
-      .selectFrom('llm_calls')
-      .select(({ fn }) => [
-        localBucketOf('created_at', timeZone, granularity).as('day'),
-        fn.sum<string>('input_tokens').as('input_tokens'),
-        fn.sum<string>('output_tokens').as('output_tokens'),
-      ])
-      .where('subject', '=', subject)
-      .where(inSpan('created_at', span, timeZone))
-      .groupBy(sql`day`)
-      .execute(),
-    db
-      .selectFrom('agent_run_log')
-      .select([
-        localBucketOf('created_at', timeZone, granularity).as('day'),
-        sql<string>`count(*)`.as('runs'),
-        sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
-      ])
-      .where('owner_subject', '=', subject)
-      .where(inSpan('created_at', span, timeZone))
-      .groupBy(sql`day`)
-      .execute(),
-    db
-      .selectFrom('tool_calls')
-      .select([
-        localBucketOf('started_at', timeZone, granularity).as('day'),
-        sql<string>`count(*)`.as('calls'),
-        sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-      ])
-      .where('subject', '=', subject)
-      .where(inSpan('started_at', span, timeZone))
-      .groupBy(sql`day`)
-      .execute(),
+    store.usageLedgers.llmSeries(filter, bucketing),
+    store.usageLedgers.runSeries(filter, bucketing),
+    store.toolUsage.series(filter, bucketing),
   ]);
 
   const byDay = new Map<string, UtilizationDay>();
@@ -272,111 +204,48 @@ export async function getUtilizationSeries(
     return fresh;
   };
   for (const row of tokenRows) {
-    const point = dayOf(row.day);
-    point.inputTokens += Number(row.input_tokens ?? 0);
-    point.outputTokens += Number(row.output_tokens ?? 0);
+    const point = dayOf(row.bucket);
+    point.inputTokens += row.inputTokens;
+    point.outputTokens += row.outputTokens;
   }
   for (const row of runRows) {
-    const point = dayOf(row.day);
-    point.runs += Number(row.runs ?? 0);
-    point.failures += Number(row.failures ?? 0);
+    const point = dayOf(row.bucket);
+    point.runs += row.runs;
+    point.failures += row.failures;
   }
   for (const row of callRows) {
-    const point = dayOf(row.day);
-    point.toolCalls += Number(row.calls ?? 0);
-    point.toolErrors += Number(row.errors ?? 0);
+    const point = dayOf(row.bucket);
+    point.toolCalls += row.calls;
+    point.toolErrors += row.errors;
   }
   return [...byDay.values()].sort((left, right) => left.day.localeCompare(right.day));
 }
 
 /** Every agent this person owns, with its share of the window's usage. */
 export async function getAgentUtilization(
-  db: Kysely<DB>,
   subject: string,
   span: UsageSpan,
   timeZone: string
 ): Promise<AgentUtilizationRow[]> {
-  const agents = await db
-    .selectFrom('agents')
-    .select(['id', 'name', 'enabled'])
-    .where('owner_subject', '=', subject)
-    .orderBy('name')
-    .execute();
+  const store = getDataStore();
+  const agents = await store.usageLedgers.ownedAgents(subject);
   if (agents.length === 0) return [];
-  const ids = agents.map((agent) => agent.id);
-  const since = spanStart(span, timeZone);
-  const end = spanEnd(span, timeZone);
+  const filter = {
+    window: spanWindow(span, timeZone),
+    subject,
+    agentIds: agents.map((agent) => agent.id),
+  };
 
   const [runRows, tokenRows, callRows, failureRows] = await Promise.all([
-    db
-      .selectFrom('agent_run_log')
-      .select([
-        'agent_id',
-        sql<string>`count(*)`.as('runs'),
-        sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
-      ])
-      .where('owner_subject', '=', subject)
-      .where('agent_id', 'in', ids)
-      .where(inSpan('created_at', span, timeZone))
-      .groupBy('agent_id')
-      .execute(),
-    db
-      .selectFrom('llm_calls')
-      .select(({ fn }) => [
-        'agent_id',
-        fn.sum<string>('input_tokens').as('input_tokens'),
-        fn.sum<string>('output_tokens').as('output_tokens'),
-      ])
-      .where('subject', '=', subject)
-      .where('agent_id', 'in', ids)
-      .where(inSpan('created_at', span, timeZone))
-      .groupBy('agent_id')
-      .execute(),
-    db
-      .selectFrom('tool_calls')
-      .select(['agent_id', sql<string>`count(*)`.as('calls')])
-      .where('subject', '=', subject)
-      .where('agent_id', 'in', ids)
-      .where(inSpan('started_at', span, timeZone))
-      .groupBy('agent_id')
-      .execute(),
-    // The newest failure per agent — DISTINCT ON walks the (agent,
-    // created_at) index once.
-    end === null
-      ? sql<{
-          agent_id: string;
-          created_at: Date;
-          step_name: string | null;
-          error_kind: string | null;
-        }>`
-      SELECT DISTINCT ON (agent_id) agent_id, created_at, step_name, error_kind
-      FROM agent_run_log
-      WHERE owner_subject = ${subject}
-        AND agent_id IN (${sql.join(ids)})
-        AND status = 'failed'
-        AND created_at >= ${since}
-      ORDER BY agent_id, created_at DESC
-    `.execute(db)
-      : sql<{
-          agent_id: string;
-          created_at: Date;
-          step_name: string | null;
-          error_kind: string | null;
-        }>`
-      SELECT DISTINCT ON (agent_id) agent_id, created_at, step_name, error_kind
-      FROM agent_run_log
-      WHERE owner_subject = ${subject}
-        AND agent_id IN (${sql.join(ids)})
-        AND status = 'failed'
-        AND created_at >= ${since}
-        AND created_at < ${end}
-      ORDER BY agent_id, created_at DESC
-    `.execute(db),
+    store.usageLedgers.runsByAgent(filter),
+    store.usageLedgers.llmByAgent(filter),
+    store.toolUsage.byAgent(filter),
+    store.usageLedgers.lastFailureByAgent(filter),
   ]);
-  const runs = new Map(runRows.map((row) => [row.agent_id, row]));
-  const tokens = new Map(tokenRows.map((row) => [row.agent_id, row]));
-  const calls = new Map(callRows.map((row) => [row.agent_id, row]));
-  const failures = new Map(failureRows.rows.map((row) => [row.agent_id, row]));
+  const runs = new Map(runRows.map((row) => [row.agentId, row]));
+  const tokens = new Map(tokenRows.map((row) => [row.agentId, row]));
+  const calls = new Map(callRows.map((row) => [row.agentId, row]));
+  const failures = new Map(failureRows.map((row) => [row.agentId, row]));
 
   return agents
     .map((agent) => {
@@ -388,14 +257,14 @@ export async function getAgentUtilization(
         agentId: agent.id,
         name: agent.name,
         enabled: agent.enabled,
-        runs: Number(run?.runs ?? 0),
-        failures: Number(run?.failures ?? 0),
-        inputTokens: Number(token?.input_tokens ?? 0),
-        outputTokens: Number(token?.output_tokens ?? 0),
-        toolCalls: Number(call?.calls ?? 0),
-        lastFailureAt: failure ? failure.created_at.toISOString() : null,
-        lastFailureStep: failure?.step_name ?? null,
-        lastFailureKind: failure?.error_kind ?? null,
+        runs: run?.runs ?? 0,
+        failures: run?.failures ?? 0,
+        inputTokens: token?.inputTokens ?? 0,
+        outputTokens: token?.outputTokens ?? 0,
+        toolCalls: call?.calls ?? 0,
+        lastFailureAt: failure ? failure.at.toISOString() : null,
+        lastFailureStep: failure?.stepName ?? null,
+        lastFailureKind: failure?.errorKind ?? null,
       };
     })
     .sort(
@@ -413,49 +282,14 @@ export async function getAgentUtilization(
  * to fix right now, and its old failures would just be noise.
  */
 export async function getFailureSignatures(
-  db: Kysely<DB>,
   subject: string,
   span: UsageSpan,
   timeZone: string,
   limit = 5
 ): Promise<FailureSignature[]> {
-  const rows = await sql<{
-    agent_id: string;
-    agent_name: string;
-    step_name: string | null;
-    error_kind: string | null;
-    outcome_code: string | null;
-    count: string;
-    last_at: Date;
-    last_error: string | null;
-  }>`
-    SELECT
-      f.agent_id,
-      a.name AS agent_name,
-      f.step_name,
-      f.error_kind,
-      f.outcome_code,
-      COUNT(*) AS count,
-      MAX(f.created_at) AS last_at,
-      (ARRAY_AGG(f.error ORDER BY f.created_at DESC))[1] AS last_error
-    FROM agent_run_log f
-    JOIN agents a ON a.id = f.agent_id
-    WHERE f.owner_subject = ${subject}
-      AND f.status = 'failed'
-      AND a.enabled
-      AND ${inSpan('f.created_at', span, timeZone)}
-    GROUP BY f.agent_id, a.name, f.step_name, f.error_kind, f.outcome_code
-    ORDER BY count DESC, last_at DESC
-    LIMIT ${limit}
-  `.execute(db);
-  return rows.rows.map((row) => ({
-    agentId: row.agent_id,
-    agentName: row.agent_name,
-    stepName: row.step_name,
-    errorKind: row.error_kind,
-    outcomeCode: row.outcome_code,
-    count: Number(row.count),
-    lastAt: row.last_at.toISOString(),
-    lastError: row.last_error,
-  }));
+  const rows = await getDataStore().usageLedgers.failureSignatures(
+    { window: spanWindow(span, timeZone), subject },
+    limit
+  );
+  return rows.map((row) => ({ ...row, lastAt: row.lastAt.toISOString() }));
 }

@@ -19,8 +19,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type DeviceKeyRequestRecord } from '@renkei/db';
 import { normalizeDeviceCode } from '@renkei/crypto';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -30,52 +29,16 @@ type Params = { params: Promise<{ requestId: string }> };
 /** Wrong codes a request survives; the next one denies it. */
 const MAX_ATTEMPTS = 5;
 
-interface AskRow {
-  id: string;
-  public_key: string;
-  code: string;
-  sealed_key: string | null;
-  asking_session_id: string | null;
-  user_agent: string | null;
-  attempts: number;
-  consumed_at: Date | null;
-  denied_at: Date | null;
-  created_at: Date;
-  expires_at: Date;
-}
+type AskRow = DeviceKeyRequestRecord;
 
-async function askFor(
-  db: Kysely<DB>,
-  subject: string,
-  requestId: string
-): Promise<AskRow | null> {
-  const row = await db
-    .selectFrom('device_key_requests')
-    .select([
-      'id',
-      'public_key',
-      'code',
-      'sealed_key',
-      'asking_session_id',
-      'user_agent',
-      'attempts',
-      'consumed_at',
-      'denied_at',
-      'created_at',
-      'expires_at',
-    ])
-    .where('id', '=', requestId)
-    .where('subject', '=', subject)
-    .executeTakeFirst();
-  return row ?? null;
-}
+const asks = () => getDataStore().deviceKeyRequests;
 
 function open(row: AskRow): boolean {
   return (
-    row.sealed_key === null &&
-    row.consumed_at === null &&
-    row.denied_at === null &&
-    row.expires_at.getTime() > Date.now()
+    row.sealedKey === null &&
+    row.consumedAt === null &&
+    row.deniedAt === null &&
+    row.expiresAt.getTime() > Date.now()
   );
 }
 
@@ -91,18 +54,10 @@ function codeMatches(typed: string | null, code: string): boolean {
  * that has taken its last miss is denied. Answers the response to send on
  * a miss, or null on a match.
  */
-async function checkCode(
-  db: Kysely<DB>,
-  row: AskRow,
-  typed: string | null
-): Promise<NextResponse | null> {
+async function checkCode(row: AskRow, typed: string | null): Promise<NextResponse | null> {
   if (codeMatches(typed, row.code)) return null;
   const attempts = row.attempts + 1;
-  await db
-    .updateTable('device_key_requests')
-    .set(attempts >= MAX_ATTEMPTS ? { attempts, denied_at: new Date() } : { attempts })
-    .where('id', '=', row.id)
-    .execute();
+  await asks().recordMiss(row.id, attempts, attempts >= MAX_ATTEMPTS ? new Date() : null);
   return jsonError(
     403,
     'wrong_code',
@@ -116,37 +71,30 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
   const { requestId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const row = await askFor(db, session.subject, requestId);
+  const { session } = ready.context;
+  const row = await asks().get(session.subject, requestId);
   if (!row) return jsonError(404, 'not_found', 'No such request.');
-  const expired = row.expires_at.getTime() <= Date.now();
+  const expired = row.expiresAt.getTime() <= Date.now();
 
-  if (row.asking_session_id === session.id) {
+  if (row.askingSessionId === session.id) {
     // The asker, polling. The sealed key is handed over once.
-    if (row.denied_at || row.consumed_at) return jsonError(404, 'not_found', 'No such request.');
-    if (row.sealed_key) {
-      await db
-        .updateTable('device_key_requests')
-        .set({ sealed_key: null, consumed_at: new Date() })
-        .where('id', '=', requestId)
-        .execute();
-    }
-    return NextResponse.json({ sealedKey: row.sealed_key, expired });
+    if (row.deniedAt || row.consumedAt) return jsonError(404, 'not_found', 'No such request.');
+    if (row.sealedKey) await asks().consume(row.id, new Date());
+    return NextResponse.json({ sealedKey: row.sealedKey, expired });
   }
 
   // Somebody else's browser of the same person: the approver, who must have
   // the code the asking screen shows before the request says anything.
   if (!open(row)) return jsonError(404, 'not_found', 'That request is gone or already answered.');
   const miss = await checkCode(
-    db,
     row,
     normalizeDeviceCode(request.nextUrl.searchParams.get('code') ?? '')
   );
   if (miss) return miss;
   return NextResponse.json({
-    publicKey: row.public_key,
-    createdAt: row.created_at.toISOString(),
-    userAgent: row.user_agent,
+    publicKey: row.publicKey,
+    createdAt: row.createdAt.toISOString(),
+    userAgent: row.userAgent,
     expired,
   });
 }
@@ -155,34 +103,26 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
   const { requestId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const sealedKey = typeof body.sealedKey === 'string' ? body.sealedKey : '';
   if (!sealedKey.startsWith('sbox1:') || sealedKey.length > 4096) {
     return jsonError(400, 'bad_request', 'The approval must carry a sealed key.');
   }
-  const row = await askFor(db, session.subject, requestId);
+  const row = await asks().get(session.subject, requestId);
   if (!row || !open(row)) {
     return jsonError(404, 'not_found', 'That request is gone or already answered.');
   }
-  if (row.asking_session_id === session.id) {
+  if (row.askingSessionId === session.id) {
     return jsonError(403, 'self_approval', 'A device cannot approve its own request.');
   }
   const miss = await checkCode(
-    db,
     row,
     normalizeDeviceCode(typeof body.code === 'string' ? body.code : '')
   );
   if (miss) return miss;
-  const result = await db
-    .updateTable('device_key_requests')
-    .set({ sealed_key: sealedKey, approved_by_session_id: session.id })
-    .where('id', '=', requestId)
-    .where('sealed_key', 'is', null)
-    .where('denied_at', 'is', null)
-    .where('expires_at', '>', new Date())
-    .executeTakeFirst();
-  if (Number(result.numUpdatedRows) === 0) {
+  const sealed = await asks().seal(row.id, sealedKey, session.id, new Date());
+  if (sealed === 0) {
     return jsonError(404, 'not_found', 'That request is gone or already answered.');
   }
   recordAuditEvent({
@@ -190,8 +130,8 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
     action: 'encryption-key.device-approved',
     details: {
       requestId,
-      askedAt: row.created_at.toISOString(),
-      askingUserAgent: row.user_agent,
+      askedAt: row.createdAt.toISOString(),
+      askingUserAgent: row.userAgent,
     },
   });
   return NextResponse.json({ ok: true });
@@ -201,15 +141,9 @@ export async function DELETE(request: NextRequest, { params }: Params): Promise<
   const { requestId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const result = await db
-    .updateTable('device_key_requests')
-    .set({ denied_at: new Date(), sealed_key: null })
-    .where('id', '=', requestId)
-    .where('subject', '=', session.subject)
-    .where('denied_at', 'is', null)
-    .executeTakeFirst();
-  if (Number(result.numUpdatedRows) > 0) {
+  const { session } = ready.context;
+  const denied = await asks().deny(session.subject, requestId, new Date());
+  if (denied > 0) {
     recordAuditEvent({
       actorSubject: session.subject,
       action: 'encryption-key.device-denied',

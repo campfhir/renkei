@@ -11,9 +11,7 @@
  * module is server-only (it reads the database).
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { delegateClient } from '@renkei/delegate-client';
 import type { Session } from '@/lib/session';
 
@@ -28,17 +26,11 @@ import {
   type KeyStatusView,
 } from './shared';
 
-async function automationDaysOf(
-  db: Kysely<DB>,
-  subject: string
-): Promise<number> {
-  const row = await db
-    .selectFrom('user_preferences')
-    .select('value')
-    .where('subject', '=', subject)
-    .where('key', '=', 'encryption_key')
-    .executeTakeFirst();
-  const value = row?.value;
+/** The preference key the automation window is kept under. */
+const ENCRYPTION_KEY_PREF = 'encryption_key';
+
+async function automationDaysOf(subject: string): Promise<number> {
+  const value = await getDataStore().userPreferences.get(subject, ENCRYPTION_KEY_PREF);
   if (typeof value === 'object' && value !== null && 'automationDays' in value) {
     const days = value.automationDays;
     if (typeof days === 'number' && AUTOMATION_WINDOW_DAYS.some((option) => option === days)) {
@@ -48,24 +40,8 @@ async function automationDaysOf(
   return AUTOMATION_WINDOW_DEFAULT_DAYS;
 }
 
-export async function setAutomationDays(
-  db: Kysely<DB>,
-  subject: string,
-  days: number
-): Promise<void> {
-  await db
-    .insertInto('user_preferences')
-    .values({
-      subject,
-      key: 'encryption_key',
-      value: JSON.stringify({ automationDays: days }),
-    })
-    .onConflict((oc) =>
-      oc
-        .columns(['subject', 'key'])
-        .doUpdateSet({ value: JSON.stringify({ automationDays: days }) })
-    )
-    .execute();
+export async function setAutomationDays(subject: string, days: number): Promise<void> {
+  await getDataStore().userPreferences.set(subject, ENCRYPTION_KEY_PREF, { automationDays: days });
 }
 
 /**
@@ -74,40 +50,29 @@ export async function setAutomationDays(
  * (app/api/keys/devices).
  */
 export async function pendingDevicesOf(
-  db: Kysely<DB>,
   subject: string
 ): Promise<{ id: string; createdAt: string; userAgent: string | null }[]> {
-  const rows = await db
-    .selectFrom('device_key_requests')
-    .select(['id', 'created_at', 'user_agent'])
-    .where('subject', '=', subject)
-    .where('sealed_key', 'is', null)
-    .where('consumed_at', 'is', null)
-    .where('denied_at', 'is', null)
-    .where('expires_at', '>', new Date())
-    .orderBy('created_at', 'asc')
-    .execute();
+  const rows = await getDataStore().deviceKeyRequests.listPending(subject, new Date());
   return rows.map((row) => ({
     id: row.id,
-    createdAt: row.created_at.toISOString(),
-    userAgent: row.user_agent,
+    createdAt: row.createdAt.toISOString(),
+    userAgent: row.userAgent,
   }));
 }
 
 /** The status for the signed-in person, as of their session. */
-export async function keyStatusView(
-  session: Session
-): Promise<KeyStatusView | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const db = dbResult.val;
+export async function keyStatusView(session: Session): Promise<KeyStatusView | null> {
   const client = delegateClient();
-  const [status, instances, automationDays, pendingDevices] = await Promise.all([
+  const [status, instances, stored] = await Promise.all([
     client.keyStatus(session.subject, session.id),
     client.keyInstancesSigned(),
-    automationDaysOf(db, session.subject),
-    pendingDevicesOf(db, session.subject),
+    // An unreadable store leaves the section out, as an unreachable database did.
+    Promise.all([automationDaysOf(session.subject), pendingDevicesOf(session.subject)]).catch(
+      () => null
+    ),
   ]);
+  if (!stored) return null;
+  const [automationDays, pendingDevices] = stored;
   if (!status.ok || !instances.ok) {
     return {
       enrolled: false,

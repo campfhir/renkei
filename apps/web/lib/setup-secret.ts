@@ -21,8 +21,7 @@
  * a credential the operator already knows how to protect.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { sha256Hex } from '@renkei/crypto';
 import { digestsMatch } from '@/lib/mcp-token';
 
@@ -34,9 +33,8 @@ export const SETUP_SECRET_ENV = 'SETUP_SECRET';
 export const SETUP_SECRET_MIN_CHARS = 16;
 
 /** Whether this deployment has an identity provider: the thing setup exists to create. */
-export async function identityProviderConfigured(db: Kysely<DB>): Promise<boolean> {
-  const row = await db.selectFrom('oidc_config').select('client_id').executeTakeFirst();
-  return Boolean(row);
+export async function identityProviderConfigured(): Promise<boolean> {
+  return getDataStore().firstRun.identityProviderConfigured();
 }
 
 /** Why the environment holds no usable secret, or null when it does. */
@@ -64,8 +62,8 @@ function configuredSetupSecret(env: SetupEnv): string | null {
  */
 export type SetupState = 'configured' | 'ready' | SetupSecretProblem;
 
-export async function setupState(db: Kysely<DB>, env: SetupEnv = process.env): Promise<SetupState> {
-  if (await identityProviderConfigured(db)) return 'configured';
+export async function setupState(env: SetupEnv = process.env): Promise<SetupState> {
+  if (await identityProviderConfigured()) return 'configured';
   return setupSecretProblem(env) ?? 'ready';
 }
 

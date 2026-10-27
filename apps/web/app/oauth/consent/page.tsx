@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { DEFAULT_ORG_SETTINGS, getOrgSettings } from '@renkei/settings';
 import RenkeiMark from '@/components/renkei-mark';
 import { getSessionFromCookies } from '@/lib/session';
@@ -40,29 +41,17 @@ export default async function ConsentPage({
     );
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  const store = getDataStore();
+  const read = await wrapAsync(
+    () => store.oauthConsents.getRequest(requestId),
+    'DB_ERROR' as const
+  );
+  if (!read.ok) {
     return <Notice title="Try again shortly" body="The service could not read this request." />;
   }
-  const db = dbResult.val;
+  const pending = read.val;
 
-  const pending = await db
-    .selectFrom('oauth_consent_requests as r')
-    .innerJoin('oauth_clients as c', 'c.client_id', 'r.client_id')
-    .select([
-      'r.id',
-      'r.session_id',
-      'r.subject',
-      'r.redirect_uri',
-      'r.scope',
-      'r.expires_at',
-      'c.client_name',
-      'c.created_at as client_created_at',
-    ])
-    .where('r.id', '=', requestId)
-    .executeTakeFirst();
-
-  if (!pending || new Date(pending.expires_at) < new Date()) {
+  if (!pending || pending.expiresAt < new Date()) {
     return (
       <Notice
         title="This request has expired"
@@ -72,7 +61,7 @@ export default async function ConsentPage({
   }
 
   const session = await getSessionFromCookies();
-  if (!session || session.id !== pending.session_id) {
+  if (!session || session.id !== pending.sessionId) {
     return (
       <Notice
         title="Sign in to continue"
@@ -81,20 +70,16 @@ export default async function ConsentPage({
     );
   }
 
-  const identity = await db
-    .selectFrom('identities')
-    .select(['email', 'display_name'])
-    .where('subject', '=', pending.subject)
-    .executeTakeFirst();
+  const identity = await store.identities.get(pending.subject);
 
-  const clientName = pending.client_name?.trim() || 'An application';
+  const clientName = pending.clientName?.trim() || 'An application';
   const settings = await getOrgSettings();
   const organizationName = (settings.ok ? settings.val : DEFAULT_ORG_SETTINGS).organizationName;
-  const target = describeRedirectTarget(pending.redirect_uri);
-  const registeredAgoMs = Date.now() - new Date(pending.client_created_at).getTime();
+  const target = describeRedirectTarget(pending.redirectUri);
+  const registeredAgoMs = Date.now() - pending.clientCreatedAt.getTime();
   const recentlyRegistered = registeredAgoMs < RECENTLY_REGISTERED_MS;
-  const who = identity?.display_name
-    ? `${identity.display_name} (${identity.email})`
+  const who = identity?.displayName
+    ? `${identity.displayName} (${identity.email})`
     : (identity?.email ?? pending.subject);
 
   return (

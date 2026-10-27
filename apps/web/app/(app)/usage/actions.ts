@@ -15,8 +15,7 @@
  * 032), which makes that guarantee structural rather than a promise.
  */
 
-import { getDatabase, type DB } from '@renkei/db';
-import { sql, type Kysely, type RawBuilder } from 'kysely';
+import { getDatabase, getDataStore, type ToolCallsByTool, type UsageWindow } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { getIdentityDisplay } from '@/lib/identity';
 import { ROLE_OPERATOR, ROLE_USER } from '@/lib/access';
@@ -103,46 +102,40 @@ const EMPTY: UsageReport = {
   byAgent: [],
 };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The last `days` days up to now — what `NOW() - MAKE_INTERVAL(days => …)` meant. */
+function lastDays(days: number): UsageWindow {
+  return { since: new Date(Date.now() - days * DAY_MS) };
+}
+
+function toolRow(row: ToolCallsByTool): ToolUsageRow {
+  return {
+    tool: row.tool,
+    connector: row.connector,
+    calls: row.calls,
+    errors: row.errors,
+    medianMs: row.medianMs ?? 0,
+    p95Ms: row.p95Ms ?? 0,
+  };
+}
+
 /**
  * The most-called tools over the window, for one subject or for the whole
  * tenant.
  *
  * `subject: null` means tenant-wide, and is the ONLY way to ask for it —
  * every caller has to state which they mean, so widening the scope cannot
- * happen by forgetting a `.where()`.
+ * happen by forgetting a filter.
  */
-async function topToolsFor(
-  db: Kysely<DB>,
-  since: RawBuilder<Date>,
-  subject: string | null
-): Promise<ToolUsageRow[]> {
-  let query = db
-    .selectFrom('tool_calls')
-    .select([
-      'tool',
-      'connector',
-      sql<string>`count(*)`.as('calls'),
-      sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-    ])
-    .where('started_at', '>=', since);
-  if (subject !== null) query = query.where('subject', '=', subject);
-
-  const rows = await query
-    .groupBy(['tool', 'connector'])
-    .orderBy(sql`count(*)`, 'desc')
-    .limit(TOP_TOOLS)
-    .execute();
-
-  return rows.map((row) => ({
-    tool: row.tool,
-    connector: row.connector,
-    calls: Number(row.calls),
-    errors: Number(row.errors),
-    // Latency is not what these cards are about, and asking for percentiles
-    // would cost a sort over the window for a number nothing displays.
-    medianMs: 0,
-    p95Ms: 0,
-  }));
+async function topToolsFor(window: UsageWindow, subject: string | null): Promise<ToolUsageRow[]> {
+  // Latency is not what these cards are about, and asking for percentiles
+  // would cost a sort over the window for a number nothing displays.
+  const rows = await getDataStore().toolUsage.byTool(
+    { window, subject },
+    { latency: false, limit: TOP_TOOLS }
+  );
+  return rows.map(toolRow);
 }
 
 export async function getUsageReport(
@@ -156,10 +149,6 @@ export async function getUsageReport(
   if (!session) {
     return { ...EMPTY, days, error: 'Sign in to see tool usage', signedOut: true };
   }
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { ...EMPTY, days, error: 'Database unavailable' };
-  const db = dbResult.val;
 
   const isOperator = session.roles.includes(ROLE_OPERATOR);
   if (!isOperator && !session.roles.includes(ROLE_USER)) {
@@ -175,110 +164,43 @@ export async function getUsageReport(
   // be forgotten.
   const ownSubject = session.subject;
 
-  const since = sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`;
+  const window = lastDays(days);
+  // A caller without the tenant-wide view is pinned to themselves: the
+  // filter names their subject before any read runs.
+  const scoped = { window, subject: tenantWide ? null : ownSubject };
+  const store = getDataStore().toolUsage;
 
   try {
-    // Built by conditional rather than a generic helper: Kysely's builders are
-    // immutable, so narrowing to one subject is just another .where(), and
-    // expressing it plainly keeps the scope visible at the call site.
-    let toolQuery = db
-      .selectFrom('tool_calls')
-      .select([
-        'tool',
-        'connector',
-        sql<string>`count(*)`.as('calls'),
-        sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-        sql<string>`percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms)`.as('median_ms'),
-        sql<string>`percentile_disc(0.95) WITHIN GROUP (ORDER BY duration_ms)`.as('p95_ms'),
-      ])
-      .where('started_at', '>=', since);
-    if (!tenantWide) toolQuery = toolQuery.where('subject', '=', ownSubject);
-
-    const toolRows = await toolQuery
-      .groupBy(['tool', 'connector'])
-      .orderBy(sql`count(*)`, 'desc')
-      .execute();
-
-    let trendQuery = db
-      .selectFrom('tool_calls')
-      .select([
-        // Bucketed in the viewer's zone, not the database session's: "calls
-        // today" has to mean their today.
-        sql<string>`to_char(date_trunc('day', started_at AT TIME ZONE ${timeZone}), 'YYYY-MM-DD')`.as(
-          'day'
-        ),
-        sql<string>`count(*)`.as('calls'),
-        sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-      ])
-      .where('started_at', '>=', since);
-    if (!tenantWide) trendQuery = trendQuery.where('subject', '=', ownSubject);
-
-    // Grouped by the OUTPUT ALIAS, not by a repeat of the bucket expression.
-    // Repeating it looks equivalent and is not: each `${timeZone}` becomes its
-    // own bound parameter, so Postgres sees `AT TIME ZONE $2` in the select and
-    // `AT TIME ZONE $3` in the group by, decides they are different
-    // expressions, and rejects the query with "started_at must appear in the
-    // GROUP BY clause". Naming the alias once removes the possibility.
-    const trendRows = await trendQuery
-      .groupBy(sql`day`)
-      .orderBy(sql`day`, 'asc')
-      .execute();
-
-    // Per-person totals are the operator's whole reason for this page, and
-    // are not computed at all for anyone else.
-    const byUser: UserUsageRow[] = [];
-    if (tenantWide) {
-      const rows = await db
-        .selectFrom('tool_calls')
-        .leftJoin('identities', (join) =>
-          join
-            .onRef('identities.subject', '=', 'tool_calls.subject')
-        )
-        .select([
-          'tool_calls.subject as subject',
-          sql<string>`max(identities.display_name)`.as('display_name'),
-          sql<string>`max(identities.email)`.as('email'),
-          sql<string>`count(*)`.as('calls'),
-          sql<string>`count(*) FILTER (WHERE tool_calls.status <> 'ok')`.as('errors'),
-        ])
-        .where('tool_calls.started_at', '>=', since)
-        .groupBy('tool_calls.subject')
-        .orderBy(sql`count(*)`, 'desc')
-        .limit(50)
-        .execute();
-      for (const row of rows) {
-        byUser.push({
-          subject: row.subject,
-          label: row.display_name || row.email || row.subject || 'unknown',
-          calls: Number(row.calls),
-          errors: Number(row.errors),
-        });
-      }
-    }
-
-    const tools: ToolUsageRow[] = toolRows.map((row) => ({
-      tool: row.tool,
-      connector: row.connector,
-      calls: Number(row.calls),
-      errors: Number(row.errors),
-      medianMs: Number(row.median_ms ?? 0),
-      p95Ms: Number(row.p95_ms ?? 0),
+    const [toolRows, trendRows, personRows] = await Promise.all([
+      store.byTool(scoped, { latency: true }),
+      // Bucketed in the viewer's zone, not the database session's: "calls
+      // today" has to mean their today.
+      store.series(scoped, { timeZone, granularity: 'day' }),
+      // Per-person totals are the operator's whole reason for this page, and
+      // are not computed at all for anyone else.
+      tenantWide ? store.byPerson({ window, subject: null }, 50) : Promise.resolve([]),
+    ]);
+    const byUser: UserUsageRow[] = personRows.map((row) => ({
+      subject: row.subject,
+      label: row.displayName || row.email || row.subject || 'unknown',
+      calls: row.calls,
+      errors: row.errors,
     }));
+
+    const tools: ToolUsageRow[] = toolRows.map(toolRow);
 
     // The headline cards. `tools` is already ordered by call count, so the
     // caller's own top five come free whenever the view IS their own; the
     // extra query happens only for an operator looking tenant-wide, who is
     // the one person whose two answers differ.
-    const myTop = tenantWide
-      ? await topToolsFor(db, since, ownSubject)
-      : tools.slice(0, TOP_TOOLS);
+    const myTop = tenantWide ? await topToolsFor(window, ownSubject) : tools.slice(0, TOP_TOOLS);
     // Role, never requested scope: an operator viewing their own calls still
     // gets the org comparison, and a non-operator gets it in no view at all.
     // Asking for it as a parameter cannot make it appear.
     const orgTop = canSeeOrgTop(isOperator)
       ? tenantWide
         ? tools.slice(0, TOP_TOOLS)
-        : await topToolsFor(db, since, null)
+        : await topToolsFor(window, null)
       : [];
     // Ranked by failures, and only tools that actually failed — a card
     // listing the five least-broken tools in a healthy org would be noise
@@ -288,11 +210,10 @@ export async function getUsageReport(
       .sort((left, right) => right.errors - left.errors)
       .slice(0, TOP_TOOLS);
 
-    const byAgent = await getAgentUsageSummaries(
-      db,
-      tenantWide ? null : ownSubject,
-      days
-    );
+    const dbResult = getDatabase();
+    const byAgent = dbResult.ok
+      ? await getAgentUsageSummaries(dbResult.val, tenantWide ? null : ownSubject, days)
+      : [];
 
     return {
       scope,
@@ -306,11 +227,7 @@ export async function getUsageReport(
       troubled,
       byAgent,
       trend: zeroFill(
-        trendRows.map((row) => ({
-          day: row.day,
-          calls: Number(row.calls),
-          errors: Number(row.errors),
-        })),
+        trendRows.map((row) => ({ day: row.bucket, calls: row.calls, errors: row.errors })),
         days,
         timeZone,
         new Date()
@@ -389,9 +306,6 @@ export async function getToolDetail(
 
   const session = await getSessionFromCookies();
   if (!session) return { ...empty, error: 'Sign in to see tool usage' };
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { ...empty, error: 'Database unavailable' };
-  const db = dbResult.val;
 
   const isOperator = session.roles.includes(ROLE_OPERATOR);
   if (!isOperator && !session.roles.includes(ROLE_USER)) {
@@ -401,89 +315,37 @@ export async function getToolDetail(
   const tenantWide = scope === 'tenant';
   const ownSubject = session.subject;
 
-  const since = sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`;
+  const filter = { window: lastDays(days), subject: tenantWide ? null : ownSubject, tool };
+  const store = getDataStore().toolUsage;
 
   try {
-    let totalsQuery = db
-      .selectFrom('tool_calls')
-      .select([
-        sql<string>`count(*)`.as('calls'),
-        sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-        sql<string>`percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms)`.as('median_ms'),
-        sql<string>`percentile_disc(0.95) WITHIN GROUP (ORDER BY duration_ms)`.as('p95_ms'),
-      ])
-      .where('tool', '=', tool)
-      .where('started_at', '>=', since);
-    if (!tenantWide) totalsQuery = totalsQuery.where('subject', '=', ownSubject);
-    const totals = await totalsQuery.executeTakeFirst();
-
-    let trendQuery = db
-      .selectFrom('tool_calls')
-      .select([
-        sql<string>`to_char(date_trunc('day', started_at AT TIME ZONE ${timeZone}), 'YYYY-MM-DD')`.as(
-          'day'
-        ),
-        sql<string>`count(*)`.as('calls'),
-        sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-      ])
-      .where('tool', '=', tool)
-      .where('started_at', '>=', since);
-    if (!tenantWide) trendQuery = trendQuery.where('subject', '=', ownSubject);
-    // Grouped by the alias for the same reason getUsageReport is: repeating
-    // the expression rebinds ${timeZone} and Postgres rejects the query.
-    const trendRows = await trendQuery
-      .groupBy(sql`day`)
-      .orderBy(sql`day`, 'asc')
-      .execute();
-
-    let failureQuery = db
-      .selectFrom('tool_calls')
-      .leftJoin('identities', (join) =>
-        join
-          .onRef('identities.subject', '=', 'tool_calls.subject')
-      )
-      .select([
-        'tool_calls.started_at as started_at',
-        'tool_calls.duration_ms as duration_ms',
-        'tool_calls.subject as subject',
-        'tool_calls.error_summary as error_summary',
-        'identities.display_name as display_name',
-        'identities.email as email',
-      ])
-      .where('tool_calls.tool', '=', tool)
-      .where('tool_calls.status', '<>', 'ok')
-      .where('tool_calls.started_at', '>=', since);
-    if (!tenantWide) failureQuery = failureQuery.where('tool_calls.subject', '=', ownSubject);
-    const failureRows = await failureQuery
-      .orderBy('tool_calls.started_at', 'desc')
-      .limit(25)
-      .execute();
+    const [totals, trendRows, failureRows] = await Promise.all([
+      store.totals(filter, { latency: true }),
+      store.series(filter, { timeZone, granularity: 'day' }),
+      store.recentFailures(filter, 25),
+    ]);
 
     return {
       tool,
       days,
       scope,
-      calls: Number(totals?.calls ?? 0),
-      errors: Number(totals?.errors ?? 0),
-      medianMs: Number(totals?.median_ms ?? 0),
-      p95Ms: Number(totals?.p95_ms ?? 0),
+      calls: totals.calls,
+      errors: totals.errors,
+      medianMs: totals.medianMs ?? 0,
+      p95Ms: totals.p95Ms ?? 0,
       trend: zeroFill(
-        trendRows.map((row) => ({
-          day: row.day,
-          calls: Number(row.calls),
-          errors: Number(row.errors),
-        })),
+        trendRows.map((row) => ({ day: row.bucket, calls: row.calls, errors: row.errors })),
         days,
         timeZone,
         new Date()
       ),
       failures: failureRows.map((row) => ({
-        at: row.started_at instanceof Date ? row.started_at.toISOString() : String(row.started_at),
-        durationMs: Number(row.duration_ms),
-        by: tenantWide ? row.display_name || row.email || row.subject || 'unknown' : null,
+        at: row.startedAt.toISOString(),
+        durationMs: row.durationMs,
+        by: tenantWide ? row.displayName || row.email || row.subject || 'unknown' : null,
         // The requester's OWN failures carry the message in either scope;
         // anyone else's never do, however privileged the viewer.
-        summary: row.subject === ownSubject ? (row.error_summary ?? null) : null,
+        summary: row.subject === ownSubject ? (row.errorSummary ?? null) : null,
       })),
     };
   } catch (error) {

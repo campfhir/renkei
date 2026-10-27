@@ -13,16 +13,31 @@ let lastQuery: { strings: readonly string[]; values: unknown[] } | null = null;
 let queryHistory: { strings: readonly string[]; values: unknown[] }[] = [];
 let rows: Record<string, unknown>[] = [];
 
-jest.mock('@renkei/db', () => ({
-  // searchKnowledge runs its query inside a transaction (to scope
-  // `SET LOCAL hnsw.ef_search`), so the stub needs a `.transaction().execute()`
-  // that just runs the callback against something the `sql` mock below will
-  // accept — it never inspects the "connection" it's handed.
-  getDatabase: () => ({
-    ok: true,
-    val: { transaction: () => ({ execute: (fn: (trx: unknown) => unknown) => fn({}) }) },
-  }),
-}));
+jest.mock('@renkei/db', () => {
+  // The candidate queries live in the data store's Postgres knowledge
+  // domain, which builds them with the `sql` mocked below. The search runs
+  // inside a transaction (to scope `SET LOCAL hnsw.ef_search`), so the
+  // stand-in connection needs a `.transaction().execute()` that just runs
+  // the callback — nothing ever inspects the "connection" it's handed.
+  const { postgresKnowledgeChunks } = jest.requireActual<
+    typeof import('../../db/src/store/domains/knowledge-chunks/postgres')
+  >('../../db/src/store/domains/knowledge-chunks/postgres');
+  const filter = jest.requireActual<
+    typeof import('../../db/src/store/domains/knowledge-chunks/metadata-filter')
+  >('../../db/src/store/domains/knowledge-chunks/metadata-filter');
+  const connection = {
+    transaction: () => ({ execute: (fn: (trx: unknown) => unknown) => fn({}) }),
+  };
+  const knowledgeChunks = postgresKnowledgeChunks(
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- a stand-in the mocked `sql` never queries
+    () => connection as never
+  );
+  return {
+    getDataStore: () => ({ knowledgeChunks }),
+    compileMetadataFilter: filter.compileMetadataFilter,
+    FREE_TEXT_KEY: filter.FREE_TEXT_KEY,
+  };
+});
 
 jest.mock('kysely', () => {
   const sql = (strings: readonly string[], ...values: unknown[]) => {
