@@ -8,7 +8,6 @@
  * connector is unconfigured, and truncates a long OCR result.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/batch-jobs-store', () => ({
   createBatch: jest.fn(),
   getBatch: jest.fn(),
@@ -30,7 +29,6 @@ jest.mock('@renkei/sandbox-client', () => ({
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import {
   createBatch,
   getBatch,
@@ -50,7 +48,6 @@ type Handler = (args: Record<string, unknown>) => Promise<{
   isError?: boolean;
 }>;
 
-const getDatabaseMock = getDatabase as jest.Mock;
 const createBatchMock = createBatch as jest.Mock;
 const getBatchMock = getBatch as jest.Mock;
 const listBatchesMock = listBatches as jest.Mock;
@@ -70,7 +67,6 @@ const callMistralOcrMock = callMistralOcr as jest.Mock;
 const resolveMistralOcrConfigMock = resolveMistralOcrConfig as jest.Mock;
 const sbReadFileMock = sbReadFile as jest.Mock;
 
-const FAKE_DB = {};
 const DEST_SHARE = '5d1f1a0e-6c7b-4e2a-9f3c-1b2d3e4f5a6b';
 
 function context(): MCPToolContext {
@@ -90,7 +86,6 @@ function registerAll(): Map<string, Handler> {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  getDatabaseMock.mockReturnValue({ ok: true, val: FAKE_DB });
   batchJobsQueueMock.mockReturnValue({ producer: 'the-producer' });
   listConnectedSharesMock.mockResolvedValue({
     ok: true,

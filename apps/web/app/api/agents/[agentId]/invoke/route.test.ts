@@ -6,10 +6,6 @@
  * machine caller (API key) never sees this at all, confirm or not.
  */
 
-jest.mock('@renkei/db', () => ({
-  ...jest.requireActual<object>('@renkei/db'),
-  getDatabase: jest.fn(() => ({ ok: true, val: {} })),
-}));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({ hasActiveGrant: jest.fn(async () => false) }));
 jest.mock('@renkei/agents/runs', () => ({

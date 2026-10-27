@@ -23,7 +23,6 @@
  */
 
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: false, error: 'no db in this suite' }),
   // Every data-store method rejects, as an unreachable database does.
   getDataStore: () =>
     new Proxy(
@@ -90,7 +89,7 @@ const CALLS: { tool: string; args: Record<string, unknown> }[] = [
   { tool: 'webex_send_message', args: { roomId: 'room-1', markdown: 'hi' } },
   { tool: 'webex_note_to_self', args: { markdown: 'hi' } },
   // Never reaches auth.fetch (it only mints a DB upload slot), so it fails
-  // on the mocked getDatabase() instead — still a clean errText(), never a
+  // on the mocked data store instead — still a clean errText(), never a
   // thrown exception or an "undefined".
   { tool: 'webex_request_attachment_upload', args: { roomId: 'room-1', filename: 'notes.txt' } },
   // The preview never has to reach auth (its room-title lookup is

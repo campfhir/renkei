@@ -33,26 +33,6 @@ jest.mock('@renkei/delegate-client', () => {
   };
 });
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: () => ({
-        select: () => ({
-          where: () => ({
-            where: () => ({
-              where: () => ({
-                limit: () => ({
-                  executeTakeFirst: async () => ({ provider_account_id: 'acct-1' }),
-                }),
-              }),
-            }),
-          }),
-        }),
-      }),
-    },
-  }),
-}));
 jest.mock('@renkei/connector-microsoft', () => ({
   ...jest.requireActual('@renkei/connector-microsoft/src/fetch'),
   GRAPH_BASE_URL: 'https://graph.microsoft.com/v1.0',

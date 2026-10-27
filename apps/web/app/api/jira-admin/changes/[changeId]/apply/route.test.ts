@@ -7,7 +7,6 @@
  * after the response, from the stored row, never from the browser.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('next/server', () => ({
   ...jest.requireActual<typeof import('next/server')>('next/server'),

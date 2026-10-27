@@ -6,7 +6,7 @@
  * knowledge operations report per-entry results.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn(), getDataStore: jest.fn() }));
+jest.mock('@renkei/db', () => ({ getDataStore: jest.fn() }));
 jest.mock('@/lib/agents/store', () => ({ listAgents: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({
   resolveAgentAccess: jest.fn(),
@@ -102,8 +102,7 @@ import { registerAgentTools } from './index';
 import type { MCPToolContext } from '../common';
 import { INSTRUCTION_SECTIONS } from '@renkei/agents';
 
-const { getDatabase: mockGetDatabase, getDataStore: mockGetDataStore } = jest.requireMock<{
-  getDatabase: jest.Mock;
+const { getDataStore: mockGetDataStore } = jest.requireMock<{
   getDataStore: jest.Mock;
 }>('@renkei/db');
 const storeMock = jest.requireMock<{ listAgents: jest.Mock }>('@/lib/agents/store');
@@ -188,8 +187,7 @@ function registerAll(context: Partial<MCPToolContext>): Map<string, Handler> {
 
 /**
  * The data store the tools read through: `rows` are the agents chained
- * after the one asked about, `row` the run a run id resolves to. The
- * database handle itself only feeds the (mocked) @renkei/agents calls.
+ * after the one asked about, `row` the run a run id resolves to.
  */
 function stubDb(
   options: {
@@ -206,7 +204,6 @@ function stubDb(
         row ? { agentId: row.agent_id, triggerKind: row.trigger_kind ?? 'manual' } : null,
     },
   });
-  mockGetDatabase.mockReturnValue({ ok: true, val: {} });
 }
 
 const AGENT = {

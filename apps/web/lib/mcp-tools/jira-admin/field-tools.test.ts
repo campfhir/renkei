@@ -15,9 +15,6 @@ jest.mock('@/lib/logger', () => ({
 jest.mock('../common', () => ({
   withPresentationHint: (body: string) => body,
 }));
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: true, val: {} }),
-}));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({}));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));

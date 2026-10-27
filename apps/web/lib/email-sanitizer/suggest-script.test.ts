@@ -29,10 +29,6 @@ jest.mock('@renkei/agent-llm', () => ({
   })),
 }));
 
-// The lib never touches the database beyond the handle it passes to
-// resolveAgentLlm (mocked), so an empty one suffices.
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
-
 import { suggestCleanerScript } from './suggest-script';
 
 const SAMPLE = [

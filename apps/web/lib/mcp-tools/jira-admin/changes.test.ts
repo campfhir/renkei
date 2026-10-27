@@ -13,9 +13,6 @@ jest.mock('@/lib/logger', () => ({
 jest.mock('../common', () => ({
   withPresentationHint: (body: string) => body,
 }));
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: true, val: {} }),
-}));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({}));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));
@@ -35,6 +32,7 @@ jest.mock('@/lib/jira-admin/change-requests', () => {
   };
 });
 
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { authedFetch } from '@renkei/delegate-client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
@@ -139,6 +137,15 @@ function storedChange(overrides: Partial<ChangeRequest> = {}): ChangeRequest {
     ...overrides,
   };
 }
+
+// Closing a replaced request notifies its requester through the data store;
+// a fresh memory store per test takes those notices.
+beforeEach(() => {
+  registerDataStore(createMemoryDataStore());
+});
+afterAll(() => {
+  resetDataStore();
+});
 
 beforeEach(() => {
   jest.mocked(createChangeRequest).mockReset();

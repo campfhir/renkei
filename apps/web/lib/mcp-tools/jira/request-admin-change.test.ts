@@ -11,7 +11,6 @@
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: () => null }));
 jest.mock('@/lib/admin-changes/notify', () => ({
   notifyOperatorsOfRequest: jest.fn(),

@@ -6,8 +6,6 @@
  * wrapper's own decisions.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: () => ({ execute: async () => ({ rows: [] }) }) }));
 jest.mock('@renkei/knowledge', () => ({
   vectorLiteral: (vector: number[]) => `[${vector.join(',')}]`,
 }));

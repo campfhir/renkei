@@ -10,7 +10,6 @@ jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({}));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));

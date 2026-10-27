@@ -5,7 +5,6 @@
  */
 
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 jest.mock('@renkei/connector-fileshares', () => ({ listConnectedShares: jest.fn() }));
 jest.mock('@renkei/batch-jobs-store', () => ({
   isDuplicateScheduleName: (error: unknown) =>
