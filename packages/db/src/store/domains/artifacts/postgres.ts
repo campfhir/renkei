@@ -1,7 +1,23 @@
 import { sql, type ExpressionBuilder, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
 import { ARTIFACT_COLUMNS, artifactFromRow, likePattern } from './record';
-import type { ArtifactStore, LibraryFilter } from './types';
+import type { ArtifactChatSelection, ArtifactPatch, ArtifactStore, LibraryFilter } from './types';
+
+/** The columns a patch sets, updated_at stamped. */
+function patchValues(patch: ArtifactPatch) {
+  return {
+    ...(patch.keyKind !== undefined ? { key_kind: patch.keyKind } : {}),
+    ...(patch.keyRef !== undefined ? { key_ref: patch.keyRef } : {}),
+    ...(patch.extractedText !== undefined ? { extracted_text: patch.extractedText } : {}),
+    ...(patch.extractStatus !== undefined ? { extract_status: patch.extractStatus } : {}),
+    ...(patch.digestStatus !== undefined ? { digest_status: patch.digestStatus } : {}),
+    ...(patch.ocrStartedAt !== undefined ? { ocr_started_at: patch.ocrStartedAt } : {}),
+    ...(patch.ocrFinishedAt !== undefined ? { ocr_finished_at: patch.ocrFinishedAt } : {}),
+    ...(patch.ocrMillis !== undefined ? { ocr_millis: patch.ocrMillis } : {}),
+    ...(patch.ocrPages !== undefined ? { ocr_pages: patch.ocrPages } : {}),
+    updated_at: patch.updatedAt ?? new Date(),
+  };
+}
 
 const REFERENCE_COLUMNS = [
   'r.id as reference_id',
@@ -50,6 +66,12 @@ function filterWhere(eb: ExpressionBuilder<DB, 'artifacts'>, filter: LibraryFilt
 }
 
 export function postgresArtifacts(db: () => Kysely<DB>): ArtifactStore {
+  const inChat = (selection: ArtifactChatSelection) =>
+    db()
+      .selectFrom('artifacts')
+      .where('owner_subject', '=', selection.ownerSubject)
+      .where('chat_id', '=', selection.chatId)
+      .where('id', 'in', selection.artifactIds);
   return {
     async get(artifactId) {
       const row = await db()
@@ -304,6 +326,235 @@ export function postgresArtifacts(db: () => Kysely<DB>): ArtifactStore {
         .where('id', 'in', artifactIds)
         .executeTakeFirstOrThrow();
       return Number(row.count);
+    },
+    async listNeedingOcr(selection) {
+      if (selection.artifactIds.length === 0) return [];
+      const rows = await inChat(selection)
+        .select(ARTIFACT_COLUMNS)
+        .where('extract_status', '=', 'needs_ocr')
+        .orderBy('created_at')
+        .orderBy('id')
+        .execute();
+      return rows.map(artifactFromRow);
+    },
+    async listUnsent(selection) {
+      if (selection.artifactIds.length === 0) return [];
+      const rows = await inChat(selection)
+        .select([...ARTIFACT_COLUMNS, 'extracted_text'])
+        .where('message_id', 'is', null)
+        .orderBy('created_at', 'asc')
+        .orderBy('id')
+        .execute();
+      return rows.map((row) => ({ ...artifactFromRow(row), extractedText: row.extracted_text }));
+    },
+    async create(input) {
+      const row = await db()
+        .insertInto('artifacts')
+        .values({
+          id: input.id,
+          owner_subject: input.ownerSubject,
+          chat_id: input.chatId,
+          message_id: input.messageId,
+          origin: input.origin,
+          key_kind: input.keyKind,
+          key_ref: input.keyRef,
+          blob_key: input.blobKey,
+          filename: input.filename,
+          content_type: input.contentType,
+          size_bytes: input.sizeBytes,
+          extracted_text: input.extractedText,
+          extract_status: input.extractStatus,
+          digest_status: input.digestStatus,
+        })
+        .returning(ARTIFACT_COLUMNS)
+        .executeTakeFirstOrThrow();
+      return artifactFromRow(row);
+    },
+    async update(artifactId, patch) {
+      const result = await db()
+        .updateTable('artifacts')
+        .set(patchValues(patch))
+        .where('id', '=', artifactId)
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows) > 0;
+    },
+    async rename(input) {
+      const result = await db()
+        .updateTable('artifacts')
+        .set({ filename: input.filename, updated_at: new Date() })
+        .where('id', '=', input.artifactId)
+        .where('owner_subject', '=', input.ownerSubject)
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows) > 0;
+    },
+    async delete(artifactId) {
+      const result = await db()
+        .deleteFrom('artifacts')
+        .where('id', '=', artifactId)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows) > 0;
+    },
+    async transferOwnership(artifactId, newOwnerSubject) {
+      await db()
+        .transaction()
+        .execute(async (trx) => {
+          await trx
+            .updateTable('artifacts')
+            .set({ owner_subject: newOwnerSubject, updated_at: new Date() })
+            .where('id', '=', artifactId)
+            .execute();
+          // Owners need no grant; the old owner keeps none of their wrappings.
+          await trx
+            .deleteFrom('resource_access_grants')
+            .where('resource_kind', '=', 'artifact')
+            .where('resource_id', '=', artifactId)
+            .where('grantee_subject', '=', newOwnerSubject)
+            .execute();
+          await trx
+            .updateTable('resource_access_grants')
+            .set({ owner_subject: newOwnerSubject })
+            .where('resource_kind', '=', 'artifact')
+            .where('resource_id', '=', artifactId)
+            .execute();
+        });
+    },
+    async adoptContent(targetId, sourceId) {
+      return db()
+        .transaction()
+        .execute(async (trx) => {
+          const source = await trx
+            .selectFrom('artifacts')
+            .select([
+              'blob_key',
+              'filename',
+              'content_type',
+              'size_bytes',
+              'extracted_text',
+              'extract_status',
+              'digest_status',
+            ])
+            .where('id', '=', sourceId)
+            .executeTakeFirst();
+          if (!source) return false;
+          const result = await trx
+            .updateTable('artifacts')
+            .set({
+              blob_key: source.blob_key,
+              filename: source.filename,
+              content_type: source.content_type,
+              size_bytes: source.size_bytes,
+              extracted_text: source.extracted_text,
+              extract_status: source.extract_status,
+              // The old digest described the old bytes: start over.
+              summary: null,
+              keywords: [],
+              search_vector: null,
+              digest_status: source.digest_status,
+              updated_at: new Date(),
+            })
+            .where('id', '=', targetId)
+            .executeTakeFirst();
+          if (Number(result.numUpdatedRows) === 0) return false;
+          await trx.deleteFrom('artifacts').where('id', '=', sourceId).execute();
+          return true;
+        });
+    },
+    async storeDigest(artifactId, digest) {
+      if (!digest) {
+        await db()
+          .updateTable('artifacts')
+          .set({ digest_status: 'failed', updated_at: new Date() })
+          .where('id', '=', artifactId)
+          .execute();
+        return;
+      }
+      const keywords = digest.keywords.join(' ');
+      await db()
+        .updateTable('artifacts')
+        .set({
+          summary: digest.summary,
+          keywords: digest.keywords,
+          digest_status: 'done',
+          search_vector: sql`setweight(to_tsvector('english', ${keywords}), 'A') || setweight(to_tsvector('english', ${digest.summary}), 'B')`,
+          updated_at: new Date(),
+        })
+        .where('id', '=', artifactId)
+        .execute();
+    },
+    async copyDigest(input) {
+      await db()
+        .updateTable('artifacts')
+        .set((eb) => ({
+          summary: input.summary,
+          keywords: input.keywords,
+          search_vector: eb
+            .selectFrom('artifacts')
+            .select('search_vector')
+            .where('id', '=', input.sourceId),
+          digest_status: 'done',
+        }))
+        .where('id', '=', input.targetId)
+        .execute();
+    },
+    async claimDigest(artifactId, staleBefore) {
+      const claimed = await db()
+        .updateTable('artifacts')
+        .set({ digest_status: 'running', updated_at: new Date() })
+        .where('id', '=', artifactId)
+        .where((eb) =>
+          eb.or([
+            eb('digest_status', '=', 'pending'),
+            eb.and([eb('digest_status', '=', 'running'), eb('updated_at', '<', staleBefore)]),
+          ])
+        )
+        .returning('id')
+        .executeTakeFirst();
+      return claimed !== undefined;
+    },
+    async claimOcr(artifactId, now, staleBefore) {
+      // Conditional, so two requests at once start one run between them.
+      const claimed = await db()
+        .updateTable('artifacts')
+        .set({ ocr_started_at: now, updated_at: now })
+        .where('id', '=', artifactId)
+        .where((eb) =>
+          eb.or([eb('ocr_started_at', 'is', null), eb('ocr_started_at', '<', staleBefore)])
+        )
+        .executeTakeFirst();
+      return Number(claimed.numUpdatedRows) > 0;
+    },
+    async addReference(input) {
+      const row = await db()
+        .insertInto('artifact_references')
+        .values({
+          artifact_id: input.artifactId,
+          project_id: input.projectId,
+          mode: input.mode,
+          added_by: input.addedBy,
+        })
+        .onConflict((oc) =>
+          oc.columns(['artifact_id', 'project_id']).doUpdateSet({ mode: input.mode })
+        )
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      return row.id;
+    },
+    async setReferenceMode(input) {
+      const result = await db()
+        .updateTable('artifact_references')
+        .set({ mode: input.mode })
+        .where('artifact_id', '=', input.artifactId)
+        .where('project_id', '=', input.projectId)
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows) > 0;
+    },
+    async removeReference(input) {
+      const result = await db()
+        .deleteFrom('artifact_references')
+        .where('artifact_id', '=', input.artifactId)
+        .where('project_id', '=', input.projectId)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows) > 0;
     },
   };
 }

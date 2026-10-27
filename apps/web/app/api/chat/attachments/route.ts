@@ -52,7 +52,7 @@ function uploadError(error: AttachmentError): Response {
 export async function PUT(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   if (!(await tenantBlobStoreConfigured())) {
     return jsonError(
       503,
@@ -115,7 +115,7 @@ export async function PUT(request: NextRequest): Promise<Response> {
 
   // A plain chat upload stays under the chat's key, as before.
   if (chat && !keep && !projectId) {
-    const created = await createAttachment(db, {
+    const created = await createAttachment({
       ownerSubject: session.subject,
       chatId: chat.chat.id,
       filename,
@@ -127,11 +127,11 @@ export async function PUT(request: NextRequest): Promise<Response> {
       key: { kind: 'chat', ref: chat.chat.id },
     });
     if (!created.ok) return uploadError(created.err.type);
-    deferDigest(db, session.subject, [created.val], after);
+    deferDigest(session.subject, [created.val], after);
     return NextResponse.json({ attachment: toAttachmentView(created.val) }, { status: 201 });
   }
 
-  const created = await createOwnedArtifact(db, {
+  const created = await createOwnedArtifact({
     ownerSubject: session.subject,
     chatId: chat?.chat.id ?? null,
     filename,
@@ -142,10 +142,10 @@ export async function PUT(request: NextRequest): Promise<Response> {
   });
   if (!created.ok) return uploadError(created.err.type);
   // The summary and keywords for the search index, asked for after the reply.
-  deferDigest(db, session.subject, [created.val], after);
+  deferDigest(session.subject, [created.val], after);
   let attached: { mode: ReferenceMode } | null = null;
   if (projectId) {
-    const result = await attachToProject(db, {
+    const result = await attachToProject({
       actorSubject: session.subject,
       artifactId: created.val.id,
       projectId,
@@ -156,7 +156,7 @@ export async function PUT(request: NextRequest): Promise<Response> {
       ? { mode: result.val.mode }
       : result.err.type === 'BUDGET' || result.err.type === 'INVALID'
         ? (
-            await attachToProject(db, {
+            await attachToProject({
               actorSubject: session.subject,
               artifactId: created.val.id,
               projectId,

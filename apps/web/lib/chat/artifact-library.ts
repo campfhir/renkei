@@ -14,9 +14,7 @@
  * upload never has to leave the chat's key until it does.
  */
 
-import type { Kysely } from 'kysely';
-import { sql } from 'kysely';
-import { getDataStore, type ArtifactRecord, type DB } from '@renkei/db';
+import { getDataStore, type ArtifactRecord } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
@@ -88,24 +86,21 @@ export const tokensOf = (chars: number): number => Math.ceil(chars / 4);
  * keep. The key is minted first so the text seals under it; a row that
  * then fails to insert leaves a key the sweep prunes.
  */
-export async function createOwnedArtifact(
-  db: Kysely<DB>,
-  input: {
-    ownerSubject: string;
-    chatId?: string | null;
-    messageId?: string | null;
-    filename: string;
-    contentType: string;
-    bytes: Uint8Array;
-    maxBytes: number;
-    redactor: OutboundRedactor | null;
-    origin?: 'upload' | 'model';
-  }
-): Promise<Result<AttachmentRow, AttachmentError>> {
+export async function createOwnedArtifact(input: {
+  ownerSubject: string;
+  chatId?: string | null;
+  messageId?: string | null;
+  filename: string;
+  contentType: string;
+  bytes: Uint8Array;
+  maxBytes: number;
+  redactor: OutboundRedactor | null;
+  origin?: 'upload' | 'model';
+}): Promise<Result<AttachmentRow, AttachmentError>> {
   const id = randomUUID();
   const key = await createKey('artifact', { id, ownerSubject: input.ownerSubject });
   if (!key) return err('CONTENT_KEY' as const);
-  const created = await createAttachment(db, {
+  const created = await createAttachment({
     id,
     ownerSubject: input.ownerSubject,
     chatId: input.chatId ?? null,
@@ -143,20 +138,15 @@ export async function createOwnedArtifact(
  * the artifact's key.
  */
 export async function promoteKey(
-  db: Kysely<DB>,
   access: ArtifactAccess
 ): Promise<Result<AttachmentRow, 'CONTENT_KEY'>> {
   const row = access.row;
   if (row.keyKind === 'artifact') return ok(row);
-  const stored = await db
-    .selectFrom('artifacts')
-    .select('extracted_text')
-    .where('id', '=', row.id)
-    .executeTakeFirst();
+  const stored = await getDataStore().artifacts.getText(row.id);
   let text: string | null = null;
-  if (stored?.extracted_text) {
+  if (stored) {
     if (access.cipher.unavailable) return err('CONTENT_KEY' as const);
-    text = openText(stored.extracted_text, access.cipher);
+    text = openText(stored, access.cipher);
     if (text.startsWith('[content unavailable')) return err('CONTENT_KEY' as const);
   }
   const own = await cipherAsOwner('artifact', { id: row.id, ownerSubject: row.ownerSubject });
@@ -180,11 +170,11 @@ export async function promoteKey(
     // behind under a key the row no longer names.
     return err('CONTENT_KEY' as const);
   }
-  await db
-    .updateTable('artifacts')
-    .set({ key_kind: 'artifact', key_ref: null, extracted_text: sealed, updated_at: new Date() })
-    .where('id', '=', row.id)
-    .execute();
+  await getDataStore().artifacts.update(row.id, {
+    keyKind: 'artifact',
+    keyRef: null,
+    extractedText: sealed,
+  });
   const resource = { id: row.id, ownerSubject: row.ownerSubject };
   if (row.chatId) {
     await wrapKeyUnder('artifact', resource, { kind: 'chat', resourceId: row.chatId });
@@ -218,15 +208,12 @@ export async function alwaysTokensOf(
  * artifact's key is then wrapped under the project's so every member
  * opens it. `always` is refused past the project's budget.
  */
-export async function attachToProject(
-  db: Kysely<DB>,
-  input: {
-    actorSubject: string;
-    artifactId: string;
-    projectId: string;
-    mode: ReferenceMode;
-  }
-): Promise<Result<{ referenceId: string; mode: ReferenceMode }, ArtifactActError>> {
+export async function attachToProject(input: {
+  actorSubject: string;
+  artifactId: string;
+  projectId: string;
+  mode: ReferenceMode;
+}): Promise<Result<{ referenceId: string; mode: ReferenceMode }, ArtifactActError>> {
   const access = await resolveArtifactAccess(input.actorSubject, input.artifactId);
   if (!access) return err('NOT_FOUND' as const);
   const project = await resolveResourceAccess(input.actorSubject, 'chat_project', input.projectId);
@@ -236,12 +223,12 @@ export async function attachToProject(
   // the same owner's projects) only when they may use it.
   if (!mayUse(access) && access.projectId !== input.projectId) return err('FORBIDDEN' as const);
   if (input.mode === 'always') {
-    const budget = await alwaysBudgetCheck(db, access.row, input.projectId);
+    const budget = await alwaysBudgetCheck(access.row, input.projectId);
     if (!budget.ok) return budget;
   }
-  const promoted = await promoteKey(db, access);
+  const promoted = await promoteKey(access);
   if (!promoted.ok) return err('CONTENT_KEY' as const);
-  const reference = await addProjectReference(db, {
+  const reference = await addProjectReference({
     artifactId: input.artifactId,
     projectId: input.projectId,
     mode: input.mode,
@@ -257,60 +244,53 @@ export async function attachToProject(
 }
 
 async function alwaysBudgetCheck(
-  db: Kysely<DB>,
   row: AttachmentRow,
   projectId: string
 ): Promise<Result<void, ArtifactActError>> {
   if (row.extractStatus !== 'done') return err('INVALID' as const);
-  const stored = await db
-    .selectFrom('artifacts')
-    .select((eb) => eb.fn.coalesce(eb.fn('length', ['extracted_text']), sql<number>`0`).as('chars'))
-    .where('id', '=', row.id)
-    .executeTakeFirst();
+  const [stored] = await getDataStore().artifacts.textLengths([row.id]);
   const used = await alwaysTokensOf(projectId, row.id);
-  if (used + tokensOf(Number(stored?.chars ?? 0)) > ALWAYS_BUDGET_TOKENS)
-    return err('BUDGET' as const);
+  if (used + tokensOf(stored?.chars ?? 0) > ALWAYS_BUDGET_TOKENS) return err('BUDGET' as const);
   return ok();
 }
 
 /** Project owner or editor, or the artifact's owner: sets how the project's chats use it. */
-export async function setProjectArtifactMode(
-  db: Kysely<DB>,
-  input: { actorSubject: string; artifactId: string; projectId: string; mode: ReferenceMode }
-): Promise<Result<void, ArtifactActError>> {
-  const allowed = await mayManageInProject(
-    db,
-    input.actorSubject,
-    input.artifactId,
-    input.projectId
-  );
+export async function setProjectArtifactMode(input: {
+  actorSubject: string;
+  artifactId: string;
+  projectId: string;
+  mode: ReferenceMode;
+}): Promise<Result<void, ArtifactActError>> {
+  const allowed = await mayManageInProject(input.actorSubject, input.artifactId, input.projectId);
   if (!allowed.ok) return allowed;
   if (input.mode === 'always') {
-    const budget = await alwaysBudgetCheck(db, allowed.val, input.projectId);
+    const budget = await alwaysBudgetCheck(allowed.val, input.projectId);
     if (!budget.ok) return budget;
   }
-  const changed = await setReferenceMode(db, input);
+  const changed = await setReferenceMode({
+    artifactId: input.artifactId,
+    projectId: input.projectId,
+    mode: input.mode,
+  });
   return changed ? ok() : err('NOT_FOUND' as const);
 }
 
 /** Project owner or editor, or the artifact's owner: the project lets go of it; the file stays. */
-export async function detachFromProject(
-  db: Kysely<DB>,
-  input: { actorSubject: string; artifactId: string; projectId: string }
-): Promise<Result<void, ArtifactActError>> {
-  const allowed = await mayManageInProject(
-    db,
-    input.actorSubject,
-    input.artifactId,
-    input.projectId
-  );
+export async function detachFromProject(input: {
+  actorSubject: string;
+  artifactId: string;
+  projectId: string;
+}): Promise<Result<void, ArtifactActError>> {
+  const allowed = await mayManageInProject(input.actorSubject, input.artifactId, input.projectId);
   if (!allowed.ok) return allowed;
-  const removed = await removeProjectReference(db, input);
+  const removed = await removeProjectReference({
+    artifactId: input.artifactId,
+    projectId: input.projectId,
+  });
   return removed ? ok() : err('NOT_FOUND' as const);
 }
 
 async function mayManageInProject(
-  db: Kysely<DB>,
   actorSubject: string,
   artifactId: string,
   projectId: string
@@ -326,19 +306,16 @@ async function mayManageInProject(
 }
 
 /** Owner shares with a person: they may use it, never change it. */
-export async function shareArtifact(
-  db: Kysely<DB>,
-  input: {
-    ownerSubject: string;
-    artifactId: string;
-    granteeSubject: string;
-    expiresAt: Date | null;
-  }
-): Promise<Result<void, ArtifactActError>> {
+export async function shareArtifact(input: {
+  ownerSubject: string;
+  artifactId: string;
+  granteeSubject: string;
+  expiresAt: Date | null;
+}): Promise<Result<void, ArtifactActError>> {
   const access = await resolveArtifactAccess(input.ownerSubject, input.artifactId);
   if (!access || access.role !== 'owner') return err('NOT_FOUND' as const);
   if (input.granteeSubject === input.ownerSubject) return err('SELF' as const);
-  const promoted = await promoteKey(db, access);
+  const promoted = await promoteKey(access);
   if (!promoted.ok) return err('CONTENT_KEY' as const);
   const outcome = await grantResourceAccess(input.ownerSubject, 'artifact', input.artifactId, {
     granteeSubject: input.granteeSubject,
@@ -440,14 +417,10 @@ export async function artifactImpact(row: AttachmentRow): Promise<ArtifactImpact
 }
 
 /** Owner deletes it for everyone: row, bytes, key, shares. References cascade. */
-export async function deleteArtifact(db: Kysely<DB>, row: AttachmentRow): Promise<boolean> {
-  const deleted = await deleteAttachment(db, row);
+export async function deleteArtifact(row: AttachmentRow): Promise<boolean> {
+  const deleted = await deleteAttachment(row);
   if (!deleted) return false;
-  await db
-    .deleteFrom('resource_access_grants')
-    .where('resource_kind', '=', 'artifact')
-    .where('resource_id', '=', row.id)
-    .execute();
+  await getDataStore().resourceGrants.deleteForResource('artifact', row.id);
   if (row.keyKind === 'artifact') await deleteKey('artifact', row.id);
   return true;
 }
@@ -458,36 +431,21 @@ export async function deleteArtifact(db: Kysely<DB>, row: AttachmentRow): Promis
  * be shared it back). The new owner opens it through the share's sealed
  * box, which their next signed-in read turns into a wrapping of their own.
  */
-export async function transferArtifact(
-  db: Kysely<DB>,
-  input: { ownerSubject: string; artifactId: string; newOwnerSubject: string }
-): Promise<Result<void, ArtifactActError>> {
+export async function transferArtifact(input: {
+  ownerSubject: string;
+  artifactId: string;
+  newOwnerSubject: string;
+}): Promise<Result<void, ArtifactActError>> {
   const access = await resolveArtifactAccess(input.ownerSubject, input.artifactId);
   if (!access || access.role !== 'owner') return err('NOT_FOUND' as const);
   if (input.newOwnerSubject === input.ownerSubject) return err('SELF' as const);
-  const promoted = await promoteKey(db, access);
+  const promoted = await promoteKey(access);
   if (!promoted.ok) return err('CONTENT_KEY' as const);
   const resource = { id: input.artifactId, ownerSubject: input.ownerSubject };
   const shared = await shareKey('artifact', resource, input.newOwnerSubject);
   if (!shared) return err('CONTENT_KEY' as const);
-  await db
-    .updateTable('artifacts')
-    .set({ owner_subject: input.newOwnerSubject, updated_at: new Date() })
-    .where('id', '=', input.artifactId)
-    .execute();
   // Owners need no grant; the old owner keeps none of their wrappings.
-  await db
-    .deleteFrom('resource_access_grants')
-    .where('resource_kind', '=', 'artifact')
-    .where('resource_id', '=', input.artifactId)
-    .where('grantee_subject', '=', input.newOwnerSubject)
-    .execute();
-  await db
-    .updateTable('resource_access_grants')
-    .set({ owner_subject: input.newOwnerSubject })
-    .where('resource_kind', '=', 'artifact')
-    .where('resource_id', '=', input.artifactId)
-    .execute();
+  await getDataStore().artifacts.transferOwnership(input.artifactId, input.newOwnerSubject);
   await revokeKey('artifact', input.artifactId, input.ownerSubject);
   notifyArtifactEvent({
     kind: 'artifact_transferred',
@@ -505,18 +463,15 @@ export async function transferArtifact(
  * attached to one of their projects in place of the original. The
  * original's owner is told.
  */
-export async function copyArtifact(
-  db: Kysely<DB>,
-  input: {
-    actorSubject: string;
-    artifactId: string;
-    filename: string | null;
-    attachProjectId: string | null;
-    mode: ReferenceMode;
-    maxBytes: number;
-    redactor: OutboundRedactor | null;
-  }
-): Promise<Result<AttachmentRow, ArtifactActError>> {
+export async function copyArtifact(input: {
+  actorSubject: string;
+  artifactId: string;
+  filename: string | null;
+  attachProjectId: string | null;
+  mode: ReferenceMode;
+  maxBytes: number;
+  redactor: OutboundRedactor | null;
+}): Promise<Result<AttachmentRow, ArtifactActError>> {
   const access = await resolveArtifactAccess(input.actorSubject, input.artifactId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role === 'owner') return err('SELF' as const);
@@ -530,7 +485,7 @@ export async function copyArtifact(
           : ('STORE' as const)
     );
   }
-  const created = await createOwnedArtifact(db, {
+  const created = await createOwnedArtifact({
     ownerSubject: input.actorSubject,
     filename: input.filename ? cleanFilename(input.filename) : copyName(access.row.filename),
     contentType: access.row.contentType,
@@ -559,33 +514,25 @@ export async function copyArtifact(
       });
       const sealed = sealText(text, own);
       if (sealed.ok) {
-        await db
-          .updateTable('artifacts')
-          .set({ extracted_text: sealed.val, extract_status: 'done' })
-          .where('id', '=', created.val.id)
-          .execute();
+        await getDataStore().artifacts.update(created.val.id, {
+          extractedText: sealed.val,
+          extractStatus: 'done',
+        });
       }
     }
   }
   // The same bytes are about the same things: the digest comes across
   // too, in the clear as it was, rather than being asked for again.
   if (access.row.digestStatus === 'done' && access.row.summary !== null) {
-    await db
-      .updateTable('artifacts')
-      .set((eb) => ({
-        summary: access.row.summary,
-        keywords: access.row.keywords,
-        search_vector: eb
-          .selectFrom('artifacts')
-          .select('search_vector')
-          .where('id', '=', access.row.id),
-        digest_status: 'done',
-      }))
-      .where('id', '=', created.val.id)
-      .execute();
+    await getDataStore().artifacts.copyDigest({
+      targetId: created.val.id,
+      sourceId: access.row.id,
+      summary: access.row.summary,
+      keywords: access.row.keywords,
+    });
   }
   if (input.attachProjectId) {
-    await attachToProject(db, {
+    await attachToProject({
       actorSubject: input.actorSubject,
       artifactId: created.val.id,
       projectId: input.attachProjectId,
@@ -593,7 +540,7 @@ export async function copyArtifact(
     });
     if (access.projectId === input.attachProjectId || access.role === 'use') {
       // In place of the original where this person may let go of it.
-      await detachFromProject(db, {
+      await detachFromProject({
         actorSubject: input.actorSubject,
         artifactId: access.row.id,
         projectId: input.attachProjectId,
@@ -616,18 +563,17 @@ function copyName(filename: string): string {
 }
 
 /** Owner renames; the bytes and every reference stay. */
-export async function renameArtifact(
-  db: Kysely<DB>,
-  input: { ownerSubject: string; artifactId: string; filename: string }
-): Promise<boolean> {
+export async function renameArtifact(input: {
+  ownerSubject: string;
+  artifactId: string;
+  filename: string;
+}): Promise<boolean> {
   if (!isUuid(input.artifactId)) return false;
-  const result = await db
-    .updateTable('artifacts')
-    .set({ filename: cleanFilename(input.filename), updated_at: new Date() })
-    .where('id', '=', input.artifactId)
-    .where('owner_subject', '=', input.ownerSubject)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows) > 0;
+  return getDataStore().artifacts.rename({
+    artifactId: input.artifactId,
+    ownerSubject: input.ownerSubject,
+    filename: cleanFilename(input.filename),
+  });
 }
 
 export interface LibraryItem {
@@ -754,23 +700,20 @@ export async function libraryItems(
  * The owner replaces the bytes, keeping the row, every reference and
  * every share: the text is extracted again and sealed under the same key.
  */
-export async function replaceArtifactBytes(
-  db: Kysely<DB>,
-  input: {
-    access: ArtifactAccess;
-    bytes: Uint8Array;
-    contentType: string;
-    filename: string | null;
-    maxBytes: number;
-    redactor: OutboundRedactor | null;
-  }
-): Promise<Result<AttachmentRow, ArtifactActError>> {
+export async function replaceArtifactBytes(input: {
+  access: ArtifactAccess;
+  bytes: Uint8Array;
+  contentType: string;
+  filename: string | null;
+  maxBytes: number;
+  redactor: OutboundRedactor | null;
+}): Promise<Result<AttachmentRow, ArtifactActError>> {
   const { row } = input.access;
   if (input.access.role !== 'owner') return err('FORBIDDEN' as const);
   // Re-extraction is createAttachment's; a replacement is a new row's
   // worth of work under the old row's identity, so do it as a swap: the
   // new row takes the old id after the old row's bytes are dropped.
-  const promoted = await promoteKey(db, input.access);
+  const promoted = await promoteKey(input.access);
   if (!promoted.ok) return err('CONTENT_KEY' as const);
   const cipher: ContentCipher = await cipherAsOwner('artifact', {
     id: row.id,
@@ -779,7 +722,7 @@ export async function replaceArtifactBytes(
   if (cipher.unavailable) return err('CONTENT_KEY' as const);
   const store = await resolveTenantBlobStore();
   if (!store.ok) return err('UNCONFIGURED' as const);
-  const temp = await createAttachment(db, {
+  const temp = await createAttachment({
     ownerSubject: row.ownerSubject,
     chatId: null,
     filename: input.filename ?? row.filename,
@@ -793,30 +736,8 @@ export async function replaceArtifactBytes(
   if (!temp.ok) {
     return err(temp.err.type === 'TOO_LARGE' ? ('INVALID' as const) : ('STORE' as const));
   }
-  const text = await db
-    .selectFrom('artifacts')
-    .select('extracted_text')
-    .where('id', '=', temp.val.id)
-    .executeTakeFirst();
-  await db
-    .updateTable('artifacts')
-    .set({
-      blob_key: temp.val.blobKey,
-      filename: temp.val.filename,
-      content_type: temp.val.contentType,
-      size_bytes: temp.val.sizeBytes,
-      extracted_text: text?.extracted_text ?? null,
-      extract_status: temp.val.extractStatus,
-      // The old digest described the old bytes: start over.
-      summary: null,
-      keywords: [],
-      search_vector: null,
-      digest_status: temp.val.digestStatus,
-      updated_at: new Date(),
-    })
-    .where('id', '=', row.id)
-    .execute();
-  await db.deleteFrom('artifacts').where('id', '=', temp.val.id).execute();
+  // The old digest described the old bytes: it starts over.
+  await getDataStore().artifacts.adoptContent(row.id, temp.val.id);
   const dropped = await store.val.deleteObject(row.blobKey);
   if (!dropped.ok) {
     logger.warn('replaced artifact bytes not deleted: {key}', {

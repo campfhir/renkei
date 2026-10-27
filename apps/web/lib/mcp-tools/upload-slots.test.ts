@@ -5,11 +5,11 @@
  * subject so a foreign upload id reads as nonexistent.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: jest.fn(() => '') }));
 
 import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import type { MCPToolContext } from './common';
 import {
   claimPendingUploadSlotByOwner,
@@ -18,7 +18,6 @@ import {
   registerUploadStatusTool,
 } from './upload-slots';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getPublicBaseUrl: mockGetPublicBaseUrl } = jest.requireMock<{
   getPublicBaseUrl: jest.Mock;
 }>('@renkei/settings');
@@ -28,33 +27,25 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<{
   isError?: boolean;
 }>;
 
-interface Recorded {
-  inserted: Record<string, unknown> | null;
-  filters: Array<[string, string, unknown]>;
-}
+const UPLOAD_ID = '00000000-0000-4000-8000-000000000001';
 
-/** Minimal Kysely stand-in recording the insert and the select's filters. */
-function stubDb(selectRow: Record<string, unknown> | undefined): Recorded {
-  const recorded: Recorded = { inserted: null, filters: [] };
-  const selectChain = {
-    select: () => selectChain,
-    where(column: string, op: string, value: unknown) {
-      recorded.filters.push([column, op, value]);
-      return selectChain;
-    },
-    executeTakeFirst: async () => selectRow,
+let store: ReturnType<typeof createMemoryDataStore>;
+
+/** One slot row, as a minted slot leaves it. */
+function slotRow(extra: Record<string, unknown> = {}) {
+  return {
+    id: UPLOAD_ID,
+    token_hash: 'hash-1',
+    subject: 'subject-1',
+    account_id: 'acct-1',
+    kind: 'onbase-document',
+    destination: JSON.stringify({}),
+    filename: 'report.pdf',
+    content_type: 'application/pdf',
+    max_bytes: 1024,
+    expires_at: new Date(Date.now() + 60_000),
+    ...extra,
   };
-  const db = {
-    insertInto: () => ({
-      values(values: Record<string, unknown>) {
-        recorded.inserted = values;
-        return { execute: async () => [] };
-      },
-    }),
-    selectFrom: () => selectChain,
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: db });
-  return recorded;
 }
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
@@ -70,15 +61,18 @@ const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
   }) as unknown as MCPToolContext;
 
 beforeEach(() => {
-  mockGetDatabase.mockReset();
+  store = createMemoryDataStore();
+  registerDataStore(store);
   mockGetPublicBaseUrl.mockReset();
   mockGetPublicBaseUrl.mockReturnValue('');
 });
 
+afterAll(() => {
+  resetDataStore();
+});
+
 describe('createUploadSlot', () => {
   it('stores only the sha256 of the token and hands both byte paths back', async () => {
-    const recorded = stubDb(undefined);
-
     const slot = await createUploadSlot(
       context(),
       'jira-attachment',
@@ -87,21 +81,25 @@ describe('createUploadSlot', () => {
     );
 
     if (!slot.ok) throw new Error(slot.error);
-    const inserted = recorded.inserted;
-    if (!inserted) throw new Error('nothing was inserted');
 
     // The bearer appears once in the curl line and once in the fragment link.
     const tokenMatch = /Bearer ([A-Za-z0-9_-]+)'/.exec(slot.instructions);
     if (!tokenMatch) throw new Error('instructions carry no bearer token');
     const token = tokenMatch[1]!;
-    expect(inserted.token_hash).toBe(createHash('sha256').update(token).digest('hex'));
-    expect(String(inserted.token_hash)).not.toBe(token);
-    expect(slot.instructions).not.toContain(String(inserted.token_hash));
+    const hash = createHash('sha256').update(token).digest('hex');
+    expect(slot.instructions).not.toContain(hash);
 
-    expect(inserted.id).toBe(slot.uploadId);
-    expect(inserted.kind).toBe('jira-attachment');
-    expect(inserted.destination).toBe(JSON.stringify({ issueKey: 'PROJ-1' }));
-    expect(inserted.subject).toBe('subject-1');
+    // The slot answers to the token's hash, and to nothing else.
+    expect(await store.uploadSlots.claim(slot.uploadId, { tokenHash: token })).toBeNull();
+    const claimed = await store.uploadSlots.claim(slot.uploadId, { tokenHash: hash });
+    expect(claimed).toMatchObject({
+      id: slot.uploadId,
+      kind: 'jira-attachment',
+      destination: { issueKey: 'PROJ-1' },
+      subject: 'subject-1',
+      accountId: 'acct-1',
+      contentType: 'application/pdf',
+    });
 
     expect(slot.instructions).toContain(
       `https://renkei.example/api/upload/${slot.uploadId}#${token}`
@@ -111,7 +109,6 @@ describe('createUploadSlot', () => {
   });
 
   it('refuses to mint without a signed-in subject', async () => {
-    stubDb(undefined);
     const slot = await createUploadSlot(
       context({ subject: undefined }),
       'jira-attachment',
@@ -122,7 +119,6 @@ describe('createUploadSlot', () => {
   });
 
   it('refuses to mint when no public base URL is known', async () => {
-    stubDb(undefined);
     const slot = await createUploadSlot(
       context({ origin: undefined }),
       'jira-attachment',
@@ -152,30 +148,32 @@ describe('check_file_upload', () => {
     return handler;
   }
 
-  it('scopes the lookup by subject, and a miss reads as nonexistent', async () => {
-    const recorded = stubDb(undefined);
+  it('a miss, and someone else’s slot, both read as nonexistent', async () => {
     const handler = await statusHandler();
+    const missing = await handler({ uploadId: UPLOAD_ID });
+    await store.seed({ upload_slots: [slotRow({ subject: 'someone-else' })] });
+    const foreign = await handler({ uploadId: UPLOAD_ID });
 
-    const result = await handler({ uploadId: '00000000-0000-4000-8000-000000000001' });
-
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toBe('No such upload.');
-    expect(recorded.filters).toContainEqual(['subject', '=', 'subject-1']);
+    for (const result of [missing, foreign]) {
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toBe('No such upload.');
+    }
   });
 
   it('reports a completed slot with its destination outcome', async () => {
-    stubDb({
-      id: 'upload-1',
-      kind: 'jira-attachment',
-      filename: 'report.pdf',
-      status: 'completed',
-      result: 'Attached "report.pdf" to PROJ-1.',
-      expires_at: new Date(Date.now() + 60_000),
-      completed_at: new Date(),
+    await store.seed({
+      upload_slots: [
+        slotRow({
+          kind: 'jira-attachment',
+          status: 'completed',
+          result: 'Attached "report.pdf" to PROJ-1.',
+          completed_at: new Date(),
+        }),
+      ],
     });
     const handler = await statusHandler();
 
-    const result = await handler({ uploadId: '00000000-0000-4000-8000-000000000001' });
+    const result = await handler({ uploadId: UPLOAD_ID });
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain('completed');
@@ -183,89 +181,53 @@ describe('check_file_upload', () => {
   });
 
   it('reports a pending slot past its expiry as expired', async () => {
-    stubDb({
-      id: 'upload-1',
-      kind: 'jira-attachment',
-      filename: 'report.pdf',
-      status: 'pending',
-      result: null,
-      expires_at: new Date(Date.now() - 60_000),
-      completed_at: null,
-    });
+    await store.seed({ upload_slots: [slotRow({ expires_at: new Date(Date.now() - 60_000) })] });
     const handler = await statusHandler();
 
-    const result = await handler({ uploadId: '00000000-0000-4000-8000-000000000001' });
+    const result = await handler({ uploadId: UPLOAD_ID });
 
     expect(result.content[0]?.text).toContain('expired');
   });
 });
 
 describe('claimPendingUploadSlotByOwner', () => {
-  interface ClaimRecorded {
-    filters: Array<[string, string, unknown]>;
-    setValues: Record<string, unknown> | null;
-  }
+  it('claims by subject, once, never by a bearer token', async () => {
+    await store.seed({ upload_slots: [slotRow()] });
 
-  /** Minimal Kysely stand-in for the ownership-based claim UPDATE. */
-  function stubClaimDb(row: Record<string, unknown> | undefined): ClaimRecorded {
-    const recorded: ClaimRecorded = { filters: [], setValues: null };
-    const chain = {
-      set(values: Record<string, unknown>) {
-        recorded.setValues = values;
-        return chain;
-      },
-      where(column: string, op: string, value: unknown) {
-        recorded.filters.push([column, op, value]);
-        return chain;
-      },
-      returning: () => chain,
-      executeTakeFirst: async () => row,
-    };
-    mockGetDatabase.mockReturnValue({ ok: true, val: { updateTable: () => chain } });
-    return recorded;
-  }
-
-  const CLAIMED_ROW = {
-    id: 'upload-1',
-    subject: 'subject-1',
-    account_id: 'acct-1',
-    kind: 'onbase-document',
-    destination: {},
-    filename: 'report.pdf',
-    content_type: 'application/pdf',
-    max_bytes: 1024,
-  };
-
-  it('claims by subject, never by a bearer token', async () => {
-    const recorded = stubClaimDb(CLAIMED_ROW);
-
-    const claimed = await claimPendingUploadSlotByOwner(context(), 'upload-1');
+    const claimed = await claimPendingUploadSlotByOwner(context(), UPLOAD_ID);
 
     if (!claimed.ok) throw new Error(claimed.error);
-    expect(claimed.val).toEqual(CLAIMED_ROW);
-    expect(recorded.setValues?.status).toBe('completed');
-    expect(recorded.filters).toContainEqual(['id', '=', 'upload-1']);
-    expect(recorded.filters).toContainEqual(['subject', '=', 'subject-1']);
-    expect(recorded.filters).toContainEqual(['status', '=', 'pending']);
+    expect(claimed.val).toEqual({
+      id: UPLOAD_ID,
+      subject: 'subject-1',
+      account_id: 'acct-1',
+      kind: 'onbase-document',
+      destination: {},
+      filename: 'report.pdf',
+      content_type: 'application/pdf',
+      max_bytes: 1024,
+    });
+    expect((await store.uploadSlots.get(UPLOAD_ID))?.status).toBe('completed');
+    expect((await claimPendingUploadSlotByOwner(context(), UPLOAD_ID)).ok).toBe(false);
   });
 
   it('refuses a foreign, wrong, expired, or already-used id with one message', async () => {
-    stubClaimDb(undefined);
+    await store.seed({
+      upload_slots: [slotRow({ subject: 'someone-else' })],
+    });
 
-    const claimed = await claimPendingUploadSlotByOwner(context(), 'upload-1');
+    const claimed = await claimPendingUploadSlotByOwner(context(), UPLOAD_ID);
 
     expect(claimed.ok).toBe(false);
     if (claimed.ok) throw new Error('expected a failure');
     expect(claimed.error).toContain('No pending upload');
+    expect((await store.uploadSlots.get(UPLOAD_ID))?.status).toBe('pending');
   });
 
   it('refuses without a signed-in subject', async () => {
-    stubClaimDb(CLAIMED_ROW);
+    await store.seed({ upload_slots: [slotRow()] });
 
-    const claimed = await claimPendingUploadSlotByOwner(
-      context({ subject: undefined }),
-      'upload-1'
-    );
+    const claimed = await claimPendingUploadSlotByOwner(context({ subject: undefined }), UPLOAD_ID);
 
     expect(claimed.ok).toBe(false);
   });

@@ -53,6 +53,7 @@ import { personalAccountScenarios } from './personal-account/scenarios';
 import { activityLogScenarios } from './activity-logs/scenarios';
 import { toolUsageScenarios } from './tool-usage/scenarios';
 import { knowledgeChunkScenarios } from './knowledge-chunks/scenarios';
+import { uploadSlotScenarios } from './upload-slots/scenarios';
 
 export const SCENARIOS: Scenario<DataStore>[] = [
   ...sessionScenarios,
@@ -106,4 +107,5 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...activityLogScenarios,
   ...toolUsageScenarios,
   ...knowledgeChunkScenarios,
+  ...uploadSlotScenarios,
 ];

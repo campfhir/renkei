@@ -34,6 +34,7 @@ jest.mock('@renkei/delegate-client', () => {
 });
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
 jest.mock('@renkei/db', () => ({
+  getDataStore: () => ({ uploadSlots: { create: async () => undefined } }),
   getDatabase: () => ({
     ok: true,
     val: {

@@ -133,7 +133,7 @@ export function createTurnStore(
       const kept: AttachmentView[] = [];
       const maxBytes = await chatFileMaxBytes();
       for (const file of files) {
-        const created = await createAttachment(db, {
+        const created = await createAttachment({
           ownerSubject: scope.subject,
           chatId: scope.chatId,
           filename: file.filename,
@@ -153,8 +153,8 @@ export function createTurnStore(
           // the model gave as it wrote the file, stored as they are; else
           // asked of the organization's model once the turn's response is
           // out of the way (or, on a turn served by no request, beside it).
-          if (file.digest) await storeDigest(db, created.val.id, file.digest);
-          else deferDigest(db, scope.subject, [created.val], after);
+          if (file.digest) await storeDigest(created.val.id, file.digest);
+          else deferDigest(scope.subject, [created.val], after);
         } else if (created.err.type !== 'UNCONFIGURED') {
           logger.warn('chat artifact not stored: {reason} {message}', {
             reason: created.err.type,

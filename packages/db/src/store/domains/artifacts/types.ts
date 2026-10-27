@@ -57,6 +57,55 @@ export interface LibraryFilter {
   terms: string[];
 }
 
+/** A new artifact row; what is left out takes the column default. */
+export interface NewArtifactRecord {
+  id: string;
+  ownerSubject: string;
+  chatId: string | null;
+  messageId: string | null;
+  origin: string;
+  keyKind: string;
+  keyRef: string | null;
+  blobKey: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  /** Sealed as the caller sealed it. */
+  extractedText: string | null;
+  extractStatus: string;
+  digestStatus: string;
+}
+
+/**
+ * Fields a write may change on one artifact; absent ones stay. Every
+ * write stamps updated_at, with `updatedAt` when given, else now.
+ */
+export interface ArtifactPatch {
+  keyKind?: string;
+  keyRef?: string | null;
+  /** Sealed as the caller sealed it. */
+  extractedText?: string | null;
+  extractStatus?: string;
+  digestStatus?: string;
+  ocrStartedAt?: Date | null;
+  ocrFinishedAt?: Date | null;
+  ocrMillis?: number | null;
+  ocrPages?: number | null;
+  updatedAt?: Date;
+}
+
+/** An artifact with its sealed text, as a prompt inlines it. */
+export interface ArtifactWithTextRecord extends ArtifactRecord {
+  extractedText: string | null;
+}
+
+/** Which of a person's files in one chat a call is about. */
+export interface ArtifactChatSelection {
+  ownerSubject: string;
+  chatId: string;
+  artifactIds: string[];
+}
+
 export interface ArtifactStore {
   get(artifactId: string): Promise<ArtifactRecord | null>;
   /** These artifacts (unknown ids left out), oldest first (ties by id). */
@@ -125,4 +174,79 @@ export interface ArtifactStore {
   ownedTotals(ownerSubject: string): Promise<{ count: number; bytes: number }>;
   /** How many of these ids are artifacts that exist. */
   countExisting(artifactIds: string[]): Promise<number>;
+
+  /** The rows of the selection, oldest first (ties by id), that still need OCR (`needs_ocr`). */
+  listNeedingOcr(selection: ArtifactChatSelection): Promise<ArtifactRecord[]>;
+  /**
+   * The rows of the selection not yet sent with a message, with their
+   * sealed text, oldest first (ties by id).
+   */
+  listUnsent(selection: ArtifactChatSelection): Promise<ArtifactWithTextRecord[]>;
+
+  /** Inserts one row and returns it as stored. Rejects on a duplicate id (23505). */
+  create(input: NewArtifactRecord): Promise<ArtifactRecord>;
+  /** Changes one row; false when there is no such row. */
+  update(artifactId: string, patch: ArtifactPatch): Promise<boolean>;
+  /** The owner renames their own row; false when it is not theirs or not there. */
+  rename(input: { artifactId: string; ownerSubject: string; filename: string }): Promise<boolean>;
+  /** Deletes the row (its references cascade); false when there was none. */
+  delete(artifactId: string): Promise<boolean>;
+  /**
+   * Hands the row to `newOwnerSubject`: the owner changes, the new owner's
+   * own share goes (owners need none), and every other share is re-owned
+   * by them. One transaction.
+   */
+  transferOwnership(artifactId: string, newOwnerSubject: string): Promise<void>;
+  /**
+   * Gives `targetId` the content of `sourceId` — bytes' key, name, type,
+   * size, sealed text, extract and digest status — clears its digest
+   * (summary, keywords, search terms), and deletes the source row. One
+   * transaction; false (nothing changed) when either row is missing.
+   */
+  adoptContent(targetId: string, sourceId: string): Promise<boolean>;
+  /**
+   * Stores a digest — summary, keywords and the search terms the library
+   * matches (keywords weighted over the summary) — as `done`; null marks
+   * the digest `failed`.
+   */
+  storeDigest(
+    artifactId: string,
+    digest: { summary: string; keywords: string[] } | null
+  ): Promise<void>;
+  /** Gives `targetId` the digest `summary`/`keywords` and the search terms `sourceId` has, as `done`. */
+  copyDigest(input: {
+    targetId: string;
+    sourceId: string;
+    summary: string;
+    keywords: string[];
+  }): Promise<void>;
+  /**
+   * Claims one row for a digest: `pending` becomes `running`, and so does a
+   * `running` last updated before `staleBefore`. False when not claimed.
+   */
+  claimDigest(artifactId: string, staleBefore: Date): Promise<boolean>;
+  /**
+   * Marks an OCR run started at `now`, unless one started at or after
+   * `staleBefore` is still in flight. False when not claimed.
+   */
+  claimOcr(artifactId: string, now: Date, staleBefore: Date): Promise<boolean>;
+
+  /**
+   * Attaches an artifact to a project, or — already attached — sets the
+   * mode, keeping the row. Returns the reference's id.
+   */
+  addReference(input: {
+    artifactId: string;
+    projectId: string;
+    mode: string;
+    addedBy: string;
+  }): Promise<string>;
+  /** False when the project does not hold the artifact. */
+  setReferenceMode(input: {
+    artifactId: string;
+    projectId: string;
+    mode: string;
+  }): Promise<boolean>;
+  /** Detaches; false when the project did not hold it. */
+  removeReference(input: { artifactId: string; projectId: string }): Promise<boolean>;
 }

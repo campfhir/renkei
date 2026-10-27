@@ -381,6 +381,69 @@ export const usageScenarios: Scenario<DataStore>[] = [
     },
   },
   {
+    method: 'usage.recordImage',
+    name: 'recorded pictures count, today, per person',
+    run: async (store) => {
+      const picture = {
+        subject: 'ann',
+        surface: 'images',
+        provider: 'openai',
+        model: 'gpt-image-1',
+        imageBytes: 2048,
+        width: 1024,
+        height: null,
+        inputTokens: 5,
+        outputTokens: 9,
+      };
+      await store.usage.recordImage(picture);
+      await store.usage.recordImage({ ...picture, imageBytes: 10, width: null });
+      await store.usage.recordImage({ ...picture, subject: 'bob', inputTokens: 0 });
+      return [
+        await store.usage.imageBySubject(today),
+        await store.usage.imageTotals(today, 'ann'),
+        await store.usage.imageTotals(yesterday, 'ann'),
+      ];
+    },
+  },
+  {
+    method: 'usage.recordVoice',
+    name: 'recorded calls count, today, by kind and person',
+    run: async (store) => {
+      await store.usage.recordVoice({
+        subject: 'ann',
+        kind: 'speech',
+        characters: 120,
+        audioMs: 4000,
+        provider: 'azure',
+        voice: 'en-US-Ava',
+        locale: 'en-US',
+      });
+      await store.usage.recordVoice({
+        subject: 'ann',
+        kind: 'transcription',
+        characters: 0,
+        audioMs: 1500,
+        provider: 'azure',
+        voice: null,
+        locale: null,
+      });
+      await store.usage.recordVoice({
+        subject: 'bob',
+        kind: 'speech',
+        characters: 3,
+        audioMs: 10,
+        provider: 'azure',
+        voice: null,
+        locale: 'de-DE',
+      });
+      return [
+        await store.usage.voiceByKind(today, 'ann'),
+        await store.usage.voiceBySubject(today),
+        await store.usage.voiceByKind(yesterday, null),
+      ];
+    },
+  },
+  {
     method: 'usage.personTotals',
     name: 'one person across ledgers, chat share',
     fixture,

@@ -183,7 +183,7 @@ describe('artifact_attach', () => {
     const tools = createLocalToolSet(artifactTools({ inProject: true }));
     const done = await tools.run('artifact_attach', { attachmentId: 'a1' }, context());
     expect(done.isError).toBeFalsy();
-    expect(attachMock).toHaveBeenCalledWith(null, {
+    expect(attachMock).toHaveBeenCalledWith({
       actorSubject: 'auth0|alice',
       artifactId: 'a1',
       projectId: 'proj-1',
@@ -224,7 +224,7 @@ describe('artifact_describe', () => {
       id: null,
       filename: 'plan.pptx',
     });
-    expect(storeDigestMock).toHaveBeenCalledWith(null, 'a7', {
+    expect(storeDigestMock).toHaveBeenCalledWith('a7', {
       summary: 'The Q3 rollout plan, by region.',
       keywords: ['rollout', 'Q3'],
     });
@@ -278,7 +278,6 @@ describe('artifact_rename and artifact_delete', () => {
     );
     expect(done.isError).toBeFalsy();
     expect(renameMock).toHaveBeenCalledWith(
-      null,
       expect.objectContaining({
         ownerSubject: 'auth0|alice',
         artifactId: 'a1',

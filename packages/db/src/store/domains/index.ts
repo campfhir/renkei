@@ -55,6 +55,7 @@ import { personalAccount } from './personal-account';
 import { activityLogs } from './activity-logs';
 import { toolUsage } from './tool-usage';
 import { knowledgeChunks } from './knowledge-chunks';
+import { uploadSlots } from './upload-slots';
 
 export const DOMAINS = {
   sessions,
@@ -108,4 +109,5 @@ export const DOMAINS = {
   activityLogs,
   toolUsage,
   knowledgeChunks,
+  uploadSlots,
 };

@@ -9,8 +9,7 @@
  * is built from the timings of runs that finished (artifact-ocr-estimate.ts).
  */
 
-import type { Kysely } from 'kysely';
-import { getDataStore, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { resolveMistralOcrConfig } from '@renkei/connector-mistral-ocr';
 import { logger } from '@/lib/logger';
@@ -38,67 +37,49 @@ export function ocrRefusalFor(access: ArtifactAccess): OcrRefusal | null {
  * Marks the file as being read, if nothing else is reading it. The update
  * is conditional, so two requests at once start one run between them.
  */
-export async function claimArtifactOcr(
-  db: Kysely<DB>,
-  artifactId: string
-): Promise<OcrRefusal | null> {
+export async function claimArtifactOcr(artifactId: string): Promise<OcrRefusal | null> {
   if (!(await resolveMistralOcrConfig()).ok) return 'unconfigured';
   const now = new Date();
-  const claimed = await db
-    .updateTable('artifacts')
-    .set({ ocr_started_at: now, updated_at: now })
-    .where('id', '=', artifactId)
-    .where((eb) =>
-      eb.or([
-        eb('ocr_started_at', 'is', null),
-        eb('ocr_started_at', '<', new Date(now.getTime() - OCR_STALE_MS)),
-      ])
-    )
-    .executeTakeFirst();
-  return Number(claimed.numUpdatedRows) > 0 ? null : 'running';
+  const claimed = await getDataStore().artifacts.claimOcr(
+    artifactId,
+    now,
+    new Date(now.getTime() - OCR_STALE_MS)
+  );
+  return claimed ? null : 'running';
 }
 
-async function clearStart(db: Kysely<DB>, artifactId: string): Promise<void> {
-  await db
-    .updateTable('artifacts')
-    .set({ ocr_started_at: null, updated_at: new Date() })
-    .where('id', '=', artifactId)
-    .execute();
+async function clearStart(artifactId: string): Promise<void> {
+  await getDataStore().artifacts.update(artifactId, { ocrStartedAt: null });
 }
 
 /**
  * Reads one file the viewer owns, then digests it. Runs after the response
  * that asked for it; nothing here reports back except the file's own state.
  */
-export async function runArtifactOcr(
-  db: Kysely<DB>,
-  artifactId: string,
-  viewerSubject: string
-): Promise<void> {
+export async function runArtifactOcr(artifactId: string, viewerSubject: string): Promise<void> {
   try {
     const [row] = await getAttachments([artifactId]);
     if (!row) return;
     const cipher = await artifactCipher(row, viewerSubject, 'owner', null);
     if (cipher.unavailable) {
-      await clearStart(db, artifactId);
+      await clearStart(artifactId);
       return;
     }
     const settings = await getOrgSettings();
     const status = await ocrOne(
-      db,
       row,
       settings.ok ? createOutboundRedactor(settings.val) : null,
       cipher
     );
     if (status === 'done') {
-      await digestPendingArtifacts(db, viewerSubject, await getAttachments([artifactId]));
+      await digestPendingArtifacts(viewerSubject, await getAttachments([artifactId]));
     }
   } catch (error) {
     logger.warn('artifact OCR failed: {message}', {
       component: 'chat/artifact-ocr',
       message: error instanceof Error ? error.message : String(error),
     });
-    await clearStart(db, artifactId).catch(() => undefined);
+    await clearStart(artifactId).catch(() => undefined);
   }
 }
 

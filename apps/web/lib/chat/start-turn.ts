@@ -221,7 +221,6 @@ export async function startChatTurn(
     ...(input.extraBlocks ?? []),
     ...(input.attachmentIds && input.attachmentIds.length > 0
       ? await attachmentPromptBlocks(
-          db,
           input.session.subject,
           chat.id,
           input.attachmentIds,
@@ -653,7 +652,7 @@ async function executeTurnBody(
       // The person's own words for this turn: the image tool's prompt, verbatim.
       userPrompt: latestUserPrompt(rows),
       recordImageUsage: (report: ImageUsageReport) =>
-        recordImageUsage(db, {
+        recordImageUsage({
           ...report,
           subject: input.session.subject,
         }),
