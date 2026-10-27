@@ -1,8 +1,15 @@
+import type { Json } from '../../../db.types';
+
 /**
- * The producer side of the Postgres-backed queues (@renkei/queue): adding
- * a message, and discarding pending ones a rebuild made stale. Claiming,
- * leasing, retries and dead letters stay with the queue's consumers in the
- * workers (FOR UPDATE SKIP LOCKED has no memory twin worth writing).
+ * The tables under @renkei/queue: producing (enqueue, discarding pending
+ * messages a rebuild made stale) and consuming (claim with a lease, ack,
+ * nack into a retry or the dead-letter table, release, and the dead-letter
+ * store's list/requeue/purge).
+ *
+ * Postgres claims with FOR UPDATE SKIP LOCKED, so any number of consumer
+ * processes compete safely. The memory store is one process: its claim is
+ * a plain filter, sort and update over the same rows, which gives the same
+ * answer for the same rows because nothing else can hold a lock there.
  */
 
 /** The queues' live tables (migrations 013/030/036/077). */
@@ -52,4 +59,105 @@ export interface QueueStore {
    * each.
    */
   discardAgentRunJobs(runId: string): Promise<{ skipped: number; deadLetters: number }>;
+
+  /**
+   * Claim the oldest deliverable message and lease it: status processing,
+   * locked now, attempts + 1. Deliverable means due (pending with run_after
+   * passed, or processing with a lease older than `staleClaimMinutes`) and,
+   * for a keyed message, no older pending or processing message sharing
+   * its ordering key. Oldest is created_at, then id. Null when nothing is
+   * deliverable.
+   */
+  claim(table: QueueTable, options: QueueClaimOptions): Promise<QueueClaimedRecord | null>;
+  /** Ack: the message's status becomes `outcome`, unlocked; `clearPayload` blanks it to {}. */
+  complete(
+    table: QueueTable,
+    id: string,
+    outcome: QueueCompletionOutcome,
+    options?: { clearPayload?: boolean }
+  ): Promise<void>;
+  /**
+   * Hand a claimed message back: pending, unlocked, due now, this delivery
+   * uncounted — only while it is still processing at `attempts` (a message
+   * another consumer has since reclaimed is left alone).
+   */
+  release(table: QueueTable, id: string, attempts: number): Promise<void>;
+  /** Nack into a retry: pending, unlocked, `error` recorded, due in `delaySeconds`. */
+  retry(table: QueueTable, id: string, error: string, delaySeconds: number): Promise<void>;
+  /**
+   * Nack into the dead-letter table: the live row moves there in one step
+   * (created_at kept, `error` as its last error, dead now).
+   */
+  deadLetter(table: QueueTable, id: string, error: string): Promise<void>;
+  /** One live message by id, or null. */
+  find(table: QueueTable, id: string): Promise<QueueMessageRecord | null>;
+  /** The queue's dead letters, most recently dead first (ties by id, descending). */
+  listDeadLetters(table: QueueTable, limit: number): Promise<QueueDeadLetterRecord[]>;
+  /**
+   * Move dead letters back to the live table: pending, no attempts, due
+   * now, created_at kept so they slot back into their ordering keys.
+   * Unknown ids are skipped. Returns how many moved.
+   */
+  requeueDeadLetters(table: QueueTable, ids: readonly string[]): Promise<number>;
+  /** Drop dead letters for good; returns how many went. */
+  purgeDeadLetters(table: QueueTable, ids: readonly string[]): Promise<number>;
 }
+
+/** Every live queue table's dead-letter twin (`<table>_dead_letters`). */
+export type QueueDeadLetterTable =
+  | 'events_dead_letters'
+  | 'embedding_jobs_dead_letters'
+  | 'agent_jobs_dead_letters'
+  | 'batch_job_messages_dead_letters';
+
+export interface QueueClaimOptions {
+  /** A processing row locked longer ago than this is a dead consumer's: claimable again. */
+  staleClaimMinutes: number;
+  /** Only messages from these sources (empty or absent: every source). */
+  sources?: readonly string[];
+  /**
+   * Pick a source uniformly at random among those with due work, then take
+   * its oldest deliverable message; fall back to the plain oldest-first
+   * claim when that source has nothing deliverable.
+   */
+  fairAcrossSources?: boolean;
+}
+
+/** A message a claim handed out: its attempts already count this delivery. */
+export interface QueueClaimedRecord {
+  id: string;
+  source: string;
+  type: string;
+  payload: Json;
+  attempts: number;
+}
+
+/** One live message, every column (for reads after a consumer's write). */
+export interface QueueMessageRecord {
+  id: string;
+  source: string;
+  type: string;
+  payload: Json;
+  orderingKey: string | null;
+  status: string;
+  attempts: number;
+  runAfter: Date;
+  lockedAt: Date | null;
+  lastError: string | null;
+  createdAt: Date;
+}
+
+/** One dead-lettered message. */
+export interface QueueDeadLetterRecord {
+  id: string;
+  source: string;
+  type: string;
+  payload: Json;
+  orderingKey: string | null;
+  attempts: number;
+  lastError: string | null;
+  deadAt: Date;
+}
+
+/** How a completed message resolved; both are terminal. */
+export type QueueCompletionOutcome = 'processed' | 'skipped';

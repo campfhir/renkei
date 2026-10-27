@@ -14,7 +14,7 @@
  * of either process can be added without coordination.
  */
 
-import { closeDatabase, getDatabase } from '@renkei/db';
+import { closeDataStore, getDatabase } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
 import { eventsQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
@@ -217,7 +217,7 @@ async function main(): Promise<void> {
   // Drain the adapters — the HttpAdapter's queue especially — while the
   // database and event loop are still alive to receive them.
   await logger.flush();
-  await closeDatabase();
+  await closeDataStore();
 }
 
 function shutdown(signal: string): void {

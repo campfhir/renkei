@@ -10,6 +10,11 @@
  * messages stay strictly serial — the row-lock rendition of Kafka's
  * partition ordering.
  *
+ * The SQL itself lives in @renkei/db's `queues` domain (one store call per
+ * former query); this file is the contract's policy over it: retry versus
+ * dead-letter, defaults, and the queue configurations. On the memory data
+ * store the same calls run in-process.
+ *
  * The claim query doubles as crash recovery: a `processing` row whose
  * `locked_at` is stale is a dead worker's orphan and is claimable again
  * (the delivery lease of the contract). Dead messages MOVE to the
@@ -17,14 +22,12 @@
  * for history, and `requeue` moves them back with a fresh attempt budget.
  */
 
-import { sql } from 'kysely';
-import { getDatabase, getDataStore, type QueueTable } from '@renkei/db';
+import { getDataStore, type QueueTable } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type {
   QueuePurger,
   ClaimedMessage,
   CompletionOutcome,
-  DeadLetter,
   DeadLetterStore,
   Disposition,
   Queue,
@@ -38,9 +41,9 @@ import { failureDisposition, DEFAULT_RETRY_POLICY, type RetryPolicy } from './po
 const DEFAULT_STALE_CLAIM_MINUTES = 10;
 
 export interface PostgresQueueConfig {
-  /** Live table name. A code constant, never user input — it is interpolated raw. */
+  /** Live table name: one of the data store's queue tables. */
   table: string;
-  /** Dead-letter table name. Same trust rule as `table`. */
+  /** Dead-letter table name: always the live table's `<table>_dead_letters` twin. */
   deadLetterTable: string;
   policy?: RetryPolicy;
   staleClaimMinutes?: number;
@@ -72,17 +75,6 @@ export interface PostgresQueueConfig {
   clearPayloadOnComplete?: boolean;
 }
 
-interface DeadLetterRow {
-  id: string;
-  source: string;
-  type: string;
-  payload: DeadLetter['payload'];
-  ordering_key: string | null;
-  attempts: number;
-  last_error: string | null;
-  dead_at: Date;
-}
-
 const QUEUE_TABLES: readonly QueueTable[] = [
   'events',
   'embedding_jobs',
@@ -90,25 +82,40 @@ const QUEUE_TABLES: readonly QueueTable[] = [
   'batch_job_messages',
 ];
 
-/** The data store's name for this queue's live table; producers only reach those. */
-function queueTable(table: string): QueueTable | null {
-  return QUEUE_TABLES.find((known) => known === table) ?? null;
+/** The data store's name for this queue's live table, when the pair is one it carries. */
+function queueTable(config: PostgresQueueConfig): QueueTable | null {
+  const table = QUEUE_TABLES.find((known) => known === config.table) ?? null;
+  return table && config.deadLetterTable === `${table}_dead_letters` ? table : null;
 }
 
+function queueError(error: unknown) {
+  return err('QUEUE_ERROR' as const, {
+    message: error instanceof Error ? error.message : String(error),
+  });
+}
+
+/**
+ * A queue on the data store's queue tables. Named for Postgres, which
+ * carries it in production (the store's claim is FOR UPDATE SKIP LOCKED);
+ * on the memory data store the same calls run in-process.
+ */
 export function createPostgresQueue(config: PostgresQueueConfig): Queue {
-  // Identifier fragments are built lazily, per call: constructing a queue
-  // must stay side-effect free so importing a module that wires one up
-  // never touches the SQL layer (worker test suites stub kysely).
-  const live = () => sql.raw(config.table);
-  const dead = () => sql.raw(config.deadLetterTable);
+  // The store is resolved per call, never at construction: building a queue
+  // stays side-effect free, so importing a module that wires one up touches
+  // nothing.
   const policy = config.policy ?? DEFAULT_RETRY_POLICY;
-  const staleMinutes = () =>
-    sql.raw(String(config.staleClaimMinutes ?? DEFAULT_STALE_CLAIM_MINUTES));
+  const unknownQueue = () =>
+    err('QUEUE_ERROR' as const, { message: `unknown queue ${config.table}` });
+  const requireTable = (): QueueTable => {
+    const table = queueTable(config);
+    if (!table) throw new Error(`unknown queue ${config.table}`);
+    return table;
+  };
 
   const producer: QueueProducer = {
     async enqueue(message: QueueMessageInput) {
-      const table = queueTable(config.table);
-      if (!table) return err('QUEUE_ERROR' as const, { message: `unknown queue ${config.table}` });
+      const table = queueTable(config);
+      if (!table) return unknownQueue();
       try {
         await getDataStore().queues.enqueue(table, {
           source: message.source,
@@ -119,140 +126,37 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
         });
         return ok();
       } catch (error) {
-        return err('QUEUE_ERROR' as const, {
-          message: error instanceof Error ? error.message : String(error),
-        });
+        return queueError(error);
       }
     },
-  };
-
-  // WHERE fragments shared by the claim and the fair source pick. `due` is
-  // the lease/backoff eligibility; the ordering-key gate lives only in the
-  // claim itself (the pick tolerates the approximation — see claim()).
-  const due = () => sql`
-    ((c.status = 'pending' AND c.run_after <= NOW())
-       OR (c.status = 'processing' AND c.locked_at < NOW() - INTERVAL '${staleMinutes()} minutes'))`;
-  const sourceRestriction = () =>
-    config.sources && config.sources.length > 0
-      ? sql` AND c.source IN (${sql.join(config.sources.map((s) => sql`${s}`))})`
-      : sql``;
-
-  type Db = Extract<ReturnType<typeof getDatabase>, { ok: true }>['val'];
-  const claimOne = async (db: Db, pinnedSource: string | null) => {
-    const result = await sql<ClaimedMessage>`
-      UPDATE ${live()}
-      SET status = 'processing', locked_at = NOW(), attempts = attempts + 1, updated_at = NOW()
-      WHERE id = (
-        SELECT c.id FROM ${live()} c
-        WHERE ${due()}
-          ${sourceRestriction()}
-          ${pinnedSource === null ? sql`` : sql`AND c.source = ${pinnedSource}`}
-          AND (c.ordering_key IS NULL OR NOT EXISTS (
-            SELECT 1 FROM ${live()} b
-            WHERE b.ordering_key = c.ordering_key
-              AND b.status IN ('pending', 'processing')
-              AND (b.created_at, b.id) < (c.created_at, c.id)
-          ))
-        ORDER BY c.created_at, c.id
-        LIMIT 1
-        FOR UPDATE OF c SKIP LOCKED
-      )
-      RETURNING id, source, type, payload, attempts
-    `.execute(db);
-    return result.rows[0] ?? null;
   };
 
   const consumer: QueueConsumer = {
     async claim() {
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return null;
-
-      if (config.fairAcrossSources) {
-        // Uniform pick among sources with due work. Due, not deliverable:
-        // the ordering-key gate is skipped here on purpose — it would make
-        // the pick as expensive as the claim. The cost of the approximation
-        // is a pick that lands on a source whose head is key-blocked; the
-        // oldest-first fallback below covers exactly that.
-        const picked = await sql<{ source: string }>`
-          SELECT source FROM (
-            SELECT DISTINCT c.source FROM ${live()} c
-            WHERE ${due()}
-              ${sourceRestriction()}
-          ) candidates
-          ORDER BY random()
-          LIMIT 1
-        `.execute(dbResult.val);
-        const source = picked.rows[0]?.source;
-        // No due rows at all — deliverable is a subset of due, so done.
-        if (source === undefined) return null;
-        const claimed = await claimOne(dbResult.val, source);
-        if (claimed) return claimed;
-      }
-
-      return claimOne(dbResult.val, null);
+      return getDataStore().queues.claim(requireTable(), {
+        staleClaimMinutes: config.staleClaimMinutes ?? DEFAULT_STALE_CLAIM_MINUTES,
+        sources: config.sources,
+        fairAcrossSources: config.fairAcrossSources,
+      });
     },
 
     async complete(message: ClaimedMessage, outcome: CompletionOutcome = 'processed') {
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return;
-      // 'skipped' is terminal exactly like 'processed' — the claim query
-      // only ever looks at pending/processing — it differs only in what the
-      // row tells an operator afterwards.
-      if (config.clearPayloadOnComplete) {
-        await sql`
-          UPDATE ${live()}
-          SET status = ${outcome}, locked_at = NULL, payload = '{}'::jsonb, updated_at = NOW()
-          WHERE id = ${message.id}
-        `.execute(dbResult.val);
-      } else {
-        await sql`
-          UPDATE ${live()}
-          SET status = ${outcome}, locked_at = NULL, updated_at = NOW()
-          WHERE id = ${message.id}
-        `.execute(dbResult.val);
-      }
+      await getDataStore().queues.complete(requireTable(), message.id, outcome, {
+        clearPayload: config.clearPayloadOnComplete,
+      });
     },
 
     async release(message: ClaimedMessage) {
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return;
-      // `attempts = message.attempts` guards the release the same way the
-      // lease does: a row another consumer has since reclaimed carries a
-      // higher count and is not ours to give back.
-      await sql`
-        UPDATE ${live()}
-        SET status = 'pending', locked_at = NULL, attempts = GREATEST(attempts - 1, 0),
-            run_after = NOW(), updated_at = NOW()
-        WHERE id = ${message.id} AND status = 'processing' AND attempts = ${message.attempts}
-      `.execute(dbResult.val);
+      await getDataStore().queues.release(requireTable(), message.id, message.attempts);
     },
 
     async fail(message: ClaimedMessage, error: string): Promise<Disposition> {
       const disposition = failureDisposition(message.attempts, policy);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return disposition;
-
+      const queues = getDataStore().queues;
       if (disposition.status === 'dead') {
-        // MOVE to the dead-letter table atomically; the live table keeps no
-        // trace, so its claim path stays lean and its ordering keys unblock.
-        await sql`
-          WITH moved AS (
-            DELETE FROM ${live()} WHERE id = ${message.id}
-            RETURNING id, source, type, payload, ordering_key, attempts, created_at
-          )
-          INSERT INTO ${dead()}
-            (id, source, type, payload, ordering_key, attempts, last_error, created_at)
-          SELECT id, source, type, payload, ordering_key, attempts, ${error}, created_at
-          FROM moved
-        `.execute(dbResult.val);
+        await queues.deadLetter(requireTable(), message.id, error);
       } else {
-        await sql`
-          UPDATE ${live()}
-          SET status = 'pending', locked_at = NULL, last_error = ${error},
-              run_after = NOW() + INTERVAL '${sql.raw(String(disposition.delaySeconds))} seconds',
-              updated_at = NOW()
-          WHERE id = ${message.id}
-        `.execute(dbResult.val);
+        await queues.retry(requireTable(), message.id, error, disposition.delaySeconds);
       }
       return disposition;
     },
@@ -260,73 +164,34 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
 
   const deadLetters: DeadLetterStore = {
     async list(options = {}) {
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return err('QUEUE_ERROR' as const, { message: 'database unavailable' });
+      const table = queueTable(config);
+      if (!table) return unknownQueue();
       try {
-        const result = await sql<DeadLetterRow>`
-          SELECT id, source, type, payload, ordering_key, attempts, last_error, dead_at
-          FROM ${dead()}
-          ORDER BY dead_at DESC
-          LIMIT ${options.limit ?? 100}
-        `.execute(dbResult.val);
-        return ok(
-          result.rows.map((row) => ({
-            id: row.id,
-            source: row.source,
-            type: row.type,
-            payload: row.payload,
-            orderingKey: row.ordering_key,
-            attempts: row.attempts,
-            lastError: row.last_error,
-            deadAt: row.dead_at,
-          }))
-        );
+        return ok(await getDataStore().queues.listDeadLetters(table, options.limit ?? 100));
       } catch (error) {
-        return err('QUEUE_ERROR' as const, {
-          message: error instanceof Error ? error.message : String(error),
-        });
+        return queueError(error);
       }
     },
 
     async requeue(ids) {
       if (ids.length === 0) return ok(0);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return err('QUEUE_ERROR' as const, { message: 'database unavailable' });
+      const table = queueTable(config);
+      if (!table) return unknownQueue();
       try {
-        // Fresh attempt budget, original enqueue order restored via the
-        // preserved created_at, so requeued messages slot back into their
-        // ordering keys where they left off.
-        const result = await sql`
-          WITH moved AS (
-            DELETE FROM ${dead()} WHERE id IN (${sql.join(ids.map((id) => sql`${id}`))})
-            RETURNING id, source, type, payload, ordering_key, created_at
-          )
-          INSERT INTO ${live()}
-            (id, source, type, payload, ordering_key, status, attempts, run_after, created_at)
-          SELECT id, source, type, payload, ordering_key, 'pending', 0, NOW(), created_at
-          FROM moved
-        `.execute(dbResult.val);
-        return ok(Number(result.numAffectedRows ?? 0));
+        return ok(await getDataStore().queues.requeueDeadLetters(table, ids));
       } catch (error) {
-        return err('QUEUE_ERROR' as const, {
-          message: error instanceof Error ? error.message : String(error),
-        });
+        return queueError(error);
       }
     },
 
     async purge(ids) {
       if (ids.length === 0) return ok(0);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return err('QUEUE_ERROR' as const, { message: 'database unavailable' });
+      const table = queueTable(config);
+      if (!table) return unknownQueue();
       try {
-        const result = await sql`
-          DELETE FROM ${dead()} WHERE id IN (${sql.join(ids.map((id) => sql`${id}`))})
-        `.execute(dbResult.val);
-        return ok(Number(result.numAffectedRows ?? 0));
+        return ok(await getDataStore().queues.purgeDeadLetters(table, ids));
       } catch (error) {
-        return err('QUEUE_ERROR' as const, {
-          message: error instanceof Error ? error.message : String(error),
-        });
+        return queueError(error);
       }
     },
   };
@@ -339,14 +204,12 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
         // the clothes of a no-op.
         return err('QUEUE_ERROR' as const, { message: 'discardPending needs a predicate' });
       }
-      const table = queueTable(config.table);
-      if (!table) return err('QUEUE_ERROR' as const, { message: `unknown queue ${config.table}` });
+      const table = queueTable(config);
+      if (!table) return unknownQueue();
       try {
         return ok(await getDataStore().queues.discardPending(table, type, match));
       } catch (error) {
-        return err('QUEUE_ERROR' as const, {
-          message: error instanceof Error ? error.message : String(error),
-        });
+        return queueError(error);
       }
     },
   };

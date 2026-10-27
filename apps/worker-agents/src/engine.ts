@@ -35,7 +35,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDataStore } from '@renkei/db';
+import { describeActor as describeActorRaw, getDataStore } from '@renkei/db';
 import type { AgentRunExecutionRecord, Json } from '@renkei/db';
 import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
@@ -450,8 +450,7 @@ export function requestLogFieldOf(
 /** The owner's name for a log line — total: a run never fails over a display name. */
 async function describeActor(subject: string): Promise<{ subject: string; displayName: string }> {
   try {
-    const identity = await getDataStore().identities.get(subject);
-    return { subject, displayName: identity?.displayName || identity?.email || subject };
+    return await describeActorRaw(subject);
   } catch {
     return { subject, displayName: subject };
   }

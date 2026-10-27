@@ -132,5 +132,10 @@ export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
         (r) => r.provider === provider && r.account_id === accountId
       );
     },
+    async findByAccount(accountId) {
+      const rows = tables.select('provider_grants', (r) => r.provider_account_id === accountId);
+      const [row] = orderBy(rows, [(r) => r.provider]);
+      return row ? grantSummaryFromRow(row) : null;
+    },
   };
 }

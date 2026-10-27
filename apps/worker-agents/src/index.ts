@@ -15,7 +15,7 @@
  * on (its MCP endpoint is how tools are executed, as the run owner).
  */
 
-import { getDatabase, closeDatabase } from '@renkei/db';
+import { checkDataStore, closeDataStore, getDatabase } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
 import { agentJobsQueue, webhookEventsQueue } from '@renkei/queue';
 import { createEventLoop, schedulePeriodicSweep } from '@renkei/worker-loop';
@@ -80,6 +80,9 @@ async function main(): Promise<void> {
   // change takes effect without restarting this process.
   watchLogLevel(logger);
 
+  if (!checkDataStore().ok) throw new Error('Database unavailable at boot');
+  // Transitional: the handlers and sweeps below still take a handle until
+  // they read through the data store; this goes with the last of them.
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('Database unavailable at boot');
 
@@ -257,7 +260,7 @@ async function main(): Promise<void> {
   for (const stop of stopSweeps) stop();
   logger.info('stopped', { component: 'worker-agents/loop' });
   await logger.flush();
-  await closeDatabase();
+  await closeDataStore();
 }
 
 void main().catch((error) => {

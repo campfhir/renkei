@@ -12,32 +12,24 @@
  */
 
 import { describeAccountActor, describeActor, type Actor } from '@renkei/db';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 
 function fallback(id: string | null | undefined): Actor {
   return { subject: id ?? '(none)', displayName: id ?? '(none)' };
 }
 
 /** The Renkei user behind an OIDC subject. Never throws. */
-export async function actorForSubject(
-  db: Kysely<DB>,
-  subject: string | null | undefined
-): Promise<Actor> {
+export async function actorForSubject(subject: string | null | undefined): Promise<Actor> {
   try {
-    return await describeActor(db, subject);
+    return await describeActor(subject);
   } catch {
     return fallback(subject);
   }
 }
 
 /** The Renkei user behind a provider account id. Never throws. */
-export async function actorForAccount(
-  db: Kysely<DB>,
-  accountId: string | null | undefined
-): Promise<Actor> {
+export async function actorForAccount(accountId: string | null | undefined): Promise<Actor> {
   try {
-    return await describeAccountActor(db, accountId);
+    return await describeAccountActor(accountId);
   } catch {
     return fallback(accountId);
   }

@@ -62,7 +62,15 @@ void runWorker({
   defaultCallerName: 'web',
   logger,
   attachPersistentLogging,
-  createServer: ({ db, encryptionKey, apiKeys, namedApiKeys }) => {
+  createServer: ({ encryptionKey, apiKeys, namedApiKeys }) => {
+    // runWorker no longer hands out a database handle; until this worker
+    // reads through the data store, it takes its own.
+    const dbResult = getDatabase();
+    if (!dbResult.ok) {
+      console.error(`FATAL [worker-delegate]: database unavailable: ${String(dbResult.err)}`);
+      process.exit(1);
+    }
+    const db = dbResult.val;
     const refusal = developmentKeyRefusal(apiKeys);
     if (refusal) {
       console.error(`FATAL [worker-delegate]: ${refusal}`);
@@ -115,7 +123,3 @@ void runWorker({
     return createDelegateServer({ db, encryptionKey, apiKeys: namedApiKeys, logger, signer });
   },
 });
-
-// A boot without a database is already fatal in runWorker; this import
-// keeps the census above honest about which pool it reads.
-void getDatabase;

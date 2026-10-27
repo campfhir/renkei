@@ -37,8 +37,6 @@
  */
 
 import type { Server, ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   isHttpMethod,
   parseAdManagerCredentials,
@@ -64,7 +62,6 @@ import {
 } from './upstream';
 
 export interface AdManagerServerDeps {
-  db: Kysely<DB>;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /**

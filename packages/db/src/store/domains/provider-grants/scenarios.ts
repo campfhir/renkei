@@ -294,4 +294,20 @@ export const providerGrantScenarios: Scenario<DataStore>[] = [
       ];
     },
   },
+  {
+    method: 'providerGrants.findByAccount',
+    name: 'by account id on any provider, the first provider by name when shared',
+    fixture: {
+      provider_grants: [
+        grant('zoom', 'shared', 'ann'),
+        grant('atlassian', 'shared', 'bob'),
+        grant('microsoft', 'solo', null),
+      ],
+    },
+    run: async (store) => [
+      await store.providerGrants.findByAccount('shared'),
+      await store.providerGrants.findByAccount('solo'),
+      await store.providerGrants.findByAccount('nobody'),
+    ],
+  },
 ];

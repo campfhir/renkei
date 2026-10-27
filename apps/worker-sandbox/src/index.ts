@@ -73,7 +73,7 @@
  *     organization will ever have workspaces or scripts on.
  */
 
-import { closeDatabase, getDatabase } from '@renkei/db';
+import { checkDataStore, closeDataStore, getDatabase } from '@renkei/db';
 import { ensureDataRoot, getDataRoot } from './disk';
 import { createBrowserStateStore } from './browser-state';
 import { createSecretKeyStore } from './secret-key-store';
@@ -200,6 +200,10 @@ async function main(): Promise<void> {
     fatal('SANDBOX_WORKER_API_KEY is required (comma-separated bearer keys)');
   }
 
+  const ready = checkDataStore();
+  if (!ready.ok) fatal(`database unavailable: ${String(ready.err)}`);
+  // Transitional: the stores below still take a handle until they read
+  // through the data store; this goes with the last of them.
   const dbResult = getDatabase();
   if (!dbResult.ok) fatal(`database unavailable: ${String(dbResult.err)}`);
 
@@ -541,7 +545,7 @@ async function main(): Promise<void> {
       vault.close();
       logger.info('stopped', { component: 'worker-sandbox/server' });
       await logger.flush();
-      await closeDatabase();
+      await closeDataStore();
       process.exit(0);
     })().catch((error: unknown) => {
       console.error('[worker-sandbox] shutdown failed:', error);
