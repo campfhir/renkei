@@ -6,7 +6,14 @@
  * connection handling and schema knowledge live in exactly one place.
  */
 
-export { initDatabase, getDatabase, getPool, closeDatabase } from './client';
+export {
+  initDatabase,
+  getDatabase,
+  getPool,
+  closeDatabase,
+  directDatabaseCalls,
+  resetDirectDatabaseCalls,
+} from './client';
 export { describeActor, describeAccountActor, resetActorCache, type Actor } from './actors';
 export type * from './db.types';
 // The data store: the seam pages and routes read through instead of
@@ -20,6 +27,15 @@ export {
 } from './store/registry';
 export { MEMORY_DATA_STORE, memoryDataStoreRequested } from './store/selection';
 export { createMemoryDataStore, type MemoryDataStore, type MemorySeed } from './store/memory';
+export {
+  MemoryTables,
+  MemoryStoreError,
+  type Row,
+  type NewRow,
+  type TableName,
+  type TableRows,
+} from './store/memory/tables';
+export { compareAsc, orderBy, like, page } from './store/memory/order';
 export { createPostgresDataStore } from './store/postgres';
 export type * from './store/types';
 // The migration runner is deliberately NOT re-exported here: it touches fs,

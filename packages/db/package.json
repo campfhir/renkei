@@ -10,7 +10,8 @@
     "test": "jest",
     "migrate": "tsx scripts/migrate.ts",
     "db:types": "tsx scripts/generate-db-types.ts",
-    "test:contract": "jest src/store"
+    "test:contract": "jest src/store",
+    "db:store-schema": "tsx scripts/generate-store-schema.ts"
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",

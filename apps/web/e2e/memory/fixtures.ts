@@ -5,8 +5,10 @@
  * project and the test's id), seeded into the server's in-memory store
  * through app/api/test/data-store, and forgotten again afterwards — so
  * tests run in parallel, across projects, without racing on one another's
- * rows or "empty" states. `seed()` adds whatever else the test needs, in
- * the store's own record shapes (MemorySeed in packages/db).
+ * rows or "empty" states. `seed()` adds whatever else the test needs, as
+ * table rows — the same columns e2e/seed.ts writes to Postgres
+ * (`{ agent_notifications: [{ id, subject, kind, headline, … }] }`); the
+ * memory tables fill defaults and refuse what Postgres would.
  *
  * The delegate is the one service the shell calls that the memory store
  * does not replace: /api/keys is answered here, at the browser edge, as
@@ -24,7 +26,7 @@ export interface MemoryPerson {
   sessionId: string;
   displayName: string;
   email: string;
-  /** Add rows to the store; ids and subjects are the caller's to choose. */
+  /** Add table rows to the store; ids and subjects are the caller's to choose. */
   seed(fixtures: MemorySeed): Promise<void>;
 }
 
@@ -72,12 +74,12 @@ export const test = base.extend<{ person: MemoryPerson; roles: string[] }>({
           id: sessionId,
           subject,
           roles,
-          expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
         },
       ],
-      identities: [{ subject, email: subject, displayName, idpGroups: [] }],
+      identities: [{ subject, email: subject, display_name: displayName }],
       // No tour stealing focus mid-test.
-      userPreferences: [{ subject, key: 'coach_marks', value: { autoStart: false } }],
+      user_preferences: [{ subject, key: 'coach_marks', value: { autoStart: false } }],
     });
 
     await page.context().addCookies([

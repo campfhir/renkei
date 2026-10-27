@@ -20,9 +20,7 @@
  * gate discloses nothing it cannot verify, and verification needs the email.
  */
 
-import type { Kysely } from 'kysely';
-import { sql } from 'kysely';
-import { getDataStore, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -155,21 +153,10 @@ export async function getIdentityEmail(
  * able to tell "no groups" from "could not read", because the two fail
  * differently.
  */
-export async function idpGroupsFor(
-  db: Kysely<DB>,
-  subject: string
-): Promise<Result<string[], 'DB_ERROR'>> {
-  const rowResult = await wrapAsync(
-    () =>
-      db
-        .selectFrom('identities')
-        .select('idp_groups')
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
-    'DB_ERROR' as const
-  );
-  if (!rowResult.ok) return rowResult;
-  return ok(rowResult.val?.idp_groups ?? []);
+export async function idpGroupsFor(subject: string): Promise<Result<string[], 'DB_ERROR'>> {
+  const row = await wrapAsync(() => getDataStore().identities.get(subject), 'DB_ERROR' as const);
+  if (!row.ok) return row;
+  return ok(row.val?.idpGroups ?? []);
 }
 
 /**
@@ -177,21 +164,14 @@ export async function idpGroupsFor(
  * audience picker's suggestions. Optional substring filter, bounded — a
  * suggestion list, not an export.
  */
-export async function observedIdpGroups(db: Kysely<DB>, query = '', limit = 50): Promise<string[]> {
-  const needle = `%${query.replace(/[%_]/g, '')}%`;
+export async function observedIdpGroups(query = '', limit = 50): Promise<string[]> {
   const rows = await wrapAsync(
-    () =>
-      sql<{ value: string }>`
-        SELECT DISTINCT unnest(idp_groups) AS value
-        FROM identities
-        ORDER BY value
-      `.execute(db),
+    () => getDataStore().identities.distinctGroups(),
     'DB_ERROR' as const
   );
   if (!rows.ok) return [];
-  const lowered = needle.slice(1, -1).toLowerCase();
-  return rows.val.rows
-    .map((row) => row.value)
+  const lowered = query.replace(/[%_]/g, '').toLowerCase();
+  return rows.val
     .filter((value) => lowered.length === 0 || value.toLowerCase().includes(lowered))
     .slice(0, limit);
 }

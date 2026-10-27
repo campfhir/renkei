@@ -41,7 +41,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
       .selectFrom('oidc_config')
       .select(['issuer', 'role_claim', 'operator_idp_value', 'user_idp_value', 'groups_claim'])
       .executeTakeFirst(),
-    observedIdpGroups(dbResult.val, '', 10_000),
+    observedIdpGroups('', 10_000),
     listSizeRequests(dbResult.val),
   ]);
   if (!settingsResult.ok) {

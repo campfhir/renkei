@@ -11,29 +11,21 @@ import { test, expect, type MemoryPerson } from './fixtures';
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 
 function notification(person: MemoryPerson, headline: string, minutesAgo: number, read = false) {
-  const createdAt = new Date(Date.now() - minutesAgo * 60_000);
+  const createdAt = new Date(Date.now() - minutesAgo * 60_000).toISOString();
   return {
     id: crypto.randomUUID(),
     subject: person.subject,
     kind: 'agent_run',
     headline,
-    category: null,
-    connector: null,
-    tool: null,
-    entity: null,
-    refUrl: null,
-    agentId: null,
-    agentName: 'Triage',
-    runId: null,
-    meta: null,
-    createdAt: createdAt.toISOString(),
-    readAt: read ? createdAt.toISOString() : null,
+    agent_name: 'Triage',
+    created_at: createdAt,
+    read_at: read ? createdAt : null,
   };
 }
 
 test('the feed, newest first, marked read and unread again', async ({ page, person }, testInfo) => {
   await person.seed({
-    notifications: [
+    agent_notifications: [
       notification(person, 'Oldest: triaged 4 tickets', 30, true),
       notification(person, 'Newest: closed a duplicate', 1),
       notification(person, 'Middle: drafted a reply', 10),
@@ -53,8 +45,14 @@ test('the feed, newest first, marked read and unread again', async ({ page, pers
     fullPage: true,
   });
 
-  await page.getByRole('button', { name: 'Mark all as read' }).click();
-  await expect(page.getByRole('button', { name: 'Mark all as read' })).toHaveCount(0);
+  // On a cold dev server the first click can land before hydration; retry
+  // until the request has gone through.
+  await expect(async () => {
+    await page.getByRole('button', { name: 'Mark all as read' }).click({ timeout: 1_000 });
+    await expect(page.getByRole('button', { name: 'Mark all as read' })).toHaveCount(0, {
+      timeout: 1_000,
+    });
+  }).toPass();
   await page.reload();
   await expect(page.getByText('2 unread', { exact: true })).toHaveCount(0);
   await expect(page.getByLabel(/unread notification/)).toHaveCount(0);
@@ -68,7 +66,7 @@ test('the feed, newest first, marked read and unread again', async ({ page, pers
 
 test('somebody with no notifications sees none, and no one else’s', async ({ page, person }) => {
   await person.seed({
-    notifications: [
+    agent_notifications: [
       { ...notification(person, 'Somebody else’s news', 1), subject: `other-${person.subject}` },
     ],
   });

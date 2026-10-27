@@ -9,7 +9,6 @@ import BackLink from '@/components/back-link';
 import ConnectorIcon from '@/components/connector-icon';
 import AvailabilityToggles from '../availability-toggles';
 import AudienceControl from './audience-control';
-import { getDatabase } from '@renkei/db';
 import { observedIdpGroups } from '@/lib/identity';
 import { getTenantOidcClaims } from '@/lib/tenant-operations';
 import CoachTarget from '@/components/coach-marks/anchor';
@@ -37,9 +36,8 @@ export default async function AdminConnectorPage({
   const settings = await getOrgSettings();
   const disabledConnectors = settings.ok ? settings.val.disabledConnectors : [];
   const audiences = settings.ok ? settings.val.connectorAudiences : {};
-  const dbResult = getDatabase();
   const [observedGroups, oidcClaims] = await Promise.all([
-    dbResult.ok ? observedIdpGroups(dbResult.val, '', 10_000) : Promise.resolve([]),
+    observedIdpGroups('', 10_000),
     getTenantOidcClaims(),
   ]);
   // null: no groups claim is configured, so nobody is in any group and a

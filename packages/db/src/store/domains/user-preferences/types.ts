@@ -1,0 +1,10 @@
+/**
+ * Per-person settings: one JSON value per (subject, key). The value comes
+ * back as it was stored (an object stays an object), and its shape is the
+ * caller's to check — @renkei/user-prefs parses every read.
+ */
+export interface UserPreferenceStore {
+  /** Undefined when the person has never saved this key. */
+  get(subject: string, key: string): Promise<unknown>;
+  set(subject: string, key: string, value: unknown): Promise<void>;
+}

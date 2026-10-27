@@ -65,7 +65,7 @@ export async function resolveAudience(
   const restricted = restrictedKeys(audiences);
   if (restricted.length === 0) return { restrictedConnectors: [], allowedConnectors: [] };
 
-  const groups = await idpGroupsFor(db, subject);
+  const groups = await idpGroupsFor(subject);
   if (!groups.ok) return closed(restricted);
   return {
     restrictedConnectors: restricted,
