@@ -1,6 +1,7 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getOrgSettings } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { CONNECTOR_DEFINITIONS } from '@/lib/connectors/definitions';
@@ -25,13 +26,11 @@ export default async function AdminConnectorsPage(): Promise<React.ReactNode> {
   const disabledConnectors = settings.ok ? settings.val.disabledConnectors : [];
   const audiences = settings.ok ? settings.val.connectorAudiences : {};
 
-  const dbResult = getDatabase();
-  const configs = dbResult.ok
-    ? await dbResult.val
-        .selectFrom('connector_configs')
-        .select(['connector', 'enabled'])
-        .execute()
-    : [];
+  const configRows = await wrapAsync(
+    () => getDataStore().connectorConfigs.list(),
+    'DB_ERROR' as const
+  );
+  const configs = configRows.ok ? configRows.val : [];
   const configByKey = new Map(configs.map((row) => [row.connector, row.enabled]));
 
   const rows: ConnectorRow[] = CONNECTOR_DEFINITIONS.map((definition) => ({

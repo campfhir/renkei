@@ -1,7 +1,6 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getDatabase } from '@renkei/db';
 import { getInstance } from '@renkei/connector-mirth';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import InstanceConfigForm from './instance-config-form';
@@ -22,16 +21,7 @@ export default async function AdminMirthInstancePage({
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return (
-      <div className="mx-auto max-w-3xl">
-        <p className="text-sm text-gray-600 dark:text-gray-400">Database unavailable.</p>
-      </div>
-    );
-  }
-
-  const instance = await getInstance(dbResult.val, instanceId);
+  const instance = await getInstance(instanceId);
   if (!instance.ok || !instance.val) notFound();
 
   const summary = instance.val.summary;

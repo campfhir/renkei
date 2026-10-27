@@ -1795,7 +1795,7 @@ async function handleMcpServerCallback(
   }
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  const server = await getServer(dbResult.val, serverId);
+  const server = await getServer(serverId);
   if (!server.ok || !server.val || !server.val.enabled) {
     return NextResponse.json({ error: 'That MCP server is no longer available' }, { status: 404 });
   }
@@ -1837,7 +1837,7 @@ async function handleMcpServerCallback(
 
   // The first listing, so the tools are there the moment the person lands
   // back on the page. A failure is not fatal: the cache refills on demand.
-  const listed = await refreshToolList(dbResult.val, server.val, subject);
+  const listed = await refreshToolList(server.val, subject);
   if (!listed.ok) {
     logger.warn('MCP tools could not be listed right after connecting: {reason}', {
       component: 'auth/oauth',
@@ -1845,7 +1845,7 @@ async function handleMcpServerCallback(
       reason: listed.reason,
     });
   }
-  ensureWatching(dbResult.val, server.val, subject);
+  ensureWatching(server.val, subject);
   logger.info('{label} grant stored', { component: 'auth/oauth', label, subject });
   recordAuditEvent({
     actorSubject: subject,

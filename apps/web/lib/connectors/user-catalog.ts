@@ -17,8 +17,7 @@
  * a card sits, not what a model may call.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { getConnectorPrefs } from '@renkei/user-prefs';
 import { listSharesWithConnection } from '@renkei/connector-fileshares';
@@ -119,23 +118,16 @@ export function shownKeys(
   return shown;
 }
 
-/** Every grant this person holds in the tenant, one query. */
-export async function grantsFor(
-  db: Kysely<DB>,
-  subject: string
-): Promise<Map<string, GrantSummary>> {
-  const rows = await db
-    .selectFrom('provider_grants')
-    .select(['provider', 'display_name', 'requested_scopes', 'granted_scopes', 'metadata'])
-    .where('subject', '=', subject)
-    .execute();
+/** Every grant this person holds in the tenant, one read. */
+export async function grantsFor(subject: string): Promise<Map<string, GrantSummary>> {
+  const rows = await getDataStore().providerGrants.listForSubject(subject);
   const grants = new Map<string, GrantSummary>();
   for (const row of rows) {
     grants.set(row.provider, {
       provider: row.provider,
-      displayName: row.display_name,
-      requestedScopes: row.requested_scopes ?? null,
-      grantedScopes: row.granted_scopes ?? null,
+      displayName: row.displayName,
+      requestedScopes: row.requestedScopes,
+      grantedScopes: row.grantedScopes,
       metadata: row.metadata,
     });
   }
@@ -143,7 +135,6 @@ export async function grantsFor(
 }
 
 export async function resolveUserCatalog(
-  db: Kysely<DB>,
   subject: string,
   options: {
     /** The audience gate's verdict per capability key; absent means everyone. */
@@ -154,16 +145,12 @@ export async function resolveUserCatalog(
 ): Promise<UserCatalog> {
   const [configs, settings, shares, mirthInstances, admanagerInstances, grants, prefs] =
     await Promise.all([
-      db
-        .selectFrom('connector_configs')
-        .select('connector')
-        .where('enabled', '=', true)
-        .execute(),
+      getDataStore().connectorConfigs.list({ enabledOnly: true }),
       getOrgSettings(),
-      listSharesWithConnection(db, subject),
-      listInstancesWithConnection(db, subject),
-      listAdManagerInstancesWithConnection(db, subject),
-      grantsFor(db, subject),
+      listSharesWithConnection(subject),
+      listInstancesWithConnection(subject),
+      listAdManagerInstancesWithConnection(subject),
+      grantsFor(subject),
       getConnectorPrefs(subject, { fresh: options.fresh }),
     ]);
 

@@ -7,7 +7,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { deleteInstance, getInstance, updateInstance } from '@renkei/connector-admanager';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -27,10 +26,7 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const instance = await getInstance(dbResult.val, instanceId);
+  const instance = await getInstance(instanceId);
   if (!instance.ok) {
     return NextResponse.json({ error: 'Could not read the instance' }, { status: 500 });
   }
@@ -64,10 +60,7 @@ export async function PATCH(
   });
   if (!transport.ok) return NextResponse.json({ error: transport.error }, { status: 400 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const updated = await updateInstance(dbResult.val, instanceId, parsed.input);
+  const updated = await updateInstance(instanceId, parsed.input);
   if (!updated.ok) {
     if (updated.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'An instance with that name exists' }, { status: 409 });
@@ -106,14 +99,11 @@ export async function DELETE(
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   // Read the name before the row goes, so the audit line names the thing.
-  const instance = await getInstance(dbResult.val, instanceId);
+  const instance = await getInstance(instanceId);
   const name = instance.ok && instance.val ? instance.val.summary.name : instanceId;
 
-  const deleted = await deleteInstance(dbResult.val, instanceId);
+  const deleted = await deleteInstance(instanceId);
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not delete the instance' }, { status: 500 });
   }

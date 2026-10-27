@@ -10,7 +10,7 @@
  * takes effect within the TTL, which beats a process restart.
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { encrypt, decrypt } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -43,16 +43,8 @@ export async function getConnectorConfig(
   connector: string,
   encryptionKey: Buffer
 ): Promise<Result<ConnectorConfig | null, ConnectorConfigError>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('connector_configs')
-        .select(['enabled', 'settings', 'encrypted_secrets'])
-        .where('connector', '=', connector)
-        .executeTakeFirst(),
+    () => getDataStore().connectorConfigs.get(connector),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return rowResult;
@@ -60,7 +52,7 @@ export async function getConnectorConfig(
   const row = rowResult.val;
   if (!row) return ok(null);
 
-  const secretsJson = decrypt(row.encrypted_secrets, encryptionKey);
+  const secretsJson = decrypt(row.encryptedSecrets, encryptionKey);
   if (!secretsJson.ok) return err('DECRYPTION_ERROR' as const);
 
   let parsed: unknown;
@@ -83,33 +75,15 @@ export async function setConnectorConfig(
   config: { enabled: boolean; settings: Record<string, unknown>; secrets: Record<string, string> },
   encryptionKey: Buffer
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const encryptedSecrets = encrypt(JSON.stringify(config.secrets), encryptionKey);
-  const settings = JSON.stringify(config.settings);
-
   const result = await wrapAsync(
     () =>
-      dbResult.val
-        .insertInto('connector_configs')
-        .values({
-          connector,
-          enabled: config.enabled,
-          settings,
-          encrypted_secrets: encryptedSecrets,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .onConflict((oc) =>
-          oc.columns(['connector']).doUpdateSet({
-            enabled: config.enabled,
-            settings,
-            encrypted_secrets: encryptedSecrets,
-            updated_at: new Date().toISOString(),
-          })
-        )
-        .execute(),
+      getDataStore().connectorConfigs.upsert({
+        connector,
+        enabled: config.enabled,
+        settings: config.settings,
+        encryptedSecrets,
+      }),
     'DB_ERROR' as const
   );
 

@@ -13,7 +13,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import {
   deleteConnection,
   getConnection,
@@ -46,11 +45,7 @@ export async function POST(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const share = await getShare(db, shareId);
+  const share = await getShare(shareId);
   if (!share.ok) return NextResponse.json({ error: 'Could not read the share' }, { status: 500 });
   if (!share.val || !share.val.summary.enabled) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -68,7 +63,6 @@ export async function POST(
       return NextResponse.json({ error: exposure.error }, { status: 400 });
     }
     const updated = await updateConnectionExposure(
-      db,
       shareId,
       session.subject,
       exposure.toolAccess,
@@ -116,7 +110,7 @@ export async function POST(
       : NextResponse.json({ error: 'Encryption key unavailable' }, { status: 503 });
   }
 
-  const stored = await upsertConnection(db, shareId, session.subject, {
+  const stored = await upsertConnection(shareId, session.subject, {
     encryptedCredentials: sealed.val[0],
     username: parsed.credentials.username,
     toolAccess: parsed.toolAccess,
@@ -149,21 +143,18 @@ export async function DELETE(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const existing = await getConnection(dbResult.val, shareId, session.subject);
+  const existing = await getConnection(shareId, session.subject);
   if (!existing.ok) {
     return NextResponse.json({ error: 'Could not read the connection' }, { status: 500 });
   }
   if (!existing.val) return NextResponse.json({ error: 'Not connected' }, { status: 404 });
 
-  const deleted = await deleteConnection(dbResult.val, shareId, session.subject);
+  const deleted = await deleteConnection(shareId, session.subject);
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
 
-  const share = await getShare(dbResult.val, shareId);
+  const share = await getShare(shareId);
   recordAuditEvent({
     actorSubject: session.subject,
     action: 'fileshare.disconnected',

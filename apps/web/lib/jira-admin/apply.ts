@@ -112,7 +112,7 @@ export async function applyGate(
 
   const [availability, audience] = await Promise.all([
     resolveConnectorAvailability(db, subject),
-    resolveAudience(db, subject),
+    resolveAudience(subject),
   ]);
   if (
     audience.restrictedConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR) &&
@@ -206,7 +206,7 @@ export async function viewGate(db: Kysely<DB>, subject: string): Promise<Gate> {
   }
   const [availability, audience] = await Promise.all([
     resolveConnectorAvailability(db, subject),
-    resolveAudience(db, subject),
+    resolveAudience(subject),
   ]);
   if (
     audience.restrictedConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR) &&

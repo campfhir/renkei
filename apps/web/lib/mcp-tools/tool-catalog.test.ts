@@ -47,25 +47,26 @@ let embeddingProvider: string | null = null;
 let webSearchProvisioned = false;
 let readOnly = false;
 let disabledConnectors: string[] = [];
-/** The caller's file_share_connections rows the exposure aggregate reads. */
+/** The caller's file-share exposure rows, as the data store returns them (snake_case here). */
 let fileshareConnections: Array<{ tool_access: string; allow_delete: boolean }> = [];
 
 jest.mock('@renkei/db', () => ({
+  // File shares are connection rows in Renkei's own table, not
+  // provider_grants — availability is the exposure aggregate the data
+  // store answers.
+  getDataStore: () => ({
+    fileShares: {
+      connectionExposures: async () =>
+        fileshareConnections.map((row) => ({
+          toolAccess: row.tool_access,
+          allowDelete: row.allow_delete,
+        })),
+    },
+  }),
   getDatabase: () => ({
     ok: true,
     val: {
-      selectFrom: (table: string) => {
-        // File shares are connection rows in Renkei's own table, not
-        // provider_grants — availability is the joined exposure aggregate.
-        if (table === 'file_share_connections') {
-          const shareChain = {
-            innerJoin: () => shareChain,
-            select: () => shareChain,
-            where: () => shareChain,
-            execute: async () => fileshareConnections,
-          };
-          return shareChain;
-        }
+      selectFrom: (_table: string) => {
         let provider = '';
         const chain = {
           select: () => chain,

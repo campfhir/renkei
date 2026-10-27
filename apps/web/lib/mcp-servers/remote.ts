@@ -10,8 +10,6 @@
  * background when it has gone stale.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { delegateRefusal, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import {
   McpAuthRequired,
@@ -81,14 +79,10 @@ export async function listRemoteTools(server: McpServer, subject: string): Promi
 }
 
 /** List and cache. A failed listing leaves the previous cache in place. */
-export async function refreshToolList(
-  db: Kysely<DB>,
-  server: McpServer,
-  subject: string
-): Promise<ListOutcome> {
+export async function refreshToolList(server: McpServer, subject: string): Promise<ListOutcome> {
   const listed = await listRemoteTools(server, subject);
   if (!listed.ok) return listed;
-  const saved = await saveToolList(db, server.id, subject, listed.tools);
+  const saved = await saveToolList(server.id, subject, listed.tools);
   if (!saved.ok) {
     return { ok: false, reason: 'failed', message: 'Could not save the server’s tool list.' };
   }
@@ -102,11 +96,11 @@ const refreshing = new Set<string>();
  * Refresh without making anyone wait: the next request sees the new list.
  * One refresh per (server, person) at a time, and a failure is only logged.
  */
-export function refreshInBackground(db: Kysely<DB>, server: McpServer, subject: string): void {
+export function refreshInBackground(server: McpServer, subject: string): void {
   const key = `${server.id}:${subject}`;
   if (refreshing.has(key)) return;
   refreshing.add(key);
-  void refreshToolList(db, server, subject)
+  void refreshToolList(server, subject)
     .then((outcome) => {
       if (!outcome.ok) {
         logger.warn('MCP tool list refresh failed: {reason}', {

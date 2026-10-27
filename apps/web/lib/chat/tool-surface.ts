@@ -287,7 +287,7 @@ async function attachServerContext(
   discoverable: DiscoverableTool[]
 ): Promise<void> {
   if (!discoverable.some((entry) => isMcpServerConnector(entry.connector))) return;
-  const servers = await listServers(db);
+  const servers = await listServers();
   if (!servers.ok) return;
   const bySlug = new Map(servers.val.map((server) => [server.slug, server]));
   for (const entry of discoverable) {

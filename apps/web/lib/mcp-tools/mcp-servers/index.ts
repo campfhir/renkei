@@ -140,8 +140,8 @@ export function registerMcpServerTools(
           // fails outright; refresh so the next turn sees the real list.
           const dbResult = getDatabase();
           if (dbResult.ok) {
-            const read = await getServer(dbResult.val, entry.id);
-            if (read.ok && read.val) refreshInBackground(dbResult.val, read.val, subject);
+            const read = await getServer(entry.id);
+            if (read.ok && read.val) refreshInBackground(read.val, subject);
           }
           logger.warn('MCP tool call failed: {error}', {
             component: 'mcp-servers',

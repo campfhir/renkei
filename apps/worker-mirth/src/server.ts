@@ -74,9 +74,7 @@ export interface MirthServerDeps {
     target: SubjectTarget,
     provided: MirthCredentials | null
   ) => Promise<Result<ResolvedTarget, ResolveError>>;
-  resolveInstance?: (
-    instanceId: string
-  ) => Promise<Result<InstanceRow, 'no_instance' | 'store'>>;
+  resolveInstance?: (instanceId: string) => Promise<Result<InstanceRow, 'no_instance' | 'store'>>;
 }
 
 /** Operation requests are JSON; a channel definition can be large but not this large. */
@@ -179,9 +177,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
     deps.resolveTarget ??
     ((target: SubjectTarget, provided: MirthCredentials | null) =>
       resolveTarget(deps.db, target, provided));
-  const resolveOne =
-    deps.resolveInstance ??
-    ((instanceId: string) => resolveInstance(deps.db, instanceId));
+  const resolveOne = deps.resolveInstance ?? ((instanceId: string) => resolveInstance(instanceId));
 
   /**
    * Log in as the credential's owner and return the session cookies Mirth
@@ -275,8 +271,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
   const handlers: Record<string, Handler> = {
     async api(body, response) {
       const target = targetOf(body);
-      if (!target)
-        return sendError(response, 'bad_request', 'instanceId and subject are required');
+      if (!target) return sendError(response, 'bad_request', 'instanceId and subject are required');
       const method = str(body.method).toUpperCase();
       const path = str(body.path);
       if (!isHttpMethod(method)) {
@@ -325,10 +320,8 @@ export function createMirthServer(deps: MirthServerDeps): Server {
               : 'unreachable';
         return sendError(response, type, `The Mirth server ${upstream.detail}.`);
       }
-      if (upstream.status === 401)
-        forgetSession(target.instanceId, target.subject);
-      else
-        rememberSession(target.instanceId, target.subject, setCookiesOf(upstream));
+      if (upstream.status === 401) forgetSession(target.instanceId, target.subject);
+      else rememberSession(target.instanceId, target.subject, setCookiesOf(upstream));
       envelope(response, upstream);
     },
 
@@ -341,11 +334,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       const instanceId = str(body.instanceId);
       const credentials = parseMirthCredentials(body.credentials);
       if (!instanceId || !credentials) {
-        return sendError(
-          response,
-          'bad_request',
-          'instanceId and credentials are required'
-        );
+        return sendError(response, 'bad_request', 'instanceId and credentials are required');
       }
       const instance = await resolveOne(instanceId);
       if (!instance.ok) return sendError(response, instance.err.type);
@@ -445,8 +434,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       // Disconnect's courtesy: end the session Mirth holds for this person
       // rather than leave it to idle out. Best-effort by contract.
       const target = targetOf(body);
-      if (!target)
-        return sendError(response, 'bad_request', 'instanceId and subject are required');
+      if (!target) return sendError(response, 'bad_request', 'instanceId and subject are required');
       const cookie = sessionCookie(target.instanceId, target.subject);
       forgetSession(target.instanceId, target.subject);
       if (!cookie) return sendJson(response, 200, { loggedOut: false });

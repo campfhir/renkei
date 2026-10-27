@@ -4,9 +4,13 @@
  * within its TTL and never caches an error as "not configured".
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-
 import { randomBytes } from 'node:crypto';
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import {
   getConnectorConfig,
   setConnectorConfig,
@@ -14,66 +18,22 @@ import {
   invalidateConnectorConfigCache,
 } from './index';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
-
 const KEY = randomBytes(32);
 
-interface FakeStore {
-  rows: Map<string, Record<string, unknown>>;
-  selects: number;
-}
-
-function stubDb(): FakeStore {
-  const store: FakeStore = { rows: new Map(), selects: 0 };
-
-  const makeSelect = () => {
-    const filters: Record<string, unknown> = {};
-    const chain = {
-      select: () => chain,
-      where: (column: string, _op: string, value: unknown) => {
-        filters[column] = value;
-        return chain;
-      },
-      executeTakeFirst: async () => {
-        store.selects += 1;
-        return store.rows.get(String(filters.connector));
-      },
-    };
-    return chain;
-  };
-
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      selectFrom: makeSelect,
-      insertInto: () => ({
-        values: (row: Record<string, unknown>) => ({
-          onConflict: () => ({
-            execute: async () => {
-              store.rows.set(String(row.connector), {
-                enabled: row.enabled,
-                settings: JSON.parse(String(row.settings)),
-                encrypted_secrets: row.encrypted_secrets,
-              });
-              return [];
-            },
-          }),
-        }),
-      }),
-    },
-  });
-  return store;
-}
+let store: MemoryDataStore;
 
 beforeEach(() => {
-  mockGetDatabase.mockReset();
+  store = createMemoryDataStore();
+  registerDataStore(store);
   invalidateConnectorConfigCache();
+});
+
+afterAll(() => {
+  resetDataStore();
 });
 
 describe('connector config store', () => {
   it('round-trips settings and encrypted secrets', async () => {
-    stubDb();
-
     const write = await setConnectorConfig(
       'webex',
       {
@@ -99,28 +59,26 @@ describe('connector config store', () => {
   });
 
   it('stores no plaintext secret material', async () => {
-    const store = stubDb();
-
     await setConnectorConfig(
       'webex',
       { enabled: true, settings: {}, secrets: { botToken: 'super-secret-token' } },
       KEY
     );
 
-    const stored = String(store.rows.get('webex')?.encrypted_secrets);
+    const stored = String(
+      store.tables.first('connector_configs', (r) => r.connector === 'webex')?.encrypted_secrets
+    );
     expect(stored).not.toContain('super-secret-token');
     expect(stored.startsWith('v1.')).toBe(true);
   });
 
   it('returns null for an unconfigured connector', async () => {
-    stubDb();
     const read = await getConnectorConfig('webex', KEY);
     expect(read.ok).toBe(true);
     if (read.ok) expect(read.val).toBeNull();
   });
 
   it('reports DECRYPTION_ERROR under the wrong key instead of leaking', async () => {
-    stubDb();
     await setConnectorConfig(
       'webex',
       { enabled: true, settings: {}, secrets: { botToken: 't' } },
@@ -132,17 +90,17 @@ describe('connector config store', () => {
   });
 
   it('serves cached reads within the TTL without re-querying', async () => {
-    const store = stubDb();
     await setConnectorConfig(
       'webex',
       { enabled: true, settings: {}, secrets: { botToken: 't' } },
       KEY
     );
 
+    const reads = jest.spyOn(store.connectorConfigs, 'get');
     await readConnectorConfigCached('webex', KEY);
-    const selectsAfterFirst = store.selects;
+    expect(reads).toHaveBeenCalledTimes(1);
     await readConnectorConfigCached('webex', KEY);
 
-    expect(store.selects).toBe(selectsAfterFirst);
+    expect(reads).toHaveBeenCalledTimes(1);
   });
 });

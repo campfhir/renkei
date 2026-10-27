@@ -25,9 +25,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -57,7 +55,8 @@ export async function POST(
     return NextResponse.json({ error: 'skipProcessed must be a boolean' }, { status: 400 });
   }
   const afterProcessing = parseAfterProcessing(body.afterProcessing);
-  if (!afterProcessing) return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
+  if (!afterProcessing)
+    return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
@@ -66,8 +65,9 @@ export async function POST(
   // credentials to it — otherwise discovery would just fail later with a
   // less helpful error once the batch is already running — and moving or
   // deleting on it must be within what they allowed on the Connectors page.
-  const shares = await listConnectedShares(dbResult.val, session.subject);
-  if (!shares.ok) return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
+  const shares = await listConnectedShares(session.subject);
+  if (!shares.ok)
+    return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
   const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
   if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
 

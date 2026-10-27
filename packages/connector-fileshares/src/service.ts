@@ -93,7 +93,7 @@ export async function resolveConnection(
   deps: ServiceDeps,
   target: SubjectTarget
 ): Promise<Result<ResolvedConnection, ServiceError>> {
-  const share = await getShare(deps.db, target.shareId);
+  const share = await getShare(target.shareId);
   if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
   if (target.credentials) {
@@ -104,18 +104,10 @@ export async function resolveConnection(
   }
   if (target.credentials === null) return err('not_connected' as const);
 
-  const ciphertext = await readConnectionCiphertext(
-    deps.db,
-    target.shareId,
-    target.subject
-  );
+  const ciphertext = await readConnectionCiphertext(target.shareId, target.subject);
   if (!ciphertext.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (ciphertext.val === null) return err('not_connected' as const);
-  const credentials = await openCredentialsForSubject(
-    deps.db,
-    target.subject,
-    ciphertext.val
-  );
+  const credentials = await openCredentialsForSubject(deps.db, target.subject, ciphertext.val);
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ share: share.val.summary, credentials: credentials.val });
 }
@@ -136,7 +128,7 @@ function hostKeyRecorder(
 ): ((fingerprint: string) => Promise<void>) | undefined {
   if (share.protocol !== 'sftp' || share.hostKeyFingerprint !== null) return undefined;
   return async (fingerprint) => {
-    const recorded = await recordHostKeyFingerprint(deps.db, share.id, fingerprint);
+    const recorded = await recordHostKeyFingerprint(share.id, fingerprint);
     onRecorded?.(fingerprint, recorded.ok && recorded.val);
   };
 }
@@ -458,7 +450,7 @@ export async function serviceTestConnection(
   shareId: string,
   credentials: ShareCredentials
 ): Promise<Result<TestConnectionOutcome, ServiceError>> {
-  const share = await getShare(deps.db, shareId);
+  const share = await getShare(shareId);
   if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
   const summary = share.val.summary;

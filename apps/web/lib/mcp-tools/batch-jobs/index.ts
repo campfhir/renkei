@@ -21,7 +21,11 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
 import { getBatch, listBatches, listItems } from '@renkei/batch-jobs-store';
-import { callMistralOcr, resolveMistralOcrConfig, describeMistralOcrError } from '@renkei/connector-mistral-ocr';
+import {
+  callMistralOcr,
+  resolveMistralOcrConfig,
+  describeMistralOcrError,
+} from '@renkei/connector-mistral-ocr';
 import { sbReadFile, clientFailure as sandboxClientFailure } from '@renkei/sandbox-client';
 import {
   startDocumentOcrPipeline,
@@ -61,7 +65,9 @@ const groupingSchema = z.union([
     strategy: z.literal('filename-pattern'),
     pattern: z
       .string()
-      .describe('A regex with named captures ?<documentKey> and ?<page>, e.g. ^(?<documentKey>.+)-p(?<page>\\d+)\\.tif$'),
+      .describe(
+        'A regex with named captures ?<documentKey> and ?<page>, e.g. ^(?<documentKey>.+)-p(?<page>\\d+)\\.tif$'
+      ),
   }),
 ]);
 
@@ -70,8 +76,13 @@ const afterProcessingSchema = z.union([
   z.object({ action: z.literal('delete') }),
   z.object({
     action: z.literal('move'),
-    shareId: z.string().uuid().describe('The share to move into — the source share, or another one.'),
-    path: z.string().describe('Destination FOLDER from that share\'s root, Unix style (e.g. /processed).'),
+    shareId: z
+      .string()
+      .uuid()
+      .describe('The share to move into — the source share, or another one.'),
+    path: z
+      .string()
+      .describe("Destination FOLDER from that share's root, Unix style (e.g. /processed)."),
   }),
 ]);
 
@@ -96,8 +107,8 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
     {
       title: 'Batch Jobs · Act — Start an OCR pipeline over a fileshare folder',
       description:
-        'Split/group a fileshare folder\'s documents, OCR each with Mistral Document AI, and ' +
-        'stage each finished document\'s text in your sandbox scratch space (tagged with the ' +
+        "Split/group a fileshare folder's documents, OCR each with Mistral Document AI, and " +
+        "stage each finished document's text in your sandbox scratch space (tagged with the " +
         'returned batchId) for a later step to classify and file into OnBase. Runs in the ' +
         'background — this only starts it; poll with batch_get_job. Use grouping ' +
         '{strategy: "whole-file"} when each source file is already a complete document, or ' +
@@ -109,7 +120,10 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
         'share on the Connectors page).',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
-        name: z.string().min(1).describe('A human-readable name for this batch, e.g. "Invoices — March 2026".'),
+        name: z
+          .string()
+          .min(1)
+          .describe('A human-readable name for this batch, e.g. "Invoices — March 2026".'),
         shareId: z.string().uuid().describe('From fileshare_list_shares.'),
         path: z.string().optional().describe('Folder path from the share root (default "/").'),
         grouping: groupingSchema,
@@ -123,7 +137,9 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
           ),
         afterProcessing: afterProcessingSchema
           .optional()
-          .describe('Default {action:"keep"}. Opt in to delete each source file, or move it to a folder.'),
+          .describe(
+            'Default {action:"keep"}. Opt in to delete each source file, or move it to a folder.'
+          ),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -136,18 +152,21 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       const shareId = str(args.shareId);
       const skipProcessed = typeof args.skipProcessed === 'boolean' ? args.skipProcessed : true;
       const parsedAfter: AfterProcessing =
-        args.afterProcessing === undefined ? { action: 'keep' } : afterProcessingSchema.parse(args.afterProcessing);
+        args.afterProcessing === undefined
+          ? { action: 'keep' }
+          : afterProcessingSchema.parse(args.afterProcessing);
       let afterProcessing: AfterProcessing = parsedAfter;
       if (parsedAfter.action === 'move') {
         const folder = normalizeFolderPath(parsedAfter.path);
-        if (!folder) return errText('afterProcessing.path must be a folder path with no ".." segments.');
+        if (!folder)
+          return errText('afterProcessing.path must be a folder path with no ".." segments.');
         afterProcessing = { ...parsedAfter, path: folder };
       }
 
       // The share must be one the caller connected, and moving/deleting on
       // it must be within what they allowed the tools on the Connectors
       // page — same gate the plain form goes through.
-      const connected = await listConnectedShares(dbResult.val, target.subject);
+      const connected = await listConnectedShares(target.subject);
       if (!connected.ok) return errText('Could not read your file shares.');
       const refusal = afterProcessingRefusal(connected.val, shareId, afterProcessing);
       if (refusal) return errText(refusal);
@@ -212,7 +231,7 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
   server.registerTool(
     'batch_list_items',
     {
-      title: 'Batch Jobs · Read — List one batch job\'s items',
+      title: "Batch Jobs · Read — List one batch job's items",
       description:
         'The documents/units of work within one batch, with their status and (once succeeded) ' +
         'the sandbox fileId a result was staged to — read it with sandbox_read_file.',
@@ -231,7 +250,10 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       const batch = await getBatch(dbResult.val, str(args.batchId));
       if (!batch || batch.subject !== target.subject) return errText('No such batch job.');
 
-      const items = await listItems(dbResult.val, batch.id, { status: str(args.status) || undefined, limit: 200 });
+      const items = await listItems(dbResult.val, batch.id, {
+        status: str(args.status) || undefined,
+        limit: 200,
+      });
       if (items.length === 0) return textResult('No items (yet).');
       return textResult(
         items

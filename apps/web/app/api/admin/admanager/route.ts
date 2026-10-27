@@ -5,7 +5,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { createInstance, listInstances } from '@renkei/connector-admanager';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -16,17 +15,12 @@ import {
 } from '@/lib/insecure-transport';
 import { parseInstancePayload } from '@/lib/admanager/parse';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const instances = await listInstances(dbResult.val);
+  const instances = await listInstances();
   if (!instances.ok) {
     return NextResponse.json({ error: 'Could not read instances' }, { status: 500 });
   }
@@ -39,9 +33,7 @@ export async function GET(
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -60,10 +52,7 @@ export async function POST(
   });
   if (!transport.ok) return NextResponse.json({ error: transport.error }, { status: 400 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const created = await createInstance(dbResult.val, parsed.input);
+  const created = await createInstance(parsed.input);
   if (!created.ok) {
     if (created.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'An instance with that name exists' }, { status: 409 });

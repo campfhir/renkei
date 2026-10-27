@@ -269,7 +269,7 @@ export async function listAvailableTools(
 
   const [availability, audience] = await Promise.all([
     resolveConnectorAvailability(db, subject),
-    resolveAudience(db, subject),
+    resolveAudience(subject),
   ]);
   const projection = buildProjection({ settings, availability, roles, audience });
 

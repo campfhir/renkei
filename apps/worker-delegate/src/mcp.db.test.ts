@@ -110,7 +110,7 @@ describeDb('mcp/prepare', () => {
   async function makeServer(slug: string, authMode: 'oauth' | 'none' = 'oauth') {
     const db = getDatabase();
     if (!db.ok) throw new Error('database unavailable');
-    const made = await createServer(db.val, {
+    const made = await createServer({
       slug,
       name: slug,
       url: `${ORIGIN}/mcp`,
@@ -148,7 +148,7 @@ describeDb('mcp/prepare', () => {
 
   afterAll(async () => {
     const db = getDatabase();
-    if (db.ok) for (const id of created) await deleteServer(db.val, id);
+    if (db.ok) for (const id of created) await deleteServer(id);
     await closeDatabase();
   });
 
@@ -174,11 +174,11 @@ describeDb('mcp/prepare', () => {
 
     const db = getDatabase();
     if (!db.ok) throw new Error('database unavailable');
-    const stored = await getServer(db.val, server.id);
+    const stored = await getServer(server.id);
     expect(stored.ok && stored.val?.clientId).toBe('registered-client');
     expect(stored.ok && stored.val?.oauth?.tokenEndpoint).toBe(`${AUTH}/token`);
     // The secret is sealed, and only the delegate's key opens it.
-    const sealed = await getSealedClientSecret(db.val, server.id);
+    const sealed = await getSealedClientSecret(server.id);
     expect(sealed.ok && sealed.val).toBeTruthy();
     expect(sealed.ok && sealed.val && decrypt(sealed.val, key)).toMatchObject({
       ok: true,

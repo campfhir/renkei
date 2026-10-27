@@ -1,7 +1,6 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getDatabase } from '@renkei/db';
 import { getShare } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import ShareConfigForm from './share-config-form';
@@ -22,16 +21,7 @@ export default async function AdminFileSharePage({
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return (
-      <div className="mx-auto max-w-3xl">
-        <p className="text-sm text-gray-600 dark:text-gray-400">Database unavailable.</p>
-      </div>
-    );
-  }
-
-  const share = await getShare(dbResult.val, shareId);
+  const share = await getShare(shareId);
   if (!share.ok || !share.val) notFound();
 
   const summary = share.val.summary;

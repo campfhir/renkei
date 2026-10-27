@@ -1023,7 +1023,7 @@ describeDb('worker-delegate', () => {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
     const db = dbResult.val;
-    const instance = await createInstance(db, {
+    const instance = await createInstance({
       name: `Dev ${randomUUID().slice(0, 8)}`,
       environment: 'dev',
       baseUrl: 'https://mirth.example.com',
@@ -1039,7 +1039,7 @@ describeDb('worker-delegate', () => {
       JSON.stringify({ username: 'alice', password: 'pw-secret' })
     );
     if (!sealed.ok) throw new Error('credential not sealed');
-    const stored = await upsertConnection(db, instance.val, owner, {
+    const stored = await upsertConnection(instance.val, owner, {
       encryptedCredentials: sealed.val,
       username: 'alice',
       permissions: ['channels.read'],
