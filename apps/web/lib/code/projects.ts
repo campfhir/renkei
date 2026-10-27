@@ -12,8 +12,7 @@
  * nothing keeps it.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { parseDotenv, validateRepoFullName } from '@renkei/connector-sandbox';
 import {
   clientFailure,
@@ -40,7 +39,6 @@ export type CodeOutcome<T> = { ok: true; val: T } | { ok: false; status: number;
  * one project, one checkout.
  */
 export async function startProjectClone(
-  db: Kysely<DB>,
   project: ProjectRow,
   credential: WorkspaceGitAccess,
   options: { depth?: number } = {}
@@ -59,7 +57,7 @@ export async function startProjectClone(
   if (project.workspaceId) {
     // Best effort: a checkout the sweep already retired is simply gone.
     await sbWorkspaceDelete(target, project.workspaceId);
-    await updateProject(db, project.id, { workspaceId: null });
+    await updateProject(project.id, { workspaceId: null });
   }
   const cloned = await sbWorkspaceClone(target, {
     provider: project.repo.provider,
@@ -73,7 +71,7 @@ export async function startProjectClone(
     const failure = clientFailure(cloned.err);
     return { ok: false, status: failure.status, message: failure.message };
   }
-  await updateProject(db, project.id, { workspaceId: cloned.val.id });
+  await updateProject(project.id, { workspaceId: cloned.val.id });
   return { ok: true, val: cloned.val };
 }
 
@@ -92,7 +90,6 @@ export function chatBranchName(chatId: string): string {
  * same worktree.
  */
 export async function startChatWorktree(
-  db: Kysely<DB>,
   project: ProjectRow,
   chatId: string,
   base: WireWorkspace,
@@ -108,11 +105,7 @@ export async function startChatWorktree(
     const failure = clientFailure(made.err);
     return { ok: false, status: failure.status, message: failure.message };
   }
-  await db
-    .updateTable('chats')
-    .set({ workspace_id: made.val.id })
-    .where('id', '=', chatId)
-    .execute();
+  await getDataStore().chats.setWorkspace(chatId, made.val.id);
   return { ok: true, val: made.val };
 }
 
@@ -181,14 +174,10 @@ export async function deleteChatWorktree(
 }
 
 /** The project row, its checkout and its variables gone together. */
-export async function deleteCodeProject(
-  db: Kysely<DB>,
-  ownerSubject: string,
-  projectId: string
-): Promise<boolean> {
-  const project = await getProjectRow(db, projectId);
+export async function deleteCodeProject(ownerSubject: string, projectId: string): Promise<boolean> {
+  const project = await getProjectRow(projectId);
   if (!project || project.ownerSubject !== ownerSubject) return false;
-  const deleted = await deleteProject(db, ownerSubject, projectId);
+  const deleted = await deleteProject(ownerSubject, projectId);
   if (!deleted) return false;
   if (await sandboxWorkspacesEnabled()) {
     const target = codeProjectTarget(projectId);

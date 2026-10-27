@@ -135,7 +135,7 @@ describe('artifact_search', () => {
       row('a1', 'guide.pdf'),
       row('a2', 'always.md', { mode: 'always' }),
     ]);
-    textMock.mockImplementation(async (_db, id) =>
+    textMock.mockImplementation(async (id) =>
       id === 'a1' ? 'Intro. Monetary columns are numeric(12,4); round half to even.' : 'never read'
     );
     const tools = createLocalToolSet(artifactTools({ inProject: true }));
@@ -218,7 +218,7 @@ describe('artifact_describe', () => {
       context()
     );
     expect(result.isError).toBeFalsy();
-    expect(findMock).toHaveBeenCalledWith(null, {
+    expect(findMock).toHaveBeenCalledWith({
       chatId: 'chat-1',
       ownerSubject: 'auth0|alice',
       id: null,

@@ -20,8 +20,8 @@
  * successful read is ever cached.
  */
 
-import { getDatabase } from '@renkei/db';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { getDataStore } from '@renkei/db';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import {
   parseToolConfig,
@@ -68,22 +68,13 @@ export async function getDefaultChatTools(
   const cached = cache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('user_preferences')
-        .select('value')
-        .where('subject', '=', subject)
-        .where('key', '=', prefKey(kind))
-        .executeTakeFirst(),
+    () => getDataStore().userPreferences.get(subject, prefKey(kind)),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return null;
 
-  const value = rowResult.val ? parseToolConfig(rowResult.val.value) : null;
+  const value = rowResult.val !== undefined ? parseToolConfig(rowResult.val) : null;
   cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -94,29 +85,15 @@ export async function setDefaultChatTools(
   config: ChatToolConfig | null,
   kind: ToolDefaultsKind = 'chat'
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-  const db = dbResult.val;
   const key = prefKey(kind);
 
+  // Cleared is stored as null, which every read takes for "none saved".
   const written = await wrapAsync(async () => {
-    if (config === null) {
-      await db
-        .deleteFrom('user_preferences')
-        .where('subject', '=', subject)
-        .where('key', '=', key)
-        .execute();
-      return;
-    }
-    const value = JSON.stringify(toolConfigJson(config));
-    const now = new Date().toISOString();
-    await db
-      .insertInto('user_preferences')
-      .values({ subject, key, value, updated_at: now })
-      .onConflict((oc) =>
-        oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
-      )
-      .execute();
+    await getDataStore().userPreferences.set(
+      subject,
+      key,
+      config === null ? null : toolConfigJson(config)
+    );
   }, 'DB_ERROR' as const);
   if (!written.ok) return written;
 

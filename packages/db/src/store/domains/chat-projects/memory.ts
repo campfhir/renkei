@@ -40,6 +40,26 @@ export function memoryChatProjects(tables: MemoryTables): ChatProjectStore {
           : orderBy(rows, [(r) => r.updated_at, 'desc'], [(r) => r.id]);
       return sorted.map(projectFromRow);
     },
+    async withGrantCounts(projectIds) {
+      if (projectIds.length === 0) return [];
+      const ids = new Set(projectIds.map(projectId));
+      const now = Date.now();
+      return orderBy(
+        tables.select('chat_projects', (r) => ids.has(r.id)),
+        [(r) => r.id]
+      ).map((project) => ({
+        id: project.id,
+        name: project.name,
+        kind: project.kind,
+        grants: tables.select(
+          'resource_access_grants',
+          (g) =>
+            g.resource_kind === 'chat_project' &&
+            g.resource_id === project.id &&
+            (g.expires_at === null || g.expires_at.getTime() > now)
+        ).length,
+      }));
+    },
     async create(project) {
       return tables.insert('chat_projects', newProjectValues(project)).id;
     },

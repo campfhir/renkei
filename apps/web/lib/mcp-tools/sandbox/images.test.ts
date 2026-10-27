@@ -38,7 +38,6 @@ jest.mock('@/lib/chat/models', () => ({ listImageModels: jest.fn(async () => [])
 import { err, ok } from '@campfhir/safe-functions/helpers';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { generateImage, resolveImageModel } from '@renkei/agent-llm';
-import { getDatabase } from '@renkei/db';
 import { listImageModels } from '@/lib/chat/models';
 import { registerSandboxTools } from './index';
 import {
@@ -151,9 +150,7 @@ describe('sandbox_generate_image — offering', () => {
     expect(withModels.get(SANDBOX_IMAGE_TOOL)?.config.annotations?.readOnlyHint).toBe(false);
   });
 
-  it('reads no models as none when there is no database or the query fails', async () => {
-    jest.mocked(getDatabase).mockReturnValueOnce({ ok: false, err: 'DB_INIT_ERROR' } as never);
-    expect(await sandboxImageModels()).toEqual([]);
+  it('reads no models as none when the read fails', async () => {
     jest.mocked(listImageModels).mockRejectedValueOnce(new Error('down'));
     expect(await sandboxImageModels()).toEqual([]);
   });

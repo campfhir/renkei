@@ -8,7 +8,6 @@ import { getIdentityDisplay } from '@/lib/identity';
 import { signInUrl } from '@/lib/sign-in-url';
 import { PATHNAME_HEADER, safeReturnPath } from '@/lib/return-path';
 import { getCoachMarkPrefs, getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
-import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { chatSidebarActiveSince, loadChatSidebar } from '@/lib/chat/sidebar';
 import { listCoachMarkProgress } from '@/lib/coach-marks/store';
@@ -80,10 +79,8 @@ export default async function TenantLayout({ children }: { children: ReactNode }
   // misbehaving database.
   // The menu carries the person's chats on every page, and the coach-mark
   // engine needs to know which tours this person has already settled.
-  // The chat list is not behind the data store yet (packages/db/src/store),
-  // so on the memory store — which has no database — the menu carries no
-  // chats, exactly as it does when the database is down.
-  const dbResult = getDatabase();
+  // A chat list that cannot be read leaves the menu without chats, as it
+  // always has when the database is down.
   const [identity, prefs, theme, coachMarks, orgSettings, chats, coachMarkProgress] =
     await Promise.all([
       getIdentityDisplay(session.subject),
@@ -91,9 +88,7 @@ export default async function TenantLayout({ children }: { children: ReactNode }
       getThemePrefs(session.subject, { fresh: true }),
       getCoachMarkPrefs(session.subject, { fresh: true }),
       getOrgSettings(),
-      dbResult.ok
-        ? loadChatSidebar(dbResult.val, session.subject, { since: chatSidebarActiveSince() })
-        : null,
+      loadChatSidebar(session.subject, { since: chatSidebarActiveSince() }).catch(() => null),
       listCoachMarkProgress(session.subject),
     ]);
   const userName = identity?.displayName ?? identity?.email ?? session.subject;

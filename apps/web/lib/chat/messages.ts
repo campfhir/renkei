@@ -8,7 +8,7 @@
  */
 
 import { sql, type Kysely, type Transaction } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type ChatMessageRecord, type DB } from '@renkei/db';
 import type { LlmContentBlock, LlmUsage } from '@renkei/agent-llm';
 import { isUuid } from '@/lib/uuid';
 import { openBlocks, sealBlocks, type ContentCipher } from './content-crypto';
@@ -42,27 +42,6 @@ export interface StoredMessage {
   createdAt: Date;
   updatedAt: Date;
 }
-
-const MESSAGE_COLUMNS = [
-  'id',
-  'chat_id',
-  'turn_id',
-  'seq',
-  'role',
-  'kind',
-  'status',
-  'content',
-  'llm_model_id',
-  'provider',
-  'model',
-  'stop_reason',
-  'usage',
-  'timing',
-  'error',
-  'summary_id',
-  'created_at',
-  'updated_at',
-] as const;
 
 function roleOf(value: string): MessageRole {
   return value === 'assistant' ? 'assistant' : 'user';
@@ -150,78 +129,44 @@ function usageJson(usage: LlmUsage): {
   };
 }
 
-function rowOf(
-  raw: {
-    id: string;
-    chat_id: string;
-    turn_id: string | null;
-    seq: number;
-    role: string;
-    kind: string;
-    status: string;
-    content: string;
-    llm_model_id: string | null;
-    provider: string | null;
-    model: string | null;
-    stop_reason: string | null;
-    usage: unknown;
-    timing: unknown;
-    error: string | null;
-    summary_id: string | null;
-    created_at: Date;
-    updated_at: Date;
-  },
-  cipher: ContentCipher
-): StoredMessage {
+function rowOf(raw: ChatMessageRecord, cipher: ContentCipher): StoredMessage {
   return {
     id: raw.id,
-    chatId: raw.chat_id,
-    turnId: raw.turn_id,
+    chatId: raw.chatId,
+    turnId: raw.turnId,
     seq: raw.seq,
     role: roleOf(raw.role),
     kind: kindOf(raw.kind),
     status: statusOf(raw.status),
     blocks: openBlocks(raw.content, cipher),
-    llmModelId: raw.llm_model_id,
+    llmModelId: raw.llmModelId,
     provider: raw.provider,
     model: raw.model,
-    stopReason: raw.stop_reason,
+    stopReason: raw.stopReason,
     usage: usageOf(raw.usage),
     timing: timingOf(raw.timing),
     error: raw.error,
-    summaryId: raw.summary_id,
-    createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
+    summaryId: raw.summaryId,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
   };
 }
 
 export async function listMessages(
-  db: Kysely<DB>,
   chatId: string,
   cipher: ContentCipher
 ): Promise<StoredMessage[]> {
   if (!isUuid(chatId)) return [];
-  const rows = await db
-    .selectFrom('chat_messages')
-    .select(MESSAGE_COLUMNS)
-    .where('chat_id', '=', chatId)
-    .orderBy('seq', 'asc')
-    .execute();
+  const rows = await getDataStore().chatThreads.listMessages(chatId);
   return rows.map((row) => rowOf(row, cipher));
 }
 
 export async function listTurnMessages(
-  db: Kysely<DB>,
   turnId: string,
   cipher: ContentCipher
 ): Promise<StoredMessage[]> {
   if (!isUuid(turnId)) return [];
-  const rows = await db
-    .selectFrom('chat_messages')
-    .select(MESSAGE_COLUMNS)
-    .where('turn_id', '=', turnId)
-    .orderBy('seq', 'asc')
-    .execute();
+  const rows = await getDataStore().chatThreads.listTurnMessages(turnId);
   return rows.map((row) => rowOf(row, cipher));
 }
 

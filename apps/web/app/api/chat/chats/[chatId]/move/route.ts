@@ -23,8 +23,8 @@ export async function POST(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, session.subject, chatId);
+  const { session } = ready.context;
+  const chat = await getChatForOwner(session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
 
   const body = await readJsonBody(request);
@@ -33,23 +33,18 @@ export async function POST(
     if (typeof body.projectId !== 'string' || !isUuid(body.projectId)) {
       return jsonError(404, 'not-found', 'No such project');
     }
-    const access = await resolveResourceAccess(
-      db,
-      session.subject,
-      'chat_project',
-      body.projectId
-    );
+    const access = await resolveResourceAccess(session.subject, 'chat_project', body.projectId);
     if (!access) return jsonError(404, 'not-found', 'No such project');
     projectId = body.projectId;
   }
   const codeProject = async (id: string | null) =>
-    id ? (await getProjectRow(db, id))?.kind === 'code' : false;
+    id ? (await getProjectRow(id))?.kind === 'code' : false;
   if ((await codeProject(chat.projectId)) || (await codeProject(projectId))) {
     return jsonError(400, 'code-project', 'A code project’s chats stay with its repository.');
   }
-  if (await getActiveTurn(db, chat.id)) {
+  if (await getActiveTurn(chat.id)) {
     return jsonError(409, 'turn-running', 'Wait for the current reply to finish first.');
   }
-  await moveChatToProject(db, session.subject, chat.id, projectId);
+  await moveChatToProject(session.subject, chat.id, projectId);
   return NextResponse.json({ ok: true, projectId });
 }

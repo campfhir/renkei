@@ -9,7 +9,7 @@
  */
 
 import { sql, type Kysely, type Transaction } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type ChatTurnRecord, type DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { isUuid } from '@/lib/uuid';
@@ -255,30 +255,42 @@ export async function createTurn(
   }
 }
 
-export async function getTurn(
-  db: Kysely<DB>,
-  chatId: string,
-  turnId: string
-): Promise<TurnRow | null> {
-  if (!isUuid(chatId) || !isUuid(turnId)) return null;
-  const raw = await db
-    .selectFrom('chat_turns')
-    .select(TURN_COLUMNS)
-    .where('chat_id', '=', chatId)
-    .where('id', '=', turnId)
-    .executeTakeFirst();
-  return raw ? rowOf(raw) : null;
+/** A turn as the store returns it, read the way rowOf reads a raw row. */
+function rowOfRecord(turn: ChatTurnRecord): TurnRow {
+  return rowOf({
+    id: turn.id,
+    chat_id: turn.chatId,
+    status: turn.status,
+    kind: turn.kind,
+    llm_model_id: turn.llmModelId,
+    thinking_budget: turn.thinkingBudget,
+    iterations: turn.iterations,
+    input_tokens: turn.inputTokens,
+    output_tokens: turn.outputTokens,
+    cancel_requested_at: turn.cancelRequestedAt,
+    error: turn.error,
+    stage: turn.stage,
+    stage_at: turn.stageAt,
+    tool_permission: turn.toolPermission,
+    suspended_at: turn.suspendedAt,
+    resume_count: turn.resumeCount,
+    runner: turn.runner,
+    started_at: turn.startedAt,
+    updated_at: turn.updatedAt,
+    finished_at: turn.finishedAt,
+  });
 }
 
-export async function getActiveTurn(db: Kysely<DB>, chatId: string): Promise<TurnRow | null> {
+export async function getTurn(chatId: string, turnId: string): Promise<TurnRow | null> {
+  if (!isUuid(chatId) || !isUuid(turnId)) return null;
+  const turn = await getDataStore().chatThreads.getTurn(chatId, turnId);
+  return turn ? rowOfRecord(turn) : null;
+}
+
+export async function getActiveTurn(chatId: string): Promise<TurnRow | null> {
   if (!isUuid(chatId)) return null;
-  const raw = await db
-    .selectFrom('chat_turns')
-    .select(TURN_COLUMNS)
-    .where('chat_id', '=', chatId)
-    .where('status', '=', 'running')
-    .executeTakeFirst();
-  return raw ? rowOf(raw) : null;
+  const turn = await getDataStore().chatThreads.getActiveTurn(chatId);
+  return turn ? rowOfRecord(turn) : null;
 }
 
 /**

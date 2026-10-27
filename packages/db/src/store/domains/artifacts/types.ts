@@ -77,6 +77,14 @@ export interface ArtifactStore {
   getText(artifactId: string): Promise<string | null>;
   /** The length of each one's extracted text (0 without), by id ascending. */
   textLengths(artifactIds: string[]): Promise<{ id: string; chars: number }[]>;
+  /**
+   * The text length of each artifact the project holds in `always` mode,
+   * `exceptId` left out, by artifact id.
+   */
+  alwaysTextLengths(
+    projectId: string,
+    exceptId: string | null
+  ): Promise<{ id: string; chars: number }[]>;
   /** The artifacts one project holds, in the order they were attached (ties by reference id). */
   listForProject(projectId: string): Promise<ProjectArtifactRecord[]>;
   getForProject(projectId: string, artifactId: string): Promise<ProjectArtifactRecord | null>;

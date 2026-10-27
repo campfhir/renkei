@@ -8,22 +8,15 @@
  * project not cloned yet, or whose clone failed, has no branch to name.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 
 /** The branch per workspace id, for the ready ones among those asked about. */
 export async function workspaceBranches(
-  db: Kysely<DB>,
   workspaceIds: (string | null)[]
 ): Promise<Map<string, string>> {
   const ids = [...new Set(workspaceIds.filter((id): id is string => !!id && isUuid(id)))];
   if (ids.length === 0) return new Map();
-  const rows = await db
-    .selectFrom('sandbox_workspaces')
-    .select(['id', 'branch'])
-    .where('id', 'in', ids)
-    .where('status', '=', 'ready')
-    .execute();
-  return new Map(rows.filter((row) => row.branch).map((row) => [row.id, row.branch]));
+  const rows = await getDataStore().codeProjects.workspaceBranches(ids);
+  return new Map(rows.map((row) => [row.id, row.branch]));
 }

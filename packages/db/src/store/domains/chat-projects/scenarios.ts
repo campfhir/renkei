@@ -61,6 +61,20 @@ export const chatProjectScenarios: Scenario<DataStore>[] = [
     },
   },
   {
+    method: 'chatProjects.withGrantCounts',
+    name: 'unexpired grants counted, none is zero',
+    fixture,
+    run: async (store) => [
+      await store.chatProjects.withGrantCounts([
+        PROJECT.annChat,
+        PROJECT.annCode,
+        PROJECT.bobChat,
+        uid(999),
+      ]),
+      await store.chatProjects.withGrantCounts([]),
+    ],
+  },
+  {
     method: 'chatProjects.create',
     name: 'chat and code projects',
     run: async (store) => {

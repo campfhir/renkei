@@ -29,10 +29,10 @@ export async function GET(
   const { projectId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, session.subject, projectId);
+  const { session } = ready.context;
+  const access = await resolveProjectAccess(session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
-  const view = await loadProjectView(db, session.subject, projectId, access);
+  const view = await loadProjectView(session.subject, projectId, access);
   if (!view) return jsonError(404, 'not-found', 'No such project');
   return NextResponse.json(view);
 }
@@ -44,8 +44,8 @@ export async function PATCH(
   const { projectId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, session.subject, projectId);
+  const { session } = ready.context;
+  const access = await resolveProjectAccess(session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   if (access.role === 'viewer')
     return jsonError(403, 'read-only', 'Only editors can change this project.');
@@ -66,7 +66,7 @@ export async function PATCH(
     if (!parsed) return jsonError(400, 'invalid', 'Invalid tool configuration');
     patch.toolConfig = parsed;
   }
-  const updated = await updateProject(db, projectId, patch, access.cipher);
+  const updated = await updateProject(projectId, patch, access.cipher);
   if (!updated) return jsonError(404, 'not-found', 'No such project');
   return NextResponse.json({ ok: true });
 }
@@ -78,8 +78,8 @@ export async function DELETE(
   const { projectId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const deleted = await deleteProject(db, session.subject, projectId);
+  const { session } = ready.context;
+  const deleted = await deleteProject(session.subject, projectId);
   if (!deleted) return jsonError(404, 'not-found', 'No such project');
   return NextResponse.json({ ok: true });
 }

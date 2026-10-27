@@ -237,8 +237,8 @@ describe(ATTACH_TO_SANDBOX_TOOL, () => {
       context({ projectId: 'p1' })
     );
     expect(result.isError).toBe(false);
-    expect(listMock).toHaveBeenCalledWith(null, { chatId: 'chat-1' });
-    expect(listProjectMock).toHaveBeenCalledWith(null, 'p1');
+    expect(listMock).toHaveBeenCalledWith({ chatId: 'chat-1' });
+    expect(listProjectMock).toHaveBeenCalledWith('p1');
     expect(writeMock).toHaveBeenCalledWith(
       { subject: 'auth0|alice' },
       expect.objectContaining({ filename: 'template.docx' }),

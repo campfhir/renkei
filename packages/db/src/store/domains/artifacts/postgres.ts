@@ -117,6 +117,21 @@ export function postgresArtifacts(db: () => Kysely<DB>): ArtifactStore {
         .execute();
       return rows.map((row) => ({ id: row.id, chars: Number(row.chars) }));
     },
+    async alwaysTextLengths(projectId, exceptId) {
+      const rows = await db()
+        .selectFrom('artifact_references as r')
+        .innerJoin('artifacts as a', 'a.id', 'r.artifact_id')
+        .select((eb) => [
+          'a.id',
+          eb.fn.coalesce(eb.fn('length', ['a.extracted_text']), sql<number>`0`).as('chars'),
+        ])
+        .where('r.project_id', '=', projectId)
+        .where('r.mode', '=', 'always')
+        .where('a.id', '!=', exceptId ?? '00000000-0000-0000-0000-000000000000')
+        .orderBy('a.id')
+        .execute();
+      return rows.map((row) => ({ id: row.id, chars: Number(row.chars) }));
+    },
     async listForProject(projectId) {
       const rows = await db()
         .selectFrom('artifact_references as r')

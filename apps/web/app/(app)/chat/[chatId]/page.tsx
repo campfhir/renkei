@@ -1,5 +1,4 @@
 import { notFound, redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveChatAccess } from '@/lib/chat/access';
@@ -15,23 +14,16 @@ import ChatThread from '../_components/chat-thread';
  * fellow member of the chat's project) reads it and watches it live.
  * Someone with neither gets a 404, never a 403.
  */
-export default async function ChatPage({
-  params,
-}: {
-  params: Promise<{ chatId: string }>;
-}) {
+export default async function ChatPage({ params }: { params: Promise<{ chatId: string }> }) {
   const { chatId } = await params;
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/chat/${chatId}`));
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const db = dbResult.val;
 
-  const access = await resolveChatAccess(db, session.subject, chatId);
+  const access = await resolveChatAccess(session.subject, chatId);
   if (!access) notFound();
   const [view, models, uploadsEnabled, voice, orgSettings] = await Promise.all([
-    loadChatView(db, access, session.subject),
-    listChatModels(db),
+    loadChatView(access, session.subject),
+    listChatModels(),
     tenantBlobStoreConfigured(),
     // Null when the org has no voice service: the thread then shows
     // nothing about voice at all.

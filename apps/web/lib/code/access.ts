@@ -28,8 +28,7 @@
  * copy of them.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { ATLASSIAN_BITBUCKET_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
 import { GITHUB_SCOPE_OPTIONS } from '@/lib/github-scopes';
@@ -115,44 +114,35 @@ export function codeProjectAccessOf(
  * wants to say, in the Connectors page's words, what is missing.
  */
 export async function grantScopes(
-  db: Kysely<DB>,
   subject: string,
   provider: string = ATLASSIAN_BITBUCKET
 ): Promise<string[] | null> {
-  const row = await db
-    .selectFrom('provider_grants')
-    .select(['requested_scopes', 'granted_scopes'])
-    .where('provider', '=', provider)
-    .where('subject', '=', subject)
-    .orderBy('updated_at', 'desc')
-    .limit(1)
-    .executeTakeFirst();
+  const row = await grantScopeRow(subject, provider);
   return row ? grantScopesOf(row) : null;
 }
 
+/** The scope columns of the person's connection to one host, or undefined without one. */
+async function grantScopeRow(subject: string, provider: string): Promise<GrantScopes | undefined> {
+  const row = await getDataStore().codeProjects.providerGrantScopes(subject, provider);
+  return row
+    ? { requested_scopes: row.requestedScopes, granted_scopes: row.grantedScopes }
+    : undefined;
+}
+
 export async function codeProjectAccess(
-  db: Kysely<DB>,
   subject: string,
   provider: string = ATLASSIAN_BITBUCKET
 ): Promise<CodeProjectAccess> {
-  const row = await db
-    .selectFrom('provider_grants')
-    .select(['requested_scopes', 'granted_scopes'])
-    .where('provider', '=', provider)
-    .where('subject', '=', subject)
-    .limit(1)
-    .executeTakeFirst();
-  return codeProjectAccessOf(row, provider);
+  return codeProjectAccessOf(await grantScopeRow(subject, provider), provider);
 }
 
 /** Access on every git host a code project can use, keyed by provider — for the Code page. */
 export async function codeProjectProviderAccess(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Record<string, CodeProjectAccess>> {
   const [bitbucket, github] = await Promise.all([
-    codeProjectAccess(db, subject, ATLASSIAN_BITBUCKET),
-    codeProjectAccess(db, subject, GITHUB),
+    codeProjectAccess(subject, ATLASSIAN_BITBUCKET),
+    codeProjectAccess(subject, GITHUB),
   ]);
   return { [ATLASSIAN_BITBUCKET]: bitbucket, [GITHUB]: github };
 }

@@ -18,7 +18,7 @@
  * fresh too.
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import {
@@ -56,22 +56,13 @@ export async function getChatToolPermissionPrefs(
   const cached = cache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return DEFAULT_CHAT_TOOL_PERMISSION_PREFS;
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('user_preferences')
-        .select('value')
-        .where('subject', '=', subject)
-        .where('key', '=', CHAT_TOOL_PERMISSIONS_PREF_KEY)
-        .executeTakeFirst(),
+    () => getDataStore().userPreferences.get(subject, CHAT_TOOL_PERMISSIONS_PREF_KEY),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return DEFAULT_CHAT_TOOL_PERMISSION_PREFS;
 
-  const value = parseChatToolPermissionPrefs(rowResult.val?.value);
+  const value = parseChatToolPermissionPrefs(rowResult.val);
   cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -81,26 +72,13 @@ export async function setChatToolPermissionPrefs(
   subject: string,
   prefs: ChatToolPermissionPrefs
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-  const db = dbResult.val;
-
-  const value = JSON.stringify(parseChatToolPermissionPrefs(prefs));
-  const now = new Date().toISOString();
   const written = await wrapAsync(
     () =>
-      db
-        .insertInto('user_preferences')
-        .values({
-          subject,
-          key: CHAT_TOOL_PERMISSIONS_PREF_KEY,
-          value,
-          updated_at: now,
-        })
-        .onConflict((oc) =>
-          oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
-        )
-        .execute(),
+      getDataStore().userPreferences.set(
+        subject,
+        CHAT_TOOL_PERMISSIONS_PREF_KEY,
+        parseChatToolPermissionPrefs(prefs)
+      ),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;

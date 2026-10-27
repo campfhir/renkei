@@ -4,8 +4,7 @@
  * the rest. Membership is resource_access_grants (access.ts).
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type ChatProjectRecord } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { parseToolConfig, toolConfigJson, type ChatToolConfig } from './tool-config';
 import { openText, resourceCipher, sealText, type ContentCipher } from './content-crypto';
@@ -48,59 +47,29 @@ export interface ProjectRow {
   updatedAt: Date;
 }
 
-const PROJECT_COLUMNS = [
-  'id',
-  'owner_subject',
-  'kind',
-  'name',
-  'description',
-  'instructions',
-  'tool_config',
-  'repo_provider',
-  'repo_full_name',
-  'repo_branch',
-  'workspace_id',
-  'created_at',
-  'updated_at',
-] as const;
-
 export const PROJECT_NAME_MAX_CHARS = 200;
 export const PROJECT_INSTRUCTIONS_MAX_CHARS = 20_000;
 
-function rowOf(raw: {
-  id: string;
-  owner_subject: string;
-  kind: string;
-  name: string;
-  description: string | null;
-  instructions: string | null;
-  tool_config: unknown;
-  repo_provider: string | null;
-  repo_full_name: string | null;
-  repo_branch: string | null;
-  workspace_id: string | null;
-  created_at: Date;
-  updated_at: Date;
-}): ProjectRow {
+function rowOf(raw: ChatProjectRecord): ProjectRow {
   return {
     id: raw.id,
-    ownerSubject: raw.owner_subject,
+    ownerSubject: raw.ownerSubject,
     kind: raw.kind === 'code' ? 'code' : 'chat',
     name: raw.name,
     description: raw.description,
     sealedInstructions: raw.instructions,
-    toolConfig: parseToolConfig(raw.tool_config),
+    toolConfig: parseToolConfig(raw.toolConfig),
     repo:
-      raw.kind === 'code' && raw.repo_provider && raw.repo_full_name
+      raw.kind === 'code' && raw.repoProvider && raw.repoFullName
         ? {
-            provider: raw.repo_provider,
-            fullName: raw.repo_full_name,
-            branch: raw.repo_branch ?? '',
+            provider: raw.repoProvider,
+            fullName: raw.repoFullName,
+            branch: raw.repoBranch ?? '',
           }
         : null,
-    workspaceId: raw.workspace_id,
-    createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
+    workspaceId: raw.workspaceId,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
   };
 }
 
@@ -112,94 +81,63 @@ export function openProjectInstructions(
   return project.sealedInstructions ? openText(project.sealedInstructions, cipher) : null;
 }
 
-export async function getProjectRow(db: Kysely<DB>, projectId: string): Promise<ProjectRow | null> {
+export async function getProjectRow(projectId: string): Promise<ProjectRow | null> {
   if (!isUuid(projectId)) return null;
-  const raw = await db
-    .selectFrom('chat_projects')
-    .select(PROJECT_COLUMNS)
-    .where('id', '=', projectId)
-    .executeTakeFirst();
+  const raw = await getDataStore().chatProjects.get(projectId);
   return raw ? rowOf(raw) : null;
 }
 
-export async function listOwnedProjects(
-  db: Kysely<DB>,
-  ownerSubject: string
-): Promise<ProjectRow[]> {
-  const rows = await db
-    .selectFrom('chat_projects')
-    .select(PROJECT_COLUMNS)
-    .where('owner_subject', '=', ownerSubject)
-    .orderBy('updated_at', 'desc')
-    .execute();
-  return rows.map(rowOf);
+export async function listOwnedProjects(ownerSubject: string): Promise<ProjectRow[]> {
+  return (await getDataStore().chatProjects.listOwned(ownerSubject)).map(rowOf);
 }
 
+/** These projects, most recently updated first — or, `orderBy: 'name'`, by name. */
 export async function listProjectsById(
-  db: Kysely<DB>,
-  projectIds: string[]
+  projectIds: string[],
+  options: { orderBy?: 'updated' | 'name' } = {}
 ): Promise<ProjectRow[]> {
   const ids = projectIds.filter(isUuid);
   if (ids.length === 0) return [];
-  const rows = await db
-    .selectFrom('chat_projects')
-    .select(PROJECT_COLUMNS)
-    .where('id', 'in', ids)
-    .orderBy('updated_at', 'desc')
-    .execute();
-  return rows.map(rowOf);
+  return (await getDataStore().chatProjects.listByIds(ids, options)).map(rowOf);
 }
 
-export async function createProject(
-  db: Kysely<DB>,
-  input: {
-    ownerSubject: string;
-    name: string;
-    description: string | null;
-    instructions: string | null;
-    toolConfig: ChatToolConfig | null;
-    /** A code project names its repository; absent means a chat project. */
-    repo?: ProjectRepo;
-  }
-): Promise<string | null> {
-  const inserted = await db
-    .insertInto('chat_projects')
-    .values({
-      owner_subject: input.ownerSubject,
-      name: input.name,
-      description: input.description,
-      instructions: null,
-      tool_config: input.toolConfig ? toolConfigJson(input.toolConfig) : null,
-      ...(input.repo
-        ? {
-            kind: 'code',
-            repo_provider: input.repo.provider,
-            repo_full_name: input.repo.fullName,
-            repo_branch: input.repo.branch || null,
-          }
-        : {}),
-    })
-    .returning('id')
-    .executeTakeFirstOrThrow();
+export async function createProject(input: {
+  ownerSubject: string;
+  name: string;
+  description: string | null;
+  instructions: string | null;
+  toolConfig: ChatToolConfig | null;
+  /** A code project names its repository; absent means a chat project. */
+  repo?: ProjectRepo;
+}): Promise<string | null> {
+  const store = getDataStore();
+  const id = await store.chatProjects.create({
+    ownerSubject: input.ownerSubject,
+    name: input.name,
+    description: input.description,
+    toolConfig: input.toolConfig ? toolConfigJson(input.toolConfig) : null,
+    ...(input.repo
+      ? {
+          repo: {
+            provider: input.repo.provider,
+            fullName: input.repo.fullName,
+            branch: input.repo.branch || null,
+          },
+        }
+      : {}),
+  });
   // The project's own key, wrapped for its owner (chat-keys.ts): its
   // instructions, memory and files are sealed under it.
-  const key = await createKey(db, 'chat_project', {
-    id: inserted.id,
-    ownerSubject: input.ownerSubject,
-  });
+  const key = await createKey('chat_project', { id, ownerSubject: input.ownerSubject });
   if (input.instructions) {
     const sealed = key ? sealText(input.instructions, resourceCipher(key)) : null;
     if (!sealed || !sealed.ok) {
-      await db.deleteFrom('chat_projects').where('id', '=', inserted.id).execute();
+      await store.chatProjects.delete(input.ownerSubject, id);
       return null;
     }
-    await db
-      .updateTable('chat_projects')
-      .set({ instructions: sealed.val })
-      .where('id', '=', inserted.id)
-      .execute();
+    await store.chatProjects.update(id, { instructions: sealed.val });
   }
-  return inserted.id;
+  return id;
 }
 
 export interface ProjectPatch {
@@ -219,7 +157,6 @@ export interface ProjectPatch {
  * patch carries instructions to seal.
  */
 export async function updateProject(
-  db: Kysely<DB>,
   projectId: string,
   patch: ProjectPatch,
   cipher?: ContentCipher
@@ -236,49 +173,33 @@ export async function updateProject(
       instructions = null;
     }
   }
-  const result = await db
-    .updateTable('chat_projects')
-    .set({
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.description !== undefined ? { description: patch.description } : {}),
-      ...(instructions !== undefined ? { instructions } : {}),
-      ...(patch.toolConfig !== undefined
-        ? { tool_config: patch.toolConfig ? toolConfigJson(patch.toolConfig) : null }
-        : {}),
-      ...(patch.repo !== undefined
-        ? {
-            repo_provider: patch.repo.provider,
-            repo_full_name: patch.repo.fullName,
-            repo_branch: patch.repo.branch || null,
-          }
-        : {}),
-      ...(patch.workspaceId !== undefined ? { workspace_id: patch.workspaceId } : {}),
-      updated_at: sql<Date>`NOW()`,
-    })
-    .where('id', '=', projectId)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows) > 0;
+  return getDataStore().chatProjects.update(projectId, {
+    ...(patch.name !== undefined ? { name: patch.name } : {}),
+    ...(patch.description !== undefined ? { description: patch.description } : {}),
+    ...(instructions !== undefined ? { instructions } : {}),
+    ...(patch.toolConfig !== undefined
+      ? { toolConfig: patch.toolConfig ? toolConfigJson(patch.toolConfig) : null }
+      : {}),
+    ...(patch.repo !== undefined
+      ? {
+          repo: {
+            provider: patch.repo.provider,
+            fullName: patch.repo.fullName,
+            branch: patch.repo.branch || null,
+          },
+        }
+      : {}),
+    ...(patch.workspaceId !== undefined ? { workspaceId: patch.workspaceId } : {}),
+  });
 }
 
-export async function deleteProject(
-  db: Kysely<DB>,
-  ownerSubject: string,
-  projectId: string
-): Promise<boolean> {
+export async function deleteProject(ownerSubject: string, projectId: string): Promise<boolean> {
   if (!isUuid(projectId)) return false;
-  const result = await db
-    .deleteFrom('chat_projects')
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', projectId)
-    .executeTakeFirst();
-  const deleted = Number(result.numDeletedRows) > 0;
+  const store = getDataStore();
+  const deleted = await store.chatProjects.delete(ownerSubject, projectId);
   if (deleted) {
-    await db
-      .deleteFrom('resource_access_grants')
-      .where('resource_kind', '=', 'chat_project')
-      .where('resource_id', '=', projectId)
-      .execute();
-    await deleteKey(db, 'chat_project', projectId);
+    await store.resourceGrants.deleteForResource('chat_project', projectId);
+    await deleteKey('chat_project', projectId);
   }
   return deleted;
 }

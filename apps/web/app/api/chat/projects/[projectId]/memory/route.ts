@@ -17,10 +17,10 @@ export async function GET(
   const { projectId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, session.subject, projectId);
+  const { session } = ready.context;
+  const access = await resolveProjectAccess(session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
-  const memory = await readProjectMemory(db, projectId, access.cipher, {
+  const memory = await readProjectMemory(projectId, access.cipher, {
     maxEntries: 300,
   });
   return NextResponse.json({
@@ -42,8 +42,8 @@ export async function POST(
   const { projectId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, session.subject, projectId);
+  const { session } = ready.context;
+  const access = await resolveProjectAccess(session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   if (access.role === 'viewer') return jsonError(403, 'read-only', 'Only editors can add notes.');
   const body = await readJsonBody(request);
@@ -51,7 +51,7 @@ export async function POST(
   if (!content) return jsonError(400, 'invalid', 'Write something first');
   const settings = await getOrgSettings();
   const redactor = settings.ok ? createOutboundRedactor(settings.val) : null;
-  const id = await appendProjectMemory(db, {
+  const id = await appendProjectMemory({
     projectId,
     content: redactor ? redactor.apply(content).text : content,
     authorSubject: session.subject,
@@ -69,8 +69,8 @@ export async function DELETE(
   const { projectId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, session.subject, projectId);
+  const { session } = ready.context;
+  const access = await resolveProjectAccess(session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   if (access.role === 'viewer')
     return jsonError(403, 'read-only', 'Only editors can remove notes.');
@@ -79,7 +79,6 @@ export async function DELETE(
     ? body.ids.filter((id): id is string => typeof id === 'string')
     : [];
   const deleted = await forgetProjectMemory(
-    db,
     projectId,
     body.all === true ? { kind: 'all' } : { kind: 'entries', ids }
   );

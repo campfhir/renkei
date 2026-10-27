@@ -8,8 +8,7 @@
  * notes for what they are.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { openText, sealText, type ContentCipher } from './content-crypto';
 
@@ -38,19 +37,15 @@ function clip(text: string, max: number): string {
 }
 
 export async function readProjectMemory(
-  db: Kysely<DB>,
   projectId: string,
   cipher: ContentCipher,
   options: { maxEntries?: number } = {}
 ): Promise<ProjectMemory> {
   if (!isUuid(projectId)) return { summary: null, entries: [] };
-  const rows = await db
-    .selectFrom('chat_project_memories')
-    .select(['id', 'kind', 'content', 'author_subject', 'chat_id', 'created_at'])
-    .where('project_id', '=', projectId)
-    .orderBy('created_at', 'desc')
-    .limit((options.maxEntries ?? PROJECT_MEMORY_INJECT_MAX_ENTRIES) + 1)
-    .execute();
+  const rows = await getDataStore().chatProjects.listMemory(
+    projectId,
+    (options.maxEntries ?? PROJECT_MEMORY_INJECT_MAX_ENTRIES) + 1
+  );
   const summary = rows.find((row) => row.kind === 'summary');
   return {
     summary: summary ? openText(summary.content, cipher) : null,
@@ -60,9 +55,9 @@ export async function readProjectMemory(
       .map((row) => ({
         id: row.id,
         content: openText(row.content, cipher),
-        authorSubject: row.author_subject,
-        chatId: row.chat_id,
-        createdAt: row.created_at,
+        authorSubject: row.authorSubject,
+        chatId: row.chatId,
+        createdAt: row.createdAt,
       })),
   };
 }
@@ -86,60 +81,38 @@ export function renderProjectMemory(memory: ProjectMemory): string | null {
   return lines.length > 0 ? lines.join('\n') : null;
 }
 
-export async function appendProjectMemory(
-  db: Kysely<DB>,
-  input: {
-    projectId: string;
-    content: string;
-    authorSubject: string;
-    chatId: string | null;
-    /** The project's cipher (access.ts's ProjectAccess, or LocalToolContext.projectCipher). */
-    cipher: ContentCipher;
-  }
-): Promise<string | null> {
+export async function appendProjectMemory(input: {
+  projectId: string;
+  content: string;
+  authorSubject: string;
+  chatId: string | null;
+  /** The project's cipher (access.ts's ProjectAccess, or LocalToolContext.projectCipher). */
+  cipher: ContentCipher;
+}): Promise<string | null> {
   const content = clip(input.content.trim(), PROJECT_MEMORY_ENTRY_MAX_CHARS);
   if (!content) return null;
   const sealed = sealText(content, input.cipher);
   if (!sealed.ok) return null;
-  const inserted = await db
-    .insertInto('chat_project_memories')
-    .values({
-      project_id: input.projectId,
-      kind: 'entry',
-      content: sealed.val,
-      author_subject: input.authorSubject,
-      chat_id: input.chatId,
-    })
-    .returning('id')
-    .executeTakeFirstOrThrow();
   // A hard cap keeps a busy project from growing without bound; the oldest
   // entries go first.
-  await sql`
-    DELETE FROM chat_project_memories
-     WHERE project_id = ${input.projectId} AND kind = 'entry'
-       AND id IN (
-         SELECT id FROM chat_project_memories
-          WHERE project_id = ${input.projectId} AND kind = 'entry'
-          ORDER BY created_at DESC OFFSET ${PROJECT_MEMORY_HARD_CAP}
-       )
-  `.execute(db);
-  return inserted.id;
+  return getDataStore().chatProjects.appendMemory({
+    projectId: input.projectId,
+    content: sealed.val,
+    authorSubject: input.authorSubject,
+    chatId: input.chatId,
+    keep: PROJECT_MEMORY_HARD_CAP,
+  });
 }
 
 export async function forgetProjectMemory(
-  db: Kysely<DB>,
   projectId: string,
   target: { kind: 'all' } | { kind: 'entries'; ids: string[] }
 ): Promise<number> {
   if (!isUuid(projectId)) return 0;
-  let query = db
-    .deleteFrom('chat_project_memories')
-    .where('project_id', '=', projectId);
   if (target.kind === 'entries') {
     const ids = target.ids.filter(isUuid);
     if (ids.length === 0) return 0;
-    query = query.where('id', 'in', ids);
+    return getDataStore().chatProjects.forgetMemory(projectId, { kind: 'entries', ids });
   }
-  const result = await query.executeTakeFirst();
-  return Number(result.numDeletedRows);
+  return getDataStore().chatProjects.forgetMemory(projectId, target);
 }

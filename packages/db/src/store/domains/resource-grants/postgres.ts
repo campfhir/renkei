@@ -99,6 +99,15 @@ export function postgresResourceGrants(db: () => Kysely<DB>): ResourceGrantStore
         .executeTakeFirst();
       return deleted?.grantee_subject ?? null;
     },
+    async removeGrantee(kind, resourceId, granteeSubject) {
+      const result = await db()
+        .deleteFrom('resource_access_grants')
+        .where('resource_kind', '=', kind)
+        .where('resource_id', '=', resourceId)
+        .where('grantee_subject', '=', granteeSubject)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
     async deleteForResource(kind, resourceId) {
       const result = await db()
         .deleteFrom('resource_access_grants')

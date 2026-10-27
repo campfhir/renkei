@@ -124,6 +124,22 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
         [(r) => r.id]
       ).map((r) => ({ id: r.id, chars: r.extracted_text ? [...r.extracted_text].length : 0 }));
     },
+    async alwaysTextLengths(projectId, exceptId) {
+      const project = tables.param('artifact_references', 'project_id', projectId);
+      const except = exceptId ? artifactId(exceptId) : null;
+      const ids = new Set(
+        tables
+          .select(
+            'artifact_references',
+            (r) => r.project_id === project && r.mode === 'always' && r.artifact_id !== except
+          )
+          .map((r) => r.artifact_id)
+      );
+      return orderBy(
+        tables.select('artifacts', (r) => ids.has(r.id)),
+        [(r) => r.id]
+      ).map((r) => ({ id: r.id, chars: r.extracted_text ? [...r.extracted_text].length : 0 }));
+    },
     async listForProject(projectId) {
       const project = tables.param('artifact_references', 'project_id', projectId);
       return orderBy(

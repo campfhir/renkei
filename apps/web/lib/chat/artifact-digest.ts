@@ -42,7 +42,9 @@ import { resolveAgentLlm, type LlmToolDef, type ResolvedLlm } from '@renkei/agen
 import { recordLlmCall } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
 import { artifactCipher } from './artifact-access';
+import { databaseForUnconvertedCode } from './route-support';
 import {
+  getAttachments,
   getAttachmentText,
   isDescribablePicture,
   readAttachmentBytes,
@@ -300,7 +302,7 @@ async function digestSourceOf(
   cipher: ContentCipher
 ): Promise<DigestSource | null> {
   if (row.extractStatus === 'done') {
-    const text = await getAttachmentText(db, row.id, cipher);
+    const text = await getAttachmentText(row.id, cipher);
     return text && !text.startsWith('[content unavailable') ? { kind: 'text', text } : null;
   }
   const bytes = await readAttachmentBytes(row, cipher);
@@ -353,7 +355,6 @@ export async function digestPendingArtifacts(
   for (const row of wanted) {
     if (!(await claimDigest(db, row.id))) continue;
     const cipher = await artifactCipher(
-      db,
       row,
       viewerSubject,
       row.ownerSubject === viewerSubject ? 'owner' : 'grant',
@@ -386,6 +387,20 @@ export async function digestPendingArtifacts(
       llm,
     });
   }
+}
+
+/**
+ * `digestPendingArtifacts` for these artifact ids, for a caller behind the
+ * data store: the digest's own writes are not behind it yet, so the
+ * database is resolved here, only once the org's switch lets one run.
+ */
+export async function digestPendingArtifactIds(
+  viewerSubject: string,
+  artifactIds: string[]
+): Promise<void> {
+  if (!(await digestsEnabled())) return;
+  const rows = await getAttachments(artifactIds);
+  await digestPendingArtifacts(databaseForUnconvertedCode(), viewerSubject, rows);
 }
 
 /**

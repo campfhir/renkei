@@ -9,17 +9,15 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { loadMoreOwnedChats } from '@/lib/chat/sidebar';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const raw = request.nextUrl.searchParams.get('before');
   const before = raw ? new Date(raw) : null;
   if (!before || Number.isNaN(before.getTime())) {
     return jsonError(400, 'bad-request', 'A valid `before` timestamp is required');
   }
-  const page = await loadMoreOwnedChats(db, session.subject, before);
+  const page = await loadMoreOwnedChats(session.subject, before);
   return NextResponse.json(page);
 }

@@ -104,6 +104,19 @@ export const resourceGrantScenarios: Scenario<DataStore>[] = [
     ],
   },
   {
+    method: 'resourceGrants.removeGrantee',
+    name: "one grantee's grant, expired or not",
+    fixture,
+    run: async (store) => [
+      await store.resourceGrants.removeGrantee('chat_project', PROJECT.annChat, CAT),
+      await store.resourceGrants.removeGrantee('chat_project', PROJECT.annChat, CAT),
+      await store.resourceGrants.removeGrantee('chat', PROJECT.annChat, BOB),
+      (await store.resourceGrants.listForOwner(ANN, 'chat_project', PROJECT.annChat)).map(
+        (grant) => grant.granteeSubject
+      ),
+    ],
+  },
+  {
     method: 'resourceGrants.deleteForResource',
     name: 'every grant on the resource, of that kind only',
     fixture,

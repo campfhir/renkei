@@ -10,11 +10,9 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext } from '@/lib/chat/route-support';
 import { listCodeProjectTemplates } from '@/lib/code/project-templates';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const templates = await listCodeProjectTemplates(ready.context.db);
+  const templates = await listCodeProjectTemplates();
   return NextResponse.json({ templates });
 }

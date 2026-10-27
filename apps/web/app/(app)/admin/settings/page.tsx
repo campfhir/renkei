@@ -42,7 +42,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
       .select(['issuer', 'role_claim', 'operator_idp_value', 'user_idp_value', 'groups_claim'])
       .executeTakeFirst(),
     observedIdpGroups('', 10_000),
-    listSizeRequests(dbResult.val),
+    listSizeRequests(),
   ]);
   if (!settingsResult.ok) {
     return (

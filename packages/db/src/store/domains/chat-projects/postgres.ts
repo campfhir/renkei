@@ -38,6 +38,30 @@ export function postgresChatProjects(db: () => Kysely<DB>): ChatProjectStore {
       const rows = await query.orderBy('id').execute();
       return rows.map(projectFromRow);
     },
+    async withGrantCounts(projectIds) {
+      if (projectIds.length === 0) return [];
+      const rows = await db()
+        .selectFrom('chat_projects as p')
+        .leftJoin('resource_access_grants as g', (join) =>
+          join
+            .onRef('g.resource_id', '=', 'p.id')
+            .on('g.resource_kind', '=', 'chat_project')
+            .on((eb) =>
+              eb.or([eb('g.expires_at', 'is', null), eb('g.expires_at', '>', new Date())])
+            )
+        )
+        .select((eb) => ['p.id', 'p.name', 'p.kind', eb.fn.count<string>('g.id').as('grants')])
+        .where('p.id', 'in', projectIds)
+        .groupBy(['p.id', 'p.name', 'p.kind'])
+        .orderBy('p.id')
+        .execute();
+      return rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        kind: row.kind,
+        grants: Number(row.grants),
+      }));
+    },
     async create(project) {
       const inserted = await db()
         .insertInto('chat_projects')

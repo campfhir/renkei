@@ -37,8 +37,7 @@
  * marker and refuses to write.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { ResourceKey, ResourceKeyKind, ResourceRef } from '@renkei/user-keys';
 import { delegateClient, type KeyOpError } from '@renkei/delegate-client';
 import { logger } from '@/lib/logger';
@@ -86,19 +85,8 @@ function failedCipher(reason: KeyOpError): ContentCipher {
 }
 
 /** Everyone the resource is currently shared with, for wrapping a newly minted key. */
-async function activeGrantees(
-  db: Kysely<DB>,
-  kind: KeyedKind,
-  resourceId: string
-): Promise<string[]> {
-  const rows = await db
-    .selectFrom('resource_access_grants')
-    .select('grantee_subject')
-    .where('resource_kind', '=', kind)
-    .where('resource_id', '=', resourceId)
-    .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date())]))
-    .execute();
-  return rows.map((row) => row.grantee_subject);
+async function activeGrantees(kind: KeyedKind, resourceId: string): Promise<string[]> {
+  return getDataStore().resourceGrants.activeGrantees(kind, resourceId);
 }
 
 /**
@@ -106,7 +94,6 @@ async function activeGrantees(
  * is wrapped for every current grantee in the same breath.
  */
 async function ensureKey(
-  db: Kysely<DB>,
   kind: KeyedKind,
   resource: KeyedResource
 ): Promise<ResourceKey | KeyOpError> {
@@ -124,7 +111,7 @@ async function ensureKey(
     });
     return created.err.type;
   }
-  for (const grantee of await activeGrantees(db, kind, resource.id)) {
+  for (const grantee of await activeGrantees(kind, resource.id)) {
     const shared = await keys.shareResourceKey(target, resource.ownerSubject, grantee);
     if (!shared.ok) {
       warn('key could not be wrapped for an existing viewer: {reason}', {
@@ -144,11 +131,10 @@ async function ensureKey(
  * best effort — a member's first read heals a missing one (cipherFor).
  */
 export async function wrapKeyUnderProject(
-  db: Kysely<DB>,
   chat: KeyedResource,
   projectId: string
 ): Promise<boolean> {
-  return wrapKeyUnder(db, 'chat', chat, ref('chat_project', projectId), chat.ownerSubject);
+  return wrapKeyUnder('chat', chat, ref('chat_project', projectId), chat.ownerSubject);
 }
 
 /**
@@ -158,14 +144,13 @@ export async function wrapKeyUnderProject(
  * a wrapping of the child (a share) and may open the parent (a member).
  */
 export async function wrapKeyUnder(
-  db: Kysely<DB>,
   kind: KeyedKind,
   resource: KeyedResource,
   parent: ResourceRef,
   bySubject: string = resource.ownerSubject
 ): Promise<boolean> {
   if (bySubject === resource.ownerSubject) {
-    const key = await ensureKey(db, kind, resource);
+    const key = await ensureKey(kind, resource);
     if (typeof key === 'string') return false;
   }
   const wrapped = await delegateClient().wrapResourceKeyUnder(
@@ -187,7 +172,6 @@ export async function wrapKeyUnder(
 
 /** A new resource's key, wrapped for its owner; null, with a warning, on a key-store failure. */
 export async function createKey(
-  db: Kysely<DB>,
   kind: KeyedKind,
   resource: KeyedResource
 ): Promise<ResourceKey | null> {
@@ -214,7 +198,6 @@ export async function createKey(
  * viewer's own opens does the read fall back to the owner's key.
  */
 export async function cipherFor(
-  db: Kysely<DB>,
   kind: KeyedKind,
   resource: KeyedResource,
   viewerSubject: string,
@@ -224,7 +207,7 @@ export async function cipherFor(
 ): Promise<ContentCipher> {
   const target = ref(kind, resource.id);
   if (via === 'owner') {
-    const key = await ensureKey(db, kind, resource);
+    const key = await ensureKey(kind, resource);
     return typeof key === 'string' ? failedCipher(key) : resourceCipher(key);
   }
   const keys = delegateClient();
@@ -235,7 +218,7 @@ export async function cipherFor(
   }
   if (own.err.type === 'NO_ACCESS' || own.err.type === 'NO_KEY') {
     // The access stands; the wrapping is missing. Heal it, as the owner.
-    const minted = await ensureKey(db, kind, resource);
+    const minted = await ensureKey(kind, resource);
     if (typeof minted !== 'string') {
       const healed =
         (via === 'project' || via === 'chat') && parentId
@@ -253,7 +236,7 @@ export async function cipherFor(
       }
     }
   }
-  return cipherAsOwner(db, kind, resource);
+  return cipherAsOwner(kind, resource);
 }
 
 /**
@@ -263,36 +246,27 @@ export async function cipherFor(
  * automation key for the chats their agents write into.
  */
 export async function cipherAsOwner(
-  db: Kysely<DB>,
   kind: KeyedKind,
   resource: KeyedResource
 ): Promise<ContentCipher> {
-  const key = await ensureKey(db, kind, resource);
+  const key = await ensureKey(kind, resource);
   return typeof key === 'string' ? failedCipher(key) : resourceCipher(key);
 }
 
 /** `cipherAsOwner` for a chat, by id — for callers holding only the chat id. */
-export async function chatCipherById(db: Kysely<DB>, chatId: string): Promise<ContentCipher> {
-  const row = await db
-    .selectFrom('chats')
-    .select('owner_subject')
-    .where('id', '=', chatId)
-    .executeTakeFirst();
-  if (!row) return unavailableCipher('no-key');
-  return cipherAsOwner(db, 'chat', { id: chatId, ownerSubject: row.owner_subject });
+export async function chatCipherById(chatId: string): Promise<ContentCipher> {
+  const chat = await getDataStore().chats.get(chatId);
+  if (!chat) return unavailableCipher('no-key');
+  return cipherAsOwner('chat', { id: chatId, ownerSubject: chat.ownerSubject });
 }
 
 /** `cipherAsOwner` for a project, by id. */
-export async function projectCipherById(db: Kysely<DB>, projectId: string): Promise<ContentCipher> {
-  const row = await db
-    .selectFrom('chat_projects')
-    .select('owner_subject')
-    .where('id', '=', projectId)
-    .executeTakeFirst();
-  if (!row) return unavailableCipher('no-key');
-  return cipherAsOwner(db, 'chat_project', {
+export async function projectCipherById(projectId: string): Promise<ContentCipher> {
+  const project = await getDataStore().chatProjects.get(projectId);
+  if (!project) return unavailableCipher('no-key');
+  return cipherAsOwner('chat_project', {
     id: projectId,
-    ownerSubject: row.owner_subject,
+    ownerSubject: project.ownerSubject,
   });
 }
 
@@ -303,7 +277,6 @@ export async function projectCipherById(db: Kysely<DB>, projectId: string): Prom
  * chats). A chat that opens neither way gets an unavailable cipher.
  */
 export async function chatCiphersFor(
-  db: Kysely<DB>,
   viewerSubject: string,
   chats: { id: string; ownerSubject: string }[]
 ): Promise<Map<string, ContentCipher>> {
@@ -338,12 +311,11 @@ export async function chatCiphersFor(
  * share of a key and not only a row.
  */
 export async function shareKey(
-  db: Kysely<DB>,
   kind: KeyedKind,
   resource: KeyedResource,
   granteeSubject: string
 ): Promise<boolean> {
-  const key = await ensureKey(db, kind, resource);
+  const key = await ensureKey(kind, resource);
   if (typeof key === 'string') return false;
   const shared = await delegateClient().shareResourceKey(
     ref(kind, resource.id),
@@ -362,7 +334,6 @@ export async function shareKey(
 
 /** Unsharing: the grantee's wrapping is forgotten; the key and the owner's stay. */
 export async function revokeKey(
-  _db: Kysely<DB>,
   kind: KeyedKind,
   resourceId: string,
   granteeSubject: string
@@ -371,10 +342,6 @@ export async function revokeKey(
 }
 
 /** The resource is gone: so is its key, with every wrapping. */
-export async function deleteKey(
-  _db: Kysely<DB>,
-  kind: KeyedKind,
-  resourceId: string
-): Promise<void> {
+export async function deleteKey(kind: KeyedKind, resourceId: string): Promise<void> {
   await delegateClient().deleteResourceKey(ref(kind, resourceId));
 }

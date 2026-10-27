@@ -70,6 +70,13 @@ export interface ChatProjectStore {
     projectIds: string[],
     options?: { orderBy?: 'updated' | 'name' }
   ): Promise<ChatProjectRecord[]>;
+  /**
+   * These projects (unknown ids left out) with how many unexpired grants
+   * each has, by id.
+   */
+  withGrantCounts(
+    projectIds: string[]
+  ): Promise<{ id: string; name: string; kind: string; grants: number }[]>;
   /** A new project (no instructions yet); its id. */
   create(project: NewChatProject): Promise<string>;
   /** Change a project by id; false when there is none. */

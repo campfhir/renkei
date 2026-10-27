@@ -107,6 +107,14 @@ export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
       );
       return deleted?.grantee_subject ?? null;
     },
+    async removeGrantee(kind, resourceId, granteeSubject) {
+      const id = resource(resourceId);
+      return tables.delete(
+        'resource_access_grants',
+        (r) =>
+          r.resource_kind === kind && r.resource_id === id && r.grantee_subject === granteeSubject
+      ).length;
+    },
     async deleteForResource(kind, resourceId) {
       const id = resource(resourceId);
       return tables.delete(

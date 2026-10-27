@@ -8,8 +8,7 @@
  * real spend, not just what the visible chat list adds up to.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 
 export interface ChatTokenUsage {
   inputTokens: number;
@@ -23,31 +22,15 @@ export interface CodeProjectUsage {
 
 const EMPTY_USAGE: CodeProjectUsage = { total: { inputTokens: 0, outputTokens: 0 }, byChat: {} };
 
-export async function loadCodeProjectUsage(
-  db: Kysely<DB>,
-  projectId: string
-): Promise<CodeProjectUsage> {
-  const rows = await db
-    .selectFrom('chat_turns')
-    .innerJoin('chats', 'chats.id', 'chat_turns.chat_id')
-    .select(({ fn }) => [
-      'chat_turns.chat_id as chat_id',
-      fn.sum<string>('chat_turns.input_tokens').as('input_tokens'),
-      fn.sum<string>('chat_turns.output_tokens').as('output_tokens'),
-    ])
-    .where('chats.project_id', '=', projectId)
-    .groupBy('chat_turns.chat_id')
-    .execute();
+export async function loadCodeProjectUsage(projectId: string): Promise<CodeProjectUsage> {
+  const rows = await getDataStore().codeProjects.usageByChat(projectId);
   if (rows.length === 0) return EMPTY_USAGE;
 
   const byChat: Record<string, ChatTokenUsage> = {};
   const total: ChatTokenUsage = { inputTokens: 0, outputTokens: 0 };
   for (const row of rows) {
-    const usage = {
-      inputTokens: Number(row.input_tokens ?? 0),
-      outputTokens: Number(row.output_tokens ?? 0),
-    };
-    byChat[row.chat_id] = usage;
+    const usage = { inputTokens: row.inputTokens, outputTokens: row.outputTokens };
+    byChat[row.chatId] = usage;
     total.inputTokens += usage.inputTokens;
     total.outputTokens += usage.outputTokens;
   }

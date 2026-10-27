@@ -151,7 +151,7 @@ export async function getUtilizationReport(
       getVoiceTotals(db, span, timeZone, subject),
       resolveVoiceProvider(),
       getImageTotals(db, span, timeZone, subject),
-      listImageModels(db),
+      listImageModels(),
       getDocumentTotals(db, span, timeZone, subject),
     ]);
     return {

@@ -94,7 +94,7 @@ maybe('chat_recall_chats', () => {
         role: 'user',
         kind: 'prompt',
         status: 'complete',
-        cipher: await chatCipherById(db, chatId),
+        cipher: await chatCipherById(chatId),
         blocks: [{ type: 'text', text }],
       });
       if (!row) throw new Error('message not sealed — is TOKEN_ENCRYPTION_KEY set?');
@@ -110,8 +110,7 @@ maybe('chat_recall_chats', () => {
     await say(elsewhereChat, 'Refund the duplicate invoices from April.');
   });
 
-  afterAll(async () => {
-  });
+  afterAll(async () => {});
 
   it('in a project, lists only the project’s other started chats', async () => {
     const result = await call(contextFor(thisChat, projectId), {});

@@ -79,7 +79,7 @@ export function createTurnStore(
       await finishTurn(db, scope.turnId, outcome);
       // A sub-agent still marked running now has no turn to report to.
       await interruptSubagentRunsOfTurn(db, scope.turnId);
-      await touchChat(db, scope.chatId, {});
+      await touchChat(scope.chatId, {});
     },
     async suspendTurn(iterations) {
       await suspendTurn(db, scope.turnId, iterations);

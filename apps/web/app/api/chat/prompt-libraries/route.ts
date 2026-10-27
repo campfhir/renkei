@@ -8,13 +8,11 @@ import {
 } from '@/lib/chat/route-support';
 import { createLibrary, listAccessibleLibraries, LIBRARY_NAME_MAX_CHARS } from '@/lib/chat/prompts';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const libraries = await listAccessibleLibraries(db, session.subject);
+  const { session } = ready.context;
+  const libraries = await listAccessibleLibraries(session.subject);
   return NextResponse.json({
     libraries: libraries.map(({ library, role }) => ({
       id: library.id,
@@ -26,17 +24,15 @@ export async function GET(
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const name = optionalString(body.name, LIBRARY_NAME_MAX_CHARS);
   if (!name) return jsonError(400, 'invalid', 'Give the library a name');
   const description = optionalString(body.description, 2_000) ?? null;
-  const libraryId = await createLibrary(db, {
+  const libraryId = await createLibrary({
     ownerSubject: session.subject,
     name,
     description: description || null,

@@ -34,7 +34,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           .filter((id): id is string => typeof id === 'string')
           .slice(0, MAX_IDS_PER_REQUEST)
       : [];
-  const access = isUuid(chatId) ? await resolveChatAccess(db, session.subject, chatId) : null;
+  const access = isUuid(chatId) ? await resolveChatAccess(session.subject, chatId) : null;
   if (!access || access.role !== 'owner') return jsonError(404, 'not-found', 'No such chat');
 
   const settings = await getOrgSettings();
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   // Text that just arrived by OCR wants its digest for the search index.
   const done = results.filter((result) => result.extractStatus === 'done').map((r) => r.id);
   if (done.length > 0) {
-    deferDigest(db, session.subject, await getAttachments(db, done), after);
+    deferDigest(db, session.subject, await getAttachments(done), after);
   }
   return NextResponse.json({ results });
 }

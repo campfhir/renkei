@@ -20,14 +20,9 @@ export async function POST(
   const { projectId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'chat_project',
-    projectId
-  );
-  const project = access ? await getProjectRow(db, projectId) : null;
+  const { session } = ready.context;
+  const access = await resolveResourceAccess(session.subject, 'chat_project', projectId);
+  const project = access ? await getProjectRow(projectId) : null;
   if (!project || project.kind !== 'code') return jsonError(404, 'not-found', 'No such project');
 
   const body = await readJsonBody(request);
@@ -39,7 +34,7 @@ export async function POST(
   if (!reason)
     return jsonError(400, 'bad-request', 'Say why you need more space (up to 1000 characters)');
 
-  const created = await createSizeRequest(db, {
+  const created = await createSizeRequest({
     projectId,
     projectName: project.name,
     requestedBy: session.subject,

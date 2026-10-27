@@ -96,7 +96,7 @@ export async function chatLocalTools(
     // without one in the org the tool is simply not offered. A failed
     // lookup costs the turn this one tool, not the turn.
     const [imageModels, imagePrefs] = await Promise.all([
-      listImageModels(db).catch(() => []),
+      listImageModels().catch(() => []),
       getImagePrefs(context.subject),
     ]);
     const imageTool = imageGenerationTool({

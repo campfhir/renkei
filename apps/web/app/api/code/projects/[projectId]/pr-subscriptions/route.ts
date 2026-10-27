@@ -58,7 +58,7 @@ interface SubscriptionView {
 const CHATS_SEARCHED = 10;
 
 async function chatForPr(
-  db: Parameters<typeof listMessages>[0],
+  db: Kysely<DB>,
   projectId: string,
   subject: string,
   prNumber: number
@@ -75,7 +75,7 @@ async function chatForPr(
     .limit(CHATS_SEARCHED)
     .execute();
   for (const { id } of candidates) {
-    const rows = await listMessages(db, id, await chatCipherById(db, id));
+    const rows = await listMessages(id, await chatCipherById(id));
     const pr = latestPrInTranscript(rows.map(toMessageView));
     if (pr?.number === prNumber) return id;
   }

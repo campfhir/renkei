@@ -10,8 +10,7 @@
  * decides which set a turn gets; this module has no opinion).
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { delegateClient } from '@renkei/delegate-client';
 import { unavailableMarker } from './content-crypto';
 import { unavailableReasonOf } from './chat-keys';
@@ -40,20 +39,16 @@ function clip(text: string, max: number): string {
 }
 
 export async function readUserMemory(
-  db: Kysely<DB>,
   ownerSubject: string,
   options: { maxEntries?: number } = {}
 ): Promise<UserMemory> {
   // A person's memory is theirs alone: sealed under their own key, never
   // under a chat's or a project's — opened by the delegate, the one
   // process that holds that key, in one batch for the page.
-  const rows = await db
-    .selectFrom('chat_user_memories')
-    .select(['id', 'kind', 'content', 'chat_id', 'created_at'])
-    .where('owner_subject', '=', ownerSubject)
-    .orderBy('created_at', 'desc')
-    .limit((options.maxEntries ?? USER_MEMORY_INJECT_MAX_ENTRIES) + 1)
-    .execute();
+  const rows = await getDataStore().userMemory.list(
+    ownerSubject,
+    (options.maxEntries ?? USER_MEMORY_INJECT_MAX_ENTRIES) + 1
+  );
   const opened = await delegateClient().openForSubject(
     ownerSubject,
     rows.map((row) => row.content)
@@ -72,8 +67,8 @@ export async function readUserMemory(
       .map(({ row, index }) => ({
         id: row.id,
         content: textAt(index),
-        chatId: row.chat_id,
-        createdAt: row.created_at,
+        chatId: row.chatId,
+        createdAt: row.createdAt,
       })),
   };
 }
@@ -97,85 +92,47 @@ export function renderUserMemory(memory: UserMemory): string | null {
   return lines.length > 0 ? lines.join('\n') : null;
 }
 
-export async function appendUserMemory(
-  db: Kysely<DB>,
-  input: {
-    ownerSubject: string;
-    content: string;
-    chatId: string | null;
-  }
-): Promise<string | null> {
+export async function appendUserMemory(input: {
+  ownerSubject: string;
+  content: string;
+  chatId: string | null;
+}): Promise<string | null> {
   const content = clip(input.content.trim(), USER_MEMORY_ENTRY_MAX_CHARS);
   if (!content) return null;
   // Memory is the person's alone: under their user key, never the
   // automation key, so nothing unattended reads it.
-  const sealed = await delegateClient().sealForSubject(
-    input.ownerSubject,
-    [content],
-    'session'
-  );
+  const sealed = await delegateClient().sealForSubject(input.ownerSubject, [content], 'session');
   if (!sealed.ok) return null;
-  const inserted = await db
-    .insertInto('chat_user_memories')
-    .values({
-      owner_subject: input.ownerSubject,
-      kind: 'entry',
-      content: sealed.val[0],
-      chat_id: input.chatId,
-    })
-    .returning('id')
-    .executeTakeFirstOrThrow();
   // A hard cap keeps a long-lived account from growing without bound; the
   // oldest entries go first.
-  await sql`
-    DELETE FROM chat_user_memories
-     WHERE owner_subject = ${input.ownerSubject} AND kind = 'entry'
-       AND id IN (
-         SELECT id FROM chat_user_memories
-          WHERE owner_subject = ${input.ownerSubject} AND kind = 'entry'
-          ORDER BY created_at DESC OFFSET ${USER_MEMORY_HARD_CAP}
-       )
-  `.execute(db);
-  return inserted.id;
+  return getDataStore().userMemory.append({
+    ownerSubject: input.ownerSubject,
+    content: sealed.val[0],
+    chatId: input.chatId,
+    keep: USER_MEMORY_HARD_CAP,
+  });
 }
 
 export async function editUserMemory(
-  db: Kysely<DB>,
   ownerSubject: string,
   id: string,
   content: string
 ): Promise<boolean> {
   const clipped = clip(content.trim(), USER_MEMORY_ENTRY_MAX_CHARS);
   if (!clipped) return false;
-  const sealed = await delegateClient().sealForSubject(
-    ownerSubject,
-    [clipped],
-    'session'
-  );
+  const sealed = await delegateClient().sealForSubject(ownerSubject, [clipped], 'session');
   if (!sealed.ok) return false;
-  const result = await db
-    .updateTable('chat_user_memories')
-    .set({ content: sealed.val[0], updated_at: sql<Date>`NOW()` })
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', id)
-    .where('kind', '=', 'entry')
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows) > 0;
+  return getDataStore().userMemory.edit(ownerSubject, id, sealed.val[0]);
 }
 
 export async function forgetUserMemory(
-  db: Kysely<DB>,
   ownerSubject: string,
   target: { kind: 'all' } | { kind: 'entries'; ids: string[] }
 ): Promise<number> {
-  let query = db
-    .deleteFrom('chat_user_memories')
-    .where('owner_subject', '=', ownerSubject);
   if (target.kind === 'entries') {
     const ids = target.ids.filter((id) => /^[0-9a-f-]{36}$/i.test(id));
     if (ids.length === 0) return 0;
-    query = query.where('id', 'in', ids);
+    return getDataStore().userMemory.forget(ownerSubject, { kind: 'entries', ids });
   }
-  const result = await query.executeTakeFirst();
-  return Number(result.numDeletedRows);
+  return getDataStore().userMemory.forget(ownerSubject, target);
 }

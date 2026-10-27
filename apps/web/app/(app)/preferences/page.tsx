@@ -81,7 +81,7 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     listChatActToolGroups(session.subject, session.roles),
     getImagePrefs(session.subject, { fresh: true }),
     // Empty when the org has no image generation model; the section is then left out.
-    dbResult.ok ? listImageModels(dbResult.val) : [],
+    dbResult.ok ? listImageModels() : [],
     // Managed until they say otherwise; a missing row reads as managed too.
     // The delegate answers; unreachable, and the section is left out.
     keyStatusView(session),
@@ -193,10 +193,7 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
         />
       </div>
       <div className="mb-6">
-        <ToolPermissionsForm
-          groups={actToolGroups}
-          initial={toolPermissions}
-        />
+        <ToolPermissionsForm groups={actToolGroups} initial={toolPermissions} />
       </div>
       <PreferencesForm
         connectors={connectors}

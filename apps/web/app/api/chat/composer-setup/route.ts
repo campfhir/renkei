@@ -17,9 +17,9 @@ import { loadVoiceAvailability } from '@/lib/voice/availability';
 export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const [models, uploadsEnabled, voice, orgSettings] = await Promise.all([
-    listChatModels(db),
+    listChatModels(),
     tenantBlobStoreConfigured(),
     loadVoiceAvailability(session.subject),
     getOrgSettings(),

@@ -16,13 +16,8 @@ export async function POST(
   const { libraryId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'prompt_library',
-    libraryId
-  );
+  const { session } = ready.context;
+  const access = await resolveResourceAccess(session.subject, 'prompt_library', libraryId);
   if (!access) return jsonError(404, 'not-found', 'No such library');
   if (access.role === 'viewer') return jsonError(403, 'read-only', 'Only editors can add prompts.');
   const body = await readJsonBody(request);
@@ -30,7 +25,7 @@ export async function POST(
   const text =
     typeof body.body === 'string' ? body.body.trim().slice(0, PROMPT_BODY_MAX_CHARS) : '';
   if (!title || !text) return jsonError(400, 'invalid', 'A prompt needs a title and a body');
-  const promptId = await createPrompt(db, {
+  const promptId = await createPrompt({
     libraryId,
     title,
     body: text,

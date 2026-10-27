@@ -155,6 +155,29 @@ export const artifactScenarios: Scenario<DataStore>[] = [
     ],
   },
   {
+    method: 'artifacts.alwaysTextLengths',
+    name: "the project's always files, one left out",
+    fixture: {
+      ...fixture,
+      artifact_references: [
+        ...fixture.artifact_references,
+        {
+          id: uid(1104),
+          artifact_id: A.annUpload,
+          project_id: PROJECT.bobChat,
+          mode: 'always',
+          added_by: BOB,
+          created_at: at(4),
+        },
+      ],
+    },
+    run: async (store) => [
+      await store.artifacts.alwaysTextLengths(PROJECT.annChat, null),
+      await store.artifacts.alwaysTextLengths(PROJECT.bobChat, null),
+      await store.artifacts.alwaysTextLengths(PROJECT.bobChat, A.annUpload),
+    ],
+  },
+  {
     method: 'artifacts.listForProject',
     name: 'in attach order, with the reference',
     fixture,

@@ -30,7 +30,7 @@ export async function POST(
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveArtifactAccess(db, session.subject, attachmentId);
+  const access = await resolveArtifactAccess(session.subject, attachmentId);
   if (!access) return jsonError(404, 'not-found', 'No such file');
   const { row } = access;
 

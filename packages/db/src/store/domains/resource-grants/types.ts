@@ -67,6 +67,8 @@ export interface ResourceGrantStore {
     resourceId: string,
     grantId: string
   ): Promise<string | null>;
+  /** Delete one grantee's grant on a resource (they leave it); how many went. */
+  removeGrantee(kind: string, resourceId: string, granteeSubject: string): Promise<number>;
   /** Delete every grant on one resource (it is gone); how many went. */
   deleteForResource(kind: string, resourceId: string): Promise<number>;
   /**

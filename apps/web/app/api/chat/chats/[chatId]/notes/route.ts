@@ -22,9 +22,9 @@ export async function POST(
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, session.subject, chatId);
+  const chat = await getChatForOwner(session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
-  const project = chat.projectId ? await getProjectRow(db, chat.projectId) : null;
+  const project = chat.projectId ? await getProjectRow(chat.projectId) : null;
   if (!project || project.kind !== 'code')
     return jsonError(400, 'invalid', 'Only a code project’s chat keeps editor notes.');
   const body = await readJsonBody(request);

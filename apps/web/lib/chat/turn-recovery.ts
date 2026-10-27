@@ -193,9 +193,9 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   // No person is signed in for a resumed turn: the chat's rows are opened
   // and written as its owner (chat-keys.ts). A chat already gone leaves
   // the rows unopenable and the turn ends below either way.
-  const chat = await getChatRow(db, turn.chatId);
-  const cipher = chat ? await cipherAsOwner(db, 'chat', chat) : unavailableCipher('no-key');
-  const rows = await listTurnMessages(db, turn.id, cipher);
+  const chat = await getChatRow(turn.chatId);
+  const cipher = chat ? await cipherAsOwner('chat', chat) : unavailableCipher('no-key');
+  const rows = await listTurnMessages(turn.id, cipher);
   const seed = resumeSeedOf(rows, turn.startedAt);
   const plan = planResume(rows);
 
@@ -217,8 +217,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     );
   }
   const llm = llmResult.val;
-  const roles =
-    turn.runner?.roles ?? (await latestSessionRoles(db, chat.ownerSubject));
+  const roles = turn.runner?.roles ?? (await latestSessionRoles(db, chat.ownerSubject));
   const settingsResult = await getOrgSettings();
 
   // Reconcile the rows to a state the loop can start from: a results row
@@ -293,10 +292,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
  * recent session's. Empty when they have none, which offers the turn no
  * role-gated tool rather than guessing at one.
  */
-async function latestSessionRoles(
-  db: Kysely<DB>,
-  subject: string
-): Promise<string[]> {
+async function latestSessionRoles(db: Kysely<DB>, subject: string): Promise<string[]> {
   const row = await db
     .selectFrom('sessions')
     .select('roles')

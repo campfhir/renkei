@@ -60,14 +60,10 @@ function scoreOf(haystack: string, terms: string[]): number {
   return score;
 }
 
-async function transcriptOf(
-  db: Kysely<DB>,
-  chat: ChatRow,
-  maxChars: number
-): Promise<string> {
+async function transcriptOf(db: Kysely<DB>, chat: ChatRow, maxChars: number): Promise<string> {
   // The person's own chat, or a fellow member's in the project: opened as
   // its owner either way (chat-keys.ts), the way a project read is.
-  const rows = await listMessages(db, chat.id, await cipherAsOwner(db, 'chat', chat));
+  const rows = await listMessages(chat.id, await cipherAsOwner('chat', chat));
   const lines: string[] = [];
   let spent = 0;
   for (const row of rows) {
@@ -110,14 +106,10 @@ function scopeWord(context: LocalToolContext): string {
  */
 async function listOthers(context: LocalToolContext): Promise<ChatRow[]> {
   if (context.projectId) {
-    const inProject = await listProjectChats(
-      context.db,
-      [context.projectId],
-      null
-    );
+    const inProject = await listProjectChats([context.projectId], null);
     return inProject.filter((chat) => chat.id !== context.chatId && chat.lastMessageAt !== null);
   }
-  const owned = await listOwnedChats(context.db, context.subject);
+  const owned = await listOwnedChats(context.subject);
   return owned.filter((chat) => chat.id !== context.chatId);
 }
 
@@ -128,10 +120,10 @@ async function listOthers(context: LocalToolContext): Promise<ChatRow[]> {
  */
 async function readable(context: LocalToolContext, chatId: string): Promise<ChatRow | null> {
   if (context.projectId) {
-    const chat = await getChatRow(context.db, chatId);
+    const chat = await getChatRow(chatId);
     return chat && chat.projectId === context.projectId ? chat : null;
   }
-  return getChatForOwner(context.db, context.subject, chatId);
+  return getChatForOwner(context.subject, chatId);
 }
 
 async function readOne(context: LocalToolContext, chatId: string) {

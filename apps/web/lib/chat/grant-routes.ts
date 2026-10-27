@@ -23,9 +23,9 @@ export async function listGrantsRoute(
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   return NextResponse.json({
-    grants: await listResourceGrants(db, session.subject, kind, resourceId),
+    grants: await listResourceGrants(session.subject, kind, resourceId),
   });
 }
 
@@ -36,14 +36,14 @@ export async function addGrantRoute(
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const granteeSubject = typeof body.granteeSubject === 'string' ? body.granteeSubject.trim() : '';
   if (!granteeSubject) return jsonError(400, 'invalid', 'Choose a person');
   const role = isGrantRole(body.role) ? body.role : 'viewer';
   const expiresAt = parseExpiry(body.expiresAt);
   if (expiresAt === undefined) return jsonError(400, 'invalid', 'Invalid expiry');
-  const outcome = await grantResourceAccess(db, session.subject, kind, resourceId, {
+  const outcome = await grantResourceAccess(session.subject, kind, resourceId, {
     granteeSubject,
     role,
     expiresAt,
@@ -55,7 +55,6 @@ export async function addGrantRoute(
   // for the grantee (chat-keys.ts). Libraries hold no sealed content.
   if (kind === 'chat_project') {
     await shareKey(
-      db,
       'chat_project',
       { id: resourceId, ownerSubject: session.subject },
       granteeSubject
@@ -72,15 +71,9 @@ export async function revokeGrantRoute(
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const revoked = await revokeResourceGrant(
-    db,
-    session.subject,
-    kind,
-    resourceId,
-    grantId
-  );
+  const { session } = ready.context;
+  const revoked = await revokeResourceGrant(session.subject, kind, resourceId, grantId);
   if (!revoked) return jsonError(404, 'not-found', 'No such share');
-  if (kind === 'chat_project') await revokeKey(db, 'chat_project', resourceId, revoked);
+  if (kind === 'chat_project') await revokeKey('chat_project', resourceId, revoked);
   return NextResponse.json({ ok: true });
 }

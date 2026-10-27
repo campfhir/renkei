@@ -13,7 +13,7 @@
  */
 
 import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type ArtifactRecord, type DB, type ProjectArtifactRecord } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmContentBlock } from '@renkei/agent-llm';
@@ -194,6 +194,39 @@ function rowOf(raw: {
     digestStatus: raw.digest_status,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
+  };
+}
+
+/** A store record as the chat's modules hold an attachment. */
+function recordOf(record: ArtifactRecord): AttachmentRow {
+  return {
+    id: record.id,
+    ownerSubject: record.ownerSubject,
+    chatId: record.chatId,
+    messageId: record.messageId,
+    blobKey: record.blobKey,
+    filename: record.filename,
+    contentType: record.contentType,
+    sizeBytes: record.sizeBytes,
+    extractStatus: record.extractStatus,
+    origin: record.origin,
+    keyKind:
+      record.keyKind === 'chat' || record.keyKind === 'chat_project' ? record.keyKind : 'artifact',
+    keyRef: record.keyRef,
+    summary: record.summary,
+    keywords: record.keywords,
+    digestStatus: record.digestStatus,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function projectRecordOf(record: ProjectArtifactRecord): ProjectArtifactRow {
+  return {
+    ...recordOf(record),
+    referenceId: record.referenceId,
+    mode: record.mode === 'always' ? 'always' : 'on_demand',
+    addedBy: record.addedBy,
   };
 }
 
@@ -571,51 +604,31 @@ async function sealInPlace(
 }
 
 /** The files tools produced in this chat — what the Artifacts button lists. */
-export async function listArtifacts(db: Kysely<DB>, chatId: string): Promise<AttachmentRow[]> {
+export async function listArtifacts(chatId: string): Promise<AttachmentRow[]> {
   if (!isUuid(chatId)) return [];
-  const rows = await db
-    .selectFrom('artifacts')
-    .select(COLUMNS)
-    .where('chat_id', '=', chatId)
-    .where('origin', '=', 'model')
-    .orderBy('created_at', 'asc')
-    .execute();
-  return rows.map(rowOf);
+  return (await getDataStore().artifacts.listByChat(chatId, { origin: 'model' })).map(recordOf);
 }
 
-export async function getAttachment(
-  db: Kysely<DB>,
-  attachmentId: string
-): Promise<AttachmentRow | null> {
+export async function getAttachment(attachmentId: string): Promise<AttachmentRow | null> {
   if (!isUuid(attachmentId)) return null;
-  const raw = await db
-    .selectFrom('artifacts')
-    .select(COLUMNS)
-    .where('id', '=', attachmentId)
-    .executeTakeFirst();
-  return raw ? rowOf(raw) : null;
+  const record = await getDataStore().artifacts.get(attachmentId);
+  return record ? recordOf(record) : null;
 }
 
-export async function getAttachments(db: Kysely<DB>, ids: string[]): Promise<AttachmentRow[]> {
+export async function getAttachments(ids: string[]): Promise<AttachmentRow[]> {
   const valid = ids.filter(isUuid);
   if (valid.length === 0) return [];
-  const rows = await db.selectFrom('artifacts').select(COLUMNS).where('id', 'in', valid).execute();
-  return rows.map(rowOf);
+  return (await getDataStore().artifacts.getMany(valid)).map(recordOf);
 }
 
 /** The text extracted at upload (redacted as the model saw it), or null when there is none. */
 export async function getAttachmentText(
-  db: Kysely<DB>,
   attachmentId: string,
   cipher: ContentCipher
 ): Promise<string | null> {
   if (!isUuid(attachmentId)) return null;
-  const raw = await db
-    .selectFrom('artifacts')
-    .select('extracted_text')
-    .where('id', '=', attachmentId)
-    .executeTakeFirst();
-  return raw?.extracted_text ? openText(raw.extracted_text, cipher) : null;
+  const text = await getDataStore().artifacts.getText(attachmentId);
+  return text ? openText(text, cipher) : null;
 }
 
 /**
@@ -623,144 +636,58 @@ export async function getAttachmentText(
  * wrote — by name, the newest of that name. Only the caller's own files
  * in the chat; null for anything else.
  */
-export async function findChatAttachment(
-  db: Kysely<DB>,
-  input: { chatId: string; ownerSubject: string; id: string | null; filename: string | null }
-): Promise<AttachmentRow | null> {
+export async function findChatAttachment(input: {
+  chatId: string;
+  ownerSubject: string;
+  id: string | null;
+  filename: string | null;
+}): Promise<AttachmentRow | null> {
   if (!isUuid(input.chatId)) return null;
   if (!input.id && !input.filename) return null;
-  let query = db
-    .selectFrom('artifacts')
-    .select(COLUMNS)
-    .where('chat_id', '=', input.chatId)
-    .where('owner_subject', '=', input.ownerSubject);
-  query = input.id
-    ? isUuid(input.id)
-      ? query.where('id', '=', input.id)
-      : query.where('id', 'is', null)
-    : query.where('filename', '=', cleanFilename(input.filename ?? ''));
-  const row = await query.orderBy('created_at', 'desc').limit(1).executeTakeFirst();
-  return row ? rowOf(row) : null;
+  // An id that is not one finds nothing.
+  if (input.id && !isUuid(input.id)) return null;
+  const record = await getDataStore().artifacts.findInChat({
+    chatId: input.chatId,
+    ownerSubject: input.ownerSubject,
+    id: input.id,
+    filename: input.id ? null : cleanFilename(input.filename ?? ''),
+  });
+  return record ? recordOf(record) : null;
 }
 
 /** The files uploaded to or produced in one chat, oldest first. */
-export async function listAttachments(
-  db: Kysely<DB>,
-  home: { chatId: string }
-): Promise<AttachmentRow[]> {
+export async function listAttachments(home: { chatId: string }): Promise<AttachmentRow[]> {
   if (!isUuid(home.chatId)) return [];
-  const rows = await db
-    .selectFrom('artifacts')
-    .select(COLUMNS)
-    .where('chat_id', '=', home.chatId)
-    .orderBy('created_at', 'asc')
-    .execute();
-  return rows.map(rowOf);
-}
-
-const REFERENCE_COLUMNS = [
-  'r.id as reference_id',
-  'r.mode',
-  'r.added_by',
-  'a.id',
-  'a.owner_subject',
-  'a.chat_id',
-  'a.message_id',
-  'a.blob_key',
-  'a.filename',
-  'a.content_type',
-  'a.size_bytes',
-  'a.extract_status',
-  'a.origin',
-  'a.key_kind',
-  'a.key_ref',
-  'a.summary',
-  'a.keywords',
-  'a.digest_status',
-  'a.created_at',
-  'a.updated_at',
-] as const;
-
-function projectRowOf(raw: {
-  reference_id: string;
-  mode: string;
-  added_by: string;
-  id: string;
-  owner_subject: string;
-  chat_id: string | null;
-  message_id: string | null;
-  blob_key: string;
-  filename: string;
-  content_type: string;
-  size_bytes: string | number | bigint;
-  extract_status: string;
-  origin: string;
-  key_kind: string;
-  key_ref: string | null;
-  summary: string | null;
-  keywords: string[];
-  digest_status: string;
-  created_at: Date;
-  updated_at: Date;
-}): ProjectArtifactRow {
-  return {
-    ...rowOf(raw),
-    referenceId: raw.reference_id,
-    mode: raw.mode === 'always' ? 'always' : 'on_demand',
-    addedBy: raw.added_by,
-  };
+  return (await getDataStore().artifacts.listByChat(home.chatId)).map(recordOf);
 }
 
 /** The artifacts one project holds, in the order they were attached. */
-export async function listProjectArtifacts(
-  db: Kysely<DB>,
-  projectId: string
-): Promise<ProjectArtifactRow[]> {
+export async function listProjectArtifacts(projectId: string): Promise<ProjectArtifactRow[]> {
   if (!isUuid(projectId)) return [];
-  const rows = await db
-    .selectFrom('artifact_references as r')
-    .innerJoin('artifacts as a', 'a.id', 'r.artifact_id')
-    .select(REFERENCE_COLUMNS)
-    .where('r.project_id', '=', projectId)
-    .orderBy('r.created_at', 'asc')
-    .execute();
-  return rows.map(projectRowOf);
+  return (await getDataStore().artifacts.listForProject(projectId)).map(projectRecordOf);
 }
 
 /** One artifact as one project holds it, or null when the project does not. */
 export async function getProjectArtifact(
-  db: Kysely<DB>,
   projectId: string,
   artifactId: string
 ): Promise<ProjectArtifactRow | null> {
   if (!isUuid(projectId) || !isUuid(artifactId)) return null;
-  const raw = await db
-    .selectFrom('artifact_references as r')
-    .innerJoin('artifacts as a', 'a.id', 'r.artifact_id')
-    .select(REFERENCE_COLUMNS)
-    .where('r.project_id', '=', projectId)
-    .where('r.artifact_id', '=', artifactId)
-    .executeTakeFirst();
-  return raw ? projectRowOf(raw) : null;
+  const record = await getDataStore().artifacts.getForProject(projectId, artifactId);
+  return record ? projectRecordOf(record) : null;
 }
 
 /** The projects that hold one artifact. */
 export async function listReferencesOf(
-  db: Kysely<DB>,
   artifactId: string
 ): Promise<{ referenceId: string; projectId: string; mode: ReferenceMode; addedBy: string }[]> {
   if (!isUuid(artifactId)) return [];
-  const rows = await db
-    .selectFrom('artifact_references')
-    .select(['id', 'project_id', 'mode', 'added_by'])
-    .where('artifact_id', '=', artifactId)
-    .orderBy('created_at', 'asc')
-    .execute();
+  const rows = await getDataStore().artifacts.listReferences(artifactId);
   return rows.map((row) => ({
-    referenceId: row.id,
-    projectId: row.project_id,
+    referenceId: row.referenceId,
+    projectId: row.projectId,
     mode: row.mode === 'always' ? 'always' : 'on_demand',
-    addedBy: row.added_by,
+    addedBy: row.addedBy,
   }));
 }
 

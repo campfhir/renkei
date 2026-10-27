@@ -65,14 +65,16 @@ maybe('loadCodeProjectUsage', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_turns WHERE chat_id IN (SELECT id FROM chats WHERE owner_subject = ${subject})`.execute(db);
+    await sql`DELETE FROM chat_turns WHERE chat_id IN (SELECT id FROM chats WHERE owner_subject = ${subject})`.execute(
+      db
+    );
     await sql`DELETE FROM chats WHERE owner_subject = ${subject}`.execute(db);
     await sql`DELETE FROM chat_projects WHERE owner_subject = ${subject}`.execute(db);
     await closeDatabase();
   });
 
   it('sums every turn per chat, and the project total across every chat', async () => {
-    const usage = await loadCodeProjectUsage(db, projectId);
+    const usage = await loadCodeProjectUsage(projectId);
     expect(usage.byChat[chatA]).toEqual({ inputTokens: 6_000, outputTokens: 1_100 });
     expect(usage.byChat[chatB]).toEqual({ inputTokens: 300, outputTokens: 50 });
     expect(usage.byChat[chatOutside]).toBeUndefined();
@@ -80,7 +82,7 @@ maybe('loadCodeProjectUsage', () => {
   });
 
   it('answers empty for a project with no turns', async () => {
-    const empty = await loadCodeProjectUsage(db, randomUUID());
+    const empty = await loadCodeProjectUsage(randomUUID());
     expect(empty).toEqual({ total: { inputTokens: 0, outputTokens: 0 }, byChat: {} });
   });
 });

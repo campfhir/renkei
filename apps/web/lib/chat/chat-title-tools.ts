@@ -39,7 +39,7 @@ export function chatRenameTool(): LocalTool {
     async execute(input, context) {
       const title = typeof input.title === 'string' ? cleanTitle(input.title) : null;
       if (!title) return errorResult('Nothing to rename to: `title` is empty.');
-      const renamed = await updateChat(context.db, context.subject, context.chatId, { title });
+      const renamed = await updateChat(context.subject, context.chatId, { title });
       return renamed
         ? textResult(`Renamed the chat to "${title}".`, { title })
         : errorResult('Could not rename this chat.');
@@ -65,7 +65,7 @@ export async function autoTitleChat(
   input: { subject: string; chatId: string; llm: ResolvedLlm; firstPrompt: string }
 ): Promise<void> {
   try {
-    const claimed = await claimAutoTitle(db, input.chatId);
+    const claimed = await claimAutoTitle(input.chatId);
     if (!claimed) return;
     const startedAt = Date.now();
     const completion = await input.llm.provider.complete({
@@ -114,7 +114,7 @@ export async function autoTitleChat(
         : '';
     const title = cleanTitle(raw);
     if (!title) return;
-    await renameChatIfTitledAs(db, input.chatId, claimed.placeholder, title);
+    await renameChatIfTitledAs(input.chatId, claimed.placeholder, title);
   } catch (error) {
     logger.warn('chat auto title failed: {message}', {
       component: 'chat/title',

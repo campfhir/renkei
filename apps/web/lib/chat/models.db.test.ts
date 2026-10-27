@@ -110,7 +110,9 @@ maybe('image generation models', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM llm_model_configs WHERE id IN (${chatId}, ${imageId}, ${fluxId}, ${offImageId}, ${anthropicId})`.execute(db);
+    await sql`DELETE FROM llm_model_configs WHERE id IN (${chatId}, ${imageId}, ${fluxId}, ${offImageId}, ${anthropicId})`.execute(
+      db
+    );
     await closeDatabase();
     if (previousKey === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
     else process.env.TOKEN_ENCRYPTION_KEY = previousKey;
@@ -120,9 +122,9 @@ maybe('image generation models', () => {
     // Both lists are the organization's, so other suites' models in a shared
     // database sit beside these; only this suite's own are judged.
     const mine = new Set<string>([chatId, imageId, fluxId, offImageId, anthropicId]);
-    const chat = (await listChatModels(db)).filter((model) => mine.has(model.id));
+    const chat = (await listChatModels()).filter((model) => mine.has(model.id));
     expect(chat.map((model) => model.label).sort()).toEqual(['Chatty', 'Claude']);
-    const images = (await listImageModels(db)).filter((model) => mine.has(model.id));
+    const images = (await listImageModels()).filter((model) => mine.has(model.id));
     // The disabled one is not offered either.
     expect(images).toEqual([
       { id: fluxId, label: 'Fox', model: 'FLUX.2-flex' },

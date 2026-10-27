@@ -25,9 +25,9 @@ export async function GET(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   return NextResponse.json({
-    grants: await listResourceGrants(db, session.subject, 'chat', chatId),
+    grants: await listResourceGrants(session.subject, 'chat', chatId),
   });
 }
 
@@ -38,13 +38,13 @@ export async function POST(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const granteeSubject = typeof body.granteeSubject === 'string' ? body.granteeSubject.trim() : '';
   if (!granteeSubject) return jsonError(400, 'invalid', 'Choose a person');
   const expiresAt = parseExpiry(body.expiresAt);
   if (expiresAt === undefined) return jsonError(400, 'invalid', 'Invalid expiry');
-  const outcome = await grantResourceAccess(db, session.subject, 'chat', chatId, {
+  const outcome = await grantResourceAccess(session.subject, 'chat', chatId, {
     granteeSubject,
     role: 'viewer',
     expiresAt,
@@ -52,13 +52,8 @@ export async function POST(
   if (outcome === 'NOT_FOUND') return jsonError(404, 'not-found', 'No such chat');
   if (outcome === 'SELF') return jsonError(400, 'self', 'That is you');
   if (outcome === 'INVALID_ROLE') return jsonError(400, 'invalid', 'Chats are shared read-only');
-  await shareKey(
-    db,
-    'chat',
-    { id: chatId, ownerSubject: session.subject },
-    granteeSubject
-  );
-  const chat = await getChatRow(db, chatId);
+  await shareKey('chat', { id: chatId, ownerSubject: session.subject }, granteeSubject);
+  const chat = await getChatRow(chatId);
   notifyChatShared({
     granteeSubject,
     actorSubject: session.subject,
