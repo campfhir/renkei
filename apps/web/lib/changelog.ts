@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-27',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Cleaner script editor opens again',
+        detail:
+          'The script editor on Email sanitizer settings loads with TypeScript checking instead of showing an error page.',
+      },
+    ],
+  },
+  {
     date: '2026-10-25',
     entries: [
       {
